@@ -19,7 +19,7 @@ function deltaLabel(value: number) {
 }
 
 export default async function AdminAnalyticsPage() {
-  const { session, entitlement } = await requireDashboardAccess("advanced_reports");
+  const { session, entitlement } = await requireDashboardAccess("core_dashboard");
   const [{ dashboard }, report] = await Promise.all([
     getRestaurantAdminDashboard(session.restaurantId),
     getAdminReport(session.restaurantId)

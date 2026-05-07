@@ -165,36 +165,36 @@ img {
 }
 
 .stitch-admin {
-  --background: #F8FAFC;
+  --background: #F4F6F8;
   --foreground: #111827;
   --surface: #FFFFFF;
   --surface-strong: #FFFFFF;
-  --surface-container: #F8FAFC;
-  --surface-container-high: #F1F5F9;
+  --surface-container: #F4F6F8;
+  --surface-container-high: #EEF1F4;
   --surface-container-highest: #E2E8F0;
-  --muted: #F8FAFC;
+  --muted: #F4F6F8;
   --muted-foreground: #64748B;
   --text-secondary: #334155;
   --text-muted: #64748B;
-  --border: #E5E7EB;
+  --border: #E2E8F0;
   --outline: #CBD5E1;
   --primary: var(--brand-primary);
-  --primary-hover: #0F4D3A;
+  --primary-hover: #0B3F30;
   --primary-strong: #0F4D3A;
   --primary-soft: #EEF7F2;
   --primary-soft-strong: #BFD8C8;
   --secondary: var(--brand-secondary);
-  --secondary-soft: #F8FAFC;
+  --secondary-soft: #F4F6F8;
   --accent: #F28C28;
   --accent-hover: #D97706;
   --accent-strong: #F28C28;
   --accent-soft: #FFF7ED;
   --tertiary: #111827;
-  --tertiary-soft: #F1F5F9;
+  --tertiary-soft: #EEF1F4;
   --soft-surface: #F8FAFC;
   --ring: rgba(15, 77, 58, 0.22);
-  --shadow-soft: none;
-  --shadow-lift: none;
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+  --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.04);
   background: var(--background);
   color: var(--foreground);
 }
@@ -307,12 +307,12 @@ img {
 .admin-glass-card {
   border: 1px solid var(--border);
   background: var(--surface);
-  box-shadow: none;
-  backdrop-filter: none;
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(8px);
 }
 
 .admin-shell-bg {
-  background: #F8FAFC;
+  background: #F4F6F8;
 }
 
 .admin-shell-bg::before {
@@ -351,14 +351,19 @@ img {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.dashboard-panel:hover {
+  box-shadow: var(--shadow-lift);
 }
 
 .dashboard-subpanel {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--soft-surface);
-  box-shadow: none;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .dashboard-stat-icon {
@@ -397,7 +402,13 @@ img {
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.dashboard-minimal-card:hover {
+  box-shadow: var(--shadow-lift);
+  border-color: color-mix(in srgb, var(--primary) 20%, var(--border));
 }
 
 .dashboard-primary-action,
@@ -442,21 +453,32 @@ img {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
+  border-radius: 14px;
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-soft);
   transition:
     border-color 180ms ease,
-    background 180ms ease;
-}
-
-.admin-stat-tile::after {
-  display: none;
+    background 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .admin-stat-tile:hover {
-  border-color: color-mix(in srgb, var(--primary) 36%, var(--border));
-  background: var(--surface);
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  box-shadow: var(--shadow-lift);
+  transform: translateY(-1px);
+}
+
+.admin-stat-tile::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 80px;
+  height: 80px;
+  border-radius: 0 14px 0 80px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 6%, transparent), transparent);
+  pointer-events: none;
 }
 
 .admin-stat-tile > * {
@@ -468,13 +490,18 @@ img {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
+  border-radius: 14px;
   background: var(--surface);
   color: var(--foreground);
-  box-shadow: none;
+  box-shadow: var(--shadow-soft);
 }
 
 .admin-hero-panel::after {
-  display: none;
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 4%, transparent), transparent 60%);
 }
 
 .admin-nav-link {
