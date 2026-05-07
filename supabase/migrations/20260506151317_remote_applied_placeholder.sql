@@ -1,0 +1,3 @@
+-- Placeholder for a migration version already recorded on the remote Supabase project.
+-- The remote schema had this version before the current auth hardening work.
+-- Keep this file so Supabase CLI can compare local and remote migration history safely.

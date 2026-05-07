@@ -1,0 +1,19 @@
+node_modules
+.next
+out
+dist
+.env
+.env*.local
+.setup-credentials.txt
+supabase/.temp
+*.log
+.DS_Store
+coverage
+prisma/dev.db
+.vercel
+*.tsbuildinfo
+**/page 2.tsx
+.agents/
+.codex/
+.codex-kit/
+codex/

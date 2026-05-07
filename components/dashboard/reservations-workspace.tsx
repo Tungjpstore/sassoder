@@ -1,0 +1,511 @@
+"use client";
+
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Banknote, CalendarCheck, Check, Clock3, Copy, ExternalLink, Loader2, QrCode, RefreshCw, Settings2, Sofa, UserRoundCheck, UsersRound, X } from "lucide-react";
+import { updateReservationSettingsAction } from "@/app/dashboard/actions";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { formatVnd } from "@/lib/money";
+import { reservationDepositStatusLabel, reservationStatusLabel } from "@/lib/labels";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import type { ReservationDepositType, ReservationDto } from "@/types/domain";
+
+type ReservationSettings = {
+  reservations_enabled: boolean;
+  reservation_deposit_enabled: boolean;
+  reservation_deposit_type: ReservationDepositType;
+  reservation_deposit_value: number;
+  reservation_hold_minutes: number;
+  reservation_duration_minutes: number;
+  reservation_buffer_minutes: number;
+  reservation_min_notice_minutes: number;
+  reservation_max_days_ahead: number;
+  reservation_arrival_grace_minutes: number;
+};
+
+type DrawerMode = "closed" | "detail" | "settings" | "share";
+type RealtimeState = "connecting" | "connected" | "error";
+type FilterKey = "today" | "holding" | "waiting_deposit_confirm" | "confirmed" | "seated" | "history";
+
+function todayInputValue() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 10);
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit"
+  }).format(new Date(value));
+}
+
+function shortId(id: string) {
+  return `#${id.slice(0, 6).toUpperCase()}`;
+}
+
+function statusTone(status: ReservationDto["status"]): "neutral" | "green" | "yellow" | "blue" | "red" {
+  if (status === "confirmed" || status === "seated" || status === "completed") return "green";
+  if (status === "holding" || status === "waiting_deposit_confirm") return "yellow";
+  if (status === "cancelled" || status === "expired" || status === "no_show") return "red";
+  return "neutral";
+}
+
+function isHistory(status: ReservationDto["status"]) {
+  return ["completed", "cancelled", "expired", "no_show"].includes(status);
+}
+
+function holdCountdown(reservation: ReservationDto) {
+  if (!reservation.holdExpiresAt || reservation.status !== "holding") return null;
+  const minutes = Math.ceil((new Date(reservation.holdExpiresAt).getTime() - Date.now()) / 60000);
+  return minutes > 0 ? `${minutes} phút` : "Đã hết hạn";
+}
+
+function actionEndpoint(action: "confirm-deposit" | "seat" | "cancel" | "no-show", reservationId: string) {
+  return `/api/admin/reservations/${reservationId}/${action}`;
+}
+
+function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
+  const [state, formAction, pending] = useActionState(updateReservationSettingsAction, undefined);
+
+  return (
+    <form action={formAction} className="grid gap-4">
+      <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+        <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+          Bật nhận đặt bàn trước
+          <input type="checkbox" name="reservationsEnabled" value="true" defaultChecked={settings.reservations_enabled} className="h-5 w-5 accent-[var(--accent)]" />
+        </label>
+        <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+          Yêu cầu cọc giữ bàn
+          <input type="checkbox" name="reservationDepositEnabled" value="true" defaultChecked={settings.reservation_deposit_enabled} className="h-5 w-5 accent-[var(--accent)]" />
+        </label>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="grid gap-2 text-sm font-semibold">
+          Kiểu cọc
+          <select name="reservationDepositType" defaultValue={settings.reservation_deposit_type} className="h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+            <option value="FIXED">Cọc cố định</option>
+            <option value="PER_PERSON">Cọc theo đầu khách</option>
+          </select>
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Số tiền cọc
+          <Input name="reservationDepositValue" type="number" min={0} step={1000} defaultValue={settings.reservation_deposit_value} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Giữ cọc trong
+          <Input name="reservationHoldMinutes" type="number" min={1} max={1440} defaultValue={settings.reservation_hold_minutes} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Thời lượng bàn
+          <Input name="reservationDurationMinutes" type="number" min={15} max={480} defaultValue={settings.reservation_duration_minutes} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Buffer chống trùng
+          <Input name="reservationBufferMinutes" type="number" min={0} max={240} defaultValue={settings.reservation_buffer_minutes} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Đặt trước tối thiểu
+          <Input name="reservationMinNoticeMinutes" type="number" min={0} max={10080} defaultValue={settings.reservation_min_notice_minutes} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Nhận trước tối đa
+          <Input name="reservationMaxDaysAhead" type="number" min={1} max={365} defaultValue={settings.reservation_max_days_ahead} />
+        </label>
+        <label className="grid gap-2 text-sm font-semibold">
+          Trễ hẹn cho phép
+          <Input name="reservationArrivalGraceMinutes" type="number" min={0} max={240} defaultValue={settings.reservation_arrival_grace_minutes} />
+        </label>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">
+        Mẹo vận hành: bật cọc cố định cho giờ cao điểm, dùng buffer 15-30 phút để tránh khách sau bị đè lịch bàn.
+      </div>
+
+      {state?.error ? <p className="text-sm font-bold text-[var(--accent-strong)]">{state.error}</p> : null}
+      {state?.success ? <p className="text-sm font-bold text-[var(--primary-strong)]">{state.success}</p> : null}
+
+      <Button disabled={pending}>
+        {pending ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
+        {pending ? "Đang lưu..." : "Lưu cấu hình đặt bàn"}
+      </Button>
+    </form>
+  );
+}
+
+export function ReservationsWorkspace({
+  restaurantId,
+  settings,
+  initialReservations,
+  publicUrl
+}: {
+  restaurantId: string;
+  settings: ReservationSettings;
+  initialReservations: ReservationDto[];
+  publicUrl: string;
+}) {
+  const [date, setDate] = useState(todayInputValue());
+  const [reservations, setReservations] = useState(initialReservations);
+  const [selectedId, setSelectedId] = useState(initialReservations[0]?.id ?? null);
+  const [drawer, setDrawer] = useState<DrawerMode>("closed");
+  const [filter, setFilter] = useState<FilterKey>("today");
+  const [loading, setLoading] = useState(false);
+  const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const refreshTimerRef = useRef<number | null>(null);
+  const selected = reservations.find((reservation) => reservation.id === selectedId) ?? null;
+
+  const stats = useMemo(() => {
+    return {
+      total: reservations.length,
+      holding: reservations.filter((item) => item.status === "holding").length,
+      waitingDeposit: reservations.filter((item) => item.status === "waiting_deposit_confirm").length,
+      confirmed: reservations.filter((item) => item.status === "confirmed").length,
+      seated: reservations.filter((item) => item.status === "seated").length
+    };
+  }, [reservations]);
+
+  const visibleReservations = useMemo(() => {
+    return reservations.filter((reservation) => {
+      if (filter === "today") return !isHistory(reservation.status);
+      if (filter === "history") return isHistory(reservation.status);
+      return reservation.status === filter;
+    });
+  }, [reservations, filter]);
+
+  const loadReservations = useCallback(async (nextDate = date, silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ date: nextDate });
+      const response = await fetch(`/api/admin/reservations?${params.toString()}`);
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tải được lịch đặt bàn.");
+      const nextReservations = json.data as ReservationDto[];
+      setReservations(nextReservations);
+      setSelectedId((current) => (current && nextReservations.some((item) => item.id === current) ? current : nextReservations[0]?.id ?? null));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Không tải được lịch đặt bàn.");
+    } finally {
+      setLoading(false);
+    }
+  }, [date]);
+
+  async function runAction(action: "confirm-deposit" | "seat" | "cancel" | "no-show", reservationId: string) {
+    setMutatingId(reservationId);
+    setError(null);
+    try {
+      const response = await fetch(actionEndpoint(action, reservationId), { method: "POST" });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại.");
+      const updated = json.data as ReservationDto;
+      setReservations((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setSelectedId(updated.id);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Thao tác thất bại.");
+    } finally {
+      setMutatingId(null);
+    }
+  }
+
+  async function copyPublicUrl() {
+    await navigator.clipboard.writeText(publicUrl);
+  }
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => void loadReservations(date, true), 280);
+    };
+
+    const channel = supabase
+      .channel(`admin-reservations:${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "reservations", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRealtimeState("connected");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+      });
+
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [date, loadReservations, restaurantId]);
+
+  return (
+    <>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-4">
+          <section className="dashboard-panel p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <Badge tone={settings.reservations_enabled ? "green" : "yellow"}>{settings.reservations_enabled ? "Đang nhận đặt bàn" : "Đang tắt đặt bàn"}</Badge>
+                <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">Đặt bàn trước</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">
+                  Quản lý lịch giữ bàn, cọc VietQR, chống trùng lịch và nhận khách vào bàn đang phục vụ.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={() => setDrawer("settings")}>
+                  <Settings2 size={16} />
+                  Cấu hình
+                </Button>
+                <Button type="button" onClick={() => setDrawer("share")}>
+                  <QrCode size={16} />
+                  Link đặt bàn
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-5">
+              {[
+                { label: "Tổng lịch", value: stats.total, icon: CalendarCheck },
+                { label: "Đang giữ", value: stats.holding, icon: Clock3 },
+                { label: "Chờ cọc", value: stats.waitingDeposit, icon: Banknote },
+                { label: "Đã xác nhận", value: stats.confirmed, icon: Check },
+                { label: "Đã đến", value: stats.seated, icon: Sofa }
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <article key={item.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+                    <span className="dashboard-stat-icon"><Icon size={17} /></span>
+                    <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">{item.label}</p>
+                    <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{item.value}</p>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="dashboard-panel p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date"
+                  value={date}
+                  onChange={(event) => {
+                    setDate(event.target.value);
+                    void loadReservations(event.target.value);
+                  }}
+                  className="w-[180px]"
+                />
+                <button type="button" onClick={() => void loadReservations(date)} className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--primary)]">
+                  {loading ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />}
+                  Tải lại
+                </button>
+              </div>
+              <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
+                {realtimeState === "connected" ? "Realtime đang bật" : realtimeState === "error" ? "Realtime gián đoạn" : "Đang kết nối"}
+              </Badge>
+            </div>
+
+            <div className="mt-4 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
+              {[
+                ["today", "Đang mở"],
+                ["holding", "Đang giữ"],
+                ["waiting_deposit_confirm", "Chờ cọc"],
+                ["confirmed", "Đã xác nhận"],
+                ["seated", "Đã đến"],
+                ["history", "Lịch sử"]
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setFilter(key as FilterKey)}
+                  className={`h-9 shrink-0 rounded-md px-3 text-sm font-semibold transition ${filter === key ? "bg-white text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {error ? <p className="mt-4 rounded-xl bg-[var(--danger-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">{error}</p> : null}
+
+            <div className="mt-4 grid gap-2">
+              {visibleReservations.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-8 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+                  Chưa có lịch đặt phù hợp bộ lọc.
+                </div>
+              ) : (
+                visibleReservations.map((reservation) => (
+                  <button
+                    key={reservation.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedId(reservation.id);
+                      setDrawer("detail");
+                    }}
+                    className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--primary)] md:grid-cols-[1fr_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-[var(--foreground)]">{reservation.customerName}</span>
+                        <Badge tone={statusTone(reservation.status)}>{reservationStatusLabel(reservation.status)}</Badge>
+                        <Badge tone={reservation.depositStatus === "paid" ? "green" : reservation.depositStatus === "waiting_confirm" ? "yellow" : "neutral"}>
+                          {reservationDepositStatusLabel(reservation.depositStatus)}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-sm font-medium text-[var(--muted-foreground)]">
+                        {formatTime(reservation.startsAt)} · {reservation.partySize} khách · {reservation.tables[0]?.name ?? "Chưa có bàn"}
+                      </p>
+                    </div>
+                    <div className="text-left md:text-right">
+                      <p className="metric-number font-semibold text-[var(--foreground)]">{reservation.depositRequiredAmount > 0 ? formatVnd(reservation.depositRequiredAmount) : "Không cọc"}</p>
+                      <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">{shortId(reservation.id)}</p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+
+        <aside className="hidden xl:block">
+          <section className="dashboard-panel sticky top-[92px] p-4">
+            <div className="flex items-center gap-2">
+              <UsersRound className="text-[var(--primary)]" size={18} />
+              <h2 className="text-lg font-semibold text-[var(--foreground)]">Tác vụ nhanh</h2>
+            </div>
+            <div className="mt-4 grid gap-2">
+              <button type="button" onClick={() => setDrawer("share")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+                Link đặt bàn public
+                <ExternalLink size={16} />
+              </button>
+              <button type="button" onClick={() => setDrawer("settings")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+                Cấu hình nhận cọc
+                <Settings2 size={16} />
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">
+              Lịch cọc hết hạn sẽ được dọn bằng cron và cả khi dashboard/khách kiểm tra khung giờ.
+            </div>
+          </section>
+        </aside>
+      </div>
+
+      {drawer !== "closed" ? (
+        <div className="fixed inset-0 z-[80] bg-black/18" onClick={() => setDrawer("closed")}>
+          <aside className="ml-auto h-full w-full max-w-xl overflow-y-auto border-l border-[var(--border)] bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+                  {drawer === "settings" ? "Cấu hình" : drawer === "share" ? "Chia sẻ" : "Chi tiết"}
+                </p>
+                <h2 className="mt-1 text-2xl font-semibold text-[var(--foreground)]">
+                  {drawer === "settings" ? "Thiết lập đặt bàn" : drawer === "share" ? "Link đặt bàn" : "Chi tiết lịch đặt"}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setDrawer("closed")} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] text-[var(--muted-foreground)]" aria-label="Đóng">
+                <X size={17} />
+              </button>
+            </div>
+
+            {drawer === "settings" ? <SettingsDrawer settings={settings} /> : null}
+
+            {drawer === "share" ? (
+              <div className="grid gap-4">
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+                  <p className="text-sm font-semibold text-[var(--muted-foreground)]">Link public cho khách đặt bàn trước</p>
+                  <code className="mt-3 block overflow-hidden rounded-lg border border-[var(--border)] bg-white px-3 py-3 text-sm font-semibold text-[var(--foreground)]">{publicUrl}</code>
+                  <div className="mx-auto mt-4 w-full max-w-[260px] rounded-2xl border border-[var(--border)] bg-white p-4 text-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/api/admin/reservation-qr?size=520" alt="QR đặt bàn trước" className="mx-auto aspect-square w-full rounded-xl object-contain" />
+                    <p className="mt-3 text-sm font-semibold text-[var(--muted-foreground)]">QR dẫn khách tới trang đặt bàn</p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="secondary" onClick={copyPublicUrl}>
+                      <Copy size={16} />
+                      Sao chép link
+                    </Button>
+                    <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-bold text-[var(--primary)]">
+                      <ExternalLink size={16} />
+                      Mở trang khách
+                    </a>
+                    <a href="/api/admin/reservation-qr?size=1200&download=1" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-bold text-[var(--primary)]">
+                      <QrCode size={16} />
+                      Tải QR
+                    </a>
+                  </div>
+                </div>
+                <div className="rounded-xl border border-[var(--border)] bg-white p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                  Bước tiếp theo có thể sinh QR riêng cho đặt bàn để in standee, đặt ở fanpage hoặc chạy quảng cáo.
+                </div>
+              </div>
+            ) : null}
+
+            {drawer === "detail" && selected ? (
+              <div className="grid gap-4">
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-[var(--muted-foreground)]">{shortId(selected.id)}</p>
+                      <h3 className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{selected.customerName}</h3>
+                    </div>
+                    <Badge tone={statusTone(selected.status)}>{reservationStatusLabel(selected.status)}</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 text-sm font-semibold sm:grid-cols-2">
+                    <p><span className="text-[var(--muted-foreground)]">Thời gian:</span> {formatTime(selected.startsAt)}</p>
+                    <p><span className="text-[var(--muted-foreground)]">Số khách:</span> {selected.partySize}</p>
+                    <p><span className="text-[var(--muted-foreground)]">Điện thoại:</span> {selected.customerPhone}</p>
+                    <p><span className="text-[var(--muted-foreground)]">Email:</span> {selected.customerEmail || "Chưa có"}</p>
+                    <p><span className="text-[var(--muted-foreground)]">Bàn giữ:</span> {selected.tables.map((table) => table.name).join(", ") || "Chưa có"}</p>
+                    <p><span className="text-[var(--muted-foreground)]">Hết hạn cọc:</span> {holdCountdown(selected) ?? "Không áp dụng"}</p>
+                  </div>
+                  {selected.customerNote ? <p className="mt-4 rounded-xl border border-[var(--border)] bg-white p-3 text-sm font-semibold text-[var(--muted-foreground)]">{selected.customerNote}</p> : null}
+                </div>
+
+                <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                    <Banknote size={16} className="text-[var(--primary)]" />
+                    Cọc giữ bàn
+                  </div>
+                  <div className="mt-3 grid gap-3 text-sm font-semibold sm:grid-cols-3">
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                      <p className="text-[var(--muted-foreground)]">Yêu cầu</p>
+                      <p className="metric-number mt-1 text-lg text-[var(--foreground)]">{formatVnd(selected.depositRequiredAmount)}</p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                      <p className="text-[var(--muted-foreground)]">Đã nhận</p>
+                      <p className="metric-number mt-1 text-lg text-[var(--foreground)]">{formatVnd(selected.depositPaidAmount)}</p>
+                    </div>
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                      <p className="text-[var(--muted-foreground)]">Trạng thái</p>
+                      <p className="mt-1 text-sm text-[var(--foreground)]">{reservationDepositStatusLabel(selected.depositStatus)}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {selected.depositStatus === "waiting_confirm" ? (
+                    <Button type="button" onClick={() => runAction("confirm-deposit", selected.id)} disabled={mutatingId === selected.id}>
+                      {mutatingId === selected.id ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
+                      Xác nhận cọc
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="secondary" onClick={() => runAction("seat", selected.id)} disabled={mutatingId === selected.id || !["confirmed", "waiting_deposit_confirm"].includes(selected.status)}>
+                    <UserRoundCheck size={16} />
+                    Nhận khách vào bàn
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={() => runAction("no-show", selected.id)} disabled={mutatingId === selected.id || isHistory(selected.status)}>
+                    <Clock3 size={16} />
+                    Khách không đến
+                  </Button>
+                  <Button type="button" variant="danger" onClick={() => runAction("cancel", selected.id)} disabled={mutatingId === selected.id || isHistory(selected.status)}>
+                    <X size={16} />
+                    Huỷ lịch đặt
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </aside>
+        </div>
+      ) : null}
+    </>
+  );
+}

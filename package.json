@@ -1,0 +1,44 @@
+{
+  "name": "qr-restaurant-saas",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "supabase:schema": "echo 'Run supabase/schema.sql in the Supabase SQL editor'",
+    "supabase:seed": "echo 'Run supabase/seed.sql after creating the demo auth user'"
+  },
+  "dependencies": {
+    "@copilotkit/react-core": "^1.57.0",
+    "@copilotkit/react-ui": "^1.57.0",
+    "@copilotkit/runtime": "^1.57.0",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.87.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.468.0",
+    "next": "16.2.4",
+    "openai": "^6.36.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "tailwind-merge": "^2.5.5",
+    "zod": "^3.24.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.4",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "16.2.4",
+    "postcss": "8.5.12",
+    "tailwindcss": "^4.2.4",
+    "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "8.5.12"
+  }
+}

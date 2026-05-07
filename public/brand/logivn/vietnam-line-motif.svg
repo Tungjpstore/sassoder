@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="190" viewBox="0 0 520 190" fill="none">
+  <g stroke="#A9C5A1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".62">
+    <path d="M42 151h422" />
+    <path d="M125 151v-38h210v38" />
+    <path d="M143 113l87-62 87 62" />
+    <path d="M166 99h128" />
+    <path d="M186 151v-33h88v33" />
+    <path d="M205 151v-21h50v21" />
+    <path d="M230 51v-28" />
+    <path d="M205 52c16-24 34-24 50 0" />
+    <path d="M188 64c28-18 56-18 84 0" />
+    <path d="M338 151v-51h64v51" />
+    <path d="M326 100h88l-44-31-44 31Z" />
+    <path d="M360 151v-25h21v25" />
+    <path d="M72 151c12-28 31-42 57-42" />
+    <path d="M87 151c9-17 22-25 40-25" />
+    <path d="M423 151c7-23 24-38 51-46" />
+    <path d="M449 151c6-13 16-21 32-25" />
+    <path d="M456 80c11-16 23-22 36-18 9 3 17 10 23 21" />
+    <path d="M19 116c16-15 34-16 54-3" />
+    <path d="M71 84c8-8 18-11 29-8 8 2 14 7 19 14" />
+    <path d="M101 67c11-8 23-10 36-5" />
+  </g>
+  <g stroke="#F28C28" stroke-width="2" stroke-linecap="round" opacity=".42">
+    <path d="M231 23c-15 13-30 13-45 0" />
+    <path d="M274 23c-14 13-29 13-44 0" />
+    <path d="M151 113c20 8 39 8 59 0" />
+    <path d="M250 113c20 8 39 8 59 0" />
+  </g>
+</svg>

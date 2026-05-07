@@ -1,0 +1,6 @@
+.env
+.env.*
+.setup-credentials.txt
+.next
+node_modules
+supabase/.temp
