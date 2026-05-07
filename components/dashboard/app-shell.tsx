@@ -50,7 +50,7 @@ export function AdminShell({
     <ToastProvider>
       <main className="stitch-admin admin-shell-bg relative min-h-screen overflow-hidden text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
-        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-white text-[var(--foreground)] lg:flex">
+        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-gradient-to-b from-white to-[#F8FAFB] text-[var(--foreground)] shadow-[1px_0_8px_rgba(0,0,0,0.03)] lg:flex">
           <Link href="/dashboard" className="relative z-[1] mx-3 mt-3 flex h-14 items-center rounded-xl border border-[var(--border)] bg-white px-3 transition hover:bg-[var(--soft-surface)]">
             <span className="inline-flex">
               <LogiVNLogo className="h-9" priority />
@@ -82,7 +82,7 @@ export function AdminShell({
 
         {/* ── Main content ── */}
         <section className="relative z-[1] lg:pl-[216px]">
-          <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-white/95 px-4 py-2 backdrop-blur md:px-5">
+          <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-white/80 px-4 py-2 shadow-[0_1px_3px_rgba(0,0,0,0.02)] backdrop-blur-lg md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="lg:hidden">
@@ -182,9 +182,10 @@ export function AdminShell({
               </section>
             ) : null}
             {!hideHeading && (
-              <section className="admin-page-heading relative mb-3 overflow-hidden rounded-xl border border-[var(--border)] bg-white px-5 py-4">
-                <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">{title}</h1>
-                {subtitle && <p className="mt-1 max-w-2xl text-sm text-[var(--muted-foreground)]">{subtitle}</p>}
+              <section className="admin-page-heading relative mb-3 overflow-hidden rounded-xl border border-[var(--border)] bg-white px-5 py-4 shadow-[var(--shadow-soft)]">
+                <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full" style={{ background: "radial-gradient(circle, rgba(15,77,58,0.06), transparent 70%)" }} />
+                <h1 className="relative text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">{title}</h1>
+                {subtitle && <p className="relative mt-1 max-w-2xl text-sm text-[var(--muted-foreground)]">{subtitle}</p>}
               </section>
             )}
             {children}
