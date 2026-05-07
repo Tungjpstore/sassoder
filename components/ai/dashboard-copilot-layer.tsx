@@ -334,7 +334,6 @@ function DashboardCopilotExperience({
   return (
     <CopilotSidebar
       defaultOpen={false}
-      clickOutsideToClose
       width="min(460px, 100vw)"
       toggleButton={LogibotSidebarToggle}
       labels={{
