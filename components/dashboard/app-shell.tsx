@@ -50,16 +50,18 @@ export function AdminShell({
     <ToastProvider>
       <main className="stitch-admin admin-shell-bg relative min-h-screen overflow-hidden text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
-        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-gradient-to-b from-white to-[#F8FAFB] text-[var(--foreground)] shadow-[1px_0_8px_rgba(0,0,0,0.03)] lg:flex">
-          <Link href="/dashboard" className="relative z-[1] mx-3 mt-3 flex h-14 items-center rounded-xl border border-[var(--border)] bg-white px-3 transition hover:bg-[var(--soft-surface)]">
+        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[#0F1419] text-[var(--foreground)] lg:flex">
+          {/* Subtle gradient overlay */}
+          <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 40%, rgba(245,158,11,0.02) 100%)" }} />
+          <Link href="/dashboard" className="relative z-[1] mx-3 mt-3 flex h-14 items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 transition hover:border-[rgba(52,211,153,0.2)]">
             <span className="inline-flex">
               <LogiVNLogo className="h-9" priority />
             </span>
           </Link>
           <AdminDesktopNav />
-          <div className="relative z-[1] mx-3 mt-auto rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+          <div className="relative z-[1] mx-3 mt-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-white text-[var(--primary)]">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[rgba(52,211,153,0.2)] bg-[rgba(52,211,153,0.08)] text-[var(--primary)]">
                 <Store size={18} />
               </span>
               <span className="min-w-0">
@@ -74,7 +76,7 @@ export function AdminShell({
           </div>
           <div className="relative z-[1] mt-3 flex h-10 items-center justify-center gap-2 border-t border-[var(--border)] text-[11px] font-medium text-[var(--muted-foreground)]">
             Powered by
-            <span className="rounded-md border border-[var(--border)] bg-white px-1.5 py-1">
+            <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1">
               <LogiVNLogo className="h-4" />
             </span>
           </div>
@@ -82,7 +84,7 @@ export function AdminShell({
 
         {/* ── Main content ── */}
         <section className="relative z-[1] lg:pl-[216px]">
-          <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-white/80 px-4 py-2 shadow-[0_1px_3px_rgba(0,0,0,0.02)] backdrop-blur-lg md:px-5">
+          <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(12,16,23,0.75)] px-4 py-2 backdrop-blur-xl md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className="lg:hidden">
@@ -92,7 +94,7 @@ export function AdminShell({
                   <div className="hidden items-center gap-3 md:flex">
                     <Link
                       href="/dashboard/settings"
-                      className="inline-flex h-9 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--foreground)]"
+                      className="inline-flex h-9 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[rgba(52,211,153,0.2)]"
                     >
                       <Store size={16} className="text-[var(--primary)]" />
                       <span className="truncate">{restaurantName}</span>
@@ -100,7 +102,7 @@ export function AdminShell({
                     </Link>
                     <Link
                       href="/dashboard/analytics"
-                      className="inline-flex h-9 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-medium text-[var(--muted-foreground)]"
+                      className="inline-flex h-9 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)]"
                     >
                       <CalendarDays size={15} className="text-[var(--muted-foreground)]" />
                       {today.replace(/^./, (char) => char.toUpperCase())}
@@ -116,7 +118,7 @@ export function AdminShell({
                 <DarkModeToggle />
                 <Link
                   href="/dashboard/settings"
-                  className="hidden h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--soft-surface)] md:inline-flex"
+                  className="hidden h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
                   aria-label="Trợ giúp"
                 >
                   <CircleHelp size={16} />
@@ -124,20 +126,20 @@ export function AdminShell({
                 </Link>
                 <Link
                   href="/dashboard/settings"
-                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] md:inline-flex"
+                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
                   aria-label="Cài đặt"
                 >
                   <Settings size={16} />
                 </Link>
                 <Link
                   href="/"
-                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] md:inline-flex"
+                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
                   aria-label="Mở trang chủ"
                 >
                   <ExternalLink size={16} />
                 </Link>
-                <div className="hidden h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-2 lg:flex">
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--primary)] text-xs font-semibold text-white">
+                <div className="hidden h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 lg:flex">
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-gradient-to-br from-[var(--primary)] to-[#0F4D3A] text-xs font-semibold text-[#0C1017]">
                     {restaurantName.charAt(0).toUpperCase()}
                   </span>
                   <span className="min-w-0">
@@ -157,8 +159,8 @@ export function AdminShell({
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${
                   entitlement.allowed
-                    ? "border-[#F28C28]/25 bg-[#FFF7ED] text-[#9A3412]"
-                    : "border-[#F28C28]/35 bg-[#FFF7ED] text-[#7C2D12]"
+                    ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent)]"
+                    : "border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]"
                 }`}
               >
                 <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -174,7 +176,7 @@ export function AdminShell({
                   </div>
                   <Link
                     href="/dashboard/settings?section=billing"
-                    className="inline-flex h-9 items-center justify-center rounded-lg bg-[#F28C28] px-3 text-xs font-semibold text-white transition hover:bg-[#D97706]"
+                    className="admin-glow-btn inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold"
                   >
                     Gia hạn gói
                   </Link>
@@ -182,10 +184,11 @@ export function AdminShell({
               </section>
             ) : null}
             {!hideHeading && (
-              <section className="admin-page-heading relative mb-3 overflow-hidden rounded-xl border border-[var(--border)] bg-white px-5 py-4 shadow-[var(--shadow-soft)]">
-                <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full" style={{ background: "radial-gradient(circle, rgba(15,77,58,0.06), transparent 70%)" }} />
-                <h1 className="relative text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">{title}</h1>
-                {subtitle && <p className="relative mt-1 max-w-2xl text-sm text-[var(--muted-foreground)]">{subtitle}</p>}
+              <section className="admin-hero-panel relative mb-4 overflow-hidden px-6 py-5">
+                <div className="relative z-[1]">
+                  <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">{title}</h1>
+                  {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-[var(--muted-foreground)]">{subtitle}</p>}
+                </div>
               </section>
             )}
             {children}

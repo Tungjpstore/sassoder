@@ -165,36 +165,38 @@ img {
 }
 
 .stitch-admin {
-  --background: #F4F6F8;
-  --foreground: #111827;
-  --surface: #FFFFFF;
-  --surface-strong: #FFFFFF;
-  --surface-container: #F4F6F8;
-  --surface-container-high: #EEF1F4;
-  --surface-container-highest: #E2E8F0;
-  --muted: #F4F6F8;
-  --muted-foreground: #64748B;
-  --text-secondary: #334155;
-  --text-muted: #64748B;
-  --border: #E2E8F0;
-  --outline: #CBD5E1;
-  --primary: var(--brand-primary);
-  --primary-hover: #0B3F30;
-  --primary-strong: #0F4D3A;
-  --primary-soft: #EEF7F2;
-  --primary-soft-strong: #BFD8C8;
-  --secondary: var(--brand-secondary);
-  --secondary-soft: #F4F6F8;
-  --accent: #F28C28;
-  --accent-hover: #D97706;
-  --accent-strong: #F28C28;
-  --accent-soft: #FFF7ED;
-  --tertiary: #111827;
-  --tertiary-soft: #EEF1F4;
-  --soft-surface: #F8FAFC;
-  --ring: rgba(15, 77, 58, 0.22);
-  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
-  --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.04);
+  --background: #0C1017;
+  --foreground: #E8ECF1;
+  --surface: #151B24;
+  --surface-strong: #1A222D;
+  --surface-container: #111820;
+  --surface-container-high: #1E2733;
+  --surface-container-highest: #28333F;
+  --muted: #151B24;
+  --muted-foreground: #7A8BA0;
+  --text-secondary: #B0BDD0;
+  --text-muted: #7A8BA0;
+  --border: rgba(255, 255, 255, 0.08);
+  --outline: rgba(255, 255, 255, 0.12);
+  --primary: #34D399;
+  --primary-hover: #2BC48A;
+  --primary-strong: #34D399;
+  --primary-soft: rgba(52, 211, 153, 0.1);
+  --primary-soft-strong: rgba(52, 211, 153, 0.18);
+  --secondary: #28333F;
+  --secondary-soft: #151B24;
+  --accent: #F59E0B;
+  --accent-hover: #EAB308;
+  --accent-strong: #F59E0B;
+  --accent-soft: rgba(245, 158, 11, 0.1);
+  --tertiary: #E8ECF1;
+  --tertiary-soft: #1E2733;
+  --soft-surface: #111820;
+  --ring: rgba(52, 211, 153, 0.3);
+  --shadow-soft: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
+  --shadow-lift: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --glow-primary: 0 0 20px rgba(52, 211, 153, 0.15), 0 0 60px rgba(52, 211, 153, 0.05);
+  --glow-accent: 0 0 20px rgba(245, 158, 11, 0.15), 0 0 60px rgba(245, 158, 11, 0.05);
   background: var(--background);
   color: var(--foreground);
 }
@@ -235,36 +237,8 @@ img {
 
 @media (prefers-color-scheme: dark) {
   .stitch-admin {
-    --background: #F8FAFC;
-    --foreground: #111827;
-    --surface: #FFFFFF;
-    --surface-strong: #FFFFFF;
-    --surface-container: #F8FAFC;
-    --surface-container-high: #F1F5F9;
-    --surface-container-highest: #E2E8F0;
-    --muted: #F8FAFC;
-    --muted-foreground: #64748B;
-    --text-secondary: #334155;
-    --text-muted: #64748B;
-    --border: #E5E7EB;
-    --outline: #CBD5E1;
-    --primary: var(--brand-primary);
-    --primary-hover: #0F4D3A;
-    --primary-strong: #0F4D3A;
-    --primary-soft: #EEF7F2;
-    --primary-soft-strong: #BFD8C8;
-    --secondary: var(--brand-secondary);
-    --secondary-soft: #F8FAFC;
-    --accent: #F28C28;
-    --accent-hover: #D97706;
-    --accent-strong: #F28C28;
-    --accent-soft: #FFF7ED;
-    --tertiary: #111827;
-    --tertiary-soft: #F1F5F9;
-    --soft-surface: #F8FAFC;
-    --ring: rgba(15, 77, 58, 0.22);
-    --shadow-soft: none;
-    --shadow-lift: none;
+    --background: #0C1017;
+    --foreground: #E8ECF1;
   }
 
   .stitch-customer {
@@ -306,80 +280,91 @@ img {
 
 .admin-glass-card {
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: rgba(21, 27, 36, 0.7);
   box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(16px) saturate(1.2);
 }
 
 .admin-shell-bg {
-  background: #F4F6F8;
+  background: #0C1017;
 }
 
 .admin-shell-bg::before {
-  display: none;
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(52, 211, 153, 0.04), transparent),
+    radial-gradient(ellipse 50% 50% at 80% 90%, rgba(245, 158, 11, 0.03), transparent);
 }
 
 .admin-command-surface {
   border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: none;
+  background: rgba(21, 27, 36, 0.85);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(20px);
 }
 
 .admin-overview-card {
   border: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: none;
+  background: rgba(21, 27, 36, 0.6);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px);
 }
 
 .stitch-admin input:not([type="checkbox"]):not([type="radio"]),
 .stitch-admin select,
 .stitch-admin textarea {
   border-color: var(--border);
-  background: var(--surface);
+  background: rgba(17, 24, 32, 0.6);
   color: var(--foreground);
-  box-shadow: none;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .stitch-admin input:not([type="checkbox"]):not([type="radio"]):focus,
 .stitch-admin select:focus,
 .stitch-admin textarea:focus {
-  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 10%, transparent);
+  border-color: rgba(52, 211, 153, 0.4);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.08), inset 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .dashboard-panel {
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: rgba(21, 27, 36, 0.6);
   box-shadow: var(--shadow-soft);
-  transition: box-shadow 180ms ease, border-color 180ms ease;
+  backdrop-filter: blur(12px);
+  transition: box-shadow 200ms ease, border-color 200ms ease, transform 200ms ease;
 }
 
 .dashboard-panel:hover {
-  box-shadow: var(--shadow-lift);
+  border-color: rgba(52, 211, 153, 0.15);
+  box-shadow: var(--shadow-lift), var(--glow-primary);
+  transform: translateY(-1px);
 }
 
 .dashboard-subpanel {
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: var(--soft-surface);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  background: rgba(17, 24, 32, 0.5);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .dashboard-stat-icon {
   display: grid;
-  height: 36px;
-  width: 36px;
+  height: 40px;
+  width: 40px;
   place-items: center;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--soft-surface);
+  border-radius: 12px;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  background: rgba(52, 211, 153, 0.08);
   color: var(--primary);
 }
 
 .dashboard-muted-header {
   border-bottom: 1px solid var(--border);
-  background: var(--soft-surface);
+  background: rgba(17, 24, 32, 0.5);
   color: var(--muted-foreground);
 }
 
@@ -390,25 +375,27 @@ img {
 }
 
 .dashboard-selectable-row:hover {
-  background: var(--soft-surface);
+  background: rgba(52, 211, 153, 0.04);
 }
 
 .dashboard-selected-row {
-  background: color-mix(in srgb, var(--primary) 6%, white);
-  outline: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: rgba(52, 211, 153, 0.08);
+  outline: 1px solid rgba(52, 211, 153, 0.2);
 }
 
 .dashboard-minimal-card {
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: rgba(21, 27, 36, 0.6);
   box-shadow: var(--shadow-soft);
-  transition: box-shadow 180ms ease, border-color 180ms ease, transform 180ms ease;
+  backdrop-filter: blur(12px);
+  transition: box-shadow 200ms ease, border-color 200ms ease, transform 200ms ease;
 }
 
 .dashboard-minimal-card:hover {
-  box-shadow: var(--shadow-lift);
-  border-color: color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-color: rgba(52, 211, 153, 0.15);
+  box-shadow: var(--shadow-lift), var(--glow-primary);
+  transform: translateY(-1px);
 }
 
 .dashboard-primary-action,
@@ -425,48 +412,54 @@ img {
   transition:
     background 160ms ease,
     border-color 160ms ease,
-    color 160ms ease;
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .dashboard-primary-action {
   border: 1px solid var(--primary);
   background: var(--primary);
-  color: white;
+  color: #0C1017;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.2);
 }
 
 .dashboard-primary-action:hover {
-  background: #0B3F30;
+  background: var(--primary-hover);
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.3);
+  transform: translateY(-1px);
 }
 
 .dashboard-secondary-action {
   border: 1px solid var(--border);
-  background: white;
+  background: rgba(21, 27, 36, 0.6);
   color: var(--foreground);
+  backdrop-filter: blur(8px);
 }
 
 .dashboard-secondary-action:hover {
-  border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
-  background: var(--soft-surface);
+  border-color: rgba(52, 211, 153, 0.2);
+  background: rgba(52, 211, 153, 0.06);
 }
 
 .admin-stat-tile {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: rgba(21, 27, 36, 0.6);
   box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(12px);
   transition:
-    border-color 180ms ease,
-    background 180ms ease,
-    box-shadow 180ms ease,
-    transform 180ms ease;
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms ease;
 }
 
 .admin-stat-tile:hover {
-  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
-  box-shadow: var(--shadow-lift);
-  transform: translateY(-1px);
+  border-color: rgba(52, 211, 153, 0.2);
+  box-shadow: var(--shadow-lift), var(--glow-primary);
+  transform: translateY(-2px);
 }
 
 .admin-stat-tile::after {
@@ -474,10 +467,10 @@ img {
   position: absolute;
   top: 0;
   right: 0;
-  width: 80px;
-  height: 80px;
-  border-radius: 0 14px 0 80px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 6%, transparent), transparent);
+  width: 100px;
+  height: 100px;
+  border-radius: 0 16px 0 100px;
+  background: radial-gradient(ellipse at 100% 0%, rgba(52, 211, 153, 0.08), transparent 70%);
   pointer-events: none;
 }
 
@@ -490,10 +483,11 @@ img {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(21, 27, 36, 0.8), rgba(15, 77, 58, 0.12));
   color: var(--foreground);
   box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(16px);
 }
 
 .admin-hero-panel::after {
@@ -501,7 +495,9 @@ img {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 4%, transparent), transparent 60%);
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(52, 211, 153, 0.08), transparent 50%),
+    radial-gradient(ellipse 60% 60% at 100% 100%, rgba(245, 158, 11, 0.05), transparent 50%);
 }
 
 .admin-nav-link {
@@ -510,19 +506,157 @@ img {
 
 .admin-glow-btn {
   border: 1px solid var(--accent);
-  background: var(--accent);
-  box-shadow: none;
-  color: white;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  box-shadow: 0 0 16px rgba(245, 158, 11, 0.25);
+  color: #0C1017;
+  font-weight: 800;
   transition:
     background 180ms ease,
     border-color 180ms ease,
-    opacity 180ms ease;
+    box-shadow 180ms ease,
+    transform 180ms ease;
 }
 
 .admin-glow-btn:hover {
   border-color: var(--accent-hover);
-  background: var(--accent-hover);
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
+  box-shadow: 0 0 24px rgba(245, 158, 11, 0.35);
+  transform: translateY(-1px);
+}
+
+/* ── Dark theme global overrides ── */
+/* Catch-all: remap Tailwind's bg-white inside admin scope to dark surface */
+.stitch-admin .bg-white {
+  background-color: var(--surface) !important;
+}
+
+/* Payments/Analytics panels referencing hardcoded white backgrounds */
+.stitch-admin .bg-\[var\(--soft-surface\)\] {
+  background-color: var(--soft-surface);
+}
+
+/* Scrollbar styling for dark theme */
+.stitch-admin ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.stitch-admin ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.stitch-admin ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.stitch-admin ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* Metric numbers — bright on dark */
+.stitch-admin .metric-number {
+  color: var(--foreground);
+}
+
+/* ── Light mode opt-in ── */
+.admin-light-mode .stitch-admin {
+  --background: #F4F6F8;
+  --foreground: #111827;
+  --surface: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --surface-container: #F4F6F8;
+  --surface-container-high: #EEF1F4;
+  --surface-container-highest: #E2E8F0;
+  --muted: #F4F6F8;
+  --muted-foreground: #64748B;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
+  --border: #E2E8F0;
+  --outline: #CBD5E1;
+  --primary: #0F4D3A;
+  --primary-hover: #0B3F30;
+  --primary-strong: #0F4D3A;
+  --primary-soft: #EEF7F2;
+  --primary-soft-strong: #BFD8C8;
+  --secondary: #A9C5A1;
+  --secondary-soft: #F4F6F8;
+  --accent: #F28C28;
+  --accent-hover: #D97706;
+  --accent-strong: #F28C28;
+  --accent-soft: #FFF7ED;
+  --tertiary: #111827;
+  --tertiary-soft: #EEF1F4;
+  --soft-surface: #F8FAFC;
+  --ring: rgba(15, 77, 58, 0.22);
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+  --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.06), 0 12px 32px rgba(0, 0, 0, 0.04);
+  --glow-primary: 0 0 20px rgba(15, 77, 58, 0.08);
+  --glow-accent: 0 0 20px rgba(242, 140, 40, 0.08);
+}
+
+.admin-light-mode .stitch-admin .bg-white {
+  background-color: #FFFFFF !important;
+}
+
+.admin-light-mode .admin-shell-bg {
+  background: #F4F6F8;
+}
+
+.admin-light-mode .admin-shell-bg::before {
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(15, 77, 58, 0.03), transparent),
+    radial-gradient(ellipse 50% 50% at 80% 90%, rgba(242, 140, 40, 0.02), transparent);
+}
+
+.admin-light-mode .admin-glass-card,
+.admin-light-mode .admin-command-surface,
+.admin-light-mode .admin-overview-card,
+.admin-light-mode .dashboard-panel,
+.admin-light-mode .dashboard-minimal-card,
+.admin-light-mode .admin-stat-tile {
+  background: #FFFFFF;
+  backdrop-filter: none;
+}
+
+.admin-light-mode .dashboard-subpanel,
+.admin-light-mode .dashboard-muted-header {
+  background: #F8FAFC;
+}
+
+.admin-light-mode .admin-hero-panel {
+  background: linear-gradient(135deg, #FFFFFF, rgba(15, 77, 58, 0.04));
+  backdrop-filter: none;
+}
+
+.admin-light-mode .dashboard-stat-icon {
+  border-color: rgba(15, 77, 58, 0.15);
+  background: rgba(15, 77, 58, 0.06);
+}
+
+.admin-light-mode .dashboard-primary-action {
+  color: white;
+  box-shadow: 0 2px 8px rgba(15, 77, 58, 0.2);
+}
+
+.admin-light-mode .admin-glow-btn {
+  color: white;
+  box-shadow: 0 2px 8px rgba(242, 140, 40, 0.2);
+}
+
+.admin-light-mode .stitch-admin input:not([type="checkbox"]):not([type="radio"]),
+.admin-light-mode .stitch-admin select,
+.admin-light-mode .stitch-admin textarea {
+  background: #FFFFFF;
   box-shadow: none;
+}
+
+.admin-light-mode .stitch-admin ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.admin-light-mode .stitch-admin ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .customer-glass-card {

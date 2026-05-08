@@ -134,7 +134,7 @@ export function CommandPalette() {
         aria-label="Đóng command palette"
         style={{ opacity: 1 }}
       />
-      <div className="command-palette-enter relative mx-auto mt-[12vh] w-[calc(100%-2rem)] max-w-[580px] overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)]">
+      <div className="command-palette-enter admin-command-surface relative mx-auto mt-[12vh] w-[calc(100%-2rem)] max-w-[580px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.4)] backdrop-blur-xl">
         <div className="flex items-center gap-3 border-b border-[var(--border)] px-4 py-3">
           <Search size={18} className="shrink-0 text-[var(--muted-foreground)]" />
           <input
@@ -175,7 +175,7 @@ export function CommandPalette() {
                     onPointerEnter={() => setActiveIndex(idx)}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition ${
                       idx === activeIndex
-                        ? "bg-[var(--primary)] text-white"
+                        ? "bg-[rgba(52,211,153,0.1)] text-[var(--primary)] shadow-[inset_0_0_0_1px_rgba(52,211,153,0.15)]"
                         : "text-[var(--foreground)] hover:bg-[var(--soft-surface)]"
                     }`}
                   >
@@ -206,7 +206,7 @@ export function CommandPaletteTrigger() {
           new KeyboardEvent("keydown", { key: "k", metaKey: true })
         );
       }}
-      className="hidden h-9 min-w-[320px] max-w-[520px] flex-1 items-center gap-3 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/30 md:flex"
+      className="hidden h-9 min-w-[320px] max-w-[520px] flex-1 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:flex"
     >
       <Search size={16} className="text-[var(--muted-foreground)]" />
       <span className="flex-1 text-left">Tìm kiếm nhanh mã đơn, bàn, món...</span>

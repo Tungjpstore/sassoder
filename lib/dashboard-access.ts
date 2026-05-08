@@ -12,11 +12,10 @@ export async function requireDashboardAccess(feature?: PlanFeatureKey) {
     redirect("/dashboard/settings?section=billing&gate=subscription");
   }
 
-  if (feature && !hasFeature(entitlement, feature)) {
-    redirect(`/dashboard/settings?section=billing&feature=${encodeURIComponent(feature)}`);
-  }
+  // Feature check — no redirect, pages handle missing features gracefully
+  const featureEnabled = feature ? hasFeature(entitlement, feature) : true;
 
-  return { session, entitlement };
+  return { session, entitlement, featureEnabled };
 }
 
 export async function getDashboardAccessForSettings() {

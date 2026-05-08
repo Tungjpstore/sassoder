@@ -81,7 +81,7 @@ export function AdminDesktopNav() {
     <nav className="relative z-[1] mx-3 mt-3 grid gap-0.5">
       {navGroups.map((group) => (
         <div key={group.title} className="mt-2 first:mt-0">
-          <p className="mb-1 px-2 text-[10px] font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]/60">
+          <p className="mb-1 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--primary)]/50">
             {group.title}
           </p>
           {group.links.map((link) => {
@@ -103,16 +103,16 @@ export function AdminDesktopNav() {
                 className={cn(
                   "admin-nav-link group relative flex h-9 items-center gap-3 rounded-lg px-2 text-[13px] font-medium transition duration-150",
                   active
-                    ? "bg-[var(--primary)] text-white"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)] hover:text-[var(--foreground)]"
+                    ? "bg-[rgba(52,211,153,0.1)] text-[var(--primary)] shadow-[inset_0_0_0_1px_rgba(52,211,153,0.15),0_0_12px_rgba(52,211,153,0.06)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[rgba(52,211,153,0.05)] hover:text-[var(--foreground)]"
                 )}
               >
                 <span
                   className={cn(
                     "flex h-7 w-7 items-center justify-center rounded-md transition",
                     active
-                      ? "bg-white/12 text-white"
-                      : "bg-transparent text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]"
+                      ? "text-[var(--primary)]"
+                      : "text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]"
                   )}
                 >
                   <link.icon size={15} />

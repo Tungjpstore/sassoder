@@ -58,9 +58,9 @@ function tableStatusLabel(status: TableOperationalStatus) {
 }
 
 function priorityTone(tone: "green" | "orange" | "red") {
-  if (tone === "red") return "border-[#E11D48]/25 bg-[#FFF1F2] text-[#BE123C]";
-  if (tone === "orange") return "border-[#F28C28]/30 bg-[#FFF7ED] text-[#C76312]";
-  return "border-[#0F4D3A]/18 bg-[#F4F8F5] text-[#0F4D3A]";
+  if (tone === "red") return "border-[#E11D48]/20 bg-[rgba(225,29,72,0.08)] text-[#FB7185]";
+  if (tone === "orange") return "border-[var(--accent)]/20 bg-[rgba(245,158,11,0.08)] text-[var(--accent)]";
+  return "border-[var(--primary)]/15 bg-[var(--primary-soft)] text-[var(--primary)]";
 }
 
 export default async function AdminPage() {
@@ -87,15 +87,15 @@ export default async function AdminPage() {
 function AdminDashboardSkeleton() {
   return (
     <div className="grid gap-3">
-      <section className="animate-pulse rounded-xl border border-[var(--border)] bg-white p-5" style={{ minHeight: 100 }} />
+      <section className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5" style={{ minHeight: 100 }} />
       <section className="grid gap-3 md:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-white p-4" style={{ minHeight: 96 }} />
+          <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" style={{ minHeight: 96 }} />
         ))}
       </section>
       <section className="grid gap-3 lg:grid-cols-3">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-white p-4" style={{ minHeight: 240 }} />
+          <div key={i} className="animate-pulse rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4" style={{ minHeight: 240 }} />
         ))}
       </section>
     </div>
@@ -153,117 +153,134 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
   ];
 
   return (
-    <div className="grid gap-4">
-      {/* ── Header strip ── */}
-      <section className="dashboard-minimal-card flex flex-wrap items-center justify-between gap-4 px-5 py-4">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--muted-foreground)]">Live operations</p>
-          <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-[28px]">
-            Tổng quan ca bán
-          </h1>
-          <p className="mt-1 max-w-xl text-sm text-[var(--muted-foreground)]">
-            Ưu tiên đơn mới, thanh toán và bàn cần chú ý.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link href="/dashboard/orders" className="dashboard-primary-action">
-            <ClipboardList size={16} />
-            Xử lý đơn
-          </Link>
-          <Link href="/dashboard/online" className="dashboard-secondary-action">
-            <ShoppingBag size={16} />
-            Bán online
-          </Link>
-          <Link href="/dashboard/kitchen" className="dashboard-secondary-action">
-            <ChefHat size={16} />
-            Bếp
-          </Link>
-          <a href={tenantUrl} target="_blank" rel="noreferrer" className="dashboard-secondary-action">
-            <ExternalLink size={16} />
-            Link gọi món
-          </a>
+    <div className="grid gap-5">
+      {/* ── Hero welcome strip ── */}
+      <section className="admin-hero-panel relative overflow-hidden px-6 py-6 md:px-8 md:py-7">
+        <div className="relative z-[1] flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--primary)]">Live operations</p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--foreground)] md:text-4xl">
+              Tổng quan ca bán
+            </h1>
+            <p className="mt-2 max-w-lg text-sm leading-relaxed text-[var(--muted-foreground)]">
+              Ưu tiên đơn mới, thanh toán và bàn cần chú ý.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/dashboard/orders" className="dashboard-primary-action">
+              <ClipboardList size={16} />
+              Xử lý đơn
+            </Link>
+            <Link href="/dashboard/online" className="dashboard-secondary-action">
+              <ShoppingBag size={16} />
+              Bán online
+            </Link>
+            <Link href="/dashboard/kitchen" className="dashboard-secondary-action">
+              <ChefHat size={16} />
+              Bếp
+            </Link>
+            <a href={tenantUrl} target="_blank" rel="noreferrer" className="dashboard-secondary-action">
+              <ExternalLink size={16} />
+              Link gọi món
+            </a>
+          </div>
         </div>
       </section>
 
-      {/* ── Priority cards + Shift metrics — balanced 2-row layout ── */}
-      <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-4">
+      {/* ── Bento grid: Priority + Revenue ── */}
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {/* Priority cards — large emphasis tiles */}
         {priorityCards.map((card) => {
           const Icon = card.icon;
+          const isAlert = card.tone !== "green";
           return (
-            <Link key={card.title} href={card.href} className="dashboard-minimal-card group flex min-h-[96px] items-center justify-between gap-3 p-4 transition hover:border-[var(--primary)]">
-              <span className="min-w-0">
-                <span className="block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{card.title}</span>
-                <span className="metric-number mt-2 block text-3xl font-semibold tracking-tight text-[var(--foreground)]">{card.value}</span>
-                <span className="mt-1 block truncate text-xs font-medium text-[var(--muted-foreground)]">{card.helper}</span>
-              </span>
-              <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl border ${priorityTone(card.tone)}`}>
-                <Icon size={20} />
-              </span>
+            <Link
+              key={card.title}
+              href={card.href}
+              className="admin-stat-tile group relative flex flex-col justify-between gap-4 p-5"
+            >
+              <div className="flex items-start justify-between">
+                <span className={`grid h-12 w-12 place-items-center rounded-2xl border ${priorityTone(card.tone)}`}>
+                  <Icon size={22} />
+                </span>
+                {isAlert && (
+                  <span className="relative flex h-3 w-3">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--accent)] opacity-60" />
+                    <span className="relative inline-flex h-3 w-3 rounded-full bg-[var(--accent)]" />
+                  </span>
+                )}
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{card.title}</p>
+                <p className="metric-number mt-1 text-4xl font-bold tabular-nums tracking-tight">{card.value}</p>
+                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{card.helper}</p>
+              </div>
             </Link>
           );
         })}
-        {/* Best seller inline card */}
-        <div className="dashboard-minimal-card flex items-center gap-3 p-4 max-md:hidden">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--primary)]">
-            <TrendingUp size={20} />
+
+        {/* Best seller — accent tile */}
+        <div className="admin-stat-tile flex items-center gap-4 p-5">
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[var(--accent-soft)] bg-[var(--accent-soft)] text-[var(--accent)]">
+            <TrendingUp size={22} />
           </span>
-          <span className="min-w-0">
-            <span className="block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">Món nổi bật</span>
-            <span className="mt-1 block truncate text-sm font-semibold text-[var(--foreground)]">
-              {bestSeller ? `${bestSeller.name}` : "Chưa có dữ liệu"}
-            </span>
-            <span className="block text-xs text-[var(--muted-foreground)]">{bestSeller ? `${bestSeller.quantity} lượt` : "--"}</span>
-          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Món nổi bật</p>
+            <p className="mt-1 truncate text-lg font-bold text-[var(--foreground)]">
+              {bestSeller ? bestSeller.name : "Chưa có dữ liệu"}
+            </p>
+            <p className="text-xs font-medium text-[var(--muted-foreground)]">{bestSeller ? `${bestSeller.quantity} lượt gọi` : "--"}</p>
+          </div>
         </div>
       </section>
 
-      {/* ── Shift metrics row ── */}
+      {/* ── Revenue metrics — compact inline row ── */}
       <section className="grid gap-3 md:grid-cols-4">
         {shiftMetrics.map((metric) => {
           const Icon = metric.icon;
           return (
-            <div key={metric.label} className="admin-stat-tile rounded-[14px] p-4">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{metric.label}</p>
-                <span className="dashboard-stat-icon">
-                  <Icon size={18} />
-                </span>
+            <div key={metric.label} className="dashboard-panel flex items-center gap-4 px-5 py-4">
+              <span className="dashboard-stat-icon shrink-0">
+                <Icon size={18} />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{metric.label}</p>
+                <p className="metric-number mt-0.5 text-xl font-bold tabular-nums tracking-tight">{metric.value}</p>
+                <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--muted-foreground)]">{metric.meta}</p>
               </div>
-              <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{metric.value}</p>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{metric.meta}</p>
             </div>
           );
         })}
       </section>
 
-      {/* ── Main content: 3-column balanced grid ── */}
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_320px]">
-        {/* Live Action Center */}
-        <div className="lg:col-span-2">
+      {/* ── Main content: Bento 2/1 asymmetric grid ── */}
+      <section className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+        {/* Realtime queue */}
+        <div className="min-h-[320px]">
           <AdminLiveActionCenter restaurantId={restaurantId} variant="panel" />
         </div>
 
         {/* Tables sidebar */}
-        <aside className="grid content-start gap-4">
-          <div className="dashboard-minimal-card overflow-hidden p-4">
+        <aside className="grid content-start gap-5">
+          <div className="dashboard-panel overflow-hidden p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Tables</p>
-                <h2 className="mt-1 text-base font-semibold text-[var(--foreground)]">Bàn cần chú ý</h2>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Tables</p>
+                <h2 className="mt-1 text-lg font-bold text-[var(--foreground)]">Bàn cần chú ý</h2>
               </div>
-              <Link href="/dashboard/tables" className="text-xs font-semibold text-[var(--primary)]">Sơ đồ bàn</Link>
+              <Link href="/dashboard/tables" className="text-xs font-bold text-[var(--primary)] transition hover:underline">Sơ đồ bàn</Link>
             </div>
-            <div className="mt-3 grid gap-2">
+            <div className="mt-4 grid gap-2">
               {focusedTables.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-4 text-center text-sm text-[var(--muted-foreground)]">
+                <div className="grid min-h-[80px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-3 text-center text-sm text-[var(--muted-foreground)]">
                   Tất cả bàn đang ổn.
                 </div>
               ) : (
                 focusedTables.map((table) => (
-                  <Link key={table.id} href="/dashboard/tables" className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-white px-3 py-2.5 transition hover:border-[var(--primary)]">
+                  <Link key={table.id} href="/dashboard/tables" className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 py-3 transition hover:border-[var(--primary)]">
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold">{table.name}</span>
-                      <span className="block text-xs text-[var(--muted-foreground)]">{tableStatusLabel(table.status)}</span>
+                      <span className="block truncate text-sm font-bold">{table.name}</span>
+                      <span className="block text-[11px] text-[var(--muted-foreground)]">{tableStatusLabel(table.status)}</span>
                     </span>
                     <Badge tone={table.status === "overdue" ? "red" : table.status === "awaiting_payment" ? "yellow" : "blue"}>
                       {formatVnd(table.unpaidTotal)}
@@ -276,37 +293,37 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
         </aside>
       </section>
 
-      {/* ── Recent orders ── */}
-      <section className="dashboard-minimal-card p-4">
+      {/* ── Recent orders — wide card grid ── */}
+      <section className="dashboard-panel overflow-hidden p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Orders</p>
-            <h2 className="mt-1 text-base font-semibold text-[var(--foreground)]">Đơn chưa đóng</h2>
+            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Orders</p>
+            <h2 className="mt-1 text-lg font-bold text-[var(--foreground)]">Đơn chưa đóng</h2>
           </div>
-          <Link href="/dashboard/orders" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--primary)]">
+          <Link href="/dashboard/orders" className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] transition hover:underline">
             Tất cả <ArrowRight size={14} />
           </Link>
         </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {recentActionOrders.length === 0 ? (
-            <div className="grid min-h-[100px] place-items-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-4 text-center text-sm text-[var(--muted-foreground)] md:col-span-2 xl:col-span-3">
+            <div className="grid min-h-[100px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm text-[var(--muted-foreground)] md:col-span-2 xl:col-span-3">
               Không có đơn đang mở.
             </div>
           ) : (
             recentActionOrders.map((order) => (
-              <Link key={order.id} href="/dashboard/orders" className="rounded-lg border border-[var(--border)] bg-white px-3 py-3 transition hover:border-[var(--primary)]">
+              <Link key={order.id} href="/dashboard/orders" className="group rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 py-3.5 transition hover:border-[var(--primary)]">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-mono text-xs font-semibold text-[var(--muted-foreground)]">DH{order.id.slice(0, 5).toUpperCase()}</span>
-                  <span className="text-xs text-[var(--muted-foreground)]">{formatOrderTime(order.createdAt)}</span>
+                  <span className="font-mono text-[11px] font-bold text-[var(--primary)]">DH{order.id.slice(0, 5).toUpperCase()}</span>
+                  <span className="text-[11px] text-[var(--muted-foreground)]">{formatOrderTime(order.createdAt)}</span>
                 </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
+                <div className="mt-2.5 flex items-center justify-between gap-3">
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{order.tableName}</span>
-                    <span className="block truncate text-xs text-[var(--muted-foreground)]">{order.itemSummary}</span>
+                    <span className="block truncate text-sm font-bold text-[var(--foreground)]">{order.tableName}</span>
+                    <span className="mt-0.5 block truncate text-xs text-[var(--muted-foreground)]">{order.itemSummary}</span>
                   </span>
-                  <span className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="flex shrink-0 flex-col items-end gap-1.5">
                     <Badge tone={statusTone(order.status)}>{orderStatusLabel(order.status)}</Badge>
-                    <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">{paymentMethodLabel(order.paymentMethod)}</span>
+                    <span className="text-[10px] font-semibold text-[var(--muted-foreground)]">{paymentMethodLabel(order.paymentMethod)}</span>
                   </span>
                 </div>
               </Link>

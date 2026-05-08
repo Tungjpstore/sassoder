@@ -421,13 +421,13 @@ export function AdminLiveActionCenter({
                 <p className="truncate text-[11px] font-medium text-[var(--muted-foreground)]">{item.label}</p>
                 <p className="metric-number mt-0.5 text-xl font-semibold text-[var(--foreground)]">{item.value}</p>
                 {item.label === "Đang phục vụ" && summary.overdue > 0 ? (
-                  <p className="text-[10px] font-semibold text-[#BE123C]">{summary.overdue} quá giờ</p>
+                  <p className="text-[10px] font-semibold text-[#FB7185]">{summary.overdue} quá giờ</p>
                 ) : null}
               </div>
             ))}
           </div>
 
-          {error ? <div className="mt-3 rounded-lg border border-[#E11D48]/30 bg-[#FFF1F2] p-3 text-xs font-semibold text-[#BE123C]">{error}</div> : null}
+          {error ? <div className="mt-3 rounded-lg border border-[rgba(251,113,133,0.2)] bg-[rgba(251,113,133,0.08)] p-3 text-xs font-semibold text-[#FB7185]">{error}</div> : null}
 
           <div className="mt-3 grid min-h-0 flex-1 gap-2 overflow-y-auto pr-1">
             {loading && actions.length === 0 ? (
@@ -456,7 +456,7 @@ export function AdminLiveActionCenter({
               <Link href="/dashboard/orders" className="inline-flex h-9 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
                 Mở đơn hàng
               </Link>
-              <Link href="/dashboard/kitchen" className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)]">
+              <Link href="/dashboard/kitchen" className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
                 Mở bếp
               </Link>
             </div>
@@ -482,8 +482,8 @@ export function AdminLiveActionCenter({
           type="button"
           onClick={() => setOpen((value) => !value)}
           className={cn(
-            "relative inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--soft-surface)]",
-            summary.total > 0 && "border-[#F28C28]/55 bg-[#FFF7ED] text-[#C76312]"
+            "relative inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--soft-surface)]",
+            summary.total > 0 && "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
           )}
           aria-label="Luồng thao tác nhanh"
         >
@@ -497,7 +497,7 @@ export function AdminLiveActionCenter({
         </button>
 
         {open && (
-          <div className="absolute right-0 top-[calc(100%+10px)] z-[70] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-white shadow-[0_16px_42px_rgba(15,23,42,0.12)]">
+          <div className="absolute right-0 top-[calc(100%+10px)] z-[70] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--foreground)]">Luồng thao tác nhanh</p>
@@ -535,7 +535,7 @@ export function AdminLiveActionCenter({
       </div>
 
       {primaryActions.length > 0 && (
-        <section className="fixed bottom-4 right-4 z-[55] hidden w-[380px] overflow-hidden rounded-xl border border-[#F28C28]/34 bg-white shadow-[0_16px_40px_rgba(15,23,42,0.12)] xl:block">
+        <section className="fixed bottom-4 right-4 z-[55] hidden w-[380px] overflow-hidden rounded-xl border border-[rgba(245,158,11,0.2)] bg-[var(--surface)] shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl xl:block">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)]">Cần xử lý ngay</p>
@@ -577,15 +577,15 @@ function FloatingActionNotice({
   const Icon = action.icon;
   const toneClass =
     action.tone === "red"
-      ? "border-[#E11D48]/36 bg-[#FFF1F2] text-[#BE123C]"
+      ? "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185]"
       : action.tone === "yellow"
-        ? "border-[#F28C28]/42 bg-[#FFF7EB] text-[#C76312]"
+        ? "border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.1)] text-[var(--accent)]"
         : action.tone === "blue"
-          ? "border-[#38A5E8]/32 bg-[#EFF8FF] text-[#1672A8]"
-          : "border-[#15945B]/28 bg-[#F4FBF6] text-[#0F4D3A]";
+          ? "border-[rgba(96,165,250,0.25)] bg-[rgba(96,165,250,0.1)] text-[#60A5FA]"
+          : "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]";
 
   return (
-    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[90] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[#F28C28]/34 bg-white shadow-[0_18px_48px_rgba(15,23,42,0.14)] md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
+    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[90] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[rgba(245,158,11,0.2)] bg-[var(--surface)] shadow-[0_18px_48px_rgba(0,0,0,0.3)] backdrop-blur-xl md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
       <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-3">
         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${toneClass}`}>
           <Icon size={20} />
@@ -598,12 +598,12 @@ function FloatingActionNotice({
             <p className="metric-number mt-1 text-sm font-black text-[var(--accent)]">{formatVnd(action.amount)}</p>
           ) : null}
         </div>
-        <button type="button" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-white" aria-label="Đóng thông báo">
+        <button type="button" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]" aria-label="Đóng thông báo">
           <X size={17} />
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 p-3">
-        <Link href={action.href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
           <ReceiptText size={15} />
           Xem chi tiết
         </Link>
@@ -630,15 +630,15 @@ function QuickActionRow({
   const Icon = action.icon;
 
   return (
-    <article className="rounded-lg border border-[var(--border)] bg-white p-2.5">
+    <article className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
       <div className="flex items-start gap-3">
         <span
           className={cn(
             "grid h-9 w-9 shrink-0 place-items-center rounded-lg",
-            action.tone === "red" && "bg-[#E11D48]/10 text-[#BE123C]",
-            action.tone === "yellow" && "bg-[#F28C28]/12 text-[#C76312]",
-            action.tone === "blue" && "bg-[#38A5E8]/10 text-[#1672A8]",
-            action.tone === "green" && "bg-[#15945B]/10 text-[#0F4D3A]"
+            action.tone === "red" && "bg-[rgba(251,113,133,0.1)] text-[#FB7185]",
+            action.tone === "yellow" && "bg-[rgba(245,158,11,0.1)] text-[var(--accent)]",
+            action.tone === "blue" && "bg-[rgba(96,165,250,0.1)] text-[#60A5FA]",
+            action.tone === "green" && "bg-[rgba(52,211,153,0.1)] text-[var(--primary)]"
           )}
         >
           <Icon size={18} />
@@ -652,7 +652,7 @@ function QuickActionRow({
         </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Link href={action.href} className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
           <ReceiptText size={14} />
           Chi tiết
         </Link>

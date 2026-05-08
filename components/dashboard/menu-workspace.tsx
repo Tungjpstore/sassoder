@@ -267,12 +267,12 @@ export function MenuWorkspace({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên món hoặc danh mục..."
-                className="h-10 w-full rounded-lg border border-[var(--border)] bg-white pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
+                className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
               />
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Danh mục
-              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả danh mục</option>
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>{category.name}</option>
@@ -281,7 +281,7 @@ export function MenuWorkspace({
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Trạng thái
-              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
                 <option value="available">Đang bán</option>
                 <option value="paused">Tạm hết</option>
@@ -293,7 +293,7 @@ export function MenuWorkspace({
           <button
             type="button"
             onClick={() => setCategoryFilter("all")}
-            className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[var(--primary)] bg-[var(--primary)] text-white" : "border-[var(--border)] bg-white text-[var(--muted-foreground)]"}`}
+            className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[rgba(52,211,153,0.2)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
           >
             Tất cả ({items.length})
           </button>
@@ -302,14 +302,14 @@ export function MenuWorkspace({
               key={category.id}
               type="button"
               onClick={() => setCategoryFilter(category.id)}
-              className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[var(--primary)] bg-[var(--primary)] text-white" : "border-[var(--border)] bg-white text-[var(--muted-foreground)]"}`}
+              className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[rgba(52,211,153,0.2)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
             >
               {category.name} ({category.items.length})
             </button>
           ))}
         </div>
 
-        <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-white">
+        <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
           <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
             <span>Ảnh</span>
             <span>Món ăn</span>
@@ -341,7 +341,7 @@ export function MenuWorkspace({
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold">{item.name}</span>
                     <span className="font-mono text-xs font-medium text-[var(--muted-foreground)]">Mã: CF{String(index + 1).padStart(3, "0")}</span>
-                    {topIdSet.has(item.id) ? <span className="mt-1 block text-xs font-semibold text-[#C76312]">Bán chạy</span> : null}
+                    {topIdSet.has(item.id) ? <span className="mt-1 block text-xs font-semibold text-[var(--accent)]">Bán chạy</span> : null}
                   </span>
                   <span className="text-sm font-medium">{item.categoryName}</span>
                   <span className="metric-number text-sm font-semibold">{formatVnd(item.price)}</span>
@@ -350,7 +350,7 @@ export function MenuWorkspace({
                     <button
                       type="button"
                       onClick={() => openPanel("editItem", item.id)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)]"
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]"
                     >
                       <Pencil size={14} />
                       Sửa
@@ -358,7 +358,7 @@ export function MenuWorkspace({
                     <form action={toggleMenuItemAvailabilityAction}>
                       <input type="hidden" name="itemId" value={item.id} />
                       <input type="hidden" name="isAvailable" value={String(!item.is_available)} />
-                      <button className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
+                      <button className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
                         {item.is_available ? <EyeOff size={14} /> : <Eye size={14} />}
                         {item.is_available ? "Tạm hết" : "Bật bán"}
                       </button>
@@ -378,7 +378,7 @@ export function MenuWorkspace({
       {panelMode !== "closed" && (
         <div className="fixed inset-0 z-[80]">
           <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng bảng nổi" onClick={closePanel} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu</p>
@@ -390,7 +390,7 @@ export function MenuWorkspace({
                   {panelMode === "editItem" && (selectedItem?.name ?? "Sửa món")}
                 </h3>
               </div>
-              <button type="button" onClick={closePanel} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]">
+              <button type="button" onClick={closePanel} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]">
                 <X size={18} />
               </button>
             </div>
@@ -409,7 +409,7 @@ export function MenuWorkspace({
                       const Icon = stat.icon;
                       return (
                         <div key={stat.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                          <span className="dashboard-stat-icon bg-white"><Icon size={18} /></span>
+                          <span className="dashboard-stat-icon bg-[var(--soft-surface)]"><Icon size={18} /></span>
                           <p className="mt-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
                           <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stat.value}</p>
                           <p className="mt-1 text-sm text-[var(--muted-foreground)]">{stat.meta}</p>
@@ -442,7 +442,7 @@ export function MenuWorkspace({
                 <div className="grid gap-4">
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                     <div className="flex items-start gap-3">
-                      <span className="dashboard-stat-icon bg-white">
+                      <span className="dashboard-stat-icon bg-[var(--soft-surface)]">
                         <Sparkles size={18} />
                       </span>
                       <div>
@@ -473,7 +473,7 @@ export function MenuWorkspace({
                       value={aiOcrText}
                       onChange={(event) => setAiOcrText(event.target.value)}
                       placeholder={"VD:\nCÀ PHÊ\nCà phê đen đá 25000\nBạc xỉu 35000\nTRÀ\nTrà đào cam sả 39000"}
-                      className="min-h-48 rounded-xl border border-[var(--border)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--primary)]"
+                      className="min-h-48 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-sm font-medium outline-none focus:border-[var(--primary)]"
                     />
                   </label>
                   {aiOcrError ? (
@@ -517,7 +517,7 @@ export function MenuWorkspace({
                   <input type="hidden" name="image" defaultValue="" />
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none" required>
+                    <select name="categoryId" className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none" required>
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
@@ -548,7 +548,7 @@ export function MenuWorkspace({
                   <input type="hidden" name="itemId" value={selectedItem.id} />
                   <input type="hidden" name="image" defaultValue="" />
                   <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-                    <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-xl bg-white">{renderImage(selectedItem, 80)}</div>
+                    <div className="grid h-20 w-20 place-items-center overflow-hidden rounded-xl bg-[var(--soft-surface)]">{renderImage(selectedItem, 80)}</div>
                     <div className="min-w-0">
                       <h3 className="truncate text-xl font-semibold text-[var(--foreground)]">{selectedItem.name}</h3>
                       <p className="mt-1 text-sm text-[var(--muted-foreground)]">{selectedItem.categoryName}</p>
@@ -561,7 +561,7 @@ export function MenuWorkspace({
                   </label>
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none">
+                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}

@@ -181,7 +181,7 @@ export function PaymentsWorkspace({
         })}
       </section>
 
-      {error ? <div className="rounded-xl border border-[#E11D48]/30 bg-[#FFF1F2] p-3 text-sm font-semibold text-[#BE123C]">{error}</div> : null}
+      {error ? <div className="rounded-xl border border-[rgba(251,113,133,0.2)] bg-[rgba(251,113,133,0.08)] p-3 text-sm font-semibold text-[#FB7185]">{error}</div> : null}
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="dashboard-panel p-4">

@@ -57,7 +57,7 @@ export function DashboardDrawer({
         aria-label="Đóng"
       />
       <aside
-        className={`drawer-panel absolute right-0 top-0 flex h-full w-full flex-col border-l border-[var(--border)] bg-white ${widthMap[width]}`}
+        className={`drawer-panel absolute right-0 top-0 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
           <div>
@@ -73,7 +73,7 @@ export function DashboardDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)]"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-container-high)]"
           >
             <X size={18} />
           </button>

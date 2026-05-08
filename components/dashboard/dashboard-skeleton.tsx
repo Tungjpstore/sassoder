@@ -17,7 +17,7 @@ export function StatCardSkeleton({ count = 4 }: { count?: number }) {
 
 export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+    <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
       <div className="dashboard-muted-header flex gap-3 px-4 py-3">
         {Array.from({ length: cols }).map((_, i) => (
           <div key={i} className="h-3 flex-1 rounded bg-[var(--surface-container-high)]/40" />
@@ -54,7 +54,7 @@ export function DrawerSkeleton() {
           <div className="h-16 rounded-lg bg-[var(--surface-container-high)]/40" />
         </div>
       </div>
-      <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
         <div className="h-4 w-40 rounded bg-[var(--surface-container-high)]/40" />
         <div className="mt-3 h-20 rounded-lg bg-[var(--surface-container-high)]/40" />
       </div>

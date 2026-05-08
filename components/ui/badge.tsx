@@ -10,12 +10,12 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-semibold",
-        tone === "neutral" && "border-[var(--border)] bg-[var(--surface-strong)] text-[var(--muted-foreground)]",
-        tone === "green" && "border-[var(--primary-soft-strong)] bg-[var(--primary-soft)] text-[var(--primary-strong)] dark:text-[var(--foreground)]",
-        tone === "yellow" && "border-[var(--warning)] bg-[var(--warning-soft)] text-[var(--accent-strong)] dark:text-[var(--foreground)]",
-        tone === "blue" && "border-[var(--secondary)] bg-[var(--secondary-soft)] text-[var(--primary-strong)] dark:text-[var(--foreground)]",
-        tone === "red" && "border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--accent-strong)] dark:text-[var(--foreground)]"
+        "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-bold",
+        tone === "neutral" && "border-[var(--border)] bg-[var(--surface-container-high)] text-[var(--muted-foreground)]",
+        tone === "green" && "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]",
+        tone === "yellow" && "border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.1)] text-[var(--accent)]",
+        tone === "blue" && "border-[rgba(96,165,250,0.25)] bg-[rgba(96,165,250,0.1)] text-[#60A5FA]",
+        tone === "red" && "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185]"
       )}
     >
       {children}

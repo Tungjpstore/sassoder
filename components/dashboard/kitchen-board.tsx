@@ -90,9 +90,9 @@ function KanbanColumn({
   children: React.ReactNode;
 }) {
   const toneMap = {
-    yellow: "border-[#F28C28]/20 bg-[#FFF7ED]",
-    blue: "border-[var(--primary)]/15 bg-[var(--primary-soft)]",
-    green: "border-[#16A34A]/15 bg-[#F0FDF4]",
+    yellow: "border-[rgba(245,158,11,0.2)] bg-[rgba(245,158,11,0.06)]",
+    blue: "border-[rgba(52,211,153,0.15)] bg-[rgba(52,211,153,0.06)]",
+    green: "border-[rgba(34,197,94,0.15)] bg-[rgba(34,197,94,0.06)]",
   };
 
   return (
@@ -129,7 +129,7 @@ function KitchenCard({
   return (
     <article
       className={cn(
-        "row-enter rounded-xl border bg-white p-4 transition",
+        "row-enter rounded-xl border bg-[var(--surface)] p-4 transition",
         overdue ? "border-[var(--accent)] ring-1 ring-[var(--accent)]/20" : "border-[var(--border)] hover:border-[var(--primary)]"
       )}
     >
@@ -352,7 +352,7 @@ export function KitchenBoard({
             type="button"
             onClick={() => void loadOrders({ force: true })}
             disabled={loading}
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--primary)] disabled:opacity-50"
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary)] disabled:opacity-50"
           >
             <RefreshCw className={loading ? "animate-spin" : ""} size={16} />
             Làm mới
@@ -389,7 +389,7 @@ export function KitchenBoard({
           {/* Overdue section within cooking column */}
           {overdueOrders.length > 0 && (
             <>
-              <div className="flex items-center gap-2 rounded-lg border border-[#E11D48]/20 bg-[#FFF1F2] px-3 py-2 text-xs font-bold text-[#BE123C]">
+              <div className="flex items-center gap-2 rounded-lg border border-[rgba(225,29,72,0.2)] bg-[rgba(225,29,72,0.08)] px-3 py-2 text-xs font-bold text-[#FB7185]">
                 <AlertTriangle size={14} />
                 {overdueOrders.length} đơn quá giờ
               </div>

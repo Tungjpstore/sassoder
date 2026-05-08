@@ -34,9 +34,9 @@ const icons = {
 
 const toneClasses = {
   success:
-    "border-[var(--primary)]/25 bg-[var(--primary-soft)] text-[var(--primary-strong)]",
-  error: "border-[#E11D48]/25 bg-[#FFF1F2] text-[#BE123C]",
-  info: "border-[var(--border)] bg-white text-[var(--foreground)]",
+    "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)] backdrop-blur-xl",
+  error: "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185] backdrop-blur-xl",
+  info: "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] backdrop-blur-xl",
 };
 
 let nextId = 0;

@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { forwardRef, useMemo, type ButtonHTMLAttributes, type MouseEvent } from "react";
+import { forwardRef, useMemo, useState, type ButtonHTMLAttributes, type MouseEvent } from "react";
 import { CopilotSidebar, useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotReadable } from "@copilotkit/react-core";
 import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
@@ -330,21 +330,30 @@ function DashboardCopilotExperience({
     },
     [restaurantName]
   );
+  const [hasEverOpened, setHasEverOpened] = useState(false);
 
   return (
-    <CopilotSidebar
-      defaultOpen={false}
-      width="min(460px, 100vw)"
-      toggleButton={LogibotSidebarToggle}
-      labels={{
-        modalHeaderTitle: "LogiBot OS",
-        welcomeMessageText: "Mình có thể đọc dữ liệu vận hành, mở đúng màn và tạo action thật cho quán.",
-        chatInputPlaceholder: "Hỏi LogiBot: đơn nào cần xử lý, mở thanh toán, tạo setup...",
-        chatDisclaimerText: "LogiBot không tự xác nhận thanh toán hoặc xoá dữ liệu nếu chưa có thao tác của bạn.",
-        chatToggleOpenLabel: "Mở LogiBot",
-        chatToggleCloseLabel: "Đóng LogiBot"
-      }}
-    />
+    <>
+      {hasEverOpened ? (
+        <CopilotSidebar
+          defaultOpen={false}
+          width="min(460px, 100vw)"
+          toggleButton={LogibotSidebarToggle}
+          labels={{
+            modalHeaderTitle: "LogiBot OS",
+            welcomeMessageText: "Mình có thể đọc dữ liệu vận hành, mở đúng màn và tạo action thật cho quán.",
+            chatInputPlaceholder: "Hỏi LogiBot: đơn nào cần xử lý, mở thanh toán, tạo setup...",
+            chatDisclaimerText: "LogiBot không tự xác nhận thanh toán hoặc xoá dữ liệu nếu chưa có thao tác của bạn.",
+            chatToggleOpenLabel: "Mở LogiBot",
+            chatToggleCloseLabel: "Đóng LogiBot"
+          }}
+        />
+      ) : (
+        <LogibotSidebarToggle
+          onClick={() => setHasEverOpened(true)}
+        />
+      )}
+    </>
   );
 }
 
