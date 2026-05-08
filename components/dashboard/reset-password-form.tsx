@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
-import { ArrowRight, LockKeyhole, ShieldCheck } from "lucide-react";
+import { useActionState, useState } from "react";
+import { ArrowRight, Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { updateRecoveredPasswordAction } from "@/app/dashboard/actions";
 
 type ResetPasswordFormProps = {
@@ -10,17 +10,19 @@ type ResetPasswordFormProps = {
 
 export function ResetPasswordForm({ email }: ResetPasswordFormProps) {
   const [state, formAction, pending] = useActionState(updateRecoveredPasswordAction, undefined);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   return (
     <form
       action={formAction}
-      className="relative w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)]/92 p-6 shadow-[0_24px_70px_rgba(43,43,43,0.12)] backdrop-blur-2xl"
+      className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-6 shadow-[var(--shadow-lift)] ring-1 ring-[var(--primary)]/5 backdrop-blur-2xl sm:p-8"
     >
       <div className="mb-7">
-        <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--primary)] text-[#FFF7EB]">
-          <ShieldCheck className="h-6 w-6" />
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--primary)] shadow-[var(--glow-primary)]">
+          <ShieldCheck className="h-7 w-7 text-white" />
         </div>
-        <h1 className="text-3xl font-black tracking-normal">Tạo mật khẩu mới</h1>
+        <h1 className="text-2xl font-black tracking-tight sm:text-3xl">Tạo mật khẩu mới</h1>
         <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
           {email ? `Đang đặt lại cho ${email}.` : "Phiên đặt lại mật khẩu đã được xác thực."} Sau khi đổi, mọi phiên cũ sẽ được đăng xuất.
         </p>
@@ -30,30 +32,46 @@ export function ResetPasswordForm({ email }: ResetPasswordFormProps) {
         <label className="grid gap-2 text-sm font-semibold">
           Mật khẩu mới
           <div className="relative">
-            <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--outline)]" />
+            <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <input
               name="password"
-              type="password"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-4 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--outline)] focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+              type={showPassword ? "text" : "password"}
+              className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-12 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
               placeholder="Ít nhất 10 ký tự"
               autoComplete="new-password"
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
+              aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
         </label>
 
         <label className="grid gap-2 text-sm font-semibold">
           Xác nhận mật khẩu
           <div className="relative">
-            <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--outline)]" />
+            <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <input
               name="confirmPassword"
-              type="password"
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-4 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--outline)] focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+              type={showConfirm ? "text" : "password"}
+              className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-12 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
               placeholder="Nhập lại mật khẩu"
               autoComplete="new-password"
               required
             />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
+              aria-label={showConfirm ? "Ẩn" : "Hiện"}
+            >
+              {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
           </div>
         </label>
       </div>
@@ -63,11 +81,11 @@ export function ResetPasswordForm({ email }: ResetPasswordFormProps) {
       </p>
 
       {state?.error ? (
-        <p className="mt-4 rounded-lg border border-[var(--danger)] bg-[var(--danger-soft)] p-3 text-sm text-[var(--accent-strong)]">{state.error}</p>
+        <p className="mt-4 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-sm text-[var(--accent-strong)]">{state.error}</p>
       ) : null}
 
       <button
-        className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 text-base font-black uppercase tracking-[0.12em] text-[#FFF7EB] shadow-[0_18px_36px_rgba(242,140,40,0.28)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[var(--accent-hover)] disabled:pointer-events-none disabled:opacity-50"
+        className="login-cta-glow mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-5 text-base font-black uppercase tracking-[0.1em] text-white shadow-[var(--glow-primary)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_30px_rgba(52,211,153,0.25)] disabled:pointer-events-none disabled:opacity-50"
         disabled={pending}
       >
         {pending ? "Đang cập nhật..." : "Cập nhật mật khẩu"}
