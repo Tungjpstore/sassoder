@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { FormEvent } from "react";
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import {
   ArrowRight,
   Banknote,
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { onboardingAction, registerOnboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { OnboardingCopilotLayer } from "@/components/ai/onboarding-copilot-layer";
 import { createSlug } from "@/lib/slug";
 import { buildTenantUrl, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
@@ -113,6 +114,23 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
   const selectedBusiness = businessTypes.find((item) => item.value === businessType) ?? businessTypes[0];
   const setupStep = isRegisterMode ? step - 1 : step;
   const progress = ((step + 1) / activeSteps.length) * 100;
+
+  // AI Copilot state & callbacks
+  const aiState = useMemo(
+    () => ({
+      step: setupStep >= 0 ? setupStep : 0,
+      restaurantName,
+      slug,
+      businessType,
+      tableCount,
+      planCode,
+      bankCode,
+      bankAccount
+    }),
+    [setupStep, restaurantName, slug, businessType, tableCount, planCode, bankCode, bankAccount]
+  );
+  const handleAiTableCount = useCallback((count: number) => setTableCount(count), []);
+  const handleAiBusinessType = useCallback((type: string) => setBusinessType(type), []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -218,6 +236,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
   }, [state?.redirectTo]);
 
   return (
+    <>
     <form action={formAction} onSubmit={handleSubmit} className="stitch-onboarding min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       {isRegisterMode && (
         <>
@@ -776,6 +795,12 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
         </div>
       </nav>
     </form>
+    <OnboardingCopilotLayer
+      state={aiState}
+      onApplyTableCount={handleAiTableCount}
+      onApplyBusinessType={handleAiBusinessType}
+    />
+    </>
   );
 }
 

@@ -4,9 +4,29 @@ import { QrCode, ShoppingBag } from "lucide-react";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { RemoteOrderClient } from "@/components/customer/remote-order-client";
 import { Button } from "@/components/ui/button";
+import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getCachedPublicMenu } from "@/services/menu-service";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params
+}: {
+  params: Promise<{ restaurantSlug: string }>;
+}) {
+  const { restaurantSlug } = await params;
+  const restaurant = await getCachedPublicMenu(restaurantSlug);
+
+  return createSeoMetadata({
+    title: restaurant ? `${restaurant.name} - Menu gọi món online` : "Menu quán",
+    description: restaurant
+      ? `Menu gọi món online của ${restaurant.name}. Khách chọn món, gọi thêm món và theo dõi trạng thái đơn trên LogiVN.`
+      : "Menu gọi món online trên LogiVN.",
+    path: `/r/${restaurantSlug}`,
+    image: restaurant?.logo_url || undefined,
+    noIndex: true
+  });
+}
 
 export default async function TenantMenuFallbackPage({
   params

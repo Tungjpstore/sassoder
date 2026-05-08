@@ -1,9 +1,27 @@
 import { notFound } from "next/navigation";
 import { CustomerOrderClient } from "@/components/customer/order-client";
+import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getCachedPublicMenu } from "@/services/menu-service";
 import { getPublicTable } from "@/services/table-service";
 
 export const dynamic = "force-dynamic";
+
+export async function generateMetadata({
+  params
+}: {
+  params: Promise<{ restaurantSlug: string; tableId: string }>;
+}) {
+  const { restaurantSlug } = await params;
+  const restaurant = await getCachedPublicMenu(restaurantSlug);
+
+  return createSeoMetadata({
+    title: restaurant ? `${restaurant.name} - Gọi món tại bàn` : "Gọi món tại bàn",
+    description: "Trang gọi món QR theo bàn trên LogiVN. Trang này dành cho khách tại quán và không được lập chỉ mục công khai.",
+    path: `/r/${restaurantSlug}`,
+    image: restaurant?.logo_url || undefined,
+    noIndex: true
+  });
+}
 
 export default async function CustomerTablePage({
   params

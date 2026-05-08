@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Be_Vietnam_Pro, Inter, Lexend, Sora } from "next/font/google";
-import { getAppUrl } from "@/lib/app-url";
+import { SiteJsonLd } from "@/components/seo/site-json-ld";
+import { defaultSeoMetadata } from "@/lib/seo/metadata";
 import "@copilotkit/react-core/v2/styles.css";
 import "./globals.css";
 
@@ -34,19 +35,7 @@ const inter = Inter({
   display: "swap"
 });
 
-export const metadata: Metadata = {
-  metadataBase: new URL(getAppUrl()),
-  title: "LogiVN - Gọi món QR cho quán Việt",
-  description: "Menu QR, quản lý bàn, nhận đơn realtime và thanh toán tiền mặt/chuyển khoản cho nhà hàng, quán cà phê.",
-  openGraph: {
-    title: "LogiVN - Gọi món QR cho quán Việt",
-    description: "Menu QR, quản lý bàn, nhận đơn realtime và thanh toán tiền mặt/chuyển khoản cho nhà hàng, quán cà phê.",
-    url: getAppUrl(),
-    siteName: "LogiVN",
-    locale: "vi_VN",
-    type: "website"
-  }
-};
+export const metadata: Metadata = defaultSeoMetadata;
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
@@ -57,6 +46,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             __html: `try{if(localStorage.getItem("admin-theme")==="dark")document.documentElement.classList.add("dark-admin")}catch(e){}`
           }}
         />
+        <SiteJsonLd />
       </head>
       <body className={`${beVietnam.variable} ${lexend.variable} ${sora.variable} ${inter.variable}`}>{children}</body>
     </html>

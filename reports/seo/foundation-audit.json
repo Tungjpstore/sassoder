@@ -1,0 +1,79 @@
+{
+  "generatedAt": "2026-05-08T10:02:50.581Z",
+  "scope": "seo-foundation",
+  "score": 100,
+  "findings": [
+    {
+      "id": "robots-route",
+      "area": "crawlability",
+      "severity": "critical",
+      "confidence": "CONFIRMED",
+      "file": "app/robots.ts",
+      "finding": "Production robots route exists.",
+      "fix": "Keep private SaaS, dashboard, auth and API routes blocked.",
+      "status": "pass",
+      "evidence": "app/robots.ts exists",
+      "seoImpact": "Search engines receive explicit crawl rules and sitemap discovery."
+    },
+    {
+      "id": "sitemap-route",
+      "area": "indexing",
+      "severity": "critical",
+      "confidence": "CONFIRMED",
+      "file": "app/sitemap.ts",
+      "finding": "Production sitemap route exists.",
+      "fix": "Keep sitemap focused on indexable marketing URLs until tenant SEO policy is explicit.",
+      "status": "pass",
+      "evidence": "app/sitemap.ts exists",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "llms-route",
+      "area": "geo",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/llms.txt/route.ts",
+      "finding": "AI search guidance file exists.",
+      "fix": "Update llms.txt when product positioning, pricing or public pages change.",
+      "status": "pass",
+      "evidence": "app/llms.txt/route.ts exists",
+      "seoImpact": "AI search crawlers receive concise citation guidance."
+    },
+    {
+      "id": "dashboard-noindex",
+      "area": "indexing",
+      "severity": "critical",
+      "confidence": "CONFIRMED",
+      "file": "app/dashboard/layout.tsx",
+      "finding": "Dashboard route group has noindex metadata.",
+      "fix": "Do not override this in child dashboard routes.",
+      "status": "pass",
+      "evidence": "app/dashboard/layout.tsx exists and imports noIndexMetadata",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "site-jsonld",
+      "area": "schema",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "components/seo/site-json-ld.tsx",
+      "finding": "Organization, WebSite and SoftwareApplication JSON-LD are emitted server-side.",
+      "fix": "Validate schema in CI after every schema change.",
+      "status": "pass",
+      "evidence": "components/seo/site-json-ld.tsx exists and uses next-seo JSON-LD helpers",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "lhci-config",
+      "area": "validation",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "lighthouserc.cjs",
+      "finding": "Lighthouse CI thresholds are configured for SEO, performance and accessibility.",
+      "fix": "Keep thresholds aligned with release risk.",
+      "status": "pass",
+      "evidence": "lighthouserc.cjs exists",
+      "seoImpact": "SEO regressions can fail pull requests before deployment."
+    }
+  ]
+}

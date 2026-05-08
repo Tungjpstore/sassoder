@@ -4,17 +4,18 @@ import { Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 export function DarkModeToggle() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window === "undefined") return "dark";
+    try {
+      return localStorage.getItem("admin-theme") === "light" ? "light" : "dark";
+    } catch {
+      return "dark";
+    }
+  });
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("admin-theme");
-      if (stored === "light") {
-        setTheme("light");
-        document.documentElement.classList.add("admin-light-mode");
-      }
-    } catch {}
-  }, []);
+    document.documentElement.classList.toggle("admin-light-mode", theme === "light");
+  }, [theme]);
 
   const toggle = useCallback(() => {
     const next = theme === "dark" ? "light" : "dark";

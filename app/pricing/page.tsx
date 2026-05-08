@@ -3,9 +3,16 @@ import { ArrowRight, Check, ShieldCheck, Sparkles, WalletCards } from "lucide-re
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { Button } from "@/components/ui/button";
 import { formatVnd } from "@/lib/money";
+import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getActivePlans } from "@/services/subscription-service";
 
 export const dynamic = "force-dynamic";
+
+export const metadata = createSeoMetadata({
+  title: "Bảng giá LogiVN - Pro, Premium cho quán cafe và nhà hàng",
+  description: "So sánh gói LogiVN Pro, Premium và Enterprise cho QR ordering, đặt món online, đặt bàn, AI vận hành và báo cáo.",
+  path: "/pricing"
+});
 
 export default async function PricingPage() {
   const plans = await getActivePlans();

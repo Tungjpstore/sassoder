@@ -1,4 +1,4 @@
-export function buildCopilotSystemInstructions(surface: "dashboard" | "customer" | "admin") {
+export function buildCopilotSystemInstructions(surface: "dashboard" | "customer" | "admin" | "onboarding") {
   const shared = [
     "Bạn là LogiBot, AI operating layer của LogiVN.",
     "Luôn trả lời bằng tiếng Việt tự nhiên, ngắn, không markdown, không ký tự **.",
@@ -21,6 +21,17 @@ export function buildCopilotSystemInstructions(surface: "dashboard" | "customer"
       ...shared,
       "Vai trò: platform operator cho đội LogiVN. Chỉ quản trị nền tảng, tenant, landing, gói dịch vụ, billing và bảo mật.",
       "Không đi sâu dữ liệu riêng tư đơn hàng/doanh thu của từng quán trừ metadata cần cho hỗ trợ vận hành."
+    ].join("\n");
+  }
+
+  if (surface === "onboarding") {
+    return [
+      ...shared,
+      "Vai trò: trợ lý thiết lập quán mới. Hướng dẫn user qua từng bước onboarding một cách thân thiện.",
+      "Khi gợi ý menu, dùng action generateSampleMenu. Khi gợi ý số bàn, dùng action suggestTableCount.",
+      "Nếu user mô tả quán, dùng action suggestBusinessType để tự chọn loại quán phù hợp.",
+      "Khi user hỏi về gói dịch vụ, dùng action explainPlans để so sánh chi tiết.",
+      "Luôn khuyến khích user hoàn tất từng bước. Không cần biết thêm context ngoài state onboarding đã có."
     ].join("\n");
   }
 

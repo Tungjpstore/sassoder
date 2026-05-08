@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "seo:audit": "node scripts/seo/foundation-audit.mjs",
+    "seo:sitemap": "next-sitemap --config next-sitemap.config.js",
+    "lhci": "lhci autorun --config=lighthouserc.cjs",
     "supabase:schema": "echo 'Run supabase/schema.sql in the Supabase SQL editor'",
     "supabase:seed": "echo 'Run supabase/seed.sql after creating the demo auth user'"
   },
@@ -30,14 +33,17 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@lhci/cli": "^0.15.1",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "eslint": "^9.17.0",
     "eslint-config-next": "16.2.4",
+    "lighthouse": "^13.3.0",
     "postcss": "8.5.12",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.21.0",
     "typescript": "^5.7.2"
   },
   "overrides": {
