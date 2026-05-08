@@ -60,7 +60,7 @@ export function OrderingSettingsForm({
           href={onlineUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--primary)]"
+          className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]"
         >
           <ExternalLink size={16} />
           Mở link đặt
@@ -81,7 +81,7 @@ export function OrderingSettingsForm({
       </div>
 
       <div className="mt-5 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-xl border border-[var(--border)] bg-white p-3">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
             <CreditCard size={16} className="text-[var(--primary)]" />
             Chính sách thanh toán online
@@ -116,7 +116,7 @@ export function OrderingSettingsForm({
           </div>
         </div>
 
-        <label className="flex min-h-24 items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-white p-3 text-sm">
+        <label className="flex min-h-24 items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
           <span>
             <span className="flex items-center gap-2 font-semibold text-[var(--foreground)]">
               <Navigation size={16} className="text-[var(--primary)]" />
@@ -151,7 +151,7 @@ export function OrderingSettingsForm({
             type="button"
             onClick={autofillCoordinates}
             disabled={geocoding || !settings.address}
-            className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {geocoding ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
             Tự lấy từ địa chỉ quán

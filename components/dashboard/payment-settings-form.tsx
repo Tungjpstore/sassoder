@@ -39,7 +39,7 @@ export function PaymentSettingsForm({
           name="bankCode"
           list="settings-bank-codes"
           defaultValue={bankCode ?? ""}
-          className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm outline-none transition"
+          className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm outline-none transition"
           placeholder="VCB"
           required
         />

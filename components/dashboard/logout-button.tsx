@@ -12,7 +12,7 @@ export function LogoutButton({ compact = false }: { compact?: boolean }) {
         className={
           compact
             ? "w-full"
-            : "w-full border-[var(--border)] bg-white text-[var(--muted-foreground)] shadow-none hover:bg-[var(--soft-surface)] hover:text-[var(--foreground)]"
+            : "w-full border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] shadow-none hover:bg-[var(--soft-surface)] hover:text-[var(--foreground)]"
         }
       >
         <LogOut size={16} />

@@ -100,7 +100,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
               href="/auth/google"
               className="mb-5 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-5 text-sm font-black text-[var(--foreground)] shadow-sm transition hover:-translate-y-0.5 hover:bg-[var(--primary-soft)]"
             >
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-base font-black text-[var(--primary)] shadow-sm">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--surface-container-high)] text-base font-black text-[var(--primary)] shadow-sm">
                 G
               </span>
               Đăng nhập bằng Google

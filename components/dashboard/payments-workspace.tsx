@@ -191,7 +191,7 @@ export function PaymentsWorkspace({
               <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chạm vào từng giao dịch để mở chi tiết và xác nhận thanh toán nhanh.</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Link href="/dashboard/orders?status=waiting_confirm" className="inline-flex h-10 items-center rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--primary)]">
+              <Link href="/dashboard/orders?status=waiting_confirm" className="inline-flex h-10 items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary)]">
                 Chờ xác nhận
               </Link>
               <Link href="/dashboard/settings?section=payments" className="inline-flex h-10 items-center rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white">
@@ -200,7 +200,7 @@ export function PaymentsWorkspace({
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
             <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
               <span>Mã thanh toán</span>
               <span>Bàn/Đơn</span>
@@ -285,7 +285,7 @@ export function PaymentsWorkspace({
                 <RefreshCw size={16} />
                 Chỉnh thông tin nhận tiền
               </Link>
-              <Link href="/dashboard/orders?status=waiting_confirm" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--primary)]">
+              <Link href="/dashboard/orders?status=waiting_confirm" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary)]">
                 <CheckCircle2 size={16} />
                 Mở danh sách chờ xác nhận
               </Link>
@@ -305,7 +305,7 @@ export function PaymentsWorkspace({
                 background: `conic-gradient(#0F4D3A 0 ${Math.max(percent(cashRevenue, totalPaid), 8)}%, #F28C28 ${Math.max(percent(cashRevenue, totalPaid), 8)}% ${Math.max(percent(cashRevenue, totalPaid), 8) + Math.max(percent(qrRevenue, totalPaid), 10)}%, #A9C5A1 0 100%)`
               }}
             >
-              <div className="grid h-24 w-24 place-items-center rounded-full bg-white text-center">
+              <div className="grid h-24 w-24 place-items-center rounded-full bg-[var(--surface)] text-center">
                 <span>
                   <span className="metric-number block text-lg font-semibold text-[var(--primary)]">{formatVnd(totalPaid)}</span>
                   <span className="text-xs font-medium text-[var(--muted-foreground)]">Tổng doanh thu</span>
@@ -328,7 +328,7 @@ export function PaymentsWorkspace({
         <div className="dashboard-panel p-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-[var(--foreground)]">Doanh thu theo phương thức</h2>
-            <span className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-semibold text-[var(--primary)]">Hôm nay</span>
+            <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--primary)]">Hôm nay</span>
           </div>
           <div className="mt-6 grid gap-4">
             {methodRows.map((row) => (
@@ -396,26 +396,26 @@ export function PaymentsWorkspace({
                     <Badge tone={selected.method === "QR" ? "green" : "neutral"}>{paymentMethodLabel(selected.method as PaymentMethod | null)}</Badge>
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-lg border border-[var(--border)] bg-white p-3">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                       <p className="text-[var(--muted-foreground)]">Nhận khách</p>
                       <p className="mt-1 font-semibold text-[var(--foreground)]">{formatDateTime(selected.createdAt)}</p>
                     </div>
-                    <div className="rounded-lg border border-[var(--border)] bg-white p-3">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                       <p className="text-[var(--muted-foreground)]">Bàn / kênh</p>
                       <p className="mt-1 font-semibold text-[var(--foreground)]">{selected.tableName}</p>
                     </div>
-                    <div className="rounded-lg border border-[var(--border)] bg-white p-3">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                       <p className="text-[var(--muted-foreground)]">Số món</p>
                       <p className="mt-1 font-semibold text-[var(--foreground)]">{selected.itemCount}</p>
                     </div>
-                    <div className="rounded-lg border border-[var(--border)] bg-white p-3">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
                       <p className="text-[var(--muted-foreground)]">Trạng thái tiền</p>
                       <p className="mt-1 font-semibold text-[var(--foreground)]">{paymentStatusLabel(paymentState)}</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-xl border border-[var(--border)] bg-white p-4">
+                <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                   <h3 className="text-sm font-semibold text-[var(--foreground)]">Chi tiết đơn trong bill</h3>
                   <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm">
                     <p className="text-[var(--muted-foreground)]">Hóa đơn gồm</p>
@@ -423,7 +423,7 @@ export function PaymentsWorkspace({
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-xl border border-[var(--border)] bg-white p-4">
+                <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                   <h3 className="text-sm font-semibold text-[var(--foreground)]">Thông tin chuyển khoản</h3>
                   <div className="mt-3 grid gap-2 text-sm">
                     <div className="flex justify-between gap-3"><span className="text-[var(--muted-foreground)]">Ngân hàng</span><strong>{bankCode || "Chưa cấu hình"}</strong></div>
@@ -432,7 +432,7 @@ export function PaymentsWorkspace({
                     <div className="flex justify-between gap-3"><span className="text-[var(--muted-foreground)]">Nội dung CK</span><strong>ORDER-{selected.id}</strong></div>
                   </div>
                   {qrUrl ? (
-                    <Image src={qrUrl} alt="Mã VietQR thanh toán" width={260} height={260} className="mx-auto mt-5 rounded-xl border border-[var(--border)] bg-white p-3" />
+                    <Image src={qrUrl} alt="Mã VietQR thanh toán" width={260} height={260} className="mx-auto mt-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3" />
                   ) : (
                     <div className="mt-5 rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-center text-sm font-medium text-[var(--muted-foreground)]">
                       Chưa đủ thông tin ngân hàng hoặc chưa có giao dịch để tạo VietQR thật.

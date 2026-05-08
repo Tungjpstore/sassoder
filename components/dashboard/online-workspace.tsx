@@ -181,7 +181,7 @@ export function OnlineWorkspace({
                       key={order.id}
                       type="button"
                       onClick={() => setDrawer("orders")}
-                      className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--primary)]"
+                      className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition hover:border-[var(--primary)]"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
@@ -240,7 +240,7 @@ export function OnlineWorkspace({
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Link public</p>
                 <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Kênh chia sẻ cho khách</h2>
               </div>
-              <a href={onlineUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--primary)]">
+              <a href={onlineUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
                 <ExternalLink size={15} />
                 Mở
               </a>
@@ -251,11 +251,11 @@ export function OnlineWorkspace({
             </code>
 
             <div className="mt-4 grid gap-2">
-              <button type="button" onClick={() => setDrawer("qr")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+              <button type="button" onClick={() => setDrawer("qr")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--foreground)]">
                 <span className="flex items-center gap-2"><QrCode size={16} className="text-[var(--primary)]" /> Mở QR chia sẻ</span>
                 <ArrowRight size={16} />
               </button>
-              <button type="button" onClick={() => setDrawer("settings")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+              <button type="button" onClick={() => setDrawer("settings")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--foreground)]">
                 <span className="flex items-center gap-2"><MapPin size={16} className="text-[var(--primary)]" /> Tọa độ & giao hàng</span>
                 <ArrowRight size={16} />
               </button>
@@ -296,13 +296,13 @@ export function OnlineWorkspace({
       {drawer !== "closed" ? (
         <div className="fixed inset-0 z-[80]">
           <button type="button" className="absolute inset-0 bg-slate-950/24" onClick={() => setDrawer("closed")} aria-label="Đóng drawer" />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[540px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[540px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Online workspace</p>
                 <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">{drawerTitle(drawer)}</h2>
               </div>
-              <button type="button" onClick={() => setDrawer("closed")} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]">
+              <button type="button" onClick={() => setDrawer("closed")} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
                 <X size={18} />
               </button>
             </div>
@@ -319,7 +319,7 @@ export function OnlineWorkspace({
                       <QrCode size={19} />
                     </div>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={qrSrc} alt="QR đặt món online" width={240} height={240} className="mx-auto rounded-xl border border-[var(--border)] bg-white p-2" />
+                    <img src={qrSrc} alt="QR đặt món online" width={240} height={240} className="mx-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2" />
                     <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">{restaurant.name}</p>
                     <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Quét để đặt món online</p>
                   </div>
@@ -335,7 +335,7 @@ export function OnlineWorkspace({
                     </div>
                   ) : (
                     recentOrders.map((order) => (
-                      <div key={order.id} className="rounded-xl border border-[var(--border)] bg-white p-4">
+                      <div key={order.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="font-semibold text-[var(--foreground)]">{order.customerName || "Khách online"}</p>

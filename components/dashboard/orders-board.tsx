@@ -456,7 +456,7 @@ export function OrdersBoard({
                     if (item.label === "Chờ thanh toán") setFilter("waiting_confirm");
                     if (item.label === "Lịch sử") setFilter("history");
                   }}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
                 >
                   <Icon size={15} className="text-[var(--primary)]" />
                   {item.label}
@@ -482,7 +482,7 @@ export function OrdersBoard({
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as OrderFilter)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               {orderFilters.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
@@ -494,7 +494,7 @@ export function OrdersBoard({
             <select
               value={locationFilter}
               onChange={(event) => setLocationFilter(event.target.value)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               {locationOptions.map((location) => (
                 <option key={location} value={location}>{location === "all" ? "Tất cả bàn/kênh" : location}</option>
@@ -506,7 +506,7 @@ export function OrdersBoard({
             <select
               value={channelFilter}
               onChange={(event) => setChannelFilter(event.target.value as ChannelFilter)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               <option value="all">Tất cả kênh</option>
               <option value="DINE_IN">QR tại bàn</option>
@@ -520,14 +520,14 @@ export function OrdersBoard({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Tìm mã đơn, bàn, khách, món..."
-              className="h-10 w-full rounded-lg border border-[var(--border)] bg-white pl-10 pr-3 text-sm font-medium outline-none"
+              className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium outline-none"
             />
           </label>
           <button
             type="button"
             onClick={() => void loadOrders()}
             disabled={loading}
-            className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-lg border border-[var(--border)] bg-white text-sm font-semibold text-[var(--primary)]"
+            className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--primary)]"
           >
             {loading ? <RefreshCw className="animate-spin" size={16} /> : <Filter size={16} />}
             Làm mới
@@ -541,8 +541,8 @@ export function OrdersBoard({
               onClick={() => setFilter(item.value)}
               className={`h-9 shrink-0 rounded-lg px-3 text-sm font-semibold transition ${
                 filter === item.value
-                  ? "bg-white text-[var(--primary)]"
-                  : "text-[var(--muted-foreground)] hover:bg-white"
+                  ? "bg-[var(--surface)] text-[var(--primary)]"
+                  : "text-[var(--muted-foreground)] hover:bg-[var(--surface)]"
               }`}
             >
               {item.label} ({statusCounts[item.value]})
@@ -550,7 +550,7 @@ export function OrdersBoard({
           ))}
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
           <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
             <span>Mã đơn</span>
             <span>Nguồn</span>
@@ -617,7 +617,7 @@ export function OrdersBoard({
                         event.stopPropagation();
                         setSelectedGroupId(group.id);
                       }}
-                      className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)] lg:hidden"
+                      className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] lg:hidden"
                       aria-label="Mở chi tiết đơn"
                     >
                       <MoreVertical size={16} />
@@ -637,7 +637,7 @@ export function OrdersBoard({
                 setChannelFilter("all");
                 setQuery("");
               }}
-              className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 font-semibold text-[var(--primary)]"
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-semibold text-[var(--primary)]"
             >
               Xoá bộ lọc
             </button>
@@ -648,7 +648,7 @@ export function OrdersBoard({
       {selectedGroup ? (
         <div className="fixed inset-0 z-[80]">
           <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng chi tiết đơn" onClick={() => setSelectedGroupId(null)} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
@@ -661,7 +661,7 @@ export function OrdersBoard({
               <button
                 type="button"
                 onClick={() => setSelectedGroupId(null)}
-                className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]"
+                className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
                 aria-label="Đóng chi tiết đơn"
               >
                 <XCircle size={18} />
@@ -701,7 +701,7 @@ export function OrdersBoard({
               )}
 
               {selectedOrder && (
-                <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-white p-3 text-sm">
+                <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
                   <div>
                     <p className="font-semibold text-[var(--foreground)]">{paymentStatusLabel(selectedOrder.paymentStatus)}</p>
                     <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Trạng thái thanh toán</p>
@@ -744,7 +744,7 @@ export function OrdersBoard({
                         href={selectedDeliveryMapUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--primary)]"
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary)]"
                       >
                         <Navigation size={15} />
                         Mở Google Maps
@@ -791,7 +791,7 @@ export function OrdersBoard({
                 ) : null}
 
                 {selectedPendingOrders.map((order) => (
-                  <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-white p-3">
+                  <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn mới"}</p>
@@ -816,7 +816,7 @@ export function OrdersBoard({
                   const dueIn = minutesUntil(order.serviceDueAt);
                   const isLate = dueIn !== null && dueIn < 0;
                   return (
-                    <div key={`serving-${order.id}`} className="rounded-xl border border-[var(--border)] bg-white p-3">
+                    <div key={`serving-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đang phục vụ"}</p>
@@ -859,7 +859,7 @@ export function OrdersBoard({
 
               <div className="mt-5">
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">Món đã gọi</h3>
-                <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+                <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
                   {selectedGroup.orders.flatMap((order) =>
                     order.items.map((item, index) => (
                       <div key={`${order.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_44px_96px] items-center gap-3 border-b border-[var(--border)] px-3 py-3 last:border-b-0">

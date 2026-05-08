@@ -311,7 +311,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                     className={`rounded-lg border p-3 text-left transition ${
                       planCode === plan.code
                         ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-strong)]"
-                        : "border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[var(--primary)]"
+                        : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--primary)]"
                     }`}
                   >
                     <span className="block text-sm font-black">{plan.name}</span>
@@ -324,7 +324,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                 href={`/auth/google?next=${encodeURIComponent(`/dashboard/onboarding?plan=${planCode}`)}`}
                 className="mb-5 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-5 text-sm font-black text-[var(--foreground)] shadow-sm transition hover:-translate-y-0.5 hover:bg-[var(--primary-soft)]"
               >
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white text-base font-black text-[var(--primary)] shadow-sm">
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--surface-container-high)] text-base font-black text-[var(--primary)] shadow-sm">
                   G
                 </span>
                 Tiếp tục bằng Google
@@ -573,7 +573,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
               <div className="relative flex min-h-[340px] flex-col items-center justify-center overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--primary-soft)] p-6 shadow-[0_10px_30px_rgba(43,43,43,0.08)] md:col-span-5">
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-white/40 to-transparent" />
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[var(--primary-soft)]/40 to-transparent" />
                 <div className="relative z-10 w-full text-center">
                   <h2 className="mb-2 text-2xl font-bold leading-8">Tổng số bàn</h2>
                   <p className="mx-auto mb-8 max-w-xs text-base leading-6 text-[var(--muted-foreground)]">
@@ -613,7 +613,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   <span className="text-sm font-semibold uppercase tracking-wider text-[#FFF7EB]/90">Live preview</span>
                   <QrCode className="h-6 w-6 text-[#FFF7EB]/70" />
                 </div>
-                <div className="relative z-10 flex w-full max-w-[300px] flex-col items-center gap-3 rounded-xl bg-[#FFF7EB]/95 p-6 shadow-xl backdrop-blur-md">
+                <div className="relative z-10 flex w-full max-w-[300px] flex-col items-center gap-3 rounded-xl bg-[var(--surface-strong)] p-6 shadow-xl ring-1 ring-[var(--border)] backdrop-blur-md">
                   <div className="w-full border-b border-[var(--secondary)] pb-2 text-center text-sm font-semibold uppercase tracking-[0.24em] text-[var(--muted-foreground)]">
                     {restaurantName || "LogiVN Cafe"}
                   </div>
@@ -626,9 +626,9 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   </div>
                 </div>
                 <div className="relative z-10 mt-4 flex gap-2">
-                  <span className="h-2 w-2 rounded-full bg-[#FFF7EB]" />
-                  <span className="h-2 w-2 rounded-full bg-[#FFF7EB]/40" />
-                  <span className="h-2 w-2 rounded-full bg-[#FFF7EB]/40" />
+                  <span className="h-2 w-2 rounded-full bg-[var(--primary)]" />
+                  <span className="h-2 w-2 rounded-full bg-[var(--primary)]/40" />
+                  <span className="h-2 w-2 rounded-full bg-[var(--primary)]/40" />
                 </div>
               </div>
 

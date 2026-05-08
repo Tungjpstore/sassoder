@@ -106,7 +106,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
               <select
                 value={roleFilter}
                 onChange={(event) => setRoleFilter(event.target.value as StaffRole | "all")}
-                className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+                className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
               >
                 <option value="all">Tất cả vai trò</option>
                 <option value="ADMIN">Quản lý</option>
@@ -120,7 +120,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên nhân viên hoặc email..."
-                className="h-10 rounded-lg border border-[var(--border)] bg-white pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
+                className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
               />
             </label>
             <Button type="button" variant="secondary" className="self-end" onClick={() => {
@@ -131,7 +131,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
             </Button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
             <div className="dashboard-muted-header grid grid-cols-[1.4fr_0.8fr_1fr_0.8fr] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
               <span>Tài khoản</span>
               <span>Vai trò</span>
@@ -190,7 +190,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                 setSelectedId(null);
               }}
             />
-            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
               <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Nhân viên</p>
@@ -204,7 +204,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                     setPanelMode("closed");
                     setSelectedId(null);
                   }}
-                  className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]"
+                  className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
                 >
                   <X size={18} />
                 </button>
@@ -222,7 +222,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                     </label>
                     <label className="grid gap-2 text-sm font-semibold">
                       Vai trò
-                      <select name="role" defaultValue="STAFF" disabled={!canManage} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none disabled:opacity-60">
+                      <select name="role" defaultValue="STAFF" disabled={!canManage} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none disabled:opacity-60">
                         <option value="STAFF">Nhân viên</option>
                         <option value="ADMIN">Quản lý</option>
                       </select>
@@ -244,13 +244,13 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                           <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">{roleLabel(selectedUser.role)} · Đang hoạt động</p>
                         </div>
                       </div>
-                      <div className="mt-5 grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-sm">
+                      <div className="mt-5 grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
                         <div className="flex items-center gap-2"><Mail size={16} className="text-[var(--primary)]" /> {selectedUser.email}</div>
                         <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-[var(--primary)]" /> Vai trò: {roleLabel(selectedUser.role)}</div>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                       <h3 className="text-sm font-semibold text-[var(--foreground)]">Quyền truy cập</h3>
                       <div className="mt-3 flex flex-wrap gap-2">
                         {permissionSet(selectedUser.role).map((permission) => (
@@ -259,14 +259,14 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                       </div>
                     </div>
 
-                    <form key={selectedUser.id} action={updateStaffRoleAction} className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4">
+                    <form key={selectedUser.id} action={updateStaffRoleAction} className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                       <h3 className="text-sm font-semibold text-[var(--foreground)]">Cập nhật vai trò</h3>
                       <input type="hidden" name="userId" value={selectedUser.id} />
                       <select
                         name="role"
                         defaultValue={selectedUser.role}
                         disabled={!canManage || selectedUser.id === currentUserId}
-                        className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none disabled:opacity-60"
+                        className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none disabled:opacity-60"
                       >
                         <option value="STAFF">Nhân viên</option>
                         <option value="ADMIN">Quản lý</option>
@@ -279,7 +279,7 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
 
                     <form
                       action={deleteStaffAction}
-                      className="rounded-xl border border-[#E11D48]/18 bg-white p-4"
+                      className="rounded-xl border border-[rgba(251,113,133,0.12)] bg-[var(--surface)] p-4"
                       onSubmit={(event) => {
                         if (!window.confirm(`Xoá tài khoản ${selectedUser.email}?`)) event.preventDefault();
                       }}

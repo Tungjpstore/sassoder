@@ -246,7 +246,7 @@ function inferIntentFromPath(pathname: string): OwnerIntent {
 function priorityClass(action: AiAgentAction) {
   if (action.priority === "primary") return "border-[var(--primary)] bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]";
   if (action.priority === "danger") return "border-red-200 bg-red-50 text-red-700 hover:border-red-300";
-  return "border-[var(--border)] bg-white text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--soft-surface)]";
+  return "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--soft-surface)]";
 }
 
 function safetyLabel(action: AiAgentAction) {
@@ -265,7 +265,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             ? "border-[var(--primary)] bg-[var(--primary)] text-white"
             : message.role === "tool"
               ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--foreground)]"
-              : "border-[var(--border)] bg-white text-[var(--foreground)]"
+              : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]"
         }`}
       >
         {message.title ? (
@@ -295,7 +295,7 @@ function ActionCard({
           {action.type === "link" ? <ExternalLink size={15} /> : <Play size={15} />}
           {action.label}
         </span>
-        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${action.priority === "primary" ? "bg-white/14 text-current" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)]"}`}>
+        <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${action.priority === "primary" ? "bg-[var(--surface)]/14 text-current" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)]"}`}>
           {safetyLabel(action)}
         </span>
       </div>
@@ -443,7 +443,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-50 inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-white py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5"
+        className="fixed bottom-5 right-5 z-50 inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5"
       >
         <span className="grid h-12 w-12 overflow-hidden rounded-full">
           <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full object-cover" priority />
@@ -452,25 +452,25 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       </button>
 
       {open ? (
-        <section className="fixed bottom-20 right-5 z-50 flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
+        <section className="fixed bottom-20 right-5 z-50 flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.3)]">
           <header className="flex items-center justify-between bg-[var(--primary)] px-4 py-3 text-white">
             <div className="flex min-w-0 items-center gap-3">
-              <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-white p-0.5">
+              <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-[var(--surface)] p-0.5">
                 <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full rounded-full object-cover" />
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="truncate text-sm font-black">LogiBot Operator</p>
-                  <span className="rounded-full bg-white/12 px-2 py-0.5 text-[10px] font-bold text-white/80">Realtime actions</span>
+                  <span className="rounded-full bg-[var(--surface)]/12 px-2 py-0.5 text-[10px] font-bold text-white/80">Realtime actions</span>
                 </div>
                 <p className="truncate text-xs text-white/72">{restaurantName} · {activeIntent?.label}</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <Link href={activeIntent?.routeHint ?? "/dashboard"} className="rounded-full p-2 text-white/78 hover:bg-white/10" title="Mở màn hiện tại">
+              <Link href={activeIntent?.routeHint ?? "/dashboard"} className="rounded-full p-2 text-white/78 hover:bg-[var(--surface)]/10" title="Mở màn hiện tại">
                 <Maximize2 size={17} />
               </Link>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-full p-2 text-white/78 hover:bg-white/10">
+              <button type="button" onClick={() => setOpen(false)} className="rounded-full p-2 text-white/78 hover:bg-[var(--surface)]/10">
                 <X size={17} />
               </button>
             </div>
@@ -491,7 +491,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                       className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                         intent === option.intent
                           ? "border-[var(--primary)] bg-[var(--primary)] text-white"
-                          : "border-[var(--border)] bg-white text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]"
+                          : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]"
                       }`}
                       title={option.routeHint}
                     >
@@ -507,7 +507,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                 ))}
                 {loading ? (
                   <div className="flex justify-start">
-                    <div className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm font-medium text-[var(--muted-foreground)]">
+                    <div className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm font-medium text-[var(--muted-foreground)]">
                       <Loader2 size={16} className="animate-spin" />
                       Agent đang đọc dữ liệu và chọn action...
                     </div>
@@ -515,7 +515,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                 ) : null}
               </div>
 
-              <div className="border-t border-[var(--border)] bg-white p-3">
+              <div className="border-t border-[var(--border)] bg-[var(--surface)] p-3">
                 {actions.length ? (
                   <div className="mb-3 grid gap-2 lg:hidden">
                     <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Action queue</p>
@@ -561,7 +561,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               </div>
             </div>
 
-            <aside className="hidden min-h-0 overflow-y-auto bg-white p-4 lg:block">
+            <aside className="hidden min-h-0 overflow-y-auto bg-[var(--surface)] p-4 lg:block">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Agent plan</p>
                 <h3 className="mt-2 text-lg font-semibold text-[var(--foreground)]">{agentPlan?.title ?? "Chưa có kế hoạch"}</h3>

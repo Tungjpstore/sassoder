@@ -135,12 +135,12 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên chiến dịch hoặc mã..."
-                className="h-10 rounded-lg border border-[var(--border)] bg-white pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
+                className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
               />
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Trạng thái
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
                 <option value="active">Đang chạy</option>
                 <option value="scheduled">Sắp diễn ra</option>
@@ -150,7 +150,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Kênh áp dụng
-              <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
                 <option value="IN_STORE">Tại quán</option>
                 <option value="QR_MENU">QR Menu</option>
@@ -172,7 +172,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
             </Button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-white">
+          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
             <div className="dashboard-muted-header grid grid-cols-[1.35fr_1fr_1fr_0.8fr_0.8fr_100px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
               <span>Chiến dịch</span>
               <span>Điều kiện</span>
@@ -297,7 +297,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
       {panelMode !== "closed" && (
         <div className="fixed inset-0 z-[80]">
           <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng khuyến mãi" onClick={closeDrawer} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Khuyến mãi</p>
@@ -305,7 +305,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   {panelMode === "create" ? "Tạo chiến dịch mới" : selectedCampaign?.name ?? "Chi tiết chiến dịch"}
                 </h3>
               </div>
-              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]">
+              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
                 <X size={18} />
               </button>
             </div>
@@ -322,7 +322,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   </label>
                   <label className="grid gap-2 text-sm font-semibold">
                     Loại ưu đãi
-                    <select name="discountType" className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 font-semibold outline-none">
+                    <select name="discountType" className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-semibold outline-none">
                       <option value="PERCENT">Giảm theo phần trăm</option>
                       <option value="FIXED">Giảm tiền trực tiếp</option>
                     </select>
@@ -345,10 +345,10 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   <div className="grid gap-2 text-sm font-semibold">
                     Kênh áp dụng
                     <div className="grid grid-cols-2 gap-2 text-sm">
-                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 font-medium"><input name="channels" type="checkbox" value="IN_STORE" defaultChecked /> <Store size={14} /> Tại quán</label>
-                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 font-medium"><input name="channels" type="checkbox" value="QR_MENU" defaultChecked /> <QrCode size={14} /> QR Menu</label>
-                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 font-medium"><input name="channels" type="checkbox" value="WEBSITE" /> <Send size={14} /> Website</label>
-                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 py-2 font-medium"><input name="channels" type="checkbox" value="EMAIL" /> Email</label>
+                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="IN_STORE" defaultChecked /> <Store size={14} /> Tại quán</label>
+                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="QR_MENU" defaultChecked /> <QrCode size={14} /> QR Menu</label>
+                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="WEBSITE" /> <Send size={14} /> Website</label>
+                      <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="EMAIL" /> Email</label>
                     </div>
                   </div>
                   <Button className="mt-2 shadow-none hover:shadow-none">
@@ -388,7 +388,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                     <h4 className="text-sm font-semibold text-[var(--foreground)]">Hiệu quả thực tế</h4>
                     <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
                       <div className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3">
@@ -407,7 +407,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     </div>
                   </div>
 
-                  <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4">
+                  <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                     <h4 className="text-sm font-semibold text-[var(--foreground)]">Thao tác nhanh</h4>
                     <div className="grid gap-3 sm:grid-cols-2">
                       <form action={togglePromotionDisplayAction}>
@@ -429,7 +429,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-[#E11D48]/18 bg-white p-4">
+                  <div className="rounded-xl border border-[#E11D48]/18 bg-[var(--surface)] p-4">
                     <h4 className="text-sm font-semibold text-[#BE123C]">Vùng xoá chiến dịch</h4>
                     <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chỉ xoá khi bạn chắc chắn không cần dùng lại mã này.</p>
                     <form

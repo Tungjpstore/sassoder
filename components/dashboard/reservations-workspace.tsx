@@ -87,7 +87,7 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="grid gap-2 text-sm font-semibold">
           Kiểu cọc
-          <select name="reservationDepositType" defaultValue={settings.reservation_deposit_type} className="h-11 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+          <select name="reservationDepositType" defaultValue={settings.reservation_deposit_type} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
             <option value="FIXED">Cọc cố định</option>
             <option value="PER_PERSON">Cọc theo đầu khách</option>
           </select>
@@ -295,7 +295,7 @@ export function ReservationsWorkspace({
                   }}
                   className="w-[180px]"
                 />
-                <button type="button" onClick={() => void loadReservations(date)} className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--primary)]">
+                <button type="button" onClick={() => void loadReservations(date)} className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
                   {loading ? <Loader2 className="animate-spin" size={15} /> : <RefreshCw size={15} />}
                   Tải lại
                 </button>
@@ -318,7 +318,7 @@ export function ReservationsWorkspace({
                   key={key}
                   type="button"
                   onClick={() => setFilter(key as FilterKey)}
-                  className={`h-9 shrink-0 rounded-md px-3 text-sm font-semibold transition ${filter === key ? "bg-white text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
+                  className={`h-9 shrink-0 rounded-md px-3 text-sm font-semibold transition ${filter === key ? "bg-[var(--surface)] text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
                 >
                   {label}
                 </button>
@@ -341,7 +341,7 @@ export function ReservationsWorkspace({
                       setSelectedId(reservation.id);
                       setDrawer("detail");
                     }}
-                    className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-left transition hover:border-[var(--primary)] md:grid-cols-[1fr_auto]"
+                    className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left transition hover:border-[var(--primary)] md:grid-cols-[1fr_auto]"
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -373,11 +373,11 @@ export function ReservationsWorkspace({
               <h2 className="text-lg font-semibold text-[var(--foreground)]">Tác vụ nhanh</h2>
             </div>
             <div className="mt-4 grid gap-2">
-              <button type="button" onClick={() => setDrawer("share")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+              <button type="button" onClick={() => setDrawer("share")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--foreground)]">
                 Link đặt bàn public
                 <ExternalLink size={16} />
               </button>
-              <button type="button" onClick={() => setDrawer("settings")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-semibold text-[var(--foreground)]">
+              <button type="button" onClick={() => setDrawer("settings")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--foreground)]">
                 Cấu hình nhận cọc
                 <Settings2 size={16} />
               </button>
@@ -391,7 +391,7 @@ export function ReservationsWorkspace({
 
       {drawer !== "closed" ? (
         <div className="fixed inset-0 z-[80] bg-black/18" onClick={() => setDrawer("closed")}>
-          <aside className="ml-auto h-full w-full max-w-xl overflow-y-auto border-l border-[var(--border)] bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+          <aside className="ml-auto h-full w-full max-w-xl overflow-y-auto border-l border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="mb-5 flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
@@ -412,8 +412,8 @@ export function ReservationsWorkspace({
               <div className="grid gap-4">
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                   <p className="text-sm font-semibold text-[var(--muted-foreground)]">Link public cho khách đặt bàn trước</p>
-                  <code className="mt-3 block overflow-hidden rounded-lg border border-[var(--border)] bg-white px-3 py-3 text-sm font-semibold text-[var(--foreground)]">{publicUrl}</code>
-                  <div className="mx-auto mt-4 w-full max-w-[260px] rounded-2xl border border-[var(--border)] bg-white p-4 text-center">
+                  <code className="mt-3 block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-sm font-semibold text-[var(--foreground)]">{publicUrl}</code>
+                  <div className="mx-auto mt-4 w-full max-w-[260px] rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-center">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="/api/admin/reservation-qr?size=520" alt="QR đặt bàn trước" className="mx-auto aspect-square w-full rounded-xl object-contain" />
                     <p className="mt-3 text-sm font-semibold text-[var(--muted-foreground)]">QR dẫn khách tới trang đặt bàn</p>
@@ -423,17 +423,17 @@ export function ReservationsWorkspace({
                       <Copy size={16} />
                       Sao chép link
                     </Button>
-                    <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-bold text-[var(--primary)]">
+                    <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-bold text-[var(--primary)]">
                       <ExternalLink size={16} />
                       Mở trang khách
                     </a>
-                    <a href="/api/admin/reservation-qr?size=1200&download=1" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-white px-4 text-sm font-bold text-[var(--primary)]">
+                    <a href="/api/admin/reservation-qr?size=1200&download=1" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-bold text-[var(--primary)]">
                       <QrCode size={16} />
                       Tải QR
                     </a>
                   </div>
                 </div>
-                <div className="rounded-xl border border-[var(--border)] bg-white p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
                   Bước tiếp theo có thể sinh QR riêng cho đặt bàn để in standee, đặt ở fanpage hoặc chạy quảng cáo.
                 </div>
               </div>
@@ -457,10 +457,10 @@ export function ReservationsWorkspace({
                     <p><span className="text-[var(--muted-foreground)]">Bàn giữ:</span> {selected.tables.map((table) => table.name).join(", ") || "Chưa có"}</p>
                     <p><span className="text-[var(--muted-foreground)]">Hết hạn cọc:</span> {holdCountdown(selected) ?? "Không áp dụng"}</p>
                   </div>
-                  {selected.customerNote ? <p className="mt-4 rounded-xl border border-[var(--border)] bg-white p-3 text-sm font-semibold text-[var(--muted-foreground)]">{selected.customerNote}</p> : null}
+                  {selected.customerNote ? <p className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">{selected.customerNote}</p> : null}
                 </div>
 
-                <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                   <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
                     <Banknote size={16} className="text-[var(--primary)]" />
                     Cọc giữ bàn

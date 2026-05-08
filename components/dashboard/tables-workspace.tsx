@@ -448,7 +448,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                 <select
                   value={areaFilter}
                   onChange={(event) => setAreaFilter(event.target.value)}
-                  className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
                 >
                   {areas.map((area) => (
                     <option key={area} value={area}>{area === "all" ? "Tất cả khu vực" : area}</option>
@@ -460,7 +460,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                  className="h-10 rounded-lg border border-[var(--border)] bg-white px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
                 >
                   {statusOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -474,7 +474,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Tên bàn, khu vực..."
-                  className="h-10 rounded-lg border border-[var(--border)] bg-white pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
                 />
               </label>
               <Button type="button" variant="secondary" className="self-end" onClick={() => {
@@ -486,7 +486,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
               </Button>
             </div>
 
-            <div className="rounded-[12px] border border-[var(--border)] bg-white p-4">
+            <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
               {tables.length === 0 ? (
                 <div className="grid min-h-56 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-5 text-center">
                   <div>
@@ -576,7 +576,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	        {panelMode !== "closed" && (
 	          <div className="fixed inset-0 z-[80]">
 	            <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng chi tiết bàn" onClick={closeDrawer} />
-	            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-white shadow-[0_20px_80px_rgba(15,23,42,0.18)]">
+	            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
 	              <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
 	                <div>
 	                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bàn & QR</p>
@@ -584,7 +584,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	                    {panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
 	                  </h3>
 	                </div>
-	                <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-white text-[var(--muted-foreground)]">
+	                <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
 	                  <X size={18} />
 	                </button>
 	              </div>
@@ -645,14 +645,14 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                         </form>
                       </div>
 
-                      <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-white p-4 text-sm">
+                      <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn đang mở</span><strong>{selected.activeOrderCount}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Tổng chưa thanh toán</span><strong>{formatVnd(selected.unpaidTotal)}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn quá giờ</span><strong>{selected.overdueCount}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Cập nhật gần nhất</span><strong>{formatTime(selected.oldestOrderAt)}</strong></div>
                       </div>
 
-                      <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+                      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                         <h3 className="font-semibold text-[var(--foreground)]">Template QR in bàn</h3>
                         <div className="mt-3 grid gap-4">
                           <div className={selected.qr_enabled ? "" : "opacity-45 grayscale"}>
@@ -689,7 +689,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                         </div>
                       </div>
 
-                      <div className="rounded-xl border border-[#E11D48]/18 bg-white p-4">
+                      <div className="rounded-xl border border-[#E11D48]/18 bg-[var(--surface)] p-4">
                         <h2 className="text-lg font-semibold text-[var(--foreground)]">Vùng nguy hiểm</h2>
                         <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chỉ xoá bàn khi không còn đơn hoặc hóa đơn đang mở.</p>
                         <form

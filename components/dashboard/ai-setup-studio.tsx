@@ -272,7 +272,7 @@ export function AiSetupStudio({
             </span>
           </div>
 
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-white p-4">
+          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
             <div className="flex items-end justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Mức sẵn sàng</p>
@@ -289,7 +289,7 @@ export function AiSetupStudio({
 
           <div className="mt-4 grid gap-2">
             {activeReadiness.nextActions.slice(0, 4).map((item) => (
-              <Link key={item.key} href={item.route} className="group rounded-xl border border-[var(--border)] bg-white p-3 transition hover:border-[var(--primary)]">
+              <Link key={item.key} href={item.route} className="group rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 transition hover:border-[var(--primary)]">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-[var(--foreground)]">{item.label}</p>
@@ -314,7 +314,7 @@ export function AiSetupStudio({
                 value={focus}
                 onChange={(event) => setFocus(event.target.value)}
                 placeholder="VD: quán cafe nhỏ, muốn bật QR tại bàn trước rồi mới bật giao hàng..."
-                className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-medium outline-none focus:border-[var(--primary)]"
+                className="h-11 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium outline-none focus:border-[var(--primary)]"
               />
             </label>
             <div className="flex items-end gap-2 overflow-x-auto">
@@ -326,7 +326,7 @@ export function AiSetupStudio({
                     type="button"
                     onClick={() => void runSetupPlan(option.mode)}
                     disabled={Boolean(loadingMode)}
-                    className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
+                    className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
                   >
                     {loadingMode === option.mode ? <Loader2 size={16} className="animate-spin" /> : <Icon size={16} />}
                     {option.label}
@@ -349,7 +349,7 @@ export function AiSetupStudio({
                   type="button"
                   onClick={() => void runBranding()}
                   disabled={Boolean(quickLoading)}
-                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
+                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
                 >
                   {quickLoading === "branding" ? <Loader2 size={15} className="animate-spin" /> : <PenLine size={15} />}
                   Slogan & mô tả
@@ -358,7 +358,7 @@ export function AiSetupStudio({
                   type="button"
                   onClick={() => void runImage("logo")}
                   disabled={Boolean(quickLoading)}
-                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
+                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
                 >
                   {quickLoading === "logo" ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={15} />}
                   Tạo logo
@@ -367,7 +367,7 @@ export function AiSetupStudio({
                   type="button"
                   onClick={() => void runImage("menu_preview")}
                   disabled={Boolean(quickLoading)}
-                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
+                  className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
                 >
                   {quickLoading === "menu_preview" ? <Loader2 size={15} className="animate-spin" /> : <ImageIcon size={15} />}
                   Ảnh menu preview
@@ -378,7 +378,7 @@ export function AiSetupStudio({
             {(brandingData || imageResult) ? (
               <div className="grid gap-3 lg:grid-cols-2">
                 {brandingData ? (
-                  <div className="rounded-xl border border-[var(--border)] bg-white p-3">
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-[var(--foreground)]">Bộ nội dung thương hiệu</p>
                       <Link href="/dashboard/settings?section=profile" className="text-xs font-semibold text-[var(--primary)]">
@@ -411,7 +411,7 @@ export function AiSetupStudio({
                 ) : null}
 
                 {imageResult ? (
-                  <div className="rounded-xl border border-[var(--border)] bg-white p-3">
+                  <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-[var(--foreground)]">Ảnh AI tạo</p>
                       <button type="button" onClick={() => void copyText(imageResult.imageUrl || imageResult.prompt)} className="text-xs font-semibold text-[var(--primary)]">
@@ -447,7 +447,7 @@ export function AiSetupStudio({
                       type="button"
                       onClick={() => void runSetupDraft(option.kind)}
                       disabled={Boolean(loadingDraftKind)}
-                      className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
+                      className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] disabled:opacity-60"
                     >
                       {loadingDraftKind === option.kind ? <Loader2 size={15} className="animate-spin" /> : <Icon size={15} />}
                       {option.label}
@@ -463,7 +463,7 @@ export function AiSetupStudio({
           ) : null}
 
           <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
-            <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
               <div className="flex items-start gap-3">
                 <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--soft-surface)] text-[var(--primary)]">
                   <CheckCircle2 size={18} />
@@ -497,7 +497,7 @@ export function AiSetupStudio({
                         <p className="text-sm font-semibold text-[var(--foreground)]">{step.title}</p>
                         <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{step.why}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-[var(--border)] bg-white px-2 py-1 text-[10px] font-bold text-[var(--muted-foreground)]">
+                      <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-[10px] font-bold text-[var(--muted-foreground)]">
                         {step.estimatedMinutes} phút
                       </span>
                     </div>
@@ -512,7 +512,7 @@ export function AiSetupStudio({
               ) : null}
 
               {draftData ? (
-                <div className="mt-4 rounded-xl border border-[var(--border)] bg-white p-4">
+                <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--accent)]">
@@ -551,7 +551,7 @@ export function AiSetupStudio({
                       <div key={`${setting.key}-${index}`} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-[var(--foreground)]">{setting.key}</p>
-                          <span className="rounded-full bg-white px-2 py-1 text-xs font-bold text-[var(--primary)]">{String(setting.value)}</span>
+                          <span className="rounded-full bg-[var(--surface)] px-2 py-1 text-xs font-bold text-[var(--primary)]">{String(setting.value)}</span>
                         </div>
                         <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">{setting.reason}</p>
                       </div>
@@ -585,14 +585,14 @@ export function AiSetupStudio({
             </div>
 
             <aside className="grid content-start gap-3">
-              <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">AI Autopilot đáng bật</h3>
                 <div className="mt-3 grid gap-2">
                   {(planData?.aiAutopilot ?? []).slice(0, 4).map((feature) => (
                     <div key={`${feature.feature}-${feature.plan}`} className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3">
                       <p className="text-sm font-semibold text-[var(--foreground)]">{feature.feature}</p>
                       <p className="mt-1 text-xs leading-5 text-[var(--muted-foreground)]">{feature.value}</p>
-                      <span className="mt-2 inline-flex rounded-full bg-white px-2 py-1 text-[10px] font-bold uppercase text-[var(--primary)]">{feature.plan}</span>
+                      <span className="mt-2 inline-flex rounded-full bg-[var(--surface)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--primary)]">{feature.plan}</span>
                     </div>
                   ))}
                   {!planData?.aiAutopilot?.length ? (
@@ -601,7 +601,7 @@ export function AiSetupStudio({
                 </div>
               </div>
 
-              <div className="rounded-xl border border-[var(--border)] bg-white p-4">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                 <h3 className="text-sm font-semibold text-[var(--foreground)]">Trải nghiệm khách</h3>
                 <div className="mt-3 grid gap-2 text-sm text-[var(--muted-foreground)]">
                   {(planData?.customerExperience ?? activeReadiness.criticalMissing.map((item) => item.action)).slice(0, 4).map((item) => (
