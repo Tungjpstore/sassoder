@@ -9,10 +9,15 @@ supabase/.temp
 *.log
 .DS_Store
 coverage
+reports/seo/
+.lighthouseci/
 prisma/dev.db
 .vercel
 *.tsbuildinfo
-**/page 2.tsx
+
+# Local duplicate artifacts created by desktop/editor sync tools.
+* 2
+* 2.*
 .agents/
 .codex/
 .codex-kit/

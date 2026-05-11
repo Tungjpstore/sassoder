@@ -13,6 +13,7 @@ import {
 } from "@/lib/platform-admin-auth";
 import {
   invalidatePlatformAdminSnapshotCache,
+  resolveBillingAnomaly,
   updatePlatformSetting,
   updatePlatformUserStatus,
   updateSaasPlan,
@@ -20,6 +21,8 @@ import {
   uploadPlatformAsset
 } from "@/services/platform-admin-service";
 import { confirmSubscriptionPayment, rejectSubscriptionPayment } from "@/services/subscription-service";
+
+const DEFAULT_LANDING_BANNER_URL = "/brand/logivn/01-banner-overview-hero-v2.png";
 
 const loginSchema = z.object({
   password: z.string().min(1)
@@ -111,6 +114,12 @@ const paymentActionSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
+const billingAnomalySchema = z.object({
+  key: z.enum(["premium_trial_subscription", "pending_without_payment", "pending_payment_missing_policy"]),
+  subscriptionId: z.string().uuid().optional(),
+  paymentId: z.string().uuid().optional()
+});
+
 async function ensurePlatformAdmin() {
   if (!(await isPlatformAdminAuthenticated())) {
     redirect("/admin");
@@ -120,7 +129,9 @@ async function ensurePlatformAdmin() {
 function revalidateAdmin() {
   invalidatePlatformAdminSnapshotCache();
   revalidateTag("platform-site-config", "max");
+  revalidateTag("public-active-plans", "max");
   revalidatePath("/");
+  revalidatePath("/pricing");
   revalidatePath("/admin");
   revalidatePath("/admin/site");
   revalidatePath("/admin/plans");
@@ -236,7 +247,7 @@ export async function updateLandingSettingAction(formData: FormData) {
     key: "landing",
     value: {
       ...parsed,
-      bannerUrl: uploadedBanner || parsed.bannerUrl || "/brand/logivn/landing-hero.webp"
+      bannerUrl: uploadedBanner || parsed.bannerUrl || DEFAULT_LANDING_BANNER_URL
     }
   });
   revalidateAdmin();
@@ -325,5 +336,17 @@ export async function rejectSubscriptionPaymentAction(formData: FormData) {
   });
 
   await rejectSubscriptionPayment({ paymentId: parsed.paymentId, reason: parsed.reason });
+  revalidateAdmin();
+}
+
+export async function resolveBillingAnomalyAction(formData: FormData) {
+  await ensurePlatformAdmin();
+  const parsed = billingAnomalySchema.parse({
+    key: formData.get("key"),
+    subscriptionId: formData.get("subscriptionId") || undefined,
+    paymentId: formData.get("paymentId") || undefined
+  });
+
+  await resolveBillingAnomaly(parsed);
   revalidateAdmin();
 }

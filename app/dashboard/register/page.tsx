@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { OnboardingForm } from "@/components/dashboard/onboarding-form";
+import { RegisterAccountForm } from "@/components/dashboard/register-account-form";
 import { getAuthUser, getSessionProfile } from "@/lib/session";
 
 function normalizePlan(value: string | string[] | undefined) {
@@ -20,5 +20,5 @@ export default async function RegisterPage({
   const user = await getAuthUser();
   if (user) redirect(`/dashboard/onboarding?plan=${planCode}`);
 
-  return <OnboardingForm mode="register" initialPlanCode={planCode} />;
+  return <RegisterAccountForm initialPlanCode={planCode} />;
 }

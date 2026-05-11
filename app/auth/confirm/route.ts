@@ -6,6 +6,16 @@ import { consumeRegistrationIntentForUser, getRestaurantForUser } from "@/servic
 
 const emailOtpTypes = new Set(["signup", "magiclink", "recovery", "invite", "email_change", "email"]);
 
+function emailOtpTypeCandidates(type: string): EmailOtpType[] {
+  const candidates = [type];
+
+  if (type === "signup" || type === "magiclink") {
+    candidates.push("email");
+  }
+
+  return Array.from(new Set(candidates)) as EmailOtpType[];
+}
+
 function safeNextPath(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
   if (!value.startsWith("/dashboard")) return "/dashboard";
@@ -42,15 +52,27 @@ export async function GET(request: Request) {
   await expireSupabaseAuthSessionCookies();
 
   const supabase = await createServerSupabaseClient({ ignoreAuthSession: true });
-  const { error } = await supabase.auth.verifyOtp({
-    token_hash: tokenHash,
-    type: type as EmailOtpType
-  });
+  let verified = false;
+  let lastErrorMessage = "";
 
-  if (error) {
+  for (const candidateType of emailOtpTypeCandidates(type)) {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: candidateType
+    });
+
+    if (!error) {
+      verified = true;
+      break;
+    }
+
+    lastErrorMessage = error.message;
+  }
+
+  if (!verified) {
     console.error("[auth/confirm] OTP link verification failed", {
       type,
-      message: error.message
+      message: lastErrorMessage
     });
     return authErrorResponse(request, "confirm");
   }

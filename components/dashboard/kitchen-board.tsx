@@ -90,9 +90,9 @@ function KanbanColumn({
   children: React.ReactNode;
 }) {
   const toneMap = {
-    yellow: "border-[rgba(245,158,11,0.2)] bg-[rgba(245,158,11,0.06)]",
-    blue: "border-[rgba(52,211,153,0.15)] bg-[rgba(52,211,153,0.06)]",
-    green: "border-[rgba(34,197,94,0.15)] bg-[rgba(34,197,94,0.06)]",
+    yellow: "border-[var(--accent)]/20 bg-[var(--accent-soft)]",
+    blue: "border-[var(--primary)]/15 bg-[var(--primary-soft)]",
+    green: "border-[var(--secondary)]/30 bg-[var(--secondary-soft)]",
   };
 
   return (
@@ -167,7 +167,7 @@ function KitchenCard({
         {order.status === "pending" ? (
           <><Flame size={14} className="text-[var(--accent)]" /> Chờ bếp nhận đơn</>
         ) : overdue ? (
-          <><AlertTriangle size={14} className="text-[#E11D48]" /> Quá giờ {Math.abs(dueIn!)} phút</>
+          <><AlertTriangle size={14} className="text-[var(--accent-strong)]" /> Quá giờ {Math.abs(dueIn!)} phút</>
         ) : dueIn !== null ? (
           <><TimerReset size={14} className="text-[var(--primary)]" /> Còn {dueIn} phút</>
         ) : (
@@ -389,7 +389,7 @@ export function KitchenBoard({
           {/* Overdue section within cooking column */}
           {overdueOrders.length > 0 && (
             <>
-              <div className="flex items-center gap-2 rounded-lg border border-[rgba(225,29,72,0.2)] bg-[rgba(225,29,72,0.08)] px-3 py-2 text-xs font-bold text-[#FB7185]">
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--tertiary)]/12 bg-[var(--danger-soft)] px-3 py-2 text-xs font-bold text-[var(--tertiary)]">
                 <AlertTriangle size={14} />
                 {overdueOrders.length} đơn quá giờ
               </div>

@@ -13,6 +13,10 @@ type PlatformSitePlan = {
   featured: boolean;
 };
 
+const DEFAULT_LANDING_BANNER_URL = "/brand/logivn/01-banner-overview-hero-v2.png";
+const PREVIOUS_LANDING_BANNER_URL = "/brand/logivn/01-banner-overview-hero.png";
+const LEGACY_LANDING_BANNER_URL = "/brand/logivn/landing-hero.webp";
+
 const fallbackSiteConfig = {
   brand: {
     companyName: "LogiVN",
@@ -29,12 +33,12 @@ const fallbackSiteConfig = {
     primaryCta: "Dùng thử ngay",
     secondaryCta: "Xem demo",
     trustTitle: "Vì sao hơn 5.000+ quán đã chọn LogiVN?",
-    dashboardTitle: "Giao diện hiện đại - Dễ dùng trên mọi thiết bị",
-    dashboardSubtitle: "Theo dõi hoạt động của quán mọi lúc mọi nơi với dashboard trực quan và báo cáo chi tiết.",
+    dashboardTitle: "Bảng quản lý hiện đại - Dễ dùng trên mọi thiết bị",
+    dashboardSubtitle: "Theo dõi hoạt động của quán mọi lúc mọi nơi với giao diện trực quan và báo cáo chi tiết.",
     finalTitle: "Sẵn sàng nâng tầm trải nghiệm và doanh thu cho quán của bạn?",
     finalSubtitle: "Đăng ký demo miễn phí - Trải nghiệm LogiVN ngay hôm nay.",
     footerTagline: "Gọi món QR & vận hành thông minh cho quán Việt.",
-    bannerUrl: "/brand/logivn/01-banner-overview-hero.png"
+    bannerUrl: DEFAULT_LANDING_BANNER_URL
   },
   plans: [
     {
@@ -42,7 +46,7 @@ const fallbackSiteConfig = {
       name: "LogiVN Pro",
       subtitle: "Dành cho quán cafe, nhà hàng nhỏ và vừa",
       price: "99.000đ",
-      items: ["QR menu theo bàn", "Quản lý đơn realtime", "AI trợ lý chủ quán", "AI hỗ trợ khách gọi món", "Dùng thử 30 ngày"],
+      items: ["QR menu theo bàn", "Quản lý đơn theo thời gian thực", "Trợ lý thông minh cho chủ quán", "Hỗ trợ khách gọi món", "Dùng thử 30 ngày"],
       action: "Dùng thử miễn phí",
       featured: true
     },
@@ -51,7 +55,7 @@ const fallbackSiteConfig = {
       name: "LogiVN Premium",
       subtitle: "Dành cho mô hình cần tự động hóa sâu hơn",
       price: "199.000đ",
-      items: ["Tất cả tính năng Pro", "AI quét OCR menu", "AI tạo ảnh menu/logo", "Đặt bàn và nhận cọc", "Báo cáo nâng cao"],
+      items: ["Tất cả tính năng Pro", "Nhập menu nhanh từ ảnh", "Tạo hình ảnh menu và nhận diện quán", "Đặt bàn và nhận cọc", "Báo cáo nâng cao"],
       action: "Dùng thử miễn phí",
       featured: false
     },
@@ -72,9 +76,50 @@ function readObject<T extends Record<string, unknown>>(value: unknown, fallback:
   return { ...fallback, ...(value as Record<string, unknown>) } as T;
 }
 
+function normalizeLandingBannerUrl(value: unknown) {
+  if (typeof value !== "string") return DEFAULT_LANDING_BANNER_URL;
+  const bannerUrl = value.trim();
+  if (!bannerUrl || bannerUrl === LEGACY_LANDING_BANNER_URL || bannerUrl === PREVIOUS_LANDING_BANNER_URL) {
+    return DEFAULT_LANDING_BANNER_URL;
+  }
+  return bannerUrl;
+}
+
+function readLandingConfig(value: unknown) {
+  const landing = readObject(value, fallbackSiteConfig.landing);
+  return {
+    ...landing,
+    bannerUrl: normalizeLandingBannerUrl(landing.bannerUrl)
+  };
+}
+
 function readFeatures(value: unknown) {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
+  return value.filter((item): item is string => typeof item === "string").map(sanitizePublicFeatureLabel);
+}
+
+function sanitizePublicFeatureLabel(value: string) {
+  const normalized = value.trim();
+  const replacements: Record<string, string> = {
+    "Quản lý đơn realtime": "Quản lý đơn theo thời gian thực",
+    "AI trợ lý chủ quán": "Trợ lý thông minh cho chủ quán",
+    "AI hỗ trợ khách gọi món": "Hỗ trợ khách gọi món",
+    "AI quét OCR menu": "Nhập menu nhanh từ ảnh",
+    "AI tạo ảnh menu/logo": "Tạo hình ảnh menu và nhận diện quán",
+    "QR ordering": "Gọi món QR",
+    "Online ordering": "Đặt món online"
+  };
+
+  if (replacements[normalized]) return replacements[normalized];
+
+  return normalized
+    .replace(/\bAI\b/gi, "Trợ lý thông minh")
+    .replace(/\bOCR\b/gi, "từ ảnh")
+    .replace(/\brealtime\b/gi, "theo thời gian thực")
+    .replace(/\bQR ordering\b/gi, "gọi món QR")
+    .replace(/\bonline ordering\b/gi, "đặt món online")
+    .replace(/\bdashboard\b/gi, "bảng quản lý")
+    .replace(/\bentitlement\b/gi, "tính năng");
 }
 
 function formatPrice(amount: number) {
@@ -107,7 +152,7 @@ async function readPlatformSiteConfig() {
 
     return {
       brand: readObject(settings.get("brand"), fallbackSiteConfig.brand),
-      landing: readObject(settings.get("landing"), fallbackSiteConfig.landing),
+      landing: readLandingConfig(settings.get("landing")),
       plans: plans.length ? plans : fallbackSiteConfig.plans
     };
   } catch {

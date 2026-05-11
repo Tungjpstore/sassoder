@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Check, CheckCircle2, ChefHat, Filter, MapPinned, MoreVertical, Navigation, RadioTower, ReceiptText, RefreshCw, Search, TimerReset, XCircle } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Check, CheckCircle2, ChefHat, Filter, LocateFixed, MapPinned, MoreVertical, Navigation, RadioTower, ReceiptText, RefreshCw, Search, TimerReset, Trash2, Truck, UserPlus, XCircle } from "lucide-react";
 import { buildDirectionsUrl, RouteMiniMap } from "@/components/customer/route-mini-map";
+import { useConfirmDialog } from "@/components/dashboard/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
@@ -32,6 +33,23 @@ function paymentTone(status: string | null | undefined): "neutral" | "green" | "
 type RealtimeState = "connecting" | "connected" | "error";
 type OrderFilter = "all" | "pending" | "ordering" | "completed" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled" | "history";
 type ChannelFilter = "all" | "DINE_IN" | "PICKUP" | "DELIVERY";
+type CourierLiveLocation = {
+  lat: number;
+  lng: number;
+  accuracyMeters?: number | null;
+  headingDegrees?: number | null;
+  speedMps?: number | null;
+  capturedAt?: string | null;
+};
+type DeliveryCourier = {
+  id: string;
+  name: string;
+  phone: string | null;
+  status: "offline" | "available" | "assigned" | "busy" | "paused";
+  lastLocationAt: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+};
 
 const orderFilters: Array<{ label: string; value: OrderFilter }> = [
   { label: "Tất cả", value: "all" },
@@ -45,10 +63,34 @@ const orderFilters: Array<{ label: string; value: OrderFilter }> = [
   { label: "Lịch sử", value: "history" }
 ];
 
+function readOrderFilter(value: string | null): OrderFilter {
+  return orderFilters.some((item) => item.value === value) ? (value as OrderFilter) : "all";
+}
+
+function readChannelFilter(value: string | null): ChannelFilter {
+  return value === "DINE_IN" || value === "PICKUP" || value === "DELIVERY" ? value : "all";
+}
+
 function realtimeLabel(status: RealtimeState) {
   if (status === "connected") return "Realtime đang bật";
   if (status === "error") return "Realtime gián đoạn";
   return "Đang kết nối realtime";
+}
+
+function courierStatusLabel(status: DeliveryCourier["status"]) {
+  if (status === "available") return "Sẵn sàng";
+  if (status === "assigned") return "Đã phân công";
+  if (status === "busy") return "Đang giao";
+  if (status === "paused") return "Tạm dừng";
+  return "Offline";
+}
+
+function courierStatusTone(status: DeliveryCourier["status"]): "neutral" | "green" | "yellow" | "blue" | "red" {
+  if (status === "available") return "green";
+  if (status === "assigned") return "yellow";
+  if (status === "busy") return "blue";
+  if (status === "paused") return "yellow";
+  return "neutral";
 }
 
 function formatOrderTime(value: string) {
@@ -94,6 +136,14 @@ function orderChannelLabel(order: OrderDto) {
   if (order.fulfillmentType === "DELIVERY") return "Online giao hàng";
   if (order.fulfillmentType === "PICKUP") return "Online đến lấy";
   return "QR tại bàn";
+}
+
+function canDeleteTestOrder(order: OrderDto) {
+  if (order.status === "paid" || order.status === "waiting_confirm") return false;
+  if (order.paymentStatus === "paid" || order.paymentStatus === "waiting_confirm") return false;
+  if (order.paidAt || order.bill?.status === "paid" || order.bill?.status === "waiting_confirm") return false;
+  if (order.deliveryStatus === "out_for_delivery" || order.deliveryStatus === "delivered") return false;
+  return ["pending", "ordering", "completed", "waiting_payment", "cancelled"].includes(order.status);
 }
 
 type BillGroup = {
@@ -163,9 +213,13 @@ function buildBillGroups(orders: OrderDto[]): BillGroup[] {
 function applyOptimisticOrderAction(
   orders: OrderDto[],
   orderId: string,
-  action: "accept" | "confirm-payment" | "complete" | "cancel" | "timer" | "delivery-status",
+  action: "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status",
   body?: unknown
 ) {
+  if (action === "delete-test") {
+    return orders.filter((order) => order.id !== orderId);
+  }
+
   const now = new Date();
   const targetOrder = orders.find((order) => order.id === orderId);
   const targetBillId = targetOrder?.bill?.id ?? null;
@@ -261,38 +315,112 @@ function groupMatches(group: BillGroup, filter: OrderFilter, keyword: string, lo
 
 export function OrdersBoard({
   initialOrders,
-  restaurantId
+  restaurantId,
+  canManageTestOrders = false
 }: {
   initialOrders: OrderDto[];
   restaurantId: string;
+  canManageTestOrders?: boolean;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const initialFilter = searchParams.get("status");
   const [orders, setOrders] = useState(initialOrders);
   const [loading, setLoading] = useState(false);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
+  const [courierLocations, setCourierLocations] = useState<Record<string, CourierLiveLocation>>({});
+  const [couriers, setCouriers] = useState<DeliveryCourier[]>([]);
+  const [couriersLoading, setCouriersLoading] = useState(false);
+  const [courierMutationOrderId, setCourierMutationOrderId] = useState<string | null>(null);
+  const [newCourierName, setNewCourierName] = useState("");
+  const [newCourierPhone, setNewCourierPhone] = useState("");
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupIdValue] = useState<string | null>(searchParams.get("order"));
+  const { confirm, confirmDialog } = useConfirmDialog();
   const refreshTimerRef = useRef<number | null>(null);
   const inFlightRefreshRef = useRef(false);
   const queuedRefreshRef = useRef(false);
   const loadOrdersRef = useRef<({ silent }?: { silent?: boolean }) => Promise<void>>(async () => undefined);
-  const [filter, setFilter] = useState<OrderFilter>(
-    initialFilter === "pending" ||
-      initialFilter === "ordering" ||
-      initialFilter === "completed" ||
-      initialFilter === "waiting_payment" ||
-      initialFilter === "waiting_confirm" ||
-      initialFilter === "paid" ||
-      initialFilter === "cancelled" ||
-      initialFilter === "history"
-      ? initialFilter
-      : "all"
-  );
-  const [query, setQuery] = useState("");
-  const [locationFilter, setLocationFilter] = useState("all");
-  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
+  const [filter, setFilterValue] = useState<OrderFilter>(() => readOrderFilter(searchParams.get("status")));
+  const [query, setQueryValue] = useState(searchParams.get("q") ?? "");
+  const [locationFilter, setLocationFilterValue] = useState(searchParams.get("source") ?? "all");
+  const [channelFilter, setChannelFilterValue] = useState<ChannelFilter>(() => readChannelFilter(searchParams.get("channel")));
   const [error, setError] = useState<string | null>(null);
+
+  function replaceUrlState(updates: {
+    channel?: ChannelFilter;
+    order?: string | null;
+    q?: string;
+    source?: string;
+    status?: OrderFilter;
+  }) {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (updates.status !== undefined) {
+      if (updates.status === "all") params.delete("status");
+      else params.set("status", updates.status);
+    }
+    if (updates.q !== undefined) {
+      const trimmedQuery = updates.q.trim();
+      if (trimmedQuery) params.set("q", trimmedQuery);
+      else params.delete("q");
+    }
+    if (updates.source !== undefined) {
+      if (updates.source === "all") params.delete("source");
+      else params.set("source", updates.source);
+    }
+    if (updates.channel !== undefined) {
+      if (updates.channel === "all") params.delete("channel");
+      else params.set("channel", updates.channel);
+    }
+    if (updates.order !== undefined) {
+      if (updates.order) params.set("order", updates.order);
+      else params.delete("order");
+    }
+
+    const queryString = params.toString();
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+  }
+
+  function setFilter(nextFilter: OrderFilter) {
+    setFilterValue(nextFilter);
+    replaceUrlState({ status: nextFilter });
+  }
+
+  function setQuery(nextQuery: string) {
+    setQueryValue(nextQuery);
+    replaceUrlState({ q: nextQuery });
+  }
+
+  function setLocationFilter(nextLocationFilter: string) {
+    setLocationFilterValue(nextLocationFilter);
+    replaceUrlState({ source: nextLocationFilter });
+  }
+
+  function setChannelFilter(nextChannelFilter: ChannelFilter) {
+    setChannelFilterValue(nextChannelFilter);
+    replaceUrlState({ channel: nextChannelFilter });
+  }
+
+  function setSelectedGroupId(nextGroupId: string | null) {
+    setSelectedGroupIdValue(nextGroupId);
+    replaceUrlState({ order: nextGroupId });
+  }
+
+  useEffect(() => {
+    const syncFiltersFromHistory = () => {
+      const params = new URLSearchParams(window.location.search);
+      setFilterValue(readOrderFilter(params.get("status")));
+      setQueryValue(params.get("q") ?? "");
+      setLocationFilterValue(params.get("source") ?? "all");
+      setChannelFilterValue(readChannelFilter(params.get("channel")));
+      setSelectedGroupIdValue(params.get("order"));
+    };
+
+    window.addEventListener("popstate", syncFiltersFromHistory);
+    return () => window.removeEventListener("popstate", syncFiltersFromHistory);
+  }, []);
 
   async function loadOrders({ silent = false }: { silent?: boolean } = {}) {
     if (inFlightRefreshRef.current) {
@@ -321,17 +449,71 @@ export function OrdersBoard({
     }
   }
 
+  async function loadCouriers({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setCouriersLoading(true);
+    try {
+      const response = await fetch("/api/admin/delivery/couriers", { cache: "no-store" });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tải được danh sách shipper");
+      setCouriers(json.data as DeliveryCourier[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tải được danh sách shipper");
+    } finally {
+      if (!silent) setCouriersLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadOrdersRef.current = loadOrders;
   });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateCouriers() {
+      try {
+        const response = await fetch("/api/admin/delivery/couriers", { cache: "no-store" });
+        const json = await response.json();
+        if (!json.ok) throw new Error(json.error ?? "Không tải được danh sách shipper");
+        if (!cancelled) setCouriers(json.data as DeliveryCourier[]);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Không tải được danh sách shipper");
+      }
+    }
+
+    void hydrateCouriers();
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurantId]);
 
   function scheduleRefresh(delay = 300) {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => void loadOrdersRef.current({ silent: true }), delay);
   }
 
-  async function mutateOrder(orderId: string, action: "accept" | "confirm-payment" | "complete" | "cancel" | "timer" | "delivery-status", body?: unknown) {
-    if (action === "cancel" && !window.confirm("Huỷ đơn này? Thao tác sẽ ẩn đơn khỏi hàng đợi vận hành.")) return;
+  async function mutateOrder(orderId: string, action: "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status", body?: unknown) {
+    if (action === "cancel") {
+      const confirmed = await confirm({
+        title: "Huỷ đơn",
+        description: "Đơn sẽ được chuyển sang trạng thái huỷ. Hệ thống vẫn giữ lịch sử và log thanh toán nếu có.",
+        confirmLabel: "Huỷ đơn"
+      });
+      if (!confirmed) return;
+    }
+    if (action === "delete-test") {
+      if (!canManageTestOrders) {
+        setError("Chỉ tài khoản quản trị mới được xoá đơn test.");
+        return;
+      }
+      const confirmed = await confirm({
+        title: "Xoá cứng đơn test",
+        description: "Đơn test chưa thanh toán sẽ bị xoá khỏi hệ thống. Chỉ dùng thao tác này để dọn dữ liệu demo hoặc test.",
+        confirmLabel: "Xoá test",
+        confirmationText: "XOA TEST"
+      });
+      if (!confirmed) return;
+    }
 
     const previousOrders = orders;
     setMutatingOrderId(orderId);
@@ -359,6 +541,233 @@ export function OrdersBoard({
     }
   }
 
+  async function cleanupVisibleTestOrders() {
+    if (!canManageTestOrders) {
+      setError("Chỉ tài khoản quản trị mới được dọn đơn test.");
+      return;
+    }
+    const confirmed = await confirm({
+      title: "Dọn đơn test",
+      description: "Tối đa 100 đơn test chưa thanh toán hoặc chưa chờ xác nhận chuyển khoản sẽ bị xoá cứng.",
+      confirmLabel: "Dọn đơn test",
+      confirmationText: "XOA TEST"
+    });
+    if (!confirmed) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/orders/cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "delete_test",
+          statuses: ["pending", "ordering", "completed", "waiting_payment", "cancelled"],
+          olderThanMinutes: 0,
+          limit: 100
+        })
+      });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không dọn được đơn test");
+      const result = json.data as { deleted: number; skipped: number };
+      setError(`Đã xoá ${result.deleted} đơn test. Bỏ qua ${result.skipped} đơn có rủi ro thanh toán.`);
+      await loadOrders({ silent: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không dọn được đơn test");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function captureDeliveryLocation(orderId: string) {
+    if (!("geolocation" in navigator)) {
+      setError("Thiết bị này chưa hỗ trợ lấy vị trí GPS.");
+      return;
+    }
+
+    setTrackingOrderId(orderId);
+    setError(null);
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 12_000,
+          maximumAge: 10_000
+        });
+      });
+
+      const response = await fetch(`/api/admin/orders/${orderId}/delivery-location`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracyMeters: position.coords.accuracy,
+          headingDegrees: Number.isFinite(position.coords.heading) ? position.coords.heading : undefined,
+          speedMps: Number.isFinite(position.coords.speed) ? position.coords.speed : undefined
+        })
+      });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không cập nhật được vị trí giao hàng");
+      const location = json.data as {
+        orderId: string;
+        latitude: number;
+        longitude: number;
+        accuracyMeters?: number | null;
+        headingDegrees?: number | null;
+        speedMps?: number | null;
+        capturedAt?: string | null;
+      };
+      setCourierLocations((current) => ({
+        ...current,
+        [location.orderId]: {
+          lat: location.latitude,
+          lng: location.longitude,
+          accuracyMeters: location.accuracyMeters ?? null,
+          headingDegrees: location.headingDegrees ?? null,
+          speedMps: location.speedMps ?? null,
+          capturedAt: location.capturedAt ?? null
+        }
+      }));
+      setOrders((current) =>
+        current.map((order) =>
+          order.id === location.orderId
+            ? {
+                ...order,
+                deliveryTrackingUpdatedAt: location.capturedAt ?? order.deliveryTrackingUpdatedAt
+              }
+            : order
+        )
+      );
+    } catch (err) {
+      const geoError = err as { code?: number; PERMISSION_DENIED?: number } | null;
+      if (geoError && typeof geoError === "object" && "code" in geoError) {
+        setError(geoError.code === 1 || geoError.code === geoError.PERMISSION_DENIED ? "Bạn cần cho phép trình duyệt dùng vị trí để gửi GPS giao hàng." : "Không lấy được vị trí hiện tại. Vui lòng thử lại gần khu vực giao.");
+      } else {
+        setError(err instanceof Error ? err.message : "Không cập nhật được vị trí giao hàng");
+      }
+    } finally {
+      setTrackingOrderId(null);
+    }
+  }
+
+  async function createCourier() {
+    const name = newCourierName.trim();
+    if (name.length < 2) {
+      setError("Tên shipper cần ít nhất 2 ký tự.");
+      return;
+    }
+
+    setCouriersLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/delivery/couriers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          phone: newCourierPhone.trim() || undefined
+        })
+      });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tạo được shipper");
+      const courier = json.data as DeliveryCourier;
+      setCouriers((current) => [...current.filter((item) => item.id !== courier.id), courier]);
+      setNewCourierName("");
+      setNewCourierPhone("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không tạo được shipper");
+    } finally {
+      setCouriersLoading(false);
+    }
+  }
+
+  async function assignCourier(orderId: string, courierId: string | null) {
+    const previousOrders = orders;
+    const optimisticCourier = courierId ? couriers.find((courier) => courier.id === courierId) ?? null : null;
+    const now = new Date().toISOString();
+
+    setCourierMutationOrderId(orderId);
+    setError(null);
+    setOrders((current) =>
+      current.map((order) =>
+        order.id === orderId
+          ? {
+              ...order,
+              deliveryCourierId: courierId,
+              deliveryAssignedAt: courierId ? now : null,
+              deliveryTrackingUpdatedAt: now,
+              deliveryCourier: optimisticCourier
+                ? {
+                    id: optimisticCourier.id,
+                    name: optimisticCourier.name,
+                    phone: optimisticCourier.phone,
+                    status: optimisticCourier.status
+                  }
+                : null
+            }
+          : order
+      )
+    );
+
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}/delivery-courier`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ courierId })
+      });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không phân công được shipper");
+      const assignment = json.data as {
+        orderId: string;
+        deliveryCourierId: string | null;
+        deliveryAssignedAt: string | null;
+        deliveryCourier: DeliveryCourier | null;
+      };
+
+      setOrders((current) =>
+        current.map((order) =>
+          order.id === assignment.orderId
+            ? {
+                ...order,
+                deliveryCourierId: assignment.deliveryCourierId,
+                deliveryAssignedAt: assignment.deliveryAssignedAt,
+                deliveryTrackingUpdatedAt: now,
+                deliveryCourier: assignment.deliveryCourier
+                  ? {
+                      id: assignment.deliveryCourier.id,
+                      name: assignment.deliveryCourier.name,
+                      phone: assignment.deliveryCourier.phone,
+                      status: assignment.deliveryCourier.status
+                    }
+                  : null
+              }
+            : order
+        )
+      );
+      if (assignment.deliveryCourier) {
+        setCouriers((current) =>
+          current.map((courier) =>
+            courier.id === assignment.deliveryCourier?.id
+              ? {
+                  ...courier,
+                  status: assignment.deliveryCourier.status,
+                  lastLocationAt: assignment.deliveryCourier.lastLocationAt
+                }
+              : courier
+          )
+        );
+      }
+      scheduleRefresh(120);
+      void loadCouriers({ silent: true });
+    } catch (err) {
+      setOrders(previousOrders);
+      setError(err instanceof Error ? err.message : "Không phân công được shipper");
+    } finally {
+      setCourierMutationOrderId(null);
+    }
+  }
+
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
     const scheduleRealtimeRefresh = () => {
@@ -372,6 +781,36 @@ export function OrdersBoard({
         "postgres_changes",
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         scheduleRealtimeRefresh
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "delivery_tracking_events", filter: `restaurant_id=eq.${restaurantId}` },
+        (payload) => {
+          const event = payload.new as {
+            order_id?: string;
+            event_type?: string;
+            latitude?: number | null;
+            longitude?: number | null;
+            accuracy_meters?: number | null;
+            heading_degrees?: number | null;
+            speed_mps?: number | null;
+            created_at?: string | null;
+          };
+          if (event.event_type === "location_ping" && event.order_id && typeof event.latitude === "number" && typeof event.longitude === "number") {
+            setCourierLocations((current) => ({
+              ...current,
+              [event.order_id!]: {
+                lat: event.latitude!,
+                lng: event.longitude!,
+                accuracyMeters: event.accuracy_meters ?? null,
+                headingDegrees: event.heading_degrees ?? null,
+                speedMps: event.speed_mps ?? null,
+                capturedAt: event.created_at ?? null
+              }
+            }));
+          }
+          scheduleRealtimeRefresh();
+        }
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") setRealtimeState("connected");
@@ -414,11 +853,16 @@ export function OrdersBoard({
   const selectedDeliveryFee = selectedOrder?.deliveryFee ?? 0;
   const selectedPendingOrders = selectedGroup?.orders.filter((order) => order.status === "pending") ?? [];
   const selectedServingOrders = selectedGroup?.orders.filter((order) => order.status === "ordering") ?? [];
+  const selectedCompletedUnpaidOrders =
+    selectedGroup?.orders.filter((order) => order.status === "completed" && order.paymentStatus !== "paid") ?? [];
   const selectedPaymentOrder =
     selectedGroup?.paymentOrder ??
     selectedGroup?.orders.find((order) => order.paymentStatus === "waiting_confirm" || order.paymentStatus === "waiting_payment") ??
     (selectedGroup && (selectedGroup.status === "waiting_confirm" || selectedGroup.status === "waiting_payment") ? selectedGroup.orders[0] : null);
   const selectedDeliveryOrder = selectedGroup?.orders.find((order) => order.fulfillmentType === "DELIVERY") ?? null;
+  const selectedCourierLocation = selectedDeliveryOrder
+    ? courierLocations[selectedDeliveryOrder.id] ?? selectedDeliveryOrder.deliveryCourierLocation ?? null
+    : null;
   const selectedDeliveryMapUrl = selectedDeliveryOrder
     ? buildDirectionsUrl(
         {
@@ -434,7 +878,8 @@ export function OrdersBoard({
 
   return (
     <div className="grid gap-3">
-      {error && <div className="rounded-xl border border-[#F28C28]/45 bg-[#F28C28]/10 p-3 text-sm font-semibold text-[#C76312]">{error}</div>}
+      {confirmDialog}
+      {error && <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div>}
 
       <section className="dashboard-panel p-3">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
@@ -533,6 +978,23 @@ export function OrdersBoard({
             Làm mới
           </button>
         </div>
+
+        {canManageTestOrders ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
+            <p className="text-xs font-semibold text-[var(--muted-foreground)]">
+              Chế độ test: chỉ xoá cứng đơn chưa thanh toán, không xoá đơn đã/chờ xác nhận chuyển khoản.
+            </p>
+            <button
+              type="button"
+              onClick={() => void cleanupVisibleTestOrders()}
+              disabled={loading}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-700 transition hover:border-red-300 disabled:opacity-60"
+            >
+              <Trash2 size={14} />
+              Dọn đơn test
+            </button>
+          </div>
+        ) : null}
 
         <div className="mt-3 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
           {orderFilters.map((item) => (
@@ -646,13 +1108,18 @@ export function OrdersBoard({
       </section>
 
       {selectedGroup ? (
-        <div className="fixed inset-0 z-[80]">
-          <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng chi tiết đơn" onClick={() => setSelectedGroupId(null)} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
+        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết đơn" onClick={() => setSelectedGroupId(null)} />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-detail-drawer-title"
+            className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
-                <h2 className="mt-1 truncate text-xl font-semibold text-[var(--foreground)]">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
+                <h2 id="order-detail-drawer-title" className="mt-1 truncate text-xl font-semibold text-[var(--foreground)]">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Badge tone={statusTone(selectedGroup.status)}>{orderStatusLabel(selectedGroup.status)}</Badge>
                   {selectedGroup.overdueCount > 0 && <Badge tone="yellow">{selectedGroup.overdueCount} đơn quá giờ</Badge>}
@@ -668,7 +1135,7 @@ export function OrdersBoard({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
                 <div>
                   <p className="font-semibold text-[var(--foreground)]">{selectedGroup.tableName}</p>
@@ -728,8 +1195,83 @@ export function OrdersBoard({
                     distanceKm={selectedDeliveryOrder.deliveryDistanceKm}
                     durationMinutes={selectedDeliveryOrder.deliveryRouteDurationMinutes}
                     status={selectedDeliveryOrder.deliveryStatus}
+                    courierLocation={selectedCourierLocation}
                     compact
                   />
+                  <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="flex items-center gap-2 font-semibold text-[var(--foreground)]">
+                          <Truck size={15} className="text-[var(--primary)]" />
+                          Điều phối shipper
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                          {selectedDeliveryOrder.deliveryCourier
+                            ? `${selectedDeliveryOrder.deliveryCourier.name}${selectedDeliveryOrder.deliveryCourier.phone ? ` · ${selectedDeliveryOrder.deliveryCourier.phone}` : ""}`
+                            : "Chưa phân công shipper cho đơn này"}
+                        </p>
+                      </div>
+                      {selectedDeliveryOrder.deliveryCourier?.status ? (
+                        <Badge tone={courierStatusTone(selectedDeliveryOrder.deliveryCourier.status)}>
+                          {courierStatusLabel(selectedDeliveryOrder.deliveryCourier.status)}
+                        </Badge>
+                      ) : (
+                        <Badge tone="yellow">Cần phân công</Badge>
+                      )}
+                    </div>
+
+                    <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+                      Chọn shipper
+                      <select
+                        value={selectedDeliveryOrder.deliveryCourierId ?? ""}
+                        onChange={(event) => void assignCourier(selectedDeliveryOrder.id, event.target.value || null)}
+                        disabled={courierMutationOrderId === selectedDeliveryOrder.id || couriersLoading}
+                        className="h-11 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none disabled:opacity-60"
+                      >
+                        <option value="">Chưa phân công</option>
+                        {couriers.map((courier) => (
+                          <option key={courier.id} value={courier.id}>
+                            {courier.name}{courier.phone ? ` · ${courier.phone}` : ""} · {courierStatusLabel(courier.status)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <form
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void createCourier();
+                      }}
+                      className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_132px_auto]"
+                    >
+                      <input
+                        value={newCourierName}
+                        onChange={(event) => setNewCourierName(event.target.value)}
+                        placeholder="Tên shipper mới"
+                        className="h-11 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold outline-none"
+                      />
+                      <input
+                        value={newCourierPhone}
+                        onChange={(event) => setNewCourierPhone(event.target.value)}
+                        placeholder="SĐT"
+                        className="h-11 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold outline-none"
+                      />
+                      <button
+                        type="submit"
+                        disabled={couriersLoading || newCourierName.trim().length < 2}
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:border-[var(--primary)] disabled:pointer-events-none disabled:opacity-60"
+                      >
+                        {couriersLoading ? <RefreshCw size={15} className="animate-spin" /> : <UserPlus size={15} />}
+                        Thêm
+                      </button>
+                    </form>
+
+                    {couriers.length === 0 && !couriersLoading ? (
+                      <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                        Chưa có đội shipper nội bộ. Thêm một shipper để bắt đầu điều phối và theo dõi realtime theo từng người.
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
                     <div className="flex justify-between gap-3">
                       <span className="text-[var(--muted-foreground)]">ETA tuyến giao</span>
@@ -739,6 +1281,31 @@ export function OrdersBoard({
                       <span className="text-[var(--muted-foreground)]">Cập nhật cuối</span>
                       <strong>{formatTrackingTime(selectedDeliveryOrder.deliveryTrackingUpdatedAt)}</strong>
                     </div>
+                    {selectedCourierLocation ? (
+                      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[var(--muted-foreground)]">GPS shipper</span>
+                          <strong>{formatTrackingTime(selectedCourierLocation.capturedAt)}</strong>
+                        </div>
+                        <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                          {selectedCourierLocation.lat.toFixed(5)}, {selectedCourierLocation.lng.toFixed(5)}
+                          {selectedCourierLocation.accuracyMeters ? ` · sai số ~${Math.round(selectedCourierLocation.accuracyMeters)}m` : ""}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                        Chưa có GPS shipper. Bấm gửi vị trí khi nhân viên bắt đầu giao hoặc khi cần cập nhật cho khách.
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void captureDeliveryLocation(selectedDeliveryOrder.id)}
+                      disabled={trackingOrderId === selectedDeliveryOrder.id}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,77,58,0.16)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-60"
+                    >
+                      {trackingOrderId === selectedDeliveryOrder.id ? <RefreshCw size={15} className="animate-spin" /> : <LocateFixed size={15} />}
+                      {trackingOrderId === selectedDeliveryOrder.id ? "Đang lấy GPS..." : "Gửi vị trí hiện tại"}
+                    </button>
                     {selectedDeliveryMapUrl ? (
                       <a
                         href={selectedDeliveryMapUrl}
@@ -784,7 +1351,7 @@ export function OrdersBoard({
                   </Badge>
                 </div>
 
-                {selectedPendingOrders.length === 0 && selectedServingOrders.length === 0 && !selectedPaymentOrder ? (
+                {selectedPendingOrders.length === 0 && selectedServingOrders.length === 0 && selectedCompletedUnpaidOrders.length === 0 && !selectedPaymentOrder ? (
                   <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-medium text-[var(--muted-foreground)]">
                     Hóa đơn này chưa có thao tác cần xử lý.
                   </div>
@@ -799,15 +1366,21 @@ export function OrdersBoard({
                       </div>
                       <Badge>Chờ nhận</Badge>
                     </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-3" : "grid-cols-2"}`}>
                       <Button onClick={() => mutateOrder(order.id, "accept", { minutes: 15 })} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
                         <Check size={16} />
                         Nhận đơn
                       </Button>
                       <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
                         <XCircle size={16} />
-                        Huỷ
+                        Từ chối
                       </Button>
+                      {canManageTestOrders && canDeleteTestOrder(order) ? (
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                          <Trash2 size={16} />
+                          Xoá test
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -836,12 +1409,48 @@ export function OrdersBoard({
                           +10 phút
                         </Button>
                       </div>
+                      <div className={`mt-2 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-2" : "grid-cols-1"}`}>
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                          <XCircle size={16} />
+                          Huỷ đơn
+                        </Button>
+                        {canManageTestOrders && canDeleteTestOrder(order) ? (
+                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                            <Trash2 size={16} />
+                            Xoá test
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })}
 
+                {selectedCompletedUnpaidOrders.map((order) => (
+                  <div key={`completed-unpaid-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn đã phục vụ"}</p>
+                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">{order.items.length} món · chưa thanh toán</p>
+                      </div>
+                      <Badge tone="blue">Đã phục vụ</Badge>
+                    </div>
+                    <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-2" : "grid-cols-1"}`}>
+                      <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                        <XCircle size={16} />
+                        Huỷ đơn
+                      </Button>
+                      {canManageTestOrders && canDeleteTestOrder(order) ? (
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                          <Trash2 size={16} />
+                          Xoá test
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+
                 {selectedPaymentOrder ? (
-                  <div className="rounded-xl border border-[#F28C28]/40 bg-[#FFF7ED] p-3">
+                  <div className="rounded-xl border border-[var(--accent)]/28 bg-[var(--accent-soft)] p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-[var(--foreground)]">Thanh toán hóa đơn</p>

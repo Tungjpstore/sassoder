@@ -78,10 +78,10 @@ export function AdminDesktopNav() {
   }, [pathname]);
 
   return (
-    <nav className="relative z-[1] mx-3 mt-3 grid gap-0.5">
+    <nav className="relative z-[1] mx-2.5 mt-2 grid gap-0.5">
       {navGroups.map((group) => (
-        <div key={group.title} className="mt-2 first:mt-0">
-          <p className="mb-1 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--primary)]/50">
+        <div key={group.title} className="mt-1.5 first:mt-0">
+          <p className="mb-0.5 px-2 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--primary)]/50">
             {group.title}
           </p>
           {group.links.map((link) => {
@@ -101,15 +101,15 @@ export function AdminDesktopNav() {
                     : undefined
                 }
                 className={cn(
-                  "admin-nav-link group relative flex h-9 items-center gap-3 rounded-lg px-2 text-[13px] font-medium transition duration-150",
+                  "admin-nav-link group relative flex h-8 items-center gap-2 rounded-lg px-2 text-[13px] font-medium transition duration-150",
                   active
-                    ? "bg-[rgba(52,211,153,0.1)] text-[var(--primary)] shadow-[inset_0_0_0_1px_rgba(52,211,153,0.15),0_0_12px_rgba(52,211,153,0.06)]"
-                    : "text-[var(--muted-foreground)] hover:bg-[rgba(52,211,153,0.05)] hover:text-[var(--foreground)]"
+                    ? "bg-[var(--primary-soft)] text-[var(--primary)] shadow-[inset_0_0_0_1px_rgba(15,77,58,0.14),0_12px_24px_rgba(15,77,58,0.06)]"
+                    : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
                 )}
               >
                 <span
                   className={cn(
-                    "flex h-7 w-7 items-center justify-center rounded-md transition",
+                    "flex h-6 w-6 items-center justify-center rounded-md transition",
                     active
                       ? "text-[var(--primary)]"
                       : "text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]"
@@ -131,7 +131,7 @@ export function AdminMobileNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="mt-3 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+    <nav className="mt-2 flex gap-2 overflow-x-auto overscroll-x-contain pb-1 lg:hidden">
       {allLinks.map((link) => {
         const active = isActive(pathname, link.href);
 
@@ -150,7 +150,7 @@ export function AdminMobileNav() {
                 : undefined
             }
             className={cn(
-              "inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition",
+              "inline-flex h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition",
               active
                 ? "border-[var(--primary)] bg-[var(--primary)] text-white"
                 : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"

@@ -11,13 +11,13 @@ export async function generateMetadata({
 }: {
   params: Promise<{ restaurantSlug: string; tableId: string }>;
 }) {
-  const { restaurantSlug } = await params;
+  const { restaurantSlug, tableId } = await params;
   const restaurant = await getCachedPublicMenu(restaurantSlug);
 
   return createSeoMetadata({
     title: restaurant ? `${restaurant.name} - Gọi món tại bàn` : "Gọi món tại bàn",
     description: "Trang gọi món QR theo bàn trên LogiVN. Trang này dành cho khách tại quán và không được lập chỉ mục công khai.",
-    path: `/r/${restaurantSlug}`,
+    path: `/r/${restaurantSlug}/table/${tableId}`,
     image: restaurant?.logo_url || undefined,
     noIndex: true
   });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, CheckCircle2, Clock3, CreditCard, Loader2, Phone, RefreshCw, Store, UsersRound, X } from "lucide-react";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { RestaurantVisitMapCard } from "@/components/location/restaurant-visit-map-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -39,6 +40,8 @@ type RestaurantInfo = {
   slug: string;
   logoUrl: string | null;
   address: string | null;
+  storeLat?: number | null;
+  storeLng?: number | null;
   hotline: string | null;
   contactEmail: string | null;
   reservationsEnabled: boolean;
@@ -108,6 +111,10 @@ function resultTone(status: ReservationDto["status"]): "green" | "yellow" | "blu
   return "neutral";
 }
 
+function hasActiveHold(status: ReservationDto["status"]) {
+  return status === "holding" || status === "waiting_deposit_confirm";
+}
+
 export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }) {
   const [date, setDate] = useState(todayInputValue());
   const [partySize, setPartySize] = useState(2);
@@ -126,6 +133,8 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
 
   const selectedSlot = useMemo(() => slots.find((slot) => slot.startsAt === selectedStartsAt), [slots, selectedStartsAt]);
   const holdCountdown = countdownLabel(result?.reservation.holdExpiresAt);
+  const canMarkPaid = result?.reservation.status === "holding" && result.reservation.depositStatus === "waiting_payment";
+  const isWaitingDepositApproval = result?.reservation.status === "waiting_deposit_confirm" && result.reservation.depositStatus === "waiting_confirm";
 
   const loadSlots = useCallback(async (nextDate = date, nextPartySize = partySize) => {
     if (!restaurant.reservationsEnabled) return;
@@ -285,6 +294,12 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
             ) : null}
           </section>
 
+          <RestaurantVisitMapCard
+            restaurant={restaurant}
+            title="Tìm đường đến quán"
+            description="Xem nhanh khoảng cách từ vị trí hiện tại đến quán trước khi giữ bàn. LogiVN không lưu vị trí này vào booking."
+          />
+
           {!restaurant.reservationsEnabled ? (
             <section className="rounded-2xl border border-dashed border-[rgba(15,77,58,0.2)] bg-white p-6 text-center text-sm font-semibold text-[var(--muted-foreground)]">
               Quán hiện chưa bật nhận đặt bàn trước. Bạn vẫn có thể gọi trực tiếp cho quán nếu cần hỗ trợ.
@@ -412,15 +427,15 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   <p className="mt-3 text-sm font-semibold text-[var(--muted-foreground)]">
                     Cọc: {reservationDepositStatusLabel(result.reservation.depositStatus)}
                   </p>
-                  {holdCountdown && result.reservation.status === "holding" ? (
+                  {holdCountdown && hasActiveHold(result.reservation.status) ? (
                     <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[var(--warning-soft)] px-3 py-1.5 text-xs font-black text-[var(--accent-strong)]">
                       <Clock3 size={14} />
-                      Còn {holdCountdown} để chuyển cọc
+                      {isWaitingDepositApproval ? `Quán đang giữ bàn thêm ${holdCountdown} để xác nhận cọc` : `Còn ${holdCountdown} để chuyển cọc`}
                     </p>
                   ) : null}
                 </div>
 
-                {result.payment && result.reservation.depositStatus !== "paid" ? (
+                {result.payment ? (
                   <div className="rounded-xl border border-[var(--border)] bg-white p-4">
                     <div className="flex items-center gap-2 text-sm font-black text-[var(--primary)]">
                       <CreditCard size={16} />
@@ -434,10 +449,17 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                       <p>STK: {result.payment.account}</p>
                       <p>Nội dung: <span className="text-[var(--primary)]">{result.payment.transferContent}</span></p>
                     </div>
-                    <Button className="mt-4 w-full" onClick={markPaid} disabled={submitting}>
-                      {submitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-                      Tôi đã chuyển cọc
-                    </Button>
+                    {canMarkPaid ? (
+                      <Button className="mt-4 w-full" onClick={markPaid} disabled={submitting}>
+                        {submitting ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                        Tôi đã chuyển cọc
+                      </Button>
+                    ) : null}
+                    {isWaitingDepositApproval ? (
+                      <p className="mt-4 rounded-xl bg-[var(--soft-surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">
+                        Quán đã nhận yêu cầu và đang xác nhận giao dịch cọc của bạn.
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
 

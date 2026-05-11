@@ -1,4 +1,15 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import {
+  cookieNamesFromHeader,
+  getHostname,
+  isCookieHeaderOverRepairBudget,
+  isSupabaseAuthFlowCookieName,
+  isSupabaseAuthSessionCookieName,
+  isSupabaseCookieName,
+  shouldShareCookiesAcrossTenantDomains
+} from "@/lib/supabase/cookie-guards";
+import { updateSession } from "@/lib/supabase/proxy";
 import { getTenantSlugFromHost, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
 const publicDashboardPaths = new Set([
@@ -13,15 +24,152 @@ const publicDashboardPaths = new Set([
 function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
     .getAll()
-    .some((cookie) => cookie.name.startsWith("sb-") && cookie.name.includes("-auth-token") && !cookie.name.includes("code-verifier"));
+    .some((cookie) => isSupabaseAuthSessionCookieName(cookie.name));
 }
 
-export function proxy(request: NextRequest) {
+function isServerActionRequest(request: NextRequest) {
+  return request.method === "POST" && request.headers.has("next-action");
+}
+
+function isPrefetchRequest(request: NextRequest) {
+  const purpose = request.headers.get("purpose") || request.headers.get("sec-purpose") || "";
+  return (
+    request.headers.has("next-router-prefetch") ||
+    purpose.toLowerCase().includes("prefetch")
+  );
+}
+
+function isRscRequest(request: NextRequest) {
+  return request.headers.has("rsc");
+}
+
+function isPrefetchOrRscRequest(request: NextRequest) {
+  return isPrefetchRequest(request) || isRscRequest(request);
+}
+
+function noStoreNoContent() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+function shouldApplyDashboardPageGate(request: NextRequest) {
+  return request.method === "GET" || request.method === "HEAD";
+}
+
+function shouldBypassProxySessionRefresh(request: NextRequest, pathname: string) {
+  return (
+    pathname.startsWith("/auth/") ||
+    pathname.startsWith("/api/") ||
+    publicDashboardPaths.has(pathname) ||
+    isServerActionRequest(request) ||
+    isPrefetchOrRscRequest(request)
+  );
+}
+
+function authTransientCookieNames(request: NextRequest) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  return cookieNamesFromHeader(cookieHeader, isSupabaseAuthFlowCookieName);
+}
+
+function supabaseCookieNames(request: NextRequest) {
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  return cookieNamesFromHeader(cookieHeader, isSupabaseCookieName);
+}
+
+function appendExpiredCookie(response: NextResponse, request: NextRequest, name: string) {
+  const secure = request.nextUrl.protocol === "https:" || process.env.VERCEL_ENV === "production";
+  const securePart = secure ? "; Secure" : "";
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? request.nextUrl.host;
+  const hostname = getHostname(host);
+
+  response.headers.append(
+    "Set-Cookie",
+    `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax${securePart}`
+  );
+
+  if (process.env.VERCEL_ENV === "production" && (hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`))) {
+    response.headers.append(
+      "Set-Cookie",
+      `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Domain=.${ROOT_DOMAIN}; SameSite=Lax; Secure`
+    );
+  }
+}
+
+function repairOversizedSupabaseCookieHeader(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/dashboard/login";
+  url.search = "?session=cleared&reason=header";
+
+  const response = NextResponse.redirect(url);
+  response.headers.set("Cache-Control", "no-store");
+
+  supabaseCookieNames(request).forEach((name) => {
+    appendExpiredCookie(response, request, name);
+  });
+
+  return response;
+}
+
+function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") {
+  const url = request.nextUrl.clone();
+  url.pathname = "/dashboard/login";
+  url.search = `?session=cleared&reason=${encodeURIComponent(reason)}`;
+
+  const response = pathnameNeedsLoginRedirect(request.nextUrl.pathname)
+    ? NextResponse.redirect(url)
+    : NextResponse.next({
+        request: {
+          headers: request.headers
+        }
+      });
+  response.headers.set("Cache-Control", "no-store");
+
+  supabaseCookieNames(request).forEach((name) => {
+    appendExpiredCookie(response, request, name);
+  });
+
+  return response;
+}
+
+function pathnameNeedsLoginRedirect(pathname: string) {
+  return pathname.startsWith("/dashboard") && !publicDashboardPaths.has(pathname);
+}
+
+function appendExpiredTransientCookies(response: NextResponse, request: NextRequest) {
+  if (request.nextUrl.pathname.startsWith("/auth/")) return response;
+
+  Array.from(new Set(authTransientCookieNames(request))).forEach((name) => {
+    appendExpiredCookie(response, request, name);
+  });
+
+  return response;
+}
+
+export async function proxy(request: NextRequest) {
   const host = request.headers.get("host")?.split(":")[0];
   const tenantSlug = getTenantSlugFromHost(host);
   const pathname = request.nextUrl.pathname;
+  const cookieHeader = request.headers.get("cookie");
 
-  if (pathname.startsWith("/dashboard") && !publicDashboardPaths.has(pathname) && !hasSupabaseAuthCookie(request)) {
+  if (!pathname.startsWith("/auth/clear-session") && isCookieHeaderOverRepairBudget(cookieHeader)) {
+    return repairOversizedSupabaseCookieHeader(request);
+  }
+
+  if (pathname.startsWith("/dashboard") && isPrefetchRequest(request)) {
+    return noStoreNoContent();
+  }
+
+  if (
+    pathname.startsWith("/dashboard") &&
+    !publicDashboardPaths.has(pathname) &&
+    shouldApplyDashboardPageGate(request) &&
+    !hasSupabaseAuthCookie(request) &&
+    !isServerActionRequest(request)
+  ) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard/login";
     url.search = "";
@@ -30,24 +178,22 @@ export function proxy(request: NextRequest) {
 
   if (tenantSlug) {
     const url = request.nextUrl.clone();
-    const pathname = url.pathname === "/" ? "/menu" : url.pathname;
+    const tenantPath = url.pathname === "/" ? "/menu" : url.pathname;
 
-    if (pathname === "/login") {
+    if (tenantPath === "/login") {
       url.pathname = "/dashboard/login";
       return NextResponse.rewrite(url);
     }
 
-    if (pathname.startsWith("/table/")) {
-      url.pathname = `/r/${tenantSlug}${pathname}`;
+    if (tenantPath.startsWith("/table/")) {
+      url.pathname = `/r/${tenantSlug}${tenantPath}`;
       return NextResponse.rewrite(url);
     }
 
-    if (pathname === "/menu") {
+    if (tenantPath === "/menu") {
       url.pathname = `/r/${tenantSlug}`;
       return NextResponse.rewrite(url);
     }
-
-    return NextResponse.next();
   }
 
   if (process.env.VERCEL_ENV === "production" && host === `www.${ROOT_DOMAIN}`) {
@@ -63,14 +209,34 @@ export function proxy(request: NextRequest) {
     host !== ROOT_DOMAIN &&
     host.endsWith(".vercel.app");
 
-  if (!shouldRedirect) return NextResponse.next();
+  if (shouldRedirect) {
+    const url = request.nextUrl.clone();
+    url.protocol = "https";
+    url.host = ROOT_DOMAIN;
+    return NextResponse.redirect(url, 308);
+  }
 
-  const url = request.nextUrl.clone();
-  url.protocol = "https";
-  url.host = ROOT_DOMAIN;
-  return NextResponse.redirect(url, 308);
+  if (shouldBypassProxySessionRefresh(request, pathname)) {
+    const response = NextResponse.next({
+      request: {
+        headers: request.headers
+      }
+    });
+    return appendExpiredTransientCookies(response, request);
+  }
+
+  try {
+    const response = await updateSession(request);
+    return appendExpiredTransientCookies(response, request);
+  } catch (error) {
+    console.error("[proxy] Supabase session refresh failed", {
+      pathname,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return appendExpiredTransientCookies(repairInvalidSupabaseSession(request), request);
+  }
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"]
 };

@@ -4,6 +4,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
+import { ensureReservationDepositLogEvent, reservationDepositTransitionKey } from "@/services/payment-log-service";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { PaymentMethod, ReservationDepositStatus, ReservationDepositType, ReservationDto, ReservationStatus } from "@/types/domain";
@@ -25,6 +26,8 @@ export type ReservationSettings = Pick<
   | "bank_account_name"
   | "logo_url"
   | "address"
+  | "store_lat"
+  | "store_lng"
   | "hotline"
   | "contact_email"
   | "opening_time"
@@ -57,11 +60,15 @@ export type ReservationAvailabilitySlot = {
   bestTableName: string | null;
 };
 
+const VN_UTC_OFFSET_MINUTES = 7 * 60;
+const activeHoldStatuses: ReservationStatus[] = ["holding", "waiting_deposit_confirm"];
+const closedReservationStatuses: ReservationStatus[] = ["completed", "cancelled", "expired", "no_show"];
+
 const reservationSelect =
   "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,seated_at,cancelled_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity))";
 
 const reservationSettingsSelect =
-  "id,name,slug,bank_code,bank_account,bank_account_name,logo_url,address,hotline,contact_email,opening_time,closing_time,reservations_enabled,reservation_deposit_enabled,reservation_deposit_type,reservation_deposit_value,reservation_hold_minutes,reservation_duration_minutes,reservation_buffer_minutes,reservation_min_notice_minutes,reservation_max_days_ahead,reservation_arrival_grace_minutes";
+  "id,name,slug,bank_code,bank_account,bank_account_name,logo_url,address,store_lat,store_lng,hotline,contact_email,opening_time,closing_time,reservations_enabled,reservation_deposit_enabled,reservation_deposit_type,reservation_deposit_value,reservation_hold_minutes,reservation_duration_minutes,reservation_buffer_minutes,reservation_min_notice_minutes,reservation_max_days_ahead,reservation_arrival_grace_minutes";
 
 function firstOrNull<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) return value[0] ?? null;
@@ -82,6 +89,10 @@ function money(value: number) {
 
 function timeOfDay(value: string | null, fallback: string) {
   return (value || fallback).slice(0, 5);
+}
+
+function vnDateString(date: Date) {
+  return new Date(date.getTime() + VN_UTC_OFFSET_MINUTES * 60_000).toISOString().slice(0, 10);
 }
 
 function vnDateTime(date: string, time: string) {
@@ -106,8 +117,38 @@ function calculateDepositAmount(settings: ReservationSettings, partySize: number
   return settings.reservation_deposit_type === "PER_PERSON" ? value * partySize : value;
 }
 
-function reservationPayment(settings: ReservationSettings, reservation: Pick<ReservationDto, "id" | "depositRequiredAmount" | "paymentMethod">): ReservationPayment | null {
+function isActiveHoldStatus(status: ReservationStatus) {
+  return activeHoldStatuses.includes(status);
+}
+
+function hasExpiredHold(reservation: Pick<ReservationDto, "status" | "holdExpiresAt">, now = new Date()) {
+  if (!isActiveHoldStatus(reservation.status) || !reservation.holdExpiresAt) return false;
+  return new Date(reservation.holdExpiresAt).getTime() <= now.getTime();
+}
+
+function assertReservationInsideOperatingHours(settings: ReservationSettings, startsAt: Date, endsAt: Date) {
+  const candidateDates = [vnDateString(startsAt), vnDateString(addMinutes(startsAt, -24 * 60))];
+  const isInsideOperatingWindow = candidateDates.some((date) => {
+    const { start, end } = dayBounds(date, settings);
+    return startsAt >= start && endsAt <= end;
+  });
+
+  if (!isInsideOperatingWindow) {
+    throw new AppError("Khung giờ đặt bàn nằm ngoài giờ phục vụ của quán.", 400);
+  }
+}
+
+function noShowAvailableAt(reservation: Pick<ReservationDto, "startsAt">, graceMinutes: number) {
+  return addMinutes(new Date(reservation.startsAt), graceMinutes);
+}
+
+function reservationPayment(
+  settings: ReservationSettings,
+  reservation: Pick<ReservationDto, "id" | "depositRequiredAmount" | "paymentMethod" | "status" | "depositStatus">
+): ReservationPayment | null {
   if (reservation.depositRequiredAmount <= 0 || reservation.paymentMethod !== "QR") return null;
+  if (!isActiveHoldStatus(reservation.status)) return null;
+  if (!["waiting_payment", "waiting_confirm"].includes(reservation.depositStatus)) return null;
   if (!settings.bank_code || !settings.bank_account) return null;
 
   return {
@@ -186,38 +227,62 @@ export async function getReservationSettings(restaurantId: string) {
   return data as ReservationSettings;
 }
 
-export async function expireReservationHolds(restaurantId?: string) {
+export async function expireReservationHolds(
+  restaurantId?: string,
+  options: {
+    limit?: number;
+    maxBatches?: number;
+  } = {}
+) {
   const supabase = createAdminSupabaseClient();
-  const now = new Date().toISOString();
-  let query = supabase
-    .from("reservations")
-    .select("id,restaurant_id")
-    .eq("status", "holding")
-    .lt("hold_expires_at", now)
-    .limit(250);
+  const limit = options.limit ?? 250;
+  const maxBatches = options.maxBatches ?? 1;
+  let batches = 0;
+  let expired = 0;
+  let hasMore = false;
 
-  if (restaurantId) query = query.eq("restaurant_id", restaurantId);
-  const { data, error } = await query;
-  throwIfSupabaseError(error);
+  while (batches < maxBatches) {
+    const now = new Date().toISOString();
+    let query = supabase
+      .from("reservations")
+      .select("id,restaurant_id")
+      .in("status", activeHoldStatuses)
+      .lt("hold_expires_at", now)
+      .limit(limit);
 
-  const rows = data ?? [];
-  if (rows.length === 0) return { expired: 0 };
+    if (restaurantId) query = query.eq("restaurant_id", restaurantId);
+    const { data, error } = await query;
+    throwIfSupabaseError(error);
 
-  const ids = rows.map((row) => row.id);
-  const { error: reservationError } = await supabase
-    .from("reservations")
-    .update({ status: "expired", expired_at: now })
-    .in("id", ids);
-  throwIfSupabaseError(reservationError);
+    const rows = data ?? [];
+    if (rows.length === 0) break;
 
-  const { error: lockError } = await supabase
-    .from("reservation_table_locks")
-    .update({ status: "released" })
-    .in("reservation_id", ids);
-  throwIfSupabaseError(lockError);
+    batches += 1;
+    hasMore = rows.length === limit;
 
-  for (const row of rows) invalidateRestaurantDashboardCache(row.restaurant_id);
-  return { expired: rows.length };
+    const ids = rows.map((row) => row.id);
+    const { error: reservationError } = await supabase
+      .from("reservations")
+      .update({ status: "expired", expired_at: now })
+      .in("id", ids);
+    throwIfSupabaseError(reservationError);
+
+    const { error: lockError } = await supabase
+      .from("reservation_table_locks")
+      .update({ status: "released" })
+      .in("reservation_id", ids);
+    throwIfSupabaseError(lockError);
+
+    for (const row of rows) invalidateRestaurantDashboardCache(row.restaurant_id);
+    expired += rows.length;
+
+    if (rows.length < limit) {
+      hasMore = false;
+      break;
+    }
+  }
+
+  return { batches, expired, hasMore: hasMore && batches === maxBatches };
 }
 
 async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date) {
@@ -336,6 +401,7 @@ export async function createReservation(input: {
   const duration = Number(settings.reservation_duration_minutes);
   const buffer = Number(settings.reservation_buffer_minutes);
   const endsAt = addMinutes(startsAt, duration);
+  assertReservationInsideOperatingHours(settings, startsAt, endsAt);
   const lockEnd = addMinutes(endsAt, buffer);
   const availableTables = await getAvailableTables(settings.id, input.partySize, startsAt, lockEnd);
   const table = availableTables[0];
@@ -400,15 +466,15 @@ export async function createReservation(input: {
   }
 
   if (needsDeposit) {
-    const { error: logError } = await supabase.from("reservation_deposit_logs").insert({
-      reservation_id: reservation.id,
-      restaurant_id: settings.id,
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId: reservation.id,
+      restaurantId: settings.id,
       method: "QR",
       status: "pending",
       amount: depositAmount,
-      raw_data: { source: "reservation_deposit_required" }
+      source: "reservation_deposit_required",
+      transitionKey: reservationDepositTransitionKey(reservation.id, "deposit-required")
     });
-    throwIfSupabaseError(logError);
   }
 
   const nextReservation = await getReservationById(reservation.id, settings.id);
@@ -430,6 +496,36 @@ async function getReservationById(reservationId: string, restaurantId?: string) 
   return mapReservation(data as unknown as ReservationRow & { locks?: ReservationLockRow[] });
 }
 
+async function expireReservationHoldIfNeeded(reservation: ReservationDto, restaurantId: string) {
+  if (!hasExpiredHold(reservation)) return reservation;
+
+  const supabase = createAdminSupabaseClient();
+  const now = new Date().toISOString();
+  const { error } = await supabase
+    .from("reservations")
+    .update({ status: "expired", expired_at: now })
+    .eq("id", reservation.id)
+    .eq("restaurant_id", restaurantId)
+    .in("status", activeHoldStatuses);
+  throwIfSupabaseError(error);
+
+  const { error: lockError } = await supabase
+    .from("reservation_table_locks")
+    .update({ status: "released" })
+    .eq("reservation_id", reservation.id)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "active");
+  throwIfSupabaseError(lockError);
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservation.id, restaurantId);
+}
+
+async function getFreshReservationById(reservationId: string, restaurantId: string) {
+  const reservation = await getReservationById(reservationId, restaurantId);
+  return expireReservationHoldIfNeeded(reservation, restaurantId);
+}
+
 async function assertReservationAccess(reservationId: string, token: string) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
@@ -449,7 +545,7 @@ async function assertReservationAccess(reservationId: string, token: string) {
 export async function getPublicReservation(reservationId: string, token: string): Promise<PublicReservationResult> {
   const restaurantId = await assertReservationAccess(reservationId, token);
   const [reservation, settings] = await Promise.all([
-    getReservationById(reservationId, restaurantId),
+    getFreshReservationById(reservationId, restaurantId),
     getReservationSettingsByAdmin(restaurantId)
   ]);
 
@@ -473,30 +569,62 @@ async function getReservationSettingsByAdmin(restaurantId: string) {
 
 export async function markReservationDepositPaid(reservationId: string, token: string) {
   const restaurantId = await assertReservationAccess(reservationId, token);
-  const reservation = await getReservationById(reservationId, restaurantId);
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  const supabase = createAdminSupabaseClient();
+  const waitingConfirmKey = reservationDepositTransitionKey(reservationId, "deposit-submitted");
   if (reservation.depositRequiredAmount <= 0) return getPublicReservation(reservationId, token);
-  if (reservation.depositStatus === "paid") return getPublicReservation(reservationId, token);
+  if (reservation.depositStatus === "paid" || reservation.depositStatus === "waiting_confirm" || reservation.status === "waiting_deposit_confirm") {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId,
+      restaurantId,
+      method: reservation.paymentMethod ?? "QR",
+      status: "waiting_confirm",
+      amount: reservation.depositRequiredAmount,
+      source: "reservation_customer_paid_button",
+      transitionKey: waitingConfirmKey
+    });
+    return getPublicReservation(reservationId, token);
+  }
   if (reservation.status !== "holding" || reservation.depositStatus !== "waiting_payment") {
     return getPublicReservation(reservationId, token);
   }
 
-  const supabase = createAdminSupabaseClient();
-  const { error: logError } = await supabase.from("reservation_deposit_logs").insert({
-    reservation_id: reservationId,
-    restaurant_id: restaurantId,
-    method: "QR",
-    status: "waiting_confirm",
-    amount: reservation.depositRequiredAmount,
-    raw_data: { source: "reservation_customer_paid_button" }
-  });
-  throwIfSupabaseError(logError);
-
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("reservations")
     .update({ status: "waiting_deposit_confirm", deposit_status: "waiting_confirm" })
     .eq("id", reservationId)
-    .eq("restaurant_id", restaurantId);
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "holding")
+    .eq("deposit_status", "waiting_payment")
+    .select("id")
+    .maybeSingle();
   throwIfSupabaseError(error);
+  if (!updated) {
+    const currentReservation = await getFreshReservationById(reservationId, restaurantId);
+    if (currentReservation.depositStatus === "paid" || currentReservation.depositStatus === "waiting_confirm") {
+      await ensureReservationDepositLogEvent(supabase, {
+        reservationId,
+        restaurantId,
+        method: currentReservation.paymentMethod ?? "QR",
+        status: "waiting_confirm",
+        amount: currentReservation.depositRequiredAmount,
+        source: "reservation_customer_paid_button",
+        transitionKey: waitingConfirmKey
+      });
+      return getPublicReservation(reservationId, token);
+    }
+    throw new AppError("Không thể ghi nhận cọc VietQR cho đặt bàn này.", 409);
+  }
+
+  await ensureReservationDepositLogEvent(supabase, {
+    reservationId,
+    restaurantId,
+    method: reservation.paymentMethod ?? "QR",
+    status: "waiting_confirm",
+    amount: reservation.depositRequiredAmount,
+    source: "reservation_customer_paid_button",
+    transitionKey: waitingConfirmKey
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getPublicReservation(reservationId, token);
@@ -561,24 +689,33 @@ export async function updateReservationSettings(
 }
 
 export async function confirmReservationDeposit(restaurantId: string, reservationId: string) {
-  const reservation = await getReservationById(reservationId, restaurantId);
-  if (reservation.status === "cancelled" || reservation.status === "expired") {
-    throw new AppError("Không thể xác nhận cọc cho đặt bàn đã huỷ hoặc hết hạn.", 400);
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  const supabase = createAdminSupabaseClient();
+  const confirmKey = reservationDepositTransitionKey(reservationId, "deposit-confirmed");
+  if (reservation.depositRequiredAmount <= 0) {
+    throw new AppError("Đặt bàn này không yêu cầu cọc.", 400);
+  }
+  if (reservation.depositStatus === "paid") {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId,
+      restaurantId,
+      method: reservation.paymentMethod ?? "QR",
+      status: "confirmed",
+      amount: reservation.depositRequiredAmount,
+      source: "merchant_reservation_deposit_confirm",
+      transitionKey: confirmKey
+    });
+    return reservation;
+  }
+  if (closedReservationStatuses.includes(reservation.status)) {
+    throw new AppError("Không thể xác nhận cọc cho đặt bàn đã kết thúc.", 400);
+  }
+  if (reservation.status !== "waiting_deposit_confirm" || reservation.depositStatus !== "waiting_confirm") {
+    throw new AppError("Chỉ có thể xác nhận cọc cho đặt bàn đang chờ xác nhận.", 400);
   }
 
   const now = new Date().toISOString();
-  const supabase = createAdminSupabaseClient();
-  const { error: logError } = await supabase.from("reservation_deposit_logs").insert({
-    reservation_id: reservationId,
-    restaurant_id: restaurantId,
-    method: "QR",
-    status: "confirmed",
-    amount: reservation.depositRequiredAmount,
-    raw_data: { source: "merchant_reservation_deposit_confirm" }
-  });
-  throwIfSupabaseError(logError);
-
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("reservations")
     .update({
       status: "confirmed",
@@ -588,14 +725,53 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
       hold_expires_at: null
     })
     .eq("id", reservationId)
-    .eq("restaurant_id", restaurantId);
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "waiting_deposit_confirm")
+    .eq("deposit_status", "waiting_confirm")
+    .select("id")
+    .maybeSingle();
   throwIfSupabaseError(error);
+  if (!updated) {
+    const currentReservation = await getFreshReservationById(reservationId, restaurantId);
+    if (currentReservation.depositStatus === "paid") {
+      await ensureReservationDepositLogEvent(supabase, {
+        reservationId,
+        restaurantId,
+        method: currentReservation.paymentMethod ?? "QR",
+        status: "confirmed",
+        amount: currentReservation.depositRequiredAmount,
+        source: "merchant_reservation_deposit_confirm",
+        transitionKey: confirmKey
+      });
+      return currentReservation;
+    }
+    throw new AppError("Không thể xác nhận cọc cho đặt bàn này.", 409);
+  }
+
+  await ensureReservationDepositLogEvent(supabase, {
+    reservationId,
+    restaurantId,
+    method: reservation.paymentMethod ?? "QR",
+    status: "confirmed",
+    amount: reservation.depositRequiredAmount,
+    source: "merchant_reservation_deposit_confirm",
+    transitionKey: confirmKey
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
 }
 
 export async function cancelReservation(restaurantId: string, reservationId: string) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  if (reservation.status === "cancelled") return reservation;
+  if (reservation.status === "seated") {
+    throw new AppError("Không thể huỷ đặt bàn khi khách đã được nhận vào bàn.", 400);
+  }
+  if (closedReservationStatuses.includes(reservation.status)) {
+    throw new AppError("Không thể huỷ đặt bàn đã kết thúc.", 400);
+  }
+
   const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
   const { error } = await supabase
@@ -617,10 +793,10 @@ export async function cancelReservation(restaurantId: string, reservationId: str
 }
 
 export async function seatReservation(restaurantId: string, reservationId: string) {
-  const reservation = await getReservationById(reservationId, restaurantId);
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
   if (reservation.seatedTableBillId) return reservation;
-  if (!["confirmed", "waiting_deposit_confirm"].includes(reservation.status)) {
-    throw new AppError("Chỉ có thể nhận khách cho đặt bàn đã xác nhận hoặc đang chờ xác nhận cọc.", 400);
+  if (reservation.status !== "confirmed") {
+    throw new AppError("Chỉ có thể nhận khách cho đặt bàn đã xác nhận.", 400);
   }
   const table = reservation.tables[0];
   if (!table) throw new AppError("Đặt bàn chưa có bàn được giữ.", 400);
@@ -657,6 +833,19 @@ export async function seatReservation(restaurantId: string, reservationId: strin
 }
 
 export async function markReservationNoShow(restaurantId: string, reservationId: string) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  if (reservation.status === "no_show") return reservation;
+  if (reservation.status !== "confirmed") {
+    throw new AppError("Chỉ có thể đánh dấu no-show cho đặt bàn đã xác nhận.", 400);
+  }
+
+  const settings = await getReservationSettingsByAdmin(restaurantId);
+  const arrivalGraceMinutes = Number(settings.reservation_arrival_grace_minutes);
+  const noShowAt = noShowAvailableAt(reservation, arrivalGraceMinutes);
+  if (noShowAt.getTime() > Date.now()) {
+    throw new AppError(`Chỉ được đánh dấu no-show sau ${arrivalGraceMinutes} phút trễ hẹn.`, 400);
+  }
+
   const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
   const { error } = await supabase

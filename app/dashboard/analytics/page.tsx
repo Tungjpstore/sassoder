@@ -58,7 +58,7 @@ export default async function AdminAnalyticsPage() {
                 <span>
                   <span className="block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</span>
                   <span className="metric-number mt-1 block text-2xl font-semibold text-[var(--foreground)]">{stat.value}</span>
-                  <span className={`mt-1 block text-sm font-medium ${stat.meta.startsWith("↓") ? "text-[#C76312]" : "text-[#15945B]"}`}>{stat.meta}</span>
+                  <span className={`mt-1 block text-sm font-medium ${stat.meta.startsWith("↓") ? "text-[var(--accent-strong)]" : "text-[var(--primary)]"}`}>{stat.meta}</span>
                 </span>
               </div>
             </div>
@@ -97,7 +97,7 @@ export default async function AdminAnalyticsPage() {
             {report.topItems.slice(0, 5).map((item) => (
               <div key={item.id} className="grid grid-cols-[140px_minmax(0,1fr)_42px] items-center gap-3">
                 <span className="truncate text-sm font-bold">{item.name}</span>
-                <span className="h-3 overflow-hidden rounded-full bg-[#EFE8DC]">
+                <span className="h-3 overflow-hidden rounded-full bg-[var(--tertiary-soft)]">
                   <span className="block h-full rounded-full bg-[var(--accent)]" style={{ width: `${percent(item.quantity, maxTopQuantity)}%` }} />
                 </span>
                 <span className="metric-number text-right text-sm font-black">{item.quantity}</span>
@@ -118,7 +118,7 @@ export default async function AdminAnalyticsPage() {
                   const start = report.paymentRows.slice(0, index).reduce((sum, item) => sum + percent(item.value, paymentBase), 0);
                   const end = start + percent(row.value, paymentBase);
                   return `${row.color} ${start}% ${Math.max(end, start + (row.value > 0 ? 2 : 0))}%`;
-                }).join(", ") || "#EFE8DC 0 100%"})`
+                }).join(", ") || "var(--tertiary-soft) 0 100%"})`
               }}
             >
               <div className="h-24 w-24 rounded-full bg-white" />

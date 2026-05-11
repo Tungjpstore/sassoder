@@ -3,6 +3,7 @@ import { createSlug } from "@/lib/slug";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
 import { createInitialRestaurantSubscription } from "@/services/subscription-service";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
@@ -497,12 +498,45 @@ type RegistrationIntentPayload = {
   name: string;
   slug?: string;
   businessType: BusinessType;
+  customBusinessType?: string;
   tableCount: number;
+  address?: string;
+  storeLat?: number;
+  storeLng?: number;
+  hotline?: string;
+  brandSlogan?: string;
+  brandDescription?: string;
+  logoUrl?: string;
+  initialMenuItem?: {
+    name: string;
+    price: number;
+    categoryName?: string;
+  };
+  initialMenuItems?: Array<{
+    name: string;
+    price: number;
+    categoryName?: string;
+  }>;
   bankCode?: string;
   bankAccount?: string;
   bankAccountName?: string;
   planCode?: string;
 };
+
+function parseRegistrationIntentMenuItem(value: Json): RegistrationIntentPayload["initialMenuItem"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, Json>;
+  const name = typeof item.name === "string" ? item.name.trim() : "";
+  const price = typeof item.price === "number" ? item.price : Number(item.price);
+  const categoryName = typeof item.categoryName === "string" ? item.categoryName.trim() : undefined;
+  if (!name || !Number.isFinite(price) || price <= 0) return undefined;
+  return { name, price, categoryName };
+}
+
+function parseRegistrationIntentMenuItems(value: Json): NonNullable<RegistrationIntentPayload["initialMenuItems"]> {
+  if (!Array.isArray(value)) return [];
+  return value.map(parseRegistrationIntentMenuItem).filter((item): item is NonNullable<RegistrationIntentPayload["initialMenuItem"]> => Boolean(item)).slice(0, 80);
+}
 
 function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -513,7 +547,17 @@ function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload 
   const name = typeof payload.name === "string" ? payload.name : "";
   const slug = typeof payload.slug === "string" ? payload.slug : undefined;
   const businessType = typeof payload.businessType === "string" ? payload.businessType : "";
+  const customBusinessType = typeof payload.customBusinessType === "string" ? payload.customBusinessType.trim() : undefined;
   const tableCount = typeof payload.tableCount === "number" ? payload.tableCount : Number(payload.tableCount);
+  const address = typeof payload.address === "string" ? payload.address : undefined;
+  const storeLat = typeof payload.storeLat === "number" ? payload.storeLat : undefined;
+  const storeLng = typeof payload.storeLng === "number" ? payload.storeLng : undefined;
+  const hotline = typeof payload.hotline === "string" ? payload.hotline : undefined;
+  const brandSlogan = typeof payload.brandSlogan === "string" ? payload.brandSlogan : undefined;
+  const brandDescription = typeof payload.brandDescription === "string" ? payload.brandDescription : undefined;
+  const logoUrl = typeof payload.logoUrl === "string" ? payload.logoUrl : undefined;
+  const initialMenuItem = parseRegistrationIntentMenuItem(payload.initialMenuItem);
+  const initialMenuItems = parseRegistrationIntentMenuItems(payload.initialMenuItems);
   const bankCode = typeof payload.bankCode === "string" ? payload.bankCode : undefined;
   const bankAccount = typeof payload.bankAccount === "string" ? payload.bankAccount : undefined;
   const bankAccountName = typeof payload.bankAccountName === "string" ? payload.bankAccountName : undefined;
@@ -527,7 +571,17 @@ function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload 
     name,
     slug,
     businessType: businessType as BusinessType,
+    customBusinessType,
     tableCount,
+    address,
+    storeLat,
+    storeLng,
+    hotline,
+    brandSlogan,
+    brandDescription,
+    logoUrl,
+    initialMenuItem,
+    initialMenuItems,
     bankCode,
     bankAccount,
     bankAccountName,
@@ -562,6 +616,16 @@ export async function getRestaurantForUser(userId: string, email?: string | null
     | null;
   const restaurant = Array.isArray(row?.restaurant) ? row?.restaurant[0] : row?.restaurant;
   return restaurant ?? null;
+}
+
+async function getRestaurantRowForUser(userId: string, email?: string | null) {
+  const existingRestaurant = await getRestaurantForUser(userId, email);
+  if (!existingRestaurant?.id) return null;
+
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase.from("restaurants").select("*").eq("id", existingRestaurant.id).maybeSingle();
+  throwIfSupabaseError(error);
+  return data;
 }
 
 export async function createRegistrationIntent(input: {
@@ -743,20 +807,57 @@ const categoryTemplates: Record<BusinessType, MenuTemplate> = {
   ]
 };
 
+type SeedMenuItem = {
+  restaurant_id: string;
+  category_id: string;
+  name: string;
+  price: number;
+  is_available: boolean;
+};
+
+function menuItemSeedKey(name: string) {
+  return name.trim().normalize("NFC").toLowerCase();
+}
+
 export async function completeRestaurantOnboarding(input: {
   userId: string;
   email: string;
   name: string;
   slug?: string;
   businessType: BusinessType;
+  customBusinessType?: string;
   tableCount: number;
+  address?: string;
+  storeLat?: number;
+  storeLng?: number;
+  hotline?: string;
+  logoUrl?: string;
+  logoFile?: FormDataEntryValue | null;
+  brandSlogan?: string;
+  brandDescription?: string;
+  initialMenuItem?: {
+    name: string;
+    price: number;
+    categoryName?: string;
+  };
+  initialMenuItems?: Array<{
+    name: string;
+    price: number;
+    categoryName?: string;
+  }>;
   bankCode?: string;
   bankAccount?: string;
   bankAccountName?: string;
   planCode?: string;
 }) {
+  const existingRestaurant = await getRestaurantRowForUser(input.userId, input.email);
+  if (existingRestaurant) return existingRestaurant;
+
   const supabase = createAdminSupabaseClient();
   const slug = await createUniqueRestaurantSlug(input.name, input.slug);
+  const customBusinessType = input.customBusinessType?.trim();
+  const brandDescription = input.brandDescription?.trim();
+  const brandSlogan = input.brandSlogan?.trim();
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
@@ -765,6 +866,16 @@ export async function completeRestaurantOnboarding(input: {
       slug,
       business_type: input.businessType,
       table_count: input.tableCount,
+      contact_email: input.email.toLowerCase(),
+      address: input.address || null,
+      store_lat: input.storeLat ?? null,
+      store_lng: input.storeLng ?? null,
+      hotline: input.hotline || null,
+      description: brandDescription || (customBusinessType ? `Loại hình: ${customBusinessType}` : null),
+      logo_url: input.logoUrl || null,
+      brand_primary: "#0F4D3A",
+      brand_accent: "#F28C28",
+      receipt_footer: brandSlogan || null,
       bank_code: input.bankCode || null,
       bank_account: input.bankAccount || null,
       bank_account_name: input.bankAccountName || null
@@ -776,6 +887,8 @@ export async function completeRestaurantOnboarding(input: {
     throw new AppError(restaurantError?.message ?? "Không tạo được quán", 400);
   }
 
+  let onboardedRestaurant = restaurant;
+
   const { error: profileError } = await supabase.from("users").insert({
     id: input.userId,
     email: input.email.toLowerCase(),
@@ -784,17 +897,76 @@ export async function completeRestaurantOnboarding(input: {
   });
 
   if (profileError) {
+    const existingAfterProfileConflict = await getRestaurantRowForUser(input.userId, input.email);
     await supabase.from("restaurants").delete().eq("id", restaurant.id);
+    if (existingAfterProfileConflict) return existingAfterProfileConflict;
     throw new AppError(profileError.message, 400);
+  }
+
+  if (input.logoFile) {
+    try {
+      const logoUrl = await uploadMenuImageFile({ restaurantId: restaurant.id, file: input.logoFile });
+      if (logoUrl) {
+        const { data: updatedRestaurant, error: logoUpdateError } = await supabase
+          .from("restaurants")
+          .update({ logo_url: logoUrl })
+          .eq("id", restaurant.id)
+          .select()
+          .single();
+
+        if (logoUpdateError) throw logoUpdateError;
+        onboardedRestaurant = updatedRestaurant;
+      }
+    } catch (error) {
+      console.error("Failed to upload onboarding restaurant logo", error);
+    }
+  } else if (input.logoUrl) {
+    try {
+      const persistedLogoUrl = await uploadRemoteMenuImageUrl({ restaurantId: restaurant.id, imageUrl: input.logoUrl });
+      if (persistedLogoUrl) {
+        const { data: updatedRestaurant, error: logoUpdateError } = await supabase
+          .from("restaurants")
+          .update({ logo_url: persistedLogoUrl })
+          .eq("id", restaurant.id)
+          .select()
+          .single();
+
+        if (logoUpdateError) throw logoUpdateError;
+        onboardedRestaurant = updatedRestaurant;
+      }
+    } catch (error) {
+      console.error("Failed to persist onboarding AI logo", error);
+    }
+  }
+
+  const requestedInitialMenuItems = [
+    ...(input.initialMenuItems ?? []),
+    ...(input.initialMenuItem ? [input.initialMenuItem] : [])
+  ];
+  const categorySeedNames = new Set<string>();
+  const categories = categoryTemplates[input.businessType].map((category) => {
+    categorySeedNames.add(menuItemSeedKey(category.name));
+    return {
+      restaurant_id: restaurant.id,
+      name: category.name
+    };
+  });
+
+  for (const initialMenuItem of requestedInitialMenuItems) {
+    const categoryName = initialMenuItem.categoryName?.trim();
+    if (!categoryName) continue;
+    const key = menuItemSeedKey(categoryName);
+    if (!key || categorySeedNames.has(key)) continue;
+    categorySeedNames.add(key);
+    categories.push({
+      restaurant_id: restaurant.id,
+      name: categoryName
+    });
   }
 
   const tables = Array.from({ length: input.tableCount }, (_, index) => ({
     restaurant_id: restaurant.id,
     name: `Bàn ${index + 1}`
-  }));
-  const categories = categoryTemplates[input.businessType].map((category) => ({
-    restaurant_id: restaurant.id,
-    name: category.name
   }));
 
   const [{ error: tableError }, { data: insertedCategories, error: categoryError }] = await Promise.all([
@@ -808,18 +980,45 @@ export async function completeRestaurantOnboarding(input: {
   }
 
   const categoryByName = new Map((insertedCategories ?? []).map((category) => [category.name, category.id]));
-  const menuItems = categoryTemplates[input.businessType].flatMap((category) => {
-    const categoryId = categoryByName.get(category.name);
-    if (!categoryId) return [];
+  const menuItems: SeedMenuItem[] = [];
+  const seenMenuItemNames = new Set<string>();
 
-    return category.items.map((item) => ({
-      restaurant_id: restaurant.id,
-      category_id: categoryId,
-      name: item.name,
-      price: item.price,
-      is_available: true
-    }));
-  });
+  function appendMenuItem(item: SeedMenuItem) {
+    const key = menuItemSeedKey(item.name);
+    if (!key || seenMenuItemNames.has(key)) return;
+    seenMenuItemNames.add(key);
+    menuItems.push({ ...item, name: item.name.trim() });
+  }
+
+  for (const initialMenuItem of requestedInitialMenuItems) {
+    if (!initialMenuItem.name || !Number.isFinite(initialMenuItem.price) || initialMenuItem.price <= 0) continue;
+    const fallbackCategoryId = insertedCategories?.[0]?.id;
+    const categoryId = categoryByName.get(initialMenuItem.categoryName || "") ?? fallbackCategoryId;
+    if (categoryId) {
+      appendMenuItem({
+        restaurant_id: restaurant.id,
+        category_id: categoryId,
+        name: initialMenuItem.name,
+        price: initialMenuItem.price,
+        is_available: true
+      });
+    }
+  }
+
+  for (const category of categoryTemplates[input.businessType]) {
+    const categoryId = categoryByName.get(category.name);
+    if (!categoryId) continue;
+
+    for (const item of category.items) {
+      appendMenuItem({
+        restaurant_id: restaurant.id,
+        category_id: categoryId,
+        name: item.name,
+        price: item.price,
+        is_available: true
+      });
+    }
+  }
 
   if (menuItems.length > 0) {
     const { error: menuItemError } = await supabase.from("menu_items").insert(menuItems);
@@ -840,7 +1039,7 @@ export async function completeRestaurantOnboarding(input: {
     console.error("Failed to create initial restaurant subscription", error);
   }
 
-  return restaurant;
+  return onboardedRestaurant;
 }
 
 export async function updateRestaurantPaymentSettings(
@@ -910,6 +1109,43 @@ export async function updateRestaurantSettings(
       receipt_show_qr: input.receiptShowQr ?? true
     })
     .eq("id", restaurantId)
+    .select()
+    .single();
+
+  throwIfSupabaseError(error);
+  return data;
+}
+
+export async function applyRestaurantAiBranding(input: {
+  restaurantId: string;
+  brandSlogan?: string;
+  brandDescription?: string;
+  logoUrl?: string;
+}) {
+  const updates: Database["public"]["Tables"]["restaurants"]["Update"] = {};
+  const brandDescription = input.brandDescription?.trim();
+  const brandSlogan = input.brandSlogan?.trim();
+
+  if (brandDescription) updates.description = brandDescription;
+  if (brandSlogan) updates.receipt_footer = brandSlogan;
+
+  if (input.logoUrl) {
+    const persistedLogoUrl = await uploadRemoteMenuImageUrl({
+      restaurantId: input.restaurantId,
+      imageUrl: input.logoUrl
+    });
+    if (persistedLogoUrl) updates.logo_url = persistedLogoUrl;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    throw new AppError("Chưa có nội dung AI nào để áp dụng vào hồ sơ quán.", 400);
+  }
+
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("restaurants")
+    .update(updates)
+    .eq("id", input.restaurantId)
     .select()
     .single();
 

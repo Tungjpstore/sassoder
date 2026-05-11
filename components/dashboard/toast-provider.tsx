@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useState } from "react";
+import type { ReactNode } from "react";
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
 
 type ToastType = "success" | "error" | "info";
@@ -34,14 +35,14 @@ const icons = {
 
 const toneClasses = {
   success:
-    "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)] backdrop-blur-xl",
-  error: "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185] backdrop-blur-xl",
+    "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)] backdrop-blur-xl",
+  error: "border-[var(--tertiary)]/12 bg-[var(--danger-soft)] text-[var(--tertiary)] backdrop-blur-xl",
   info: "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] backdrop-blur-xl",
 };
 
 let nextId = 0;
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((type: ToastType, message: string) => {
@@ -62,24 +63,29 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[200] grid gap-2 max-lg:left-4 lg:w-[380px]">
+      <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-[200] grid gap-2 max-lg:left-4 lg:w-[380px]">
         {toasts.map((t) => {
           const Icon = icons[t.type];
+          const isError = t.type === "error";
           return (
             <div
               key={t.id}
+              role={isError ? "alert" : "status"}
+              aria-live={isError ? "assertive" : "polite"}
+              aria-atomic="true"
               className={`toast-enter flex items-start gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg ${toneClasses[t.type]}`}
             >
-              <Icon size={18} className="mt-0.5 shrink-0" />
+              <Icon size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1">{t.message}</span>
               <button
                 type="button"
+                aria-label="Đóng thông báo"
                 onClick={() =>
                   setToasts((prev) => prev.filter((x) => x.id !== t.id))
                 }
-                className="shrink-0 opacity-60 hover:opacity-100"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-md opacity-60 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2"
               >
-                <X size={16} />
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
           );

@@ -72,6 +72,12 @@ type StoreSetupDraftConfig = {
   guardrails: string[];
 };
 
+type IntentRouteRule<TIntent extends string> = {
+  intent: TIntent;
+  patterns: string[];
+  weight: number;
+};
+
 export const storeSetupDraftConfig: Record<StoreSetupDraftKind, StoreSetupDraftConfig> = {
   brand_profile: {
     kind: "brand_profile",
@@ -174,7 +180,7 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
     label: "Tổng quan ca",
     description: "Tóm tắt nhịp vận hành, điểm nghẽn và hành động ưu tiên trong ca bán.",
     dataScope: "Đơn 24h, doanh thu đã thanh toán, bàn hoạt động, đơn gần đây và món nổi bật.",
-    guardrails: ["Không bịa doanh thu.", "Chỉ ưu tiên theo dữ liệu hiện có.", "Không xác nhận thay thao tác của chủ quán."],
+    guardrails: ["Không bịa doanh thu.", "Chỉ ưu tiên theo dữ liệu hiện có.", "Chỉ chạy thao tác vận hành khi chủ quán bấm xác nhận."],
     systemAddendum:
       "Đóng vai COO ca bán. Ưu tiên cảnh báo đơn cần xử lý, bàn có rủi ro, doanh thu, món nổi bật và thao tác giúp ca chạy mượt trong 15 phút tới.",
     responseContract: "Trả lời theo 3 mục: Tình hình hiện tại, Việc cần làm ngay, Theo dõi tiếp.",
@@ -185,9 +191,13 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
     label: "Đơn hàng",
     description: "Phân loại đơn theo trạng thái và đề xuất thao tác nhận, xác nhận, phục vụ, thanh toán.",
     dataScope: "Đơn gần đây, trạng thái order/payment, bàn, fulfillment, món trong đơn và thời hạn phục vụ.",
-    guardrails: ["Không tự nhận đơn.", "Không xác nhận thanh toán.", "Không bỏ qua thứ tự trạng thái hợp lệ."],
+    guardrails: [
+      "Không nhận/hoàn tất đơn nếu chưa có action được chủ quán xác nhận.",
+      "Không xác nhận thanh toán.",
+      "Không bỏ qua thứ tự trạng thái hợp lệ."
+    ],
     systemAddendum:
-      "Chỉ dùng trạng thái đơn trong dữ liệu. Không tự nhận đơn, không tự xác nhận thanh toán. Khi cần thao tác, chỉ rõ nút hoặc khu vực trong dashboard.",
+      "Chỉ dùng trạng thái đơn trong dữ liệu. Nếu chủ quán yêu cầu xử lý nhiều đơn, ưu tiên batch action có xác nhận thay vì trả lời chung chung. Không tự xác nhận thanh toán.",
     responseContract: "Nêu đơn ưu tiên, lý do ưu tiên, thao tác đúng tiếp theo và rủi ro nếu bỏ qua.",
     suggestions: ["Đơn nào cần xử lý trước?", "Luồng xử lý đơn hiện tại đã đúng chưa?", "Tìm đơn có nguy cơ trễ món"]
   },
@@ -410,25 +420,25 @@ export const customerAiIntentConfig: Record<CustomerAiIntent, IntentConfig<Custo
 };
 
 const ownerKeywordMap: Record<OwnerAiIntent, string[]> = {
-  setup: ["setup", "thiet lap", "cau hinh", "san sang", "onboarding", "bat dau", "setup nhanh"],
-  overview: ["tong quan", "ca ban", "van hanh", "hom nay", "hien tai", "uu tien"],
-  orders: ["don", "order", "nhan don", "xac nhan", "phuc vu", "trang thai don"],
-  kitchen: ["bep", "ra mon", "tre mon", "qua gio", "sla", "dang nau"],
-  menu: ["menu", "mon", "danh muc", "gia", "hinh anh", "ocr", "nhap menu"],
-  tables: ["ban", "qr", "trong", "dang phuc vu", "so do ban"],
-  payments: ["thanh toan", "vietqr", "tien mat", "chuyen khoan", "hoa don", "doi soat"],
-  promotions: ["khuyen mai", "ma giam", "voucher", "campaign", "uu dai"],
-  staff: ["nhan vien", "phan quyen", "ca lam", "goi nhan vien"],
-  online: ["online", "ship", "giao hang", "pickup", "den lay", "ban kinh", "phi ship"],
-  reservations: ["dat ban", "coc", "giu ban", "lich", "booking", "reservation"],
-  reports: ["bao cao", "doanh thu", "analytics", "bieu do", "excel", "pdf", "email"],
-  settings: ["cai dat", "ho so", "ngan hang", "logo", "dia chi", "gio mo cua"],
+  setup: ["setup", "thiet lap", "cau hinh", "san sang", "onboarding", "bat dau", "setup nhanh", "ke hoach setup"],
+  overview: ["tong quan", "ca ban", "van hanh", "hom nay", "hien tai", "uu tien", "kiem tra ca", "tinh hinh"],
+  orders: ["don", "order", "nhan don", "xac nhan", "phuc vu", "trang thai don", "xu ly don", "don cho"],
+  kitchen: ["bep", "ra mon", "tre mon", "qua gio", "sla", "dang nau", "uu tien bep"],
+  menu: ["menu", "mon", "danh muc", "gia", "hinh anh", "ocr", "nhap menu", "anh mon", "tao anh mon", "anh do an", "food photo", "mo ta mon"],
+  tables: ["ban", "qr", "trong", "dang phuc vu", "so do ban", "ma qr", "in qr"],
+  payments: ["thanh toan", "vietqr", "tien mat", "chuyen khoan", "hoa don", "doi soat", "xac nhan tien"],
+  promotions: ["khuyen mai", "ma giam", "voucher", "campaign", "uu dai", "giam gia"],
+  staff: ["nhan vien", "phan quyen", "ca lam", "goi nhan vien", "tai khoan staff"],
+  online: ["online", "ship", "giao hang", "pickup", "den lay", "ban kinh", "phi ship", "dat online"],
+  reservations: ["dat ban", "coc", "giu ban", "lich", "booking", "reservation", "giu cho"],
+  reports: ["bao cao", "doanh thu", "analytics", "bieu do", "excel", "pdf", "email", "xuat bao cao"],
+  settings: ["cai dat", "ho so", "ngan hang", "dia chi", "gio mo cua", "vietqr setting"],
   security: ["bao mat", "rls", "hack", "bug goi", "spam", "quyen", "audit"],
-  growth: ["slogan", "thuong hieu", "logo", "mo ta", "marketing", "tang truong"]
+  growth: ["slogan", "thuong hieu", "logo", "tao logo", "prompt logo", "mo ta quan", "marketing", "tang truong", "brand", "branding", "anh cover", "menu hero"]
 };
 
 const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
-  menu_discovery: ["goi y", "mon nao", "ngon", "de an", "de uong", "nen thu", "menu"],
+  menu_discovery: ["goi y", "mon nao", "ngon", "de an", "de uong", "nen thu", "menu", "combo", "nhom", "ngan sach", "duoi"],
   cart: ["gio", "them", "xoa", "so luong", "goi them", "ghi chu"],
   order_status: ["don cua toi", "trang thai", "da nhan", "dang ra", "cho mon", "xac nhan"],
   payment: ["thanh toan", "vietqr", "tien mat", "hoa don", "chuyen khoan", "da tra"],
@@ -438,6 +448,30 @@ const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
   promotion: ["ma giam", "khuyen mai", "voucher", "uu dai"],
   allergy: ["di ung", "an chay", "khong cay", "it cay", "it ngot", "hai san"]
 };
+
+const ownerRouteRules: Array<IntentRouteRule<OwnerAiIntent>> = [
+  { intent: "orders", weight: 5, patterns: ["xu ly tat ca don", "xu ly don cho", "nhan don", "accept order", "don nao can xu ly"] },
+  { intent: "payments", weight: 5, patterns: ["xac nhan thanh toan", "doi soat", "vietqr", "da chuyen khoan", "xac nhan tien"] },
+  { intent: "menu", weight: 6, patterns: ["tao anh mon", "anh mon an", "anh do an", "food photo", "ocr menu", "quet menu", "nhap menu", "them mon tu ocr"] },
+  { intent: "growth", weight: 6, patterns: ["tao logo", "prompt logo", "tao slogan", "viet slogan", "bo nhan dien", "thuong hieu", "branding"] },
+  { intent: "setup", weight: 5, patterns: ["ke hoach setup", "setup quan", "thiet lap quan", "san sang ban that", "hoan thien setup"] },
+  { intent: "tables", weight: 4, patterns: ["in qr", "tai qr", "ma qr", "ban nao", "so do ban"] },
+  { intent: "online", weight: 4, patterns: ["bat giao hang", "phi ship", "ban kinh giao", "dat online", "pickup"] },
+  { intent: "reservations", weight: 4, patterns: ["dat ban", "tien coc", "giu cho", "overbooking"] },
+  { intent: "reports", weight: 4, patterns: ["xuat bao cao", "doanh thu", "bao cao tuan", "gui email bao cao"] },
+  { intent: "security", weight: 5, patterns: ["bug goi", "lo bao mat", "tenant", "rls", "spam", "audit log"] }
+];
+
+const customerRouteRules: Array<IntentRouteRule<CustomerAiIntent>> = [
+  { intent: "cart", weight: 5, patterns: ["them vao gio", "mo gio", "gio hang", "goi them", "xoa mon"] },
+  { intent: "payment", weight: 5, patterns: ["thanh toan", "toi da chuyen khoan", "vietqr", "hoa don", "da tra"] },
+  { intent: "order_status", weight: 5, patterns: ["don cua toi", "trang thai don", "quan da nhan", "cho mon"] },
+  { intent: "delivery", weight: 4, patterns: ["giao hang", "phi ship", "bao lau giao", "dia chi giao"] },
+  { intent: "reservation", weight: 4, patterns: ["dat ban", "giu ban", "dat cho", "tien coc"] },
+  { intent: "allergy", weight: 5, patterns: ["di ung", "an chay", "khong cay", "it ngot", "khong hai san"] },
+  { intent: "promotion", weight: 4, patterns: ["ma giam", "khuyen mai", "voucher", "uu dai"] },
+  { intent: "staff_call", weight: 4, patterns: ["goi nhan vien", "them nuoc", "can ho tro", "gap nhan vien"] }
+];
 
 function foldText(value: string) {
   return value
@@ -452,13 +486,39 @@ function asKey<TIntent extends string>(value: string | null | undefined, configs
   return normalized in configs ? normalized : null;
 }
 
-function inferIntent<TIntent extends string>(message: string, keywordMap: Record<TIntent, string[]>, fallback: TIntent) {
+function phraseScore(foldedMessage: string, pattern: string, weight: number) {
+  const foldedPattern = foldText(pattern);
+  if (!foldedPattern) return 0;
+  if (foldedMessage === foldedPattern) return weight + 2;
+  if (foldedMessage.includes(foldedPattern)) return weight;
+  const words = foldedPattern.split(/\s+/).filter(Boolean);
+  if (words.length >= 2 && words.every((word) => foldedMessage.includes(word))) return Math.max(1, weight - 1);
+  return 0;
+}
+
+function scoreIntentRules<TIntent extends string>(folded: string, routeRules: Array<IntentRouteRule<TIntent>>) {
+  const scores = new Map<TIntent, number>();
+  for (const rule of routeRules) {
+    const score = rule.patterns.reduce((sum, pattern) => sum + phraseScore(folded, pattern, rule.weight), 0);
+    if (score > 0) scores.set(rule.intent, (scores.get(rule.intent) ?? 0) + score);
+  }
+  return scores;
+}
+
+function inferIntent<TIntent extends string>(
+  message: string,
+  keywordMap: Record<TIntent, string[]>,
+  fallback: TIntent,
+  routeRules: Array<IntentRouteRule<TIntent>> = []
+) {
   const folded = foldText(message);
   let bestIntent = fallback;
   let bestScore = 0;
+  const ruleScores = scoreIntentRules(folded, routeRules);
 
   for (const [intent, keywords] of Object.entries(keywordMap) as Array<[TIntent, string[]]>) {
-    const score = keywords.reduce((sum, keyword) => sum + (folded.includes(keyword) ? 1 : 0), 0);
+    const keywordScore = keywords.reduce((sum, keyword) => sum + (folded.includes(foldText(keyword)) ? 1 : 0), 0);
+    const score = keywordScore + (ruleScores.get(intent) ?? 0);
     if (score > bestScore) {
       bestScore = score;
       bestIntent = intent;
@@ -473,12 +533,55 @@ function jsonBlock(value: unknown, maxLength: number) {
   return JSON.stringify(value, null, 2).slice(0, maxLength);
 }
 
+function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant: AiRestaurantContext) {
+  return [
+    "Bạn là LogiVN AI Operating Copilot cho chủ quán F&B tại Việt Nam.",
+    "Nhiệm vụ: biến câu hỏi thành hành động vận hành ngắn, đúng màn, đúng dữ liệu, không đốt quota bằng lời khuyên chung chung.",
+    "Ngôn ngữ bắt buộc: tiếng Việt tự nhiên, gọn, rõ hành động.",
+    "Tuyệt đối không dùng markdown, không dùng **, không dùng tiêu đề dài. Trả plain text ngắn.",
+    "Vòng lặp agent bắt buộc: Diagnose dữ liệu -> Decide bước ưu tiên -> Guide thao tác -> Hand off sang action/card nếu cần.",
+    "Chỉ dùng dữ liệu được cung cấp trong prompt. Nếu thiếu dữ liệu, nói rõ 'chưa có dữ liệu' và đề xuất màn cần cấu hình.",
+    "Không tự xác nhận thanh toán, không hủy/xóa dữ liệu, không đổi gói, không hứa đã thay đổi dữ liệu nếu chưa có action chạy thành công.",
+    "Không yêu cầu API key/env/token. Không suy đoán dữ liệu quán khác. Không expose raw JSON/tool output cho UI.",
+    "Nếu câu hỏi liên quan OCR, logo, ảnh món, branding hoặc setup: trả lời theo hướng tạo draft/action dùng được ngay, không chỉ mô tả lý thuyết.",
+    "Nếu câu hỏi liên quan xử lý đơn/bếp/thanh toán: ưu tiên action an toàn, batch action khi có nhiều đơn chờ, và nêu bước cần chủ quán xác nhận.",
+    "Nếu không chắc intent: chọn hành động an toàn nhất là mở đúng màn hoặc tạo checklist ngắn; không im lặng.",
+    "Ưu tiên câu trả lời scan nhanh trên màn hình quản lý: tối đa 3 dòng, ít chữ, nhiều thao tác cụ thể.",
+    `Danh mục prompt: ${config.label} (${config.intent}).`,
+    `Mục tiêu danh mục: ${config.description}`,
+    config.dataScope ? `Phạm vi dữ liệu được phép dùng: ${config.dataScope}` : "",
+    config.guardrails?.length ? `Luật an toàn riêng:\n${config.guardrails.map((item) => `- ${item}`).join("\n")}` : "",
+    config.systemAddendum,
+    `Contract trả lời: ${config.responseContract}`,
+    `Quán: ${restaurant.name}. Slug: ${restaurant.slug}. Loại hình: ${restaurant.business_type || "chưa cấu hình"}.`,
+    `Địa chỉ: ${restaurant.address || "chưa cấu hình"}. Hotline: ${restaurant.hotline || "chưa cấu hình"}.`,
+    restaurant.description ? `Mô tả quán: ${restaurant.description}` : ""
+  ].filter(Boolean);
+}
+
+function buildCustomerPromptKernel(config: IntentConfig<CustomerAiIntent>, restaurant: AiRestaurantContext) {
+  return [
+    "Bạn là trợ lý gọi món của LogiVN dành cho khách hàng đang dùng điện thoại.",
+    "Nhiệm vụ: giúp khách ra quyết định nhanh và dẫn tới nút đúng trong giao diện, không tư vấn lan man.",
+    "Ngôn ngữ bắt buộc: tiếng Việt thân thiện, rất ngắn, dễ hiểu.",
+    "Tuyệt đối không dùng markdown, không dùng **, không dùng bullet dài.",
+    "Không tự tạo đơn, không tự thêm/xóa món, không xác nhận đã thanh toán. Hướng dẫn khách bấm nút trong giao diện.",
+    "Chỉ gợi ý món có trong menu snapshot. Nếu thiếu dữ liệu, nói rõ và hỏi lại một câu ngắn.",
+    "Không yêu cầu thông tin nhạy cảm. Với dị ứng nghiêm trọng, khuyên khách gọi nhân viên.",
+    "Không lặp lại danh sách món dài. UI sẽ hiển thị CTA; câu trả lời chỉ giải thích quyết định.",
+    `Danh mục hỗ trợ: ${config.label} (${config.intent}).`,
+    config.systemAddendum,
+    `Contract trả lời: ${config.responseContract}`,
+    `Quán: ${restaurant.name}.`
+  ];
+}
+
 export function normalizeOwnerAiIntent(value: string | null | undefined, message: string) {
-  return asKey(value, ownerAiIntentConfig) ?? inferIntent(message, ownerKeywordMap, "overview");
+  return asKey(value, ownerAiIntentConfig) ?? inferIntent(message, ownerKeywordMap, "overview", ownerRouteRules);
 }
 
 export function normalizeCustomerAiIntent(value: string | null | undefined, message: string) {
-  return asKey(value, customerAiIntentConfig) ?? inferIntent(message, customerKeywordMap, "menu_discovery");
+  return asKey(value, customerAiIntentConfig) ?? inferIntent(message, customerKeywordMap, "menu_discovery", customerRouteRules);
 }
 
 export function normalizeStoreSetupDraftKind(value: string | null | undefined) {
@@ -496,29 +599,7 @@ export function buildOwnerAssistantMessages(input: {
   return [
     {
       role: "system",
-      content: [
-        "Bạn là LogiVN AI Operating Copilot cho chủ quán F&B tại Việt Nam.",
-        "Ngôn ngữ bắt buộc: tiếng Việt tự nhiên, gọn, rõ hành động.",
-        "Tuyệt đối không dùng markdown, không dùng **, không dùng tiêu đề dài. Trả plain text ngắn.",
-        "Bạn hoạt động như AI agent theo vòng lặp: Diagnose -> Decide -> Guide -> Hand off action. Không trả lời như chatbot chung chung.",
-        "Chỉ dùng dữ liệu được cung cấp trong prompt. Nếu thiếu dữ liệu, nói rõ 'chưa có dữ liệu' và đề xuất nơi cần cấu hình.",
-        "Không tự nhận đơn, không tự xác nhận thanh toán, không hứa đã thay đổi dữ liệu. Chỉ hướng dẫn thao tác trong dashboard.",
-        "Luôn bảo vệ dữ liệu tenant: không suy đoán dữ liệu quán khác, không nhắc tới khoá/API/env.",
-        "Ưu tiên câu trả lời scan nhanh trên màn hình quản lý: tối đa 3 dòng, ít chữ, nhiều hành động cụ thể.",
-        "Không nói kiểu 'hãy tự tìm'. Nếu cần thao tác, chỉ rõ màn, tên vùng, nút bấm và điều kiện an toàn.",
-        "Mọi hành động nhạy cảm như xác nhận thanh toán, hủy đơn, đổi gói, xóa dữ liệu phải nêu là cần chủ quán tự xác nhận.",
-        `Danh mục prompt: ${config.label} (${config.intent}).`,
-        `Mục tiêu danh mục: ${config.description}`,
-        config.dataScope ? `Phạm vi dữ liệu được phép dùng: ${config.dataScope}` : "",
-        config.guardrails?.length ? `Luật an toàn riêng:\n${config.guardrails.map((item) => `- ${item}`).join("\n")}` : "",
-        config.systemAddendum,
-        `Contract trả lời: ${config.responseContract}`,
-        `Quán: ${input.restaurant.name}. Slug: ${input.restaurant.slug}. Loại hình: ${input.restaurant.business_type || "chưa cấu hình"}.`,
-        `Địa chỉ: ${input.restaurant.address || "chưa cấu hình"}. Hotline: ${input.restaurant.hotline || "chưa cấu hình"}.`,
-        input.restaurant.description ? `Mô tả quán: ${input.restaurant.description}` : ""
-      ]
-        .filter(Boolean)
-        .join("\n")
+      content: buildOwnerPromptKernel(config, input.restaurant).join("\n")
     },
     {
       role: "user",
@@ -544,20 +625,7 @@ export function buildCustomerAssistantMessages(input: {
   return [
     {
       role: "system",
-      content: [
-        "Bạn là trợ lý gọi món của LogiVN dành cho khách hàng đang dùng điện thoại.",
-        "Ngôn ngữ bắt buộc: tiếng Việt thân thiện, rất ngắn, dễ hiểu.",
-        "Tuyệt đối không dùng markdown, không dùng **, không dùng bullet dài.",
-        "Bạn là customer agent: hiểu nhu cầu, chỉ ra bước kế tiếp và hướng khách tới nút đúng trong giao diện.",
-        "Không tự tạo đơn, không tự thêm/xóa món, không xác nhận đã thanh toán. Hướng dẫn khách bấm nút trong giao diện.",
-        "Không yêu cầu thông tin nhạy cảm. Với dị ứng nghiêm trọng, khuyên khách gọi nhân viên.",
-        "Nếu dữ liệu không có, hãy nói rõ và hỏi lại một câu ngắn.",
-        "Không lặp lại danh sách món dài. UI sẽ tự hiển thị nút thêm giỏ/chọn món; câu trả lời chỉ giải thích quyết định.",
-        `Danh mục hỗ trợ: ${config.label} (${config.intent}).`,
-        config.systemAddendum,
-        `Contract trả lời: ${config.responseContract}`,
-        `Quán: ${input.restaurant.name}.`
-      ].join("\n")
+      content: buildCustomerPromptKernel(config, input.restaurant).join("\n")
     },
     {
       role: "user",
@@ -579,23 +647,31 @@ export function buildBrandingMessages(input: {
   tone?: string;
   audience?: string;
 }) {
+  const restaurantName = input.restaurantName || input.restaurant.name;
+  const businessType = input.businessType || input.restaurant.business_type || "quán cafe/nhà hàng";
+  const tone = input.tone || "hiện đại, đáng tin, ấm, có tinh thần Việt nhưng không sến";
+  const audience = input.audience || "khách địa phương, dân văn phòng và nhóm khách quen";
   const prompt = [
-    "Tạo bộ nội dung thương hiệu cho quán F&B Việt Nam.",
+    "Tạo bộ nội dung thương hiệu có thể dùng thật cho quán F&B Việt Nam.",
     "Chỉ trả về JSON hợp lệ, không markdown.",
-    "Schema: {\"slogans\":[string,string,string],\"description\":string,\"brandVoice\":string,\"logoPrompt\":string,\"menuHeroPrompt\":string}",
-    "Yêu cầu logoPrompt/menuHeroPrompt: không yêu cầu chữ nhỏ trong ảnh, không đặt text phức tạp vào ảnh; ưu tiên biểu tượng, màu sắc, bối cảnh, khoảng trống để app overlay chữ chuẩn.",
-    "LogoPrompt phải mô tả biểu tượng/emblem, không yêu cầu AI render chính xác tên quán để tránh lỗi chữ.",
-    "MenuHeroPrompt phải tạo ảnh nền/cover giàu cảm xúc, có chỗ trống để LogiVN chèn menu bằng HTML/CSS.",
-    `Tên quán: ${input.restaurantName || input.restaurant.name}`,
-    `Loại hình: ${input.businessType || input.restaurant.business_type || "quán cafe/nhà hàng"}`,
-    `Phong cách: ${input.tone || "hiện đại, đáng tin, có tinh thần Việt"}`,
-    `Khách mục tiêu: ${input.audience || "khách địa phương và dân văn phòng"}`
+    "Schema: {\"slogans\":[string,string,string],\"description\":string,\"brandVoice\":string,\"logoPrompt\":string,\"menuHeroPrompt\":string,\"warnings\":[string]}",
+    "Slogan: tiếng Việt tự nhiên, tối đa 54 ký tự, không sáo rỗng kiểu 'nâng tầm trải nghiệm'.",
+    "Description: tối đa 500 ký tự, mô tả đúng loại hình, không cam kết chất lượng/y tế nếu thiếu căn cứ.",
+    "BrandVoice: tối đa 160 ký tự, đủ rõ để nhân viên viết nội dung đồng nhất.",
+    "LogoPrompt phải là creative brief chuyên nghiệp cho ảnh vuông 1024x1024: emblem/icon, silhouette rõ, scalable, dùng được làm avatar/app icon/menu badge.",
+    "LogoPrompt tuyệt đối không yêu cầu AI render chữ, tên quán, typography nhỏ, QR, watermark, menu text hay số điện thoại.",
+    "MenuHeroPrompt là ảnh nền/cover thương mại: có không gian âm để LogiVN overlay chữ thật, giàu cảm xúc F&B, không có text trong ảnh.",
+    "Mỗi prompt ảnh phải gồm: subject, composition, visual style, color palette, lighting, material/texture, negative constraints.",
+    `Tên quán: ${restaurantName}`,
+    `Loại hình: ${businessType}`,
+    `Phong cách: ${tone}`,
+    `Khách mục tiêu: ${audience}`
   ].join("\n");
 
   return [
     {
       role: "system",
-      content: "Bạn là strategist thương hiệu F&B Việt Nam và prompt engineer tạo ảnh. Trả JSON thuần, súc tích, có thể dùng ngay."
+      content: "Bạn là brand strategist F&B Việt Nam, creative director và prompt engineer ảnh thương mại. Trả JSON thuần, sắc, không filler."
     },
     { role: "user", content: prompt }
   ] satisfies AiPromptMessage[];
@@ -692,6 +768,8 @@ export function buildMenuOcrPrompt(input: { imageUrl?: string; imageBase64?: str
     "Chỉ trả JSON hợp lệ, không markdown.",
     "Schema: {\"categories\":[{\"name\":string,\"items\":[{\"name\":string,\"price\":number,\"description\":string|null,\"tags\":[string]}]}],\"warnings\":[string],\"confidence\":number}",
     "Giá phải là VND dạng số nguyên. Nếu không chắc, đưa vào warnings và confidence thấp.",
+    "Nếu tên món và giá nằm cùng một dòng, hãy tách số cuối dòng thành price và loại phần giá khỏi name. Ví dụ \"Cà phê sữa đá 28.000\" => name \"Cà phê sữa đá\", price 28000.",
+    "Không đưa tiêu đề quán, chữ MENU, số điện thoại, địa chỉ hoặc ghi chú không có giá vào danh sách items.",
     "Không tự thêm món không có trong ảnh/nội dung. Chuẩn hóa lỗi OCR phổ biến nhưng giữ tên món dễ nhận biết.",
     "Tags nên là các nhãn ngắn như bán chạy, đồ uống, món nóng, ăn nhẹ, chay, cay, signature nếu có căn cứ.",
     contentSource
@@ -704,26 +782,45 @@ export function buildImageGenerationPrompt(input: {
   businessType?: string;
   prompt?: string;
 }) {
+  const restaurantName = input.restaurantName || "Vietnamese cafe/restaurant";
+  const businessType = input.businessType || "F&B";
+  const creativeDirection = input.prompt?.trim().replace(/\s+/g, " ").slice(0, 1500);
   const base = [
-    "High quality commercial F&B brand image for a Vietnamese restaurant ordering platform.",
-    "No small text, no long readable typography, no misspelled words, no watermark, no QR code.",
-    "Leave clean empty space for the application to overlay exact Vietnamese text later.",
-    "Modern premium Vietnamese hospitality, trustworthy, warm, minimal-futuristic SaaS aesthetic.",
-    "Use deep green and warm orange as accents, ivory background, subtle Vietnamese cultural motifs only when tasteful.",
-    `Kind: ${input.kind}.`,
-    `Restaurant: ${input.restaurantName || "Vietnamese cafe/restaurant"}.`,
-    `Business type: ${input.businessType || "F&B"}.`
+    "Create a premium commercial image for LogiVN, a Vietnamese QR ordering and restaurant operations platform.",
+    `Restaurant context: ${restaurantName}. Business type: ${businessType}.`,
+    "Brand atmosphere: trustworthy Vietnamese hospitality, modern but warm, not generic SaaS stock art.",
+    "Core palette guidance: deep forest green, ivory rice-paper white, warm orange accent, natural food colors.",
+    "Output must feel production-ready for a real restaurant dashboard, not a demo placeholder.",
+    "Global negative constraints: no watermark, no QR code, no random letters, no misspelled text, no cluttered composition, no plastic-looking food, no distorted hands, no cheap 3D clipart, no generic AI mascot."
   ];
 
-  if (input.prompt) base.push(`Creative direction: ${input.prompt.trim().replace(/\s+/g, " ").slice(0, 1500)}`);
+  if (creativeDirection) base.push(`Specific creative brief from app/user: ${creativeDirection}`);
   if (input.kind === "logo") {
-    base.push("Create an icon/emblem only. Do not render the restaurant name as text. Strong silhouette, works as app avatar.");
+    base.push(
+      "Asset type: square logo emblem, 1024x1024.",
+      "Composition: centered icon mark with strong silhouette, readable at 48px, balanced negative space, no mockup background.",
+      "Style: premium vector-inspired emblem, clean geometry, subtle Vietnamese F&B cue only if tasteful, not a cartoon mascot.",
+      "Materials: flat color with slight paper/ink texture, crisp edges, app-icon-ready.",
+      "Hard rule: do not render the restaurant name, typography, initials, menu text or slogan in the image."
+    );
   }
   if (input.kind === "menu_preview") {
-    base.push("Create a menu cover/hero background with food, Vietnamese hospitality atmosphere, blank content panels, no readable menu item text.");
+    base.push(
+      "Asset type: landscape menu hero cover, 1536x1024.",
+      "Composition: editorial F&B scene with clear blank panel/negative space for HTML text overlay on one side.",
+      "Style: premium Vietnamese restaurant photography mixed with subtle brand illustration, cinematic but practical.",
+      "Lighting: soft natural window light, appetizing highlights, clean table surface.",
+      "Hard rule: no readable menu item text, no fake prices, no poster typography."
+    );
   }
   if (input.kind === "food_photo") {
-    base.push("Create a realistic appetizing food photo suitable for a digital menu card, clean composition, no text.");
+    base.push(
+      "Asset type: realistic food photo for a digital menu card, square 1024x1024.",
+      "Composition: hero dish centered, 45-degree camera angle, enough margin for cropping, no text overlays.",
+      "Style: natural Vietnamese food photography, appetizing steam/texture, real ingredients, honest portion size.",
+      "Lighting: soft side light, warm highlights, clean shadows, commercial menu quality.",
+      "Hard rule: the generated dish must match the specific dish named in the creative brief; if no dish is provided, do not invent a random dish."
+    );
   }
-  return base.join(" ");
+  return base.join("\n");
 }

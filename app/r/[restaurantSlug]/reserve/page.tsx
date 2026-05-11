@@ -38,6 +38,8 @@ export default async function PublicReservationPage({
         slug: restaurant.slug,
         logoUrl: restaurant.logo_url,
         address: restaurant.address,
+        storeLat: restaurant.store_lat,
+        storeLng: restaurant.store_lng,
         hotline: restaurant.hotline,
         contactEmail: restaurant.contact_email,
         reservationsEnabled: restaurant.reservations_enabled,

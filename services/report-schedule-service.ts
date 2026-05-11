@@ -423,65 +423,97 @@ async function writeReportLog(input: {
   throwIfSupabaseError(error);
 }
 
-export async function sendDueScheduledReports({ now = new Date(), limit = 25 }: { now?: Date; limit?: number } = {}) {
+export async function sendDueScheduledReports({
+  now = new Date(),
+  limit = 25,
+  maxBatches = 1
+}: {
+  now?: Date;
+  limit?: number;
+  maxBatches?: number;
+} = {}) {
   const supabase = createAdminSupabaseClient() as any;
-  const { data, error } = await supabase
-    .from("report_schedules")
-    .select("*,restaurant:restaurants(name,slug,contact_email)")
-    .eq("enabled", true)
-    .lte("next_run_at", now.toISOString())
-    .order("next_run_at", { ascending: true })
-    .limit(limit);
-  throwIfSupabaseError(error);
-
-  const schedules = (data ?? []) as ReportScheduleRow[];
   const results: Array<{ scheduleId: string; restaurantId: string; status: "sent" | "failed" | "skipped"; error?: string }> = [];
+  let batches = 0;
+  let hasMore = false;
 
-  for (const schedule of schedules) {
-    const recipients = normalizeRecipients(schedule.recipients);
-    const period = reportPeriodRange(schedule.frequency, now);
-    const subject = `LogiVN - Báo cáo ${frequencyLabel(schedule.frequency)} ${schedule.restaurant?.name ?? ""} (${dateOnly(period.start)} - ${dateOnly(period.end)})`;
+  while (batches < maxBatches) {
+    const { data, error } = await supabase
+      .from("report_schedules")
+      .select("*,restaurant:restaurants(name,slug,contact_email)")
+      .eq("enabled", true)
+      .lte("next_run_at", now.toISOString())
+      .order("next_run_at", { ascending: true })
+      .limit(limit);
+    throwIfSupabaseError(error);
 
-    try {
-      if (recipients.length === 0) {
-        await writeReportLog({
-          restaurantId: schedule.restaurant_id,
-          scheduleId: schedule.id,
-          frequency: schedule.frequency,
-          periodStart: period.start,
-          periodEnd: period.end,
-          recipients,
-          status: "skipped",
-          subject,
-          errorMessage: "Không có email nhận báo cáo"
-        });
-        results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "skipped" });
-      } else {
-        const reportAnchor = new Date(period.end.getTime() + 12 * 60 * 60 * 1000);
-        const report = await getAdminReport(schedule.restaurant_id, { period: schedule.frequency, now: reportAnchor });
-        const csv = buildAdminReportCsv(report);
-        const attachments = [
-          ...(schedule.include_csv
-            ? [{ filename: `logivn-report-${schedule.frequency}-${dateOnly(period.end)}.csv`, content: Buffer.from(csv).toString("base64") }]
-            : []),
-          ...(schedule.include_json
-            ? [{ filename: `logivn-report-${schedule.frequency}-${dateOnly(period.end)}.json`, content: Buffer.from(JSON.stringify(report, null, 2)).toString("base64") }]
-            : [])
-        ];
+    const schedules = (data ?? []) as ReportScheduleRow[];
+    if (schedules.length === 0) break;
 
-        const email = await sendEmail({
-          to: recipients,
-          subject,
-          html: buildReportEmailHtml({
-            restaurantName: schedule.restaurant?.name ?? "Nhà hàng",
+    batches += 1;
+    hasMore = schedules.length === limit;
+
+    for (const schedule of schedules) {
+      const recipients = normalizeRecipients(schedule.recipients);
+      const period = reportPeriodRange(schedule.frequency, now);
+      const subject = `LogiVN - Báo cáo ${frequencyLabel(schedule.frequency)} ${schedule.restaurant?.name ?? ""} (${dateOnly(period.start)} - ${dateOnly(period.end)})`;
+
+      try {
+        if (recipients.length === 0) {
+          await writeReportLog({
+            restaurantId: schedule.restaurant_id,
+            scheduleId: schedule.id,
             frequency: schedule.frequency,
             periodStart: period.start,
             periodEnd: period.end,
-            report
-          }),
-          attachments
-        });
+            recipients,
+            status: "skipped",
+            subject,
+            errorMessage: "Không có email nhận báo cáo"
+          });
+          results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "skipped" });
+        } else {
+          const reportAnchor = new Date(period.end.getTime() + 12 * 60 * 60 * 1000);
+          const report = await getAdminReport(schedule.restaurant_id, { period: schedule.frequency, now: reportAnchor });
+          const csv = buildAdminReportCsv(report);
+          const attachments = [
+            ...(schedule.include_csv
+              ? [{ filename: `logivn-report-${schedule.frequency}-${dateOnly(period.end)}.csv`, content: Buffer.from(csv).toString("base64") }]
+              : []),
+            ...(schedule.include_json
+              ? [{ filename: `logivn-report-${schedule.frequency}-${dateOnly(period.end)}.json`, content: Buffer.from(JSON.stringify(report, null, 2)).toString("base64") }]
+              : [])
+          ];
 
+          const email = await sendEmail({
+            to: recipients,
+            subject,
+            html: buildReportEmailHtml({
+              restaurantName: schedule.restaurant?.name ?? "Nhà hàng",
+              frequency: schedule.frequency,
+              periodStart: period.start,
+              periodEnd: period.end,
+              report
+            }),
+            attachments
+          });
+
+          await writeReportLog({
+            restaurantId: schedule.restaurant_id,
+            scheduleId: schedule.id,
+            frequency: schedule.frequency,
+            periodStart: period.start,
+            periodEnd: period.end,
+            recipients,
+            status: "sent",
+            subject,
+            providerMessageId: email.providerMessageId,
+            rawData: email.raw
+          });
+          results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "sent" });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Không gửi được báo cáo";
         await writeReportLog({
           restaurantId: schedule.restaurant_id,
           scheduleId: schedule.id,
@@ -489,55 +521,47 @@ export async function sendDueScheduledReports({ now = new Date(), limit = 25 }: 
           periodStart: period.start,
           periodEnd: period.end,
           recipients,
-          status: "sent",
+          status: "failed",
           subject,
-          providerMessageId: email.providerMessageId,
-          rawData: email.raw
+          errorMessage: message
         });
-        results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "sent" });
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Không gửi được báo cáo";
-      await writeReportLog({
-        restaurantId: schedule.restaurant_id,
-        scheduleId: schedule.id,
-        frequency: schedule.frequency,
-        periodStart: period.start,
-        periodEnd: period.end,
-        recipients,
-        status: "failed",
-        subject,
-        errorMessage: message
-      });
-      results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "failed", error: message });
-    } finally {
-      const nextRunAt = calculateNextReportRunAt(
-        {
-          enabled: schedule.enabled,
-          frequency: schedule.frequency,
-          recipients,
-          sendHour: schedule.send_hour,
-          sendDayOfWeek: schedule.send_day_of_week,
-          sendDayOfMonth: schedule.send_day_of_month,
-          sendMonth: schedule.send_month,
-          includeCsv: schedule.include_csv,
-          includeJson: schedule.include_json
-        },
-        new Date(now.getTime() + 60_000)
-      );
+        results.push({ scheduleId: schedule.id, restaurantId: schedule.restaurant_id, status: "failed", error: message });
+      } finally {
+        const nextRunAt = calculateNextReportRunAt(
+          {
+            enabled: schedule.enabled,
+            frequency: schedule.frequency,
+            recipients,
+            sendHour: schedule.send_hour,
+            sendDayOfWeek: schedule.send_day_of_week,
+            sendDayOfMonth: schedule.send_day_of_month,
+            sendMonth: schedule.send_month,
+            includeCsv: schedule.include_csv,
+            includeJson: schedule.include_json
+          },
+          new Date(now.getTime() + 60_000)
+        );
 
-      const { error: updateError } = await supabase
-        .from("report_schedules")
-        .update({
-          last_sent_at: new Date().toISOString(),
-          next_run_at: nextRunAt
-        })
-        .eq("id", schedule.id);
-      throwIfSupabaseError(updateError);
+        const { error: updateError } = await supabase
+          .from("report_schedules")
+          .update({
+            last_sent_at: new Date().toISOString(),
+            next_run_at: nextRunAt
+          })
+          .eq("id", schedule.id);
+        throwIfSupabaseError(updateError);
+      }
+    }
+
+    if (schedules.length < limit) {
+      hasMore = false;
+      break;
     }
   }
 
   return {
+    batches,
+    hasMore: hasMore && batches === maxBatches,
     processed: results.length,
     results
   };

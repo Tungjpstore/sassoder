@@ -1,20 +1,27 @@
 import Link from "next/link";
 import {
+  Activity,
   AlertTriangle,
   Banknote,
+  Bot,
   Building2,
   CheckCircle2,
+  Clock3,
+  ClipboardCheck,
   CircleDot,
   CreditCard,
   Database,
   FileSliders,
+  FileText,
   GitBranch,
   Globe2,
   KeyRound,
   LockKeyhole,
   LogOut,
+  MapPinned,
   PackageCheck,
   RefreshCw,
+  ServerCog,
   ShieldCheck,
   SlidersHorizontal,
   Store,
@@ -27,6 +34,7 @@ import {
   platformAdminLogoutAction,
   refreshPlatformAdminAction,
   rejectSubscriptionPaymentAction,
+  resolveBillingAnomalyAction,
   updateBillingSettingAction,
   updateBrandSettingAction,
   updateLandingSettingAction,
@@ -40,23 +48,45 @@ import { cn } from "@/lib/utils";
 import { getPlatformAdminSnapshot } from "@/services/platform-admin-service";
 
 type Snapshot = Awaited<ReturnType<typeof getPlatformAdminSnapshot>>;
-type ActiveSection = "overview" | "site" | "plans" | "billing" | "tenants" | "users" | "security" | "release";
+type ActiveSection = "overview" | "site" | "content" | "plans" | "billing" | "tenants" | "users" | "ai" | "maps" | "atlas" | "ops" | "governance" | "security" | "release";
 type Tenant = Snapshot["tenants"][number];
 type Plan = Snapshot["plans"][number];
+type BillingAnomaly = Snapshot["billingCutover"]["anomalies"][number];
+type Integration = Snapshot["integrations"][number];
+type ProjectSurface = Snapshot["projectAtlas"]["surfaces"][number];
 
 const sections: Array<{ key: ActiveSection; label: string; href: string; icon: React.ElementType }> = [
   { key: "overview", label: "Tổng quan", href: "/admin", icon: SlidersHorizontal },
   { key: "site", label: "Website", href: "/admin/site", icon: FileSliders },
+  { key: "content", label: "Content", href: "/admin/content", icon: FileText },
   { key: "plans", label: "Gói dịch vụ", href: "/admin/plans", icon: PackageCheck },
   { key: "billing", label: "Thanh toán gói", href: "/admin/billing", icon: CreditCard },
   { key: "tenants", label: "Cửa hàng", href: "/admin/tenants", icon: Store },
   { key: "users", label: "User", href: "/admin/users", icon: UsersRound },
+  { key: "ai", label: "AI", href: "/admin/ai", icon: Bot },
+  { key: "maps", label: "Maps", href: "/admin/maps", icon: MapPinned },
+  { key: "atlas", label: "Atlas", href: "/admin/atlas", icon: Globe2 },
+  { key: "ops", label: "Ops", href: "/admin/ops", icon: ServerCog },
+  { key: "governance", label: "Governance", href: "/admin/governance", icon: ClipboardCheck },
   { key: "security", label: "Bảo mật", href: "/admin/security", icon: ShieldCheck },
   { key: "release", label: "Release", href: "/admin/release", icon: GitBranch }
 ];
 
+const projectSurfaceKindLabel: Record<ProjectSurface["kind"], string> = {
+  frontend: "Frontend",
+  backend: "Backend",
+  data: "Data",
+  automation: "Automation",
+  integration: "Integration"
+};
+
 const moduleStatusLabel: Record<string, string> = {
   live: "Đang chạy",
+  configured: "Đã cấu hình",
+  partial: "Một phần",
+  static: "Code-managed",
+  planned: "Đã lên kế hoạch",
+  blocked: "Chưa mở",
   needs_config: "Cần cấu hình",
   needs_review: "Cần rà soát"
 };
@@ -83,6 +113,30 @@ const paymentStatusLabel: Record<string, string> = {
   rejected: "Từ chối",
   expired: "Hết hạn"
 };
+
+const cutoverSourceLabel: Record<string, string> = {
+  legacy: "Legacy fallback",
+  mixed: "Mixed bridge",
+  v2: "Billing v2"
+};
+
+const cutoverStatusLabel: Record<string, string> = {
+  healthy: "Ổn định",
+  partial: "Đang chuyển tiếp",
+  needs_attention: "Cần xử lý"
+};
+
+function billingAnomalyActionLabel(anomaly: BillingAnomaly) {
+  if (anomaly.key === "premium_trial_subscription") return "Đưa về trial Pro";
+  if (anomaly.key === "pending_without_payment") return "Chuẩn hóa trạng thái";
+  if (anomaly.key === "pending_payment_missing_policy") return "Bổ sung policy";
+  return "Xử lý";
+}
+
+function canResolveBillingAnomaly(anomaly: BillingAnomaly) {
+  if (anomaly.key === "pending_payment_missing_policy") return Boolean(anomaly.paymentId);
+  return Boolean(anomaly.subscriptionId);
+}
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value);
@@ -111,11 +165,24 @@ function badgeTone(kind: "good" | "warning" | "danger" | "info" | "neutral") {
 }
 
 function statusTone(status: string) {
-  if (status === "active" || status === "confirmed" || status === "live") return "good";
-  if (status === "suspended" || status === "waiting_confirm" || status === "trialing" || status === "needs_review") return "warning";
+  if (status === "active" || status === "confirmed" || status === "live" || status === "configured" || status === "pass" || status === "success") return "good";
+  if (status === "suspended" || status === "waiting_confirm" || status === "trialing" || status === "needs_review" || status === "partial" || status === "static" || status === "planned" || status === "warn") return "warning";
   if (status === "deleted" || status === "blocked" || status === "rejected" || status === "past_due") return "danger";
   if (status === "needs_config" || status === "pending_payment") return "info";
+  if (status === "fail" || status === "failed" || status === "missing") return "danger";
   return "neutral";
+}
+
+function riskTone(risk: "low" | "medium" | "high") {
+  if (risk === "high") return "danger";
+  if (risk === "medium") return "warning";
+  return "good";
+}
+
+function criticalityTone(criticality: ProjectSurface["criticality"]) {
+  if (criticality === "critical") return "danger";
+  if (criticality === "high") return "warning";
+  return "info";
 }
 
 function Field({
@@ -177,10 +244,10 @@ function PrimaryButton({ children, tone = "dark" }: { children: React.ReactNode;
     <button
       className={cn(
         "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition",
-        tone === "dark" && "bg-slate-950 text-white hover:bg-slate-800",
-        tone === "orange" && "bg-[#F28C28] text-white hover:bg-[#dc7c1f]",
-        tone === "danger" && "bg-red-600 text-white hover:bg-red-700",
-        tone === "soft" && "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+        tone === "dark" && "bg-[var(--primary)] text-[#FFF7EB] hover:bg-[var(--primary-hover)]",
+        tone === "orange" && "bg-[var(--accent)] text-[#FFF7EB] hover:bg-[var(--accent-hover)]",
+        tone === "danger" && "bg-[var(--accent-strong)] text-[#FFF7EB] hover:bg-[var(--accent)]",
+        tone === "soft" && "border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:bg-[var(--soft-surface)]"
       )}
     >
       {children}
@@ -270,7 +337,7 @@ function Sidebar({ activeSection, snapshot }: { activeSection: ActiveSection; sn
                 href={section.href}
                 className={cn(
                   "flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition",
-                  active ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+                  active ? "bg-[var(--primary)] text-[#FFF7EB]" : "text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)] hover:text-[var(--foreground)]"
                 )}
               >
                 <Icon size={16} />
@@ -454,7 +521,7 @@ function SiteSettings({ snapshot }: { snapshot: Snapshot }) {
 function Plans({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      {snapshot.plans.map((plan) => (
+      {snapshot.plans.map((plan: Plan) => (
         <PlanForm key={plan.id} plan={plan} />
       ))}
     </div>
@@ -502,6 +569,121 @@ function Billing({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="MRR" value={formatVnd(snapshot.metrics.mrr)} detail="Doanh thu SaaS dự kiến hằng tháng" icon={Banknote} tone="good" />
         <MetricCard label="Trial" value={formatNumber(snapshot.metrics.trialingSubscriptions)} detail="Cần chuyển đổi sau 30 ngày" icon={CircleDot} tone="info" />
       </div>
+
+      <SectionCard title="Billing v2 cutover health">
+        <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Trạng thái</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={badgeTone(statusTone(snapshot.billingCutover.status === "healthy" ? "live" : snapshot.billingCutover.status === "partial" ? "needs_review" : "needs_config"))}>
+                  {cutoverStatusLabel[snapshot.billingCutover.status]}
+                </span>
+                <span className={badgeTone(statusTone(snapshot.billingCutover.source === "v2" ? "live" : snapshot.billingCutover.source === "mixed" ? "needs_review" : "needs_config"))}>
+                  {cutoverSourceLabel[snapshot.billingCutover.source]}
+                </span>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-600">
+                Màn này giúp nhìn nhanh coverage giữa legacy billing và billing v2 sau migration/backfill.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Legacy</p>
+              <div className="mt-3 grid gap-2 text-sm text-slate-700">
+                <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.legacy.subscriptions)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Payments</span><strong>{formatNumber(snapshot.billingCutover.legacy.payments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Pending</span><strong>{formatNumber(snapshot.billingCutover.legacy.pendingPayments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>AI successes</span><strong>{formatNumber(snapshot.billingCutover.legacy.aiUsageSuccess)}</strong></div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:col-span-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Billing v2</p>
+              <div className="mt-3 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
+                <div className="flex items-center justify-between gap-3"><span>Plans</span><strong>{formatNumber(snapshot.billingCutover.v2.plans)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Entitlements</span><strong>{formatNumber(snapshot.billingCutover.v2.entitlements)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.v2.subscriptions)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Invoices</span><strong>{formatNumber(snapshot.billingCutover.v2.invoices)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Payments</span><strong>{formatNumber(snapshot.billingCutover.v2.payments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Payment logs</span><strong>{formatNumber(snapshot.billingCutover.v2.paymentLogs)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Usage quotas</span><strong>{formatNumber(snapshot.billingCutover.v2.usageQuotas)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Feature usage</span><strong>{formatNumber(snapshot.billingCutover.v2.featureUsageLogs)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Trial usage</span><strong>{formatNumber(snapshot.billingCutover.v2.trialUsage)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Upgrade events</span><strong>{formatNumber(snapshot.billingCutover.v2.upgradeEvents)}</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            {snapshot.billingCutover.checks.map((check) => (
+              <div key={check.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-950">{check.label}</p>
+                  <span className={badgeTone(check.status === "pass" ? "good" : check.status === "warn" ? "warning" : "danger")}>
+                    {check.status === "pass" ? "PASS" : check.status === "warn" ? "WARN" : "FAIL"}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{check.detail}</p>
+              </div>
+            ))}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+              CLI check: <code className="rounded bg-white px-1.5 py-0.5 text-slate-950">npm run billing:verify</code>
+            </div>
+          </div>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Billing anomalies cần xử lý">
+        <div className="grid gap-3">
+          {snapshot.billingCutover.anomalies.length ? (
+            snapshot.billingCutover.anomalies.map((anomaly) => (
+              <div key={`${anomaly.key}-${anomaly.subscriptionId ?? anomaly.paymentId ?? anomaly.restaurantId}`} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-950">{anomaly.restaurantName}</p>
+                    <p className="mt-1 text-xs text-slate-500">{anomaly.restaurantSlug}.logivn.com</p>
+                  </div>
+                  <span className={badgeTone(anomaly.severity === "danger" ? "danger" : "warning")}>
+                    {anomaly.severity === "danger" ? "Cần xử lý gấp" : "Cần rà soát"}
+                  </span>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-600">{anomaly.detail}</p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                  {anomaly.subscriptionId ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">subscription {anomaly.subscriptionId.slice(0, 8)}</span> : null}
+                  {anomaly.paymentId ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">payment {anomaly.paymentId.slice(0, 8)}</span> : null}
+                </div>
+                {canResolveBillingAnomaly(anomaly) ? (
+                  <form action={resolveBillingAnomalyAction} className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="text-xs leading-5 text-slate-500">
+                      <p className="font-semibold text-slate-700">Safe reconcile</p>
+                      <p>Chỉ cập nhật trạng thái/metadata đã được guard server-side và ghi audit log.</p>
+                    </div>
+                    <input type="hidden" name="key" value={anomaly.key} />
+                    {anomaly.subscriptionId ? <input type="hidden" name="subscriptionId" value={anomaly.subscriptionId} /> : null}
+                    {anomaly.paymentId ? <input type="hidden" name="paymentId" value={anomaly.paymentId} /> : null}
+                    <PrimaryButton tone={anomaly.severity === "danger" ? "orange" : "soft"}>
+                      {billingAnomalyActionLabel(anomaly)}
+                    </PrimaryButton>
+                  </form>
+                ) : (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
+                    Thiếu định danh để tự động xử lý. Cần rà soát thủ công bằng CLI audit.
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+              Chưa phát hiện anomaly billing rõ ràng trong snapshot hiện tại.
+            </div>
+          )}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+            Audit sâu hơn bằng CLI: <code className="rounded bg-white px-1.5 py-0.5 text-slate-950">npm run billing:audit</code>
+          </div>
+        </div>
+      </SectionCard>
+
       <SectionCard title="Giao dịch mua/gia hạn gói">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-left text-sm">
@@ -689,6 +871,471 @@ function Users({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+function ContentControl({ snapshot }: { snapshot: Snapshot }) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-3">
+        <MetricCard label="Surfaces" value={formatNumber(snapshot.contentSurfaces.length)} detail="Landing, pricing, blog, QR menu và SEO feed" icon={FileText} tone="info" />
+        <MetricCard label="Blog posts" value={formatNumber(snapshot.contentSurfaces.find((item) => item.key === "blog")?.items ?? 0)} detail="Hiện là content-as-code, chưa có draft CMS" icon={Globe2} tone="warning" />
+        <MetricCard label="Editable trực tiếp" value={formatNumber(snapshot.contentSurfaces.filter((item) => item.editable === "direct").length)} detail="Các vùng có server action an toàn trong /admin" icon={CheckCircle2} tone="good" />
+      </div>
+
+      <SectionCard title="Bề mặt public đang quản lý">
+        <div className="grid gap-3">
+          {snapshot.contentSurfaces.map((surface) => (
+            <div key={surface.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-950">{surface.name}</p>
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-xs text-slate-500">{surface.route}</span>
+                    <span className={badgeTone(statusTone(surface.status))}>{moduleStatusLabel[surface.status] ?? surface.status}</span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{surface.note}</p>
+                </div>
+                <Link href={surface.route.startsWith("http") ? surface.route : surface.route} className="inline-flex h-9 items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700">
+                  Mở trang
+                </Link>
+              </div>
+              <div className="mt-3 grid gap-2 text-xs text-slate-500 md:grid-cols-4">
+                <span>Nguồn: <strong className="text-slate-700">{surface.source}</strong></span>
+                <span>Owner: <strong className="text-slate-700">{surface.owner}</strong></span>
+                <span>Items: <strong className="text-slate-700">{surface.items}</strong></span>
+                <span>Update: <strong className="text-slate-700">{surface.lastUpdated ?? "Theo deploy/data"}</strong></span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Nâng cấp CMS an toàn">
+        <div className="grid gap-2 md:grid-cols-3">
+          {[
+            ["Draft/Preview", "Mọi sửa landing/blog/pricing đi qua bản nháp và preview URL trước khi publish."],
+            ["Publish/Rollback", "Lưu revision immutable để quay lại nội dung cũ nếu SEO hoặc conversion giảm."],
+            ["Approval", "Blog, pricing và legal copy cần role Content/Owner duyệt, không sửa thẳng production."]
+          ].map(([title, detail]) => (
+            <div key={title} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-sm font-semibold text-slate-950">{title}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function AiControl({ snapshot }: { snapshot: Snapshot }) {
+  const aiIntegrations = snapshot.integrations.filter((item) => item.category === "ai");
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="AI requests 24h" value={formatNumber(snapshot.aiControl.requests)} detail={`${snapshot.aiControl.successRate}% success`} icon={Bot} tone={snapshot.aiControl.failures ? "warning" : "good"} />
+        <MetricCard label="Tokens 24h" value={formatNumber(snapshot.aiControl.tokens)} detail={`${snapshot.aiControl.imageCount} image requests`} icon={Activity} tone="info" />
+        <MetricCard label="Blocked/failed" value={formatNumber(snapshot.aiControl.blocked + snapshot.aiControl.failures)} detail="Theo ai_usage_logs gần nhất" icon={AlertTriangle} tone={snapshot.aiControl.blocked + snapshot.aiControl.failures ? "warning" : "neutral"} />
+        <MetricCard label="Providers" value={formatNumber(aiIntegrations.filter((item) => item.status === "configured").length)} detail={`${aiIntegrations.length} provider groups tracked`} icon={KeyRound} tone="info" />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <SectionCard title="AI routing">
+          <dl className="grid gap-3 text-sm">
+            {[
+              ["Owner provider", snapshot.aiControl.routing.ownerProvider],
+              ["Customer provider", snapshot.aiControl.routing.customerProvider],
+              ["Image provider", snapshot.aiControl.routing.imageProvider],
+              ["Owner model", snapshot.aiControl.routing.ownerModel],
+              ["Image model", snapshot.aiControl.routing.imageModel]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
+                <dd className="mt-2 break-all font-mono text-sm text-slate-950">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </SectionCard>
+
+        <SectionCard title="Provider usage 24h">
+          <div className="grid gap-2">
+            {snapshot.aiControl.providers.map((provider) => (
+              <div key={provider.provider} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-950">{provider.provider}</p>
+                  <span className={badgeTone(provider.failureRate > 10 ? "warning" : "good")}>{provider.failureRate}% lỗi</span>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-3">
+                  <span>{provider.requests} requests</span>
+                  <span>{formatNumber(provider.tokens)} tokens</span>
+                  <span>{provider.models.join(", ") || "Chưa có model log"}</span>
+                </div>
+              </div>
+            ))}
+            {!snapshot.aiControl.providers.length ? <p className="text-sm text-slate-500">Chưa có AI usage log trong 24h gần nhất.</p> : null}
+          </div>
+        </SectionCard>
+      </div>
+
+      <IntegrationGrid title="AI secrets & config" integrations={aiIntegrations} />
+    </div>
+  );
+}
+
+function MapsControl({ snapshot }: { snapshot: Snapshot }) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Provider calls 24h" value={formatNumber(snapshot.mapControl.provider.requests)} detail={`${snapshot.mapControl.provider.failureRate}% lỗi`} icon={MapPinned} tone={snapshot.mapControl.provider.failureRate > 10 ? "warning" : "good"} />
+        <MetricCard label="Map cost est." value={formatVnd(snapshot.mapControl.provider.estimatedCostVnd)} detail="Ước tính từ env cost accounting" icon={Banknote} tone="info" />
+        <MetricCard label="Cache hit" value={`${snapshot.mapControl.cache.hitRate}%`} detail={`${snapshot.mapControl.cache.events} cache events`} icon={Database} tone="neutral" />
+        <MetricCard label="Quote accept" value={`${snapshot.mapControl.quotes.acceptanceRate}%`} detail={`${snapshot.mapControl.quotes.requests} delivery quotes`} icon={CheckCircle2} tone="good" />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <SectionCard title="Maps routing config">
+          <dl className="grid gap-3 text-sm">
+            {[
+              ["Geocoder", snapshot.mapControl.routing.geocoder],
+              ["Geocoder fallback", snapshot.mapControl.routing.geocoderFallbacks],
+              ["Router", snapshot.mapControl.routing.router],
+              ["Router fallback", snapshot.mapControl.routing.routerFallbacks],
+              ["Cache namespace", snapshot.mapControl.routing.cacheNamespace]
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
+                <dd className="mt-2 break-all font-mono text-sm text-slate-950">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </SectionCard>
+
+        <SectionCard title="Provider breakdown 24h">
+          <div className="grid gap-2">
+            {snapshot.mapControl.provider.breakdown.map((provider) => (
+              <div key={provider.provider} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-950">{provider.provider}</p>
+                  <span className={badgeTone(provider.failureRate > 10 ? "warning" : "good")}>{provider.failureRate}% lỗi</span>
+                </div>
+                <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-4">
+                  <span>{provider.requests} calls</span>
+                  <span>{provider.failures} failures</span>
+                  <span>{provider.avgLatencyMs}ms avg</span>
+                  <span>{formatVnd(provider.estimatedCostVnd)}</span>
+                </div>
+              </div>
+            ))}
+            {!snapshot.mapControl.provider.breakdown.length ? <p className="text-sm text-slate-500">Chưa có map provider log trong 24h gần nhất.</p> : null}
+          </div>
+        </SectionCard>
+      </div>
+
+      <IntegrationGrid title="Maps integrations" integrations={snapshot.integrations.filter((item) => item.category === "maps" || item.key === "persistent-cache")} />
+    </div>
+  );
+}
+
+function OpsControl({ snapshot }: { snapshot: Snapshot }) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Integrations" value={formatNumber(snapshot.integrations.length)} detail={`${snapshot.integrations.filter((item) => item.status === "configured").length} configured`} icon={ServerCog} tone="info" />
+        <MetricCard label="Cron jobs" value={formatNumber(snapshot.cronJobs.length)} detail={`${snapshot.cronJobs.filter((job) => job.status === "configured").length} có CRON_SECRET`} icon={Clock3} tone={snapshot.cronJobs.every((job) => job.status === "configured") ? "good" : "warning"} />
+        <MetricCard label="Env warnings" value={formatNumber(snapshot.metrics.integrationWarnings)} detail="Thiếu hoặc mới cấu hình một phần" icon={AlertTriangle} tone={snapshot.metrics.integrationWarnings ? "warning" : "good"} />
+        <MetricCard label="R2 readiness" value={snapshot.integrations.find((item) => item.key === "cloudflare-r2")?.status === "configured" ? "Ready" : "Planned"} detail="Không lưu raw secret trong DB" icon={LockKeyhole} tone="neutral" />
+      </div>
+
+      <SectionCard title="Cron jobs">
+        <div className="grid gap-3 md:grid-cols-3">
+          {snapshot.cronJobs.map((job) => (
+            <div key={job.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-slate-950">{job.name}</p>
+                <span className={badgeTone(statusTone(job.status))}>{moduleStatusLabel[job.status] ?? job.status}</span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{job.note}</p>
+              <div className="mt-3 grid gap-1 font-mono text-xs text-slate-500">
+                <span>{job.path}</span>
+                <span>{job.schedule}</span>
+                <span>Guard: {job.guard}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+
+      <IntegrationGrid title="Secrets, storage & runtime" integrations={snapshot.integrations.filter((item) => item.category !== "ai" && item.category !== "maps")} />
+    </div>
+  );
+}
+
+function ProjectAtlas({ snapshot }: { snapshot: Snapshot }) {
+  const { summary, surfaces } = snapshot.projectAtlas;
+  const surfaceKinds = (Object.keys(projectSurfaceKindLabel) as Array<ProjectSurface["kind"]>).map((kind) => ({
+    kind,
+    label: projectSurfaceKindLabel[kind],
+    count: summary[kind],
+    surfaces: surfaces.filter((surface) => surface.kind === kind)
+  }));
+  const controlGaps = surfaces.filter((surface) => surface.control !== "live");
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Project surfaces" value={formatNumber(summary.surfaces)} detail="Frontend, backend, data, automation, integrations" icon={Globe2} tone="info" />
+        <MetricCard label="Critical surfaces" value={formatNumber(summary.critical)} detail="Luồng ảnh hưởng trực tiếp production" icon={AlertTriangle} tone="warning" />
+        <MetricCard label="Observe live" value={`${summary.liveObserve}/${summary.surfaces}`} detail="Đã có dữ liệu quan sát trong /admin" icon={Activity} tone="good" />
+        <MetricCard label="Control gaps" value={formatNumber(summary.plannedControl)} detail="Planned hoặc blocked, cần nâng cấp dần" icon={ClipboardCheck} tone={summary.plannedControl ? "warning" : "good"} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <SectionCard title="Coverage by layer">
+          <div className="grid gap-2">
+            {surfaceKinds.map((group) => (
+              <div key={group.kind} className="rounded-xl border border-slate-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold text-slate-950">{group.label}</p>
+                  <span className={badgeTone("info")}>{formatNumber(group.count)} surfaces</span>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  {group.surfaces.map((surface) => surface.name).join(" · ")}
+                </p>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Priority control gaps">
+          <div className="grid gap-2">
+            {controlGaps.slice(0, 6).map((surface) => (
+              <div key={surface.key} className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-950">{surface.name}</p>
+                  <span className={badgeTone(statusTone(surface.control))}>{moduleStatusLabel[surface.control] ?? surface.control}</span>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-orange-800">{surface.nextStep}</p>
+              </div>
+            ))}
+            {!controlGaps.length ? <p className="text-sm text-slate-500">Tất cả surfaces đã có control live.</p> : null}
+          </div>
+        </SectionCard>
+      </div>
+
+      <SectionCard title="Project surface map">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.1em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">Surface</th>
+                <th className="px-3 py-3">Layer / Owner</th>
+                <th className="px-3 py-3">Routes & APIs</th>
+                <th className="px-3 py-3">Dependencies</th>
+                <th className="px-3 py-3">Observe / Control / Audit</th>
+                <th className="px-3 py-3">Next step</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {surfaces.map((surface) => (
+                <tr key={surface.key} className="bg-white align-top">
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-semibold text-slate-950">{surface.name}</p>
+                      <span className={badgeTone(statusTone(surface.status))}>{moduleStatusLabel[surface.status] ?? surface.status}</span>
+                      <span className={badgeTone(criticalityTone(surface.criticality))}>{surface.criticality.toUpperCase()}</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">{surface.note}</p>
+                  </td>
+                  <td className="px-3 py-3">
+                    <p className="font-semibold text-slate-800">{projectSurfaceKindLabel[surface.kind]}</p>
+                    <p className="mt-1 text-xs text-slate-500">{surface.owner}</p>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {surface.routes.slice(0, 5).map((route) => (
+                        <span key={route} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500">
+                          {route}
+                        </span>
+                      ))}
+                      {surface.routes.length > 5 ? <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-500">+{surface.routes.length - 5}</span> : null}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {surface.dependencies.slice(0, 5).map((dependency) => (
+                        <span key={dependency} className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-500">
+                          {dependency}
+                        </span>
+                      ))}
+                      {surface.dependencies.length > 5 ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500">+{surface.dependencies.length - 5}</span> : null}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="grid gap-1">
+                      {[
+                        ["Observe", surface.observe],
+                        ["Control", surface.control],
+                        ["Audit", surface.audit]
+                      ].map(([label, state]) => (
+                        <div key={`${surface.key}-${label}`} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1">
+                          <span className="text-[11px] font-semibold text-slate-500">{label}</span>
+                          <span className={badgeTone(statusTone(state))}>{moduleStatusLabel[state] ?? state}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600">{surface.nextStep}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function GovernanceControl({ snapshot }: { snapshot: Snapshot }) {
+  const summary = snapshot.governance.summary;
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Capabilities" value={formatNumber(summary.capabilities)} detail={`${summary.liveObserve} vùng quan sát live`} icon={ClipboardCheck} tone="info" />
+        <MetricCard label="Live mutations" value={formatNumber(summary.liveAdjust)} detail={`${summary.highRiskMutations} high-risk mutations đã map`} icon={ShieldCheck} tone="warning" />
+        <MetricCard label="Rollback gaps" value={formatNumber(summary.partialOrPlannedRollback)} detail="Cần revision/approval để rollback sạch" icon={GitBranch} tone={summary.partialOrPlannedRollback ? "warning" : "good"} />
+        <MetricCard label="RBAC roles" value={`${summary.rolesReady}/${summary.rolesReady + summary.rolesPlanned}`} detail="Runtime RBAC chưa bật" icon={UserRound} tone="warning" />
+      </div>
+
+      <SectionCard title="Capability matrix">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] border-collapse text-left text-sm">
+            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.1em] text-slate-500">
+              <tr>
+                <th className="px-3 py-3">Vùng</th>
+                <th className="px-3 py-3">Owner</th>
+                <th className="px-3 py-3">Observe</th>
+                <th className="px-3 py-3">Adjust</th>
+                <th className="px-3 py-3">Audit</th>
+                <th className="px-3 py-3">Rollback</th>
+                <th className="px-3 py-3">Next step</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {snapshot.governance.capabilities.map((capability) => (
+                <tr key={capability.key} className="bg-white align-top">
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={capability.section} className="font-semibold text-slate-950 hover:underline">{capability.name}</Link>
+                      <span className={badgeTone(statusTone(capability.status))}>{moduleStatusLabel[capability.status] ?? capability.status}</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">{capability.note}</p>
+                  </td>
+                  <td className="px-3 py-3 text-slate-600">{capability.owner}</td>
+                  {[capability.observe, capability.adjust, capability.audit, capability.rollback].map((state, index) => (
+                    <td key={`${capability.key}-${index}`} className="px-3 py-3">
+                      <span className={badgeTone(statusTone(state))}>{moduleStatusLabel[state] ?? state}</span>
+                    </td>
+                  ))}
+                  <td className="px-3 py-3 text-slate-600">{capability.nextStep}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <SectionCard title="Mutation registry">
+          <div className="grid gap-3">
+            {snapshot.governance.mutations.map((mutation) => (
+              <div key={mutation.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-950">{mutation.name}</p>
+                      <span className={badgeTone(riskTone(mutation.risk))}>{mutation.risk.toUpperCase()}</span>
+                      <span className={badgeTone(statusTone(mutation.status))}>{moduleStatusLabel[mutation.status] ?? mutation.status}</span>
+                    </div>
+                    <p className="mt-1 font-mono text-xs text-slate-500">{mutation.key} · {mutation.surface}</p>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 md:grid-cols-3">
+                  <span><strong className="text-slate-800">Guard:</strong> {mutation.guard}</span>
+                  <span><strong className="text-slate-800">Audit:</strong> {mutation.auditAction}</span>
+                  <span><strong className="text-slate-800">Rollback:</strong> {mutation.rollback}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+
+        <div className="grid gap-4">
+          <SectionCard title="RBAC readiness">
+            <div className="grid gap-2">
+              {snapshot.governance.roles.map((role) => (
+                <div key={role.key} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-950">{role.role}</p>
+                    <span className={badgeTone(statusTone(role.status))}>{moduleStatusLabel[role.status] ?? role.status}</span>
+                  </div>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">{role.scope}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{role.note}</p>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Production guardrails tiếp theo">
+            <div className="grid gap-2 text-sm leading-6 text-slate-600">
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-orange-800">
+                High-risk billing, tenant và plan actions nên đi qua two-person approval trước khi mở rộng team.
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                Content/blog/pricing cần revision immutable để rollback trong vài giây thay vì khôi phục thủ công.
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                Support mode nên có reason, expiry, read-only mặc định và audit trước khi cho xem sâu tenant data.
+              </div>
+            </div>
+          </SectionCard>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IntegrationGrid({ title, integrations }: { title: string; integrations: Integration[] }) {
+  return (
+    <SectionCard title={title}>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {integrations.map((integration) => (
+          <div key={integration.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">{integration.name}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{integration.category}</p>
+              </div>
+              <span className={badgeTone(statusTone(integration.status))}>{moduleStatusLabel[integration.status] ?? integration.status}</span>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-600">{integration.note}</p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">{integration.secretHandling}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {integration.envNames.map((name) => (
+                <span key={name} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] text-slate-500">
+                  {name}
+                </span>
+              ))}
+            </div>
+            <p className="mt-3 text-xs font-semibold text-slate-500">
+              Configured {integration.configured}/{integration.total}{integration.required ? " · required" : " · optional"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
 function Security({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
@@ -818,9 +1465,9 @@ function Release({ snapshot }: { snapshot: Snapshot }) {
         <SectionCard title="Việc cần làm trước thương mại hoá">
           <div className="grid gap-2">
             {checklist.map((item, index) => (
-              <div key={item} className="flex gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-slate-950 text-xs font-semibold text-white">{index + 1}</span>
-                <p className="text-sm leading-6 text-slate-700">{item}</p>
+              <div key={item} className="flex gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--primary)] text-xs font-semibold text-[#FFF7EB]">{index + 1}</span>
+                <p className="text-sm leading-6 text-[var(--muted-foreground)]">{item}</p>
               </div>
             ))}
           </div>
@@ -842,7 +1489,7 @@ function MobileNav({ activeSection }: { activeSection: ActiveSection }) {
             href={section.href}
             className={cn(
               "inline-flex h-9 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-semibold",
-              active ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-600"
+              active ? "border-[var(--primary)] bg-[var(--primary)] text-[#FFF7EB]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
             )}
           >
             <Icon size={15} />
@@ -856,7 +1503,7 @@ function MobileNav({ activeSection }: { activeSection: ActiveSection }) {
 
 export function PlatformAdminConsole({ snapshot, activeSection }: { snapshot: Snapshot; activeSection: ActiveSection }) {
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-950">
+    <main className="stitch-admin min-h-screen bg-[var(--background)] text-[var(--foreground)]">
       <Sidebar activeSection={activeSection} snapshot={snapshot} />
       <section className="lg:pl-[252px]">
         <Topbar activeSection={activeSection} snapshot={snapshot} />
@@ -864,10 +1511,16 @@ export function PlatformAdminConsole({ snapshot, activeSection }: { snapshot: Sn
         <div className="mx-auto max-w-[1500px] px-4 py-4 lg:px-5">
           {activeSection === "overview" ? <Overview snapshot={snapshot} /> : null}
           {activeSection === "site" ? <SiteSettings snapshot={snapshot} /> : null}
+          {activeSection === "content" ? <ContentControl snapshot={snapshot} /> : null}
           {activeSection === "plans" ? <Plans snapshot={snapshot} /> : null}
           {activeSection === "billing" ? <Billing snapshot={snapshot} /> : null}
           {activeSection === "tenants" ? <Tenants snapshot={snapshot} /> : null}
           {activeSection === "users" ? <Users snapshot={snapshot} /> : null}
+          {activeSection === "ai" ? <AiControl snapshot={snapshot} /> : null}
+          {activeSection === "maps" ? <MapsControl snapshot={snapshot} /> : null}
+          {activeSection === "atlas" ? <ProjectAtlas snapshot={snapshot} /> : null}
+          {activeSection === "ops" ? <OpsControl snapshot={snapshot} /> : null}
+          {activeSection === "governance" ? <GovernanceControl snapshot={snapshot} /> : null}
           {activeSection === "security" ? <Security snapshot={snapshot} /> : null}
           {activeSection === "release" ? <Release snapshot={snapshot} /> : null}
         </div>

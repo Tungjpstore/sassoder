@@ -1,19 +1,23 @@
 import type { NextConfig } from "next";
 
+const isVercelProduction = process.env.VERCEL_ENV === "production";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'"} https://vercel.live`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.mapbox.com https://events.mapbox.com https://img.vietqr.io https://api.qrserver.com https://vercel.live",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.mapbox.com https://events.mapbox.com https://rsapi.goong.io https://tiles.goong.io https://*.goong.io https://tile.openstreetmap.org https://*.arcgisonline.com https://server.arcgisonline.com https://services.arcgisonline.com https://img.vietqr.io https://api.qrserver.com https://vercel.live",
   "media-src 'self' blob:",
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
   "frame-src 'none'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  ...(process.env.NODE_ENV === "production" ? ["upgrade-insecure-requests"] : [])
+  ...(isVercelProduction ? ["upgrade-insecure-requests"] : [])
 ].join("; ");
 
 const nextConfig: NextConfig = {

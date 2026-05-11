@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getOAuthCallbackOrigin } from "@/lib/auth-redirect-origin";
+import {
+  cookieNamesFromHeader,
+  getHostname,
+  isSupabaseAuthFlowCookieName,
+  shouldShareCookiesAcrossTenantDomains
+} from "@/lib/supabase/cookie-guards";
 import { createSupabaseOAuthCookieName } from "@/lib/supabase/oauth";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
@@ -26,23 +32,9 @@ function noStoreRedirect(url: URL) {
   return response;
 }
 
-function getHostname(host: string) {
-  if (host.startsWith("[")) return host.slice(1, host.indexOf("]"));
-  return host.split(":")[0]?.toLowerCase() ?? "";
-}
-
-function shouldShareCookiesAcrossTenantDomains(hostname: string) {
-  return process.env.VERCEL_ENV === "production" && (hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`));
-}
-
 function authFlowCookieNames(request: Request) {
   const cookieHeader = request.headers.get("cookie") || "";
-  const names = cookieHeader
-    .split(";")
-    .map((part) => part.trim().split("=")[0])
-    .filter((name) => name?.startsWith("sb-") && name.includes("code-verifier") && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name));
-
-  return Array.from(new Set(names));
+  return cookieNamesFromHeader(cookieHeader, isSupabaseAuthFlowCookieName);
 }
 
 function createOAuthKey() {

@@ -5,22 +5,22 @@ import { useCallback, useEffect, useState } from "react";
 
 export function DarkModeToggle() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
-    if (typeof window === "undefined") return "dark";
+    if (typeof window === "undefined") return "light";
     try {
-      return localStorage.getItem("admin-theme") === "light" ? "light" : "dark";
+      return localStorage.getItem("admin-theme") === "dark" ? "dark" : "light";
     } catch {
-      return "dark";
+      return "light";
     }
   });
 
   useEffect(() => {
-    document.documentElement.classList.toggle("admin-light-mode", theme === "light");
+    document.documentElement.classList.toggle("dark-admin", theme === "dark");
   }, [theme]);
 
   const toggle = useCallback(() => {
     const next = theme === "dark" ? "light" : "dark";
     setTheme(next);
-    document.documentElement.classList.toggle("admin-light-mode", next === "light");
+    document.documentElement.classList.toggle("dark-admin", next === "dark");
     try {
       localStorage.setItem("admin-theme", next);
     } catch {}
@@ -29,7 +29,7 @@ export function DarkModeToggle() {
   return (
     <button
       type="button"
-      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] hover:text-[var(--primary)]"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/30 hover:text-[var(--primary)]"
       aria-label="Chuyển chế độ sáng/tối"
       onClick={toggle}
     >

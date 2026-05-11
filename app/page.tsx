@@ -1,14 +1,15 @@
 import { LogiVNLanding } from "@/components/landing/logivn-landing";
+import { SEO_HOME_DESCRIPTION, SEO_HOME_TITLE } from "@/lib/seo/config";
 import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getPlatformSiteConfig } from "@/services/platform-public-service";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600;
 
 export async function generateMetadata() {
   const siteConfig = await getPlatformSiteConfig();
   return createSeoMetadata({
-    title: siteConfig.landing.heroTitle,
-    description: siteConfig.landing.heroSubtitle,
+    title: SEO_HOME_TITLE,
+    description: SEO_HOME_DESCRIPTION,
     path: "/",
     image: siteConfig.landing.bannerUrl
   });

@@ -46,14 +46,16 @@ VIETQR_ACCOUNT
 VIETQR_ACCOUNT_NAME
 CRON_SECRET
 RESEND_API_KEY
+AUTH_EMAIL_FROM
 REPORT_EMAIL_FROM
 MAPBOX_ACCESS_TOKEN
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` chỉ dùng ở server/API routes. Không đưa key này ra client.
 `PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` bảo vệ dev console `/admin`.
-`RESEND_API_KEY` dùng để gửi báo cáo tự động. `CRON_SECRET` bảo vệ endpoint cron `/api/cron/reports`.
+`RESEND_API_KEY` dùng để gửi OTP xác thực, báo cáo tự động và email hệ thống. `AUTH_EMAIL_FROM` là sender riêng cho OTP đăng ký/xác thực. `CRON_SECRET` bảo vệ endpoint cron `/api/cron/reports`.
 `MAPBOX_ACCESS_TOKEN` dùng ở server để định vị địa chỉ giao hàng và đo quãng đường lái xe bằng Mapbox. Không cần đặt `NEXT_PUBLIC_` cho token này.
+Danh sách biến đầy đủ, scope theo môi trường và checklist rollout/rollback nằm ở `docs/infrastructure-runbook.md`.
 
 Trên Vercel production, đặt:
 
@@ -63,6 +65,7 @@ PLATFORM_ADMIN_PASSWORD=<mật khẩu nội bộ mạnh>
 PLATFORM_ADMIN_SESSION_SECRET=<chuỗi bí mật dài>
 CRON_SECRET=<chuỗi bí mật dài>
 RESEND_API_KEY=<Resend API key>
+AUTH_EMAIL_FROM=LogiVN <no-reply@chophanmem.com>
 REPORT_EMAIL_FROM=LogiVN <reports@logivn.com>
 MAPBOX_ACCESS_TOKEN=<Mapbox access token>
 ```
@@ -126,9 +129,10 @@ supabase/migrations/20260505110000_platform_admin_billing.sql
 Trong Supabase Dashboard:
 
 - Bật Email provider và email confirmation.
-- Cấu hình Custom SMTP cho production. SMTP mặc định của Supabase chỉ phù hợp thử nghiệm và có giới hạn gửi rất thấp.
-- SMTP hiện tại đã cấu hình qua Resend với sender `LogiVN <no-reply@chophanmem.com>`; khi có domain gửi mail chính thức, đổi sender về `@logivn.com`.
-- Template `Confirm signup` nên dùng nội dung trong `supabase/templates/confirmation.html` để email có cả OTP 6 số và nút xác thực.
+- Production dùng `RESEND_API_KEY`/`AUTH_EMAIL_FROM` để LogiVN tự gửi OTP 6 số và link xác thực từ mã do Supabase Admin tạo. Nếu Resend lỗi hoặc sender domain chưa verify, app phải báo lỗi thật, không hiển thị trạng thái “đã gửi” giả.
+- Sender production tạm dùng domain đã verify `LogiVN <no-reply@chophanmem.com>`. Chỉ đổi về `@logivn.com` sau khi domain `logivn.com` đã verified trong Resend.
+- Custom SMTP của Supabase vẫn nên cấu hình như tuyến dự phòng cho các email Auth ngoài luồng app. SMTP mặc định của Supabase chỉ phù hợp thử nghiệm và có giới hạn gửi rất thấp.
+- Template `Confirm signup` trong `supabase/templates/confirmation.html` vẫn nên được đồng bộ để dự phòng có cả OTP 6 số và nút xác thực.
 - Bật password hardening trong Supabase Auth: mật khẩu tối thiểu 10 ký tự, yêu cầu chữ hoa/chữ thường/chữ số, bật refresh-token rotation và bật leaked password protection.
 - Redirect URLs cần có:
   - `https://logivn.com/auth/callback**`
@@ -185,6 +189,7 @@ https://img.vietqr.io/image/{BANK}-{ACCOUNT}-compact2.png?amount={amount}&addInf
 ## Kiểm Tra
 
 ```bash
+npm run infra:check
 npm run lint
 npm run build
 npm audit --omit=dev

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowRight, Banknote, CheckCircle2, Clock3, CreditCard, Loader2, Printer, QrCode, RefreshCw, X, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,13 @@ function effectivePaymentStatus(order: Pick<AdminPaymentTransaction, "status" | 
   return order.status;
 }
 
+function firstActionablePaymentId(transactions: AdminPaymentTransaction[]) {
+  return transactions.find((order) => {
+    const paymentState = effectivePaymentStatus(order);
+    return paymentState === "waiting_confirm" || paymentState === "waiting_payment";
+  })?.id ?? transactions[0]?.id ?? null;
+}
+
 export function PaymentsWorkspace({
   stats,
   transactions,
@@ -98,15 +106,19 @@ export function PaymentsWorkspace({
   cashRevenue,
   qrRevenue
 }: PaymentWorkspaceProps) {
-  const [localTransactions, setLocalTransactions] = useState(transactions);
-  const [selectedId, setSelectedId] = useState<string | null>(
-    transactions.find((order) => {
-      const paymentState = effectivePaymentStatus(order);
-      return paymentState === "waiting_confirm" || paymentState === "waiting_payment";
-    })?.id ?? transactions[0]?.id ?? null
-  );
+  const router = useRouter();
+  const [transactionOverrides, setTransactionOverrides] = useState<Record<string, Partial<AdminPaymentTransaction>>>({});
+  const [selectedId, setSelectedId] = useState<string | null>(firstActionablePaymentId(transactions));
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const localTransactions = useMemo(
+    () =>
+      transactions.map((transaction) => ({
+        ...transaction,
+        ...transactionOverrides[transaction.id]
+      })),
+    [transactionOverrides, transactions]
+  );
 
   const selected = localTransactions.find((order) => order.id === selectedId) ?? localTransactions[0] ?? null;
   const qrUrl =
@@ -135,26 +147,32 @@ export function PaymentsWorkspace({
   async function confirmPayment(orderId: string) {
     setMutatingId(orderId);
     setError(null);
-    const previous = localTransactions;
-    setLocalTransactions((current) =>
-      current.map((transaction) =>
-        transaction.id === orderId
-          ? {
-              ...transaction,
-              status: "paid" as const,
-              paymentStatus: "paid",
-              method: transaction.method ?? "QR"
-            }
-          : transaction
-      )
-    );
+    const previousOverride = transactionOverrides[orderId];
+    const target = localTransactions.find((transaction) => transaction.id === orderId);
+    setTransactionOverrides((current) => ({
+      ...current,
+      [orderId]: {
+        ...current[orderId],
+        status: "paid" as const,
+        paymentStatus: "paid",
+        method: target?.method ?? "QR"
+      }
+    }));
 
     try {
       const response = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, { method: "POST" });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không xác nhận được thanh toán");
     } catch (err) {
-      setLocalTransactions(previous);
+      setTransactionOverrides((current) => {
+        const next = { ...current };
+        if (previousOverride) {
+          next[orderId] = previousOverride;
+        } else {
+          delete next[orderId];
+        }
+        return next;
+      });
       setError(err instanceof Error ? err.message : "Không xác nhận được thanh toán");
     } finally {
       setMutatingId(null);
@@ -181,7 +199,7 @@ export function PaymentsWorkspace({
         })}
       </section>
 
-      {error ? <div className="rounded-xl border border-[rgba(251,113,133,0.2)] bg-[rgba(251,113,133,0.08)] p-3 text-sm font-semibold text-[#FB7185]">{error}</div> : null}
+      {error ? <div className="rounded-xl border border-[var(--tertiary)]/12 bg-[var(--danger-soft)] p-3 text-sm font-semibold text-[var(--tertiary)]">{error}</div> : null}
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="dashboard-panel p-4">
@@ -242,7 +260,7 @@ export function PaymentsWorkspace({
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-[var(--muted-foreground)]">
               <span>Đang hiển thị {localTransactions.length} giao dịch từ dữ liệu thật.</span>
-              <button type="button" onClick={() => window.location.reload()} className="font-semibold text-[var(--primary)]">Làm mới</button>
+              <button type="button" onClick={() => router.refresh()} className="font-semibold text-[var(--primary)]">Làm mới</button>
             </div>
           </div>
         </div>

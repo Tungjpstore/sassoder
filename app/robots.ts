@@ -6,18 +6,19 @@ const aiSearchCrawlers = ["GPTBot", "ChatGPT-User", "OAI-SearchBot", "ClaudeBot"
 
 export default function robots(): MetadataRoute.Robots {
   const host = getAppUrl();
-  const disallow = [...SEO_PRIVATE_ROUTE_PREFIXES, "/api/", "/_next/"];
+  const allow = ["/", "/_next/static/", "/_next/image"];
+  const disallow = Array.from(new Set([...SEO_PRIVATE_ROUTE_PREFIXES, "/api/"]));
 
   return {
     rules: [
       {
         userAgent: "*",
-        allow: "/",
+        allow,
         disallow
       },
       ...aiSearchCrawlers.map((userAgent) => ({
         userAgent,
-        allow: "/",
+        allow,
         disallow
       }))
     ],
@@ -25,4 +26,3 @@ export default function robots(): MetadataRoute.Robots {
     host
   };
 }
-

@@ -12,10 +12,10 @@ export function Badge({
       className={cn(
         "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-bold",
         tone === "neutral" && "border-[var(--border)] bg-[var(--surface-container-high)] text-[var(--muted-foreground)]",
-        tone === "green" && "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]",
-        tone === "yellow" && "border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.1)] text-[var(--accent)]",
-        tone === "blue" && "border-[rgba(96,165,250,0.25)] bg-[rgba(96,165,250,0.1)] text-[#60A5FA]",
-        tone === "red" && "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185]"
+        tone === "green" && "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]",
+        tone === "yellow" && "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+        tone === "blue" && "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]",
+        tone === "red" && "border-[var(--tertiary)]/12 bg-[var(--danger-soft)] text-[var(--tertiary)]"
       )}
     >
       {children}

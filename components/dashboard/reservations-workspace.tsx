@@ -1,8 +1,10 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Banknote, CalendarCheck, Check, Clock3, Copy, ExternalLink, Loader2, QrCode, RefreshCw, Settings2, Sofa, UserRoundCheck, UsersRound, X } from "lucide-react";
+import Link from "next/link";
+import { Banknote, CalendarCheck, Check, Clock3, Copy, ExternalLink, Loader2, MapPin, QrCode, RefreshCw, Settings2, Sofa, UserRoundCheck, UsersRound, X } from "lucide-react";
 import { updateReservationSettingsAction } from "@/app/dashboard/actions";
+import { RestaurantVisitMapCard } from "@/components/location/restaurant-visit-map-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +14,12 @@ import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { ReservationDepositType, ReservationDto } from "@/types/domain";
 
 type ReservationSettings = {
+  name: string;
+  slug: string;
+  address: string | null;
+  store_lat: number | null;
+  store_lng: number | null;
+  hotline: string | null;
   reservations_enabled: boolean;
   reservation_deposit_enabled: boolean;
   reservation_deposit_type: ReservationDepositType;
@@ -59,9 +67,22 @@ function isHistory(status: ReservationDto["status"]) {
 }
 
 function holdCountdown(reservation: ReservationDto) {
-  if (!reservation.holdExpiresAt || reservation.status !== "holding") return null;
+  if (!reservation.holdExpiresAt || !["holding", "waiting_deposit_confirm"].includes(reservation.status)) return null;
   const minutes = Math.ceil((new Date(reservation.holdExpiresAt).getTime() - Date.now()) / 60000);
   return minutes > 0 ? `${minutes} phút` : "Đã hết hạn";
+}
+
+function canSeatReservation(reservation: ReservationDto) {
+  return reservation.status === "confirmed";
+}
+
+function canCancelReservation(reservation: ReservationDto) {
+  return !isHistory(reservation.status) && reservation.status !== "seated";
+}
+
+function canMarkNoShow(reservation: ReservationDto, arrivalGraceMinutes: number) {
+  if (reservation.status !== "confirmed") return false;
+  return Date.now() >= new Date(reservation.startsAt).getTime() + arrivalGraceMinutes * 60_000;
 }
 
 function actionEndpoint(action: "confirm-deposit" | "seat" | "cancel" | "no-show", reservationId: string) {
@@ -82,6 +103,24 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
           Yêu cầu cọc giữ bàn
           <input type="checkbox" name="reservationDepositEnabled" value="true" defaultChecked={settings.reservation_deposit_enabled} className="h-5 w-5 accent-[var(--accent)]" />
         </label>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)]">
+            <MapPin size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-black text-[var(--foreground)]">Vị trí đặt bàn dùng chung với bản đồ quán</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+              {settings.address || "Chưa có địa chỉ quán."}{" "}
+              {settings.store_lat !== null && settings.store_lng !== null ? "Đã có toạ độ cho chỉ đường." : "Chưa ghim toạ độ."}
+            </p>
+            <Link href="/dashboard/settings?section=online" className="mt-2 inline-flex text-sm font-black text-[var(--primary)] hover:text-[var(--primary-strong)]">
+              Cập nhật vị trí trên bản đồ
+            </Link>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -373,6 +412,18 @@ export function ReservationsWorkspace({
               <h2 className="text-lg font-semibold text-[var(--foreground)]">Tác vụ nhanh</h2>
             </div>
             <div className="mt-4 grid gap-2">
+              <RestaurantVisitMapCard
+                compact
+                restaurant={{
+                  name: settings.name,
+                  address: settings.address,
+                  storeLat: settings.store_lat,
+                  storeLng: settings.store_lng,
+                  hotline: settings.hotline
+                }}
+                title="Bản đồ khách đặt bàn"
+                description="Kiểm tra nhanh trải nghiệm chỉ đường mà khách thấy trên trang đặt bàn public."
+              />
               <button type="button" onClick={() => setDrawer("share")} className="inline-flex min-h-11 items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--foreground)]">
                 Link đặt bàn public
                 <ExternalLink size={16} />
@@ -390,14 +441,20 @@ export function ReservationsWorkspace({
       </div>
 
       {drawer !== "closed" ? (
-        <div className="fixed inset-0 z-[80] bg-black/18" onClick={() => setDrawer("closed")}>
-          <aside className="ml-auto h-full w-full max-w-xl overflow-y-auto border-l border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng đặt bàn" onClick={() => setDrawer("closed")} />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reservation-drawer-title"
+            className="drawer-panel ml-auto h-dvh max-h-dvh w-full max-w-xl overflow-y-auto overscroll-contain border-l border-[var(--border)] bg-[var(--surface)] p-5"
+          >
             <div className="mb-5 flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
                   {drawer === "settings" ? "Cấu hình" : drawer === "share" ? "Chia sẻ" : "Chi tiết"}
                 </p>
-                <h2 className="mt-1 text-2xl font-semibold text-[var(--foreground)]">
+                <h2 id="reservation-drawer-title" className="mt-1 text-2xl font-semibold text-[var(--foreground)]">
                   {drawer === "settings" ? "Thiết lập đặt bàn" : drawer === "share" ? "Link đặt bàn" : "Chi tiết lịch đặt"}
                 </h2>
               </div>
@@ -410,6 +467,18 @@ export function ReservationsWorkspace({
 
             {drawer === "share" ? (
               <div className="grid gap-4">
+                <RestaurantVisitMapCard
+                  compact
+                  restaurant={{
+                    name: settings.name,
+                    address: settings.address,
+                    storeLat: settings.store_lat,
+                    storeLng: settings.store_lng,
+                    hotline: settings.hotline
+                  }}
+                  title="Preview bản đồ đặt bàn"
+                  description="Nếu thiếu tọa độ, cập nhật vị trí quán trước khi in QR hoặc chia sẻ link đặt bàn."
+                />
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                   <p className="text-sm font-semibold text-[var(--muted-foreground)]">Link public cho khách đặt bàn trước</p>
                   <code className="mt-3 block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-sm font-semibold text-[var(--foreground)]">{publicUrl}</code>
@@ -482,21 +551,21 @@ export function ReservationsWorkspace({
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {selected.depositStatus === "waiting_confirm" ? (
+                  {selected.status === "waiting_deposit_confirm" && selected.depositStatus === "waiting_confirm" ? (
                     <Button type="button" onClick={() => runAction("confirm-deposit", selected.id)} disabled={mutatingId === selected.id}>
                       {mutatingId === selected.id ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
                       Xác nhận cọc
                     </Button>
                   ) : null}
-                  <Button type="button" variant="secondary" onClick={() => runAction("seat", selected.id)} disabled={mutatingId === selected.id || !["confirmed", "waiting_deposit_confirm"].includes(selected.status)}>
+                  <Button type="button" variant="secondary" onClick={() => runAction("seat", selected.id)} disabled={mutatingId === selected.id || !canSeatReservation(selected)}>
                     <UserRoundCheck size={16} />
                     Nhận khách vào bàn
                   </Button>
-                  <Button type="button" variant="secondary" onClick={() => runAction("no-show", selected.id)} disabled={mutatingId === selected.id || isHistory(selected.status)}>
+                  <Button type="button" variant="secondary" onClick={() => runAction("no-show", selected.id)} disabled={mutatingId === selected.id || !canMarkNoShow(selected, settings.reservation_arrival_grace_minutes)}>
                     <Clock3 size={16} />
                     Khách không đến
                   </Button>
-                  <Button type="button" variant="danger" onClick={() => runAction("cancel", selected.id)} disabled={mutatingId === selected.id || isHistory(selected.status)}>
+                  <Button type="button" variant="danger" onClick={() => runAction("cancel", selected.id)} disabled={mutatingId === selected.id || !canCancelReservation(selected)}>
                     <X size={16} />
                     Huỷ lịch đặt
                   </Button>

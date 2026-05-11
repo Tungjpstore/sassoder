@@ -43,7 +43,11 @@ export function RemotePaymentReceipt({
     url?: string;
   } | null;
 }) {
-  const subtotal = order.subtotal ?? Math.max(0, order.total - (order.deliveryFee ?? 0) + (order.discountAmount ?? 0));
+  const serviceFee = order.serviceFee ?? 0;
+  const subtotal = Math.max(
+    0,
+    (order.subtotal ?? order.total + (order.discountAmount ?? 0)) - (order.deliveryFee ?? 0) - serviceFee
+  );
   const discount = order.discountAmount ?? 0;
   const deliveryFee = order.deliveryFee ?? 0;
   const paidAt = order.paidAt ?? order.bill?.paidAt ?? order.updatedAt ?? order.createdAt;
@@ -137,6 +141,7 @@ export function RemotePaymentReceipt({
               <p className="receipt-row"><span>Tạm tính</span><strong>{formatVnd(subtotal)}</strong></p>
               <p className="receipt-row"><span>Giảm giá</span><strong className="text-[var(--accent)]">-{formatVnd(discount)}</strong></p>
               <p className="receipt-row"><span>Phí giao hàng</span><strong>{formatVnd(deliveryFee)}</strong></p>
+              {serviceFee > 0 ? <p className="receipt-row"><span>Phí dịch vụ</span><strong>{formatVnd(serviceFee)}</strong></p> : null}
               <p className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-[rgba(242,140,40,0.34)] bg-[#FFF7EB] px-3 py-3 font-black sm:mt-2 sm:px-4">
                 <span>TỔNG CỘNG</span>
                 <span className="whitespace-nowrap text-xl text-[var(--accent)] sm:text-2xl">{formatVnd(order.total)}</span>

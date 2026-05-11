@@ -10,6 +10,7 @@ export const preferredRegion = "sin1";
 const customerAiSchema = z.object({
   restaurantSlug: z.string().trim().min(1).max(80),
   customerSessionId: z.string().trim().max(120).optional(),
+  threadId: z.string().trim().min(6).max(200).optional(),
   message: z.string().trim().min(2).max(1500),
   intent: z.string().trim().max(60).optional(),
   category: z.string().trim().max(60).optional(),
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
       await runCustomerAssistant({
         restaurantId,
         customerSessionId: body.customerSessionId,
+        threadId: body.threadId,
         message: body.message,
         intent: body.intent || body.category,
         cart: body.cart,

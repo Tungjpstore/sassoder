@@ -33,6 +33,8 @@ Mỗi phản hồi có thể kèm `actions` để hộp chat hiển thị nút t
 - `api`: gọi endpoint AI phụ trợ như setup plan/draft/branding
 - `ui`: điều khiển UI cục bộ như mở giỏ, mở lịch sử đơn, gọi nhân viên
 
+`ui` cũng có thể điều phối workflow cục bộ có xác nhận, ví dụ `bulk_owner_actions` để chạy tuần tự nhiều action đơn hàng an toàn như nhận các đơn `pending`. Bulk action chỉ được chạy sau khi chủ quán bấm xác nhận, bị giới hạn số lượng, và không được chứa xác nhận thanh toán/hủy/xóa dữ liệu.
+
 Action luôn có `safety`: `safe`, `confirm` hoặc `manual_only`. Những thao tác nhạy cảm như xác nhận thanh toán vẫn là `manual_only`, AI chỉ mở đúng màn để chủ quán tự bấm.
 
 Mỗi phản hồi cũng có `agentPlan` để UI không còn là một hộp chat thô:
@@ -126,3 +128,5 @@ Mỗi intent nên có:
 - `suggestions`: quick prompts ngắn cho chủ quán/khách
 
 Router phải ưu tiên intent explicit từ UI. Nếu không có, mới infer bằng keyword tiếng Việt đã bỏ dấu. Mọi snapshot đều phải filter theo `restaurant_id`.
+
+Nếu provider AI lỗi, timeout hoặc trả nội dung rỗng, backend phải dùng deterministic action router để trả `reply`, `agentPlan` và `actions` an toàn thay vì để CopilotKit treo hoặc hiển thị trống. UI chỉ render summary/action đã chuẩn hóa, không render raw JSON/tool output.

@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { getDashboardDestinationForHost } from "@/lib/dashboard-destination";
+import {
+  chunkedCookieNames,
+  cookieNamesFromHeader,
+  getHostname,
+  isSafeCookieName,
+  isSupabaseAuthFlowCookieName,
+  shouldShareCookiesAcrossTenantDomains
+} from "@/lib/supabase/cookie-guards";
 import { createSupabaseOAuthCookieName } from "@/lib/supabase/oauth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
@@ -11,20 +19,21 @@ function safeNextPath(value: string | null) {
   return value;
 }
 
-function redirectUrl(request: Request, pathOrUrl: string) {
+function redirectUrl(request: Request, pathOrUrl: string, extraCookieNames: string[] = []) {
   const response = pathOrUrl.startsWith("http")
     ? NextResponse.redirect(pathOrUrl)
     : NextResponse.redirect(new URL(pathOrUrl, request.url));
   response.headers.set("Cache-Control", "no-store");
+  appendExpiredAuthFlowCookies(response, request, extraCookieNames);
   return response;
 }
 
-function redirectAuthError(request: Request, authError: string) {
+function redirectAuthError(request: Request, authError: string, extraCookieNames: string[] = []) {
   const url = new URL("/dashboard/login", request.url);
   url.searchParams.set("authError", authError);
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
-  appendExpiredAuthFlowCookies(response, request);
+  appendExpiredAuthFlowCookies(response, request, extraCookieNames);
   return response;
 }
 
@@ -36,33 +45,31 @@ function safeOAuthKey(value: string | null) {
   return value && /^[a-z0-9]{16}$/.test(value) ? value : null;
 }
 
-function getHostname(host: string) {
-  if (host.startsWith("[")) return host.slice(1, host.indexOf("]"));
-  return host.split(":")[0]?.toLowerCase() ?? "";
-}
-
-function shouldShareCookiesAcrossTenantDomains(hostname: string) {
-  return process.env.VERCEL_ENV === "production" && (hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`));
-}
-
 function authFlowCookieNames(request: Request) {
   const cookieHeader = request.headers.get("cookie") || "";
-  const names = cookieHeader
-    .split(";")
-    .map((part) => part.trim().split("=")[0])
-    .filter((name) => name?.startsWith("sb-") && name.includes("code-verifier") && /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name));
-
-  return Array.from(new Set(names));
+  return cookieNamesFromHeader(cookieHeader, isSupabaseAuthFlowCookieName);
 }
 
-function appendExpiredAuthFlowCookies(response: NextResponse, request: Request) {
+function oauthCleanupCookieNames(oauthKey: string | null) {
+  if (!oauthKey) return [];
+  const baseName = createSupabaseOAuthCookieName(oauthKey);
+  return [
+    ...chunkedCookieNames(baseName),
+    ...chunkedCookieNames(`${baseName}-auth-token`),
+    `${baseName}-code-verifier`
+  ];
+}
+
+function appendExpiredAuthFlowCookies(response: NextResponse, request: Request, extraCookieNames: string[] = []) {
   const requestUrl = new URL(request.url);
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? requestUrl.host;
   const hostname = getHostname(host);
   const secure = requestUrl.protocol === "https:" || process.env.VERCEL_ENV === "production";
   const securePart = secure ? "; Secure" : "";
 
-  authFlowCookieNames(request).forEach((name) => {
+  Array.from(new Set([...authFlowCookieNames(request), ...extraCookieNames])).forEach((name) => {
+    if (!isSafeCookieName(name)) return;
+
     response.headers.append(
       "Set-Cookie",
       `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax${securePart}`
@@ -82,6 +89,7 @@ export async function GET(request: Request) {
   const code = requestUrl.searchParams.get("code");
   const next = safeNextPath(requestUrl.searchParams.get("next"));
   const oauthKey = safeOAuthKey(requestUrl.searchParams.get("oauthKey"));
+  const cleanupCookieNames = oauthCleanupCookieNames(oauthKey);
   const providerError = requestUrl.searchParams.get("error");
   const providerErrorDescription = requestUrl.searchParams.get("error_description");
 
@@ -90,12 +98,13 @@ export async function GET(request: Request) {
       providerError,
       providerErrorDescription
     });
-    return redirectAuthError(request, providerError ? "provider" : "missing_code");
+    return redirectAuthError(request, providerError ? "provider" : "missing_code", cleanupCookieNames);
   }
 
   const supabase = await createServerSupabaseClient({
     ignoreAuthSession: true,
-    cookieName: oauthKey ? createSupabaseOAuthCookieName(oauthKey) : undefined
+    cookieName: oauthKey ? createSupabaseOAuthCookieName(oauthKey) : undefined,
+    suppressAuthSessionCookieWrites: Boolean(oauthKey)
   });
   let exchangeResult: Awaited<ReturnType<typeof supabase.auth.exchangeCodeForSession>>;
 
@@ -104,7 +113,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const message = errorMessage(error);
     console.error("[auth/callback] Code exchange exception", { message });
-    return redirectAuthError(request, "callback");
+    return redirectAuthError(request, "callback", cleanupCookieNames);
   }
 
   const { error } = exchangeResult;
@@ -114,7 +123,7 @@ export async function GET(request: Request) {
       code: "code" in error ? error.code : undefined,
       status: "status" in error ? error.status : undefined
     });
-    return redirectAuthError(request, "callback");
+    return redirectAuthError(request, "callback", cleanupCookieNames);
   }
 
   const session = exchangeResult.data.session;
@@ -131,7 +140,7 @@ export async function GET(request: Request) {
         code: "code" in sessionCopyError ? sessionCopyError.code : undefined,
         status: "status" in sessionCopyError ? sessionCopyError.status : undefined
       });
-      return redirectAuthError(request, "session");
+      return redirectAuthError(request, "session", cleanupCookieNames);
     }
   }
 
@@ -142,7 +151,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const message = errorMessage(error);
     console.error("[auth/callback] User read exception", { message });
-    return redirectAuthError(request, "session");
+    return redirectAuthError(request, "session", cleanupCookieNames);
   }
 
   const {
@@ -156,7 +165,7 @@ export async function GET(request: Request) {
       hasUser: Boolean(user?.id),
       hasEmail: Boolean(user?.email)
     });
-    return redirectAuthError(request, "session");
+    return redirectAuthError(request, "session", cleanupCookieNames);
   }
 
   const restaurant =
@@ -165,8 +174,8 @@ export async function GET(request: Request) {
 
   if (restaurant) {
     const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-    return redirectUrl(request, getDashboardDestinationForHost(restaurant.slug, host));
+    return redirectUrl(request, getDashboardDestinationForHost(restaurant.slug, host), cleanupCookieNames);
   }
 
-  return redirectUrl(request, next === "/dashboard" ? "/dashboard/onboarding" : next);
+  return redirectUrl(request, next === "/dashboard" ? "/dashboard/onboarding" : next, cleanupCookieNames);
 }

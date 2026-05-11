@@ -12,6 +12,10 @@ const qwenFirstTasks = new Set<AiTaskType>(["customer_ordering", "menu_generatio
 function chooseProviderOrder(taskType: AiTaskType, preferredProvider?: AiProvider) {
   const available = availableAiProviders();
   if (available.length === 0) throw new AppError("Chưa cấu hình QWEN_API_KEY/DASHSCOPE_API_KEY hoặc XAI_API_KEY cho AI.", 500);
+  if (taskType === "ocr") {
+    if (!available.includes("qwen")) throw new AppError("AI OCR menu yêu cầu QWEN_API_KEY hoặc DASHSCOPE_API_KEY. xAI không được dùng cho OCR menu.", 500);
+    return ["qwen" as AiProvider];
+  }
 
   const preferred = preferredProvider && available.includes(preferredProvider) ? preferredProvider : null;
   const primary: AiProvider = preferred ?? (reasoningTasks.has(taskType) && available.includes("xai") ? "xai" : "qwen");

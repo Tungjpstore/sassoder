@@ -27,6 +27,7 @@ export default async function AdminMenuPage() {
         categories={categories}
         topItemIds={report.topItems.map((item) => item.id)}
         topItemNames={report.topItems.map((item) => item.name)}
+        restaurantName={dashboard.restaurant.name}
       />
     </AdminShell>
   );

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, Copy, Download, Grid3X3, Link2, Plus, Printer, QrCode, Save, Search, Table2, Trash2, Users, X } from "lucide-react";
 import { createTableAction, deleteTableAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,11 +35,11 @@ const POSTER_LOGO_URL = "/brand/logivn/logo-horizontal-transparent.png";
 
 function statusMeta(status: TableOperationalStatus) {
   const map = {
-    available: { label: "Trống", className: "border-[#15945B]/60 bg-[#15945B]/6 text-[#0F4D3A]", dot: "bg-[#15945B]", tone: "green" },
-    needs_confirm: { label: "Chờ nhận đơn", className: "border-[#F28C28]/70 bg-[#F28C28]/8 text-[#C76312]", dot: "bg-[#F28C28]", tone: "yellow" },
-    serving: { label: "Đang ra món", className: "border-[#7CA357]/70 bg-[#A9C5A1]/16 text-[#496D33]", dot: "bg-[#7CA357]", tone: "green" },
-    overdue: { label: "Quá giờ ra món", className: "border-[#E11D48]/60 bg-[#E11D48]/8 text-[#BE123C]", dot: "bg-[#E11D48]", tone: "red" },
-    awaiting_payment: { label: "Chờ thanh toán", className: "border-[#38A5E8]/60 bg-[#38A5E8]/8 text-[#1672A8]", dot: "bg-[#38A5E8]", tone: "blue" }
+    available: { label: "Trống", className: "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]", dot: "bg-[var(--primary)]", tone: "green" },
+    needs_confirm: { label: "Chờ nhận đơn", className: "border-[var(--accent)]/30 bg-[var(--accent-soft)] text-[var(--accent-strong)]", dot: "bg-[var(--accent)]", tone: "yellow" },
+    serving: { label: "Đang ra món", className: "border-[var(--secondary)]/40 bg-[var(--secondary-soft)] text-[var(--primary)]", dot: "bg-[var(--secondary)]", tone: "green" },
+    overdue: { label: "Quá giờ ra món", className: "border-[var(--tertiary)]/15 bg-[var(--danger-soft)] text-[var(--tertiary)]", dot: "bg-[var(--accent)]", tone: "red" },
+    awaiting_payment: { label: "Chờ thanh toán", className: "border-[var(--secondary)]/40 bg-[var(--secondary-soft)] text-[var(--primary)]", dot: "bg-[var(--primary)]", tone: "blue" }
   } satisfies Record<TableOperationalStatus, { label: string; className: string; dot: string; tone: "green" | "yellow" | "red" | "blue" }>;
   return map[status];
 }
@@ -574,21 +575,26 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	        </div>
 
 	        {panelMode !== "closed" && (
-	          <div className="fixed inset-0 z-[80]">
-	            <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng chi tiết bàn" onClick={closeDrawer} />
-	            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
+	          <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+		            <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết bàn" onClick={closeDrawer} />
+		            <aside
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="table-drawer-title"
+                  className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+                >
 	              <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
 	                <div>
 	                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bàn & QR</p>
-	                  <h3 className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+	                  <h3 id="table-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
 	                    {panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
 	                  </h3>
 	                </div>
-	                <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
+	                <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng chi tiết bàn">
 	                  <X size={18} />
 	                </button>
 	              </div>
-	              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+	              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
 	                {panelMode === "create" && (
 	                  <form action={createTableAction} className="grid gap-4">
 	                    <label className="grid gap-2 text-sm font-semibold">
@@ -689,21 +695,22 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                         </div>
                       </div>
 
-                      <div className="rounded-xl border border-[#E11D48]/18 bg-[var(--surface)] p-4">
+	                      <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] p-4">
                         <h2 className="text-lg font-semibold text-[var(--foreground)]">Vùng nguy hiểm</h2>
                         <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chỉ xoá bàn khi không còn đơn hoặc hóa đơn đang mở.</p>
-                        <form
-                          action={deleteTableAction}
-                          className="mt-4"
-                          onSubmit={(event) => {
-                            if (!window.confirm(`Xoá ${selected.name}? Thao tác này không thể hoàn tác.`)) event.preventDefault();
-                          }}
-                        >
+                        <form action={deleteTableAction} className="mt-4">
                           <input type="hidden" name="tableId" value={selected.id} />
-                          <Button type="submit" variant="ghost" className="w-full border-[#E11D48]/30 text-[#BE123C] hover:bg-[#E11D48]/8">
+		                          <ConfirmActionButton
+                            type="submit"
+                            variant="ghost"
+                            className="w-full border-[var(--accent)]/30 text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
+                            confirmTitle="Xoá bàn"
+                            confirmDescription={`${selected.name} sẽ bị xoá. Chỉ tiếp tục nếu bàn này không còn đơn hoặc hoá đơn đang mở.`}
+                            confirmLabel="Xoá bàn"
+                          >
                             <Trash2 size={16} />
                             Xoá bàn
-                          </Button>
+                          </ConfirmActionButton>
                         </form>
                       </div>
 	                  </div>

@@ -1,8 +1,17 @@
 import "server-only";
 
 import { createHash } from "crypto";
+import { unstable_cache } from "next/cache";
+import { buildResolvedEntitlementSnapshot } from "@/lib/billing/entitlements";
+import { assertServerFeatureAccess } from "@/lib/billing/feature-gates";
+import {
+  buildPaymentPolicySummary,
+  computeConfirmedSubscriptionTransition,
+  isSubscriptionUsable
+} from "@/lib/billing/subscription-transitions";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import type { BillingFeatureKey, BillingPlanCode, QuotaDimension, QuotaSnapshot, QuotaWindow } from "@/lib/billing/types";
 
 type PlanRow = {
   id: string;
@@ -122,6 +131,52 @@ type PlanCapabilityRow = {
 
 type RestaurantFeatureOverrideRow = PlanCapabilityRow & {
   expires_at: string | null;
+};
+
+type UsageQuotaRow = {
+  feature_key: string;
+  dimension: string;
+  quota_window: string;
+  used_value: number | string;
+  limit_value: number | string | null;
+  period_start: string;
+  period_end: string | null;
+  reset_at: string | null;
+};
+
+type BillingV2PlanRow = {
+  id: string;
+  code: BillingPlanCode;
+  name: string;
+  description: string | null;
+  monthly_price: number;
+  metadata?: Record<string, unknown> | null;
+};
+
+type BillingV2SubscriptionRow = {
+  id: string;
+  restaurant_id: string;
+  plan_id: string;
+  status: "trialing" | "active" | "grace" | "pending_payment" | "cancelled" | "expired" | "suspended";
+  current_period_start: string | null;
+  current_period_end: string | null;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
+  plan?: BillingV2PlanRow | BillingV2PlanRow[] | null;
+};
+
+type BillingV2PaymentRow = {
+  id: string;
+  restaurant_id: string;
+  subscription_id: string | null;
+  invoice_id: string | null;
+  amount: number;
+  currency: string;
+  status: "pending" | "detected" | "waiting_confirmation" | "confirmed" | "failed" | "expired" | "cancelled" | "refunded";
+  transfer_code: string;
+  created_at: string;
+  confirmed_at: string | null;
+  deleted_at?: string | null;
 };
 
 type SubscriptionReminderCandidateRow = {
@@ -407,6 +462,685 @@ function formatVnd(value: number) {
   return new Intl.NumberFormat("vi-VN").format(value) + "đ";
 }
 
+function monthStartIso() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
+}
+
+function monthEndIso() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0)).toISOString();
+}
+
+function dayStartIso() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0)).toISOString();
+}
+
+function dayEndIso() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0)).toISOString();
+}
+
+function lifetimeStartIso() {
+  return new Date(Date.UTC(1970, 0, 1, 0, 0, 0, 0)).toISOString();
+}
+
+function getQuotaPeriod(window: QuotaWindow) {
+  if (window === "daily") {
+    return {
+      periodStart: dayStartIso(),
+      periodEnd: dayEndIso(),
+      resetAt: dayEndIso()
+    };
+  }
+
+  if (window === "lifetime") {
+    return {
+      periodStart: lifetimeStartIso(),
+      periodEnd: null,
+      resetAt: null
+    };
+  }
+
+  return {
+    periodStart: monthStartIso(),
+    periodEnd: monthEndIso(),
+    resetAt: monthEndIso()
+  };
+}
+
+function normalizeBillingPlanCode(planCode?: string | null): BillingPlanCode {
+  return planCode === "premium" ? "premium" : "pro";
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function normalizeQuotaWindow(window?: string | null): QuotaWindow {
+  if (window === "daily" || window === "lifetime") return window;
+  return "monthly";
+}
+
+function normalizeQuotaDimension(dimension?: string | null): QuotaDimension {
+  if (
+    dimension === "tables" ||
+    dimension === "staff" ||
+    dimension === "ai_requests" ||
+    dimension === "ai_tokens" ||
+    dimension === "ai_images" ||
+    dimension === "exports" ||
+    dimension === "analytics_runs" ||
+    dimension === "automation_runs"
+  ) {
+    return dimension;
+  }
+
+  return "ai_requests";
+}
+
+const legacyBillingFeatureMap: Partial<Record<PlanFeatureKey, BillingFeatureKey>> = {
+  ai_owner_assistant: "advanced_ai_assistant",
+  ai_customer_assistant: "ai_chatbot",
+  ai_branding_studio: "ai_branding",
+  ai_menu_ocr: "ai_menu_generation",
+  ai_image_generation: "ai_image_generation",
+  scheduled_reports: "export_pdf",
+  advanced_reports: "ai_analytics"
+};
+
+async function readLegacyUsageBridge(restaurantId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const usage: Partial<Record<string, Omit<QuotaSnapshot, "used"> & { used?: number }>> = {};
+  const usagePriority = new Map<string, number>();
+  const trialsUsed: Partial<Record<BillingFeatureKey, boolean>> = {};
+
+  try {
+    const { data: quotaRows, error: quotaError } = await supabase
+      .from("usage_quotas")
+      .select("feature_key,dimension,quota_window,period_start,used_value,limit_value,period_end,reset_at")
+      .eq("restaurant_id", restaurantId);
+
+    if (quotaError && !isMissingSchemaError(quotaError)) throw quotaError;
+
+    for (const row of ((quotaRows ?? []) as UsageQuotaRow[])) {
+      const window = normalizeQuotaWindow(row.quota_window);
+      const periodStart = new Date(row.period_start).getTime();
+      const isCurrentWindow =
+        window === "lifetime" ||
+        (window === "daily" && periodStart >= new Date(dayStartIso()).getTime()) ||
+        (window === "monthly" && periodStart >= new Date(monthStartIso()).getTime());
+      const dimension = normalizeQuotaDimension(row.dimension);
+
+      // Token ledgers are useful for cost analytics, but entitlement progress bars
+      // must use request/image/export counters or quotas can appear unlimited.
+      if (!isCurrentWindow || dimension === "ai_tokens") continue;
+
+      const priority =
+        (row.limit_value === null ? 0 : 100) +
+        (dimension === "ai_images"
+          ? 40
+          : dimension === "analytics_runs"
+            ? 35
+            : dimension === "automation_runs"
+              ? 30
+              : dimension === "exports"
+                ? 25
+                : dimension === "ai_requests"
+                  ? 20
+                  : 10);
+      const existingPriority = usagePriority.get(row.feature_key) ?? -1;
+      if (existingPriority > priority) continue;
+
+      usagePriority.set(row.feature_key, priority);
+      usage[row.feature_key] = {
+        key: row.feature_key,
+        label: row.feature_key,
+        used: Number(row.used_value ?? 0),
+        limit: row.limit_value === null ? null : Number(row.limit_value),
+        unit: dimension,
+        window,
+        resetLabel: row.reset_at || row.period_end ? `Reset: ${formatDateVi(row.reset_at || row.period_end)}` : undefined
+      };
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
+  }
+
+  const legacyFeatureKeys = Object.keys(legacyBillingFeatureMap) as PlanFeatureKey[];
+  const { data: aiUsageRows, error: aiUsageError } = await supabase
+    .from("ai_usage_logs")
+    .select("feature_key,status,created_at")
+    .eq("restaurant_id", restaurantId)
+    .in("feature_key", legacyFeatureKeys)
+    .gte("created_at", monthStartIso());
+
+  if (aiUsageError && !isMissingSchemaError(aiUsageError)) throw aiUsageError;
+
+  const successCounts = new Map<BillingFeatureKey, number>();
+  for (const row of (aiUsageRows ?? []) as Array<{ feature_key: PlanFeatureKey; status: string }>) {
+    const billingFeatureKey = legacyBillingFeatureMap[row.feature_key];
+    if (!billingFeatureKey || row.status !== "success") continue;
+    successCounts.set(billingFeatureKey, (successCounts.get(billingFeatureKey) ?? 0) + 1);
+  }
+
+  for (const [featureKey, used] of successCounts.entries()) {
+    if (!usage[featureKey]) {
+      usage[featureKey] = {
+        key: featureKey,
+        label: featureKey,
+        used,
+        limit: null,
+        unit: "lượt",
+        window: "monthly"
+      };
+    } else if (typeof usage[featureKey]?.used !== "number" || usage[featureKey]?.used === 0) {
+      usage[featureKey] = {
+        ...usage[featureKey],
+        used
+      };
+    }
+  }
+
+  const { data: trialRows, error: trialError } = await supabase
+    .from("trial_usage")
+    .select("feature_key")
+    .eq("restaurant_id", restaurantId);
+
+  if (trialError && !isMissingSchemaError(trialError)) throw trialError;
+
+  for (const row of (trialRows ?? []) as Array<{ feature_key: string }>) {
+    if (
+      row.feature_key === "ai_branding" ||
+      row.feature_key === "ai_analytics" ||
+      row.feature_key === "ai_image_generation"
+    ) {
+      trialsUsed[row.feature_key] = true;
+    }
+  }
+
+  if ((successCounts.get("ai_branding") ?? 0) > 0) trialsUsed.ai_branding = true;
+  if ((successCounts.get("ai_image_generation") ?? 0) > 0) trialsUsed.ai_image_generation = true;
+  if ((successCounts.get("ai_analytics") ?? 0) > 0) trialsUsed.ai_analytics = true;
+
+  return { usage, trialsUsed };
+}
+
+async function readBillingV2Bridge(restaurantId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const [subscriptionResult, paymentResult] = await Promise.all([
+    supabase
+      .from("subscriptions")
+      .select("id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_started_at,trial_ends_at,plan:subscription_plans(id,code,name,description,monthly_price,metadata)")
+      .eq("restaurant_id", restaurantId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from("payments")
+      .select("id,restaurant_id,subscription_id,invoice_id,amount,currency,status,transfer_code,created_at,confirmed_at,deleted_at")
+      .eq("restaurant_id", restaurantId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(8)
+  ]);
+
+  if (subscriptionResult.error) {
+    if (isMissingSchemaError(subscriptionResult.error)) return null;
+    throw subscriptionResult.error;
+  }
+  if (paymentResult.error) {
+    if (isMissingSchemaError(paymentResult.error)) return null;
+    throw paymentResult.error;
+  }
+
+  const subscription = subscriptionResult.data as BillingV2SubscriptionRow | null;
+  const payments = (paymentResult.data ?? []) as BillingV2PaymentRow[];
+  if (!subscription && payments.length === 0) return null;
+
+  return {
+    subscription,
+    plan: firstOrNull(subscription?.plan),
+    payments
+  };
+}
+
+export async function getResolvedBillingEntitlementSnapshotForRestaurant({
+  restaurantId,
+  ownerEmail
+}: {
+  restaurantId: string;
+  ownerEmail?: string | null;
+}) {
+  const portal = await getRestaurantBillingPortal({ restaurantId, ownerEmail });
+  return portal.resolvedSnapshot;
+}
+
+export async function assertBillingFeatureEntitlement({
+  restaurantId,
+  featureKey,
+  ownerEmail
+}: {
+  restaurantId: string;
+  featureKey: BillingFeatureKey;
+  ownerEmail?: string | null;
+}) {
+  const snapshot = await getResolvedBillingEntitlementSnapshotForRestaurant({ restaurantId, ownerEmail });
+  return assertServerFeatureAccess(snapshot, featureKey);
+}
+
+export async function recordBillingUsageEvent({
+  restaurantId,
+  featureKey,
+  quotaKey,
+  dimension,
+  quantity = 1,
+  limitValue = null,
+  window = "monthly",
+  countAgainstQuota = true,
+  consumeTrial = false,
+  trialFeatureKey,
+  userId,
+  provider,
+  model,
+  requestId,
+  status = "success",
+  metadata
+}: {
+  restaurantId: string;
+  featureKey: BillingFeatureKey;
+  quotaKey?: string | null;
+  dimension: QuotaDimension;
+  quantity?: number;
+  limitValue?: number | null;
+  window?: QuotaWindow;
+  countAgainstQuota?: boolean;
+  consumeTrial?: boolean;
+  trialFeatureKey?: BillingFeatureKey;
+  userId?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  requestId?: string | null;
+  status?: "success" | "failed" | "blocked";
+  metadata?: Record<string, unknown>;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const quantityValue = Math.max(0, Number(quantity) || 0);
+  const quotaFeatureKey = quotaKey || featureKey;
+  const shouldConsumeTrial = consumeTrial || quotaFeatureKey.endsWith("_trial");
+
+  const { error: usageLogError } = await supabase.from("feature_usage_logs").insert({
+    restaurant_id: restaurantId,
+    user_id: userId ?? null,
+    feature_key: featureKey,
+    dimension,
+    quantity: quantityValue,
+    provider: provider ?? null,
+    model: model ?? null,
+    request_id: requestId ?? null,
+    status,
+    metadata: metadata ?? {}
+  });
+
+  if (usageLogError && !isMissingSchemaError(usageLogError)) throw usageLogError;
+  if (status !== "success") return;
+
+  if (shouldConsumeTrial) {
+    const { error: trialError } = await supabase.from("trial_usage").upsert(
+      {
+        restaurant_id: restaurantId,
+        feature_key: trialFeatureKey ?? featureKey,
+        consumed_by: null,
+        source: "runtime",
+        metadata: {
+          ...(metadata ?? {}),
+          quotaKey: quotaFeatureKey,
+          userId: userId ?? null
+        }
+      },
+      { onConflict: "restaurant_id,feature_key", ignoreDuplicates: true }
+    );
+
+    if (trialError && !isMissingSchemaError(trialError)) throw trialError;
+  }
+
+  if (!countAgainstQuota || quantityValue <= 0) return;
+
+  const { periodStart, periodEnd, resetAt } = getQuotaPeriod(window);
+
+  const { data: existingQuota, error: existingQuotaError } = await supabase
+    .from("usage_quotas")
+    .select("id,used_value")
+    .eq("restaurant_id", restaurantId)
+    .eq("feature_key", quotaFeatureKey)
+    .eq("dimension", dimension)
+    .eq("quota_window", window)
+    .eq("period_start", periodStart)
+    .maybeSingle();
+
+  if (existingQuotaError) {
+    if (isMissingSchemaError(existingQuotaError)) return;
+    throw existingQuotaError;
+  }
+
+  if (existingQuota?.id) {
+    const { error: updateQuotaError } = await supabase
+      .from("usage_quotas")
+      .update({
+        used_value: Number(existingQuota.used_value ?? 0) + quantityValue,
+        limit_value: limitValue,
+        period_end: periodEnd,
+        reset_at: resetAt,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existingQuota.id);
+
+    if (updateQuotaError && !isMissingSchemaError(updateQuotaError)) throw updateQuotaError;
+    return;
+  }
+
+  const { error: insertQuotaError } = await supabase.from("usage_quotas").insert({
+    restaurant_id: restaurantId,
+    feature_key: quotaFeatureKey,
+    dimension,
+    quota_window: window,
+    period_start: periodStart,
+    period_end: periodEnd,
+    used_value: quantityValue,
+    limit_value: limitValue,
+    reset_at: resetAt,
+    source: "runtime",
+    metadata: metadata ?? {}
+  });
+
+  if (insertQuotaError && !isMissingSchemaError(insertQuotaError)) throw insertQuotaError;
+}
+
+function mapLegacySubscriptionStatusToBillingStatus(status: SubscriptionRow["status"]): "trialing" | "active" | "grace" | "pending_payment" | "cancelled" | "expired" | "suspended" {
+  if (status === "trialing" || status === "active" || status === "pending_payment" || status === "cancelled" || status === "expired" || status === "suspended") {
+    return status;
+  }
+
+  return status === "past_due" ? "grace" : "active";
+}
+
+async function mirrorLegacyPaymentRequestToBillingV2({
+  restaurant,
+  subscription,
+  currentPlanCode,
+  targetPlanCode,
+  amount,
+  months,
+  transferContent,
+  billingAction,
+  legacyPaymentId
+}: {
+  restaurant: RestaurantRow;
+  subscription: SubscriptionRow;
+  currentPlanCode: string;
+  targetPlanCode: string;
+  amount: number;
+  months: number;
+  transferContent: string;
+  billingAction: "renew" | "upgrade" | "downgrade";
+  legacyPaymentId: string;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  try {
+    const { data: v2Plans, error: planError } = await supabase
+      .from("subscription_plans")
+      .select("id,code")
+      .in("code", [normalizeBillingPlanCode(currentPlanCode), normalizeBillingPlanCode(targetPlanCode)]);
+    if (planError) {
+      if (isMissingSchemaError(planError)) return;
+      throw planError;
+    }
+
+    const planByCode = new Map(((v2Plans ?? []) as Array<{ id: string; code: BillingPlanCode }>).map((plan) => [plan.code, plan.id]));
+    const currentV2PlanId = planByCode.get(normalizeBillingPlanCode(currentPlanCode));
+    const targetV2PlanId = planByCode.get(normalizeBillingPlanCode(targetPlanCode));
+    if (!targetV2PlanId) return;
+
+    const { data: existingSubscription, error: subscriptionError } = await supabase
+      .from("subscriptions")
+      .select("id")
+      .eq("restaurant_id", restaurant.id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (subscriptionError) throw subscriptionError;
+
+    let v2SubscriptionId = existingSubscription?.id ?? null;
+    if (!v2SubscriptionId) {
+      const { data: createdSubscription, error: createSubscriptionError } = await supabase
+        .from("subscriptions")
+        .insert({
+          restaurant_id: restaurant.id,
+          plan_id: currentV2PlanId ?? targetV2PlanId,
+          status: mapLegacySubscriptionStatusToBillingStatus(subscription.status),
+          interval: "month",
+          started_at: subscription.created_at,
+          current_period_start: subscription.current_period_start,
+          current_period_end: subscription.current_period_end,
+          trial_started_at: subscription.trial_started_at,
+          trial_ends_at: subscription.trial_ends_at,
+          metadata: {
+            source: "legacy_bridge",
+            legacySubscriptionId: subscription.id
+          }
+        })
+        .select("id")
+        .single();
+      if (createSubscriptionError) throw createSubscriptionError;
+      v2SubscriptionId = createdSubscription.id;
+    }
+
+    const invoiceNumber = `LGV-${restaurant.slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
+    const { data: invoice, error: invoiceError } = await supabase
+      .from("invoices")
+      .insert({
+        restaurant_id: restaurant.id,
+        subscription_id: v2SubscriptionId,
+        plan_id: targetV2PlanId,
+        invoice_number: invoiceNumber,
+        billing_reason: billingAction,
+        status: "pending",
+        subtotal: amount,
+        total: amount,
+        currency: "VND",
+        issued_at: new Date().toISOString(),
+        due_at: new Date().toISOString(),
+        metadata: {
+          source: "legacy_bridge",
+          months,
+          legacySubscriptionId: subscription.id,
+          legacyPaymentId
+        }
+      })
+      .select("id")
+      .single();
+    if (invoiceError) throw invoiceError;
+
+    const { data: payment, error: paymentError } = await supabase
+      .from("payments")
+      .insert({
+        restaurant_id: restaurant.id,
+        subscription_id: v2SubscriptionId,
+        invoice_id: invoice.id,
+        provider: "vietqr",
+        amount,
+        currency: "VND",
+        status: "waiting_confirmation",
+        transfer_code: transferContent,
+        expires_at: monthEndIso(),
+        metadata: {
+          source: "legacy_bridge",
+          billingAction,
+          months,
+          legacySubscriptionId: subscription.id,
+          legacyPaymentId
+        }
+      })
+      .select("id")
+      .single();
+    if (paymentError) throw paymentError;
+
+    await supabase.from("billing_payment_logs").insert({
+      payment_id: payment.id,
+      event_type: "payment_requested",
+      actor_type: "system",
+      payload: {
+        source: "legacy_bridge",
+        legacyPaymentId,
+        billingAction
+      }
+    });
+
+    await supabase
+      .from("subscriptions")
+      .update({
+        latest_invoice_id: invoice.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", v2SubscriptionId);
+
+    await supabase.from("upgrade_events").insert({
+      restaurant_id: restaurant.id,
+      from_plan_id: currentV2PlanId ?? null,
+      to_plan_id: targetV2PlanId,
+      trigger: billingAction,
+      source: "restaurant_dashboard",
+      context: {
+        source: "legacy_bridge",
+        months,
+        transferContent,
+        legacyPaymentId
+      }
+    });
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[subscription-service] Failed to mirror legacy payment request to billing v2", error);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function mirrorLegacyPaymentFinalStateToBillingV2(paymentId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  try {
+    const { data: payment, error: legacyPaymentError } = await supabase
+      .from("subscription_payment_logs")
+      .select("*")
+      .eq("id", paymentId)
+      .maybeSingle();
+    if (legacyPaymentError) {
+      if (isMissingSchemaError(legacyPaymentError)) return;
+      throw legacyPaymentError;
+    }
+    if (!payment) return;
+
+    const legacyPayment = payment as PaymentRow;
+    const { data: legacySubscription, error: legacySubscriptionError } = await supabase
+      .from("restaurant_subscriptions")
+      .select("*,plan:saas_plans(code,name)")
+      .eq("id", legacyPayment.subscription_id)
+      .maybeSingle();
+    if (legacySubscriptionError) throw legacySubscriptionError;
+    if (!legacySubscription) return;
+
+    const nextPlanCode =
+      firstOrNull((legacySubscription as { plan?: { code: string } | Array<{ code: string }> | null }).plan)?.code ?? "pro";
+    const { data: v2Subscription, error: v2SubscriptionError } = await supabase
+      .from("subscriptions")
+      .select("id")
+      .eq("restaurant_id", legacyPayment.restaurant_id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (v2SubscriptionError) throw v2SubscriptionError;
+    if (!v2Subscription?.id) return;
+
+    const { data: v2Plan, error: v2PlanError } = await supabase
+      .from("subscription_plans")
+      .select("id")
+      .eq("code", normalizeBillingPlanCode(nextPlanCode))
+      .maybeSingle();
+    if (v2PlanError) throw v2PlanError;
+
+    const { data: v2Payment, error: v2PaymentError } = await supabase
+      .from("payments")
+      .select("id,invoice_id")
+      .eq("transfer_code", legacyPayment.transfer_content)
+      .maybeSingle();
+    if (v2PaymentError) throw v2PaymentError;
+    if (!v2Payment?.id) return;
+
+    const paymentStatus =
+      legacyPayment.status === "confirmed"
+        ? "confirmed"
+        : legacyPayment.status === "rejected"
+          ? "failed"
+          : legacyPayment.status === "expired"
+            ? "expired"
+            : "waiting_confirmation";
+
+    await supabase
+      .from("payments")
+      .update({
+        status: paymentStatus,
+        confirmed_at: legacyPayment.confirmed_at,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", v2Payment.id);
+
+    await supabase
+      .from("billing_payment_logs")
+      .insert({
+        payment_id: v2Payment.id,
+        event_type: paymentStatus === "confirmed" ? "payment_confirmed" : "payment_closed",
+        actor_type: "system",
+        payload: {
+          source: "legacy_bridge",
+          legacyPaymentId: legacyPayment.id,
+          status: legacyPayment.status
+        }
+      });
+
+    if (v2Payment.invoice_id) {
+      await supabase
+        .from("invoices")
+        .update({
+          status: paymentStatus === "confirmed" ? "paid" : paymentStatus === "expired" ? "failed" : "failed",
+          paid_at: legacyPayment.confirmed_at,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", v2Payment.invoice_id);
+    }
+
+    await supabase
+      .from("subscriptions")
+      .update({
+        plan_id: v2Plan?.id ?? undefined,
+        status: paymentStatus === "confirmed" ? "active" : undefined,
+        current_period_start: (legacySubscription as SubscriptionRow).current_period_start,
+        current_period_end: (legacySubscription as SubscriptionRow).current_period_end,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", v2Subscription.id);
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[subscription-service] Failed to mirror legacy payment final state to billing v2", error);
+      return;
+    }
+    throw error;
+  }
+}
+
 function buildSubscriptionReminderEmail({
   restaurantName,
   planName,
@@ -524,33 +1258,25 @@ function getSubscriptionAccessEnd(subscription: SubscriptionRow) {
   return subscription.current_period_end || subscription.trial_ends_at;
 }
 
-function hasCurrentAccessWindow(subscription: SubscriptionRow, allowOpenEnded = true) {
-  const accessEnd = getSubscriptionAccessEnd(subscription);
-  if (!accessEnd) return allowOpenEnded;
-  return new Date(accessEnd).getTime() >= Date.now();
-}
-
-function isSubscriptionUsable(subscription: SubscriptionRow) {
-  if (subscription.status === "active" || subscription.status === "trialing") {
-    return hasCurrentAccessWindow(subscription);
-  }
-
-  // A renewal or upgrade payment can be waiting for manual confirmation while the
-  // current paid/trial window is still valid. Do not lock the restaurant in that case.
-  if (subscription.status === "pending_payment") {
-    return hasCurrentAccessWindow(subscription, false);
-  }
-
-  return false;
-}
-
 async function readRestaurantEntitlement(restaurantId: string) {
   const supabase = createAdminSupabaseClient() as any;
-  const { data: restaurant, error: restaurantError } = await supabase
-    .from("restaurants")
-    .select("id,platform_status,suspended_at,deleted_at")
-    .eq("id", restaurantId)
-    .maybeSingle();
+  const [restaurantResult, subscriptionResult] = await Promise.all([
+    supabase
+      .from("restaurants")
+      .select("id,platform_status,suspended_at,deleted_at")
+      .eq("id", restaurantId)
+      .maybeSingle(),
+    supabase
+      .from("restaurant_subscriptions")
+      .select("*,plan:saas_plans(id,code,name,monthly_price,trial_days,features,is_active,sort_order)")
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["trialing", "pending_payment", "active", "past_due", "suspended", "cancelled", "expired"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+  ]);
+
+  const { data: restaurant, error: restaurantError } = restaurantResult;
 
   if (restaurantError) throw restaurantError;
   if (!restaurant) {
@@ -587,14 +1313,7 @@ async function readRestaurantEntitlement(restaurantId: string) {
     };
   }
 
-  const { data: subscription, error: subscriptionError } = await supabase
-    .from("restaurant_subscriptions")
-    .select("*,plan:saas_plans(id,code,name,monthly_price,trial_days,features,is_active,sort_order)")
-    .eq("restaurant_id", restaurantId)
-    .in("status", ["trialing", "pending_payment", "active", "past_due", "suspended", "cancelled", "expired"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: subscription, error: subscriptionError } = subscriptionResult;
 
   if (subscriptionError) throw subscriptionError;
   if (!subscription) {
@@ -608,8 +1327,16 @@ async function readRestaurantEntitlement(restaurantId: string) {
     };
   }
 
-  const sub = subscription as SubscriptionRow;
-  const plan = firstOrNull((subscription as { plan?: PlanRow | PlanRow[] | null }).plan);
+  let sub = subscription as SubscriptionRow;
+  let plan = firstOrNull((subscription as { plan?: PlanRow | PlanRow[] | null }).plan);
+  const repair = await repairRequestedOnboardingPlanIfNeeded({
+    supabase,
+    subscription: sub,
+    currentPlan: plan
+  });
+  sub = repair.subscription;
+  plan = repair.plan ?? plan;
+
   const features = await getEffectiveCapabilities({
     planId: sub.plan_id,
     restaurantId,
@@ -728,7 +1455,7 @@ export async function getBillingSettings() {
   return normalizeSettings(data?.value);
 }
 
-export async function getActivePlans() {
+async function readActivePlans() {
   const supabase = createAdminSupabaseClient() as any;
   const { data, error } = await supabase
     .from("saas_plans")
@@ -742,6 +1469,15 @@ export async function getActivePlans() {
     features: asFeatures(plan.features)
   }));
 }
+
+export async function getActivePlans() {
+  return readActivePlans();
+}
+
+export const getPublicActivePlans = unstable_cache(readActivePlans, ["public-active-plans"], {
+  tags: ["public-active-plans"],
+  revalidate: 3600
+});
 
 async function getDefaultPlan(planCode?: string) {
   const supabase = createAdminSupabaseClient() as any;
@@ -774,6 +1510,60 @@ async function getActivePlanByCode(planCode: string) {
   return data as PlanRow;
 }
 
+async function repairRequestedOnboardingPlanIfNeeded({
+  supabase,
+  subscription,
+  currentPlan,
+  requestedPlanCode
+}: {
+  supabase: any;
+  subscription: SubscriptionRow;
+  currentPlan?: PlanRow | null;
+  requestedPlanCode?: BillingPlanCode | null;
+}) {
+  const metadata = asRecord(subscription.metadata);
+  const metadataRequestedPlanCode =
+    metadata.requestedPlanCode === "premium" || metadata.requestedPlanCode === "pro"
+      ? (metadata.requestedPlanCode as BillingPlanCode)
+      : null;
+  const intendedPlanCode = requestedPlanCode ?? metadataRequestedPlanCode;
+  const canRepairStatus = subscription.status === "trialing" || subscription.status === "pending_payment";
+
+  if (
+    intendedPlanCode !== "premium" ||
+    metadata.source !== "onboarding" ||
+    !canRepairStatus ||
+    currentPlan?.code === "premium"
+  ) {
+    return { subscription, plan: currentPlan ?? null, repaired: false };
+  }
+
+  const premiumPlan = await getActivePlanByCode("premium");
+  if (subscription.plan_id === premiumPlan.id) {
+    return { subscription, plan: premiumPlan, repaired: false };
+  }
+
+  const { data, error } = await supabase
+    .from("restaurant_subscriptions")
+    .update({
+      plan_id: premiumPlan.id,
+      updated_at: new Date().toISOString(),
+      metadata: {
+        ...metadata,
+        requestedPlanCode: "premium",
+        repairedRequestedPlanAt: new Date().toISOString(),
+        repairedFromPlanCode: currentPlan?.code ?? null,
+        repairedFromPlanId: subscription.plan_id
+      }
+    })
+    .eq("id", subscription.id)
+    .select("*")
+    .single();
+
+  if (error) throw error;
+  return { subscription: data as SubscriptionRow, plan: premiumPlan, repaired: true };
+}
+
 async function getRestaurant(restaurantId: string) {
   const supabase = createAdminSupabaseClient() as any;
   const { data, error } = await supabase
@@ -803,7 +1593,8 @@ export async function createInitialRestaurantSubscription({
   userAgent?: string | null;
 }) {
   const supabase = createAdminSupabaseClient() as any;
-  const plan = await getDefaultPlan(planCode || undefined);
+  const requestedPlanCode = normalizeBillingPlanCode(planCode);
+  const plan = await getDefaultPlan(requestedPlanCode);
   const now = new Date();
   const trialEnds = addDays(now, plan.trial_days);
   const normalizedOwnerEmail = ownerEmail.toLowerCase();
@@ -815,7 +1606,17 @@ export async function createInitialRestaurantSubscription({
     .maybeSingle();
 
   if (existingError) throw existingError;
-  if (existing) return existing as SubscriptionRow;
+  if (existing) {
+    const { data: currentPlan, error: currentPlanError } = await supabase.from("saas_plans").select("*").eq("id", existing.plan_id).maybeSingle();
+    if (currentPlanError) throw currentPlanError;
+    const repaired = await repairRequestedOnboardingPlanIfNeeded({
+      supabase,
+      subscription: existing as SubscriptionRow,
+      currentPlan: (currentPlan as PlanRow | null) ?? null,
+      requestedPlanCode
+    });
+    return repaired.subscription;
+  }
 
   const { count: existingTrialClaims, error: claimsError } = await supabase
     .from("trial_claims")
@@ -837,7 +1638,8 @@ export async function createInitialRestaurantSubscription({
       current_period_end: hasUsedTrial ? now.toISOString() : trialEnds.toISOString(),
       metadata: {
         source: "onboarding",
-        trialBlockedByPriorClaim: hasUsedTrial
+        trialBlockedByPriorClaim: hasUsedTrial,
+        requestedPlanCode
       }
     })
     .select()
@@ -877,6 +1679,7 @@ async function getOrCreateSubscription(restaurantId: string, ownerEmail?: string
   });
 }
 
+
 export async function getRestaurantBillingPortal({
   restaurantId,
   ownerEmail
@@ -885,12 +1688,28 @@ export async function getRestaurantBillingPortal({
   ownerEmail?: string | null;
 }) {
   const supabase = createAdminSupabaseClient() as any;
-  const [restaurant, subscription, plans, billing] = await Promise.all([
+  const [restaurant, initialSubscription, plans, billing, v2Billing] = await Promise.all([
     getRestaurant(restaurantId),
     getOrCreateSubscription(restaurantId, ownerEmail),
     getActivePlans(),
-    getBillingSettings()
+    getBillingSettings(),
+    readBillingV2Bridge(restaurantId)
   ]);
+
+  let subscription = initialSubscription;
+  let currentPlan = plans.find((plan) => plan.id === subscription.plan_id) ?? (await getDefaultPlan());
+  const repair = await repairRequestedOnboardingPlanIfNeeded({
+    supabase,
+    subscription,
+    currentPlan
+  });
+  subscription = repair.subscription;
+  currentPlan = repair.plan ?? currentPlan;
+  let paymentRequests: Array<PaymentRow & { qrUrl: string }> = [];
+  let pendingPayment: (PaymentRow & { qrUrl: string }) | null = null;
+  const periodEnd = getSubscriptionAccessEnd(subscription);
+  const daysLeft = daysUntil(periodEnd);
+  const usable = isSubscriptionUsable(subscription);
 
   const { data: paymentRows, error: paymentsError } = await supabase
     .from("subscription_payment_logs")
@@ -900,9 +1719,7 @@ export async function getRestaurantBillingPortal({
     .limit(8);
 
   if (paymentsError) throw paymentsError;
-
-  const currentPlan = plans.find((plan) => plan.id === subscription.plan_id) ?? (await getDefaultPlan());
-  const paymentRequests = ((paymentRows ?? []) as PaymentRow[]).map((payment) => ({
+  paymentRequests = ((paymentRows ?? []) as PaymentRow[]).map((payment) => ({
     ...payment,
     qrUrl: vietQrUrl({
       bank: billing.bankCode,
@@ -911,7 +1728,69 @@ export async function getRestaurantBillingPortal({
       transferContent: payment.transfer_content
     })
   }));
-  const pendingPayment = paymentRequests.find((payment) => payment.status === "waiting_confirm") ?? null;
+
+  if (paymentRequests.length === 0 && v2Billing?.payments.length) {
+    paymentRequests = v2Billing.payments.map((payment) => ({
+      id: payment.id,
+      restaurant_id: payment.restaurant_id,
+      subscription_id: payment.subscription_id,
+      plan_id: v2Billing.plan?.id ?? subscription.plan_id,
+      amount: payment.amount,
+      months: Number((v2Billing.plan?.metadata as Record<string, unknown> | undefined)?.months ?? 1),
+      method: "VIETQR",
+      status:
+        payment.status === "confirmed"
+          ? "confirmed"
+          : payment.status === "failed" || payment.status === "cancelled" || payment.status === "refunded"
+            ? "rejected"
+            : payment.status === "expired"
+              ? "expired"
+              : "waiting_confirm",
+      transfer_content: payment.transfer_code,
+      raw_data: {
+        source: "billing_v2"
+      },
+      created_at: payment.created_at,
+      confirmed_at: payment.confirmed_at,
+      confirmed_by: null,
+      rejected_at: null,
+      rejected_reason: null,
+      qrUrl: vietQrUrl({
+        bank: billing.bankCode,
+        account: billing.bankAccount,
+        amount: payment.amount,
+        transferContent: payment.transfer_code
+      })
+    }));
+  }
+
+  pendingPayment = paymentRequests.find((payment) => payment.status === "waiting_confirm") ?? null;
+
+  const { usage, trialsUsed } = await readLegacyUsageBridge(restaurantId);
+  const resolvedSnapshot = buildResolvedEntitlementSnapshot({
+    planCode: normalizeBillingPlanCode(currentPlan.code),
+    planName: currentPlan.name,
+    daysLeft,
+    status: !usable ? "expired" : pendingPayment ? "pending_payment" : "active",
+    usage,
+    trialsUsed
+  });
+
+  const pendingPaymentMeta = asRecord(pendingPayment?.raw_data);
+  const pendingPlanFromPayment = pendingPayment?.plan_id ? plans.find((plan) => plan.id === pendingPayment.plan_id) ?? null : null;
+  const pendingTargetPlanCode = typeof pendingPaymentMeta.planCode === "string" ? pendingPaymentMeta.planCode : null;
+  const pendingTargetPlan = (pendingTargetPlanCode ? plans.find((plan) => plan.code === pendingTargetPlanCode) : null) ?? pendingPlanFromPayment ?? currentPlan;
+  const pendingPolicy = pendingPayment
+    ? buildPaymentPolicySummary({
+        subscription: {
+          ...subscription,
+          metadata: asRecord(subscription.metadata)
+        },
+        currentPlan,
+        targetPlan: pendingTargetPlan,
+        months: pendingPayment.months
+      })
+    : null;
 
   return {
     restaurant,
@@ -924,10 +1803,23 @@ export async function getRestaurantBillingPortal({
     },
     paymentRequests,
     pendingPayment,
-    daysLeft: daysUntil(getSubscriptionAccessEnd(subscription)),
-    usable: isSubscriptionUsable(subscription),
+    pendingChange:
+      pendingPayment && pendingPolicy
+        ? {
+            action: pendingPolicy.billingAction,
+            targetPlanCode: pendingTargetPlan.code,
+            targetPlanName: pendingTargetPlan.name,
+            effectiveAt: pendingPolicy.effectiveAt,
+            policyKey: pendingPolicy.policyKey,
+            summary: pendingPolicy.summary,
+            isImmediate: pendingPolicy.isImmediate
+          }
+        : null,
+    daysLeft,
+    usable,
     hasPendingPayment: Boolean(pendingPayment),
-    needsPayment: !isSubscriptionUsable(subscription)
+    needsPayment: !usable,
+    resolvedSnapshot
   };
 }
 
@@ -960,6 +1852,19 @@ export async function createSubscriptionPaymentRequest({
       : targetPlan.monthly_price > currentPlan.monthly_price
         ? "upgrade"
         : "downgrade";
+  const policy = buildPaymentPolicySummary({
+    subscription: {
+      ...subscription,
+      metadata: asRecord(subscription.metadata)
+    },
+    currentPlan,
+    targetPlan,
+    months: normalizedMonths
+  });
+
+  if (billingAction === "downgrade" && isSubscriptionUsable(subscription)) {
+    throw new AppError(policy.summary, 409);
+  }
 
   const { data: existingPending, error: existingPendingError } = await supabase
     .from("subscription_payment_logs")
@@ -998,6 +1903,7 @@ export async function createSubscriptionPaymentRequest({
       .eq("id", pending.id)
       .eq("status", "waiting_confirm");
     if (expireError) throw expireError;
+    await mirrorLegacyPaymentFinalStateToBillingV2(pending.id);
   }
 
   const transferContent = `${billing.transferPrefix}-${restaurant.slug.toUpperCase().replace(/[^A-Z0-9]/g, "")}-${Date.now()
@@ -1018,6 +1924,9 @@ export async function createSubscriptionPaymentRequest({
       raw_data: {
         source: "restaurant_dashboard",
         billingAction,
+        policyKey: policy.policyKey,
+        effectiveAt: policy.effectiveAt,
+        effectiveSummary: policy.summary,
         fromPlanCode: currentPlan.code,
         fromPlanName: currentPlan.name,
         planCode: targetPlan.code,
@@ -1028,6 +1937,18 @@ export async function createSubscriptionPaymentRequest({
     .single();
 
   if (error) throw error;
+
+  await mirrorLegacyPaymentRequestToBillingV2({
+    restaurant,
+    subscription,
+    currentPlanCode: currentPlan.code,
+    targetPlanCode: targetPlan.code,
+    amount,
+    months: normalizedMonths,
+    transferContent,
+    billingAction,
+    legacyPaymentId: (data as PaymentRow).id
+  });
 
   const subscriptionStillUsable = isSubscriptionUsable(subscription);
   await supabase
@@ -1060,27 +1981,6 @@ export async function confirmSubscriptionPayment({
   confirmedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
-  const { data: paymentBeforeConfirm, error: paymentBeforeConfirmError } = await supabase
-    .from("subscription_payment_logs")
-    .select("restaurant_id")
-    .eq("id", paymentId)
-    .maybeSingle();
-
-  if (paymentBeforeConfirmError) throw paymentBeforeConfirmError;
-
-  const { data: rpcResult, error: rpcError } = await supabase.rpc("confirm_subscription_payment_atomic", {
-    p_payment_id: paymentId,
-    p_confirmed_by: confirmedBy
-  });
-
-  if (!rpcError) {
-    invalidateRestaurantEntitlementCache(paymentBeforeConfirm?.restaurant_id ?? undefined);
-    return rpcResult;
-  }
-  if (rpcError.code !== "PGRST202" && rpcError.code !== "42883") {
-    throw rpcError;
-  }
-
   const { data: payment, error: paymentError } = await supabase
     .from("subscription_payment_logs")
     .select("*")
@@ -1102,52 +2002,62 @@ export async function confirmSubscriptionPayment({
   if (!subscription) throw new AppError("Không tìm thấy subscription của giao dịch.", 404);
 
   const sub = subscription as SubscriptionRow;
-  const now = new Date();
-  const basePeriod = sub.current_period_end && new Date(sub.current_period_end).getTime() > now.getTime()
-    ? new Date(sub.current_period_end)
-    : now;
-  const nextPeriodEnd = addMonths(basePeriod, paymentRow.months);
+  const currentPlanResult = await supabase.from("saas_plans").select("*").eq("id", sub.plan_id).maybeSingle();
+  if (currentPlanResult.error) throw currentPlanResult.error;
+  if (!currentPlanResult.data) throw new AppError("Không tìm thấy gói hiện tại.", 404);
 
-  const { data: lockedPayment, error: paymentUpdateError } = await supabase
-    .from("subscription_payment_logs")
-    .update({
-      status: "confirmed",
-      confirmed_at: now.toISOString(),
-      confirmed_by: confirmedBy
-    })
-    .eq("id", paymentRow.id)
-    .eq("status", "waiting_confirm")
-    .select("id")
-    .maybeSingle();
+  const targetPlanId = paymentRow.plan_id ?? sub.plan_id;
+  const targetPlanResult = await supabase.from("saas_plans").select("*").eq("id", targetPlanId).maybeSingle();
+  if (targetPlanResult.error) throw targetPlanResult.error;
+  if (!targetPlanResult.data) throw new AppError("Không tìm thấy gói đích của giao dịch.", 404);
 
-  if (paymentUpdateError) throw paymentUpdateError;
-  if (!lockedPayment) throw new AppError("Giao dịch này vừa được xử lý bởi phiên khác.", 409);
+  let transition;
+  try {
+    transition = computeConfirmedSubscriptionTransition({
+      subscription: {
+        ...sub,
+        metadata: asRecord(sub.metadata)
+      },
+      payment: paymentRow,
+      currentPlan: currentPlanResult.data as PlanRow,
+      targetPlan: targetPlanResult.data as PlanRow
+    });
+  } catch (error) {
+    throw new AppError(error instanceof Error ? error.message : "Không thể xác nhận giao dịch gói với trạng thái hiện tại.", 409);
+  }
 
-  const [{ error: subscriptionUpdateError }, { error: restaurantUpdateError }] = await Promise.all([
-    supabase
-      .from("restaurant_subscriptions")
-      .update({
-        plan_id: paymentRow.plan_id ?? sub.plan_id,
-        status: "active",
-        current_period_start: now.toISOString(),
-        current_period_end: nextPeriodEnd.toISOString(),
-        suspended_at: null,
-        updated_at: now.toISOString()
-      })
-      .eq("id", sub.id),
-    supabase
-      .from("restaurants")
-      .update({
-        platform_status: "active",
-        suspended_at: null,
-        suspended_reason: null
-      })
-      .eq("id", paymentRow.restaurant_id)
-  ]);
+  const { error: applyError } = await supabase.rpc("apply_subscription_payment_confirmation", {
+    p_payment_id: paymentRow.id,
+    p_confirmed_by: confirmedBy,
+    p_next_plan_id: transition.planId,
+    p_current_period_start: transition.currentPeriodStart,
+    p_current_period_end: transition.currentPeriodEnd,
+    p_subscription_metadata: transition.metadata
+  });
 
-  if (subscriptionUpdateError) throw subscriptionUpdateError;
-  if (restaurantUpdateError) throw restaurantUpdateError;
+  if (applyError) {
+    const status = applyError.code === "P0002" ? 404 : applyError.code === "P0001" ? 409 : 400;
+    throw new AppError(applyError.message || "Không thể áp dụng xác nhận thanh toán gói.", status);
+  }
+
+  const { error: auditError } = await supabase.from("platform_audit_logs").insert({
+    actor: confirmedBy,
+    action: "subscription_payment_confirmed_runtime",
+    target_type: "subscription_payment",
+    target_id: paymentRow.id,
+    metadata: {
+      restaurantId: paymentRow.restaurant_id,
+      subscriptionId: sub.id,
+      previousPlanId: sub.plan_id,
+      nextPlanId: transition.planId,
+      currentPeriodEnd: transition.currentPeriodEnd
+    }
+  });
+  if (auditError && !isMissingSchemaError(auditError)) {
+    console.error("[subscription-service] Failed to write subscription confirmation audit log", auditError);
+  }
   invalidateRestaurantEntitlementCache(paymentRow.restaurant_id);
+  await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
 }
 
 export async function rejectSubscriptionPayment({
@@ -1175,6 +2085,7 @@ export async function rejectSubscriptionPayment({
   if (error) throw error;
   if (!data) throw new AppError("Giao dịch này không còn chờ xác minh.", 409);
   invalidateRestaurantEntitlementCache(data.restaurant_id);
+  await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
 }
 
 export async function sendSubscriptionExpiryReminders() {

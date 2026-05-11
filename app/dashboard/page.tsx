@@ -153,16 +153,16 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
   ];
 
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-3">
       {/* ── Hero welcome strip ── */}
-      <section className="admin-hero-panel relative overflow-hidden px-6 py-6 md:px-8 md:py-7">
-        <div className="relative z-[1] flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+      <section className="admin-hero-panel relative overflow-hidden px-4 py-3.5">
+        <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--primary)]">Live operations</p>
-            <h1 className="mt-2 text-3xl font-bold tracking-tight text-[var(--foreground)] md:text-4xl">
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--foreground)] md:text-3xl">
               Tổng quan ca bán
             </h1>
-            <p className="mt-2 max-w-lg text-sm leading-relaxed text-[var(--muted-foreground)]">
+            <p className="mt-1 max-w-lg truncate text-sm text-[var(--muted-foreground)]">
               Ưu tiên đơn mới, thanh toán và bàn cần chú ý.
             </p>
           </div>
@@ -188,7 +188,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       </section>
 
       {/* ── Bento grid: Priority + Revenue ── */}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {/* Priority cards — large emphasis tiles */}
         {priorityCards.map((card) => {
           const Icon = card.icon;
@@ -197,11 +197,11 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
             <Link
               key={card.title}
               href={card.href}
-              className="admin-stat-tile group relative flex flex-col justify-between gap-4 p-5"
+              className="admin-stat-tile group relative flex min-h-[128px] flex-col justify-between gap-3 p-4"
             >
               <div className="flex items-start justify-between">
-                <span className={`grid h-12 w-12 place-items-center rounded-2xl border ${priorityTone(card.tone)}`}>
-                  <Icon size={22} />
+                <span className={`grid h-10 w-10 place-items-center rounded-xl border ${priorityTone(card.tone)}`}>
+                  <Icon size={19} />
                 </span>
                 {isAlert && (
                   <span className="relative flex h-3 w-3">
@@ -212,7 +212,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{card.title}</p>
-                <p className="metric-number mt-1 text-4xl font-bold tabular-nums tracking-tight">{card.value}</p>
+                <p className="metric-number mt-0.5 text-3xl font-bold tabular-nums tracking-tight">{card.value}</p>
                 <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{card.helper}</p>
               </div>
             </Link>
@@ -220,9 +220,9 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
         })}
 
         {/* Best seller — accent tile */}
-        <div className="admin-stat-tile flex items-center gap-4 p-5">
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-[var(--accent-soft)] bg-[var(--accent-soft)] text-[var(--accent)]">
-            <TrendingUp size={22} />
+        <div className="admin-stat-tile flex min-h-[128px] items-center gap-3 p-4">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--accent-soft)] bg-[var(--accent-soft)] text-[var(--accent)]">
+            <TrendingUp size={19} />
           </span>
           <div className="min-w-0">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Món nổi bật</p>
@@ -235,11 +235,11 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       </section>
 
       {/* ── Revenue metrics — compact inline row ── */}
-      <section className="grid gap-3 md:grid-cols-4">
+      <section className="grid gap-2.5 md:grid-cols-4">
         {shiftMetrics.map((metric) => {
           const Icon = metric.icon;
           return (
-            <div key={metric.label} className="dashboard-panel flex items-center gap-4 px-5 py-4">
+            <div key={metric.label} className="dashboard-panel flex items-center gap-3 px-4 py-3">
               <span className="dashboard-stat-icon shrink-0">
                 <Icon size={18} />
               </span>
@@ -254,15 +254,15 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       </section>
 
       {/* ── Main content: Bento 2/1 asymmetric grid ── */}
-      <section className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(280px,0.85fr)]">
         {/* Realtime queue */}
-        <div className="min-h-[320px]">
+        <div className="min-h-0">
           <AdminLiveActionCenter restaurantId={restaurantId} variant="panel" />
         </div>
 
         {/* Tables sidebar */}
-        <aside className="grid content-start gap-5">
-          <div className="dashboard-panel overflow-hidden p-5">
+        <aside className="grid content-start gap-3">
+          <div className="dashboard-panel overflow-hidden p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Tables</p>
@@ -270,14 +270,14 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
               </div>
               <Link href="/dashboard/tables" className="text-xs font-bold text-[var(--primary)] transition hover:underline">Sơ đồ bàn</Link>
             </div>
-            <div className="mt-4 grid gap-2">
+            <div className="mt-3 grid gap-2">
               {focusedTables.length === 0 ? (
-                <div className="grid min-h-[80px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-3 text-center text-sm text-[var(--muted-foreground)]">
+                <div className="grid min-h-[56px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-3 text-center text-sm text-[var(--muted-foreground)]">
                   Tất cả bàn đang ổn.
                 </div>
               ) : (
                 focusedTables.map((table) => (
-                  <Link key={table.id} href="/dashboard/tables" className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 py-3 transition hover:border-[var(--primary)]">
+                  <Link key={table.id} href="/dashboard/tables" className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5 transition hover:border-[var(--primary)]">
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-bold">{table.name}</span>
                       <span className="block text-[11px] text-[var(--muted-foreground)]">{tableStatusLabel(table.status)}</span>
@@ -294,7 +294,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       </section>
 
       {/* ── Recent orders — wide card grid ── */}
-      <section className="dashboard-panel overflow-hidden p-5">
+      <section className="dashboard-panel overflow-hidden p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Orders</p>
@@ -304,19 +304,19 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
             Tất cả <ArrowRight size={14} />
           </Link>
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-3 grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
           {recentActionOrders.length === 0 ? (
-            <div className="grid min-h-[100px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm text-[var(--muted-foreground)] md:col-span-2 xl:col-span-3">
+            <div className="grid min-h-[64px] place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm text-[var(--muted-foreground)] md:col-span-2 xl:col-span-3">
               Không có đơn đang mở.
             </div>
           ) : (
             recentActionOrders.map((order) => (
-              <Link key={order.id} href="/dashboard/orders" className="group rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 py-3.5 transition hover:border-[var(--primary)]">
+              <Link key={order.id} href="/dashboard/orders" className="group rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5 transition hover:border-[var(--primary)]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-mono text-[11px] font-bold text-[var(--primary)]">DH{order.id.slice(0, 5).toUpperCase()}</span>
                   <span className="text-[11px] text-[var(--muted-foreground)]">{formatOrderTime(order.createdAt)}</span>
                 </div>
-                <div className="mt-2.5 flex items-center justify-between gap-3">
+                <div className="mt-2 flex items-center justify-between gap-3">
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-bold text-[var(--foreground)]">{order.tableName}</span>
                     <span className="mt-0.5 block truncate text-xs text-[var(--muted-foreground)]">{order.itemSummary}</span>

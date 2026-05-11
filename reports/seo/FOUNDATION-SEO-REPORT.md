@@ -1,13 +1,30 @@
 # LogiVN SEO Foundation Report
 
-Generated: 2026-05-08T10:02:50.581Z
+Generated: 2026-05-11T04:34:39.051Z
 Score: 100/100
 
 | Area | Status | Confidence | Finding | Evidence | Fix |
 | --- | --- | --- | --- | --- | --- |
 | crawlability | PASS | CONFIRMED | Production robots route exists. | app/robots.ts exists | Keep private SaaS, dashboard, auth and API routes blocked. |
+| crawlability | PASS | CONFIRMED | Robots keeps Next.js render assets crawlable. | app/robots.ts exists and explicitly allows Next.js render assets | Never disallow /_next/ because Googlebot needs CSS, JS and image assets to render public pages. |
 | indexing | PASS | CONFIRMED | Production sitemap route exists. | app/sitemap.ts exists | Keep sitemap focused on indexable marketing URLs until tenant SEO policy is explicit. |
+| crawl-optimization | PASS | CONFIRMED | RSS feed route exists for editorial discovery. | app/feed.xml/route.ts exists and emits RSS from shared blog posts | Keep feed.xml generated from the shared blog registry so new posts are discoverable without hardcoded URLs. |
+| metadata | PASS | CONFIRMED | Landing metadata is pinned to the Week 1 brand and QR ordering keyword target. | app/page.tsx exists and uses SEO_HOME_TITLE + SEO_HOME_DESCRIPTION | Keep the home title unique, brand-led and aligned with the H1. |
 | geo | PASS | CONFIRMED | AI search guidance file exists. | app/llms.txt/route.ts exists | Update llms.txt when product positioning, pricing or public pages change. |
 | indexing | PASS | CONFIRMED | Dashboard route group has noindex metadata. | app/dashboard/layout.tsx exists and imports noIndexMetadata | Do not override this in child dashboard routes. |
-| schema | PASS | CONFIRMED | Organization, WebSite and SoftwareApplication JSON-LD are emitted server-side. | components/seo/site-json-ld.tsx exists and uses next-seo JSON-LD helpers | Validate schema in CI after every schema change. |
+| schema | PASS | CONFIRMED | Organization, WebSite and SoftwareApplication JSON-LD are emitted from shared schema builders. | components/seo/site-json-ld.tsx exists and uses shared schema builders | Validate stable @id fragments and schema output in CI after every schema change. |
 | validation | PASS | CONFIRMED | Lighthouse CI thresholds are configured for SEO, performance and accessibility. | lighthouserc.cjs exists | Keep thresholds aligned with release risk. |
+| validation | PASS | CONFIRMED | GitHub Actions SEO workflow exists. | .github/workflows/seo-ci.yml exists | Run SEO audit, typecheck, build and Lighthouse CI for every pull request. |
+| structured-data | PASS | CONFIRMED | Schema entity IDs normalize the root URL before fragment IDs are appended. | lib/seo/schema.ts exists and normalizes schema fragment IDs | Keep Organization, WebSite and SoftwareApplication @id values stable across deploys. |
+| structured-data | PASS | CONFIRMED | Pricing page emits FAQ and breadcrumb JSON-LD. | components/seo/pricing-page-json-ld.tsx exists and includes FAQ + breadcrumb schema builders | Keep visible pricing FAQ copy and JSON-LD answers in sync whenever packages or entitlements change. |
+| answer-engine | PASS | CONFIRMED | Pricing FAQ structured data is mirrored by visible FAQ content. | app/pricing/page.tsx exists and renders pricingFaqItems visibly | Do not emit FAQPage JSON-LD without matching visible page copy. |
+| performance | PASS | CONFIRMED | Pricing page uses cached public plan data instead of per-request dynamic rendering. | app/pricing/page.tsx exists and uses ISR with cached public plans | Keep pricing on ISR/cached public data so SEO crawlers receive a fast, stable public page. |
+| content-seo | PASS | CONFIRMED | Blog index route exists with metadata, internal links and ItemList structured data. | app/blog/page.tsx exists and includes metadata + ItemList + shared blog posts | Keep /blog focused on topic clusters and link naturally to landing and pricing pages. |
+| content-seo | PASS | CONFIRMED | Blog article route emits Article, FAQ and breadcrumb structured data. | app/blog/[slug]/page.tsx exists and includes Article + FAQ schema with static params | Require every article to have unique title, description, canonical path and visible FAQ copy before adding it to sitemap. |
+| indexing | PASS | CONFIRMED | Blog index and article URLs are included in the sitemap. | app/sitemap.ts exists and maps blog posts into sitemap entries | Keep blog sitemap generation tied to the shared blog content registry. |
+| validation | PASS | CONFIRMED | Lighthouse CI writes summary artifacts for downstream SEO reporting. | scripts/seo/run-lhci.mjs exists and writes lighthouse-summary.json | Keep reports/seo/lighthouse-summary.json stable so the agentic audit can consume real score evidence. |
+| content-seo | PASS | CONFIRMED | Week 2 blog expansion has an automated content and internal-linking quality gate. | scripts/seo/blog-expansion-audit.mjs exists and writes blog expansion reports | Run npm run seo:blog after adding blog posts, topic clusters or article schema changes. |
+| validation | PASS | CONFIRMED | Week 2 SEO activation report separates local readiness from post-deploy Firecrawl and GSC actions. | scripts/seo/week2-activation.mjs exists and writes Week 2 activation reports | Run npm run seo:week2 before deploy handoffs and after refreshing Firecrawl/GSC evidence. |
+| indexing | PASS | CONFIRMED | Google Search Console Week 1 indexing readiness can be generated without sensitive credentials. | scripts/seo/gsc-week1-readiness.mjs exists and writes JSON + Markdown readiness reports | Run this before deploys and attach reports/seo/GSC-WEEK1-READINESS.md to SEO handoffs. |
+| indexing | PASS | CONFIRMED | Google Search Console action logs and exports are normalized into SEO summary artifacts. | scripts/seo/gsc-reporting.mjs exists and writes GSC summary artifacts | Keep reports/seo/gsc-summary.json as the agentic audit input for indexing, performance and GSC action evidence. |
+| crawlability | PASS | CONFIRMED | Firecrawl mapping integration can generate live crawl evidence when credentials are available. | scripts/seo/firecrawl-readiness.mjs exists and can write Firecrawl summary artifacts | Set FIRECRAWL_API_KEY in CI to write reports/seo/firecrawl-summary.json; keep the script non-blocking without credentials. |

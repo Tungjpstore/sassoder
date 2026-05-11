@@ -64,13 +64,13 @@ export function OnlineOrderingActions({
               min-height: 100vh;
               display: grid;
               place-items: center;
-              background: #f8fafc;
-              color: #0f172a;
+              background: #fff7eb;
+              color: #2b2b2b;
               font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
             .poster {
               width: min(92vw, 420px);
-              border: 1px solid #dfe7df;
+              border: 1px solid rgba(15, 77, 58, 0.14);
               border-radius: 28px;
               background: #fff7eb;
               padding: 28px;
@@ -79,7 +79,7 @@ export function OnlineOrderingActions({
             .logo { color: #0f4d3a; font-size: 22px; font-weight: 900; letter-spacing: -0.02em; }
             .logo span { color: #f28c28; }
             h1 { margin: 18px 0 10px; color: #0f4d3a; font-size: 38px; line-height: 1.02; }
-            p { margin: 0; color: #334155; font-size: 16px; font-weight: 700; }
+            p { margin: 0; color: rgba(43, 43, 43, 0.72); font-size: 16px; font-weight: 700; }
             .qr {
               margin: 24px auto 18px;
               width: 280px;

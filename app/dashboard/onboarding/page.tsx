@@ -1,5 +1,6 @@
-import { OnboardingForm } from "@/components/dashboard/onboarding-form";
+import { RestaurantOnboardingFlow } from "@/components/dashboard/restaurant-onboarding-flow";
 import { requireOnboardingUser } from "@/lib/session";
+import { getPublicActivePlans } from "@/services/subscription-service";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,7 @@ export default async function AdminOnboardingPage({
   searchParams?: Promise<{ plan?: string | string[] }>;
 }) {
   const params = await searchParams;
-  const user = await requireOnboardingUser();
+  const [user, plans] = await Promise.all([requireOnboardingUser(), getPublicActivePlans()]);
 
-  return <OnboardingForm email={user.email ?? ""} initialPlanCode={normalizePlan(params?.plan)} />;
+  return <RestaurantOnboardingFlow email={user.email ?? ""} initialPlanCode={normalizePlan(params?.plan)} plans={plans} />;
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { BarChart3, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, X } from "lucide-react";
 import { createPromotionAction, deletePromotionAction, togglePromotionAction, togglePromotionDisplayAction } from "@/app/dashboard/actions";
+import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -295,21 +296,26 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
       </section>
 
       {panelMode !== "closed" && (
-        <div className="fixed inset-0 z-[80]">
-          <button type="button" className="absolute inset-0 bg-slate-950/24" aria-label="Đóng khuyến mãi" onClick={closeDrawer} />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
+        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng khuyến mãi" onClick={closeDrawer} />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="promotion-drawer-title"
+            className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+          >
             <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Khuyến mãi</p>
-                <h3 className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+                <h3 id="promotion-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
                   {panelMode === "create" ? "Tạo chiến dịch mới" : selectedCampaign?.name ?? "Chi tiết chiến dịch"}
                 </h3>
               </div>
-              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
+              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng khuyến mãi">
                 <X size={18} />
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
               {panelMode === "create" && (
                 <form action={createPromotionAction} className="grid gap-4">
                   <label className="grid gap-2 text-sm font-semibold">
@@ -429,21 +435,22 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-[#E11D48]/18 bg-[var(--surface)] p-4">
-                    <h4 className="text-sm font-semibold text-[#BE123C]">Vùng xoá chiến dịch</h4>
+                  <div className="rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] p-4">
+                    <h4 className="text-sm font-semibold text-[var(--accent-strong)]">Vùng xoá chiến dịch</h4>
                     <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chỉ xoá khi bạn chắc chắn không cần dùng lại mã này.</p>
-                    <form
-                      action={deletePromotionAction}
-                      className="mt-4"
-                      onSubmit={(event) => {
-                        if (!window.confirm(`Xoá mã ${selectedCampaign.code}?`)) event.preventDefault();
-                      }}
-                    >
+                    <form action={deletePromotionAction} className="mt-4">
                       <input type="hidden" name="promotionId" value={selectedCampaign.id} />
-                      <Button type="submit" variant="ghost" className="w-full border-[#E11D48]/30 text-[#BE123C] hover:bg-[#E11D48]/8">
+                      <ConfirmActionButton
+                        type="submit"
+                        variant="ghost"
+                        className="w-full border-[var(--accent)]/30 text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
+                        confirmTitle="Xoá chiến dịch ưu đãi"
+                        confirmDescription={`Mã ${selectedCampaign.code} sẽ bị xoá và không còn hiển thị trong menu khách.`}
+                        confirmLabel="Xoá chiến dịch"
+                      >
                         <Trash2 size={16} />
                         Xoá chiến dịch
-                      </Button>
+                      </ConfirmActionButton>
                     </form>
                   </div>
                 </div>

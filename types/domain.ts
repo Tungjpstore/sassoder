@@ -74,6 +74,7 @@ export type OrderDto = {
   deliveryLng?: number | null;
   deliveryDistanceKm?: number | null;
   deliveryFee?: number;
+  serviceFee?: number;
   deliveryStatus?: DeliveryStatus;
   deliveryRouteGeometry?: {
     type: "LineString";
@@ -81,6 +82,22 @@ export type OrderDto = {
   } | null;
   deliveryRouteDurationMinutes?: number | null;
   deliveryTrackingUpdatedAt?: string | null;
+  deliveryCourierId?: string | null;
+  deliveryAssignedAt?: string | null;
+  deliveryCourier?: {
+    id: string;
+    name: string;
+    phone?: string | null;
+    status?: "offline" | "available" | "assigned" | "busy" | "paused";
+  } | null;
+  deliveryCourierLocation?: {
+    lat: number;
+    lng: number;
+    accuracyMeters?: number | null;
+    headingDegrees?: number | null;
+    speedMps?: number | null;
+    capturedAt?: string | null;
+  } | null;
   bill: {
     id: string;
     status: TableBillStatus;

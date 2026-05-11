@@ -11,11 +11,16 @@ function requestOrigin(request: Request) {
   return `${protocol}://${host}`;
 }
 
-export function assertSameOriginRequest(request: Request) {
+export function assertSameOriginRequest(request: Request, options: { requireOrigin?: boolean } = {}) {
   if (SAFE_METHODS.has(request.method.toUpperCase())) return;
 
   const origin = request.headers.get("origin");
-  if (!origin) return;
+  if (!origin) {
+    if (options.requireOrigin) {
+      throw new AppError("Yêu cầu không hợp lệ. Vui lòng tải lại trang và thử lại.", 403);
+    }
+    return;
+  }
 
   const expectedOrigin = requestOrigin(request);
   if (!expectedOrigin || origin !== expectedOrigin) {

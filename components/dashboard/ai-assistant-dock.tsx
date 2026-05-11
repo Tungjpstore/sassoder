@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRight,
   CheckCircle2,
@@ -66,7 +66,7 @@ type ChatMessage = {
 };
 
 const ownerIntentOptions: Array<{ intent: OwnerIntent; label: string; routeHint: string }> = [
-  { intent: "setup", label: "Setup", routeHint: "/dashboard/settings" },
+  { intent: "setup", label: "Thiết lập", routeHint: "/dashboard/settings" },
   { intent: "overview", label: "Tổng quan", routeHint: "/dashboard" },
   { intent: "orders", label: "Đơn", routeHint: "/dashboard/orders" },
   { intent: "kitchen", label: "Bếp", routeHint: "/dashboard/orders" },
@@ -83,7 +83,7 @@ const ownerIntentOptions: Array<{ intent: OwnerIntent; label: string; routeHint:
 ];
 
 const quickPrompts: Record<OwnerIntent, string[]> = {
-  setup: ["Quét readiness và chỉ ra việc chặn bán thật", "Tạo kế hoạch setup trong 30 phút", "Sinh bản nháp thương hiệu và menu đầu tiên"],
+  setup: ["Kiểm tra mức sẵn sàng và việc còn thiếu", "Tạo kế hoạch thiết lập trong 30 phút", "Tạo bản nháp thương hiệu và menu đầu tiên"],
   overview: ["Tóm tắt ca bán hiện tại và 3 việc cần làm ngay", "Điểm nghẽn lớn nhất trong 15 phút tới là gì?"],
   orders: ["Đơn nào cần xử lý trước và thao tác tiếp theo là gì?", "Kiểm tra đơn có nguy cơ trễ hoặc sai trạng thái"],
   kitchen: ["Sắp xếp thứ tự ra món cho bếp theo mức độ ưu tiên", "Có món/bàn nào quá giờ ra món không?"],
@@ -97,7 +97,7 @@ const quickPrompts: Record<OwnerIntent, string[]> = {
   reports: ["Tóm tắt insight doanh thu và món bán chạy", "Gợi ý báo cáo tuần nên gửi qua email"],
   settings: ["Quán còn thiếu cấu hình gì trước khi thương mại hóa?", "Kiểm tra hồ sơ quán, VietQR, logo và địa chỉ"],
   security: ["Audit nhanh rủi ro bị spam, bug gói hoặc sai quyền", "Các điểm cần khóa trước khi mở rộng quán"],
-  growth: ["Viết slogan và ý tưởng chiến dịch giữ chân khách", "Gợi ý prompt ảnh menu preview không bị lỗi chữ"]
+  growth: ["Viết slogan và ý tưởng chiến dịch giữ chân khách", "Gợi ý ảnh menu rõ món, không lỗi chữ"]
 };
 
 const logibotLogo = "/brand/logivn/logibot-badge.png";
@@ -127,8 +127,8 @@ function defaultOwnerMessages(): ChatMessage[] {
     {
       id: "intro",
       role: "assistant",
-      title: "LogiBot Operator",
-      content: "Mình sẽ đọc dữ liệu thật của quán và đưa action xử lý ngay. Chọn một nghiệp vụ hoặc hỏi trực tiếp."
+      title: "LogiBot hỗ trợ vận hành",
+      content: "Mình sẽ đọc dữ liệu thật của quán và đề xuất việc cần làm ngay. Chọn một nghiệp vụ hoặc hỏi trực tiếp."
     }
   ];
 }
@@ -148,8 +148,8 @@ function structuredBrandingText(data: AiReply["data"]) {
   return [
     data.slogans?.length ? `Slogan:\n${data.slogans.map((item) => `- ${item}`).join("\n")}` : "",
     data.description ? `\nMô tả:\n${data.description}` : "",
-    data.logoPrompt ? `\nPrompt logo:\n${data.logoPrompt}` : "",
-    data.menuHeroPrompt ? `\nPrompt ảnh menu:\n${data.menuHeroPrompt}` : ""
+    data.logoPrompt ? `\nGợi ý logo:\n${data.logoPrompt}` : "",
+    data.menuHeroPrompt ? `\nGợi ý ảnh menu:\n${data.menuHeroPrompt}` : ""
   ]
     .filter(Boolean)
     .join("\n");
@@ -175,7 +175,7 @@ function setupPlanText(data: unknown) {
           .join("\n")}`
       : "",
     plan.aiAutopilot?.length
-      ? `\nAI đáng bật:\n${plan.aiAutopilot.map((item) => `- ${item.feature} (${item.plan}): ${item.value}`).join("\n")}`
+      ? `\nTính năng nên bật:\n${plan.aiAutopilot.map((item) => `- ${item.feature} (${item.plan}): ${item.value}`).join("\n")}`
       : ""
   ]
     .filter(Boolean)
@@ -224,7 +224,7 @@ function agentEndpointText(payload: Record<string, unknown>) {
     setupDraftText(data) ||
     structuredBrandingText(data as AiReply["data"]) ||
     (payload.text as string | undefined) ||
-    "Đã chạy action. Dashboard sẽ cập nhật theo dữ liệu mới."
+    "Đã chạy tác vụ. Bảng quản lý sẽ cập nhật theo dữ liệu mới."
   );
 }
 
@@ -245,7 +245,7 @@ function inferIntentFromPath(pathname: string): OwnerIntent {
 
 function priorityClass(action: AiAgentAction) {
   if (action.priority === "primary") return "border-[var(--primary)] bg-[var(--primary)] text-white hover:bg-[var(--primary-hover)]";
-  if (action.priority === "danger") return "border-red-200 bg-red-50 text-red-700 hover:border-red-300";
+  if (action.priority === "danger") return "border-[var(--accent)]/24 bg-[var(--accent-soft)] text-[var(--accent-strong)] hover:border-[var(--accent)]/36";
   return "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--soft-surface)]";
 }
 
@@ -253,6 +253,37 @@ function safetyLabel(action: AiAgentAction) {
   if (action.safety === "manual_only") return "Cần tự xác nhận";
   if (action.safety === "confirm") return "Cần xác nhận";
   return "An toàn";
+}
+
+function actionConfirmMessage(action: AiAgentAction, count = 1) {
+  if (action.safety === "manual_only") {
+    return `Chỉ tiếp tục nếu bạn đã kiểm tra dữ liệu thật.\n\n${action.label}${count > 1 ? ` (${count} thao tác)` : ""}`;
+  }
+  if (action.safety === "confirm") {
+    return `LogiBot sẽ chạy thao tác này trong dashboard.\n\n${action.label}${count > 1 ? ` (${count} thao tác)` : ""}`;
+  }
+  return "";
+}
+
+function actionNeedsConfirmation(action: AiAgentAction) {
+  return action.safety === "confirm" || action.safety === "manual_only";
+}
+
+function isApiEnvelope(value: unknown): value is { ok: boolean; error?: string } {
+  return Boolean(value && typeof value === "object" && "ok" in value);
+}
+
+function getApiErrorMessage(value: unknown, fallback: string) {
+  if (isApiEnvelope(value) && value.ok === false && value.error) return value.error;
+  return fallback;
+}
+
+function getBulkOwnerActions(action: AiAgentAction) {
+  const body = action.body as { kind?: unknown; actions?: unknown } | undefined;
+  if (body?.kind !== "bulk_owner_actions" || !Array.isArray(body.actions)) return [];
+  return body.actions.filter((item): item is AiAgentAction => {
+    return Boolean(item && typeof item === "object" && (item as AiAgentAction).type === "api" && (item as AiAgentAction).endpoint);
+  });
 }
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -281,10 +312,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
 function ActionCard({
   action,
+  running,
   disabled,
   onRun
 }: {
   action: AiAgentAction;
+  running?: boolean;
   disabled?: boolean;
   onRun: (action: AiAgentAction) => void;
 }) {
@@ -292,8 +325,8 @@ function ActionCard({
     <>
       <div className="flex items-start justify-between gap-3">
         <span className="flex items-center gap-2 text-sm font-semibold">
-          {action.type === "link" ? <ExternalLink size={15} /> : <Play size={15} />}
-          {action.label}
+          {running ? <Loader2 size={15} className="animate-spin" /> : action.type === "link" ? <ExternalLink size={15} /> : <Play size={15} />}
+          {running ? "Đang chạy..." : action.label}
         </span>
         <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${action.priority === "primary" ? "bg-[var(--surface)]/14 text-current" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)]"}`}>
           {safetyLabel(action)}
@@ -314,7 +347,7 @@ function ActionCard({
   return (
     <button
       type="button"
-      disabled={disabled}
+      disabled={disabled || running}
       onClick={() => onRun(action)}
       className={`rounded-xl border p-3 text-left transition disabled:cursor-wait disabled:opacity-60 ${priorityClass(action)}`}
     >
@@ -324,6 +357,7 @@ function ActionCard({
 }
 
 export function AiAssistantDock({ restaurantName }: { restaurantName: string }) {
+  const router = useRouter();
   const pathname = usePathname();
   const initialIntent = useMemo(() => inferIntentFromPath(pathname), [pathname]);
   const storageKey = useMemo(() => ownerStorageKey(restaurantName), [restaurantName]);
@@ -335,6 +369,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
   const [agentPlan, setAgentPlan] = useState<AiAgentPlan | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(() => readStoredOwnerMessages(storageKey));
   const [loading, setLoading] = useState(false);
+  const [runningActionId, setRunningActionId] = useState<string | null>(null);
 
   useEffect(() => {
     setMessages(readStoredOwnerMessages(storageKey));
@@ -357,7 +392,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
         body: JSON.stringify(body)
       });
       const result = (await response.json().catch(() => null)) as ApiResponse<AiReply> | null;
-      if (!result || !result.ok) throw new Error(result?.error || "AI chưa phản hồi được.");
+      if (!result || !result.ok) throw new Error(result?.error || "LogiBot chưa phản hồi được.");
 
       const data = result.data;
       const content = agentEndpointText(data as Record<string, unknown>);
@@ -370,9 +405,9 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
         {
           id: makeId(),
           role: endpoint.includes("setup-") || endpoint.includes("branding") ? "tool" : "assistant",
-          title: data.agentPlan?.title ?? data.intentLabel ?? "AI phản hồi",
+          title: data.agentPlan?.title ?? data.intentLabel ?? "LogiBot phản hồi",
           content,
-          meta: [data.intentLabel, data.provider, data.model].filter(Boolean).join(" · "),
+          meta: [data.intentLabel].filter(Boolean).join(" · "),
           actions: nextActions,
           plan: data.agentPlan ?? null
         }
@@ -384,13 +419,94 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
         {
           id: makeId(),
           role: "assistant",
-          title: "Không chạy được agent",
-          content: error instanceof Error ? error.message : "Không gọi được AI."
+          title: "Chưa xử lý được yêu cầu",
+          content: error instanceof Error ? error.message : "Không gọi được LogiBot."
         }
       ]);
     } finally {
       setLoading(false);
     }
+  }
+
+  function pushMessage(message: Omit<ChatMessage, "id">) {
+    setMessages((current) => [...current.slice(-(maxStoredMessages - 1)), { id: makeId(), ...message }]);
+  }
+
+  async function postOperationalAction(action: AiAgentAction) {
+    if (!action.endpoint) throw new Error("Action chưa có endpoint để thực thi.");
+    const response = await fetch(action.endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(action.body ?? {})
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || (isApiEnvelope(result) && !result.ok)) {
+      throw new Error(getApiErrorMessage(result, "Không chạy được action. Vui lòng thử lại hoặc mở đúng màn để xử lý thủ công."));
+    }
+    return result;
+  }
+
+  async function runSingleApiAction(action: AiAgentAction) {
+    if (actionNeedsConfirmation(action) && !globalThis.confirm(actionConfirmMessage(action))) return;
+
+    setRunningActionId(action.id);
+    pushMessage({ role: "user", title: "Chạy action", content: action.label });
+    try {
+      await postOperationalAction(action);
+      router.refresh();
+      pushMessage({
+        role: "assistant",
+        title: "Action đã hoàn tất",
+        content: `${action.label} đã chạy xong. Mình đã làm mới dashboard để dữ liệu hiện tại được cập nhật.`
+      });
+    } catch (error) {
+      pushMessage({
+        role: "assistant",
+        title: "Action chưa hoàn tất",
+        content: error instanceof Error ? error.message : "Không chạy được action."
+      });
+    } finally {
+      setRunningActionId(null);
+    }
+  }
+
+  async function runBulkOwnerAction(action: AiAgentAction) {
+    const bulkActions = getBulkOwnerActions(action);
+    if (!bulkActions.length) {
+      pushMessage({
+        role: "assistant",
+        title: "Action chưa sẵn sàng",
+        content: "LogiBot chưa có danh sách thao tác hợp lệ để chạy hàng loạt."
+      });
+      return;
+    }
+
+    if (!globalThis.confirm(actionConfirmMessage(action, bulkActions.length) || `Chạy ${bulkActions.length} thao tác?`)) return;
+
+    setRunningActionId(action.id);
+    pushMessage({ role: "user", title: "Chạy hàng loạt", content: action.label });
+
+    let successCount = 0;
+    const failedLabels: string[] = [];
+
+    for (const item of bulkActions) {
+      try {
+        await postOperationalAction(item);
+        successCount += 1;
+      } catch {
+        failedLabels.push(item.label);
+      }
+    }
+
+    router.refresh();
+    setRunningActionId(null);
+    pushMessage({
+      role: "assistant",
+      title: failedLabels.length ? "Action chạy một phần" : "Đã xử lý hàng loạt",
+      content: failedLabels.length
+        ? `Đã chạy ${successCount}/${bulkActions.length} thao tác. Các mục chưa xong: ${failedLabels.slice(0, 3).join(", ")}.`
+        : `Đã chạy xong ${successCount} thao tác. Dashboard đã được làm mới để phản ánh trạng thái mới.`
+    });
   }
 
   async function submitAssistant(value = message, nextIntent = intent) {
@@ -422,17 +538,20 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       return;
     }
 
+    if (action.type === "ui" && (action.body as { kind?: unknown } | undefined)?.kind === "bulk_owner_actions") {
+      await runBulkOwnerAction(action);
+      return;
+    }
+
     if (action.type === "api" && action.endpoint) {
-      setMessages((current) => [
-        ...current.slice(-(maxStoredMessages - 1)),
-        {
-          id: makeId(),
-          role: "user",
-          title: "Chạy action",
-          content: action.label
-        }
-      ]);
-      await callAi(action.endpoint, action.body ?? {}, (action.intent as OwnerIntent) || intent);
+      if (action.endpoint.startsWith("/api/admin/ai/")) {
+        if (actionNeedsConfirmation(action) && !globalThis.confirm(actionConfirmMessage(action))) return;
+        await callAi(action.endpoint, action.body ?? {}, (action.intent as OwnerIntent) || intent);
+        router.refresh();
+        return;
+      }
+
+      await runSingleApiAction(action);
     }
   }
 
@@ -452,7 +571,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       </button>
 
       {open ? (
-        <section className="fixed bottom-20 right-5 z-50 flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.3)]">
+        <section className="fixed bottom-20 right-5 z-50 flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)]">
           <header className="flex items-center justify-between bg-[var(--primary)] px-4 py-3 text-white">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-[var(--surface)] p-0.5">
@@ -460,8 +579,8 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-black">LogiBot Operator</p>
-                  <span className="rounded-full bg-[var(--surface)]/12 px-2 py-0.5 text-[10px] font-bold text-white/80">Realtime actions</span>
+                  <p className="truncate text-sm font-black">LogiBot vận hành</p>
+                  <span className="rounded-full bg-[var(--surface)]/12 px-2 py-0.5 text-[10px] font-bold text-white/80">Tác vụ tức thời</span>
                 </div>
                 <p className="truncate text-xs text-white/72">{restaurantName} · {activeIntent?.label}</p>
               </div>
@@ -509,7 +628,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                   <div className="flex justify-start">
                     <div className="inline-flex items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm font-medium text-[var(--muted-foreground)]">
                       <Loader2 size={16} className="animate-spin" />
-                      Agent đang đọc dữ liệu và chọn action...
+                      LogiBot đang đọc dữ liệu và đề xuất việc cần làm...
                     </div>
                   </div>
                 ) : null}
@@ -518,10 +637,10 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               <div className="border-t border-[var(--border)] bg-[var(--surface)] p-3">
                 {actions.length ? (
                   <div className="mb-3 grid gap-2 lg:hidden">
-                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Action queue</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Việc cần làm</p>
                     <div className="grid gap-2">
                       {actions.slice(0, 3).map((item) => (
-                        <ActionCard key={item.id} action={item} disabled={loading} onRun={runAgentAction} />
+                        <ActionCard key={item.id} action={item} running={runningActionId === item.id} disabled={loading || Boolean(runningActionId)} onRun={runAgentAction} />
                       ))}
                     </div>
                   </div>
@@ -546,7 +665,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                     onKeyDown={(event) => {
                       if (event.key === "Enter") void submitAssistant();
                     }}
-                    placeholder={`Yêu cầu AI xử lý ${activeIntent?.label.toLowerCase() || "vận hành"}...`}
+                    placeholder={`Yêu cầu LogiBot xử lý ${activeIntent?.label.toLowerCase() || "vận hành"}...`}
                     className="min-w-0 flex-1 rounded-xl border border-[var(--border)] px-3 py-2 text-sm outline-none focus:border-[var(--primary)]"
                   />
                   <button
@@ -563,10 +682,10 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
 
             <aside className="hidden min-h-0 overflow-y-auto bg-[var(--surface)] p-4 lg:block">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Agent plan</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Kế hoạch xử lý</p>
                 <h3 className="mt-2 text-lg font-semibold text-[var(--foreground)]">{agentPlan?.title ?? "Chưa có kế hoạch"}</h3>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                  {agentPlan?.summary ?? "Hỏi AI hoặc chọn quick prompt để tạo kế hoạch hành động theo dữ liệu thật của quán."}
+                  {agentPlan?.summary ?? "Hỏi LogiBot hoặc chọn gợi ý nhanh để tạo kế hoạch hành động theo dữ liệu thật của quán."}
                 </p>
                 <div className="mt-3 grid gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
                   <span className="inline-flex items-center gap-2">
@@ -575,27 +694,27 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                   </span>
                   <span className="inline-flex items-center gap-2">
                     <ShieldCheck size={14} />
-                    {agentPlan?.safetyNote ?? "Action nhạy cảm cần người dùng tự xác nhận."}
+                    {agentPlan?.safetyNote ?? "Việc quan trọng cần chủ quán tự xác nhận trước khi áp dụng."}
                   </span>
                 </div>
               </div>
 
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Action queue</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Việc cần làm</p>
                   {actions.length ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-[var(--primary-soft)] px-2 py-1 text-[10px] font-bold text-[var(--primary)]">
                       <CheckCircle2 size={12} />
-                      {actions.length} action
+                      {actions.length} tác vụ
                     </span>
                   ) : null}
                 </div>
                 <div className="mt-3 grid gap-2">
                   {actions.length ? (
-                    actions.map((item) => <ActionCard key={item.id} action={item} disabled={loading} onRun={runAgentAction} />)
+                    actions.map((item) => <ActionCard key={item.id} action={item} running={runningActionId === item.id} disabled={loading || Boolean(runningActionId)} onRun={runAgentAction} />)
                   ) : (
                     <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm leading-6 text-[var(--muted-foreground)]">
-                      Action sẽ xuất hiện sau khi AI xác định intent và dữ liệu cần xử lý.
+                      Việc cần làm sẽ xuất hiện sau khi LogiBot hiểu nghiệp vụ và dữ liệu cần xử lý.
                     </div>
                   )}
                 </div>

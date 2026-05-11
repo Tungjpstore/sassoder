@@ -2,20 +2,20 @@ import type { AiAgentAction } from "@/types/ai-agent";
 
 export const customerCopilotToolCatalog = [
   {
-    name: "search_menu",
-    description: "Tìm món trong menu thật theo khẩu vị, ngân sách hoặc từ khóa khách hỏi."
+    name: "ask_customer_waiter",
+    description: "Đọc menu thật, giỏ hàng và trạng thái đơn để trả gợi ý món hoặc bước tiếp theo."
   },
   {
-    name: "add_recommended_item_to_cart",
-    description: "Đưa món được gợi ý vào giỏ hàng qua action UI, không tự gửi đơn."
+    name: "open_customer_cart",
+    description: "Mở giỏ hàng để khách kiểm tra món, ghi chú hoặc thanh toán."
   },
   {
-    name: "open_customer_flow",
-    description: "Mở đúng vùng menu, giỏ, đơn, thanh toán, gọi nhân viên hoặc đặt bàn."
+    name: "call_staff_from_table",
+    description: "Gọi nhân viên hỗ trợ tại bàn khi khách yêu cầu."
   },
   {
-    name: "create_combo",
-    description: "Tạo combo gợi ý từ menu thật và ngân sách khách đưa ra."
+    name: "mark_customer_paid",
+    description: "Đánh dấu khách đã chuyển khoản để quán vào bước xác nhận thủ công."
   }
 ] as const;
 

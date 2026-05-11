@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useId, useRef } from "react";
 import { X } from "lucide-react";
+import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
 
 type DashboardDrawerProps = {
   open: boolean;
@@ -28,57 +29,53 @@ export function DashboardDrawer({
   width = "md",
   footer,
 }: DashboardDrawerProps) {
-  const handleEscape = useCallback(
-    (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    },
-    [onClose]
-  );
+  const titleId = useId();
+  const subtitleId = useId();
+  const panelRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    if (open) {
-      document.addEventListener("keydown", handleEscape);
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.removeEventListener("keydown", handleEscape);
-        document.body.style.overflow = "";
-      };
-    }
-  }, [open, handleEscape]);
+  useDialogFocusTrap({ containerRef: panelRef, onClose, open });
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80]">
+    <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
       <button
         type="button"
-        className="drawer-backdrop absolute inset-0"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="drawer-backdrop absolute inset-0 z-0"
         onClick={onClose}
-        aria-label="Đóng"
       />
       <aside
-        className={`drawer-panel absolute right-0 top-0 flex h-full w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={subtitle ? subtitleId : undefined}
+        tabIndex={-1}
+        className={`drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
           <div>
             {subtitle && (
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-                {subtitle}
-              </p>
+                <p id={subtitleId} className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+                  {subtitle}
+                </p>
             )}
-            <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+            <h2 id={titleId} className="mt-1 text-xl font-semibold text-[var(--foreground)]">
               {title}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-container-high)]"
-          >
-            <X size={18} />
-          </button>
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-container-high)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2"
+                aria-label="Đóng drawer"
+              >
+                <X size={18} aria-hidden="true" />
+              </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
         {footer && (
           <div className="border-t border-[var(--border)] px-5 py-4">
             {footer}

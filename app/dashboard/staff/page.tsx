@@ -1,12 +1,12 @@
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { StaffWorkspace } from "@/components/dashboard/staff-workspace";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import { getRestaurantAdminDashboard, listRestaurantUsers } from "@/services/restaurant-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminStaffPage() {
-  const { session, entitlement } = await requireDashboardAccess("staff_management");
+  const { session, entitlement } = await requireDashboardAdminAccess("staff_management");
   const [{ dashboard, operations }, users] = await Promise.all([
     getRestaurantAdminDashboard(session.restaurantId),
     listRestaurantUsers(session.restaurantId)

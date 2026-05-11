@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authPasswordMaxLength, authPasswordMinLength, authPasswordPolicyPatterns } from "@/lib/auth-password-policy";
 
 export const paymentMethodSchema = z.enum(["QR", "CASH"]);
 export const fulfillmentTypeSchema = z.enum(["DINE_IN", "PICKUP", "DELIVERY"]);
@@ -18,6 +19,53 @@ const optionalCoordinateInput = (min: number, max: number) =>
     (value) => (value === "" || value === null ? undefined : value),
     z.coerce.number().finite().min(min).max(max).optional()
   );
+
+const optionalIntegerInput = (min: number, max: number) =>
+  z.preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.coerce.number().int().min(min).max(max).optional()
+  );
+
+const jsonArrayInput = <T extends z.ZodTypeAny>(schema: T, max: number) =>
+  z.preprocess((value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== "string" || value.trim().length === 0) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, z.array(schema).max(max));
+
+const deliveryAreaPointSchema = z.object({
+  lat: z.coerce.number().finite().min(-90).max(90),
+  lng: z.coerce.number().finite().min(-180).max(180)
+});
+
+const deliveryFeeTierSchema = z.object({
+  id: z.string().trim().max(80).optional().or(z.literal("")),
+  label: z.string().trim().max(80).optional().or(z.literal("")),
+  upToKm: z.preprocess(
+    (value) => (value === "" || value === null ? null : value),
+    z.coerce.number().finite().min(0).max(200).nullable()
+  ),
+  fee: z.preprocess(
+    (value) => (value === "" || value === null ? null : value),
+    z.coerce.number().int().min(0).max(10000000).nullable()
+  ),
+  contact: z.coerce.boolean().optional()
+}).refine((tier) => Boolean(tier.contact) || tier.fee !== null, {
+  message: "Mỗi mức phí phải có giá tiền hoặc đánh dấu Liên hệ",
+  path: ["fee"]
+});
+
+const deliveryExclusionZoneSchema = z.object({
+  id: z.string().trim().max(80).optional().or(z.literal("")),
+  name: z.string().trim().min(1).max(120),
+  areaKm2: z.coerce.number().finite().min(0).max(500).optional().default(0),
+  polygon: z.array(deliveryAreaPointSchema).max(30).optional().default([])
+});
 
 export const createOrderSchema = z.object({
   restaurantSlug: z.string().min(1),
@@ -105,6 +153,41 @@ export const deliveryStatusSchema = z.object({
   status: z.enum(["accepted", "out_for_delivery", "delivered", "rejected"])
 });
 
+export const deliveryLocationSchema = z.object({
+  lat: coordinateSchema.min(-90).max(90),
+  lng: coordinateSchema.min(-180).max(180),
+  accuracyMeters: z.coerce.number().finite().min(0).max(5000).optional(),
+  headingDegrees: z.coerce.number().finite().min(0).lt(360).optional(),
+  speedMps: z.coerce.number().finite().min(0).max(80).optional(),
+  source: z.enum(["admin_dashboard", "driver_app", "manual", "system"]).optional(),
+  capturedAt: z.string().datetime().optional(),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const deliveryCourierSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal(""))
+});
+
+export const deliveryCourierAssignmentSchema = z.object({
+  courierId: z.string().uuid().nullable().optional()
+});
+
+export const adminOrderIdSchema = z.object({
+  orderId: z.string().uuid()
+});
+
+export const adminOrderCleanupSchema = z.object({
+  mode: z.enum(["cancel", "delete_test"]),
+  statuses: z
+    .array(z.enum(["pending", "ordering", "waiting_payment", "waiting_confirm", "paid", "completed", "cancelled"]))
+    .min(1)
+    .max(7)
+    .optional(),
+  olderThanMinutes: z.coerce.number().int().min(0).max(10080).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional()
+});
+
 export const reservationAvailabilitySchema = z.object({
   restaurantSlug: z.string().min(1),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -147,21 +230,23 @@ export const reservationSettingsSchema = z.object({
   path: ["reservationDepositValue"]
 });
 
+export const authEmailSchema = z.string().trim().toLowerCase().email();
+
 export const loginSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   password: z.string().min(8)
 });
 
 const strongPasswordSchema = z
   .string()
-  .min(10, "Mật khẩu cần ít nhất 10 ký tự.")
-  .max(128, "Mật khẩu quá dài.")
-  .regex(/[a-z]/, "Mật khẩu cần có chữ thường.")
-  .regex(/[A-Z]/, "Mật khẩu cần có chữ hoa.")
-  .regex(/[0-9]/, "Mật khẩu cần có chữ số.");
+  .min(authPasswordMinLength, "Mật khẩu cần ít nhất 10 ký tự.")
+  .max(authPasswordMaxLength, "Mật khẩu quá dài.")
+  .regex(authPasswordPolicyPatterns.lowercase, "Mật khẩu cần có chữ thường.")
+  .regex(authPasswordPolicyPatterns.uppercase, "Mật khẩu cần có chữ hoa.")
+  .regex(authPasswordPolicyPatterns.number, "Mật khẩu cần có chữ số.");
 
 export const forgotPasswordSchema = z.object({
-  email: z.string().email()
+  email: authEmailSchema
 });
 
 export const resetPasswordSchema = z
@@ -175,22 +260,58 @@ export const resetPasswordSchema = z
   });
 
 export const emailOtpSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   token: z.string().trim().regex(/^\d{6}$/)
 });
 
 export const resendEmailOtpSchema = z.object({
-  email: z.string().email()
+  email: authEmailSchema
 });
+
+export const authEmailStatusSchema = z.object({
+  email: authEmailSchema
+});
+
+export const registerAccountSchema = z
+  .object({
+    email: authEmailSchema,
+    password: strongPasswordSchema,
+    confirmPassword: z.string()
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: "Mật khẩu xác nhận chưa khớp.",
+    path: ["confirmPassword"]
+  });
 
 export const restaurantSchema = z.object({
   name: z.string().min(2).max(120),
   slug: z.string().min(2).max(80).regex(/^[a-z0-9-]+$/).optional()
 });
 
+const onboardingInitialMenuItemSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  price: z.coerce.number().int().min(1000).max(100000000),
+  categoryName: z.string().trim().max(80).optional().or(z.literal(""))
+});
+
 export const onboardingSchema = restaurantSchema.extend({
   businessType: businessTypeSchema,
+  customBusinessType: z.string().trim().max(80).optional().or(z.literal("")),
   tableCount: z.coerce.number().int().min(1).max(300),
+  address: z.string().trim().max(500).optional().or(z.literal("")),
+  storeLat: optionalCoordinateInput(-90, 90),
+  storeLng: optionalCoordinateInput(-180, 180),
+  hotline: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  initialItemName: z.string().trim().max(120).optional().or(z.literal("")),
+  initialItemPrice: z.preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.coerce.number().int().min(1).max(100000000).optional()
+  ),
+  initialItemCategory: z.string().trim().max(80).optional().or(z.literal("")),
+  initialMenuItems: jsonArrayInput(onboardingInitialMenuItemSchema, 80),
+  brandSlogan: z.string().trim().max(80).optional().or(z.literal("")),
+  brandDescription: z.string().trim().max(500).optional().or(z.literal("")),
+  generatedLogoUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
   bankCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{2,20}$/).optional().or(z.literal("")),
   bankAccount: z.string().trim().regex(/^[0-9]{4,32}$/).optional().or(z.literal("")),
   bankAccountName: z.string().trim().max(120).optional().or(z.literal("")),
@@ -205,7 +326,7 @@ export const onboardingSchema = restaurantSchema.extend({
 
 export const registerOnboardingSchema = onboardingSchema.extend({
   ownerName: z.string().min(2).max(120).optional().or(z.literal("")),
-  email: z.string().email(),
+  email: authEmailSchema,
   password: strongPasswordSchema
 });
 
@@ -256,23 +377,53 @@ export const reportScheduleSchema = z.object({
 });
 
 export const orderingSettingsSchema = z.object({
+  address: z.string().trim().max(240).optional().or(z.literal("")),
   onlineOrderingEnabled: z.coerce.boolean().optional(),
   pickupEnabled: z.coerce.boolean().optional(),
   deliveryEnabled: z.coerce.boolean().optional(),
   onlinePaymentMode: z.enum(["PAY_AFTER", "QR_PREPAID"]),
   deliveryTrackingEnabled: z.coerce.boolean().optional(),
+  mapGeocodingProvider: z.enum(["nominatim", "mapbox", "vietmap", "goong"]),
+  mapRoutingProvider: z.enum(["osrm", "mapbox", "vietmap", "goong"]),
+  mapDefaultZoom: z.coerce.number().int().min(8).max(18),
+  mapDisplayStyle: z.enum(["LIGHT", "DARK"]),
+  showStoreMarkerOnOrdering: z.coerce.boolean().optional(),
+  showCustomerDistance: z.coerce.boolean().optional(),
   storeLat: optionalCoordinateInput(-90, 90),
   storeLng: optionalCoordinateInput(-180, 180),
   deliveryRadiusKm: z.coerce.number().min(0).max(200),
   freeDeliveryRadiusKm: z.coerce.number().min(0).max(200),
   deliveryBaseFee: z.coerce.number().int().min(0).max(10000000),
   deliveryFeePerKm: z.coerce.number().int().min(0).max(10000000),
+  deliveryAreaMode: z.enum(["RADIUS", "CUSTOM"]),
+  deliveryAreaName: z.string().trim().max(120).optional().or(z.literal("")),
+  deliveryAreaNote: z.string().trim().max(240).optional().or(z.literal("")),
+  deliveryAreaWardCount: z.coerce.number().int().min(0).max(10000),
+  deliveryAreaPolygon: jsonArrayInput(deliveryAreaPointSchema, 40),
+  deliveryExclusionZones: jsonArrayInput(deliveryExclusionZoneSchema, 30),
+  deliveryFeeEnabled: z.coerce.boolean().optional(),
+  deliveryFeeTiers: jsonArrayInput(deliveryFeeTierSchema, 20),
   minOrderForDelivery: z.coerce.number().int().min(0).max(100000000),
   pickupEtaMinutes: z.coerce.number().int().min(1).max(240),
-  deliveryEtaMinutes: z.coerce.number().int().min(1).max(240)
+  deliveryEtaMinutes: z.coerce.number().int().min(1).max(240),
+  serviceFeeEnabled: z.coerce.boolean().optional(),
+  serviceFeeType: z.enum(["ORDER_PERCENT"]),
+  serviceFeePercent: z.coerce.number().min(0).max(100),
+  serviceFeeMin: z.coerce.number().int().min(0).max(10000000),
+  serviceFeeMax: optionalIntegerInput(0, 10000000),
+  allowOutsideDeliveryArea: z.coerce.boolean().optional(),
+  showDeliveryEta: z.coerce.boolean().optional(),
+  requireOutsideAreaConfirmation: z.coerce.boolean().optional(),
+  autoSuggestNearestBranch: z.coerce.boolean().optional()
 }).refine((value) => value.freeDeliveryRadiusKm <= value.deliveryRadiusKm, {
   message: "Khoảng miễn phí ship không được lớn hơn bán kính nhận đơn",
   path: ["freeDeliveryRadiusKm"]
+}).refine((value) => value.deliveryAreaMode === "RADIUS" || value.deliveryAreaPolygon.length >= 3, {
+  message: "Vùng giao tùy chỉnh cần ít nhất 3 điểm trên bản đồ",
+  path: ["deliveryAreaPolygon"]
+}).refine((value) => value.serviceFeeMax === undefined || value.serviceFeeMax >= value.serviceFeeMin, {
+  message: "Phí dịch vụ tối đa không được nhỏ hơn phí tối thiểu",
+  path: ["serviceFeeMax"]
 });
 
 export const categorySchema = z.object({

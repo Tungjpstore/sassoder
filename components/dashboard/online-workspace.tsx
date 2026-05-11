@@ -1,10 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Banknote, Bike, Clock3, Compass, ExternalLink, MapPin, PackageCheck, QrCode, Settings2, ShoppingBag, Truck, X } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, ArrowRight, Banknote, Bike, Clock3, Compass, ExternalLink, MapPin, PackageCheck, QrCode, Settings2, ShoppingBag, Truck, X } from "lucide-react";
+import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
 import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
+import { StoreDeliveryMapPreview } from "@/components/maps/store-delivery-map-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentStatusLabel } from "@/lib/labels";
@@ -83,7 +87,7 @@ function readinessItems({
   return [
     { label: "Sẵn sàng nhận đơn", value: onlineReady ? "Đang bật" : "Chưa bật", helper: onlineReady ? "Link online đang hoạt động" : "Bật đặt online và ít nhất 1 hình thức nhận đơn" },
     { label: "Menu", value: `${menuItems} món`, helper: `${categories} danh mục đang bán` },
-    { label: "Bản đồ giao hàng", value: mapboxReady ? "Mapbox OK" : "Chưa đủ", helper: mapboxReady ? "Đã sẵn sàng tính tuyến giao thật" : "Cần token hoặc tọa độ quán" },
+    { label: "Bản đồ giao hàng", value: mapboxReady ? "Maps ready" : "Chưa đủ", helper: mapboxReady ? "Đã sẵn sàng định vị, routing và quote" : "Cần ít nhất một provider map hoặc tọa độ quán" },
     { label: "Định vị quán", value: deliveryReady ? "Đã có" : "Thiếu tọa độ", helper: deliveryReady ? "Có thể tính khoảng cách giao hàng" : "Dùng nút tự lấy tọa độ trong cấu hình" }
   ];
 }
@@ -93,6 +97,10 @@ function drawerTitle(mode: DrawerMode) {
   if (mode === "qr") return "QR & link chia sẻ";
   if (mode === "orders") return "Đơn online gần đây";
   return "";
+}
+
+function readDrawerMode(value: string | null): DrawerMode {
+  return value === "settings" || value === "qr" || value === "orders" ? value : "closed";
 }
 
 export function OnlineWorkspace({
@@ -105,9 +113,39 @@ export function OnlineWorkspace({
   categories,
   mapboxReady
 }: OnlineWorkspaceProps) {
-  const [drawer, setDrawer] = useState<DrawerMode>("closed");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [drawer, setDrawerState] = useState<DrawerMode>(() => readDrawerMode(searchParams.get("panel")));
+  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const readiness = useMemo(() => readinessItems({ restaurant, mapboxReady, menuItems, categories }), [restaurant, mapboxReady, menuItems, categories]);
   const topOrders = recentOrders.slice(0, 4);
+
+  useDialogFocusTrap({
+    containerRef: settingsPanelRef,
+    onClose: () => setDrawer("closed"),
+    open: drawer === "settings"
+  });
+
+  useEffect(() => {
+    const syncDrawerFromHistory = () => {
+      setDrawerState(readDrawerMode(new URLSearchParams(window.location.search).get("panel")));
+    };
+    window.addEventListener("popstate", syncDrawerFromHistory);
+    return () => window.removeEventListener("popstate", syncDrawerFromHistory);
+  }, []);
+
+  function setDrawer(nextDrawer: DrawerMode) {
+    setDrawerState(nextDrawer);
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextDrawer === "closed") {
+      params.delete("panel");
+    } else {
+      params.set("panel", nextDrawer);
+    }
+    const queryString = params.toString();
+    router.replace(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+  }
 
   return (
     <>
@@ -262,6 +300,13 @@ export function OnlineWorkspace({
             </div>
           </section>
 
+          <StoreDeliveryMapPreview
+            latitude={restaurant.store_lat}
+            longitude={restaurant.store_lng}
+            radiusKm={Number(restaurant.delivery_radius_km)}
+            address={restaurant.address}
+          />
+
           <section className="dashboard-panel p-4">
             <div className="flex items-center gap-2">
               <Truck className="text-[var(--primary)]" size={18} />
@@ -293,88 +338,119 @@ export function OnlineWorkspace({
         </aside>
       </div>
 
-      {drawer !== "closed" ? (
-        <div className="fixed inset-0 z-[80]">
-          <button type="button" className="absolute inset-0 bg-slate-950/24" onClick={() => setDrawer("closed")} aria-label="Đóng drawer" />
-          <aside className="absolute right-0 top-0 flex h-full w-full max-w-[540px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
-            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Online workspace</p>
-                <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">{drawerTitle(drawer)}</h2>
-              </div>
-              <button type="button" onClick={() => setDrawer("closed")} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]">
-                <X size={18} />
+      {drawer === "settings" ? (
+        <div
+          ref={settingsPanelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="online-workspace-settings-title"
+          aria-describedby="online-workspace-settings-description"
+          tabIndex={-1}
+          className="fixed inset-0 z-[90] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] focus:outline-none"
+        >
+          <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-4 py-3 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDrawer("closed")}
+                className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
+              >
+                <ArrowLeft size={16} aria-hidden="true" />
+                Quay lại
               </button>
+              <span className="dashboard-stat-icon h-10 w-10 shrink-0">
+                <Settings2 size={18} aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Online workspace</p>
+                <h2 id="online-workspace-settings-title" className="truncate text-xl font-semibold text-[var(--foreground)]">Cấu hình bán online</h2>
+                <p id="online-workspace-settings-description" className="mt-0.5 truncate text-sm font-medium text-[var(--muted-foreground)]">Màn hình đầy đủ cho map, vùng giao và phí ship</p>
+              </div>
             </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
-              {drawer === "settings" ? (
-                <OrderingSettingsForm settings={restaurant} onlineUrl={onlineUrl} compact />
-              ) : null}
-
-              {drawer === "qr" ? (
-                <div className="grid gap-4">
-                  <div className="mx-auto w-full max-w-[280px] rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-center">
-                    <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl bg-[var(--primary)] text-white">
-                      <QrCode size={19} />
-                    </div>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={qrSrc} alt="QR đặt món online" width={240} height={240} className="mx-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2" />
-                    <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">{restaurant.name}</p>
-                    <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Quét để đặt món online</p>
-                  </div>
-                  <OnlineOrderingActions onlineUrl={onlineUrl} restaurantName={restaurant.name} qrSrc={qrSrc} />
-                </div>
-              ) : null}
-
-              {drawer === "orders" ? (
-                <div className="grid gap-3">
-                  {recentOrders.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-6 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-                      Chưa có đơn online gần đây.
-                    </div>
-                  ) : (
-                    recentOrders.map((order) => (
-                      <div key={order.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <p className="font-semibold text-[var(--foreground)]">{order.customerName || "Khách online"}</p>
-                            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
-                              {order.customerPhone || "Chưa có SĐT"} · {formatTime(order.createdAt)}
-                            </p>
-                          </div>
-                          <span className="metric-number font-semibold text-[var(--accent)]">{formatVnd(order.total)}</span>
-                        </div>
-                        <p className="mt-3 text-sm text-[var(--muted-foreground)]">{order.itemSummary}</p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <Badge tone={order.fulfillmentType === "DELIVERY" ? "blue" : "green"}>
-                            {order.fulfillmentType === "DELIVERY" ? "Giao hàng" : "Đến lấy"}
-                          </Badge>
-                          <Badge tone={statusTone(order.status)}>{orderStatusLabel(order.status)}</Badge>
-                          <Badge tone={statusTone(order.paymentStatus ?? "pending")}>{paymentStatusLabel(order.paymentStatus)}</Badge>
-                          {order.fulfillmentType === "DELIVERY" ? (
-                            <Badge tone={order.deliveryStatus === "delivered" ? "green" : order.deliveryStatus === "out_for_delivery" ? "blue" : "yellow"}>
-                              {deliveryStatusLabel(order.deliveryStatus)}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        {order.fulfillmentType === "DELIVERY" ? (
-                          <p className="mt-3 text-xs font-medium text-[var(--muted-foreground)]">
-                            {order.deliveryDistanceKm ? `${order.deliveryDistanceKm} km` : "Chưa có khoảng cách"} · {order.deliveryRouteDurationMinutes ? `${order.deliveryRouteDurationMinutes} phút` : "Chưa có ETA"} · {order.deliveryAddress || "Chưa có địa chỉ"}
-                          </p>
-                        ) : null}
-                      </div>
-                    ))
-                  )}
-                  <Link href="/dashboard/orders" className="dashboard-primary-action">
-                    Mở bảng đơn hàng đầy đủ
-                    <ArrowRight size={15} />
-                  </Link>
-                </div>
-              ) : null}
+            <button
+              type="button"
+              onClick={() => setDrawer("closed")}
+              className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
+              aria-label="Thu nhỏ cấu hình bán online"
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          </header>
+          <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6 md:py-5">
+            <div className="mx-auto w-full max-w-[1680px]">
+              <OrderingSettingsForm settings={restaurant} onlineUrl={onlineUrl} />
             </div>
-          </aside>
+          </main>
         </div>
+      ) : drawer !== "closed" ? (
+        <DashboardDrawer
+          open
+          onClose={() => setDrawer("closed")}
+          title={drawerTitle(drawer)}
+          subtitle="Online workspace"
+          width="md"
+        >
+          {drawer === "qr" ? (
+            <div className="grid gap-4">
+              <div className="mx-auto w-full max-w-[280px] rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-center">
+                <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl bg-[var(--primary)] text-white">
+                  <QrCode size={19} aria-hidden="true" />
+                </div>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={qrSrc} alt="QR đặt món online" width={240} height={240} className="mx-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2" />
+                <p className="mt-3 text-sm font-semibold text-[var(--foreground)]">{restaurant.name}</p>
+                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Quét để đặt món online</p>
+              </div>
+              <OnlineOrderingActions onlineUrl={onlineUrl} restaurantName={restaurant.name} qrSrc={qrSrc} />
+            </div>
+          ) : null}
+
+          {drawer === "orders" ? (
+            <div className="grid gap-3">
+              {recentOrders.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-6 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+                  Chưa có đơn online gần đây.
+                </div>
+              ) : (
+                recentOrders.map((order) => (
+                  <div key={order.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-[var(--foreground)]">{order.customerName || "Khách online"}</p>
+                        <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+                          {order.customerPhone || "Chưa có SĐT"} · {formatTime(order.createdAt)}
+                        </p>
+                      </div>
+                      <span className="metric-number font-semibold text-[var(--accent)]">{formatVnd(order.total)}</span>
+                    </div>
+                    <p className="mt-3 text-sm text-[var(--muted-foreground)]">{order.itemSummary}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge tone={order.fulfillmentType === "DELIVERY" ? "blue" : "green"}>
+                        {order.fulfillmentType === "DELIVERY" ? "Giao hàng" : "Đến lấy"}
+                      </Badge>
+                      <Badge tone={statusTone(order.status)}>{orderStatusLabel(order.status)}</Badge>
+                      <Badge tone={statusTone(order.paymentStatus ?? "pending")}>{paymentStatusLabel(order.paymentStatus)}</Badge>
+                      {order.fulfillmentType === "DELIVERY" ? (
+                        <Badge tone={order.deliveryStatus === "delivered" ? "green" : order.deliveryStatus === "out_for_delivery" ? "blue" : "yellow"}>
+                          {deliveryStatusLabel(order.deliveryStatus)}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {order.fulfillmentType === "DELIVERY" ? (
+                      <p className="mt-3 text-xs font-medium text-[var(--muted-foreground)]">
+                        {order.deliveryDistanceKm ? `${order.deliveryDistanceKm} km` : "Chưa có khoảng cách"} · {order.deliveryRouteDurationMinutes ? `${order.deliveryRouteDurationMinutes} phút` : "Chưa có ETA"} · {order.deliveryAddress || "Chưa có địa chỉ"}
+                      </p>
+                    ) : null}
+                  </div>
+                ))
+              )}
+              <Link href="/dashboard/orders" className="dashboard-primary-action">
+                Mở bảng đơn hàng đầy đủ
+                <ArrowRight size={15} aria-hidden="true" />
+              </Link>
+            </div>
+          ) : null}
+        </DashboardDrawer>
       ) : null}
     </>
   );

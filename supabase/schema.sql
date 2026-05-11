@@ -1,8 +1,10 @@
 -- QR Restaurant SaaS Supabase schema
 -- Run this in Supabase SQL Editor before deploying the app.
 
+create schema if not exists extensions;
 create extension if not exists "pgcrypto";
 create extension if not exists btree_gist;
+create extension if not exists postgis with schema extensions;
 
 create type public.user_role as enum ('ADMIN', 'STAFF');
 create type public.business_type as enum ('CAFE', 'RESTAURANT', 'FAST_FOOD', 'BAR', 'OTHER');
@@ -43,6 +45,13 @@ create table public.restaurants (
   delivery_enabled boolean not null default false,
   store_lat double precision,
   store_lng double precision,
+  store_geog extensions.geography(Point, 4326) generated always as (
+    case
+      when store_lat is not null and store_lng is not null then
+        extensions.ST_SetSRID(extensions.ST_MakePoint(store_lng, store_lat), 4326)::extensions.geography
+      else null
+    end
+  ) stored,
   delivery_radius_km numeric(6,2) not null default 5,
   free_delivery_radius_km numeric(6,2) not null default 0,
   delivery_base_fee integer not null default 0,
@@ -52,6 +61,30 @@ create table public.restaurants (
   delivery_eta_minutes integer not null default 45,
   online_payment_mode text not null default 'PAY_AFTER',
   delivery_tracking_enabled boolean not null default true,
+  map_provider text not null default 'maplibre',
+  map_geocoding_provider text not null default 'nominatim',
+  map_routing_provider text not null default 'osrm',
+  map_default_zoom integer not null default 14,
+  map_display_style text not null default 'LIGHT',
+  show_store_marker_on_ordering boolean not null default true,
+  show_customer_distance boolean not null default true,
+  delivery_area_mode text not null default 'RADIUS',
+  delivery_area_name text,
+  delivery_area_note text,
+  delivery_area_polygon jsonb not null default '[]'::jsonb,
+  delivery_area_ward_count integer not null default 0,
+  delivery_exclusion_zones jsonb not null default '[]'::jsonb,
+  delivery_fee_enabled boolean not null default true,
+  delivery_fee_tiers jsonb not null default '[]'::jsonb,
+  service_fee_enabled boolean not null default false,
+  service_fee_type text not null default 'ORDER_PERCENT',
+  service_fee_percent numeric(5,2) not null default 0,
+  service_fee_min integer not null default 0,
+  service_fee_max integer,
+  allow_outside_delivery_area boolean not null default false,
+  show_delivery_eta boolean not null default true,
+  require_outside_area_confirmation boolean not null default true,
+  auto_suggest_nearest_branch boolean not null default true,
   notify_new_order boolean not null default true,
   notify_payment_waiting boolean not null default true,
   receipt_footer text,
@@ -85,6 +118,25 @@ create table public.restaurants (
     and pickup_eta_minutes between 1 and 240
     and delivery_eta_minutes between 1 and 240
   ),
+  constraint restaurants_map_provider_check check (map_provider in ('maplibre', 'mapbox')),
+  constraint restaurants_map_geocoding_provider_check check (map_geocoding_provider in ('nominatim', 'mapbox', 'vietmap', 'goong')),
+  constraint restaurants_map_routing_provider_check check (map_routing_provider in ('osrm', 'mapbox', 'vietmap', 'goong')),
+  constraint restaurants_map_display_style_check check (map_display_style in ('LIGHT', 'DARK')),
+  constraint restaurants_map_default_zoom_range check (map_default_zoom between 8 and 18),
+  constraint restaurants_delivery_area_mode_check check (delivery_area_mode in ('RADIUS', 'CUSTOM')),
+  constraint restaurants_delivery_area_json_check check (
+    jsonb_typeof(delivery_area_polygon) = 'array'
+    and jsonb_typeof(delivery_exclusion_zones) = 'array'
+    and jsonb_typeof(delivery_fee_tiers) = 'array'
+  ),
+  constraint restaurants_delivery_area_ward_count_range check (delivery_area_ward_count >= 0),
+  constraint restaurants_service_fee_check check (
+    service_fee_type in ('ORDER_PERCENT')
+    and service_fee_percent >= 0
+    and service_fee_percent <= 100
+    and service_fee_min >= 0
+    and (service_fee_max is null or service_fee_max >= service_fee_min)
+  ),
   constraint restaurants_online_payment_mode_check check (online_payment_mode in ('PAY_AFTER', 'QR_PREPAID')),
   constraint restaurants_reservation_deposit_type_check check (reservation_deposit_type in ('FIXED', 'PER_PERSON')),
   constraint restaurants_reservation_settings_range check (
@@ -112,6 +164,40 @@ create table public.tables (
   area text not null default 'Khu chính',
   capacity integer not null default 4 check (capacity >= 1 and capacity <= 50),
   qr_enabled boolean not null default true,
+  unique (restaurant_id, name)
+);
+
+create table public.store_branches (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  name text not null,
+  address text not null,
+  latitude double precision not null,
+  longitude double precision not null,
+  location_geog extensions.geography(Point, 4326) generated always as (
+    extensions.ST_SetSRID(extensions.ST_MakePoint(longitude, latitude), 4326)::extensions.geography
+  ) stored,
+  is_primary boolean not null default false,
+  is_active boolean not null default true,
+  delivery_radius_km numeric(6,2) not null default 5,
+  free_delivery_radius_km numeric(6,2) not null default 0,
+  delivery_base_fee integer not null default 15000,
+  delivery_fee_per_km integer not null default 5000,
+  pickup_eta_minutes integer not null default 15,
+  delivery_eta_minutes integer not null default 45,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint store_branches_latitude_range check (latitude between -90 and 90),
+  constraint store_branches_longitude_range check (longitude between -180 and 180),
+  constraint store_branches_delivery_radius_range check (delivery_radius_km >= 0 and delivery_radius_km <= 200),
+  constraint store_branches_free_delivery_radius_range check (free_delivery_radius_km >= 0 and free_delivery_radius_km <= delivery_radius_km),
+  constraint store_branches_delivery_fee_range check (
+    delivery_base_fee >= 0
+    and delivery_fee_per_km >= 0
+    and pickup_eta_minutes between 1 and 240
+    and delivery_eta_minutes between 1 and 240
+  ),
   unique (restaurant_id, name)
 );
 
@@ -157,10 +243,17 @@ create table public.orders (
   delivery_lng double precision,
   delivery_distance_km numeric(8,2),
   delivery_fee integer not null default 0,
+  service_fee integer not null default 0,
   delivery_status text not null default 'none',
   delivery_route_geometry jsonb,
   delivery_route_duration_minutes integer,
+  delivery_route_provider text,
+  delivery_route_confidence text,
+  delivery_quote_version text,
+  delivery_quote_snapshot jsonb,
   delivery_tracking_updated_at timestamptz,
+  delivery_courier_id uuid references public.delivery_couriers(id) on delete set null,
+  delivery_assigned_at timestamptz,
   idempotency_key text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -181,8 +274,21 @@ create table public.orders (
       and jsonb_typeof(delivery_route_geometry->'coordinates') = 'array'
     )
   ),
+  constraint orders_delivery_route_provider_check check (
+    delivery_route_provider is null
+    or delivery_route_provider in ('goong', 'vietmap', 'osrm', 'mapbox', 'haversine')
+  ),
+  constraint orders_delivery_route_confidence_check check (
+    delivery_route_confidence is null
+    or delivery_route_confidence in ('high', 'medium', 'low')
+  ),
+  constraint orders_delivery_quote_snapshot_check check (
+    delivery_quote_snapshot is null
+    or jsonb_typeof(delivery_quote_snapshot) = 'object'
+  ),
   constraint orders_delivery_lat_range check (delivery_lat is null or (delivery_lat >= -90 and delivery_lat <= 90)),
   constraint orders_delivery_lng_range check (delivery_lng is null or (delivery_lng >= -180 and delivery_lng <= 180)),
+  constraint orders_service_fee_range check (service_fee >= 0),
   constraint orders_remote_customer_required check (
     fulfillment_type = 'DINE_IN'
     or (customer_name is not null and length(trim(customer_name)) >= 2 and customer_phone is not null and length(trim(customer_phone)) >= 6)
@@ -231,6 +337,7 @@ create table public.payment_logs (
   method public.payment_method not null,
   status public.payment_log_status not null default 'pending',
   amount integer not null check (amount >= 0),
+  transition_key text,
   raw_data jsonb,
   created_at timestamptz not null default now()
 );
@@ -338,6 +445,7 @@ create table public.reservation_deposit_logs (
   method public.payment_method not null default 'QR',
   status public.payment_log_status not null default 'pending',
   amount integer not null check (amount >= 0),
+  transition_key text,
   raw_data jsonb,
   created_at timestamptz not null default now()
 );
@@ -404,9 +512,156 @@ create table public.report_send_logs (
   constraint report_send_logs_period_range check (period_start <= period_end)
 );
 
+create table public.map_provider_request_logs (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid references public.restaurants(id) on delete set null,
+  restaurant_slug text,
+  source text,
+  operation text not null,
+  provider text not null,
+  outcome text not null,
+  status_code integer,
+  latency_ms integer not null default 0,
+  estimated_cost_vnd numeric(12,2) not null default 0,
+  created_at timestamptz not null default now(),
+  constraint map_provider_request_logs_operation_check
+    check (operation in ('geocode', 'reverse', 'route')),
+  constraint map_provider_request_logs_provider_check
+    check (provider in ('goong', 'vietmap', 'mapbox', 'nominatim', 'osrm')),
+  constraint map_provider_request_logs_outcome_check
+    check (outcome in ('success', 'http_error', 'timeout', 'error', 'empty')),
+  constraint map_provider_request_logs_latency_check
+    check (latency_ms >= 0)
+);
+
+create table public.map_cache_event_logs (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid references public.restaurants(id) on delete set null,
+  restaurant_slug text,
+  source text,
+  operation text not null,
+  namespace text not null,
+  hit boolean not null,
+  created_at timestamptz not null default now(),
+  constraint map_cache_event_logs_operation_check
+    check (operation in ('geocode', 'reverse', 'route', 'delivery_quote'))
+);
+
+create table public.delivery_quote_metric_logs (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid references public.restaurants(id) on delete set null,
+  restaurant_slug text not null,
+  accepted boolean not null,
+  provider text not null,
+  route_provider text,
+  confidence text,
+  is_estimated boolean,
+  distance_km numeric(8,2),
+  fee integer,
+  latency_ms integer not null default 0,
+  created_at timestamptz not null default now(),
+  constraint delivery_quote_metric_logs_provider_check
+    check (provider in ('goong', 'vietmap', 'mapbox', 'nominatim', 'osrm', 'manual', 'browser-location+haversine')),
+  constraint delivery_quote_metric_logs_route_provider_check
+    check (route_provider is null or route_provider in ('goong', 'vietmap', 'mapbox', 'osrm', 'haversine')),
+  constraint delivery_quote_metric_logs_confidence_check
+    check (confidence is null or confidence in ('high', 'medium', 'low')),
+  constraint delivery_quote_metric_logs_latency_check
+    check (latency_ms >= 0)
+);
+
+create table public.delivery_couriers (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  name text not null,
+  phone text,
+  status text not null default 'offline',
+  metadata jsonb not null default '{}'::jsonb,
+  last_location_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint delivery_couriers_status_check check (status in ('offline', 'available', 'assigned', 'busy', 'paused')),
+  constraint delivery_couriers_phone_format check (phone is null or phone ~ '^[0-9+() .-]{6,24}$'),
+  constraint delivery_couriers_metadata_object_check check (jsonb_typeof(metadata) = 'object')
+);
+
+create table public.courier_locations (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  courier_id uuid references public.delivery_couriers(id) on delete set null,
+  order_id uuid references public.orders(id) on delete cascade,
+  latitude double precision not null,
+  longitude double precision not null,
+  location_geog extensions.geography(Point, 4326)
+    generated always as (extensions.ST_SetSRID(extensions.ST_MakePoint(longitude, latitude), 4326)::extensions.geography) stored,
+  accuracy_meters numeric(8,2),
+  heading_degrees numeric(6,2),
+  speed_mps numeric(8,2),
+  source text not null default 'admin_dashboard',
+  captured_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  metadata jsonb not null default '{}'::jsonb,
+  constraint courier_locations_latitude_range check (latitude between -90 and 90),
+  constraint courier_locations_longitude_range check (longitude between -180 and 180),
+  constraint courier_locations_accuracy_range check (accuracy_meters is null or accuracy_meters between 0 and 5000),
+  constraint courier_locations_heading_range check (heading_degrees is null or (heading_degrees >= 0 and heading_degrees < 360)),
+  constraint courier_locations_speed_range check (speed_mps is null or speed_mps >= 0),
+  constraint courier_locations_source_check check (source in ('admin_dashboard', 'driver_app', 'manual', 'system')),
+  constraint courier_locations_metadata_object_check check (jsonb_typeof(metadata) = 'object')
+);
+
+create table public.delivery_tracking_events (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  order_id uuid not null references public.orders(id) on delete cascade,
+  courier_id uuid references public.delivery_couriers(id) on delete set null,
+  event_type text not null,
+  delivery_status text,
+  latitude double precision,
+  longitude double precision,
+  location_geog extensions.geography(Point, 4326)
+    generated always as (
+      case
+        when latitude is not null and longitude is not null then
+          extensions.ST_SetSRID(extensions.ST_MakePoint(longitude, latitude), 4326)::extensions.geography
+        else null
+      end
+    ) stored,
+  accuracy_meters numeric(8,2),
+  heading_degrees numeric(6,2),
+  speed_mps numeric(8,2),
+  source text not null default 'admin_dashboard',
+  note text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint delivery_tracking_events_type_check check (event_type in ('status_changed', 'location_ping', 'assigned', 'unassigned', 'eta_adjusted', 'handoff_note')),
+  constraint delivery_tracking_events_status_check check (delivery_status is null or delivery_status in ('requested', 'accepted', 'out_for_delivery', 'delivered', 'rejected')),
+  constraint delivery_tracking_events_latitude_range check (latitude is null or latitude between -90 and 90),
+  constraint delivery_tracking_events_longitude_range check (longitude is null or longitude between -180 and 180),
+  constraint delivery_tracking_events_coordinate_pair_check check ((latitude is null and longitude is null) or (latitude is not null and longitude is not null)),
+  constraint delivery_tracking_events_accuracy_range check (accuracy_meters is null or accuracy_meters between 0 and 5000),
+  constraint delivery_tracking_events_heading_range check (heading_degrees is null or (heading_degrees >= 0 and heading_degrees < 360)),
+  constraint delivery_tracking_events_speed_range check (speed_mps is null or speed_mps >= 0),
+  constraint delivery_tracking_events_source_check check (source in ('admin_dashboard', 'driver_app', 'manual', 'system')),
+  constraint delivery_tracking_events_metadata_object_check check (jsonb_typeof(metadata) = 'object')
+);
+
 create index restaurants_slug_idx on public.restaurants (slug);
+create index restaurants_delivery_coords_idx on public.restaurants (store_lat, store_lng);
+create index restaurants_store_geog_gist_idx
+  on public.restaurants
+  using gist (store_geog)
+  where store_geog is not null;
+create index restaurants_map_provider_idx on public.restaurants (map_provider, map_geocoding_provider, map_routing_provider);
 create index users_restaurant_id_idx on public.users (restaurant_id);
 create index tables_restaurant_id_idx on public.tables (restaurant_id);
+create index store_branches_restaurant_active_idx on public.store_branches (restaurant_id, is_active, is_primary desc);
+create index store_branches_coordinates_idx on public.store_branches (latitude, longitude);
+create index store_branches_location_geog_gist_idx
+  on public.store_branches
+  using gist (location_geog)
+  where is_active = true;
 create index menu_categories_restaurant_id_idx on public.menu_categories (restaurant_id);
 create index menu_items_restaurant_category_idx on public.menu_items (restaurant_id, category_id);
 create index table_bills_restaurant_table_status_idx on public.table_bills (restaurant_id, table_id, status, created_at desc);
@@ -422,6 +677,20 @@ create index orders_restaurant_fulfillment_created_idx on public.orders (restaur
 create index orders_restaurant_delivery_status_created_idx
   on public.orders (restaurant_id, delivery_status, created_at desc)
   where fulfillment_type = 'DELIVERY';
+create index orders_delivery_route_provider_idx
+  on public.orders (restaurant_id, delivery_route_provider)
+  where delivery_route_provider is not null;
+create index orders_delivery_quote_version_idx
+  on public.orders (restaurant_id, delivery_quote_version)
+  where delivery_quote_version is not null;
+create index orders_restaurant_delivery_courier_idx
+  on public.orders (restaurant_id, delivery_courier_id, delivery_status, created_at desc)
+  where fulfillment_type = 'DELIVERY' and delivery_courier_id is not null;
+create index orders_restaurant_unassigned_delivery_idx
+  on public.orders (restaurant_id, created_at desc)
+  where fulfillment_type = 'DELIVERY'
+    and delivery_courier_id is null
+    and delivery_status in ('requested', 'accepted', 'out_for_delivery');
 create index orders_restaurant_promotion_created_idx
   on public.orders (restaurant_id, promotion_id, created_at desc)
   where promotion_id is not null;
@@ -431,6 +700,38 @@ create index orders_restaurant_remote_customer_created_idx
 create index orders_customer_session_created_idx
   on public.orders (restaurant_id, table_id, customer_session_id, created_at desc)
   where customer_session_id is not null;
+create index map_provider_request_logs_restaurant_created_idx
+  on public.map_provider_request_logs (restaurant_id, created_at desc);
+create index map_provider_request_logs_provider_created_idx
+  on public.map_provider_request_logs (provider, operation, created_at desc);
+create index map_cache_event_logs_restaurant_created_idx
+  on public.map_cache_event_logs (restaurant_id, created_at desc);
+create index delivery_quote_metric_logs_restaurant_created_idx
+  on public.delivery_quote_metric_logs (restaurant_id, created_at desc);
+create index delivery_quote_metric_logs_slug_created_idx
+  on public.delivery_quote_metric_logs (restaurant_slug, created_at desc);
+create index delivery_couriers_restaurant_status_idx
+  on public.delivery_couriers (restaurant_id, status, updated_at desc);
+create unique index delivery_couriers_restaurant_phone_idx
+  on public.delivery_couriers (restaurant_id, phone)
+  where phone is not null;
+create index courier_locations_restaurant_order_captured_idx
+  on public.courier_locations (restaurant_id, order_id, captured_at desc)
+  where order_id is not null;
+create index courier_locations_courier_captured_idx
+  on public.courier_locations (courier_id, captured_at desc)
+  where courier_id is not null;
+create index courier_locations_geog_gist_idx
+  on public.courier_locations
+  using gist (location_geog);
+create index delivery_tracking_events_order_created_idx
+  on public.delivery_tracking_events (order_id, created_at desc);
+create index delivery_tracking_events_restaurant_created_idx
+  on public.delivery_tracking_events (restaurant_id, created_at desc);
+create index delivery_tracking_events_geog_gist_idx
+  on public.delivery_tracking_events
+  using gist (location_geog)
+  where location_geog is not null;
 create unique index orders_restaurant_table_idempotency_idx
   on public.orders (restaurant_id, table_id, idempotency_key)
   where idempotency_key is not null;
@@ -439,6 +740,9 @@ create unique index orders_restaurant_remote_idempotency_idx
   where table_id is null and idempotency_key is not null;
 create index order_items_order_id_idx on public.order_items (order_id);
 create index payment_logs_order_created_idx on public.payment_logs (order_id, created_at desc);
+create unique index payment_logs_transition_key_idx
+  on public.payment_logs (transition_key)
+  where transition_key is not null;
 create index promotions_restaurant_status_idx on public.promotions (restaurant_id, is_active, starts_at desc, created_at desc);
 create index service_requests_restaurant_status_created_idx
   on public.service_requests (restaurant_id, status, created_at desc);
@@ -456,6 +760,9 @@ create index reservation_locks_restaurant_table_time_idx
   where status = 'active';
 create index reservation_deposit_logs_reservation_created_idx
   on public.reservation_deposit_logs (reservation_id, created_at desc);
+create unique index reservation_deposit_logs_transition_key_idx
+  on public.reservation_deposit_logs (transition_key)
+  where transition_key is not null;
 create index registration_intents_user_pending_idx
   on public.registration_intents (user_id, created_at desc)
   where consumed_at is null;
@@ -471,9 +778,133 @@ create index report_send_logs_restaurant_created_idx
 create index report_send_logs_schedule_created_idx
   on public.report_send_logs (schedule_id, created_at desc);
 
+create or replace function public.find_nearest_delivery_stores(
+  p_restaurant_slug text,
+  p_lat double precision,
+  p_lng double precision,
+  p_limit integer default 4,
+  p_max_radius_km double precision default 50
+)
+returns table (
+  id uuid,
+  restaurant_id uuid,
+  name text,
+  address text,
+  latitude double precision,
+  longitude double precision,
+  is_primary boolean,
+  source text,
+  delivery_radius_km numeric,
+  free_delivery_radius_km numeric,
+  delivery_base_fee integer,
+  delivery_fee_per_km integer,
+  pickup_eta_minutes integer,
+  delivery_eta_minutes integer,
+  metadata jsonb,
+  approx_distance_km double precision
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with input as (
+    select
+      extensions.ST_SetSRID(extensions.ST_MakePoint(p_lng, p_lat), 4326)::extensions.geography as destination,
+      least(greatest(coalesce(p_limit, 4), 1), 20) as row_limit,
+      greatest(coalesce(p_max_radius_km, 50), 0) * 1000 as max_radius_m
+    where p_restaurant_slug is not null
+      and p_restaurant_slug <> ''
+      and p_lat between -90 and 90
+      and p_lng between -180 and 180
+  ),
+  target_restaurant as (
+    select r.*
+    from public.restaurants r
+    where r.slug = p_restaurant_slug
+    limit 1
+  ),
+  candidates as (
+    select
+      r.id,
+      r.id as restaurant_id,
+      r.name,
+      r.address,
+      r.store_lat as latitude,
+      r.store_lng as longitude,
+      true as is_primary,
+      'primary'::text as source,
+      r.delivery_radius_km,
+      r.free_delivery_radius_km,
+      r.delivery_base_fee,
+      r.delivery_fee_per_km,
+      r.pickup_eta_minutes,
+      r.delivery_eta_minutes,
+      '{}'::jsonb as metadata,
+      r.store_geog as geog
+    from target_restaurant r
+    where r.store_geog is not null
+
+    union all
+
+    select
+      b.id,
+      b.restaurant_id,
+      b.name,
+      b.address,
+      b.latitude,
+      b.longitude,
+      b.is_primary,
+      'branch'::text as source,
+      b.delivery_radius_km,
+      b.free_delivery_radius_km,
+      b.delivery_base_fee,
+      b.delivery_fee_per_km,
+      b.pickup_eta_minutes,
+      b.delivery_eta_minutes,
+      b.metadata,
+      b.location_geog as geog
+    from public.store_branches b
+    join target_restaurant r on r.id = b.restaurant_id
+    where b.is_active = true
+      and b.location_geog is not null
+  )
+  select
+    c.id,
+    c.restaurant_id,
+    c.name,
+    c.address,
+    c.latitude,
+    c.longitude,
+    c.is_primary,
+    c.source,
+    c.delivery_radius_km,
+    c.free_delivery_radius_km,
+    c.delivery_base_fee,
+    c.delivery_fee_per_km,
+    c.pickup_eta_minutes,
+    c.delivery_eta_minutes,
+    c.metadata,
+    round((extensions.ST_Distance(c.geog, input.destination) / 1000)::numeric, 3)::double precision as approx_distance_km
+  from candidates c
+  cross join input
+  where input.max_radius_m = 0
+    or extensions.ST_DWithin(c.geog, input.destination, input.max_radius_m)
+  order by c.geog operator(extensions.<->) input.destination, c.is_primary desc
+  limit (select row_limit from input);
+$$;
+
+comment on function public.find_nearest_delivery_stores(text, double precision, double precision, integer, double precision)
+  is 'Server-side PostGIS prefilter for delivery quote branch routing. Backend routes only the nearest candidates through Goong/Mapbox.';
+
+revoke all on function public.find_nearest_delivery_stores(text, double precision, double precision, integer, double precision) from public;
+revoke all on function public.find_nearest_delivery_stores(text, double precision, double precision, integer, double precision) from anon;
+revoke all on function public.find_nearest_delivery_stores(text, double precision, double precision, integer, double precision) from authenticated;
+grant execute on function public.find_nearest_delivery_stores(text, double precision, double precision, integer, double precision) to service_role;
+
 alter table public.restaurants enable row level security;
 alter table public.users enable row level security;
 alter table public.tables enable row level security;
+alter table public.store_branches enable row level security;
 alter table public.menu_categories enable row level security;
 alter table public.menu_items enable row level security;
 alter table public.table_bills enable row level security;
@@ -488,6 +919,12 @@ alter table public.reservation_deposit_logs enable row level security;
 alter table public.registration_intents enable row level security;
 alter table public.report_schedules enable row level security;
 alter table public.report_send_logs enable row level security;
+alter table public.map_provider_request_logs enable row level security;
+alter table public.map_cache_event_logs enable row level security;
+alter table public.delivery_quote_metric_logs enable row level security;
+alter table public.delivery_couriers enable row level security;
+alter table public.courier_locations enable row level security;
+alter table public.delivery_tracking_events enable row level security;
 
 create or replace function public.current_restaurant_id()
 returns uuid
@@ -725,6 +1162,21 @@ create trigger orders_sync_table_bill_total
 after insert or update of bill_id, total, status or delete on public.orders
 for each row execute function public.sync_table_bill_total();
 
+create or replace function public.touch_delivery_courier_updated_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+create trigger delivery_couriers_touch_updated_at
+before update on public.delivery_couriers
+for each row execute function public.touch_delivery_courier_updated_at();
+
 create policy "authenticated can read own restaurant"
 on public.restaurants for select
 to authenticated
@@ -757,6 +1209,53 @@ on public.tables for all
 to authenticated
 using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
 with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "public can read active store branches"
+on public.store_branches for select
+to anon, authenticated
+using (is_active = true);
+
+create policy "users can read own store branches"
+on public.store_branches for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can mutate own store branches"
+on public.store_branches for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "users can read own delivery couriers"
+on public.delivery_couriers for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can mutate own delivery couriers"
+on public.delivery_couriers for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "users can read own courier locations"
+on public.courier_locations for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "users can insert own courier locations"
+on public.courier_locations for insert
+to authenticated
+with check (restaurant_id = public.current_restaurant_id());
+
+create policy "users can read own delivery tracking events"
+on public.delivery_tracking_events for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "users can insert own delivery tracking events"
+on public.delivery_tracking_events for insert
+to authenticated
+with check (restaurant_id = public.current_restaurant_id());
 
 create policy "users can read own menu categories"
 on public.menu_categories for select
@@ -939,6 +1438,8 @@ alter publication supabase_realtime add table public.orders;
 alter publication supabase_realtime add table public.order_items;
 alter publication supabase_realtime add table public.payment_logs;
 alter publication supabase_realtime add table public.reservations;
+alter publication supabase_realtime add table public.courier_locations;
+alter publication supabase_realtime add table public.delivery_tracking_events;
 
 create policy "anon can receive customer order broadcasts"
 on realtime.messages
@@ -963,7 +1464,10 @@ begin
       'delivery_status', new.delivery_status,
       'delivery_distance_km', new.delivery_distance_km,
       'delivery_fee', new.delivery_fee,
+      'service_fee', new.service_fee,
       'delivery_route_duration_minutes', new.delivery_route_duration_minutes,
+      'delivery_route_provider', new.delivery_route_provider,
+      'delivery_route_confidence', new.delivery_route_confidence,
       'delivery_tracking_updated_at', new.delivery_tracking_updated_at,
       'total', new.total,
       'updated_at', new.updated_at
@@ -978,8 +1482,44 @@ end;
 $$;
 
 create trigger orders_customer_status_broadcast
-after insert or update of status, total, payment_method, payment_status, paid_at, delivery_status, delivery_distance_km, delivery_fee, delivery_route_duration_minutes, delivery_tracking_updated_at, updated_at on public.orders
+after insert or update of status, total, payment_method, payment_status, paid_at, delivery_status, delivery_distance_km, delivery_fee, service_fee, delivery_route_duration_minutes, delivery_route_provider, delivery_route_confidence, delivery_tracking_updated_at, updated_at on public.orders
 for each row execute function public.broadcast_customer_order_status();
+
+create or replace function public.broadcast_delivery_tracking_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, realtime
+as $$
+begin
+  perform realtime.send(
+    jsonb_build_object(
+      'id', new.id,
+      'order_id', new.order_id,
+      'event_type', new.event_type,
+      'delivery_status', new.delivery_status,
+      'courier_id', new.courier_id,
+      'latitude', new.latitude,
+      'longitude', new.longitude,
+      'accuracy_meters', new.accuracy_meters,
+      'heading_degrees', new.heading_degrees,
+      'speed_mps', new.speed_mps,
+      'source', new.source,
+      'note', new.note,
+      'created_at', new.created_at
+    ),
+    'delivery_tracking',
+    'customer-order:' || new.order_id::text,
+    false
+  );
+
+  return null;
+end;
+$$;
+
+create trigger delivery_tracking_event_broadcast
+after insert on public.delivery_tracking_events
+for each row execute function public.broadcast_delivery_tracking_event();
 
 create or replace function public.touch_order_for_realtime()
 returns trigger

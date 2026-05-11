@@ -3,17 +3,20 @@ import { buildAppUrl, getAppUrl } from "@/lib/app-url";
 export const SEO_SITE_NAME = "LogiVN";
 export const SEO_COMPANY_NAME = "LogiVN";
 export const SEO_LEGAL_NAME = "LogiVN";
-export const SEO_DEFAULT_TITLE = "LogiVN - Gọi món QR cho quán Việt";
+export const SEO_HOME_TITLE = "LogiVN - Phần mềm gọi món QR cho quán cafe, nhà hàng";
+export const SEO_HOME_DESCRIPTION =
+  "LogiVN giúp quán cafe, nhà hàng tạo menu QR, nhận đơn theo thời gian thực, quản lý bàn, thanh toán VietQR và vận hành trên một bảng quản lý rõ ràng.";
+export const SEO_DEFAULT_TITLE = SEO_HOME_TITLE;
 export const SEO_TITLE_TEMPLATE = "%s | LogiVN";
-export const SEO_DEFAULT_DESCRIPTION =
-  "LogiVN là nền tảng SaaS gọi món bằng QR, quản lý bàn, vận hành đơn realtime, VietQR và AI cho quán cafe, nhà hàng Việt.";
+export const SEO_DEFAULT_DESCRIPTION = SEO_HOME_DESCRIPTION;
 export const SEO_LOCALE = "vi_VN";
 export const SEO_LANG = "vi";
 export const SEO_THEME_COLOR = "#0F4D3A";
 export const SEO_TWITTER_CARD = "summary_large_image";
+export const SEO_ORGANIZATION_SAME_AS = [] as const;
 
 export const SEO_BRAND_LOGO_PATH = "/brand/logivn/logo-horizontal-transparent.png";
-export const SEO_DEFAULT_IMAGE_PATH = "/brand/logivn/01-banner-overview-hero.png";
+export const SEO_DEFAULT_IMAGE_PATH = "/brand/logivn/01-banner-overview-hero-v2.png";
 
 export const SEO_PUBLIC_ROUTES = [
   {
@@ -28,7 +31,14 @@ export const SEO_PUBLIC_ROUTES = [
     priority: 0.8,
     changeFrequency: "weekly" as const,
     title: "Bảng giá LogiVN - Pro, Premium cho quán cafe và nhà hàng",
-    description: "So sánh gói LogiVN Pro, Premium và Enterprise cho QR ordering, đặt món online, đặt bàn, AI vận hành và báo cáo."
+    description: "So sánh gói LogiVN Pro, Premium và gói tư vấn cho gọi món QR, đặt món online, đặt bàn, thanh toán VietQR và báo cáo."
+  },
+  {
+    path: "/blog",
+    priority: 0.7,
+    changeFrequency: "weekly" as const,
+    title: "Blog LogiVN - Gọi món QR, VietQR và vận hành quán cafe",
+    description: "Kiến thức thực chiến về gọi món QR, thanh toán VietQR, quản lý đơn theo thời gian thực và chuyển đổi số cho quán cafe, nhà hàng Việt."
   }
 ];
 
@@ -50,4 +60,3 @@ export function absoluteAssetUrl(path: string) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   return `${getAppUrl()}${normalizedPath}`;
 }
-

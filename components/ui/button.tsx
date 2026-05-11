@@ -8,9 +8,13 @@ export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "sm" | "md" | "icon";
 };
 
-export function Button({ className, variant = "primary", size = "md", ...props }: ButtonProps) {
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { className, variant = "primary", size = "md", ...props },
+  ref
+) {
   return (
     <button
+      ref={ref}
       className={cn(
         "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg font-bold transition duration-200 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]",
@@ -22,10 +26,10 @@ export function Button({ className, variant = "primary", size = "md", ...props }
         variant === "danger" && "bg-[var(--danger)] text-[#FFF7EB] hover:bg-[var(--accent-strong)]",
         size === "sm" && "h-9 px-3 text-sm",
         size === "md" && "h-11 px-4 text-sm",
-        size === "icon" && "h-10 w-10",
+        size === "icon" && "h-11 w-11",
         className
       )}
       {...props}
     />
   );
-}
+});

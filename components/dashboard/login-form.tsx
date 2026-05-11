@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { ArrowRight, Eye, EyeOff, Lock, Mail, QrCode, ShieldCheck, Store } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Lock, Mail, ShieldCheck } from "lucide-react";
 import { loginAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
@@ -11,6 +11,7 @@ type LoginFormProps = {
   tenantSlug?: string;
   authError?: string;
   resetStatus?: string;
+  initialEmail?: string;
 };
 
 function getGoogleAuthErrorMessage(authError?: string) {
@@ -29,59 +30,34 @@ function getGoogleAuthErrorMessage(authError?: string) {
   return messages[authError] ?? "Không hoàn tất được đăng nhập Google. Vui lòng thử lại hoặc dùng email và mật khẩu.";
 }
 
-const trustItems = [
-  { icon: Store, label: "Tách dữ liệu quán", desc: "Mỗi quán một subdomain riêng" },
-  { icon: QrCode, label: "QR theo từng bàn", desc: "Quét để gọi món & thanh toán" },
-  { icon: ShieldCheck, label: "Phiên an toàn", desc: "Tự động đăng xuất phiên cũ" }
-];
-
-export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus }: LoginFormProps) {
+export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus, initialEmail = "" }: LoginFormProps) {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
   const tenantHost = tenantSlug ? `${tenantSlug}.${rootDomain}` : rootDomain;
   const googleAuthErrorMessage = getGoogleAuthErrorMessage(authError);
 
   return (
-    <main className="stitch-onboarding min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <div className="relative flex min-h-screen flex-col overflow-hidden">
-        {/* Ambient glows */}
-        <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[var(--primary)]/8 blur-[120px]" />
-        <div className="pointer-events-none absolute -right-32 bottom-0 h-[500px] w-[500px] rounded-full bg-[var(--accent)]/6 blur-[120px]" />
-        <div className="pointer-events-none absolute -left-32 bottom-1/4 h-[400px] w-[400px] rounded-full bg-[var(--primary)]/5 blur-[100px]" />
-
-        {/* Header */}
-        <header className="relative z-10 flex min-h-16 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)]/60 px-5 py-3 backdrop-blur-xl sm:px-8">
+    <main className="min-h-screen overflow-hidden bg-[#fff8ec] text-[#102a1f]">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(15,77,58,0.11),transparent_34%),radial-gradient(circle_at_92%_12%,rgba(242,140,40,0.08),transparent_24%)]" />
+      <section className="auth-fade-in relative mx-auto flex min-h-screen w-full max-w-[440px] flex-col justify-center px-5 py-8">
+        <div className="mb-7 flex flex-col items-center text-center">
           <LogiVNLogo href="/" className="h-9" priority />
-          <Link
-            href="/dashboard/register"
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] px-4 text-sm font-bold text-[var(--primary-strong)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--primary)]/40 hover:shadow-[var(--glow-primary)]"
-          >
-            Tạo quán mới
-          </Link>
-        </header>
-
-        {/* Centered content */}
-        <section className="auth-fade-in relative z-10 mx-auto flex w-full max-w-[460px] flex-1 flex-col items-center justify-center gap-8 px-5 py-10">
-          {/* Logo mark */}
-          <div className="flex flex-col items-center gap-3">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--primary)] shadow-[var(--glow-primary)]">
-              <ShieldCheck className="h-7 w-7 text-white" />
-            </div>
-            <h1 className="text-center text-2xl font-black tracking-tight sm:text-3xl">Đăng nhập quản trị</h1>
-            <p className="text-center text-sm leading-6 text-[var(--muted-foreground)]">
-              {tenantSlug ? `Bạn đang ở ${tenantHost}.` : "Nhập email và mật khẩu, LogiVN tự mở đúng quán."}
-            </p>
+          <div className="mt-6 grid h-12 w-12 place-items-center rounded-2xl bg-[#0f4d3a] shadow-[0_16px_36px_rgba(15,77,58,0.18)]">
+            <ShieldCheck className="h-5 w-5 text-[#fff8ec]" />
           </div>
+          <h1 className="mt-5 text-[28px] font-black tracking-[-0.05em]">Đăng nhập</h1>
+          <p className="mt-2 max-w-sm text-sm leading-6 text-[#657267]">
+            {tenantSlug ? `Bạn đang ở ${tenantHost}.` : "Vào đúng dashboard quán bằng phiên quản trị an toàn."}
+          </p>
+        </div>
 
-          {/* Glass card */}
           <form
             action={formAction}
-            className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-6 shadow-[var(--shadow-lift)] ring-1 ring-[var(--primary)]/5 backdrop-blur-2xl sm:p-8"
+            className="w-full rounded-[32px] border border-[#123b2b]/10 bg-[#fffdf8]/92 p-4 shadow-[0_24px_80px_rgba(15,77,58,0.08)] backdrop-blur sm:p-5"
           >
-            {/* Google OAuth */}
             <a
               href="/auth/google"
-              className="mb-5 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-strong)] px-5 text-sm font-bold text-[var(--foreground)] transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--primary)]/30 hover:shadow-[var(--glow-primary)]"
+              className="mb-4 flex h-12 w-full items-center justify-center gap-3 rounded-2xl border border-[#123b2b]/10 bg-white px-5 text-sm font-black text-[#21352a] transition hover:border-[#0f4d3a]/35"
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
@@ -92,15 +68,13 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
               Đăng nhập bằng Google
             </a>
 
-            {/* Divider */}
-            <div className="mb-5 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--muted-foreground)]">
-              <span className="h-px flex-1 bg-[var(--border)]" />
+            <div className="mb-4 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--muted-foreground)]">
+              <span className="h-px flex-1 bg-[#123b2b]/10" />
               Hoặc email
-              <span className="h-px flex-1 bg-[var(--border)]" />
+              <span className="h-px flex-1 bg-[#123b2b]/10" />
             </div>
 
-            {/* Fields */}
-            <div className="grid gap-4">
+            <div className="grid gap-3">
               <label className="grid gap-2 text-sm font-semibold">
                 Địa chỉ email
                 <div className="relative">
@@ -108,7 +82,8 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
                   <input
                     name="email"
                     type="email"
-                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-4 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+                    defaultValue={initialEmail}
+                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
                     placeholder="admin@example.com"
                     autoComplete="email"
                     required
@@ -128,7 +103,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
                   <input
                     name="password"
                     type={showPassword ? "text" : "password"}
-                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--background)] py-3 pl-11 pr-12 text-base leading-6 text-[var(--foreground)] outline-none transition-all duration-200 placeholder:text-[var(--muted-foreground)]/50 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-12 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
                     placeholder="Nhập mật khẩu"
                     autoComplete="current-password"
                     required
@@ -145,7 +120,6 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
               </label>
             </div>
 
-            {/* Status messages */}
             {resetStatus === "success" && (
               <p className="mt-4 rounded-xl border border-[var(--success)]/30 bg-[var(--success-soft)] p-3 text-sm font-semibold text-[var(--primary-strong)]">
                 Mật khẩu đã được cập nhật. Vui lòng đăng nhập lại để tiếp tục.
@@ -158,40 +132,21 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus 
               </p>
             )}
 
-            {/* CTA */}
             <button
-              className="login-cta-glow mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-5 text-base font-black uppercase tracking-[0.1em] text-white shadow-[var(--glow-primary)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_30px_rgba(52,211,153,0.25)] disabled:pointer-events-none disabled:opacity-50"
+              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#0f4d3a] px-5 text-sm font-black text-[#FFF7EB] shadow-[0_16px_36px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
               disabled={pending}
             >
               {pending ? "Đang đăng nhập..." : "Vào dashboard"}
               <ArrowRight className="h-5 w-5" />
             </button>
 
-            {/* Footer links */}
             <div className="mt-5 flex flex-col gap-2 text-center text-sm text-[var(--muted-foreground)]">
               <Link href="/dashboard/register" className="font-semibold text-[var(--primary-strong)] transition hover:text-[var(--primary)]">
                 Chưa có tài khoản? Đăng ký và thiết lập quán
               </Link>
             </div>
           </form>
-
-          {/* Trust badges - always visible */}
-          <div className="grid w-full grid-cols-3 gap-3">
-            {trustItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <div key={item.label} className="flex flex-col items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 p-3 text-center backdrop-blur-sm sm:p-4">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
-                    <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
-                  </div>
-                  <p className="text-[11px] font-bold leading-4 text-[var(--foreground)] sm:text-xs">{item.label}</p>
-                  <p className="hidden text-[10px] leading-4 text-[var(--muted-foreground)] sm:block">{item.desc}</p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
+      </section>
     </main>
   );
 }

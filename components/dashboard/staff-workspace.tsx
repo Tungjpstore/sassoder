@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CalendarDays, Mail, Search, ShieldCheck, Star, Trash2, UserPlus, UserRound, Users, X } from "lucide-react";
 import { createStaffAction, deleteStaffAction, updateStaffRoleAction } from "@/app/dashboard/actions";
+import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -180,21 +181,26 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
         </div>
 
         {panelMode !== "closed" && (
-          <div className="fixed inset-0 z-[80]">
+          <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
             <button
               type="button"
-              className="absolute inset-0 bg-slate-950/24"
+              className="drawer-backdrop absolute inset-0 z-0"
               aria-label="Đóng thông tin nhân viên"
               onClick={() => {
                 setPanelMode("closed");
                 setSelectedId(null);
               }}
             />
-            <aside className="absolute right-0 top-0 flex h-full w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-[0_20px_80px_rgba(0,0,0,0.3)]">
+            <aside
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="staff-drawer-title"
+              className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+            >
               <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Nhân viên</p>
-                  <h3 className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+                  <h3 id="staff-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
                     {panelMode === "create" ? "Tạo tài khoản nhân viên" : selectedUser?.email.split("@")[0] ?? "Chi tiết nhân viên"}
                   </h3>
                 </div>
@@ -205,11 +211,12 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                     setSelectedId(null);
                   }}
                   className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+                  aria-label="Đóng thông tin nhân viên"
                 >
                   <X size={18} />
                 </button>
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
                 {panelMode === "create" && (
                   <form action={createStaffAction} className="grid gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                     <label className="grid gap-2 text-sm font-semibold">
@@ -277,20 +284,22 @@ export function StaffWorkspace({ users, operations, currentUserId, currentRole, 
                       </Button>
                     </form>
 
-                    <form
-                      action={deleteStaffAction}
-                      className="rounded-xl border border-[rgba(251,113,133,0.12)] bg-[var(--surface)] p-4"
-                      onSubmit={(event) => {
-                        if (!window.confirm(`Xoá tài khoản ${selectedUser.email}?`)) event.preventDefault();
-                      }}
-                    >
-                      <h3 className="text-sm font-semibold text-[#BE123C]">Vùng xoá tài khoản</h3>
+                    <form action={deleteStaffAction} className="rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] p-4">
+                      <h3 className="text-sm font-semibold text-[var(--accent-strong)]">Vùng xoá tài khoản</h3>
                       <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chỉ xoá tài khoản phụ khi chắc chắn không còn dùng trong ca vận hành.</p>
                       <input type="hidden" name="userId" value={selectedUser.id} />
-                      <Button type="submit" variant="ghost" className="mt-4 w-full border-[#E11D48]/30 text-[#BE123C] hover:bg-[#E11D48]/8" disabled={!canManage || selectedUser.id === currentUserId}>
+                      <ConfirmActionButton
+                        type="submit"
+                        variant="ghost"
+                        className="mt-4 w-full border-[var(--accent)]/30 text-[var(--accent-strong)] hover:bg-[var(--accent-soft)]"
+                        disabled={!canManage || selectedUser.id === currentUserId}
+                        confirmTitle="Xoá tài khoản nhân viên"
+                        confirmDescription={`Tài khoản ${selectedUser.email} sẽ mất quyền truy cập vào dashboard quán.`}
+                        confirmLabel="Xoá tài khoản"
+                      >
                         <Trash2 size={16} />
                         Xoá tài khoản này
-                      </Button>
+                      </ConfirmActionButton>
                     </form>
                   </div>
                 )}

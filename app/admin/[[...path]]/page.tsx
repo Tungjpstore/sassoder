@@ -15,15 +15,21 @@ export const metadata: Metadata = {
   }
 };
 
-type ActiveSection = "overview" | "site" | "plans" | "billing" | "tenants" | "users" | "security" | "release";
+type ActiveSection = "overview" | "site" | "content" | "plans" | "billing" | "tenants" | "users" | "ai" | "maps" | "atlas" | "ops" | "governance" | "security" | "release";
 
 const activeSections = new Set<ActiveSection>([
   "overview",
   "site",
+  "content",
   "plans",
   "billing",
   "tenants",
   "users",
+  "ai",
+  "maps",
+  "atlas",
+  "ops",
+  "governance",
   "security",
   "release"
 ]);

@@ -22,6 +22,15 @@ export type AiCompletionOptions = {
   temperature?: number;
   cacheTtlMs?: number;
   cacheKey?: string;
+  tools?: Array<{
+    type: "function";
+    function: {
+      name: string;
+      description: string;
+      parameters: Record<string, unknown>;
+    };
+  }>;
+  toolChoice?: "auto" | "none" | { type: "function"; function: { name: string } };
 };
 
 export type AiCompletionRequest = {
@@ -41,6 +50,14 @@ export type AiCompletionResult = {
   raw?: unknown;
   cacheHit?: boolean;
   latencyMs?: number;
+  toolCalls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
   attempts: Array<{
     provider: AiProvider;
     model: string;

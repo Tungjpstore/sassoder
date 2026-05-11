@@ -6,6 +6,8 @@ import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { CopilotSidebar } from "@copilotkit/react-core/v2";
 import { Bot, Sparkles, X } from "lucide-react";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
+import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
+import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
 
 /* ─── Types ─── */
 export type OnboardingAiState = {
@@ -29,6 +31,20 @@ type OnboardingCopilotProps = {
   onApplyMenuSuggestion?: (menus: MenuSuggestion[]) => void;
   onApplyTableCount?: (count: number) => void;
   onApplyBusinessType?: (type: string) => void;
+};
+
+type OnboardingAgentAction = {
+  id: string;
+  label: string;
+  description?: string;
+  tone?: "primary" | "secondary" | "safe";
+};
+
+type OnboardingAiResult = {
+  title?: string;
+  text: string;
+  actions?: OnboardingAgentAction[];
+  metrics?: Array<{ label: string; value: string | number }>;
 };
 
 /* ─── Step Contexts ─── */
@@ -67,15 +83,11 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
   useCopilotAdditionalInstructions(
     {
       instructions: [
-        "Bạn là LogiBot, trợ lý thiết lập quán cho LogiVN.",
-        "Luôn trả lời bằng tiếng Việt tự nhiên, ngắn gọn, thân thiện.",
-        "Vai trò: hướng dẫn user qua từng bước onboarding, giải thích tại sao cần mỗi thông tin.",
+        buildCopilotSystemInstructions("onboarding"),
         "Gợi ý tối ưu dựa trên loại quán đã chọn.",
-        "Nếu user hỏi về tính năng, giải thích plan Pro vs Premium.",
         "Khi user ở bước Thực đơn, chủ động hỏi có muốn tạo menu mẫu không.",
         "Khi user ở bước Bàn & QR, gợi ý số bàn phù hợp.",
         `Ngữ cảnh bước hiện tại: ${stepContextMap[state.step] ?? "Không rõ bước."}`,
-        "Không yêu cầu API key, token hay dữ liệu nhạy cảm.",
         "Ưu tiên dùng action (generateSampleMenu, suggestTableCount) thay vì chỉ mô tả bằng lời."
       ].join("\n")
     },
@@ -117,13 +129,23 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
         const menus = buildSampleMenu(businessType, specialization, priceRange);
         onApplyMenuSuggestion?.(menus);
         const totalItems = menus.reduce((sum, cat) => sum + cat.items.length, 0);
-        return `Đã tạo ${menus.length} danh mục với ${totalItems} món mẫu. Menu sẽ tự động được thêm vào quán sau khi hoàn tất đăng ký. Bạn có thể chỉnh sửa chi tiết trong dashboard sau.`;
+        return {
+          text: `Đã tạo ${menus.length} danh mục với ${totalItems} món mẫu. Menu đã được đưa vào bước onboarding và sẽ lưu theo quán khi hoàn tất đăng ký.`,
+          actions: [
+            { id: "menu-applied", label: "Đã áp dụng menu", description: "Có thể chỉnh giá/tên món trong dashboard sau.", tone: "primary" },
+            { id: "next-table", label: "Tiếp tục Bàn & QR", description: "Hoàn thiện số bàn và VietQR để bán thật.", tone: "secondary" }
+          ],
+          metrics: [
+            { label: "Danh mục", value: menus.length },
+            { label: "Món", value: totalItems }
+          ]
+        } satisfies OnboardingAiResult;
       },
       render: ({ status, result }) => (
         <AiResultCard
           title="Menu mẫu AI"
           status={status}
-          text={typeof result === "string" ? result : "Đang tạo menu mẫu..."}
+          result={result as OnboardingAiResult}
         />
       )
     },
@@ -153,13 +175,20 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
       handler: async ({ businessType, areaSqm }) => {
         const suggested = calculateTableSuggestion(businessType, areaSqm);
         onApplyTableCount?.(suggested.recommended);
-        return `Gợi ý: ${suggested.recommended} bàn (${suggested.reasoning}). Đã tự điền cho bạn, có thể điều chỉnh thêm.`;
+        return {
+          text: `Gợi ý ${suggested.recommended} bàn. Đã tự điền vào onboarding, bạn có thể chỉnh lại nếu layout thực tế khác.`,
+          actions: [
+            { id: "table-applied", label: "Đã áp dụng số bàn", description: suggested.reasoning, tone: "primary" },
+            { id: "vietqr-next", label: "Kiểm VietQR", description: "Bước tiếp theo là ngân hàng và tài khoản nhận tiền.", tone: "secondary" }
+          ],
+          metrics: [{ label: "Bàn đề xuất", value: suggested.recommended }]
+        } satisfies OnboardingAiResult;
       },
       render: ({ status, result }) => (
         <AiResultCard
           title="Gợi ý số bàn"
           status={status}
-          text={typeof result === "string" ? result : "Đang tính toán..."}
+          result={result as OnboardingAiResult}
         />
       )
     },
@@ -173,28 +202,13 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
       description: "So sánh chi tiết gói Pro và Premium cho user đang cân nhắc.",
       parameters: [],
       handler: async () => {
-        return [
-          "📦 LogiVN Pro (99k/tháng):",
-          "• QR gọi món theo bàn, đơn realtime",
-          "• Bán online qua link riêng",
-          "• AI vận hành cơ bản (LogiBot)",
-          "• Quản lý nhân viên, thanh toán VietQR",
-          "",
-          "💎 LogiVN Premium (199k/tháng):",
-          "• Tất cả tính năng Pro",
-          "• Đặt bàn online + nhận cọc tự động",
-          "• AI OCR menu (chụp/upload PDF → tự nhập)",
-          "• AI sinh ảnh món, mô tả menu",
-          "• Báo cáo nâng cao + AI phân tích doanh thu",
-          "",
-          "Cả 2 gói đều được thử miễn phí 30 ngày."
-        ].join("\n");
+        return buildPlanExplanation();
       },
       render: ({ status, result }) => (
         <AiResultCard
           title="So sánh gói dịch vụ"
           status={status}
-          text={typeof result === "string" ? result : "Đang lấy thông tin..."}
+          result={result as OnboardingAiResult}
         />
       )
     },
@@ -215,36 +229,78 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
         }
       ],
       handler: async ({ description }) => {
-        const lower = description.toLowerCase();
-        let suggested = "RESTAURANT";
-        let reason = "Quán ăn phổ thông";
-
-        if (/cafe|cà phê|coffee|trà|tea|bánh/.test(lower)) {
-          suggested = "CAFE";
-          reason = "Quán cafe / trà / bánh ngọt";
-        } else if (/bar|pub|cocktail|bia|rượu|nhậu/.test(lower)) {
-          suggested = "BAR";
-          reason = "Bar / pub / quán nhậu";
-        } else if (/nhanh|fast|burger|pizza|gà rán|ăn vặt|combo/.test(lower)) {
-          suggested = "FAST_FOOD";
-          reason = "Đồ ăn nhanh / ăn vặt";
-        } else if (/phở|bún|cơm|lẩu|nướng|hải sản|đặc sản/.test(lower)) {
-          suggested = "RESTAURANT";
-          reason = "Quán ăn / nhà hàng";
-        }
+        const { suggested, reason } = inferBusinessType(description);
 
         onApplyBusinessType?.(suggested);
-        return `Gợi ý: ${reason} (${suggested}). Đã chọn cho bạn, bạn có thể đổi nếu chưa đúng.`;
+        return {
+          text: `Gợi ý ${reason}. Đã chọn mô hình ${suggested} trong onboarding, bạn có thể đổi nếu chưa đúng.`,
+          actions: [
+            { id: "business-type-applied", label: "Đã chọn mô hình", description: reason, tone: "primary" },
+            { id: "menu-next", label: "Tạo menu mẫu", description: "LogiBot có thể tạo menu phù hợp mô hình này.", tone: "secondary" }
+          ],
+          metrics: [{ label: "Loại quán", value: suggested }]
+        } satisfies OnboardingAiResult;
       },
       render: ({ status, result }) => (
         <AiResultCard
           title="Gợi ý mô hình quán"
           status={status}
-          text={typeof result === "string" ? result : "Đang phân tích..."}
+          result={result as OnboardingAiResult}
         />
       )
     },
     [onApplyBusinessType]
+  );
+
+  useCopilotAction(
+    {
+      name: "answer_onboarding_request",
+      description:
+        "Catch-all bắt buộc cho mọi câu hỏi tự do trong onboarding. Luôn trả card hành động rõ ràng; nếu phù hợp thì tự áp dụng menu mẫu, số bàn hoặc mô hình quán.",
+      parameters: [
+        {
+          name: "message",
+          type: "string",
+          required: true,
+          description: "Nguyên văn câu hỏi/yêu cầu của user đang onboarding."
+        }
+      ],
+      handler: async ({ message }) => {
+        const result = runOnboardingAgent({
+          message: String(message || "Tôi nên làm gì tiếp?"),
+          state,
+          onApplyMenuSuggestion,
+          onApplyTableCount,
+          onApplyBusinessType
+        });
+        return result;
+      },
+      render: ({ status, result }) => (
+        <AiResultCard
+          title="Onboarding Agent"
+          status={status}
+          result={result as OnboardingAiResult}
+        />
+      )
+    },
+    [onApplyBusinessType, onApplyMenuSuggestion, onApplyTableCount, state]
+  );
+
+  useCopilotAction(
+    {
+      name: "continue_onboarding_setup",
+      description: "Tiếp tục setup theo bước hiện tại bằng runtime deterministic, không gọi model nếu chỉ cần chỉ bước tiếp theo.",
+      parameters: [],
+      handler: async () => buildOnboardingStepResult(state),
+      render: ({ status, result }) => (
+        <AiResultCard
+          title="Bước tiếp theo"
+          status={status}
+          result={result as OnboardingAiResult}
+        />
+      )
+    },
+    [state]
   );
 
   return (
@@ -254,7 +310,7 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-28 right-5 z-[1190] flex h-14 items-center gap-2.5 rounded-full border border-[var(--primary)]/20 bg-[var(--surface)] px-4 text-sm font-bold text-[var(--primary-strong)] shadow-[var(--glow-primary)] backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_0_30px_rgba(52,211,153,0.2)] md:bottom-28 md:right-6"
+          className="fixed bottom-28 right-5 z-[70] flex h-14 items-center gap-2.5 rounded-full border border-[var(--primary)]/20 bg-[var(--surface)] px-4 text-sm font-bold text-[var(--primary-strong)] shadow-[var(--glow-primary)] backdrop-blur-xl transition-[box-shadow,transform] duration-300 hover:-translate-y-1 hover:shadow-[0_16px_34px_rgba(15,77,58,0.16)] md:bottom-28 md:right-6"
           aria-label="Mở LogiBot trợ lý"
         >
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--primary)] text-white">
@@ -272,9 +328,9 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           width="min(420px, 100vw)"
           labels={{
             modalHeaderTitle: "LogiBot · Trợ lý thiết lập",
-            welcomeMessageText: "Chào bạn! Mình giúp bạn thiết lập quán nhanh hơn. Hỏi bất cứ điều gì về menu, số bàn, gói dịch vụ hay cách vận hành nhé!",
-            chatInputPlaceholder: "Hỏi LogiBot: tạo menu mẫu, gợi ý số bàn...",
-            chatDisclaimerText: "LogiBot gợi ý dựa trên kinh nghiệm vận hành 1000+ quán. Bạn luôn có thể chỉnh sửa sau.",
+            welcomeMessageText: "Mình sẽ biến onboarding thành checklist có hành động: chọn loại quán, tạo menu mẫu, gợi ý số bàn và chỉ bước tiếp theo.",
+            chatInputPlaceholder: "VD: quán phở 60m2 cần bao nhiêu bàn, tạo menu mẫu...",
+            chatDisclaimerText: "LogiBot chỉ tạo gợi ý và bản nháp; bạn xác nhận trước khi lưu dữ liệu thật.",
             chatToggleOpenLabel: "Mở trợ lý",
             chatToggleCloseLabel: "Đóng trợ lý"
           }}
@@ -472,28 +528,253 @@ function calculateTableSuggestion(businessType: string, areaSqm?: number) {
   };
 }
 
-function AiResultCard({ title, status, text }: { title: string; status?: string; text: string }) {
+function foldOnboardingText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function sanitizeCardText(value?: string) {
+  const text = String(value || "").trim();
+  if (!text) return "Mình đã chuẩn bị bước tiếp theo để bạn tiếp tục setup.";
+  if (/^[{[]/.test(text) || /"(summary|actions|agentPlan|reply)"\s*:/.test(text)) {
+    return "Mình đã chuyển kết quả AI thành card thao tác an toàn để bạn dùng ngay.";
+  }
+  return text.replace(/\*\*/g, "").slice(0, 700);
+}
+
+function normalizeBusinessType(value?: string) {
+  const type = String(value || "").toUpperCase();
+  return ["CAFE", "RESTAURANT", "FAST_FOOD", "BAR", "OTHER"].includes(type) ? type : "RESTAURANT";
+}
+
+function inferPriceRange(message: string) {
+  const text = foldOnboardingText(message);
+  if (/premium|cao cap|sang|dat/.test(text)) return "premium";
+  if (/re|binh dan|budget|sinh vien/.test(text)) return "budget";
+  return "mid";
+}
+
+function extractAreaSqm(message: string) {
+  const text = foldOnboardingText(message).replace(/,/g, ".");
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(m2|m²|met|sqm)/);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function inferBusinessType(description: string) {
+  const lower = description.toLowerCase();
+  if (/cafe|cà phê|coffee|trà|tea|bánh/.test(lower)) {
+    return { suggested: "CAFE", reason: "quán cafe / trà / bánh ngọt" };
+  }
+  if (/bar|pub|cocktail|bia|rượu|nhậu/.test(lower)) {
+    return { suggested: "BAR", reason: "bar / pub / quán nhậu" };
+  }
+  if (/nhanh|fast|burger|pizza|gà rán|ăn vặt|combo/.test(lower)) {
+    return { suggested: "FAST_FOOD", reason: "đồ ăn nhanh / ăn vặt" };
+  }
+  if (/phở|bún|cơm|lẩu|nướng|hải sản|đặc sản/.test(lower)) {
+    return { suggested: "RESTAURANT", reason: "quán ăn / nhà hàng" };
+  }
+  return { suggested: "RESTAURANT", reason: "quán ăn phổ thông" };
+}
+
+function buildPlanExplanation(): OnboardingAiResult {
+  return {
+    text:
+      "Pro phù hợp quán muốn bán thật nhanh với QR gọi món, đơn realtime, online ordering, nhân viên và VietQR. Premium phù hợp nếu cần OCR menu, đặt bàn/cọc, AI ảnh món và báo cáo nâng cao. Cả hai đều có trial, nên chọn theo tính năng cần vận hành ngay.",
+    actions: [
+      { id: "choose-pro", label: "Chọn Pro nếu cần bán nhanh", description: "Đủ QR, đơn, online, nhân viên và VietQR.", tone: "primary" },
+      { id: "choose-premium", label: "Chọn Premium nếu cần AI/OCR", description: "Thêm OCR menu, ảnh món, đặt bàn/cọc và báo cáo nâng cao.", tone: "secondary" }
+    ],
+    metrics: [
+      { label: "Pro", value: "99k" },
+      { label: "Premium", value: "199k" }
+    ]
+  };
+}
+
+function buildOnboardingStepResult(state: OnboardingAiState): OnboardingAiResult {
+  const stepActions: Record<number, OnboardingAgentAction[]> = {
+    0: [
+      { id: "create-account", label: "Tạo tài khoản", description: "Dùng email thật để nhận thông báo đơn và reset mật khẩu.", tone: "primary" },
+      { id: "compare-plan", label: "So sánh Pro/Premium", description: "Chọn gói theo nhu cầu vận hành.", tone: "secondary" }
+    ],
+    1: [
+      { id: "finish-profile", label: "Hoàn thiện hồ sơ quán", description: "Tên, slug, địa chỉ và hotline giúp QR/hóa đơn rõ ràng.", tone: "primary" },
+      { id: "short-slug", label: "Giữ slug ngắn", description: "Slug dễ đọc giúp khách mở link nhanh.", tone: "secondary" }
+    ],
+    2: [
+      { id: "generate-menu", label: "Tạo menu mẫu", description: "AI có thể thêm danh mục/món mẫu vào onboarding.", tone: "primary" },
+      { id: "pick-business-type", label: "Chốt mô hình quán", description: "Mô hình đúng giúp menu và số bàn hợp lý hơn.", tone: "secondary" }
+    ],
+    3: [
+      { id: "suggest-tables", label: "Gợi ý số bàn", description: "Số bàn quyết định số QR cần in.", tone: "primary" },
+      { id: "vietqr-ready", label: "Kiểm VietQR", description: "Ngân hàng và số tài khoản cần đúng trước khi bán thật.", tone: "secondary" }
+    ],
+    4: [
+      { id: "final-review", label: "Kiểm tra lần cuối", description: "Menu, bàn QR, VietQR và gói cần sẵn sàng trước khi tạo quán.", tone: "primary" },
+      { id: "open-dashboard-next", label: "Sau khi tạo", description: "Vào dashboard để in QR và bật nhận đơn.", tone: "secondary" }
+    ]
+  };
+
+  const stepName = ["Tài khoản", "Thông tin quán", "Thực đơn", "Bàn & QR", "Hoàn tất"][state.step] ?? "Setup";
+  const missing = [
+    !state.restaurantName ? "tên quán" : "",
+    !state.slug ? "slug" : "",
+    !state.businessType ? "mô hình quán" : "",
+    !state.tableCount ? "số bàn" : "",
+    !(state.bankCode && state.bankAccount) ? "VietQR" : ""
+  ].filter(Boolean);
+
+  return {
+    title: `Bước ${state.step + 1}: ${stepName}`,
+    text: missing.length
+      ? `Bạn đang ở bước ${stepName}. Cần hoàn thiện ${missing.slice(0, 3).join(", ")} để quán có thể bán thật mượt hơn.`
+      : `Bước ${stepName} đang đủ dữ liệu chính. Tiếp tục hoàn tất để vào dashboard in QR và kiểm thử đơn đầu tiên.`,
+    actions: stepActions[state.step] ?? stepActions[4],
+    metrics: [
+      { label: "Bước", value: `${state.step + 1}/5` },
+      { label: "Thiếu", value: missing.length }
+    ]
+  };
+}
+
+function runOnboardingAgent(input: {
+  message: string;
+  state: OnboardingAiState;
+  onApplyMenuSuggestion?: (menus: MenuSuggestion[]) => void;
+  onApplyTableCount?: (count: number) => void;
+  onApplyBusinessType?: (type: string) => void;
+}): OnboardingAiResult {
+  const text = foldOnboardingText(input.message);
+  const businessType = normalizeBusinessType(input.state.businessType);
+
+  if (/goi|plan|premium|pro|gia|phi/.test(text)) {
+    return buildPlanExplanation();
+  }
+
+  if (/mo hinh|loai quan|chon loai|business type|cafe|ca phe|pho|bun|com|bar|fast|pizza|burger/.test(text)) {
+    const { suggested, reason } = inferBusinessType(input.message);
+    input.onApplyBusinessType?.(suggested);
+    return {
+      text: `Mình chọn ${suggested} vì nhận diện đây là ${reason}. Nếu chưa đúng, bạn vẫn có thể đổi ở bước mô hình quán.`,
+      actions: [
+        { id: "business-type-applied", label: "Đã áp dụng mô hình", description: reason, tone: "primary" },
+        { id: "menu-from-type", label: "Tạo menu theo mô hình", description: "Hỏi: tạo menu mẫu cho mô hình này.", tone: "secondary" }
+      ],
+      metrics: [{ label: "Loại quán", value: suggested }]
+    };
+  }
+
+  if (/menu|thuc don|mon|ocr|tao mau|tao menu/.test(text)) {
+    const menus = buildSampleMenu(businessType, input.message, inferPriceRange(input.message));
+    input.onApplyMenuSuggestion?.(menus);
+    const totalItems = menus.reduce((sum, category) => sum + category.items.length, 0);
+    return {
+      text: `Đã tạo menu mẫu cho ${businessType}: ${menus.length} danh mục, ${totalItems} món. Menu đã được áp dụng vào onboarding để lưu khi tạo quán.`,
+      actions: [
+        { id: "menu-applied", label: "Đã áp dụng menu", description: "Sau khi tạo quán, vào dashboard để chỉnh ảnh/giá.", tone: "primary" },
+        { id: "table-next", label: "Tiếp tục số bàn", description: "Hỏi LogiBot gợi ý số bàn nếu chưa chắc.", tone: "secondary" }
+      ],
+      metrics: [
+        { label: "Danh mục", value: menus.length },
+        { label: "Món", value: totalItems }
+      ]
+    };
+  }
+
+  if (/ban|qr|so ban|m2|m²|dien tich/.test(text)) {
+    const suggestion = calculateTableSuggestion(businessType, extractAreaSqm(input.message));
+    input.onApplyTableCount?.(suggestion.recommended);
+    return {
+      text: `Mình đề xuất ${suggestion.recommended} bàn và đã điền vào onboarding. Lý do: ${suggestion.reasoning}.`,
+      actions: [
+        { id: "tables-applied", label: "Đã áp dụng số bàn", description: "Số bàn này sẽ tạo QR tương ứng.", tone: "primary" },
+        { id: "vietqr-next", label: "Hoàn thiện VietQR", description: "Kiểm ngân hàng và số tài khoản trước khi bán thật.", tone: "secondary" }
+      ],
+      metrics: [{ label: "Bàn", value: suggestion.recommended }]
+    };
+  }
+
+  return buildOnboardingStepResult(input.state);
+}
+
+function AiResultCard({
+  title,
+  status,
+  text,
+  result
+}: {
+  title: string;
+  status?: string;
+  text?: string;
+  result?: OnboardingAiResult | string;
+}) {
   const isLoading = status === "executing" || status === "inProgress";
+  const payload = typeof result === "string" ? { text: result } : result;
+  const displayTitle = payload?.title || title;
+  const displayText = sanitizeCardText(payload?.text ?? text);
+  const actions = payload?.actions ?? [];
+  const metrics = payload?.metrics ?? [];
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] p-4 text-sm text-[var(--foreground)]">
-      <div className="flex items-center gap-2">
+    <div className="logibot-agent-card rounded-[28px] border border-[var(--border)] p-4 text-sm text-[var(--foreground)] shadow-[var(--shadow-soft)]">
+      <div className="relative z-[1] flex items-center gap-2">
         <span className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--primary)] text-white">
           <Sparkles size={15} />
         </span>
-        <p className="font-bold">{title}</p>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold">{displayTitle}</p>
+          <p className="truncate text-xs text-[var(--muted-foreground)]">{isLoading ? "Đang xử lý..." : "Setup action card"}</p>
+        </div>
       </div>
-      <p className="mt-3 whitespace-pre-line leading-6 text-[var(--text-secondary)]">
-        {isLoading ? "Đang xử lý..." : text}
+      {metrics.length ? (
+        <div className="relative z-[1] mt-3 grid grid-cols-2 gap-2">
+          {metrics.slice(0, 2).map((metric) => (
+            <div key={metric.label} className="rounded-2xl border border-[rgba(15,77,58,0.1)] bg-white/55 px-3 py-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{metric.label}</p>
+              <p className="mt-1 text-lg font-black text-[var(--primary)]">{metric.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <p className="relative z-[1] mt-3 whitespace-pre-line leading-6 text-[var(--text-secondary)]">
+        {isLoading ? "Đang xử lý..." : displayText}
       </p>
+      {actions.length ? (
+        <div className="relative z-[1] mt-3 grid gap-2">
+          {actions.slice(0, 4).map((action) => (
+            <div
+              key={action.id}
+              className={`rounded-2xl border px-3 py-3 ${
+                action.tone === "primary"
+                  ? "border-[var(--primary)] bg-[var(--primary)] text-[#FFF7EB]"
+                  : "border-[var(--border)] bg-white/60 text-[var(--foreground)]"
+              }`}
+            >
+              <p className="text-sm font-semibold">{action.label}</p>
+              {action.description ? (
+                <p className={`mt-1 text-xs leading-5 ${action.tone === "primary" ? "text-[#FFF7EB]/82" : "text-[var(--muted-foreground)]"}`}>
+                  {action.description}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /* ─── Export ─── */
 export function OnboardingCopilotLayer(props: OnboardingCopilotProps) {
+  const threadId = buildCopilotThreadId("logivn", "onboarding", "setup");
+
   return (
-    <LogiVNCopilotProvider>
+    <LogiVNCopilotProvider threadId={threadId}>
       <OnboardingCopilotExperience {...props} />
     </LogiVNCopilotProvider>
   );

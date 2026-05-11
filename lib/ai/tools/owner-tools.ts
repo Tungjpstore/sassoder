@@ -3,15 +3,15 @@ import type { AiAgentAction } from "@/types/ai-agent";
 export const ownerCopilotToolCatalog = [
   {
     name: "navigate_dashboard",
-    description: "Mở đúng màn trong dashboard theo nghiệp vụ chủ quán đang xử lý."
+    description: "Mở đúng màn trong dashboard khi chủ quán yêu cầu điều hướng rõ ràng."
   },
   {
     name: "analyze_dashboard_area",
-    description: "Gọi AI backend đọc dữ liệu thật của quán theo intent rồi trả lời ngắn kèm action queue."
+    description: "Đọc dữ liệu thật của quán theo intent rồi trả insight ngắn kèm action queue."
   },
   {
-    name: "generate_setup_plan",
-    description: "Tạo kế hoạch setup quán 30 phút hoặc audit readiness."
+    name: "generate_store_setup_plan",
+    description: "Tạo kế hoạch setup quán 30 phút, audit readiness hoặc lộ trình tăng trưởng."
   },
   {
     name: "generate_branding_draft",

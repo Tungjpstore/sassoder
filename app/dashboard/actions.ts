@@ -3,10 +3,11 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
+import { z } from "zod";
 import { checkPersistentAuthRateLimit } from "@/lib/auth-rate-limit";
 import { getDashboardDestinationForHost } from "@/lib/dashboard-destination";
 import { buildAppUrl } from "@/lib/app-url";
-import { getSessionProfile, requireOnboardingUser, requireSession } from "@/lib/session";
+import { getAuthUser, getSessionProfile, requireSession } from "@/lib/session";
 import {
   categorySchema,
   emailOtpSchema,
@@ -25,6 +26,7 @@ import {
   resendEmailOtpSchema,
   resetPasswordSchema,
   restaurantSettingsSchema,
+  registerAccountSchema,
   registerOnboardingSchema,
   staffInviteSchema,
   staffRoleSchema,
@@ -37,6 +39,7 @@ import {
 } from "@/lib/validators";
 import {
   assertAdmin,
+  getAuthEmailRegistrationStatus,
   loginWithPassword,
   logout,
   requestPasswordReset,
@@ -45,8 +48,16 @@ import {
   updateRecoveredPassword,
   verifySignupEmailOtp
 } from "@/services/auth-service";
-import { uploadMenuImageFile } from "@/services/menu-image-service";
-import { createCategory, createMenuItem, deleteMenuItem, invalidateMenuCache, updateMenuItem, updateMenuItemAvailability } from "@/services/menu-service";
+import { persistMenuImageUrl, uploadMenuImageFile } from "@/services/menu-image-service";
+import {
+  createCategory,
+  createMenuItem,
+  deleteMenuItem,
+  importMenuItemsFromDraft,
+  invalidateMenuCache,
+  updateMenuItem,
+  updateMenuItemAvailability
+} from "@/services/menu-service";
 import { createPromotion, deletePromotion, updatePromotionActiveStatus, updatePromotionCustomerVisibility } from "@/services/promotion-service";
 import { updateReportSchedule } from "@/services/report-schedule-service";
 import { createTable, deleteTable, updateTable, updateTableQrStatus } from "@/services/table-service";
@@ -60,6 +71,7 @@ import {
   type PlanFeatureKey
 } from "@/services/subscription-service";
 import {
+  applyRestaurantAiBranding,
   completeRestaurantOnboarding,
   consumeRegistrationIntentForUser,
   createRestaurantUser,
@@ -111,6 +123,13 @@ async function requireOperationalAdminSession(feature?: PlanFeatureKey) {
   return session;
 }
 
+const aiSetupBrandApplySchema = z.object({
+  brandSlogan: z.string().trim().max(80).optional().or(z.literal("")),
+  brandDescription: z.string().trim().max(500).optional().or(z.literal("")),
+  logoUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
+  includeLogo: z.preprocess((value) => value === "true" || value === true, z.boolean().optional())
+});
+
 export async function loginAction(_prevState: { error?: string } | undefined, formData: FormData) {
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
@@ -137,6 +156,69 @@ export async function loginAction(_prevState: { error?: string } | undefined, fo
   redirect(await getDashboardDestination(session.restaurant.slug));
 }
 
+export async function registerAccountAction(
+  _prevState: { error?: string; success?: string; redirectTo?: string } | undefined,
+  formData: FormData
+) {
+  const parsed = registerAccountSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+    confirmPassword: formData.get("confirmPassword")
+  });
+
+  if (!parsed.success) {
+    return { error: "Vui lòng nhập email hợp lệ và mật khẩu đủ mạnh, xác nhận phải khớp." };
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const planCode = String(formData.get("planCode") ?? "").trim().toLowerCase();
+  const onboardingPath = planCode === "premium" ? "/dashboard/onboarding?plan=premium" : "/dashboard/onboarding?plan=pro";
+
+  if (!(await checkActionRateLimit(`register:${email}`, 5, 10 * 60_000))) {
+    return { error: "Bạn tạo tài khoản quá nhanh. Vui lòng thử lại sau vài phút." };
+  }
+
+  try {
+    const emailStatus = await getAuthEmailRegistrationStatus(email);
+    if (emailStatus === "registered") {
+      return { error: "Email này đã có tài khoản LogiVN. Bạn có thể đăng nhập hoặc dùng Quên mật khẩu." };
+    }
+    if (emailStatus === "pending_verification") {
+      return {
+        success: "Email này đang chờ xác minh. LogiVN sẽ mở lại trang xác thực.",
+        redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+      };
+    }
+
+    await signUpWithEmailOtp({
+      email,
+      password: parsed.data.password,
+      emailRedirectTo: buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`)
+    });
+
+    return {
+      success: "Đã gửi email xác thực. Vui lòng kiểm tra hộp thư để tiếp tục.",
+      redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+    };
+  } catch (error) {
+    try {
+      await resendSignupEmailOtp(email, buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`));
+      return {
+        success: "Email này đang chờ xác thực. LogiVN đã gửi lại email xác thực.",
+        redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+      };
+    } catch {
+      // Keep the public error intentionally generic so we do not leak account state.
+    }
+
+    console.error("[dashboard/register] Account registration failed", {
+      email,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return { error: "Không tạo được tài khoản. Nếu email đã đăng ký, vui lòng đăng nhập hoặc dùng Quên mật khẩu." };
+  }
+}
+
 export async function registerOnboardingAction(_prevState: { error?: string } | undefined, formData: FormData) {
   const parsed = registerOnboardingSchema.safeParse({
     ownerName: formData.get("ownerName"),
@@ -145,7 +227,19 @@ export async function registerOnboardingAction(_prevState: { error?: string } | 
     name: formData.get("name"),
     slug: formData.get("slug"),
     businessType: formData.get("businessType"),
+    customBusinessType: formData.get("customBusinessType"),
     tableCount: formData.get("tableCount"),
+    address: formData.get("address"),
+    storeLat: formData.get("storeLat"),
+    storeLng: formData.get("storeLng"),
+    hotline: formData.get("hotline"),
+    initialItemName: formData.get("initialItemName"),
+    initialItemPrice: formData.get("initialItemPrice"),
+    initialItemCategory: formData.get("initialItemCategory"),
+    initialMenuItems: formData.get("initialMenuItems"),
+    brandSlogan: formData.get("brandSlogan"),
+    brandDescription: formData.get("brandDescription"),
+    generatedLogoUrl: formData.get("generatedLogoUrl"),
     bankCode: formData.get("bankCode"),
     bankAccount: formData.get("bankAccount"),
     bankAccountName: formData.get("bankAccountName"),
@@ -161,6 +255,17 @@ export async function registerOnboardingAction(_prevState: { error?: string } | 
   }
 
   try {
+    const emailStatus = await getAuthEmailRegistrationStatus(parsed.data.email);
+    if (emailStatus === "registered") {
+      return { error: "Email này đã có tài khoản LogiVN. Vui lòng đăng nhập hoặc dùng Quên mật khẩu." };
+    }
+    if (emailStatus === "pending_verification") {
+      return {
+        success: "Email này đang chờ xác minh. LogiVN sẽ mở lại trang nhập mã OTP.",
+        redirectTo: `/dashboard/verify-email?email=${encodeURIComponent(parsed.data.email.toLowerCase())}`
+      };
+    }
+
     const user = await signUpWithEmailOtp({
       email: parsed.data.email,
       password: parsed.data.password,
@@ -174,7 +279,24 @@ export async function registerOnboardingAction(_prevState: { error?: string } | 
         name: parsed.data.name,
         slug: parsed.data.slug,
         businessType: parsed.data.businessType,
+        customBusinessType: parsed.data.customBusinessType || undefined,
         tableCount: parsed.data.tableCount,
+        address: parsed.data.address || undefined,
+        storeLat: parsed.data.storeLat,
+        storeLng: parsed.data.storeLng,
+        hotline: parsed.data.hotline || undefined,
+        logoUrl: parsed.data.generatedLogoUrl || undefined,
+        brandSlogan: parsed.data.brandSlogan || undefined,
+        brandDescription: parsed.data.brandDescription || undefined,
+        initialMenuItem:
+          parsed.data.initialMenuItems.length === 0 && parsed.data.initialItemName && parsed.data.initialItemPrice !== undefined
+            ? {
+                name: parsed.data.initialItemName,
+                price: parsed.data.initialItemPrice,
+                categoryName: parsed.data.initialItemCategory || undefined
+              }
+            : undefined,
+        initialMenuItems: parsed.data.initialMenuItems,
         bankCode: parsed.data.bankCode || undefined,
         bankAccount: parsed.data.bankAccount || undefined,
         bankAccountName: parsed.data.bankAccountName || undefined,
@@ -319,12 +441,31 @@ export async function logoutAction() {
 }
 
 export async function onboardingAction(_prevState: { error?: string } | undefined, formData: FormData) {
-  const user = await requireOnboardingUser();
+  const session = await getSessionProfile();
+  if (session) redirect(await getDashboardDestination(session.restaurant.slug));
+
+  const user = await getAuthUser();
+  if (!user) {
+    return { error: "Phiên đăng ký đã hết hạn. Vui lòng đăng nhập lại, LogiVN sẽ giữ bản nháp đã nhập trên trình duyệt này." };
+  }
+
   const parsed = onboardingSchema.safeParse({
     name: formData.get("name"),
     slug: formData.get("slug"),
     businessType: formData.get("businessType"),
+    customBusinessType: formData.get("customBusinessType"),
     tableCount: formData.get("tableCount"),
+    address: formData.get("address"),
+    storeLat: formData.get("storeLat"),
+    storeLng: formData.get("storeLng"),
+    hotline: formData.get("hotline"),
+    initialItemName: formData.get("initialItemName"),
+    initialItemPrice: formData.get("initialItemPrice"),
+    initialItemCategory: formData.get("initialItemCategory"),
+    initialMenuItems: formData.get("initialMenuItems"),
+    brandSlogan: formData.get("brandSlogan"),
+    brandDescription: formData.get("brandDescription"),
+    generatedLogoUrl: formData.get("generatedLogoUrl"),
     bankCode: formData.get("bankCode"),
     bankAccount: formData.get("bankAccount"),
     bankAccountName: formData.get("bankAccountName"),
@@ -335,24 +476,50 @@ export async function onboardingAction(_prevState: { error?: string } | undefine
     return { error: "Vui lòng kiểm tra tên quán, đường dẫn, số bàn và thông tin ngân hàng." };
   }
 
+  let completed = false;
   try {
-    await completeRestaurantOnboarding({
+    const restaurant = await completeRestaurantOnboarding({
       userId: user.id,
       email: user.email!,
       name: parsed.data.name,
       slug: parsed.data.slug,
       businessType: parsed.data.businessType,
+      customBusinessType: parsed.data.customBusinessType || undefined,
       tableCount: parsed.data.tableCount,
+      address: parsed.data.address || undefined,
+      storeLat: parsed.data.storeLat,
+      storeLng: parsed.data.storeLng,
+      hotline: parsed.data.hotline || undefined,
+      logoFile: formData.get("logoFile"),
+      logoUrl: parsed.data.generatedLogoUrl || undefined,
+      brandSlogan: parsed.data.brandSlogan || undefined,
+      brandDescription: parsed.data.brandDescription || undefined,
+      initialMenuItem:
+        parsed.data.initialMenuItems.length === 0 && parsed.data.initialItemName && parsed.data.initialItemPrice !== undefined
+          ? {
+              name: parsed.data.initialItemName,
+              price: parsed.data.initialItemPrice,
+              categoryName: parsed.data.initialItemCategory || undefined
+            }
+          : undefined,
+      initialMenuItems: parsed.data.initialMenuItems,
       bankCode: parsed.data.bankCode || undefined,
       bankAccount: parsed.data.bankAccount || undefined,
       bankAccountName: parsed.data.bankAccountName || undefined,
       planCode: parsed.data.planCode || undefined
     });
+    revalidatePath("/dashboard");
+    completed = Boolean(restaurant.id);
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Không hoàn tất được onboarding." };
+    console.error("[dashboard/onboarding] Onboarding failed", {
+      userId: user.id,
+      email: user.email,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return { error: "Không hoàn tất được thiết lập quán. Vui lòng thử lại, LogiVN sẽ không tạo trùng dữ liệu đã khởi tạo." };
   }
 
-  redirect("/dashboard");
+  redirect(completed ? "/dashboard?onboarded=1" : "/dashboard/onboarding");
 }
 
 export async function updatePaymentSettingsAction(
@@ -413,6 +580,40 @@ export async function updateRestaurantSettingsAction(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
+export async function applyAiSetupBrandAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession();
+  const parsed = aiSetupBrandApplySchema.safeParse({
+    brandSlogan: formData.get("brandSlogan"),
+    brandDescription: formData.get("brandDescription"),
+    logoUrl: formData.get("logoUrl"),
+    includeLogo: formData.get("includeLogo")
+  });
+
+  if (!parsed.success) {
+    return { error: "AI draft chưa hợp lệ để áp dụng vào hồ sơ quán." };
+  }
+
+  try {
+    await applyRestaurantAiBranding({
+      restaurantId: session.restaurantId,
+      brandSlogan: parsed.data.brandSlogan || undefined,
+      brandDescription: parsed.data.brandDescription || undefined,
+      logoUrl: parsed.data.includeLogo ? parsed.data.logoUrl || undefined : undefined
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không áp dụng được AI draft vào hồ sơ quán." };
+  }
+
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateMenuCache();
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard");
+  return { success: parsed.data.includeLogo ? "Đã áp dụng slogan, mô tả và logo AI vào hồ sơ quán." : "Đã áp dụng slogan và mô tả AI vào hồ sơ quán." };
+}
+
 export async function updateReportScheduleAction(formData: FormData) {
   const session = await requireOperationalAdminSession("scheduled_reports");
   const parsed = reportScheduleSchema.safeParse({
@@ -453,20 +654,44 @@ export async function updateOrderingSettingsAction(
 ) {
   const session = await requireOperationalAdminSession("online_ordering");
   const parsed = orderingSettingsSchema.safeParse({
+    address: formData.get("address") ?? "",
     onlineOrderingEnabled: formData.get("onlineOrderingEnabled") === "true",
     pickupEnabled: formData.get("pickupEnabled") === "true",
     deliveryEnabled: formData.get("deliveryEnabled") === "true",
     onlinePaymentMode: formData.get("onlinePaymentMode") ?? "PAY_AFTER",
     deliveryTrackingEnabled: formData.get("deliveryTrackingEnabled") === "true",
+    mapGeocodingProvider: formData.get("mapGeocodingProvider") ?? "nominatim",
+    mapRoutingProvider: formData.get("mapRoutingProvider") ?? "osrm",
+    mapDefaultZoom: formData.get("mapDefaultZoom") ?? "14",
+    mapDisplayStyle: formData.get("mapDisplayStyle") ?? "LIGHT",
+    showStoreMarkerOnOrdering: formData.get("showStoreMarkerOnOrdering") === "true",
+    showCustomerDistance: formData.get("showCustomerDistance") === "true",
     storeLat: formData.get("storeLat") ?? "",
     storeLng: formData.get("storeLng") ?? "",
     deliveryRadiusKm: formData.get("deliveryRadiusKm"),
     freeDeliveryRadiusKm: formData.get("freeDeliveryRadiusKm"),
     deliveryBaseFee: formData.get("deliveryBaseFee"),
     deliveryFeePerKm: formData.get("deliveryFeePerKm"),
+    deliveryAreaMode: formData.get("deliveryAreaMode") ?? "RADIUS",
+    deliveryAreaName: formData.get("deliveryAreaName") ?? "",
+    deliveryAreaNote: formData.get("deliveryAreaNote") ?? "",
+    deliveryAreaWardCount: formData.get("deliveryAreaWardCount") ?? "0",
+    deliveryAreaPolygon: formData.get("deliveryAreaPolygon") ?? "[]",
+    deliveryExclusionZones: formData.get("deliveryExclusionZones") ?? "[]",
+    deliveryFeeEnabled: formData.get("deliveryFeeEnabled") === "true",
+    deliveryFeeTiers: formData.get("deliveryFeeTiers") ?? "[]",
     minOrderForDelivery: formData.get("minOrderForDelivery"),
     pickupEtaMinutes: formData.get("pickupEtaMinutes"),
-    deliveryEtaMinutes: formData.get("deliveryEtaMinutes")
+    deliveryEtaMinutes: formData.get("deliveryEtaMinutes"),
+    serviceFeeEnabled: formData.get("serviceFeeEnabled") === "true",
+    serviceFeeType: formData.get("serviceFeeType") ?? "ORDER_PERCENT",
+    serviceFeePercent: formData.get("serviceFeePercent") ?? "0",
+    serviceFeeMin: formData.get("serviceFeeMin") ?? "0",
+    serviceFeeMax: formData.get("serviceFeeMax") ?? "",
+    allowOutsideDeliveryArea: formData.get("allowOutsideDeliveryArea") === "true",
+    showDeliveryEta: formData.get("showDeliveryEta") === "true",
+    requireOutsideAreaConfirmation: formData.get("requireOutsideAreaConfirmation") === "true",
+    autoSuggestNearestBranch: formData.get("autoSuggestNearestBranch") === "true"
   });
 
   if (!parsed.success) {
@@ -536,15 +761,20 @@ export async function requestSubscriptionPaymentAction(formData: FormData) {
   const months = Number(formData.get("months") ?? 1);
   const planCode = String(formData.get("planCode") ?? "").trim() || undefined;
 
-  await createSubscriptionPaymentRequest({
-    restaurantId: session.restaurantId,
-    ownerEmail: session.email,
-    months: Number.isFinite(months) ? months : 1,
-    planCode
-  });
+  try {
+    await createSubscriptionPaymentRequest({
+      restaurantId: session.restaurantId,
+      ownerEmail: session.email,
+      months: Number.isFinite(months) ? months : 1,
+      planCode
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Không tạo được yêu cầu thanh toán gói.";
+    redirect(`/dashboard/settings?section=billing&billingStep=payment&billingError=${encodeURIComponent(message.slice(0, 240))}`);
+  }
 
   revalidatePath("/dashboard/settings");
-  redirect("/dashboard/settings?section=billing");
+  redirect("/dashboard/settings?section=billing&billingStep=payment");
 }
 
 export async function createCategoryAction(formData: FormData) {
@@ -554,6 +784,7 @@ export async function createCategoryAction(formData: FormData) {
   invalidateRestaurantDashboardCache(session.restaurantId);
   revalidatePath("/dashboard/menu");
   revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
 }
 
 export async function createMenuItemAction(formData: FormData) {
@@ -568,6 +799,12 @@ export async function createMenuItemAction(formData: FormData) {
     restaurantId: session.restaurantId,
     file: formData.get("imageFile")
   });
+  const persistedImage = uploadedImage
+    ? uploadedImage
+    : await persistMenuImageUrl({
+        restaurantId: session.restaurantId,
+        imageUrl: parsed.image || undefined
+      });
   await assertRestaurantResourceLimit({
     restaurantId: session.restaurantId,
     featureKey: "menu_management",
@@ -578,11 +815,67 @@ export async function createMenuItemAction(formData: FormData) {
   await createMenuItem({
     restaurantId: session.restaurantId,
     ...parsed,
-    image: uploadedImage ?? (parsed.image || undefined)
+    image: persistedImage ?? (parsed.image || undefined)
   });
   invalidateRestaurantDashboardCache(session.restaurantId);
   revalidatePath("/dashboard/menu");
   revalidatePath("/dashboard");
+}
+
+const menuOcrImportItemSchema = z.object({
+  categoryName: z.string().trim().max(80).optional().or(z.literal("")),
+  name: z.string().trim().min(2).max(120),
+  price: z.coerce.number().int().min(1000).max(100000000)
+});
+
+export async function importMenuOcrItemsAction(
+  _prevState: { error?: string; success?: string; inserted?: number; skipped?: number; categoriesCreated?: number; skippedNames?: string[] } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const rawItems = String(formData.get("itemsJson") ?? "");
+  let parsedJson: unknown = [];
+
+  try {
+    parsedJson = JSON.parse(rawItems);
+  } catch {
+    parsedJson = [];
+  }
+
+  const parsed = z.array(menuOcrImportItemSchema).max(80).safeParse(parsedJson);
+  if (!parsed.success || parsed.data.length === 0) {
+    return { error: "Không có món hợp lệ để nhập vào menu." };
+  }
+
+  const result = await importMenuItemsFromDraft({
+    restaurantId: session.restaurantId,
+    items: parsed.data,
+    beforeInsert: async (increment) => {
+      await assertRestaurantResourceLimit({
+        restaurantId: session.restaurantId,
+        featureKey: "menu_management",
+        table: "menu_items",
+        label: "món",
+        increment
+      });
+    }
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+
+  if (result.inserted === 0) {
+    return {
+      ...result,
+      success: result.skipped > 0 ? `Không thêm món mới vì ${result.skipped} món đã có trong menu.` : "Không có món mới để thêm."
+    };
+  }
+
+  return {
+    ...result,
+    success: `Đã thêm ${result.inserted} món vào menu${result.skipped ? `, bỏ qua ${result.skipped} món trùng` : ""}.`
+  };
 }
 
 export async function deleteMenuItemAction(formData: FormData) {
@@ -618,6 +911,12 @@ export async function updateMenuItemAction(formData: FormData) {
     restaurantId: session.restaurantId,
     file: formData.get("imageFile")
   });
+  const persistedImage = uploadedImage
+    ? uploadedImage
+    : await persistMenuImageUrl({
+        restaurantId: session.restaurantId,
+        imageUrl: parsed.image || undefined
+      });
 
   await updateMenuItem({
     restaurantId: session.restaurantId,
@@ -625,12 +924,13 @@ export async function updateMenuItemAction(formData: FormData) {
     categoryId: parsed.categoryId,
     name: parsed.name,
     price: parsed.price,
-    image: uploadedImage ?? (parsed.image || undefined),
+    image: persistedImage ?? (parsed.image || undefined),
     isAvailable: parsed.isAvailable
   });
   invalidateRestaurantDashboardCache(session.restaurantId);
   revalidatePath("/dashboard/menu");
   revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
 }
 
 export async function createTableAction(formData: FormData) {
