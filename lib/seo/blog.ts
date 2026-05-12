@@ -8,6 +8,13 @@ export type BlogSection = {
   body: string[];
 };
 
+export type BlogIllustration = {
+  title: string;
+  alt: string;
+  caption: string;
+  labels: [string, string, string, string];
+};
+
 export type BlogPost = {
   slug: string;
   title: string;
@@ -20,6 +27,8 @@ export type BlogPost = {
   readingTimeMinutes: number;
   keywords: string[];
   takeaways: string[];
+  illustration?: BlogIllustration;
+  wordCount?: number;
   sections: BlogSection[];
   faq: BlogFaqItem[];
   relatedSlugs: string[];
@@ -912,12 +921,421 @@ export const BLOG_TOPIC_HUBS: BlogTopicHub[] = [
   }
 ];
 
+type BlogArticleEnhancement = {
+  slug: string;
+  illustration: BlogIllustration;
+  sections: BlogSection[];
+};
+
+const BLOG_ARTICLE_ENHANCEMENTS: BlogArticleEnhancement[] = [
+  {
+    slug: "phan-mem-goi-mon-qr-cho-quan-cafe",
+    illustration: {
+      title: "Phác hoạ luồng gọi món QR tại quán cafe",
+      alt: "Sơ đồ khách quét QR, chọn món, gửi đơn về nhân viên và thanh toán VietQR trong quán cafe.",
+      caption:
+        "Minh hoạ cách LogiVN biến một mã QR trên bàn thành luồng vận hành có trạng thái, thay vì chỉ là một đường dẫn xem menu.",
+      labels: ["Khách quét QR", "Menu dữ liệu", "Đơn về nhân viên", "VietQR và báo cáo"]
+    },
+    sections: [
+      {
+        heading: "Cấu trúc triển khai nên bắt đầu từ dữ liệu menu",
+        body: [
+          "Trước khi in QR cho toàn bộ bàn, quán nên kiểm tra lại dữ liệu menu như một dự án nhỏ. Tên món cần thống nhất, giá không mâu thuẫn, topping phải có lựa chọn rõ, món tạm hết cần có trạng thái để khách không gọi nhầm. Khi dữ liệu nền sạch, QR mới giúp giảm việc hỏi lại.",
+          "Một cấu trúc tốt thường gồm danh mục, món chính, tuỳ chọn, ghi chú, ảnh vừa đủ nhẹ và trạng thái còn bán. Quán không nhất thiết phải đưa mọi món lên ngay ngày đầu. Bắt đầu bằng nhóm món bán chạy giúp nhân viên học quy trình nhanh hơn và giúp chủ quán đo tác động thật trước khi mở rộng."
+        ]
+      },
+      {
+        heading: "Checklist bảy ngày để không làm đội ngũ bị quá tải",
+        body: [
+          "Ngày đầu nên nhập menu và kiểm tra trên điện thoại thật. Ngày thứ hai in thử QR cho vài bàn đông khách. Ngày thứ ba cho nhân viên tập nhận đơn, xác nhận món và xử lý ghi chú đặc biệt. Ba ngày tiếp theo, quán theo dõi đơn bị sửa và món bị hỏi lại.",
+          "Đến ngày thứ bảy, chủ quán nên nhìn lại ba con số đơn giản: số đơn đi qua QR, số lỗi giảm được và khung giờ nhân viên thấy nhẹ hơn. Nếu dữ liệu tích cực, mở rộng ra toàn bộ bàn. Nếu vẫn rối, quay lại chỉnh danh mục, mô tả món hoặc cách nhân viên xác nhận đơn."
+        ]
+      },
+      {
+        heading: "Những lỗi thường làm gọi món QR bị hiểu sai",
+        body: [
+          "Lỗi phổ biến nhất là coi QR như một poster kỹ thuật. Khách quét được nhưng menu khó đọc, món không có mô tả, giá thiếu tuỳ chọn và nhân viên không biết đơn vừa gửi nằm ở đâu. Khi đó trải nghiệm còn chậm hơn gọi trực tiếp vì khách phải tự đoán rồi vẫn cần nhân viên giải thích.",
+          "Lỗi thứ hai là mở quá nhiều tính năng cùng lúc: đặt món tại bàn, đặt online, thanh toán và báo cáo nâng cao trong khi đội ngũ chưa quen. LogiVN nên được triển khai theo nhịp vận hành thật, chỉ bật lớp mới khi lớp trước đã rõ và tin cậy."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "thanh-toan-vietqr-cho-nha-hang",
+    illustration: {
+      title: "Phác hoạ đối soát VietQR theo từng đơn",
+      alt: "Sơ đồ đơn hàng gắn với mã VietQR, trạng thái xác minh, ngoại lệ và báo cáo cuối ca.",
+      caption:
+        "Minh hoạ cách thanh toán VietQR cần đi cùng mã đơn và trạng thái xác minh để cuối ca không phải đối chiếu thủ công bằng trí nhớ.",
+      labels: ["Đơn có mã", "Khách quét VietQR", "Nhân viên xác minh", "Báo cáo cuối ca"]
+    },
+    sections: [
+      {
+        heading: "Thiết kế mã thanh toán theo ngữ cảnh đơn hàng",
+        body: [
+          "VietQR hiệu quả nhất khi mỗi lần thanh toán đều có ngữ cảnh rõ: mã đơn, bàn, tổng tiền, thời điểm tạo và người xác minh. Nếu quán chỉ dán một mã chuyển khoản chung ở quầy, nhân viên vẫn phải hỏi lại khách đã chuyển cho đơn nào, chuyển lúc nào và số tiền có khớp hay không.",
+          "Với nhà hàng đông bàn, nên tách thanh toán thành trạng thái có thể kiểm tra. Một đơn có thể đang chờ khách chuyển, đã có tín hiệu thanh toán, đã được nhân viên xác minh hoặc cần xử lý ngoại lệ. Cách đặt tên trạng thái càng đơn giản, đội ngũ càng ít nhầm trong giờ cao điểm."
+        ]
+      },
+      {
+        heading: "Quy trình xác minh nên ngắn nhưng có bằng chứng",
+        body: [
+          "Nhân viên không cần một biểu mẫu dài để xác minh thanh toán. Họ cần thấy đúng đơn, đúng số tiền, phương thức VietQR và nút xác nhận rõ ràng. Nếu có sai lệch, hệ thống nên giữ đơn ở trạng thái cần kiểm tra thay vì cho qua như đơn đã thanh toán hoàn tất.",
+          "Bằng chứng vận hành có thể rất nhỏ: ai xác minh, xác minh lúc nào, ghi chú ngoại lệ là gì. Những dữ liệu này giúp chủ quán tra lại khi khách hỏi, khi nhân viên đổi ca hoặc khi báo cáo cuối ngày lệch so với sao kê ngân hàng."
+        ]
+      },
+      {
+        heading: "Nội dung trên website nên nói thẳng vào nỗi lo đối soát",
+        body: [
+          "Chủ quán tìm VietQR thường không chỉ hỏi có thanh toán được không. Họ lo nhầm tiền, bỏ sót giao dịch, nhân viên xác minh thiếu hoặc cuối ca mất quá nhiều thời gian cộng lại. Vì vậy bài viết cần giải thích bằng tình huống thật thay vì chỉ nói tính năng thanh toán nhanh.",
+          "Cách truyền thông tốt là nối VietQR với luồng gọi món, bảng quản lý đơn và báo cáo cuối ca. Khi người đọc thấy đường đi từ khách thanh toán đến chủ quán kiểm tra số liệu, họ hiểu vì sao phần mềm vận hành quan trọng hơn một mã QR chuyển khoản đơn lẻ."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "quan-ly-order-realtime-gio-cao-diem",
+    illustration: {
+      title: "Phác hoạ bảng trạng thái giờ cao điểm",
+      alt: "Sơ đồ bàn, bếp, thanh toán và báo cáo cùng đổ về một bảng trạng thái theo thời gian thực.",
+      caption:
+        "Minh hoạ cách một bảng quản lý tốt gom tín hiệu từ bàn, bếp và thanh toán để nhân viên biết việc tiếp theo cần làm.",
+      labels: ["Bàn đang chờ", "Bếp đang xử lý", "Thanh toán cần xác minh", "Báo cáo ca"]
+    },
+    sections: [
+      {
+        heading: "Trạng thái phải đủ ít để nhân viên nhớ được",
+        body: [
+          "Một lỗi thường gặp của bảng quản lý theo thời gian thực là quá nhiều nhãn trạng thái. Khi ca đông, nhân viên không có thời gian phân biệt mười loại cảnh báo khác nhau. Tốt hơn là bắt đầu với vài trạng thái hành động: mới gọi, đang chuẩn bị, cần phục vụ, cần xác minh thanh toán và đã hoàn tất.",
+          "Mỗi trạng thái nên gắn với một người hoặc một nhóm chịu trách nhiệm. Đơn mới thuộc nhân viên nhận đơn, món đang chuẩn bị thuộc bếp, thanh toán cần xác minh thuộc thu ngân hoặc quản lý ca. Khi trách nhiệm rõ, bảng quản lý không còn là nơi xem cho biết mà trở thành nhịp điều phối."
+        ]
+      },
+      {
+        heading: "Cần tách tín hiệu vận hành khỏi báo cáo sau ca",
+        body: [
+          "Trong giờ cao điểm, chủ quán cần tín hiệu ngắn để hành động ngay. Báo cáo doanh thu chi tiết nên để sau ca. Nếu trộn mọi số liệu vào cùng một màn hình, đội ngũ dễ bỏ lỡ việc quan trọng như bàn gọi thêm, đơn quá lâu hoặc khách đã chuyển khoản nhưng chưa được xác minh.",
+          "Cấu trúc hợp lý là lớp trực ca hiển thị việc đang cần xử lý, còn lớp báo cáo ghi lại dữ liệu để xem sau. LogiVN nên giữ hai lớp này liên thông nhưng không làm chúng cạnh tranh sự chú ý của nhân viên trong thời điểm nhạy cảm nhất."
+        ]
+      },
+      {
+        heading: "Cách đo bảng quản lý có thật sự giúp quán nhanh hơn",
+        body: [
+          "Không nên đánh giá bảng theo thời gian cập nhật kỹ thuật đơn thuần. Hãy đo thời gian từ lúc khách gửi đơn đến lúc nhân viên xác nhận, số đơn bị hỏi lại, số thanh toán bị treo và số lần quản lý phải can thiệp thủ công. Đây là các tín hiệu phản ánh trải nghiệm thật.",
+          "Sau một tuần, nếu số đơn treo giảm và nhân viên ít hỏi nhau hơn, bảng quản lý đang tạo giá trị. Nếu mọi người vẫn phải nhắn riêng để xác nhận, cần xem lại cách đặt trạng thái, thứ tự ưu tiên hoặc vị trí hiển thị cảnh báo."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "menu-qr-la-gi",
+    illustration: {
+      title: "Phác hoạ menu QR dạng dữ liệu",
+      alt: "Sơ đồ menu QR gồm danh mục, món, tuỳ chọn, trạng thái còn bán và đường đi sang giỏ hàng.",
+      caption:
+        "Minh hoạ sự khác nhau giữa một ảnh menu tĩnh và menu QR dạng dữ liệu có thể nối sang gọi món tại bàn.",
+      labels: ["Danh mục", "Món và giá", "Topping", "Giỏ hàng"]
+    },
+    sections: [
+      {
+        heading: "Menu QR tốt phải dễ quét, dễ đọc và dễ sửa",
+        body: [
+          "Một menu QR tốt không chỉ là mã quét được. Sau khi mở trên điện thoại, khách cần nhìn thấy danh mục rõ, chữ đủ lớn, giá dễ hiểu và món bán chạy không bị chôn quá sâu. Nếu khách phải phóng to ảnh menu hoặc kéo qua lại liên tục, trải nghiệm đã thất bại trước khi bước gọi món bắt đầu.",
+          "Khả năng sửa nhanh cũng rất quan trọng. Quán thay giá, ẩn món hết hàng hoặc thêm topping không nên phải in lại toàn bộ menu. Menu dạng dữ liệu giúp chủ quán chỉnh một lần và đồng bộ cho các bàn, trang đặt món online hoặc kênh chia sẻ khác."
+        ]
+      },
+      {
+        heading: "Ảnh món nên hỗ trợ quyết định, không làm trang chậm",
+        body: [
+          "Ảnh giúp khách chọn món nhanh hơn, nhưng ảnh quá nặng có thể làm menu tải chậm trên 4G yếu. Với quán cafe, nên ưu tiên ảnh đại diện cho nhóm món bán chạy, combo hoặc món mới thay vì cố chụp mọi món ngay từ đầu.",
+          "Mỗi ảnh cần có tên món và mô tả đi cùng để khách không phụ thuộc hoàn toàn vào hình. Về mặt tìm kiếm và khả năng truy cập, mô tả văn bản vẫn là phần giúp người đọc, công cụ tìm kiếm và trợ lý thông minh hiểu nội dung chính xác hơn."
+        ]
+      },
+      {
+        heading: "Khi menu trở thành nền dữ liệu cho vận hành",
+        body: [
+          "Khi menu đã có cấu trúc, quán có thể nối thêm giỏ hàng, bàn, bếp, thanh toán và báo cáo. Lúc này menu không còn là tài liệu giới thiệu món mà trở thành dữ liệu vận hành. Một thay đổi nhỏ trong menu có thể ảnh hưởng trực tiếp đến đơn, nguyên liệu và doanh thu.",
+          "Đây là lý do nên chuẩn hóa menu trước khi nói đến tự động hóa sâu hơn. Nếu dữ liệu món còn lộn xộn, mọi tính năng phía sau đều phải bù lỗi. Nếu dữ liệu sạch, LogiVN có thể mở rộng tự nhiên từ menu QR sang gọi món QR và thanh toán."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "chi-phi-phan-mem-goi-mon-qr",
+    illustration: {
+      title: "Phác hoạ cách tính chi phí phần mềm gọi món QR",
+      alt: "Sơ đồ năm nhóm chi phí gồm phí tháng, thiết lập menu, đào tạo, thiết bị và lỗi vận hành giảm được.",
+      caption:
+        "Minh hoạ cách chủ quán nên nhìn tổng chi phí triển khai thay vì chỉ so sánh phí thuê bao hằng tháng.",
+      labels: ["Phí tháng", "Setup menu", "Đào tạo", "Lỗi giảm được"]
+    },
+    sections: [
+      {
+        heading: "Nên tính chi phí theo ca bán, không chỉ theo tháng",
+        body: [
+          "Một khoản phí hằng tháng nghe có vẻ cố định, nhưng giá trị của phần mềm lại xuất hiện theo từng ca bán. Nếu mỗi ca giảm được vài đơn sai, vài phút hỏi lại và một phần thời gian cộng sổ cuối ngày, khoản tiết kiệm thực tế có thể lớn hơn con số trên bảng giá.",
+          "Cách tính thực tế là lấy phí phần mềm chia cho số ca vận hành trong tháng, rồi so với thời gian nhân viên tiết kiệm được ở mỗi ca. Chủ quán sẽ dễ quyết định hơn khi nhìn phần mềm như công cụ giảm ma sát vận hành, không chỉ là một khoản thuê bao."
+        ]
+      },
+      {
+        heading: "Chi phí ẩn thường nằm ở quy trình chưa rõ",
+        body: [
+          "Nhiều quán không mất tiền phần mềm nhưng mất tiền vì quy trình thủ công: nhân viên ghi sai món, khách chờ lâu, thanh toán nhầm, cuối ca cộng lại mất thời gian hoặc chủ quán không biết món nào nên đẩy mạnh. Đây là chi phí ẩn khó thấy nếu chỉ nhìn hoá đơn tháng.",
+          "Phần mềm tốt cần làm các chi phí này hiện ra bằng số liệu. Khi biết đơn nào hay bị sửa, món nào bị chậm hoặc khung giờ nào cần thêm người, chủ quán có cơ sở để thay đổi. Đây là phần giá trị mà bảng giá nên giải thích rõ."
+        ]
+      },
+      {
+        heading: "Cách đọc bảng giá để chọn gói đúng giai đoạn",
+        body: [
+          "Quán mới nên chọn gói đủ để chạy menu, gọi món tại bàn và thanh toán cơ bản. Quán bắt đầu bán online nên ưu tiên trạng thái đơn, pickup, delivery và báo cáo nguồn đơn. Quán có nhiều chi nhánh hoặc nhiều điểm chạm mới cần báo cáo sâu và trợ lý thông minh.",
+          "Điều quan trọng là không mua theo cảm giác nhiều tính năng hơn thì tốt hơn. Gói phù hợp là gói giải quyết điểm nghẽn hiện tại và có đường mở rộng khi quán tăng trưởng. Bài viết chi phí vì vậy nên dẫn người đọc sang bảng giá bằng tình huống vận hành cụ thể."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "phan-mem-quan-ly-quan-cafe-nho",
+    illustration: {
+      title: "Phác hoạ lộ trình số hoá quán cafe nhỏ",
+      alt: "Sơ đồ quán cafe nhỏ đi từ menu, đơn tại bàn, thanh toán đến báo cáo cuối ca.",
+      caption:
+        "Minh hoạ lộ trình triển khai từng lớp để quán nhỏ không bị quá tải khi bắt đầu dùng phần mềm quản lý.",
+      labels: ["Menu gọn", "Đơn rõ trạng thái", "Thanh toán", "Báo cáo ca"]
+    },
+    sections: [
+      {
+        heading: "Quán nhỏ cần phần mềm biết tiết chế",
+        body: [
+          "Điểm khó của quán nhỏ không phải thiếu công cụ, mà là thiếu thời gian để học quá nhiều thao tác mới. Một phần mềm phù hợp nên che bớt độ phức tạp, chỉ đưa ra những việc cần làm trong ca: đơn mới, bàn cần phục vụ, món hết hàng và thanh toán cần xác minh.",
+          "Nếu giao diện bắt nhân viên đi qua nhiều màn hình cho một thao tác đơn giản, quán nhỏ sẽ quay lại giấy bút rất nhanh. Vì vậy cấu trúc triển khai nên ưu tiên tốc độ thao tác và khả năng sửa lỗi hơn là danh sách tính năng dài."
+        ]
+      },
+      {
+        heading: "Nên chọn một điểm nghẽn để giải quyết trước",
+        body: [
+          "Trước khi mua hoặc bật phần mềm, chủ quán nên viết ra điểm nghẽn lớn nhất hiện tại. Nếu khách chờ gọi món, bắt đầu từ QR tại bàn. Nếu cuối ca lệch tiền, bắt đầu từ thanh toán và đối soát. Nếu không biết món nào bán tốt, bắt đầu từ báo cáo đơn giản.",
+          "Cách chọn một điểm nghẽn giúp đội ngũ thấy lợi ích nhanh hơn. Khi nhân viên cảm nhận được ca bán nhẹ đi, họ sẽ dễ chấp nhận lớp tiếp theo như đặt món online, đặt bàn hoặc báo cáo chi tiết."
+        ]
+      },
+      {
+        heading: "Đừng để chuyển đổi số làm mất chất quán",
+        body: [
+          "Quán nhỏ thường sống nhờ cảm giác thân quen. Phần mềm không nên biến trải nghiệm thành lạnh lẽo hoặc bắt khách tự xử lý mọi thứ. QR và bảng quản lý nên giảm việc lặp lại để nhân viên có thêm thời gian chào hỏi, tư vấn món và chăm khách quen.",
+          "Nội dung của LogiVN nên nhấn mạnh điểm cân bằng này. Chuyển đổi số không phải thay nhân viên bằng màn hình, mà là làm cho quy trình phía sau gọn hơn để trải nghiệm phía trước ấm hơn, nhanh hơn và ít sai hơn."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "dat-mon-online-cho-quan-cafe",
+    illustration: {
+      title: "Phác hoạ luồng đặt món online cho quán cafe",
+      alt: "Sơ đồ khách đặt online, quán nhận đơn, chuẩn bị pickup hoặc delivery và cập nhật trạng thái.",
+      caption:
+        "Minh hoạ cách đơn online nên được tách khỏi đơn tại bàn nhưng vẫn nằm trong cùng một hệ vận hành.",
+      labels: ["Khách đặt trước", "Quán nhận đơn", "Pickup", "Delivery"]
+    },
+    sections: [
+      {
+        heading: "Đơn online cần lời hứa thời gian rõ ràng",
+        body: [
+          "Khi khách đặt online, họ không nhìn thấy nhịp quán như khi ngồi tại bàn. Vì vậy thời gian chuẩn bị, trạng thái xác nhận và cách nhận món phải rõ ngay từ đầu. Nếu quán hứa quá nhanh rồi trễ, trải nghiệm online sẽ làm hại uy tín của quán.",
+          "Pickup thường dễ kiểm soát hơn vì khách chủ động đến lấy. Delivery cần thêm bán kính phục vụ, phí giao, thời gian bàn giao và chính sách khi tài xế đến muộn. Quán nên mở từng lớp để không làm bếp bị kéo khỏi khách đang ngồi tại chỗ."
+        ]
+      },
+      {
+        heading: "Menu online nên được biên tập như một kênh bán riêng",
+        body: [
+          "Một số món ngon tại quán nhưng không phù hợp để giao đi xa. Đồ uống dễ tách lớp, món cần dùng ngay hoặc combo cần trình bày đẹp nên được cân nhắc trước khi đưa lên kênh online. Menu online cần ưu tiên món giữ chất lượng tốt và thao tác đóng gói nhanh.",
+          "Mô tả món cũng nên cụ thể hơn menu tại bàn. Khách online không có nhân viên đứng cạnh để giải thích mức ngọt, topping hay dị ứng. Càng ít mơ hồ, quán càng ít cuộc gọi xác nhận và càng dễ xử lý nhiều đơn cùng lúc."
+        ]
+      },
+      {
+        heading: "Cách đo kênh online có đáng mở rộng hay không",
+        body: [
+          "Sau một đến hai tuần, chủ quán nên xem số đơn online, tỷ lệ huỷ, món bán tốt, thời gian chuẩn bị và số lần khách phải hỏi lại. Nếu pickup có tín hiệu tốt nhưng delivery nhiều lỗi, có thể giữ pickup trước thay vì mở rộng vội.",
+          "Kênh online nên bổ sung doanh thu mà không phá nhịp phục vụ tại quán. Nếu nhân viên phải bỏ khách tại bàn để xử lý đơn giao đi, cần tách trạng thái, phân công người nhận đơn hoặc giới hạn khung giờ nhận online."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "doi-soat-vietqr-cuoi-ca",
+    illustration: {
+      title: "Phác hoạ checklist đối soát cuối ca",
+      alt: "Sơ đồ kiểm tra đơn đã thanh toán, giao dịch lệch, tiền mặt và báo cáo ngoại lệ cuối ca.",
+      caption:
+        "Minh hoạ cách cuối ca nên đi theo checklist cố định để phát hiện giao dịch VietQR thiếu, dư hoặc chưa xác minh.",
+      labels: ["Đơn hoàn tất", "VietQR khớp", "Ngoại lệ", "Khoá ca"]
+    },
+    sections: [
+      {
+        heading: "Checklist nên được viết cho người đang mệt cuối ca",
+        body: [
+          "Cuối ca là lúc nhân viên đã mệt, nên checklist càng phải ngắn và theo thứ tự quen thuộc. Không nên yêu cầu họ suy luận lại toàn bộ ca bán. Hãy đi từ số đơn, tổng tiền, phương thức thanh toán, giao dịch chưa xác minh và ngoại lệ cần bàn giao.",
+          "Một checklist tốt giúp người mới cũng làm được, không phụ thuộc vào kinh nghiệm của một nhân viên lâu năm. Khi quy trình được chuẩn hóa, chủ quán giảm rủi ro mỗi khi đổi ca, đổi người hoặc mở thêm chi nhánh."
+        ]
+      },
+      {
+        heading: "Ngoại lệ cần được ghi lại ngay khi phát sinh",
+        body: [
+          "Nếu khách chuyển thiếu, chuyển dư, chuyển sai nội dung hoặc đổi món sau khi thanh toán, nhân viên nên ghi chú ngay trên đơn. Đợi đến cuối ca mới nhớ lại thường dẫn tới thiếu bằng chứng và mất thời gian hỏi nhau.",
+          "Các ngoại lệ không cần quá dài, chỉ cần rõ chuyện gì xảy ra, ai xử lý và trạng thái cuối cùng. Dữ liệu này giúp báo cáo đáng tin hơn, đồng thời là căn cứ khi khách hoặc quản lý hỏi lại sau ca."
+        ]
+      },
+      {
+        heading: "Tự động hoá nên đi sau thói quen kiểm tra đúng",
+        body: [
+          "Nhiều quán muốn tự động hóa ngay, nhưng nếu thói quen xác minh chưa rõ thì tự động hóa chỉ làm sai nhanh hơn. Giai đoạn đầu nên dùng danh sách đơn và trạng thái thanh toán để tạo kỷ luật đối soát trước.",
+          "Khi dữ liệu đủ đều, LogiVN có thể giúp rút ngắn thời gian bằng báo cáo cuối ca, lọc ngoại lệ và nhóm giao dịch theo nguồn đơn. Lúc đó tự động hóa dựa trên quy trình thật, không phải trên giả định."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "order-tai-ban-khong-can-app",
+    illustration: {
+      title: "Phác hoạ gọi món tại bàn không cần app",
+      alt: "Sơ đồ khách quét QR tại bàn, dùng trình duyệt, gửi đơn và gọi thêm món mà không tải app.",
+      caption:
+        "Minh hoạ trải nghiệm khách chỉ cần quét QR bằng điện thoại, thao tác trên trình duyệt và vẫn giữ được ngữ cảnh bàn.",
+      labels: ["Quét tại bàn", "Không tải app", "Gửi đơn", "Gọi thêm"]
+    },
+    sections: [
+      {
+        heading: "Trải nghiệm đầu tiên phải nhẹ như mở một trang web",
+        body: [
+          "Khách ngồi xuống thường muốn xem món ngay. Nếu hệ thống yêu cầu tải app, tạo tài khoản hoặc nhập quá nhiều thông tin trước khi gọi món, quán đã đặt rào cản vào đúng thời điểm khách đang có nhu cầu cao nhất.",
+          "Luồng không cần app nên mở nhanh, nhận biết bàn tự động từ QR và cho phép khách chọn món trong vài thao tác đầu tiên. Những bước như lưu lịch sử, nhận ưu đãi hoặc tạo tài khoản chỉ nên xuất hiện sau khi khách đã hoàn tất nhu cầu chính."
+        ]
+      },
+      {
+        heading: "Nhân viên vẫn giữ vai trò kiểm soát trải nghiệm",
+        body: [
+          "Gọi món tại bàn không có nghĩa là bỏ mặc khách với điện thoại. Nhân viên vẫn cần thấy đơn mới, xác nhận món, xử lý ghi chú đặc biệt và hỗ trợ khách lớn tuổi hoặc khách đi theo nhóm. Công nghệ nên giảm thao tác lặp lại, không thay thế sự quan sát của đội ngũ.",
+          "Một quy trình tốt cho phép khách tự gọi khi họ muốn nhanh, đồng thời vẫn có nút gọi phục vụ hoặc cách nhờ nhân viên can thiệp. Sự linh hoạt này phù hợp với quán Việt, nơi trải nghiệm thân thiện vẫn là lợi thế cạnh tranh."
+        ]
+      },
+      {
+        heading: "Khi gọi thêm món trở thành tín hiệu doanh thu",
+        body: [
+          "Một lợi ích hay bị bỏ qua của QR tại bàn là gọi thêm món. Khi khách không phải chờ nhân viên quay lại, họ dễ gọi thêm nước, topping hoặc món tráng miệng đúng lúc. Nếu hệ thống ghi nhận được hành vi này, chủ quán có thêm dữ liệu để thiết kế combo.",
+          "Bài viết này nên nhấn vào điểm không cần app vì đó là nỗi lo phổ biến của khách và chủ quán. Nhưng phần sâu hơn là vận hành: QR phải giữ ngữ cảnh bàn, đơn, nhân viên và thanh toán để tạo giá trị thật."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "phan-mem-order-tra-sua",
+    illustration: {
+      title: "Phác hoạ menu trà sữa nhiều biến thể",
+      alt: "Sơ đồ ly trà sữa gồm size, đường, đá, topping, combo và trạng thái chuẩn bị trong giờ cao điểm.",
+      caption:
+        "Minh hoạ vì sao quán trà sữa cần menu dữ liệu rõ cho từng tuỳ chọn, không chỉ một danh sách món đơn giản.",
+      labels: ["Size", "Đường đá", "Topping", "Combo"]
+    },
+    sections: [
+      {
+        heading: "Biến thể món phải được thiết kế trước khi lên QR",
+        body: [
+          "Trà sữa là ngành hàng có nhiều tuỳ chọn nhỏ nhưng ảnh hưởng trực tiếp đến giá và tốc độ pha chế. Nếu size, đường, đá và topping chỉ nằm trong ghi chú tự do, nhân viên phải đọc lại từng đơn và rất dễ bỏ sót khi đơn dồn.",
+          "Cách tốt hơn là biến mỗi tuỳ chọn thành dữ liệu có cấu trúc. Khách chọn bằng nút rõ ràng, hệ thống tính giá tự động và bếp pha chế nhìn thấy thông tin theo cùng một thứ tự. Điều này giúp giảm lỗi mà không làm khách mất quyền cá nhân hoá."
+        ]
+      },
+      {
+        heading: "Combo cần được đo bằng tốc độ chuẩn bị",
+        body: [
+          "Combo không chỉ là ghép món để tăng giá trị đơn. Với quán trà sữa, combo tốt còn phải dễ chuẩn bị trong giờ cao điểm. Nếu combo bán chạy nhưng làm chậm quầy pha chế, lợi ích doanh thu có thể bị triệt tiêu bởi thời gian chờ và đơn tồn.",
+          "Báo cáo nên cho chủ quán thấy combo nào bán tốt, topping nào hay đi cùng nhau và khung giờ nào cần chuẩn bị nguyên liệu trước. Khi dữ liệu đủ rõ, quán có thể tạo combo vừa hấp dẫn khách vừa hợp sức vận hành."
+        ]
+      },
+      {
+        heading: "Tách dòng đơn để tránh nghẽn quầy pha chế",
+        body: [
+          "Đơn tại quán, pickup và delivery có nhịp khác nhau. Nếu tất cả cùng rơi vào một danh sách không ưu tiên, nhân viên dễ làm đơn giao đi trước khách đang chờ tại quán hoặc ngược lại. Trạng thái nguồn đơn giúp quầy pha chế ra quyết định nhanh hơn.",
+          "LogiVN nên giải thích điều này bằng ví dụ trà sữa vì người đọc dễ hình dung: vài tuỳ chọn nhỏ có thể nhân lên thành nhiều biến thể. Phần mềm tốt phải làm phức tạp trở nên có trật tự, không đẩy gánh nặng đó sang nhân viên."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "dat-ban-nhan-coc-nha-hang",
+    illustration: {
+      title: "Phác hoạ luồng đặt bàn nhận cọc",
+      alt: "Sơ đồ khách chọn giờ, giữ bàn, thanh toán cọc VietQR, nhà hàng xác nhận và xử lý no-show.",
+      caption:
+        "Minh hoạ cách nhận cọc cần đi cùng thời gian giữ bàn, trạng thái xác nhận và chính sách hoàn huỷ rõ ràng.",
+      labels: ["Chọn giờ", "Giữ bàn", "Cọc VietQR", "Xác nhận"]
+    },
+    sections: [
+      {
+        heading: "Nhận cọc chỉ nên dùng khi có lý do rõ với khách",
+        body: [
+          "Khách sẽ chấp nhận đặt cọc dễ hơn khi họ hiểu vì sao nhà hàng cần điều đó: bàn giới hạn, nguyên liệu chuẩn bị trước, phòng riêng hoặc khung giờ rất đông. Nếu chỉ yêu cầu cọc mà không giải thích, trải nghiệm đặt bàn có thể trở nên nặng nề.",
+          "Nội dung trên website và trong luồng đặt bàn nên nói ngắn gọn về số tiền cọc, thời gian giữ bàn, điều kiện hoàn hủy và cách liên hệ khi cần đổi lịch. Minh bạch từ đầu giúp giảm tranh cãi và tăng tỷ lệ hoàn tất đặt chỗ."
+        ]
+      },
+      {
+        heading: "Trạng thái đặt bàn cần chống trùng và chống quên",
+        body: [
+          "Một đặt bàn nhận cọc không thể chỉ là một dòng ghi chú. Hệ thống cần biết khung giờ, số khách, khu vực bàn, trạng thái cọc và thời gian hết hạn giữ chỗ. Nếu khách chưa cọc sau thời gian quy định, bàn cần được trả lại cho lịch trống.",
+          "Nhà hàng cũng cần cảnh báo trước giờ khách đến, đặc biệt với bàn lớn. Khi trạng thái rõ, nhân viên không phải hỏi lại trong nhóm chat và quản lý ca biết đặt chỗ nào đã chắc, đặt chỗ nào còn rủi ro."
+        ]
+      },
+      {
+        heading: "Báo cáo đặt bàn giúp cải thiện chính sách",
+        body: [
+          "Sau vài tuần, chủ nhà hàng nên xem tỷ lệ khách đặt nhưng không đến, tỷ lệ đặt có cọc hoàn tất, khung giờ hay bị huỷ và số bàn bị giữ quá lâu. Những dữ liệu này giúp điều chỉnh mức cọc hoặc thời gian giữ bàn hợp lý hơn.",
+          "Nếu no-show thấp, có thể giảm độ nặng của chính sách để trải nghiệm nhẹ hơn. Nếu no-show cao ở khung giờ vàng, nhận cọc và xác nhận tự động là lớp bảo vệ doanh thu. Bài viết cần cho thấy đây là quyết định vận hành, không chỉ là tính năng thanh toán."
+        ]
+      }
+    ]
+  },
+  {
+    slug: "bao-cao-doanh-thu-quan-cafe",
+    illustration: {
+      title: "Phác hoạ báo cáo doanh thu cuối ca",
+      alt: "Sơ đồ doanh thu theo nguồn đơn, món bán chạy, phương thức thanh toán và ngoại lệ cần xử lý.",
+      caption:
+        "Minh hoạ một báo cáo cuối ca tập trung vào quyết định ngày mai, không phải chỉ gom thật nhiều biểu đồ.",
+      labels: ["Doanh thu", "Nguồn đơn", "Món bán chạy", "Ngoại lệ"]
+    },
+    sections: [
+      {
+        heading: "Báo cáo tốt bắt đầu bằng câu hỏi của chủ quán",
+        body: [
+          "Trước khi xem biểu đồ, chủ quán thường có vài câu hỏi rất thực tế: hôm nay bán được bao nhiêu, món nào kéo doanh thu, tiền đã khớp chưa, khung giờ nào quá tải và ngày mai cần chuẩn bị gì. Báo cáo nên trả lời những câu hỏi này trước.",
+          "Nếu báo cáo mở đầu bằng quá nhiều chỉ số kỹ thuật, người dùng dễ bỏ qua. Một cấu trúc tốt đi từ tổng quan đến ngoại lệ: doanh thu và số đơn, nguồn đơn, phương thức thanh toán, món nổi bật, cuối cùng là việc cần xử lý."
+        ]
+      },
+      {
+        heading: "Món bán chạy cần đọc cùng biên lợi nhuận và khả năng phục vụ",
+        body: [
+          "Một món bán chạy chưa chắc là món nên đẩy mạnh nếu biên lợi nhuận thấp hoặc làm chậm quầy pha chế. Chủ quán nên đọc món bán chạy cùng nguyên liệu, thời gian chuẩn bị, tỷ lệ gọi thêm và khả năng tạo combo.",
+          "Ví dụ, một đồ uống có lượng bán vừa phải nhưng thường đi kèm topping hoặc bánh ngọt có thể đáng ưu tiên hơn món bán nhiều nhưng ít lợi nhuận. Báo cáo tốt giúp chủ quán nhìn doanh thu như một hệ quyết định, không chỉ bảng xếp hạng món."
+        ]
+      },
+      {
+        heading: "Báo cáo nên tạo ra hành động cho ca sau",
+        body: [
+          "Cuối mỗi ca, báo cáo nên kết thúc bằng vài hành động rõ: chuẩn bị thêm nguyên liệu nào, điều chỉnh nhân sự khung giờ nào, kiểm tra giao dịch nào và thử combo nào. Nếu không có hành động, báo cáo chỉ là tài liệu lưu trữ.",
+          "LogiVN có thể dùng nội dung báo cáo để kết nối toàn bộ câu chuyện sản phẩm. Gọi món QR tạo dữ liệu, VietQR làm rõ thanh toán, đối soát bảo vệ số liệu và báo cáo biến dữ liệu thành quyết định vận hành cho ngày tiếp theo."
+        ]
+      }
+    ]
+  }
+];
+
+function getBlogArticleEnhancement(slug: string) {
+  return BLOG_ARTICLE_ENHANCEMENTS.find((entry) => entry.slug === slug);
+}
+
 const PUBLIC_BLOG_COPY_REPLACEMENTS: Array<[RegExp, string]> = [
   [/AI citation readiness/gi, "khả năng tham khảo rõ ràng"],
   [/AI OCR menu/gi, "nhập menu nhanh từ ảnh"],
   [/AI hỗ trợ vận hành/gi, "trợ lý thông minh hỗ trợ vận hành"],
-  [/AI/gi, "trợ lý thông minh"],
-  [/OCR/gi, "nhập từ ảnh"],
+  [/\bAI\b/gi, "trợ lý thông minh"],
+  [/\bOCR\b/gi, "nhập từ ảnh"],
   [/QR ordering/gi, "gọi món QR"],
   [/online ordering/gi, "đặt món online"],
   [/order realtime/gi, "đơn theo thời gian thực"],
@@ -982,8 +1400,41 @@ function sanitizeBlogFaqItem(item: BlogFaqItem): BlogFaqItem {
   };
 }
 
-function sanitizeBlogPost(post: BlogPost): BlogPost {
+function sanitizeBlogIllustration(illustration: BlogIllustration): BlogIllustration {
   return {
+    title: sanitizePublicBlogCopy(illustration.title),
+    alt: sanitizePublicBlogCopy(illustration.alt),
+    caption: sanitizePublicBlogCopy(illustration.caption),
+    labels: illustration.labels.map(sanitizePublicBlogCopy) as BlogIllustration["labels"]
+  };
+}
+
+function countWords(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function countBlogPostWords(post: BlogPost) {
+  return countWords(
+    [
+      post.title,
+      post.description,
+      post.excerpt,
+      post.takeaways.join(" "),
+      post.illustration ? [post.illustration.title, post.illustration.alt, post.illustration.caption, ...post.illustration.labels].join(" ") : "",
+      post.sections.flatMap((section) => [section.heading, ...section.body]).join(" "),
+      post.faq.flatMap((item) => [item.question, item.answer]).join(" ")
+    ].join(" ")
+  );
+}
+
+function sanitizeBlogPost(post: BlogPost): BlogPost {
+  const enhancement = getBlogArticleEnhancement(post.slug);
+  const sections = [...post.sections, ...(enhancement?.sections ?? [])].map(sanitizeBlogSection);
+  const illustration = enhancement?.illustration ? sanitizeBlogIllustration(enhancement.illustration) : undefined;
+  const sanitizedPost = {
     ...post,
     title: sanitizePublicBlogCopy(post.title),
     description: sanitizePublicBlogCopy(post.description),
@@ -992,8 +1443,16 @@ function sanitizeBlogPost(post: BlogPost): BlogPost {
     topic: sanitizePublicBlogCopy(post.topic),
     keywords: post.keywords.map(sanitizePublicBlogCopy),
     takeaways: post.takeaways.map(sanitizePublicBlogCopy),
-    sections: post.sections.map(sanitizeBlogSection),
+    illustration,
+    sections,
     faq: post.faq.map(sanitizeBlogFaqItem)
+  };
+
+  const wordCount = countBlogPostWords(sanitizedPost);
+  return {
+    ...sanitizedPost,
+    readingTimeMinutes: Math.max(post.readingTimeMinutes, Math.ceil(wordCount / 130)),
+    wordCount
   };
 }
 

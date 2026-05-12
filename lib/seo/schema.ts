@@ -95,10 +95,10 @@ export function buildSoftwareApplicationSchema() {
     },
     featureList: [
       "Gọi món bằng QR theo bàn",
-      "Quản lý đơn realtime",
+      "Quản lý đơn theo thời gian thực",
       "Thanh toán VietQR và tiền mặt",
       "Đặt món online và đặt bàn trước",
-      "AI hỗ trợ vận hành quán"
+      "Trợ lý thông minh hỗ trợ vận hành quán"
     ]
   };
 }

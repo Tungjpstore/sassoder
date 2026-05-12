@@ -14,7 +14,7 @@ export async function POST(request: Request) {
       throw new AppError("Bạn thao tác quá nhanh. Vui lòng thử lại sau.", 429);
     }
 
-    const body = remoteOrderSchema.parse(await request.json());
+    const body = remoteOrderSchema.parse(await request.json().catch(() => ({})));
     const result = await createRemoteOrder(body);
     return ok(result, { status: 201 });
   } catch (error) {

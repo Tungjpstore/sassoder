@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { staffPermissionProfiles } from "@/lib/staff-permissions";
 import { authPasswordMaxLength, authPasswordMinLength, authPasswordPolicyPatterns } from "@/lib/auth-password-policy";
 
 export const paymentMethodSchema = z.enum(["QR", "CASH"]);
@@ -70,6 +71,7 @@ const deliveryExclusionZoneSchema = z.object({
 export const createOrderSchema = z.object({
   restaurantSlug: z.string().min(1),
   tableId: z.string().min(1),
+  tableAccessToken: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   customerSessionId: z.string().uuid().optional(),
   customerNote: z.string().max(300).optional(),
   promotionCode: promotionCodeSchema,
@@ -89,6 +91,7 @@ export const createOrderSchema = z.object({
 export const checkoutOrderSchema = z.object({
   restaurantSlug: z.string().min(1),
   tableId: z.string().min(1),
+  tableAccessToken: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   customerSessionId: z.string().uuid().optional(),
   paymentMethod: paymentMethodSchema
 });
@@ -96,6 +99,7 @@ export const checkoutOrderSchema = z.object({
 export const customerOrderAccessSchema = z.object({
   restaurantSlug: z.string().min(1),
   tableId: z.string().min(1),
+  tableAccessToken: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   customerSessionId: z.string().uuid().optional()
 });
 
@@ -130,6 +134,7 @@ export const deliveryQuoteSchema = z.object({
 export const publicOrderHistorySchema = z.object({
   restaurantSlug: z.string().min(1),
   tableId: z.string().min(1),
+  tableAccessToken: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   customerSessionId: z.string().uuid().optional()
 });
 
@@ -141,6 +146,7 @@ export const remoteOrderHistorySchema = z.object({
 export const serviceRequestSchema = z.object({
   restaurantSlug: z.string().min(1),
   tableId: z.string().uuid(),
+  tableAccessToken: z.string().regex(/^[a-f0-9]{40}$/i).optional(),
   customerSessionId: z.string().uuid().optional(),
   message: z.string().trim().max(160).optional().or(z.literal(""))
 });
@@ -489,12 +495,12 @@ export const promotionDisplaySchema = promotionIdSchema.extend({
 export const staffInviteSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
-  role: z.enum(["ADMIN", "STAFF"]).default("STAFF")
+  permissionProfile: z.enum(staffPermissionProfiles).default("service")
 });
 
 export const staffRoleSchema = z.object({
   userId: z.string().uuid(),
-  role: z.enum(["ADMIN", "STAFF"])
+  permissionProfile: z.enum(staffPermissionProfiles)
 });
 
 export const staffUserSchema = z.object({

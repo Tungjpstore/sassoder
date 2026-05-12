@@ -326,7 +326,7 @@ export function RestaurantOnboardingFlow({
         id: "brand",
         label: "Nhận diện quán",
         done: brandApplied,
-        detail: brandApplied ? "Đã có brand/logo sẽ lưu" : brandBoard ? "AI đã tạo, cần bấm áp dụng" : "Tạo hoặc upload logo",
+        detail: brandApplied ? "Đã có nhận diện/logo sẽ lưu" : brandBoard ? "Đã tạo, cần bấm áp dụng" : "Tạo hoặc upload logo",
         targetStep: 0
       },
       {
@@ -347,12 +347,12 @@ export function RestaurantOnboardingFlow({
         id: "menu",
         label: "Menu khởi tạo",
         done: menuApplied || Boolean(itemName.trim()),
-        detail: menuApplied ? `${confirmedMenuItems.length} món OCR đã áp dụng` : "Đang dùng 1 món mẫu, có thể OCR menu giấy",
+        detail: menuApplied ? `${confirmedMenuItems.length} món đã áp dụng` : "Đang dùng 1 món mẫu, có thể nhập menu giấy từ ảnh",
         targetStep: 4
       },
       {
         id: "launch",
-        label: "Sẵn sàng vào dashboard",
+        label: "Sẵn sàng vào bảng quản lý",
         done: canContinueInfo && tableCount > 0 && (menuApplied || Boolean(itemName.trim())),
         detail: "LogiVN sẽ tạo dữ liệu thật khi bấm hoàn tất",
         targetStep: 4
@@ -676,13 +676,13 @@ export function RestaurantOnboardingFlow({
           }>
         | null;
 
-      if (!result || !result.ok) throw new Error(result?.error || "AI chưa tạo được bộ nhận diện.");
+      if (!result || !result.ok) throw new Error(result?.error || "Chưa tạo được bộ nhận diện.");
       setBrandBoard(result.data.brand.data);
       setSelectedBrandSlogan(result.data.brand.data.slogans[0] ?? "");
       setBrandQuota(result.data.quota);
       setAiLogoDraft(result.data.image ?? null);
     } catch (error) {
-      setBrandError(error instanceof Error ? error.message : "Không chạy được CopilotAI thương hiệu.");
+      setBrandError(error instanceof Error ? error.message : "Không tạo được nhận diện thương hiệu.");
     } finally {
       setBrandLoading(false);
     }
@@ -740,12 +740,12 @@ export function RestaurantOnboardingFlow({
           }>
         | null;
 
-      if (!result || !result.ok) throw new Error(result?.error || "AI chưa đọc được menu.");
+      if (!result || !result.ok) throw new Error(result?.error || "Chưa đọc được menu.");
       setMenuOcrDraft(result.data.data);
       setMenuOcrQuota(result.data.quota);
     } catch (error) {
       setMenuOcrDraft(null);
-      setMenuOcrError(error instanceof Error ? error.message : "Không chạy được OCR menu.");
+      setMenuOcrError(error instanceof Error ? error.message : "Không nhập được menu từ ảnh.");
     } finally {
       setMenuOcrLoading(false);
     }
@@ -996,7 +996,7 @@ export function RestaurantOnboardingFlow({
                           <Bot className="h-5 w-5" />
                         </span>
                         <div className="min-w-0">
-                          <p className="text-sm font-black text-[#12251c]">CopilotAI tạo nhận diện</p>
+                          <p className="text-sm font-black text-[#12251c]">Tạo nhận diện thông minh</p>
                           <p className="mt-1 text-xs font-bold leading-5 text-[#68766b]">
                             Tạo slogan, mô tả và logo. Chỉ lưu vào quán sau khi bạn bấm áp dụng.
                           </p>
@@ -1009,11 +1009,11 @@ export function RestaurantOnboardingFlow({
                         className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#0f4d3a]/20 bg-[#0f4d3a]/7 text-sm font-black text-[#0f4d3a] transition hover:border-[#0f4d3a]/40 disabled:opacity-50"
                       >
                         {brandLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                        {brandLoading ? "AI đang dựng brand..." : "AI tạo bộ nhận diện"}
+                        {brandLoading ? "Đang dựng nhận diện..." : "Tạo bộ nhận diện"}
                       </button>
                       {brandQuota ? (
                         <p className="mt-2 text-xs font-bold text-[#68766b]">
-                        Logo AI: còn {brandQuota.remaining}/{brandQuota.limit} lượt gói {brandQuota.planCode.toUpperCase()}.
+                        Logo gợi ý: còn {brandQuota.remaining}/{brandQuota.limit} lượt gói {brandQuota.planCode.toUpperCase()}.
                       </p>
                     ) : null}
                       {brandError ? <p className="mt-2 text-xs font-bold text-[#a55618]">{brandError}</p> : null}
@@ -1044,9 +1044,9 @@ export function RestaurantOnboardingFlow({
                           {aiLogoDraft?.imageUrl ? (
                             <div className={`grid grid-cols-[72px_minmax(0,1fr)] gap-3 rounded-xl border ${sectionLine} bg-white/55 p-2`}>
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={aiLogoDraft.imageUrl} alt="Logo AI tạo" className="h-16 w-16 rounded-xl object-cover" />
+                              <img src={aiLogoDraft.imageUrl} alt="Logo gợi ý" className="h-16 w-16 rounded-xl object-cover" />
                               <div className="min-w-0">
-                                <p className="text-xs font-black text-[#12251c]">Logo AI đã sẵn sàng</p>
+                                <p className="text-xs font-black text-[#12251c]">Logo gợi ý đã sẵn sàng</p>
                                 <p className="mt-1 text-xs font-semibold leading-5 text-[#68766b]">Bấm áp dụng để dùng làm logo quán khi hoàn tất.</p>
                               </div>
                             </div>
@@ -1149,7 +1149,7 @@ export function RestaurantOnboardingFlow({
 
             {step === 1 ? (
               <>
-                <StepHeader eyebrow="Bước 2" title="Chọn gói dịch vụ" description="Dữ liệu gói được lấy trực tiếp từ cấu hình active của LogiVN, không dùng mô tả tạm." />
+                <StepHeader eyebrow="Bước 2" title="Chọn gói dịch vụ" description="Chọn gói phù hợp với quy mô bàn, menu, đặt món và báo cáo của quán." />
                 <div className="p-5 sm:p-6">
                   <div className="grid gap-3 lg:grid-cols-2">
                     {plans.map((plan) => {
@@ -1179,7 +1179,7 @@ export function RestaurantOnboardingFlow({
                           </p>
                           <p className="mt-2 min-h-10 text-sm leading-5 text-[#667266]">{plan.description}</p>
                           <p className="mt-3 text-xs font-black text-[#0f4d3a]">
-                            Mọi quán bắt đầu bằng trial Pro {plan.trial_days} ngày. Chọn Premium để LogiVN ưu tiên gợi ý nâng cấp sau khi xác minh.
+                            Mọi quán bắt đầu bằng dùng thử Pro {plan.trial_days} ngày. Chọn Premium khi cần thêm đặt bàn, nhập menu nhanh và báo cáo sâu hơn.
                           </p>
                           <ul className={`mt-4 divide-y ${sectionLine} border-y ${sectionLine}`}>
                             {plan.features.map((feature) => (
@@ -1212,7 +1212,7 @@ export function RestaurantOnboardingFlow({
 
             {step === 2 ? (
               <>
-                <StepHeader eyebrow="Bước 3" title="Kiểm tra trước khi tạo quán" description="Chỉ giữ các mục sẽ thật sự được lưu vào database khi hoàn tất." />
+                <StepHeader eyebrow="Bước 3" title="Kiểm tra trước khi tạo quán" description="Chỉ giữ các mục sẽ thật sự được lưu vào hồ sơ quán khi hoàn tất." />
                 <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[280px_minmax(0,1fr)]">
                   <div className={`rounded-2xl border ${sectionLine} bg-white/45 p-4`}>
                     <div className="flex items-center justify-between text-sm font-black">
@@ -1287,7 +1287,7 @@ export function RestaurantOnboardingFlow({
                         <QrCode className="h-20 w-20 text-[#12251c]" />
                       </div>
                       <p className="mt-3 text-sm font-black text-[#0f4d3a]">{name || "LogiVN"} QR</p>
-                      <p className="mt-1 text-center text-xs text-[#68766b]">Auto branding + logo quán</p>
+                      <p className="mt-1 text-center text-xs text-[#68766b]">Nhận diện LogiVN + logo quán</p>
                     </div>
                     <div className="mt-4 grid gap-2">
                       <button type="button" className="flex h-10 items-center justify-center gap-2 rounded-xl bg-[#0f4d3a] text-sm font-black text-[#fffaf1]">
@@ -1307,7 +1307,7 @@ export function RestaurantOnboardingFlow({
 
             {step === 4 ? (
               <>
-                <StepHeader eyebrow="Bước 5" title="Tạo menu" description="Thêm món đầu tiên hoặc dùng OCR AI để nhập menu giấy. Món OCR chỉ lưu sau khi chủ quán xác nhận." />
+                <StepHeader eyebrow="Bước 5" title="Tạo menu" description="Thêm món đầu tiên hoặc nhập menu giấy từ ảnh. Món chỉ lưu sau khi chủ quán xác nhận." />
                 <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[minmax(0,1fr)_260px]">
                   <div className={`grid gap-4 rounded-2xl border ${sectionLine} bg-white/45 p-4`}>
                     <label className="grid gap-2 text-sm font-black">
@@ -1336,10 +1336,10 @@ export function RestaurantOnboardingFlow({
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="flex items-center gap-2 text-sm font-black text-[#0f4d3a]">
-                            <Sparkles className="h-4 w-4" /> OCR menu bằng AI
+                            <Sparkles className="h-4 w-4" /> Nhập menu từ ảnh
                           </p>
                           <p className="mt-1 text-xs font-semibold leading-5 text-[#68766b]">
-                            Pro có 1 lượt OCR onboarding, Premium có 5 lượt. AI đọc xong sẽ tạo danh sách để bạn xác nhận trước khi lưu.
+                            Pro có 1 lượt nhập menu nhanh, Premium có 5 lượt. LogiVN đọc xong sẽ tạo danh sách để bạn xác nhận trước khi lưu.
                           </p>
                         </div>
                         {menuOcrQuota ? (
@@ -1383,7 +1383,7 @@ export function RestaurantOnboardingFlow({
                           className="flex h-10 items-center justify-center gap-2 rounded-xl border border-[#0f4d3a]/20 bg-[#0f4d3a]/7 text-sm font-black text-[#0f4d3a] disabled:opacity-50"
                         >
                           {menuOcrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                          {menuOcrLoading ? "AI đang đọc menu..." : "Quét menu bằng AI"}
+                          {menuOcrLoading ? "Đang đọc menu..." : "Quét menu"}
                         </button>
                         {menuOcrError ? <p className="text-xs font-bold text-[#a55618]">{menuOcrError}</p> : null}
                       </div>
@@ -1392,7 +1392,7 @@ export function RestaurantOnboardingFlow({
                         <div className={`mt-4 divide-y ${sectionLine} border-y ${sectionLine}`}>
                           <div className="flex items-center justify-between gap-3 py-2">
                             <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0f4d3a]">
-                              AI đọc được {ocrDraftItems.length} món
+                              Đã đọc được {ocrDraftItems.length} món
                             </p>
                             <span className="text-xs font-bold text-[#68766b]">{Math.round((menuOcrDraft?.confidence ?? 0) * 100)}% tin cậy</span>
                           </div>
@@ -1418,7 +1418,7 @@ export function RestaurantOnboardingFlow({
                       ) : null}
                       {confirmedMenuItems.length > 0 ? (
                         <p className="mt-3 rounded-xl border border-[#0f4d3a]/16 bg-[#edf7eb] px-3 py-2 text-xs font-black text-[#0f4d3a]">
-                          Đã xác nhận {confirmedMenuItems.length} món. Khi hoàn tất, LogiVN sẽ tạo danh mục và món thật trong database.
+                          Đã xác nhận {confirmedMenuItems.length} món. Khi hoàn tất, LogiVN sẽ tạo danh mục và món thật trong menu quán.
                         </p>
                       ) : null}
                     </div>
@@ -1426,17 +1426,17 @@ export function RestaurantOnboardingFlow({
                   <aside className="grid content-start gap-3">
                     <div className={`rounded-2xl border ${sectionLine} bg-white/50 p-4`}>
                       <p className="flex items-center gap-2 text-sm font-black text-[#0f4d3a]">
-                        <Bot className="h-5 w-5" /> Gợi ý AI
+                        <Bot className="h-5 w-5" /> Gợi ý thông minh
                       </p>
-                      <p className="mt-2 text-sm leading-6 text-[#647267]">Sau khi vào dashboard, chủ quán có thể sửa ảnh từng món, thêm mô tả AI và tối ưu menu khách trên mobile.</p>
+                      <p className="mt-2 text-sm leading-6 text-[#647267]">Sau khi vào bảng quản lý, chủ quán có thể sửa ảnh từng món, thêm mô tả gợi ý và tối ưu menu khách trên mobile.</p>
                       <div className={`mt-4 divide-y ${sectionLine} border-y ${sectionLine}`}>
                         <p className="py-2.5 text-sm font-black text-[#0f4d3a]">Ảnh món: 1200x1200px</p>
-                        <p className="py-2.5 text-sm font-black text-[#0f4d3a]">OCR lưu sau xác nhận</p>
+                        <p className="py-2.5 text-sm font-black text-[#0f4d3a]">Menu ảnh lưu sau xác nhận</p>
                       </div>
                     </div>
                     {state?.error ? <p className="rounded-xl border border-[#e59665]/30 bg-[#fff1e8] p-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p> : null}
                     <OnboardingButton type="submit" disabled={pending || !canContinueInfo || (!itemName.trim() && confirmedMenuItems.length === 0)} className="w-full">
-                      {pending ? "Đang tạo..." : "Hoàn tất & vào Dashboard"}
+                      {pending ? "Đang tạo..." : "Hoàn tất & vào bảng quản lý"}
                       <ArrowRight className="h-4 w-4" />
                     </OnboardingButton>
                   </aside>

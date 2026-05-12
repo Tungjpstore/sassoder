@@ -87,7 +87,7 @@ function readinessItems({
   return [
     { label: "Sẵn sàng nhận đơn", value: onlineReady ? "Đang bật" : "Chưa bật", helper: onlineReady ? "Link online đang hoạt động" : "Bật đặt online và ít nhất 1 hình thức nhận đơn" },
     { label: "Menu", value: `${menuItems} món`, helper: `${categories} danh mục đang bán` },
-    { label: "Bản đồ giao hàng", value: mapboxReady ? "Maps ready" : "Chưa đủ", helper: mapboxReady ? "Đã sẵn sàng định vị, routing và quote" : "Cần ít nhất một provider map hoặc tọa độ quán" },
+    { label: "Bản đồ giao hàng", value: mapboxReady ? "Sẵn sàng" : "Chưa đủ", helper: mapboxReady ? "Đã sẵn sàng định vị, tính tuyến và báo phí" : "Cần cấu hình bản đồ hoặc tọa độ quán" },
     { label: "Định vị quán", value: deliveryReady ? "Đã có" : "Thiếu tọa độ", helper: deliveryReady ? "Có thể tính khoảng cách giao hàng" : "Dùng nút tự lấy tọa độ trong cấu hình" }
   ];
 }
@@ -284,7 +284,7 @@ export function OnlineWorkspace({
               </a>
             </div>
 
-            <code className="mt-4 block overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-3 text-sm font-semibold text-[var(--foreground)]">
+            <code className="mt-4 block overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-3 text-sm font-semibold text-[var(--foreground)]">
               {onlineUrl}
             </code>
 
@@ -346,7 +346,7 @@ export function OnlineWorkspace({
           aria-labelledby="online-workspace-settings-title"
           aria-describedby="online-workspace-settings-description"
           tabIndex={-1}
-          className="fixed inset-0 z-[90] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] focus:outline-none"
+          className="fixed inset-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] focus:outline-none"
         >
           <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-4 py-3 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-6">
             <div className="flex min-w-0 items-center gap-3">

@@ -62,6 +62,24 @@ const checks = [
     fix: "Update llms.txt when product positioning, pricing or public pages change."
   },
   {
+    id: "favicon-assets",
+    area: "metadata",
+    severity: "high",
+    confidence: "CONFIRMED",
+    file: "public/favicon.ico",
+    finding: "Root favicon assets exist for browser and Google Search result discovery.",
+    fix: "Keep /favicon.ico and 48x48+ PNG favicon variants crawlable at stable root URLs."
+  },
+  {
+    id: "favicon-metadata",
+    area: "metadata",
+    severity: "high",
+    confidence: "CONFIRMED",
+    file: "lib/seo/metadata.ts",
+    finding: "Shared metadata emits icon links for public pages.",
+    fix: "Keep rel icon and apple icon metadata wired through createSeoMetadata."
+  },
+  {
     id: "dashboard-noindex",
     area: "indexing",
     severity: "critical",
@@ -243,6 +261,23 @@ async function main() {
         const hasFeed = content.includes("getAllBlogPosts") && content.includes("application/rss+xml") && content.includes("feed.xml");
         status = hasFeed ? "pass" : "fail";
         evidence += hasFeed ? " and emits RSS from shared blog posts" : " but RSS feed generation is incomplete";
+      }
+      if (check.id === "favicon-assets") {
+        const requiredFavicons = ["public/favicon.ico", "public/favicon-48x48.png", "public/icon.png", "public/apple-icon.png"];
+        const missingFavicons = requiredFavicons.filter((file) => !existsSync(path.join(root, file)));
+        status = missingFavicons.length === 0 ? "pass" : "fail";
+        evidence = missingFavicons.length
+          ? `missing favicon assets: ${missingFavicons.join(", ")}`
+          : "root favicon.ico, 48x48 PNG, 512x512 icon and apple icon exist";
+      }
+      if (check.id === "favicon-metadata") {
+        const hasIconMetadata =
+          content.includes("icons:") &&
+          content.includes("/favicon.ico") &&
+          content.includes("/favicon-48x48.png") &&
+          content.includes("/apple-icon.png");
+        status = hasIconMetadata ? "pass" : "fail";
+        evidence += hasIconMetadata ? " and emits favicon/apple icon metadata" : " but favicon metadata is incomplete";
       }
       if (check.id === "site-jsonld") {
         const usesSchemaBuilders = content.includes("buildOrganizationSchema") && content.includes("buildWebSiteSchema") && content.includes("buildSoftwareApplicationSchema");

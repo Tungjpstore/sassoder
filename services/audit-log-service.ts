@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { writeOperationalEvent } from "@/services/operational-observability-service";
 
 type AuditLogInput = {
   restaurantId: string;
@@ -36,5 +37,30 @@ export async function writeAuditLog(input: AuditLogInput) {
       code: error.code,
       message: error.message
     });
+    writeOperationalEvent({
+      area: "audit",
+      event: "audit_log_write_failed",
+      restaurantId: input.restaurantId,
+      status: "error",
+      metadata: {
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId ?? null,
+        code: error.code
+      }
+    });
+    return;
   }
+
+  writeOperationalEvent({
+    area: "audit",
+    event: "audit_log_written",
+    restaurantId: input.restaurantId,
+    metadata: {
+      action: input.action,
+      actorRole: input.actorRole ?? null,
+      entityType: input.entityType,
+      entityId: input.entityId ?? null
+    }
+  });
 }

@@ -296,7 +296,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
       </section>
 
       {panelMode !== "closed" && (
-        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
           <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng khuyến mãi" onClick={closeDrawer} />
           <aside
             role="dialog"
@@ -304,7 +304,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
             aria-labelledby="promotion-drawer-title"
             className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Khuyến mãi</p>
                 <h3 id="promotion-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
@@ -315,7 +315,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                 <X size={18} />
               </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {panelMode === "create" && (
                 <form action={createPromotionAction} className="grid gap-4">
                   <label className="grid gap-2 text-sm font-semibold">

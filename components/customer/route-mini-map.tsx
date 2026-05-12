@@ -136,7 +136,7 @@ export function RouteMiniMap({
   durationMinutes,
   status,
   courierLocation,
-  title = "Tuyến giao realtime",
+  title = "Tuyến giao đang cập nhật",
   statusLabel,
   originLabel = "Quán",
   destinationLabel = "Khách",
@@ -260,7 +260,7 @@ export function RouteMiniMap({
   if (points.length < 2) {
     return (
       <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-        Chưa đủ tọa độ để dựng bản đồ tuyến giao.
+        Chưa đủ tọa độ để hiển thị tuyến đường.
       </div>
     );
   }
@@ -273,7 +273,7 @@ export function RouteMiniMap({
             <Route size={16} />
           </span>
           <span>
-            <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Route Preview</span>
+            <span className="block text-[10px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Xem trước tuyến</span>
             <span className="block">{title}</span>
           </span>
         </div>

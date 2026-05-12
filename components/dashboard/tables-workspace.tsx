@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import { CheckCircle2, Copy, Download, Grid3X3, Link2, Plus, Printer, QrCode, Save, Search, Table2, Trash2, Users, X } from "lucide-react";
-import { createTableAction, deleteTableAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions";
+import { createTableAction, deleteTableAction, rotateTableQrAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,14 @@ function statusMeta(status: TableOperationalStatus) {
 
 function qrImageUrl(tableUrl: string, size = 520) {
   return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(tableUrl)}`;
+}
+
+function tableQrUrl(restaurantSlug: string, table: RestaurantTableWithStatus) {
+  const url = buildTenantUrl(restaurantSlug, `/table/${table.id}`);
+  if (!table.qr_token) return url;
+  const parsed = new URL(url);
+  parsed.searchParams.set("t", table.qr_token);
+  return parsed.toString();
 }
 
 function formatVnd(value: number) {
@@ -318,7 +326,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
   }, [filteredTables]);
 
   const selected = selectedId ? tables.find((table) => table.id === selectedId) ?? null : null;
-  const selectedUrl = selected ? buildTenantUrl(restaurantSlug, `/table/${selected.id}`) : "";
+  const selectedUrl = selected ? tableQrUrl(restaurantSlug, selected) : "";
   const selectedQrUrl = selected ? qrImageUrl(selectedUrl) : "";
   const total = tables.length || dashboardTableCount;
   const serving = counts.serving + counts.needs_confirm;
@@ -332,7 +340,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
   }
 
   async function buildPosterForTable(table: RestaurantTableWithStatus) {
-    const tableUrl = buildTenantUrl(restaurantSlug, `/table/${table.id}`);
+    const tableUrl = tableQrUrl(restaurantSlug, table);
     const [logoDataUrl, qrDataUrl] = await Promise.all([
       fetchAssetDataUrl(POSTER_LOGO_URL),
       fetchAssetDataUrl(qrImageUrl(tableUrl, 760))
@@ -575,7 +583,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	        </div>
 
 	        {panelMode !== "closed" && (
-	          <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+	          <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
 		            <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết bàn" onClick={closeDrawer} />
 		            <aside
                   role="dialog"
@@ -583,7 +591,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                   aria-labelledby="table-drawer-title"
                   className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
                 >
-	              <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+	              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
 	                <div>
 	                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bàn & QR</p>
 	                  <h3 id="table-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
@@ -594,7 +602,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	                  <X size={18} />
 	                </button>
 	              </div>
-	              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+	              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
 	                {panelMode === "create" && (
 	                  <form action={createTableAction} className="grid gap-4">
 	                    <label className="grid gap-2 text-sm font-semibold">
@@ -660,6 +668,11 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 
                       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                         <h3 className="font-semibold text-[var(--foreground)]">Template QR in bàn</h3>
+                        <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                          {selected.qr_token_enforced
+                            ? `QR bảo mật đang bật${selected.qr_token_rotated_at ? ` · xoay lần cuối ${formatTime(selected.qr_token_rotated_at)}` : ""}.`
+                            : "QR cũ vẫn còn tương thích. Bấm xoay mã để vô hiệu hóa link cũ và dùng QR có token."}
+                        </p>
                         <div className="mt-3 grid gap-4">
                           <div className={selected.qr_enabled ? "" : "opacity-45 grayscale"}>
                             <QrPrintPoster restaurantName={restaurantName} tableName={selected.name} qrUrl={selectedQrUrl} />
@@ -690,6 +703,20 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                                 <QrCode size={16} />
                                 {selected.qr_enabled ? "Tắt QR bàn này" : "Bật QR bàn này"}
                               </Button>
+                            </form>
+                            <form action={rotateTableQrAction}>
+                              <input type="hidden" name="tableId" value={selected.id} />
+                              <ConfirmActionButton
+                                type="submit"
+                                variant="secondary"
+                                className="w-full shadow-none hover:shadow-none"
+                                confirmTitle="Xoay mã QR"
+                                confirmDescription="Link QR cũ của bàn này sẽ hết hiệu lực. Hãy in lại template QR mới sau khi xoay."
+                                confirmLabel="Xoay mã QR"
+                              >
+                                <QrCode size={16} />
+                                Xoay mã QR bảo mật
+                              </ConfirmActionButton>
                             </form>
                           </div>
                         </div>
@@ -724,7 +751,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
       <section className="hidden print:block">
         <div className="grid grid-cols-2 gap-8">
           {tables.map((table) => {
-            const tableUrl = buildTenantUrl(restaurantSlug, `/table/${table.id}`);
+            const tableUrl = tableQrUrl(restaurantSlug, table);
             return (
               <QrPrintPoster key={table.id} restaurantName={restaurantName} tableName={table.name} qrUrl={qrImageUrl(tableUrl, 520)} />
             );

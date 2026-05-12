@@ -157,7 +157,7 @@ export function AdminShell({
             </div>
             <AdminMobileNav />
           </header>
-          <div className="mx-auto w-full max-w-[1680px] px-3 py-2.5 md:px-4">
+          <div className="mx-auto w-full max-w-[1680px] px-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-2.5 md:px-4 lg:pb-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${

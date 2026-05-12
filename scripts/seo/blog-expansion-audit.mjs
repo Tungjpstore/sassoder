@@ -24,6 +24,61 @@ function extractRelatedSlugs(source) {
   return [...source.matchAll(/relatedSlugs:\s*\[([^\]]*)\]/g)].flatMap((match) => extractStrings(match[1], /"([^"]+)"/g));
 }
 
+function extractBalancedObject(source, startIndex) {
+  if (startIndex < 0) return "";
+  let depth = 0;
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      inString = true;
+      quote = char;
+      continue;
+    }
+
+    if (char === "{") depth += 1;
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(startIndex, index + 1);
+    }
+  }
+
+  return "";
+}
+
+function extractEntryObject(source, slug) {
+  const slugIndex = source.indexOf(`slug: "${slug}"`);
+  if (slugIndex < 0) return "";
+  const objectStart = source.lastIndexOf("{", slugIndex);
+  return extractBalancedObject(source, objectStart);
+}
+
+function countWords(value) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+function countStringWords(source) {
+  return countWords(extractStrings(source, /"([^"\\]*(?:\\.[^"\\]*)*)"/g).join(" "));
+}
+
 function createCheck({ id, area, status, evidence, action }) {
   return { id, area, status, evidence, action };
 }
@@ -43,6 +98,8 @@ function renderMarkdown(report) {
     `- Categories: ${report.inventory.categoryCount}`,
     `- Related links: ${report.inventory.relatedLinkCount}`,
     `- Broken related links: ${report.inventory.brokenRelatedLinks.length}`,
+    `- Article word range: ${report.inventory.articleWordRange.min}-${report.inventory.articleWordRange.max}`,
+    `- Articles with sketches: ${report.inventory.illustrationCount}/${report.inventory.postCount}`,
     "",
     "## Checks",
     "",
@@ -67,16 +124,33 @@ async function main() {
   const sitemap = await readText("app/sitemap.ts");
   const feed = await readText("app/feed.xml/route.ts");
   const llms = await readText("app/llms.txt/route.ts");
+  const [postSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
+  const enhancementSource = blogSource.slice(Math.max(0, blogSource.indexOf("const BLOG_ARTICLE_ENHANCEMENTS")));
+  const hasArticleCitationSummary =
+    articlePage.includes("article-citation-note") && articlePage.includes('aria-labelledby="citation-note-heading"');
+  const hasArticleSketch = articlePage.includes("function ArticleSketch") && articlePage.includes("article-sketch");
 
-  const slugs = extractStrings(blogSource, /slug:\s*"([^"]+)"/g);
-  const titles = extractStrings(blogSource, /title:\s*"([^"]+)"/g);
-  const descriptions = extractStrings(blogSource, /description:\s*\n?\s*"([^"]+)"/g);
-  const categories = extractStrings(blogSource, /category:\s*"([^"]+)"/g);
-  const relatedSlugs = extractRelatedSlugs(blogSource);
+  const slugs = extractStrings(postSource, /slug:\s*"([^"]+)"/g);
+  const titles = extractStrings(postSource, /title:\s*"([^"]+)"/g);
+  const descriptions = extractStrings(postSource, /description:\s*\n?\s*"([^"]+)"/g);
+  const categories = extractStrings(postSource, /category:\s*"([^"]+)"/g);
+  const relatedSlugs = extractRelatedSlugs(postSource);
   const brokenRelatedLinks = relatedSlugs.filter((slug) => !slugs.includes(slug));
-  const faqBlocks = [...blogSource.matchAll(/faq:\s*\[/g)].length;
-  const sectionBlocks = [...blogSource.matchAll(/sections:\s*\[/g)].length;
-  const readingTimes = [...blogSource.matchAll(/readingTimeMinutes:\s*(\d+)/g)].map((match) => Number(match[1]));
+  const faqBlocks = [...postSource.matchAll(/faq:\s*\[/g)].length;
+  const sectionBlocks = [...postSource.matchAll(/sections:\s*\[/g)].length;
+  const readingTimes = [...postSource.matchAll(/readingTimeMinutes:\s*(\d+)/g)].map((match) => Number(match[1]));
+  const articleWordCounts = slugs.map((slug) => {
+    const postObject = extractEntryObject(postSource, slug);
+    const enhancementObject = extractEntryObject(enhancementSource, slug);
+    return {
+      slug,
+      words: countStringWords(`${postObject}\n${enhancementObject}`),
+      hasIllustration: enhancementObject.includes("illustration:") && enhancementObject.includes("caption:") && enhancementObject.includes("labels:")
+    };
+  });
+  const thinArticles = articleWordCounts.filter((entry) => entry.words < 800 || entry.words > 1000);
+  const missingIllustrations = articleWordCounts.filter((entry) => !entry.hasIllustration).map((entry) => entry.slug);
+  const wordValues = articleWordCounts.map((entry) => entry.words);
 
   const checks = [
     createCheck({
@@ -115,11 +189,31 @@ async function main() {
       action: "Require visible sections and FAQ content for every article that emits FAQPage schema."
     }),
     createCheck({
-      id: "reading-depth",
+      id: "reading-time-depth",
       area: "content-quality",
       status: readingTimes.every((minutes) => minutes >= 5) ? "pass" : "fail",
       evidence: `Minimum reading time is ${Math.min(...readingTimes)} minutes`,
       action: "Avoid thin posts by keeping each article at 5+ minutes of useful content."
+    }),
+    createCheck({
+      id: "article-word-count-band",
+      area: "content-quality",
+      status: thinArticles.length === 0 ? "pass" : "fail",
+      evidence: thinArticles.length
+        ? thinArticles.map((entry) => `${entry.slug}: ${entry.words} words`).join("; ")
+        : `All articles are between 800 and 1000 words (${Math.min(...wordValues)}-${Math.max(...wordValues)})`,
+      action: "Keep every published blog article in the 800-1000 word band so pages are useful without becoming bloated."
+    }),
+    createCheck({
+      id: "article-sketch-illustrations",
+      area: "content-quality",
+      status: missingIllustrations.length === 0 && hasArticleSketch ? "pass" : "fail",
+      evidence: missingIllustrations.length
+        ? `Missing sketches: ${missingIllustrations.join(", ")}`
+        : hasArticleSketch
+          ? "Every article has structured sketch data and the article template renders inline SVG sketches"
+          : "Article sketch component missing",
+      action: "Keep one lightweight explanatory sketch with accessible caption and labels for every article."
     }),
     createCheck({
       id: "topic-cluster-index",
@@ -131,8 +225,8 @@ async function main() {
     createCheck({
       id: "article-geo-summary",
       area: "geo",
-      status: articlePage.includes("article-citation-note") && articlePage.includes("GEO summary") ? "pass" : "fail",
-      evidence: articlePage.includes("article-citation-note") ? "article template renders citation-ready summary" : "citation-ready summary missing",
+      status: hasArticleCitationSummary ? "pass" : "fail",
+      evidence: hasArticleCitationSummary ? "article template renders citation-ready summary" : "citation-ready summary missing",
       action: "Keep visible author, update date, topic and summary context in every article."
     }),
     createCheck({
@@ -170,7 +264,13 @@ async function main() {
       categories: unique(categories),
       slugs,
       relatedLinkCount: relatedSlugs.length,
-      brokenRelatedLinks
+      brokenRelatedLinks,
+      articleWordCounts,
+      articleWordRange: {
+        min: Math.min(...wordValues),
+        max: Math.max(...wordValues)
+      },
+      illustrationCount: articleWordCounts.filter((entry) => entry.hasIllustration).length
     },
     checks
   };

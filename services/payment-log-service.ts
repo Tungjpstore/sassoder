@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { writeOperationalEvent } from "@/services/operational-observability-service";
 import type { PaymentLogStatus, PaymentMethod, TableBillStatus } from "@/types/domain";
 import type { Database, Json } from "@/types/supabase";
 
@@ -72,8 +73,32 @@ export async function ensurePaymentLogEvent(supabase: TypedSupabaseClient, input
     raw_data: auditPayload(input.source, input.transitionKey, input.rawData)
   });
 
-  if ((error as { code?: string } | null)?.code === "23505") return;
+  if ((error as { code?: string } | null)?.code === "23505") {
+    writeOperationalEvent({
+      area: "payment",
+      event: "payment_transition_duplicate",
+      status: "warn",
+      metadata: {
+        orderId: input.orderId,
+        billId: input.billId ?? null,
+        source: input.source,
+        transitionKey: input.transitionKey
+      }
+    });
+    return;
+  }
   throwIfSupabaseError(error);
+  writeOperationalEvent({
+    area: "payment",
+    event: "payment_transition_logged",
+    metadata: {
+      orderId: input.orderId,
+      billId: input.billId ?? null,
+      source: input.source,
+      status: input.status,
+      transitionKey: input.transitionKey
+    }
+  });
 }
 
 export async function ensureReservationDepositLogEvent(supabase: TypedSupabaseClient, input: ReservationDepositLogEventInput) {
@@ -87,6 +112,30 @@ export async function ensureReservationDepositLogEvent(supabase: TypedSupabaseCl
     raw_data: auditPayload(input.source, input.transitionKey, input.rawData)
   });
 
-  if ((error as { code?: string } | null)?.code === "23505") return;
+  if ((error as { code?: string } | null)?.code === "23505") {
+    writeOperationalEvent({
+      area: "payment",
+      event: "reservation_deposit_transition_duplicate",
+      restaurantId: input.restaurantId,
+      status: "warn",
+      metadata: {
+        reservationId: input.reservationId,
+        source: input.source,
+        transitionKey: input.transitionKey
+      }
+    });
+    return;
+  }
   throwIfSupabaseError(error);
+  writeOperationalEvent({
+    area: "payment",
+    event: "reservation_deposit_transition_logged",
+    restaurantId: input.restaurantId,
+    metadata: {
+      reservationId: input.reservationId,
+      source: input.source,
+      status: input.status,
+      transitionKey: input.transitionKey
+    }
+  });
 }

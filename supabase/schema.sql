@@ -154,7 +154,14 @@ create table public.users (
   id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
   role public.user_role not null default 'STAFF',
-  restaurant_id uuid not null references public.restaurants(id) on delete cascade
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  staff_title text not null default 'Phục vụ',
+  permission_profile text not null default 'service',
+  permissions jsonb not null default '["dashboard.view","orders.manage","tables.manage","reservations.manage"]'::jsonb,
+  constraint users_permission_profile_check check (
+    permission_profile in ('manager', 'cashier', 'kitchen', 'service', 'delivery', 'viewer')
+  ),
+  constraint users_permissions_array_check check (jsonb_typeof(permissions) = 'array')
 );
 
 create table public.tables (
@@ -164,6 +171,10 @@ create table public.tables (
   area text not null default 'Khu chính',
   capacity integer not null default 4 check (capacity >= 1 and capacity <= 50),
   qr_enabled boolean not null default true,
+  qr_token_version integer not null default 1,
+  qr_token_enforced boolean not null default false,
+  qr_token_rotated_at timestamptz,
+  constraint tables_qr_token_version_positive check (qr_token_version >= 1),
   unique (restaurant_id, name)
 );
 
@@ -655,7 +666,9 @@ create index restaurants_store_geog_gist_idx
   where store_geog is not null;
 create index restaurants_map_provider_idx on public.restaurants (map_provider, map_geocoding_provider, map_routing_provider);
 create index users_restaurant_id_idx on public.users (restaurant_id);
+create index users_permission_profile_idx on public.users (restaurant_id, permission_profile);
 create index tables_restaurant_id_idx on public.tables (restaurant_id);
+create index tables_restaurant_qr_enforced_idx on public.tables (restaurant_id, qr_token_enforced, qr_enabled);
 create index store_branches_restaurant_active_idx on public.store_branches (restaurant_id, is_active, is_primary desc);
 create index store_branches_coordinates_idx on public.store_branches (latitude, longitude);
 create index store_branches_location_geog_gist_idx

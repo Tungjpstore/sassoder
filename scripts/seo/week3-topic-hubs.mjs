@@ -68,6 +68,7 @@ async function main() {
   const llms = await readText("app/llms.txt/route.ts");
   const landing = await readText("components/landing/logivn-landing.tsx");
   const lhci = await readText("lighthouserc.cjs");
+  const hasLlmsTopicHubHeading = llms.includes("## Topic hubs") || llms.includes("## Nhóm chủ đề");
 
   const [postSource = "", hubAndFunctionsSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
   const [hubSource = ""] = hubAndFunctionsSource.split("export function getAllBlogPosts");
@@ -138,8 +139,8 @@ async function main() {
     createCheck({
       id: "llms-topic-hubs",
       area: "geo",
-      status: llms.includes("## Topic hubs") && llms.includes("getAllBlogTopicHubs") && llms.includes("getBlogTopicHubPath") ? "pass" : "fail",
-      evidence: llms.includes("## Topic hubs") ? "llms.txt lists topic hubs" : "llms.txt topic hub section missing",
+      status: hasLlmsTopicHubHeading && llms.includes("getAllBlogTopicHubs") && llms.includes("getBlogTopicHubPath") ? "pass" : "fail",
+      evidence: hasLlmsTopicHubHeading ? "llms.txt lists topic hubs" : "llms.txt topic hub section missing",
       action: "Expose topic hubs in llms.txt so AI search systems can cite the canonical cluster pages."
     }),
     createCheck({

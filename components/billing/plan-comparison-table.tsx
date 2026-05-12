@@ -6,14 +6,14 @@ import { PremiumBadge } from "@/components/billing/premium-badge";
 const rows = [
   { label: "Số bàn", pro: "20", premium: "Không giới hạn" },
   { label: "Nhân viên", pro: "10", premium: "Không giới hạn" },
-  { label: "QR ordering", pro: true, premium: true },
-  { label: "AI tạo menu", pro: "60 lượt/tháng", premium: "300 lượt/tháng" },
-  { label: "AI chatbot", pro: "500 lượt/tháng", premium: "5000 lượt/tháng" },
-  { label: "AI tạo ảnh", pro: "1 lần dùng thử", premium: "120 ảnh/tháng" },
-  { label: "AI analytics", pro: "1 lần dùng thử", premium: "120 lượt/tháng" },
-  { label: "AI marketing", pro: false, premium: true },
-  { label: "Automation workflow", pro: false, premium: true },
-  { label: "Custom domain", pro: false, premium: true }
+  { label: "Gọi món QR", pro: true, premium: true },
+  { label: "Tạo menu thông minh", pro: "60 lượt/tháng", premium: "300 lượt/tháng" },
+  { label: "Trợ lý hỏi đáp", pro: "500 lượt/tháng", premium: "5000 lượt/tháng" },
+  { label: "Tạo ảnh món", pro: "1 lần dùng thử", premium: "120 ảnh/tháng" },
+  { label: "Báo cáo thông minh", pro: "1 lần dùng thử", premium: "120 lượt/tháng" },
+  { label: "Marketing thông minh", pro: false, premium: true },
+  { label: "Quy trình tự động", pro: false, premium: true },
+  { label: "Tên miền riêng", pro: false, premium: true }
 ];
 
 function Cell({ value }: { value: boolean | string }) {
@@ -32,7 +32,7 @@ export function PlanComparisonTable() {
   return (
     <section className="overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--surface)]">
       <div className="border-b border-[var(--border)] px-5 py-4">
-        <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Plan comparison</p>
+        <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">So sánh gói</p>
         <h3 className="mt-1 text-xl font-semibold text-[var(--foreground)]">So sánh nhanh Pro và Premium</h3>
       </div>
       <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,0.9fr)_minmax(0,0.9fr)] gap-px bg-[var(--border)]">

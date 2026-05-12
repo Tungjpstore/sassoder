@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 export const preferredRegion = "sin1";
 
 const copilotRuntime = new CopilotRuntime();
+const copilotProviderTimeoutMs = Number(process.env.COPILOTKIT_TIMEOUT_MS || 18_000);
 
 function pickCopilotProvider() {
   const providers = availableAiProviders();
@@ -45,7 +46,9 @@ function createServiceAdapter() {
   const aiProvider = getAiProviderConfig(provider);
   const openai = new OpenAI({
     apiKey: aiProvider.apiKey,
-    baseURL: aiProvider.baseUrl
+    baseURL: aiProvider.baseUrl,
+    timeout: copilotProviderTimeoutMs,
+    maxRetries: 1
   });
 
   return new OpenAIAdapter({

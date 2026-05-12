@@ -10,6 +10,9 @@ supabase/.temp
 .DS_Store
 coverage
 reports/seo/
+reports/responsive/
+docs/p1-progress-*.md
+docs/p2-progress-*.md
 .lighthouseci/
 prisma/dev.db
 .vercel

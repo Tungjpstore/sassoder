@@ -126,7 +126,7 @@ export function CommandPalette() {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] overflow-hidden overscroll-contain">
+    <div className="fixed inset-0 z-[var(--z-dashboard-modal)] overflow-hidden overscroll-contain">
       <button
         type="button"
         className="drawer-backdrop absolute inset-0 z-0"

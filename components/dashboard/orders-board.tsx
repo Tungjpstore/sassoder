@@ -72,9 +72,9 @@ function readChannelFilter(value: string | null): ChannelFilter {
 }
 
 function realtimeLabel(status: RealtimeState) {
-  if (status === "connected") return "Realtime đang bật";
-  if (status === "error") return "Realtime gián đoạn";
-  return "Đang kết nối realtime";
+  if (status === "connected") return "Cập nhật tức thời đang bật";
+  if (status === "error") return "Kết nối bị gián đoạn";
+  return "Đang kết nối dữ liệu";
 }
 
 function courierStatusLabel(status: DeliveryCourier["status"]) {
@@ -1013,7 +1013,7 @@ export function OrdersBoard({
         </div>
 
         <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-          <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+          <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em]">
             <span>Mã đơn</span>
             <span>Nguồn</span>
             <span>Món / lượt gọi</span>
@@ -1021,7 +1021,7 @@ export function OrdersBoard({
             <span>Trạng thái</span>
             <span className="text-right">Tổng tiền</span>
           </div>
-          <div className="divide-y divide-[var(--border)]">
+          <div className="dashboard-data-list">
             {visibleBillGroups.length === 0 && (
               <div className="grid min-h-40 place-items-center px-5 py-8 text-sm font-semibold text-[var(--muted-foreground)]">
                 Không có đơn phù hợp.
@@ -1042,24 +1042,24 @@ export function OrdersBoard({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") setSelectedGroupId(group.id);
                   }}
-                  className={`dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
+                  className={`dashboard-data-row dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
                     selectedGroup?.id === group.id ? "dashboard-selected-row" : ""
                   }`}
                 >
-                  <span className="min-w-0">
+                  <span className="dashboard-data-field min-w-0" data-label="Mã đơn">
                     <span className="block font-mono text-sm font-semibold">#{group.id.slice(0, 10).toUpperCase()}</span>
                     <span className="mt-1 block truncate text-xs font-medium text-[var(--muted-foreground)]">{orderChannelLabel(mainOrder)}</span>
                   </span>
-                  <span className="text-sm font-semibold">{group.tableName}</span>
-                  <span className="min-w-0">
+                  <span className="dashboard-data-field text-sm font-semibold" data-label="Nguồn">{group.tableName}</span>
+                  <span className="dashboard-data-field min-w-0" data-label="Món / lượt gọi">
                     <span className="block truncate text-sm font-semibold">{itemPreview || "Chưa có món"}</span>
                     <span className="mt-1 block text-xs font-medium text-[var(--muted-foreground)]">{group.orders.length} lượt gọi · {group.orders.reduce((sum, order) => sum + order.items.length, 0)} dòng món</span>
                   </span>
-                  <span className="text-sm font-semibold text-[var(--muted-foreground)]">
+                  <span className="dashboard-data-field text-sm font-semibold text-[var(--muted-foreground)]" data-label="Thời gian">
                     {formatOrderTime(group.latestAt)}
                     <span className="block text-xs font-medium">{minutesSince(group.latestAt)} phút trước</span>
                   </span>
-                  <span className="flex flex-wrap items-center gap-2">
+                  <span className="dashboard-data-field dashboard-data-badges flex flex-wrap items-center gap-2" data-label="Trạng thái">
                     <Badge tone={statusTone(group.status)}>{orderStatusLabel(group.status)}</Badge>
                     {mainOrder.paymentStatus !== "unpaid" && (
                       <Badge tone={paymentTone(mainOrder.paymentStatus)}>{paymentStatusLabel(mainOrder.paymentStatus)}</Badge>
@@ -1071,7 +1071,7 @@ export function OrdersBoard({
                     )}
                     {group.overdueCount > 0 && <Badge tone="red">{group.overdueCount} quá giờ</Badge>}
                   </span>
-                  <span className="flex items-center justify-between gap-3 lg:justify-end">
+                  <span className="dashboard-data-field dashboard-data-row-actions flex items-center justify-between gap-3 lg:justify-end" data-label="Tổng tiền">
                     <span className="metric-number font-semibold">{formatVnd(group.total)}</span>
                     <button
                       type="button"
@@ -1108,7 +1108,7 @@ export function OrdersBoard({
       </section>
 
       {selectedGroup ? (
-        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
           <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết đơn" onClick={() => setSelectedGroupId(null)} />
           <aside
             role="dialog"
@@ -1116,7 +1116,7 @@ export function OrdersBoard({
             aria-labelledby="order-detail-drawer-title"
             className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
                 <h2 id="order-detail-drawer-title" className="mt-1 truncate text-xl font-semibold text-[var(--foreground)]">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
@@ -1135,7 +1135,7 @@ export function OrdersBoard({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
                 <div>
                   <p className="font-semibold text-[var(--foreground)]">{selectedGroup.tableName}</p>
@@ -1268,7 +1268,7 @@ export function OrdersBoard({
 
                     {couriers.length === 0 && !couriersLoading ? (
                       <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
-                        Chưa có đội shipper nội bộ. Thêm một shipper để bắt đầu điều phối và theo dõi realtime theo từng người.
+                        Chưa có đội shipper nội bộ. Thêm một shipper để bắt đầu điều phối và theo dõi trạng thái theo từng người.
                       </div>
                     ) : null}
                   </div>

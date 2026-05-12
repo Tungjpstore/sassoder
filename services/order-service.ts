@@ -6,14 +6,17 @@ import { recordDeliveryStatusTrackingEvent } from "@/services/delivery-tracking-
 import { ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
 import { getPaymentInstructions } from "@/services/payment-service";
 import { resolvePromotionForOrder } from "@/services/promotion-service";
+import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-boundary";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
+import { getPublicTable } from "@/services/table-service";
 import type { DeliveryStatus, FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
 import type { Json } from "@/types/supabase";
 
 export type CreateOrderInput = {
   restaurantSlug: string;
   tableId: string;
+  tableAccessToken?: string;
   customerSessionId?: string;
   customerNote?: string;
   promotionCode?: string;
@@ -353,13 +356,16 @@ function mapOrder(order: RawOrder): OrderDto {
   };
 }
 
-async function attachLatestDeliveryLocations(restaurantId: string, orders: OrderDto[]) {
+async function attachLatestDeliveryLocations(
+  restaurantId: string,
+  orders: OrderDto[],
+  supabase: OrderSupabaseClient = createAdminSupabaseClient()
+) {
   const deliveryOrderIds = orders
     .filter((order) => order.fulfillmentType === "DELIVERY")
     .map((order) => order.id);
   if (deliveryOrderIds.length === 0) return orders;
 
-  const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("courier_locations")
     .select("order_id,latitude,longitude,accuracy_meters,heading_degrees,speed_mps,captured_at")
@@ -429,13 +435,14 @@ async function closeBillIfNoActiveOrders(supabase: OrderSupabaseClient, restaura
 async function getOrCreateOpenTableBill({
   restaurantId,
   tableId,
-  customerSessionId
+  customerSessionId,
+  supabase = createAdminSupabaseClient()
 }: {
   restaurantId: string;
   tableId: string;
   customerSessionId?: string;
+  supabase?: OrderSupabaseClient;
 }) {
-  const supabase = createAdminSupabaseClient();
   const { data: waitingBill, error: waitingBillError } = await supabase
     .from("table_bills")
     .select("id,status")
@@ -488,8 +495,7 @@ async function getOrCreateOpenTableBill({
   return insertedBill;
 }
 
-async function getOrderDto(orderId: string) {
-  const supabase = createAdminSupabaseClient();
+async function getOrderDto(orderId: string, supabase: OrderSupabaseClient = createAdminSupabaseClient()) {
   const { data, error } = await supabase
     .from("orders")
     .select(orderSelect)
@@ -501,13 +507,16 @@ async function getOrderDto(orderId: string) {
   const row = data as unknown as RawOrder;
   const order = mapOrder(row);
   const [withLocation] = row.restaurant_id
-    ? await attachLatestDeliveryLocations(row.restaurant_id, [order])
+    ? await attachLatestDeliveryLocations(row.restaurant_id, [order], supabase)
     : [order];
   return withLocation ?? order;
 }
 
-async function assertCustomerOrderAccess(orderId: string, access: CustomerOrderAccessInput) {
-  const supabase = createAdminSupabaseClient();
+async function assertCustomerOrderAccess(
+  orderId: string,
+  access: CustomerOrderAccessInput,
+  supabase: OrderSupabaseClient = createPublicTenantAdminClient("customer_order_access")
+) {
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
     .select("id")
@@ -576,8 +585,11 @@ function assertOrderNotPaid(order: MutableOrderRow) {
   }
 }
 
-async function assertRemoteOrderAccess(orderId: string, access: RemoteOrderAccessInput) {
-  const supabase = createAdminSupabaseClient();
+async function assertRemoteOrderAccess(
+  orderId: string,
+  access: RemoteOrderAccessInput,
+  supabase: OrderSupabaseClient = createPublicTenantAdminClient("remote_order_access")
+) {
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
     .select("id")
@@ -602,7 +614,7 @@ async function assertRemoteOrderAccess(orderId: string, access: RemoteOrderAcces
 }
 
 export async function createOrder(input: CreateOrderInput) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createPublicTenantAdminClient("customer_order_create");
   const normalizedItems = normalizeOrderItems(input.items);
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
@@ -614,15 +626,8 @@ export async function createOrder(input: CreateOrderInput) {
   if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
   await assertFeatureEntitlement(restaurant.id, "order_realtime");
 
-  const { data: table, error: tableError } = await supabase
-    .from("tables")
-    .select("id")
-    .eq("id", input.tableId)
-    .eq("restaurant_id", restaurant.id)
-    .single();
-
-  throwIfSupabaseError(tableError);
-  if (!table) throw new AppError("Không tìm thấy bàn", 404);
+  const table = await getPublicTable(restaurant.id, input.tableId, input.tableAccessToken);
+  if (!table) throw new AppError("Không tìm thấy bàn hoặc mã QR đã hết hiệu lực. Vui lòng quét lại mã tại bàn.", 403);
 
   if (input.idempotencyKey) {
     const { data: existing, error: existingError } = await supabase
@@ -635,7 +640,7 @@ export async function createOrder(input: CreateOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id);
+      const order = await getOrderDto(existing.id, supabase);
       return {
         order,
         payment: getPaymentInstructions(order)
@@ -673,7 +678,8 @@ export async function createOrder(input: CreateOrderInput) {
   const bill = await getOrCreateOpenTableBill({
     restaurantId: restaurant.id,
     tableId: table.id,
-    customerSessionId: input.customerSessionId
+    customerSessionId: input.customerSessionId,
+    supabase
   });
 
   const { data: insertedOrder, error: orderError } = await supabase
@@ -707,7 +713,7 @@ export async function createOrder(input: CreateOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id);
+      const order = await getOrderDto(existing.id, supabase);
       return {
         order,
         payment: getPaymentInstructions(order)
@@ -739,7 +745,7 @@ export async function createOrder(input: CreateOrderInput) {
     throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn", 400);
   }
 
-  const order = await getOrderDto(insertedOrder.id);
+  const order = await getOrderDto(insertedOrder.id, supabase);
   invalidateRestaurantOrderCache(restaurant.id);
   invalidateRestaurantDashboardCache(restaurant.id);
   return {
@@ -749,7 +755,7 @@ export async function createOrder(input: CreateOrderInput) {
 }
 
 export async function createRemoteOrder(input: CreateRemoteOrderInput) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createPublicTenantAdminClient("remote_order_create");
   const normalizedItems = normalizeOrderItems(input.items);
   const settings = await getPublicOrderingSettingsBySlug(input.restaurantSlug);
 
@@ -782,7 +788,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id);
+      const order = await getOrderDto(existing.id, supabase);
       return {
         order,
         payment: getPaymentInstructions(order),
@@ -890,7 +896,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id);
+      const order = await getOrderDto(existing.id, supabase);
       return {
         order,
         payment: getPaymentInstructions(order),
@@ -934,7 +940,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     });
   }
 
-  const order = await getOrderDto(insertedOrder.id);
+  const order = await getOrderDto(insertedOrder.id, supabase);
   invalidateRestaurantOrderCache(settings.id);
   invalidateRestaurantDashboardCache(settings.id);
   return {
@@ -945,11 +951,12 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 }
 
 export async function getPublicOrder(orderId: string, access?: CustomerOrderAccessInput) {
+  const supabase = createPublicTenantAdminClient("customer_order_read");
   if (access) {
-    await assertCustomerOrderAccess(orderId, access);
+    await assertCustomerOrderAccess(orderId, access, supabase);
   }
 
-  const order = await getOrderDto(orderId);
+  const order = await getOrderDto(orderId, supabase);
   return {
     order,
     payment: getPaymentInstructions(order)
@@ -957,9 +964,10 @@ export async function getPublicOrder(orderId: string, access?: CustomerOrderAcce
 }
 
 export async function getRemotePublicOrder(orderId: string, access: RemoteOrderAccessInput) {
-  await assertRemoteOrderAccess(orderId, access);
+  const supabase = createPublicTenantAdminClient("remote_order_read");
+  await assertRemoteOrderAccess(orderId, access, supabase);
 
-  const order = await getOrderDto(orderId);
+  const order = await getOrderDto(orderId, supabase);
   return {
     order,
     payment: getPaymentInstructions(order)
@@ -971,7 +979,7 @@ export async function listPublicOrderHistory(input: {
   tableId: string;
   customerSessionId?: string;
 }) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createPublicTenantAdminClient("customer_order_history");
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
     .select("id")
@@ -1023,7 +1031,7 @@ export async function listPublicOrderHistory(input: {
     byId.set(order.id, order);
   }
 
-  const orders = (await attachLatestDeliveryLocations(restaurant.id, [...byId.values()]))
+  const orders = (await attachLatestDeliveryLocations(restaurant.id, [...byId.values()], supabase))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const tableOpenIds = new Set(((tableOpenOrders.data ?? []) as Array<{ id: string }>).map((order) => order.id));
   const openOrders = orders.filter((order) => tableOpenIds.has(order.id));
@@ -1042,7 +1050,7 @@ export async function listRemoteOrderHistory(input: {
   restaurantSlug: string;
   customerSessionId: string;
 }) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createPublicTenantAdminClient("remote_order_history");
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
     .select("id")
@@ -1068,7 +1076,8 @@ export async function listRemoteOrderHistory(input: {
 
   const orders = await attachLatestDeliveryLocations(
     restaurant.id,
-    ((data ?? []) as unknown as RawOrder[]).map((row) => mapOrder(row))
+    ((data ?? []) as unknown as RawOrder[]).map((row) => mapOrder(row)),
+    supabase
   );
   const openOrders = orders.filter((order) => activePublicStatuses.includes(order.status));
 

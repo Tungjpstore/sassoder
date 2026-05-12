@@ -1,3 +1,6 @@
+import "server-only";
+
+import { createHmac, timingSafeEqual } from "crypto";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { AppError } from "@/lib/response";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -11,6 +14,10 @@ export type RestaurantTable = {
   area: string;
   capacity: number;
   qr_enabled: boolean;
+  qr_token_version?: number;
+  qr_token_enforced?: boolean;
+  qr_token_rotated_at?: string | null;
+  qr_token?: string;
 };
 
 export type TableOperationalStatus = "available" | "needs_confirm" | "serving" | "overdue" | "awaiting_payment";
@@ -46,6 +53,51 @@ type TableOrderRow = {
 };
 
 const activeTableStatuses: OrderStatus[] = ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"];
+
+function tableQrSecret() {
+  return (
+    process.env.TABLE_QR_ACCESS_SECRET?.trim() ||
+    process.env.PLATFORM_ADMIN_SESSION_SECRET?.trim() ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
+    "logivn-local-table-qr-access"
+  );
+}
+
+export function buildTableQrAccessToken(table: Pick<RestaurantTable, "id" | "restaurant_id" | "qr_token_version">) {
+  return createHmac("sha256", tableQrSecret())
+    .update(`${table.restaurant_id}:${table.id}:${table.qr_token_version ?? 1}`)
+    .digest("hex")
+    .slice(0, 40);
+}
+
+function safeEqualToken(a: string, b: string) {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function withQrToken<T extends RestaurantTable>(table: T): T {
+  return {
+    ...table,
+    qr_token: buildTableQrAccessToken(table)
+  };
+}
+
+export function isValidTableQrAccess(table: RestaurantTable, token?: string | null) {
+  if (!table.qr_token_enforced) return true;
+  if (!token || !/^[a-f0-9]{40}$/i.test(token)) return false;
+  return safeEqualToken(token.toLowerCase(), buildTableQrAccessToken(table));
+}
+
+export function assertTableQrAccess(table: RestaurantTable, token?: string | null) {
+  if (!table.qr_enabled) {
+    throw new AppError("QR của bàn này đang tắt. Vui lòng gọi nhân viên để được hỗ trợ.", 403);
+  }
+
+  if (!isValidTableQrAccess(table, token)) {
+    throw new AppError("Mã QR của bàn này đã được làm mới. Vui lòng quét lại mã QR tại bàn.", 403);
+  }
+}
 
 function getTableStatus(orders: TableOrderRow[]): TableOperationalStatus {
   const now = Date.now();
@@ -90,7 +142,7 @@ export async function listTablesWithStatus(restaurantId: string): Promise<Restau
       .sort();
 
     return {
-      ...table,
+      ...withQrToken(table),
       status: getTableStatus(tableOrders),
       activeOrderCount: tableOrders.length,
       unpaidTotal: tableOrders.reduce((sum, order) => sum + order.total, 0),
@@ -103,7 +155,7 @@ export async function listTablesWithStatus(restaurantId: string): Promise<Restau
   });
 }
 
-export async function getPublicTable(restaurantId: string, tableId: string) {
+export async function getPublicTable(restaurantId: string, tableId: string, accessToken?: string | null) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("tables")
@@ -113,7 +165,14 @@ export async function getPublicTable(restaurantId: string, tableId: string) {
     .maybeSingle();
 
   throwIfSupabaseError(error);
-  return data as RestaurantTable | null;
+  const table = data as RestaurantTable | null;
+  if (!table) return null;
+  try {
+    assertTableQrAccess(table, accessToken);
+  } catch {
+    return null;
+  }
+  return withQrToken(table);
 }
 
 export async function createTable(
@@ -139,6 +198,34 @@ export async function createTable(
 
   throwIfSupabaseError(error);
   return data as RestaurantTable;
+}
+
+export async function rotateTableQrToken(restaurantId: string, tableId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { data: current, error: currentError } = await supabase
+    .from("tables")
+    .select("*")
+    .eq("id", tableId)
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
+
+  throwIfSupabaseError(currentError);
+  if (!current) throw new AppError("Không tìm thấy bàn cần xoay mã QR", 404);
+
+  const { data: updated, error: updateError } = await supabase
+    .from("tables")
+    .update({
+      qr_token_version: Number(current.qr_token_version ?? 1) + 1,
+      qr_token_enforced: true,
+      qr_token_rotated_at: new Date().toISOString()
+    })
+    .eq("id", tableId)
+    .eq("restaurant_id", restaurantId)
+    .select()
+    .single();
+
+  throwIfSupabaseError(updateError);
+  return withQrToken(updated as RestaurantTable);
 }
 
 export async function updateTable(

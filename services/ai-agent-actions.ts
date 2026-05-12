@@ -730,6 +730,7 @@ type CustomerActionContext = {
   menuSnapshot?: unknown;
   cart?: unknown;
   orderStatus?: unknown;
+  reservationStatus?: unknown;
   message?: string;
   toolRuns?: ToolRunRecord[];
 };
@@ -778,6 +779,103 @@ function customerOrderPaymentAction(orderStatus?: unknown) {
     });
   }
   return null;
+}
+
+function customerReservationActions(restaurantSlug: string, reservationStatus?: unknown) {
+  const reservation = asRecord(reservationStatus);
+  const status = String(reservation?.status ?? "");
+  const depositStatus = String(reservation?.depositStatus ?? reservation?.deposit_status ?? "");
+  const depositPaidAmount = Number(reservation?.depositPaidAmount ?? reservation?.deposit_paid_amount ?? 0);
+  const hasPersistedReservation = Boolean(status && status !== "draft");
+  const actions: AiAgentAction[] = [];
+
+  if (!reservation) {
+    return [
+      action({
+        id: "customer-open-reservation",
+        type: "link",
+        label: "Đặt bàn trước",
+        href: `/r/${restaurantSlug}/reserve`,
+        priority: "primary"
+      })
+    ];
+  }
+
+  if (!hasPersistedReservation) {
+    return [
+      action({
+        id: "customer-reservation-start",
+        type: "ui",
+        label: "Tiếp tục đặt bàn",
+        description: "Quay về bước chọn ngày, số khách và khung giờ.",
+        uiTarget: "reservation",
+        body: { action: "start" },
+        intent: "reservation",
+        priority: "primary"
+      })
+    ];
+  }
+
+  actions.push(
+    action({
+      id: "customer-reservation-refresh",
+      type: "ui",
+      label: "Cập nhật lịch đặt",
+      description: "Tải lại trạng thái giữ bàn, cọc và xác nhận từ quán.",
+      uiTarget: "reservation",
+      body: { action: "refresh" },
+      intent: "reservation",
+      priority: "primary"
+    })
+  );
+
+  const canCancel =
+    (status === "holding" || status === "confirmed") &&
+    depositPaidAmount <= 0 &&
+    depositStatus !== "paid" &&
+    depositStatus !== "waiting_confirm" &&
+    !(status === "confirmed" && Number(reservation?.depositRequiredAmount ?? reservation?.deposit_required_amount ?? 0) > 0);
+
+  if (canCancel) {
+    actions.push(
+      action({
+        id: "customer-reservation-cancel",
+        type: "ui",
+        label: "Huỷ lịch đặt",
+        description: "Mở hộp xác nhận huỷ. LogiBot không tự huỷ nếu khách chưa xác nhận.",
+        uiTarget: "reservation",
+        body: { action: "cancel" },
+        intent: "reservation",
+        priority: "secondary",
+        safety: "confirm"
+      })
+    );
+  }
+
+  actions.push(
+    action({
+      id: "customer-reservation-new",
+      type: "ui",
+      label: "Đặt thêm lịch khác",
+      description: "Bắt đầu một lượt đặt bàn mới trên cùng quán.",
+      uiTarget: "reservation",
+      body: { action: "new" },
+      intent: "reservation",
+      priority: "secondary"
+    }),
+    action({
+      id: "customer-reservation-call",
+      type: "ui",
+      label: "Gọi quán",
+      description: "Dùng khi đã chuyển cọc, cần đổi giờ hoặc cần hỗ trợ trực tiếp.",
+      uiTarget: "staff_call",
+      intent: "reservation",
+      priority: "secondary",
+      safety: "manual_only"
+    })
+  );
+
+  return actions;
 }
 
 function rankCustomerItems(menuSnapshot: unknown, message?: string) {
@@ -935,15 +1033,7 @@ export function buildCustomerAgentActions(intent: CustomerAiIntent, restaurantSl
   }
 
   if (intent === "reservation") {
-    actions.push(
-      action({
-        id: "customer-open-reservation",
-        type: "link",
-        label: "Đặt bàn trước",
-        href: `/r/${restaurantSlug}/reserve`,
-        priority: "primary"
-      })
-    );
+    actions.push(...customerReservationActions(restaurantSlug, context.reservationStatus));
   }
 
   actions.push(

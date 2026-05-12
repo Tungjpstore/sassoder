@@ -5,6 +5,7 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
 import { ensureReservationDepositLogEvent, reservationDepositTransitionKey } from "@/services/payment-log-service";
+import { roundUpToSlotBoundary } from "@/services/reservation-time";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { PaymentMethod, ReservationDepositStatus, ReservationDepositType, ReservationDto, ReservationStatus } from "@/types/domain";
@@ -58,6 +59,9 @@ export type ReservationAvailabilitySlot = {
   available: boolean;
   tableCount: number;
   bestTableName: string | null;
+  availabilityLevel: "sold_out" | "low" | "medium" | "high";
+  recommendationLabel: string;
+  recommendationReason: string;
 };
 
 const VN_UTC_OFFSET_MINUTES = 7 * 60;
@@ -140,6 +144,54 @@ function assertReservationInsideOperatingHours(settings: ReservationSettings, st
 
 function noShowAvailableAt(reservation: Pick<ReservationDto, "startsAt">, graceMinutes: number) {
   return addMinutes(new Date(reservation.startsAt), graceMinutes);
+}
+
+function slotAvailabilityHint(slotStart: Date, tableCount: number) {
+  if (tableCount <= 0) {
+    return {
+      availabilityLevel: "sold_out" as const,
+      recommendationLabel: "Hết bàn",
+      recommendationReason: "Không còn bàn phù hợp cho số khách này."
+    };
+  }
+
+  const localHour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      hour: "2-digit",
+      hour12: false
+    }).format(slotStart)
+  );
+
+  if (tableCount <= 1) {
+    return {
+      availabilityLevel: "low" as const,
+      recommendationLabel: "Sắp hết",
+      recommendationReason: "Chỉ còn một bàn phù hợp, nên giữ chỗ sớm."
+    };
+  }
+
+  if (localHour >= 18 && localHour <= 20) {
+    return {
+      availabilityLevel: "medium" as const,
+      recommendationLabel: "Giờ đẹp",
+      recommendationReason: "Khung giờ phù hợp cho bữa tối hoặc đi nhóm."
+    };
+  }
+
+  if (tableCount >= 4) {
+    return {
+      availabilityLevel: "high" as const,
+      recommendationLabel: "Rộng chỗ",
+      recommendationReason: "Còn nhiều bàn phù hợp, dễ sắp xếp vị trí."
+    };
+  }
+
+  return {
+    availabilityLevel: "medium" as const,
+    recommendationLabel: "Còn bàn",
+    recommendationReason: "Có bàn phù hợp với số khách bạn chọn."
+  };
 }
 
 function reservationPayment(
@@ -362,16 +414,18 @@ export async function getReservationAvailability(input: {
   const slots: ReservationAvailabilitySlot[] = [];
   const { tables, locks } = await getAvailabilityContext(settings.id, input.partySize, start, addMinutes(end, buffer));
 
-  for (let slotStart = new Date(Math.max(start.getTime(), firstAllowed.getTime())); addMinutes(slotStart, duration) <= end; slotStart = addMinutes(slotStart, 30)) {
+  for (let slotStart = roundUpToSlotBoundary(new Date(Math.max(start.getTime(), firstAllowed.getTime()))); addMinutes(slotStart, duration) <= end; slotStart = addMinutes(slotStart, 30)) {
     const slotEnd = addMinutes(slotStart, duration);
     const lockEnd = addMinutes(slotEnd, buffer);
     const availableTables = tables.filter((table) => !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), slotStart, lockEnd)));
+    const hint = slotAvailabilityHint(slotStart, availableTables.length);
     slots.push({
       startsAt: slotStart.toISOString(),
       endsAt: slotEnd.toISOString(),
       available: availableTables.length > 0,
       tableCount: availableTables.length,
-      bestTableName: availableTables[0]?.name ?? null
+      bestTableName: availableTables[0]?.name ?? null,
+      ...hint
     });
   }
 
@@ -630,6 +684,65 @@ export async function markReservationDepositPaid(reservationId: string, token: s
   return getPublicReservation(reservationId, token);
 }
 
+export async function cancelPublicReservation(reservationId: string, token: string): Promise<PublicReservationResult> {
+  const restaurantId = await assertReservationAccess(reservationId, token);
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+
+  if (reservation.status === "cancelled" || closedReservationStatuses.includes(reservation.status)) {
+    return getPublicReservation(reservationId, token);
+  }
+  if (reservation.status === "seated") {
+    throw new AppError("Không thể huỷ đặt bàn khi khách đã được nhận vào bàn.", 400);
+  }
+  if (reservation.depositPaidAmount > 0 || reservation.depositStatus === "paid") {
+    throw new AppError("Đặt bàn đã được quán xác nhận cọc. Vui lòng gọi quán để được hỗ trợ huỷ hoặc đổi lịch.", 409);
+  }
+  if (reservation.status === "waiting_deposit_confirm" || reservation.depositStatus === "waiting_confirm") {
+    throw new AppError("Quán đang kiểm tra giao dịch cọc. Vui lòng gọi quán nếu bạn cần huỷ lịch.", 409);
+  }
+  if (reservation.status === "confirmed" && reservation.depositRequiredAmount > 0) {
+    throw new AppError("Lịch đặt đã có yêu cầu cọc. Vui lòng gọi quán để được hỗ trợ huỷ.", 409);
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const now = new Date().toISOString();
+  const { data: updated, error } = await supabase
+    .from("reservations")
+    .update({ status: "cancelled", cancelled_at: now })
+    .eq("id", reservationId)
+    .eq("restaurant_id", restaurantId)
+    .in("status", ["holding", "confirmed"])
+    .select("id")
+    .maybeSingle();
+  throwIfSupabaseError(error);
+  if (!updated) {
+    throw new AppError("Trạng thái đặt bàn vừa thay đổi. Vui lòng tải lại trước khi huỷ.", 409);
+  }
+
+  const { error: lockError } = await supabase
+    .from("reservation_table_locks")
+    .update({ status: "released" })
+    .eq("reservation_id", reservationId)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "active");
+  throwIfSupabaseError(lockError);
+
+  if (reservation.depositRequiredAmount > 0) {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId,
+      restaurantId,
+      method: reservation.paymentMethod ?? "QR",
+      status: "cancelled",
+      amount: reservation.depositRequiredAmount,
+      source: "reservation_customer_cancel",
+      transitionKey: reservationDepositTransitionKey(reservationId, "customer-cancel")
+    });
+  }
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getPublicReservation(reservationId, token);
+}
+
 export async function listReservationsForRestaurant(restaurantId: string, date?: string) {
   await expireReservationHolds(restaurantId);
   const supabase = await createServerSupabaseClient();
@@ -816,10 +929,10 @@ export async function seatReservation(restaurantId: string, reservationId: strin
     .single();
 
   if ((billError as { code?: string } | null)?.code === "23505") {
-    throw new AppError("Bàn đang có hóa đơn mở. Hãy đóng hóa đơn hiện tại trước khi nhận booking.", 409);
+    throw new AppError("Bàn đang có hóa đơn mở. Hãy đóng hóa đơn hiện tại trước khi nhận khách vào bàn.", 409);
   }
   throwIfSupabaseError(billError);
-  if (!bill) throw new AppError("Không mở được hóa đơn cho booking.", 400);
+  if (!bill) throw new AppError("Không mở được hóa đơn cho lịch đặt này.", 400);
 
   const { error } = await supabase
     .from("reservations")

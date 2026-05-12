@@ -37,7 +37,7 @@ function formatDistance(distanceKm: number | null) {
 export function RestaurantVisitMapCard({
   restaurant,
   title = "Đường đến quán",
-  description = "Dùng GPS để xem khoảng cách, ETA và mở chỉ đường trên Google Maps/Apple Maps.",
+  description = "Dùng vị trí hiện tại để xem khoảng cách, thời gian dự kiến và mở chỉ đường.",
   compact = false
 }: RestaurantVisitMapCardProps) {
   const configuredDestination = toRestaurantPoint(restaurant);
@@ -143,7 +143,7 @@ export function RestaurantVisitMapCard({
             <p className="mt-1 leading-6">
               {resolvingDestination
                 ? "LogiVN đang kiểm tra địa chỉ quán để khách vẫn có thể xem khoảng cách và chỉ đường."
-                : "Hãy cập nhật vị trí quán trong onboarding hoặc Cấu hình giao hàng để khách xem chỉ đường và ETA đặt bàn."}
+                : "Quán đang cập nhật vị trí bản đồ. Bạn vẫn có thể gọi quán để được hướng dẫn đường đi."}
             </p>
           </div>
         </div>
@@ -162,7 +162,7 @@ export function RestaurantVisitMapCard({
           <p className="mt-1 text-sm font-semibold leading-6 text-[var(--muted-foreground)]">{description}</p>
         </div>
         <div className="rounded-full border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-1.5 text-xs font-black text-[var(--primary)]">
-          {route?.provider ? route.provider.toUpperCase() : "GPS ready"}
+          {route?.provider ? "Đã tính tuyến" : "Sẵn sàng định vị"}
         </div>
       </div>
 
@@ -206,7 +206,7 @@ export function RestaurantVisitMapCard({
           <p className="mt-1 font-black text-[var(--foreground)]">{formatDistance(distanceKm)}</p>
         </div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
-          <p className="text-xs font-semibold text-[var(--muted-foreground)]">ETA</p>
+          <p className="text-xs font-semibold text-[var(--muted-foreground)]">Dự kiến</p>
           <p className="mt-1 font-black text-[var(--foreground)]">{durationMinutes ? `${durationMinutes} phút` : "Chưa tính"}</p>
         </div>
         <a

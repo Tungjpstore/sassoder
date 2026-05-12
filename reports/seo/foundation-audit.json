@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-11T04:34:39.051Z",
+  "generatedAt": "2026-05-11T14:45:01.573Z",
   "scope": "seo-foundation",
   "score": 100,
   "findings": [
@@ -74,6 +74,30 @@
       "status": "pass",
       "evidence": "app/llms.txt/route.ts exists",
       "seoImpact": "AI search crawlers receive concise citation guidance."
+    },
+    {
+      "id": "favicon-assets",
+      "area": "metadata",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "public/favicon.ico",
+      "finding": "Root favicon assets exist for browser and Google Search result discovery.",
+      "fix": "Keep /favicon.ico and 48x48+ PNG favicon variants crawlable at stable root URLs.",
+      "status": "pass",
+      "evidence": "root favicon.ico, 48x48 PNG, 512x512 icon and apple icon exist",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "favicon-metadata",
+      "area": "metadata",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "lib/seo/metadata.ts",
+      "finding": "Shared metadata emits icon links for public pages.",
+      "fix": "Keep rel icon and apple icon metadata wired through createSeoMetadata.",
+      "status": "pass",
+      "evidence": "lib/seo/metadata.ts exists and emits favicon/apple icon metadata",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
     },
     {
       "id": "dashboard-noindex",

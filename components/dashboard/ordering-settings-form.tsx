@@ -315,7 +315,7 @@ export function OrderingSettingsForm({
       action={formAction}
       className={cn(
         "min-h-full bg-[#fbfaf7] text-[#101813]",
-        compact ? "-m-5 px-5 pb-28 pt-5" : "rounded-2xl border border-[#e7e2d8] p-5"
+        compact ? "-mx-3 -mb-3 px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-1 sm:-mx-4 sm:px-4" : "rounded-2xl border border-[#e7e2d8] p-5"
       )}
     >
       <input type="hidden" name="address" value={resolvedAddress ?? settings.address ?? ""} readOnly />
@@ -327,31 +327,31 @@ export function OrderingSettingsForm({
       <input type="hidden" name="deliveryAreaPolygon" value={JSON.stringify(deliveryPolygon)} readOnly />
       <input type="hidden" name="deliveryExclusionZones" value={serializedExclusions} readOnly />
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-[22px] font-extrabold tracking-[-0.02em] text-[#101813]">Địa chỉ & giao hàng</h2>
-          <p className="mt-1 text-sm font-medium text-[#667166]">Chỉ cần ghim đúng vị trí quán. LogiVN sẽ dùng mặc định an toàn cho vùng giao, ETA và phí.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-extrabold tracking-[-0.02em] text-[#101813] sm:text-[22px]">Địa chỉ & giao hàng</h2>
+          <p className="mt-1 max-w-2xl text-xs font-medium leading-5 text-[#667166] sm:text-sm">Ghim đúng vị trí quán, bật kênh online và lưu cấu hình giao hàng.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#f3d4ad] bg-[#fff7eb] px-3 text-xs font-extrabold text-[#f27c1b]">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <span className="hidden h-10 items-center gap-2 rounded-lg border border-[#f3d4ad] bg-[#fff7eb] px-3 text-xs font-extrabold text-[#f27c1b] sm:inline-flex">
             <Crown size={14} aria-hidden="true" />
             Gói Premium
           </span>
-          <span className="grid h-9 w-9 place-items-center rounded-full border border-[#e7e2d8] bg-white text-[#364238]">
+          <span className="hidden h-9 w-9 place-items-center rounded-full border border-[#e7e2d8] bg-white text-[#364238] sm:grid">
             <HelpCircle size={17} aria-hidden="true" />
           </span>
-          <span className="relative grid h-9 w-9 place-items-center rounded-full border border-[#e7e2d8] bg-white text-[#364238]">
+          <span className="relative hidden h-9 w-9 place-items-center rounded-full border border-[#e7e2d8] bg-white text-[#364238] sm:grid">
             <Bell size={17} aria-hidden="true" />
             <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[#f04438] text-[9px] font-black text-white">5</span>
           </span>
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-[#e9f4e6] text-[#0f6944]">
+          <span className="hidden h-9 w-9 place-items-center rounded-full bg-[#e9f4e6] text-[#0f6944] sm:grid">
             <Bot size={18} aria-hidden="true" />
           </span>
           <a
             href={onlineUrl}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#cbded0] bg-white px-4 text-xs font-extrabold text-[#0f6944]"
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#cbded0] bg-white px-4 text-xs font-extrabold text-[#0f6944] sm:h-10 sm:w-auto"
           >
             <Download size={15} aria-hidden="true" />
             Xem trang đặt món
@@ -359,14 +359,14 @@ export function OrderingSettingsForm({
         </div>
       </div>
 
-      <div className="mt-7 flex gap-8 overflow-x-auto border-b border-[#e5e0d6] text-sm font-semibold text-[#3b463d]">
+      <div className="mt-4 flex gap-3 overflow-x-auto overscroll-x-contain border-b border-[#e5e0d6] pb-1 text-xs font-semibold text-[#3b463d] sm:text-sm">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => scrollToTab(tab)}
             className={cn(
-              "shrink-0 border-b-2 px-1 pb-3 transition",
+              "min-h-10 shrink-0 rounded-t-lg border-b-2 px-2 pb-2 transition",
               activeTab === tab.id ? "border-[#0f6944] text-[#0f2318]" : "border-transparent text-[#3f493f] hover:text-[#0f6944]"
             )}
           >
@@ -397,7 +397,7 @@ export function OrderingSettingsForm({
                 <p className="mt-2 text-xs font-medium leading-5 text-[#667166]">Cần tọa độ quán để tính phí và khoảng cách chính xác.</p>
               </div>
               <div className="rounded-xl border border-[#e8e3d9] bg-[#fbfaf7] p-3">
-                <ToggleField name="deliveryTrackingEnabled" label="Theo dõi giao hàng realtime" defaultChecked={settings.delivery_tracking_enabled ?? false} />
+                  <ToggleField name="deliveryTrackingEnabled" label="Theo dõi giao hàng theo thời gian thực" defaultChecked={settings.delivery_tracking_enabled ?? false} />
                 <p className="mt-2 text-xs font-medium leading-5 text-[#667166]">Hiển thị vị trí/ETA khi quán có luồng giao hàng.</p>
               </div>
             </div>
@@ -412,7 +412,7 @@ export function OrderingSettingsForm({
               </label>
               <div className="rounded-xl border border-[#e8e3d9] bg-white p-3">
                 <p className="text-xs font-bold text-[#566052]">Link đặt online</p>
-                <code className="mt-2 block overflow-hidden rounded-lg border border-[#ede8df] bg-[#fbfaf7] px-3 py-2 text-xs font-extrabold text-[#101813]">{onlineUrl}</code>
+                <code className="mt-2 block overflow-x-auto rounded-lg border border-[#ede8df] bg-[#fbfaf7] px-3 py-2 text-xs font-extrabold text-[#101813]">{onlineUrl}</code>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" onClick={copyOnlineUrl} className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#d7e5d9] bg-[#f3faf4] px-3 text-xs font-extrabold text-[#0f6944]">
                     <Copy size={15} aria-hidden="true" />
@@ -521,7 +521,7 @@ export function OrderingSettingsForm({
           <details className="rounded-[14px] border border-[#e7e2d8] bg-white p-4 shadow-[0_1px_2px_rgba(29,39,32,0.04)]">
             <summary className="cursor-pointer text-[15px] font-extrabold text-[#101813] marker:text-[#0f6944]">
               Tuỳ chọn bản đồ nâng cao
-              <span className="mt-1 block text-xs font-medium text-[#667166]">Chỉ cần mở khi muốn đổi provider, zoom hoặc style hiển thị.</span>
+              <span className="mt-1 block text-xs font-medium text-[#667166]">Chỉ cần mở khi muốn đổi nguồn bản đồ, độ phóng hoặc kiểu hiển thị.</span>
             </summary>
             <div className="mt-4 grid gap-4">
               <Card title="Tùy chọn hiển thị bản đồ">
@@ -548,7 +548,7 @@ export function OrderingSettingsForm({
                 </div>
               </Card>
 
-              <Card id="provider-card" title="Nhà cung cấp bản đồ" description="Nhà cung cấp đang sử dụng">
+              <Card id="provider-card" title="Nguồn bản đồ" description="Nguồn bản đồ đang sử dụng">
                 <div className="rounded-xl border border-[#dfe9df] bg-[#f4faf2] p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -667,15 +667,15 @@ export function OrderingSettingsForm({
                 Thêm vùng loại trừ
               </button>
             </div>
-            <div className="overflow-hidden rounded-xl border border-[#ece7dd]">
-              <div className="grid grid-cols-[minmax(0,1fr)_90px_70px] bg-[#fbfaf7] px-3 py-2 text-xs font-bold text-[#667166]">
+            <div className="overflow-x-auto rounded-xl border border-[#ece7dd]">
+              <div className="grid min-w-[420px] grid-cols-[minmax(0,1fr)_90px_70px] bg-[#fbfaf7] px-3 py-2 text-xs font-bold text-[#667166]">
                 <span>Tên vùng loại trừ</span>
                 <span>Diện tích</span>
                 <span className="text-right">Thao tác</span>
               </div>
               {exclusionZones.length ? (
                 exclusionZones.map((zone, index) => (
-                  <div key={zone.id} className="grid grid-cols-[minmax(0,1fr)_90px_70px] items-center border-t border-[#ece7dd] px-3 py-2 text-xs font-semibold text-[#101813]">
+                  <div key={zone.id} className="grid min-w-[420px] grid-cols-[minmax(0,1fr)_90px_70px] items-center border-t border-[#ece7dd] px-3 py-2 text-xs font-semibold text-[#101813]">
                     <input
                       value={zone.name}
                       onChange={(event) => setExclusionZones((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, name: event.target.value } : item)))}
@@ -713,15 +713,15 @@ export function OrderingSettingsForm({
             <div className="mb-3">
               <ToggleField name="deliveryFeeEnabled" label="Bật tính phí giao hàng" defaultChecked={settings.delivery_fee_enabled ?? true} />
             </div>
-            <div className="overflow-hidden rounded-xl border border-[#ece7dd]">
-              <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(72px,0.5fr)_minmax(92px,0.7fr)_44px] bg-[#fbfaf7] px-3 py-2 text-xs font-bold text-[#667166]">
+            <div className="overflow-x-auto rounded-xl border border-[#ece7dd]">
+              <div className="grid min-w-[540px] grid-cols-[minmax(0,1.2fr)_minmax(72px,0.5fr)_minmax(92px,0.7fr)_44px] bg-[#fbfaf7] px-3 py-2 text-xs font-bold text-[#667166]">
                 <span>Khoảng cách</span>
                 <span>Đến km</span>
                 <span>Phí giao hàng</span>
                 <span className="text-right">Thao tác</span>
               </div>
               {feeTiers.map((tier, index) => (
-                <div key={tier.id} className="grid grid-cols-[minmax(0,1.2fr)_minmax(72px,0.5fr)_minmax(92px,0.7fr)_44px] items-center border-t border-[#ece7dd] px-3 py-2 text-xs font-semibold text-[#101813]">
+                <div key={tier.id} className="grid min-w-[540px] grid-cols-[minmax(0,1.2fr)_minmax(72px,0.5fr)_minmax(92px,0.7fr)_44px] items-center border-t border-[#ece7dd] px-3 py-2 text-xs font-semibold text-[#101813]">
                   <input
                     aria-label={`Tên mức phí ${index + 1}`}
                     value={tier.label}
@@ -837,19 +837,19 @@ export function OrderingSettingsForm({
       {state?.error ? <p role="alert" className="mt-4 rounded-xl bg-[#fff1ed] px-4 py-3 text-sm font-extrabold text-[#c23b2a]">{state.error}</p> : null}
       {state?.success ? <p aria-live="polite" className="mt-4 rounded-xl bg-[#edf7ef] px-4 py-3 text-sm font-extrabold text-[#0f6944]">{state.success}</p> : null}
 
-      <div id="save-settings-bar" className="sticky bottom-0 z-10 mt-7 flex flex-wrap items-center justify-end gap-3 border-t border-[#e5e0d6] bg-[#fbfaf7]/95 px-0 py-4 backdrop-blur">
+      <div id="save-settings-bar" className="sticky bottom-0 z-10 mt-4 grid grid-cols-1 gap-2 border-t border-[#e5e0d6] bg-[#fbfaf7]/95 px-0 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:flex sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
         <button
           type="button"
           onClick={() => {
             setFeeTiers(defaultFeeTiers);
             setDeliveryPolygon(makeDefaultDeliveryPolygon(center.lat, center.lng));
           }}
-          className="inline-flex h-11 items-center gap-2 rounded-lg border border-[#e1ddd4] bg-white px-4 text-sm font-extrabold text-[#364238]"
+          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[#e1ddd4] bg-white px-4 text-sm font-extrabold text-[#364238] sm:w-auto"
         >
           <RotateCcw size={16} aria-hidden="true" />
           Khôi phục mặc định
         </button>
-        <Button disabled={pending} className="h-11 min-w-[170px] rounded-lg bg-[#0f6944] text-white hover:bg-[#0b5738]">
+        <Button disabled={pending} className="h-11 w-full min-w-0 rounded-lg bg-[#0f6944] text-white hover:bg-[#0b5738] sm:w-auto sm:min-w-[170px]">
           <Save size={16} aria-hidden="true" />
           {pending ? "Đang lưu..." : "Lưu thay đổi"}
         </Button>

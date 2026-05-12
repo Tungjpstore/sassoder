@@ -102,6 +102,8 @@ const quickPrompts: Record<OwnerIntent, string[]> = {
 
 const logibotLogo = "/brand/logivn/logibot-badge.png";
 const maxStoredMessages = 12;
+const aiRequestTimeoutMs = 16_000;
+const operationalActionTimeoutMs = 12_000;
 
 function ownerStorageKey(restaurantName: string) {
   return `logivn:owner-ai:${restaurantName || "store"}:v2`;
@@ -255,6 +257,13 @@ function safetyLabel(action: AiAgentAction) {
   return "An toàn";
 }
 
+function planConfidenceLabel(plan: AiAgentPlan | null) {
+  if (plan?.confidence === "high") return "Tự tin cao";
+  if (plan?.confidence === "medium") return "Đủ dữ liệu";
+  if (plan?.confidence === "low") return "Cần thêm dữ liệu";
+  return "Đang chờ";
+}
+
 function actionConfirmMessage(action: AiAgentAction, count = 1) {
   if (action.safety === "manual_only") {
     return `Chỉ tiếp tục nếu bạn đã kiểm tra dữ liệu thật.\n\n${action.label}${count > 1 ? ` (${count} thao tác)` : ""}`;
@@ -384,12 +393,15 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
   }, [messages, storageKey]);
 
   async function callAi(endpoint: string, body: Record<string, unknown>, nextIntent = intent) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), aiRequestTimeoutMs);
     setLoading(true);
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
       const result = (await response.json().catch(() => null)) as ApiResponse<AiReply> | null;
       if (!result || !result.ok) throw new Error(result?.error || "LogiBot chưa phản hồi được.");
@@ -420,10 +432,16 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
           id: makeId(),
           role: "assistant",
           title: "Chưa xử lý được yêu cầu",
-          content: error instanceof Error ? error.message : "Không gọi được LogiBot."
+          content:
+            error instanceof Error && error.name === "AbortError"
+              ? "LogiBot phản hồi quá lâu. Mình đã dừng lượt này để UI không bị treo; bạn có thể bấm gợi ý nhanh hoặc hỏi lại ngắn hơn."
+              : error instanceof Error
+                ? error.message
+                : "Không gọi được LogiBot."
         }
       ]);
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   }
@@ -433,17 +451,29 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
   }
 
   async function postOperationalAction(action: AiAgentAction) {
-    if (!action.endpoint) throw new Error("Action chưa có endpoint để thực thi.");
-    const response = await fetch(action.endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(action.body ?? {})
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok || (isApiEnvelope(result) && !result.ok)) {
-      throw new Error(getApiErrorMessage(result, "Không chạy được action. Vui lòng thử lại hoặc mở đúng màn để xử lý thủ công."));
+    if (!action.endpoint) throw new Error("Tác vụ chưa sẵn sàng để thực thi.");
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), operationalActionTimeoutMs);
+    try {
+      const response = await fetch(action.endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action.body ?? {}),
+        signal: controller.signal
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || (isApiEnvelope(result) && !result.ok)) {
+        throw new Error(getApiErrorMessage(result, "Không chạy được action. Vui lòng thử lại hoặc mở đúng màn để xử lý thủ công."));
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Action mất quá lâu nên đã dừng để tránh UI bị đứng. Vui lòng mở đúng màn và thử lại.");
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-    return result;
   }
 
   async function runSingleApiAction(action: AiAgentAction) {
@@ -505,7 +535,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       title: failedLabels.length ? "Action chạy một phần" : "Đã xử lý hàng loạt",
       content: failedLabels.length
         ? `Đã chạy ${successCount}/${bulkActions.length} thao tác. Các mục chưa xong: ${failedLabels.slice(0, 3).join(", ")}.`
-        : `Đã chạy xong ${successCount} thao tác. Dashboard đã được làm mới để phản ánh trạng thái mới.`
+        : `Đã chạy xong ${successCount} thao tác. Bảng quản lý đã được làm mới để phản ánh trạng thái mới.`
     });
   }
 
@@ -556,13 +586,15 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
   }
 
   const activeIntent = ownerIntentOptions.find((item) => item.intent === intent);
+  const nextAction = actions.find((item) => item.id === agentPlan?.nextBestActionId) ?? actions.find((item) => item.priority === "primary") ?? actions[0] ?? null;
+  const contextStatus = runningActionId ? "Đang chạy action" : loading ? "Đang đọc dữ liệu" : actions.length ? "Sẵn sàng thao tác" : "Chờ yêu cầu";
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-50 inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5"
+        className="fixed bottom-5 right-5 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5"
       >
         <span className="grid h-12 w-12 overflow-hidden rounded-full">
           <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full object-cover" priority />
@@ -571,7 +603,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       </button>
 
       {open ? (
-        <section className="fixed bottom-20 right-5 z-50 flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)]">
+        <section className="fixed bottom-20 right-5 z-[var(--z-dashboard-panel)] flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)]">
           <header className="flex items-center justify-between bg-[var(--primary)] px-4 py-3 text-white">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-[var(--surface)] p-0.5">
@@ -594,6 +626,27 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               </button>
             </div>
           </header>
+
+          <div className="border-b border-[var(--border)] bg-[linear-gradient(90deg,rgba(15,77,58,0.06),rgba(242,140,40,0.06),rgba(255,247,235,0.72))] px-4 py-3">
+            <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
+                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Ngữ cảnh</p>
+                <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{activeIntent?.label ?? "Tổng quan"}</p>
+              </div>
+              <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
+                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Trạng thái</p>
+                <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{contextStatus}</p>
+              </div>
+              <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
+                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bước tiếp</p>
+                <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{nextAction?.label ?? "Hỏi hoặc chọn gợi ý"}</p>
+              </div>
+              <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
+                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Độ chắc</p>
+                <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{planConfidenceLabel(agentPlan)}</p>
+              </div>
+            </div>
+          </div>
 
           <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_292px]">
             <div className="flex min-h-0 flex-col border-r border-[var(--border)]">

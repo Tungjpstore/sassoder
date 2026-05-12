@@ -65,11 +65,11 @@ export function AiSetupStudio({
         })
       });
       const result = (await response.json().catch(() => null)) as ApiResponse<BrandingResponse> | null;
-      if (!result || !result.ok) throw new Error(result?.error || "AI chưa tạo được bộ nhận diện.");
+      if (!result || !result.ok) throw new Error(result?.error || "Chưa tạo được bộ nhận diện.");
       setBranding(result.data);
       setSelectedSlogan(result.data.data?.slogans?.[0] ?? "");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không gọi được AI thương hiệu.");
+      setError(err instanceof Error ? err.message : "Không tạo được nhận diện thương hiệu.");
     } finally {
       setLoading(null);
     }
@@ -86,10 +86,10 @@ export function AiSetupStudio({
         body: JSON.stringify({ kind: "logo", restaurantName, prompt })
       });
       const result = (await response.json().catch(() => null)) as ApiResponse<ImageResponse> | null;
-      if (!result || !result.ok) throw new Error(result?.error || "AI chưa tạo được logo.");
+      if (!result || !result.ok) throw new Error(result?.error || "Chưa tạo được logo.");
       setLogoDraft(result.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không gọi được AI tạo logo.");
+      setError(err instanceof Error ? err.message : "Không tạo được logo.");
     } finally {
       setLoading(null);
     }
@@ -107,7 +107,7 @@ export function AiSetupStudio({
       <div className="border-b border-[var(--border)] bg-[linear-gradient(135deg,rgba(15,77,58,0.1),rgba(242,140,40,0.08))] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">AI Brand Studio</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Studio nhận diện</p>
             <h2 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[var(--foreground)]">{restaurantName}</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">
               Tạo slogan, mô tả và logo rồi áp dụng trực tiếp vào hồ sơ quán. Không còn bản nháp dài dòng.
@@ -199,7 +199,7 @@ export function AiSetupStudio({
             <div className="grid place-items-center bg-[linear-gradient(135deg,#0f4d3a,#174f43_50%,#f28c28)] p-6">
               {logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={logoUrl} alt="Logo AI tạo" className="h-28 w-28 rounded-3xl border-4 border-white/80 bg-white object-cover shadow-[0_20px_50px_rgba(15,77,58,0.24)]" />
+                <img src={logoUrl} alt="Logo gợi ý" className="h-28 w-28 rounded-3xl border-4 border-white/80 bg-white object-cover shadow-[0_20px_50px_rgba(15,77,58,0.24)]" />
               ) : (
                 <span className="grid h-28 w-28 place-items-center rounded-3xl border-4 border-white/60 bg-white/20 text-white">
                   <ImageIcon size={34} />

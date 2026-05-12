@@ -353,14 +353,14 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
           <aside className="auth-zen-hero relative hidden overflow-hidden rounded-[28px] p-8 text-white shadow-[0_28px_80px_rgba(3,55,37,0.28)] lg:flex lg:flex-col lg:justify-between">
             <div className="relative z-10">
               <LogiVNLogo href="/" className="h-14" priority />
-              <p className="mt-5 max-w-[230px] text-lg font-black leading-6 text-[#fff5d8]">AI-native Restaurant Operating System</p>
+              <p className="mt-5 max-w-[230px] text-lg font-black leading-6 text-[#fff5d8]">Nền tảng gọi món & vận hành quán Việt</p>
               <div className="mt-14">
                 <h1 className="text-[30px] font-black leading-[1.1] tracking-tight">
                   Vận hành thông minh
                   <span className="block text-[#f1a23b]">Trải nghiệm đỉnh cao</span>
                 </h1>
                 <p className="mt-5 max-w-[260px] text-sm leading-6 text-[#fff5d8]/82">
-                  Nền tảng quản lý nhà hàng, quán cafe dùng AI để tối ưu mọi hoạt động.
+                  Nền tảng quản lý nhà hàng, quán cafe với trợ lý thông minh để tối ưu từng ca bán.
                 </p>
               </div>
             </div>
@@ -384,9 +384,9 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
 
               <div className="grid grid-cols-4 gap-3 text-center">
                 {[
-                  { icon: Sparkles, label: "AI Copilot" },
+                  { icon: Sparkles, label: "Trợ lý LogiVN" },
                   { icon: Banknote, label: "Báo cáo" },
-                  { icon: QrCode, label: "QR Order" },
+                  { icon: QrCode, label: "Gọi món QR" },
                   { icon: ShieldCheck, label: "Bảo mật" }
                 ].map((item) => {
                   const Icon = item.icon;
@@ -552,9 +552,9 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
             <h2 className="text-lg font-black text-[#f7ce74]">Vì sao chọn LogiVN?</h2>
             <div className="mt-7 grid gap-5">
               {[
-                ["AI Copilot", "Trợ lý hỗ trợ vận hành 24/7", Sparkles],
+                ["Trợ lý LogiVN", "Hỗ trợ vận hành 24/7", Sparkles],
                 ["Quản lý toàn diện", "Từ gọi món, thanh toán đến báo cáo", Store],
-                ["Báo cáo realtime", "Dữ liệu chính xác, cập nhật tức thì", Banknote],
+                ["Báo cáo tức thời", "Dữ liệu chính xác, cập nhật nhanh", Banknote],
                 ["Bảo mật tuyệt đối", "Dữ liệu quán được tách biệt", ShieldCheck],
                 ["Dễ sử dụng", "Giao diện thân thiện, thao tác nhanh", QrCode]
               ].map(([title, desc, Icon]) => (
@@ -632,7 +632,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
               <div>
                 <p className="text-sm font-black text-[var(--primary-strong)]">Bạn đã có tài khoản LogiVN?</p>
                 <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
-                  Đăng nhập bằng email và mật khẩu, hệ thống sẽ tự mở đúng dashboard của quán.
+                  Đăng nhập bằng email và mật khẩu, hệ thống sẽ tự mở đúng bảng quản lý của quán.
                 </p>
               </div>
               <Link
@@ -657,13 +657,13 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                     code: "pro",
                     name: "LogiVN Pro",
                     price: "99.000đ/tháng",
-                    helper: "QR, đơn realtime, bán online, AI vận hành cơ bản"
+                    helper: "QR, đơn theo thời gian thực, bán online và trợ lý vận hành cơ bản"
                   },
                   {
                     code: "premium",
                     name: "LogiVN Premium",
                     price: "199.000đ/tháng",
-                    helper: "Đặt bàn, nhận cọc, AI OCR menu, AI ảnh và báo cáo nâng cao"
+                    helper: "Đặt bàn, nhận cọc, nhập menu nhanh từ ảnh, tạo ảnh món và báo cáo nâng cao"
                   }
                 ].map((plan) => (
                   <button
@@ -678,7 +678,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   >
                     <span className="block text-sm font-black">{plan.name}</span>
                     <span className="mt-1 block text-xs font-bold text-[var(--accent)]">
-                      {plan.price} · mọi tài khoản bắt đầu từ trial Pro 30 ngày
+                      {plan.price} · mọi tài khoản bắt đầu bằng dùng thử Pro 30 ngày
                     </span>
                     <span className="mt-2 block text-xs leading-5 text-[var(--muted-foreground)]">{plan.helper}</span>
                   </button>
@@ -884,7 +884,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   </div>
                   <h3 className="mb-2 text-2xl font-bold leading-8">Tải menu PDF</h3>
                   <p className="mb-8 max-w-[270px] text-base leading-6 text-[var(--muted-foreground)]">
-                    Có thể dùng AI OCR ở dashboard để đọc menu thật. Bước này tạo sẵn menu mẫu để quán vào vận hành ngay.
+                    Có thể nhập menu nhanh từ ảnh trong bảng quản lý. Bước này tạo sẵn menu mẫu để quán vào vận hành ngay.
                   </p>
                   <span className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-8 py-3 text-sm font-semibold text-[#FFF7EB] shadow-[0_0_20px_rgba(242,140,40,0.3)]">
                     <Plus className="h-5 w-5" />

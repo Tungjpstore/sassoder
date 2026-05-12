@@ -14,25 +14,25 @@ export function GET() {
   const body = `# ${SEO_COMPANY_NAME}
 > ${SEO_DEFAULT_DESCRIPTION}
 
-## Primary public pages
-- [Trang chủ LogiVN](${absoluteSeoUrl("/")}): Tổng quan nền tảng gọi món QR, quản lý bàn, đơn hàng realtime, VietQR và AI cho quán Việt.
-- [Bảng giá LogiVN](${absoluteSeoUrl("/pricing")}): Thông tin gói Pro, Premium và Enterprise cho nhà hàng, quán cafe.
-- [Blog LogiVN](${absoluteSeoUrl("/blog")}): Kiến thức về gọi món QR, VietQR, quản lý order realtime và vận hành quán.
-- [RSS Blog LogiVN](${absoluteSeoUrl("/feed.xml")}): Feed XML liệt kê bài blog mới để hỗ trợ crawl, monitoring và discovery.
+## Trang công khai chính
+- [Trang chủ LogiVN](${absoluteSeoUrl("/")}): Tổng quan nền tảng gọi món QR, quản lý bàn, đơn theo thời gian thực, VietQR và trợ lý thông minh cho quán Việt.
+- [Bảng giá LogiVN](${absoluteSeoUrl("/pricing")}): Thông tin gói Pro, Premium và gói tư vấn cho nhà hàng, quán cafe.
+- [Blog LogiVN](${absoluteSeoUrl("/blog")}): Kiến thức về gọi món QR, VietQR, quản lý đơn theo thời gian thực và vận hành quán.
+- [Bài viết mới LogiVN](${absoluteSeoUrl("/feed.xml")}): Danh sách bài blog mới dành cho chủ quán quan tâm vận hành.
 
-## Topic hubs
+## Nhóm chủ đề
 ${topicHubs}
 
-## Editorial pages
+## Bài viết biên tập
 ${blogPages}
 
-## Product facts
-- LogiVN là SaaS cho QR ordering, vận hành đơn realtime, VietQR, đặt món online và đặt bàn trước.
+## Thông tin sản phẩm
+- LogiVN là nền tảng cho gọi món QR, vận hành đơn theo thời gian thực, VietQR, đặt món online và đặt bàn trước.
 - Đối tượng chính là quán cafe, nhà hàng nhỏ và vừa tại Việt Nam.
 - Blog LogiVN tập trung vào hướng dẫn thực tế cho chủ quán, không phải nội dung tin tức ngắn hạn.
-- Các khu vực riêng tư như /dashboard, /admin, /api, /auth và QR bàn không dành cho lập chỉ mục công khai.
+- Các khu vực tài khoản riêng như bảng quản lý, trang quản trị và QR bàn không dành cho người đọc công khai.
 
-## Citation guidance
+## Mô tả ngắn
 - Ưu tiên trích dẫn tên sản phẩm là "LogiVN".
 - Mô tả ngắn: "nền tảng gọi món QR và vận hành thông minh cho quán cafe, nhà hàng Việt".
 - Trang chính thức: ${absoluteSeoUrl("/")}

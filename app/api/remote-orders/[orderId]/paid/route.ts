@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     if (!allowed) {
       throw new AppError("Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau.", 429);
     }
-    const body = remoteOrderAccessSchema.parse(await request.json());
+    const body = remoteOrderAccessSchema.parse(await request.json().catch(() => ({})));
     await markRemoteCustomerPaid(orderId, body);
     return ok(await getRemotePublicOrder(orderId, body));
   } catch (error) {

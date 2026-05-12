@@ -44,7 +44,7 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[220] grid place-items-center overflow-y-auto overscroll-contain px-4 py-6">
+    <div className="fixed inset-0 z-[var(--z-dashboard-confirm)] grid place-items-center overflow-y-auto overscroll-contain px-4 py-6">
       <button type="button" aria-hidden="true" tabIndex={-1} onClick={onCancel} className="drawer-backdrop absolute inset-0 z-0" />
       <div
         ref={panelRef}

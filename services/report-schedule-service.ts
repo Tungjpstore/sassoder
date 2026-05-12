@@ -254,7 +254,7 @@ function buildReportEmailHtml({
               )
               .join("") || `<tr><td style="padding:12px 0;color:#64748B;">Chưa có dữ liệu danh mục.</td></tr>`}
           </table>
-          <p style="margin-top:24px;color:#64748B;font-size:13px;">Báo cáo này được gửi tự động theo cấu hình trong dashboard LogiVN. File CSV/JSON được đính kèm nếu quán đã bật.</p>
+          <p style="margin-top:24px;color:#64748B;font-size:13px;">Báo cáo này được gửi tự động theo cấu hình trong bảng quản lý LogiVN. File dữ liệu chi tiết được đính kèm nếu quán đã bật.</p>
         </div>
       </div>
     </div>

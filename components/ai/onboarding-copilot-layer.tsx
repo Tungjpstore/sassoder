@@ -6,6 +6,7 @@ import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { CopilotSidebar } from "@copilotkit/react-core/v2";
 import { Bot, Sparkles, X } from "lucide-react";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
+import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
 
@@ -59,6 +60,12 @@ const stepContextMap: Record<number, string> = {
 /* ─── Copilot Experience ─── */
 function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTableCount, onApplyBusinessType }: OnboardingCopilotProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  useCopilotResponseWatchdog({
+    timeoutMs: 12_000,
+    fallbackText:
+      "LogiBot chưa nhận được phản hồi đầy đủ, nhưng mình vẫn có thể tiếp tục bằng lộ trình an toàn: hoàn tất thông tin quán, tạo menu mẫu, chọn số bàn và kiểm tra VietQR trước khi tạo quán."
+  });
 
   // Readable state
   useCopilotReadable(

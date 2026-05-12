@@ -29,7 +29,26 @@ export default async function AdminStaffPage() {
           id: session.userId,
           email: session.email,
           role: session.role,
-          restaurant_id: session.restaurantId
+          restaurant_id: session.restaurantId,
+          staff_title: session.role === "ADMIN" ? "Quản lý" : "Phục vụ",
+          permission_profile: session.role === "ADMIN" ? "manager" : "service",
+          permissions: session.role === "ADMIN"
+            ? [
+                "dashboard.view",
+                "orders.manage",
+                "kitchen.view",
+                "menu.manage",
+                "tables.manage",
+                "payments.manage",
+                "online.manage",
+                "reservations.manage",
+                "promotions.manage",
+                "reports.view",
+                "staff.manage",
+                "settings.manage"
+              ]
+            : ["dashboard.view", "orders.manage", "tables.manage", "reservations.manage"],
+          account_status: session.accountStatus ?? "active"
         }}
       />
     </AdminShell>

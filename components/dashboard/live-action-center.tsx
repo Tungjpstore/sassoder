@@ -233,7 +233,7 @@ function applyOptimisticOrderAction(orders: OrderDto[], action: QuickAction, now
 }
 
 function realtimeLabel(state: RealtimeState) {
-  if (state === "connected") return "Realtime";
+  if (state === "connected") return "Tức thời";
   if (state === "error") return "Mất kết nối";
   return "Đang nối";
 }
@@ -567,7 +567,7 @@ export function AdminLiveActionCenter({
         </button>
 
         {open && (
-          <div className="absolute right-0 top-[calc(100%+10px)] z-[60] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+          <div className="absolute right-0 top-[calc(100%+10px)] z-[var(--z-dashboard-panel)] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--foreground)]">Luồng thao tác nhanh</p>
@@ -605,7 +605,7 @@ export function AdminLiveActionCenter({
       </div>
 
       {primaryActions.length > 0 && (
-        <section className="fixed bottom-4 right-4 z-[50] hidden w-[380px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl xl:block">
+        <section className="fixed bottom-4 right-4 z-[var(--z-dashboard-panel)] hidden w-[380px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl xl:block">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)]">Cần xử lý ngay</p>
@@ -655,7 +655,7 @@ function FloatingActionNotice({
           : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
 
   return (
-    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[60] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
+    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[var(--z-dashboard-panel)] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
       <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-3">
         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${toneClass}`}>
           <Icon size={20} />

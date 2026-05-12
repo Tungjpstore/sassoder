@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     if (!allowed) {
       throw new AppError("Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau.", 429);
     }
-    const body = checkoutOrderSchema.parse(await request.json());
+    const body = checkoutOrderSchema.parse(await request.json().catch(() => ({})));
     await startCustomerPayment(orderId, body.paymentMethod, body);
     return ok(await getPublicOrder(orderId, body));
   } catch (error) {

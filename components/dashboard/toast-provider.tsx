@@ -63,7 +63,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-[200] grid gap-2 max-lg:left-4 lg:w-[380px]">
+      <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-[var(--z-dashboard-toast)] grid gap-2 max-lg:left-4 lg:w-[380px]">
         {toasts.map((t) => {
           const Icon = icons[t.type];
           const isError = t.type === "error";

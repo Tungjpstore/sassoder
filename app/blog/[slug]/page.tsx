@@ -13,6 +13,7 @@ import {
   getBlogTopicHub,
   getBlogTopicHubPath,
   getRelatedBlogPosts,
+  type BlogIllustration,
   type BlogTopicHub
 } from "@/lib/seo/blog";
 import { createSeoMetadata } from "@/lib/seo/metadata";
@@ -116,6 +117,7 @@ export default async function BlogArticlePage({ params }: { params: Promise<{ sl
                   <Clock size={14} />
                   {post.readingTimeMinutes} phút đọc
                 </span>
+                {post.wordCount ? <span>{post.wordCount} từ</span> : null}
                 <span>{post.topic}</span>
                 <span>Cập nhật {post.updatedAt}</span>
               </div>
@@ -140,6 +142,8 @@ export default async function BlogArticlePage({ params }: { params: Promise<{ sl
         <section className="article-body-section">
           <div className="article-container article-layout">
             <div className="article-content">
+              {post.illustration ? <ArticleSketch slug={post.slug} illustration={post.illustration} /> : null}
+
               {post.sections.map((section) => (
                 <section key={section.heading}>
                   <h2>{section.heading}</h2>
@@ -222,6 +226,68 @@ export default async function BlogArticlePage({ params }: { params: Promise<{ sl
   );
 }
 
+function ArticleSketch({ slug, illustration }: { slug: string; illustration: BlogIllustration }) {
+  const titleId = `article-sketch-title-${slug}`;
+  const descriptionId = `article-sketch-description-${slug}`;
+  const [first, second, third, fourth] = illustration.labels;
+
+  return (
+    <figure className="article-sketch">
+      <svg viewBox="0 0 720 300" role="img" aria-labelledby={`${titleId} ${descriptionId}`}>
+        <title id={titleId}>{illustration.alt}</title>
+        <desc id={descriptionId}>{illustration.caption}</desc>
+        <defs>
+          <linearGradient id={`article-sketch-gradient-${slug}`} x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0%" stopColor="#FFF7EB" />
+            <stop offset="100%" stopColor="#E7F0E1" />
+          </linearGradient>
+          <filter id={`article-sketch-shadow-${slug}`} x="-10%" y="-20%" width="120%" height="140%">
+            <feDropShadow dx="0" dy="10" stdDeviation="12" floodColor="#092E23" floodOpacity="0.12" />
+          </filter>
+        </defs>
+        <rect width="720" height="300" rx="32" fill={`url(#article-sketch-gradient-${slug})`} />
+        <path d="M55 238 C165 180 240 238 350 177 S542 114 662 154" fill="none" stroke="rgba(15,77,58,0.18)" strokeWidth="4" strokeDasharray="10 12" />
+        <g filter={`url(#article-sketch-shadow-${slug})`}>
+          <rect x="46" y="64" width="140" height="94" rx="22" fill="#FFFFFF" />
+          <rect x="214" y="116" width="140" height="94" rx="22" fill="#FFFFFF" />
+          <rect x="382" y="64" width="140" height="94" rx="22" fill="#FFFFFF" />
+          <rect x="550" y="116" width="124" height="94" rx="22" fill="#FFFFFF" />
+        </g>
+        <g fill="none" stroke="#0F4D3A" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5">
+          <path d="M186 111 H214" />
+          <path d="M354 163 H382" />
+          <path d="M522 111 H550" />
+          <path d="M204 101 L214 111 L204 121" />
+          <path d="M372 153 L382 163 L372 173" />
+          <path d="M540 101 L550 111 L540 121" />
+        </g>
+        <g fontFamily="ui-sans-serif, system-ui, sans-serif" fontWeight="850" textAnchor="middle">
+          <circle cx="116" cy="92" r="18" fill="#F28C28" opacity="0.9" />
+          <circle cx="284" cy="144" r="18" fill="#0F4D3A" opacity="0.9" />
+          <circle cx="452" cy="92" r="18" fill="#F28C28" opacity="0.9" />
+          <circle cx="612" cy="144" r="18" fill="#0F4D3A" opacity="0.9" />
+          <text x="116" y="131" fill="#092E23" fontSize="18">
+            {first}
+          </text>
+          <text x="284" y="183" fill="#092E23" fontSize="18">
+            {second}
+          </text>
+          <text x="452" y="131" fill="#092E23" fontSize="18">
+            {third}
+          </text>
+          <text x="612" y="183" fill="#092E23" fontSize="18">
+            {fourth}
+          </text>
+        </g>
+        <text x="52" y="256" fill="#0F4D3A" fontFamily="ui-sans-serif, system-ui, sans-serif" fontSize="18" fontWeight="900">
+          {illustration.title}
+        </text>
+      </svg>
+      <figcaption>{illustration.caption}</figcaption>
+    </figure>
+  );
+}
+
 function BlogTopicHubPage({ hub }: { hub: BlogTopicHub }) {
   const hubPosts = getBlogPostsForTopicHub(hub);
 
@@ -247,7 +313,7 @@ function BlogTopicHubPage({ hub }: { hub: BlogTopicHub }) {
       <header className="article-header">
         <div className="article-container article-nav">
           <LogiVNLogo href="/" className="h-10" priority />
-          <nav aria-label="Điều hướng topic hub" className="article-nav-links">
+          <nav aria-label="Điều hướng nhóm bài viết" className="article-nav-links">
             <Link href="/">Trang chủ</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
@@ -583,6 +649,29 @@ const styles = `
 .article-content p {
   margin-top: 14px;
   font-size: 17px;
+}
+
+.article-sketch {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid rgba(15, 77, 58, 0.14);
+  border-radius: 32px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: 0 18px 42px rgba(26, 34, 31, 0.07);
+}
+
+.article-sketch svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.article-sketch figcaption {
+  margin-top: 14px;
+  color: var(--article-muted);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.65;
 }
 
 .article-faq {

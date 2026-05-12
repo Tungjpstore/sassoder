@@ -9,6 +9,7 @@ import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { motion } from "framer-motion";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
+import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
 import type { AiAgentPlan } from "@/types/ai-agent";
@@ -289,6 +290,13 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
   const runPlatformAction = useCallback((action: PlatformAgentAction) => {
     router.push(action.route);
   }, [router]);
+
+  useCopilotResponseWatchdog({
+    timeoutMs: 12_000,
+    fallbackText:
+      "Platform AI chưa nhận được phản hồi đầy đủ, nhưng bạn vẫn có thể tiếp tục bằng shortcut an toàn: mở khu vực admin liên quan, kiểm tra billing/tenant/security hoặc chạy lại yêu cầu ngắn hơn."
+  });
+
   const readable = useMemo(
     () => ({
       surface: "platform_admin",

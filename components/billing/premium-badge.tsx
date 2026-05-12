@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 const labels: Record<BillingBadgeKind, string> = {
   PREMIUM: "PREMIUM",
   PRO: "PRO",
-  AI: "AI",
-  NEW: "NEW",
-  BETA: "BETA"
+  AI: "SMART",
+  NEW: "MỚI",
+  BETA: "THỬ NGHIỆM"
 };
 
 export function PremiumBadge({

@@ -25,18 +25,12 @@ import {
   Trash2,
   Utensils
 } from "lucide-react";
-import { create } from "zustand";
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
-import {
-  addDineInCartItem,
-  decrementDineInCartItem,
-  removeDineInCartItem,
-  setDineInCartItemNote,
-  type DineInCartItem
-} from "@/lib/customer/cart-state";
+import { useDineInCartStore } from "@/hooks/customer/use-dine-in-cart-store";
+import { useDineInMenuBrowser } from "@/hooks/customer/use-customer-menu-browser";
 import {
   dineInCheckoutReducer,
   type DineInCheckoutAction,
@@ -45,36 +39,6 @@ import {
 import type { AiAgentAction } from "@/types/ai-agent";
 import type { PaymentMethod, TableBillStatus } from "@/types/domain";
 import type { PublicMenuCategory, PublicPromotion } from "@/types";
-
-type CartStore = {
-  items: Record<string, DineInCartItem>;
-  add: (item: Omit<DineInCartItem, "quantity">) => void;
-  decrement: (menuItemId: string) => void;
-  remove: (menuItemId: string) => void;
-  setNote: (menuItemId: string, note: string) => void;
-  clear: () => void;
-};
-
-const useCart = create<CartStore>((set) => ({
-  items: {},
-  add: (item) =>
-    set((state) => ({
-      items: addDineInCartItem(state.items, item)
-    })),
-  decrement: (menuItemId) =>
-    set((state) => ({
-      items: decrementDineInCartItem(state.items, menuItemId)
-    })),
-  remove: (menuItemId) =>
-    set((state) => ({
-      items: removeDineInCartItem(state.items, menuItemId)
-    })),
-  setNote: (menuItemId, note) =>
-    set((state) => ({
-      items: setDineInCartItemNote(state.items, menuItemId, note)
-    })),
-  clear: () => set({ items: {} })
-}));
 
 type PaymentInfo =
   | {
@@ -216,10 +180,6 @@ function promotionDescription(promotion: PublicPromotion) {
   return `Giảm ${value} cho đơn hiện tại`;
 }
 
-function normalizeText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
 function formatCountdown(seconds: number) {
   const minute = Math.floor(seconds / 60);
   const second = seconds % 60;
@@ -229,7 +189,7 @@ function formatCountdown(seconds: number) {
 function realtimeLabel(state: RealtimeState) {
   if (state === "connected") return "Cập nhật tự động đang bật";
   if (state === "connecting") return "Đang kết nối trạng thái đơn";
-  if (state === "error") return "Realtime tạm gián đoạn, bấm làm mới nếu cần";
+  if (state === "error") return "Cập nhật tự động tạm gián đoạn, bấm làm mới nếu cần";
   return "Trạng thái sẽ tự cập nhật sau khi gọi món";
 }
 
@@ -374,7 +334,7 @@ function PrimaryButton({
 
 function BottomDock({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-none bg-gradient-to-t from-[#fffefa] via-[#fffefa] to-transparent px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-8 sm:max-w-[390px]">
+    <div className="fixed inset-x-0 bottom-0 z-[var(--z-customer-sticky)] mx-auto w-full max-w-none bg-gradient-to-t from-[#fffefa] via-[#fffefa] to-transparent px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-8 sm:max-w-[390px]">
       {children}
     </div>
   );
@@ -397,7 +357,7 @@ function FloatingCustomerActions({
 }) {
   return (
     <div
-      className="customer-floating-actions customer-floating-actions--dine-in pointer-events-none fixed z-[1305] flex max-w-[270px] flex-col items-end gap-2"
+      className="customer-floating-actions customer-floating-actions--dine-in pointer-events-none fixed z-[var(--z-customer-cart)] flex max-w-[270px] flex-col items-end gap-2"
     >
       {notice ? (
         <div role="status" className="rounded-2xl border border-[#dce9df] bg-white/96 px-3 py-2 text-right text-[12px] font-black text-[#0f6b43] shadow-[0_12px_28px_rgba(16,32,23,0.12)] backdrop-blur">
@@ -741,6 +701,7 @@ function ReceiptInvoice({
 export function CustomerOrderClient({
   restaurant,
   table,
+  tableAccessToken,
   categories
 }: {
   restaurant: {
@@ -756,13 +717,13 @@ export function CustomerOrderClient({
     promotions: PublicPromotion[];
   };
   table: { id: string; name: string };
+  tableAccessToken?: string | null;
   categories: PublicMenuCategory[];
 }) {
-  const { items, add, decrement, remove, setNote, clear } = useCart();
+  const { items, add, decrement, remove, setNote, clear } = useDineInCartStore();
   const cart = Object.values(items);
   const [screen, setScreen] = useState<CustomerScreen>("menu");
-  const [categoryId, setCategoryId] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const { categoryId, searchQuery, setCategoryId, setSearchQuery, visibleCategories } = useDineInMenuBrowser(categories);
   const [customerSessionId, setCustomerSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<CreatedOrder[]>([]);
   const [customerNote, setCustomerNote] = useState("");
@@ -806,16 +767,6 @@ export function CustomerOrderClient({
       ),
     [cart]
   );
-  const visibleCategories = useMemo(() => {
-    const query = normalizeText(searchQuery.trim());
-    const scoped = categoryId === "all" ? categories : categories.filter((category) => category.id === categoryId);
-    return scoped
-      .map((category) => ({
-        ...category,
-        items: query ? category.items.filter((item) => normalizeText(item.name).includes(query)) : category.items
-      }))
-      .filter((category) => category.items.length > 0 || !query);
-  }, [categories, categoryId, searchQuery]);
   const createdOrderId = created?.order.id;
   const customerSessionKey = useMemo(() => customerSessionStorageKey(restaurant.id, table.id), [restaurant.id, table.id]);
   const openHistory = useMemo(() => history.filter((entry) => isOpenOrder(entry.order.status)), [history]);
@@ -900,6 +851,7 @@ export function CustomerOrderClient({
         body: JSON.stringify({
           restaurantSlug: restaurant.slug,
           tableId: table.id,
+          tableAccessToken: tableAccessToken ?? undefined,
           customerSessionId: sessionId,
           message: "Khách cần nhân viên hỗ trợ tại bàn."
         })
@@ -927,6 +879,7 @@ export function CustomerOrderClient({
           tableId: table.id,
           customerSessionId
         });
+        if (tableAccessToken) params.set("tableAccessToken", tableAccessToken);
         const response = await fetch(`/api/orders/history?${params.toString()}`, { cache: "no-store" });
         const json = await response.json();
         if (!json.ok) throw new Error(json.error ?? "Không tải được lịch sử gọi món");
@@ -946,7 +899,7 @@ export function CustomerOrderClient({
         setHistoryLoading(false);
       }
     },
-    [customerSessionId, openEntry, restaurant.slug, table.id]
+    [customerSessionId, openEntry, restaurant.slug, table.id, tableAccessToken]
   );
 
   useEffect(() => {
@@ -1025,6 +978,7 @@ export function CustomerOrderClient({
         body: JSON.stringify({
           restaurantSlug: restaurant.slug,
           tableId: table.id,
+          tableAccessToken: tableAccessToken ?? undefined,
           customerSessionId: sessionId,
           customerNote: [customerNote.trim(), driverNote.trim()].filter(Boolean).join("\n"),
           promotionCode: selectedPromotionCode || undefined,
@@ -1067,6 +1021,7 @@ export function CustomerOrderClient({
         body: JSON.stringify({
           restaurantSlug: restaurant.slug,
           tableId: table.id,
+          tableAccessToken: tableAccessToken ?? undefined,
           customerSessionId: sessionId
         })
       });
@@ -1096,6 +1051,7 @@ export function CustomerOrderClient({
         body: JSON.stringify({
           restaurantSlug: restaurant.slug,
           tableId: table.id,
+          tableAccessToken: tableAccessToken ?? undefined,
           customerSessionId: sessionId,
           paymentMethod: method
         })

@@ -25,7 +25,7 @@ export function AnalyticsExportActions() {
         className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary)]"
       >
         <FileJson size={17} />
-        Xuất JSON
+        Xuất dữ liệu chi tiết
       </a>
       <a
         href="/dashboard/settings?section=notifications"

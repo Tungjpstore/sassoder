@@ -628,7 +628,7 @@ export function MenuWorkspace({
       </section>
 
       {panelMode !== "closed" && (
-        <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
           <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng bảng nổi" onClick={closePanel} />
           <aside
             role="dialog"
@@ -636,7 +636,7 @@ export function MenuWorkspace({
             aria-labelledby="menu-workspace-drawer-title"
             className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu</p>
                 <h3 id="menu-workspace-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
@@ -652,7 +652,7 @@ export function MenuWorkspace({
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {uploadError ? (
                 <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">
                   {uploadError}

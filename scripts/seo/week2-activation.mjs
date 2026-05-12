@@ -13,9 +13,16 @@ async function readText(file) {
   return readFile(fullPath, "utf8");
 }
 
-function extractBlogRoutes(blogSource) {
-  const slugs = [...blogSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
-  return ["/blog", ...slugs.map((slug) => `/blog/${slug}`)];
+function extractBlogInventory(blogSource) {
+  const [postSource = "", hubAndFunctionsSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
+  const [hubSource = ""] = hubAndFunctionsSource.split("export function getAllBlogPosts");
+  const postSlugs = [...postSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
+  const hubSlugs = [...hubSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
+
+  return {
+    postRoutes: postSlugs.map((slug) => `/blog/${slug}`),
+    hubRoutes: hubSlugs.map((slug) => `/blog/${slug}`)
+  };
 }
 
 function absoluteUrl(route) {
@@ -56,6 +63,7 @@ function renderMarkdown(report) {
     "",
     `- Expected public URLs: ${report.inventory.expectedPublicUrls}`,
     `- Blog posts: ${report.inventory.blogPosts}`,
+    `- Topic hubs: ${report.inventory.topicHubs}`,
     `- New URLs needing GSC action: ${report.gsc.missingInspectionUrls.length}`,
     `- Firecrawl coverage: ${report.firecrawl.discoveredExpectedUrls}/${report.inventory.expectedPublicUrls}`,
     `- Lighthouse routes checked: ${report.lighthouse.routeCount}`,
@@ -81,9 +89,11 @@ async function main() {
   await mkdir(reportsDir, { recursive: true });
 
   const blogSource = await readText("lib/seo/blog.ts");
-  const publicRoutes = ["/", "/pricing", ...extractBlogRoutes(blogSource)];
+  const blogInventory = extractBlogInventory(blogSource);
+  const publicRoutes = ["/", "/pricing", "/blog", ...blogInventory.postRoutes, ...blogInventory.hubRoutes];
   const expectedUrls = publicRoutes.map(absoluteUrl);
-  const blogPosts = publicRoutes.filter((route) => route.startsWith("/blog/")).length;
+  const blogPosts = blogInventory.postRoutes.length;
+  const topicHubs = blogInventory.hubRoutes.length;
 
   const blogAudit = await readJsonReport("reports/seo/blog-expansion-audit.json", { root });
   const gscSummary = await readJsonReport("reports/seo/gsc-summary.json", { root });
@@ -153,7 +163,8 @@ async function main() {
     inventory: {
       expectedPublicUrls: expectedUrls.length,
       publicRoutes,
-      blogPosts
+      blogPosts,
+      topicHubs
     },
     lighthouse: {
       routeCount: lighthouseRouteCount,

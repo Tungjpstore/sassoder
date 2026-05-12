@@ -38,8 +38,8 @@ function orderLocationLabel(order: OrderDto) {
 }
 
 function realtimeLabel(status: RealtimeState) {
-  if (status === "connected") return "Bếp đang nhận đơn realtime";
-  if (status === "error") return "Realtime gián đoạn";
+  if (status === "connected") return "Bếp đang nhận đơn tức thời";
+  if (status === "error") return "Kết nối bị gián đoạn";
   return "Đang kết nối bếp";
 }
 

@@ -701,7 +701,7 @@ function BillingStepHeader({ index, title, subtitle }: { index: number; title: s
 
 function BillingSurface({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn("rounded-[24px] border border-[#E7E0D6] bg-[#FFFDF8] shadow-[0_18px_55px_rgba(21,30,24,0.06)]", className)}>
+    <section className={cn("billing-flow-surface rounded-[24px] border border-[#E7E0D6] bg-[#FFFDF8] shadow-[0_18px_55px_rgba(21,30,24,0.06)]", className)}>
       {children}
     </section>
   );
@@ -1265,7 +1265,7 @@ function SubscriptionSettingsPanel({
   }
 
   return (
-    <section className="flex min-h-[calc(100dvh-132px)] flex-col rounded-[30px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:p-6">
+    <section className="billing-flow-shell flex min-h-[calc(100dvh-132px)] flex-col rounded-[30px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:p-6">
       {billingError ? (
         <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-[#F4D7AF] bg-[#FFF5E8] p-4 text-sm font-semibold leading-6 text-[#9B5417]">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -1302,7 +1302,7 @@ function SubscriptionSettingsPanel({
         </div>
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{pageContent}</div>
+      <div className="billing-flow-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">{pageContent}</div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         {previousStep ? (
@@ -1691,7 +1691,7 @@ export default async function AdminSettingsPage({
         />
 
         {activeSection && activeMeta ? (
-          <div className="fixed inset-0 z-[100] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+          <div className="fixed inset-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
             <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-3 py-2 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-4">
               <div className="flex min-w-0 items-center gap-3">
                 <Link

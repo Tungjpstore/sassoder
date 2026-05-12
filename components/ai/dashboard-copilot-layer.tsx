@@ -10,6 +10,7 @@ import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { motion } from "framer-motion";
 import { ExternalLink, Loader2, Play, ShieldCheck, Sparkles } from "lucide-react";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
+import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
 import { useCopilotHistoryReplay } from "@/components/ai/use-copilot-history-replay";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
@@ -1076,6 +1077,34 @@ function DashboardCopilotExperience({
     );
     return normalizedResult;
   }, []);
+
+  const handleCopilotFallback = useCallback(
+    (lastUserMessage: string) => {
+      const focus = inferOwnerIntentFromMessage(lastUserMessage, currentOwnerIntent);
+      rememberOwnerResult({
+        ...buildOwnerShortcutResult({
+          focus,
+          pathname,
+          restaurantName,
+          threadId
+        }),
+        reply: "LogiBot mất quá lâu để phản hồi, nên mình đã dựng shortcut hành động an toàn dựa trên màn hiện tại thay vì để bạn chờ."
+      });
+    },
+    [currentOwnerIntent, pathname, rememberOwnerResult, restaurantName, threadId]
+  );
+
+  const fallbackText = useCallback(
+    (lastUserMessage: string) =>
+      `Mình chưa nhận được phản hồi đầy đủ cho câu: "${lastUserMessage.slice(0, 120)}". Mình đã chuẩn bị shortcut an toàn theo đúng màn hiện tại; bạn có thể bấm gợi ý nhanh hoặc hỏi lại ngắn hơn để LogiBot chạy phân tích tiếp.`,
+    []
+  );
+
+  useCopilotResponseWatchdog({
+    timeoutMs: 14_000,
+    fallbackText,
+    onFallback: handleCopilotFallback
+  });
 
   function findQueuedAction(actionId: string) {
     return queuedActions.find((action) => action.id === actionId) ?? null;

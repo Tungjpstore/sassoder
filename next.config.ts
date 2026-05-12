@@ -23,6 +23,7 @@ const contentSecurityPolicy = [
 const nextConfig: NextConfig = {
   typedRoutes: false,
   experimental: {
+    optimizePackageImports: ["lucide-react"],
     serverActions: {
       bodySizeLimit: "8mb"
     }

@@ -395,9 +395,9 @@ export const customerAiIntentConfig: Record<CustomerAiIntent, IntentConfig<Custo
     label: "Đặt bàn",
     description: "Hướng dẫn đặt bàn trước, cọc giữ chỗ, giờ đến và hết hạn giữ bàn.",
     systemAddendum:
-      "Không tự giữ bàn nếu chưa có booking. Hướng dẫn khách vào luồng đặt bàn, nhập số khách, giờ đến và thanh toán cọc nếu có.",
-    responseContract: "Nêu bước đặt bàn và thông tin cần chuẩn bị.",
-    suggestions: ["Tôi muốn đặt bàn", "Có cần đặt cọc không?", "Tôi đến muộn thì sao?"]
+      "Đóng vai LogiBot đặt bàn. Nếu có reservationStatus, giải thích đúng trạng thái, cọc, thời gian giữ bàn, đến muộn, đổi/hủy lịch. Không tự giữ bàn nếu chưa có booking. Không tự xác nhận cọc hoặc tự hủy lịch; chỉ hướng dẫn khách bấm CTA an toàn.",
+    responseContract: "Nêu trạng thái hoặc bước tiếp theo, sau đó chỉ 1 CTA phù hợp: tiếp tục đặt bàn, cập nhật trạng thái, chuyển cọc, gọi quán hoặc hủy có xác nhận.",
+    suggestions: ["Tôi muốn đặt bàn", "Có cần đặt cọc không?", "Tôi đến muộn thì sao?", "Tôi muốn đổi giờ hoặc hủy lịch"]
   },
   promotion: {
     intent: "promotion",
@@ -444,7 +444,7 @@ const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
   payment: ["thanh toan", "vietqr", "tien mat", "hoa don", "chuyen khoan", "da tra"],
   staff_call: ["goi nhan vien", "nhan vien", "ho tro", "them nuoc", "muon gap"],
   delivery: ["giao hang", "ship", "dia chi", "phi ship", "bao lau", "theo doi"],
-  reservation: ["dat ban", "giu ban", "dat cho", "coc"],
+  reservation: ["dat ban", "giu ban", "dat cho", "coc", "giu cho", "lich dat", "doi gio", "huy lich", "den muon", "tre gio", "con ban", "ban trong"],
   promotion: ["ma giam", "khuyen mai", "voucher", "uu dai"],
   allergy: ["di ung", "an chay", "khong cay", "it cay", "it ngot", "hai san"]
 };
@@ -467,7 +467,7 @@ const customerRouteRules: Array<IntentRouteRule<CustomerAiIntent>> = [
   { intent: "payment", weight: 5, patterns: ["thanh toan", "toi da chuyen khoan", "vietqr", "hoa don", "da tra"] },
   { intent: "order_status", weight: 5, patterns: ["don cua toi", "trang thai don", "quan da nhan", "cho mon"] },
   { intent: "delivery", weight: 4, patterns: ["giao hang", "phi ship", "bao lau giao", "dia chi giao"] },
-  { intent: "reservation", weight: 4, patterns: ["dat ban", "giu ban", "dat cho", "tien coc"] },
+  { intent: "reservation", weight: 6, patterns: ["dat ban", "giu ban", "dat cho", "tien coc", "huy lich", "doi gio", "den muon", "tre gio", "con ban khong"] },
   { intent: "allergy", weight: 5, patterns: ["di ung", "an chay", "khong cay", "it ngot", "khong hai san"] },
   { intent: "promotion", weight: 4, patterns: ["ma giam", "khuyen mai", "voucher", "uu dai"] },
   { intent: "staff_call", weight: 4, patterns: ["goi nhan vien", "them nuoc", "can ho tro", "gap nhan vien"] }
@@ -533,6 +533,189 @@ function jsonBlock(value: unknown, maxLength: number) {
   return JSON.stringify(value, null, 2).slice(0, maxLength);
 }
 
+function recordFromUnknown(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function recordArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = recordFromUnknown(item);
+    return record ? [record] : [];
+  });
+}
+
+function textArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      const record = recordFromUnknown(item);
+      return textValue(record?.title) || textValue(record?.label) || textValue(record?.action);
+    })
+    .filter(Boolean);
+}
+
+function textValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberValue(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatVnd(value: unknown) {
+  const amount = numberValue(value);
+  return amount > 0 ? `${Math.round(amount).toLocaleString("vi-VN")}đ` : "0đ";
+}
+
+function statusCountText(value: unknown) {
+  const record = recordFromUnknown(value);
+  if (!record) return "";
+  return Object.entries(record)
+    .map(([status, count]) => ({ status, count: numberValue(count) }))
+    .filter((item) => item.count > 0)
+    .map((item) => `${item.status}: ${item.count}`)
+    .join(", ");
+}
+
+function orderAttentionScore(order: Record<string, unknown>) {
+  const status = foldText(textValue(order.status));
+  const paymentStatus = foldText(textValue(order.paymentStatus));
+  if (status.includes("pending") || status.includes("waiting") || paymentStatus.includes("waiting")) return 4;
+  if (status.includes("ordering") || status.includes("preparing")) return 3;
+  if (paymentStatus.includes("unpaid") || paymentStatus.includes("pending")) return 2;
+  return 0;
+}
+
+function orderLine(order: Record<string, unknown>) {
+  const shortId = textValue(order.shortId) || textValue(order.id).slice(0, 8) || "đơn";
+  const table = textValue(order.tableName) || textValue(order.customerName) || "chưa rõ bàn/khách";
+  const status = textValue(order.status) || "chưa rõ trạng thái";
+  const paymentStatus = textValue(order.paymentStatus);
+  const total = formatVnd(order.total);
+  return `${shortId} · ${table} · ${status}${paymentStatus ? `/${paymentStatus}` : ""} · ${total}`;
+}
+
+function topAttentionOrders(snapshot: Record<string, unknown> | null) {
+  return recordArray(snapshot?.recentOrders)
+    .map((order) => ({ order, score: orderAttentionScore(order) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((item) => orderLine(item.order));
+}
+
+function buildOwnerNextStep(input: {
+  intent: OwnerAiIntent;
+  attentionOrders: string[];
+  waitingConfirmPayments: number;
+  menuItemCount: number;
+  menuUnavailableCount: number;
+  setupBlockers: string[];
+}) {
+  if (input.attentionOrders.length && ["overview", "orders", "kitchen", "tables"].includes(input.intent)) {
+    return "Bước ưu tiên: đề xuất action nhận/xử lý đơn chờ hoặc mở đúng màn Đơn hàng; không tự xác nhận thanh toán.";
+  }
+  if (input.waitingConfirmPayments > 0 || input.intent === "payments") {
+    return "Bước ưu tiên: mở đối soát thanh toán và yêu cầu chủ quán kiểm tiền trước khi xác nhận.";
+  }
+  if (input.intent === "menu" || input.menuItemCount === 0 || input.menuUnavailableCount > 0) {
+    return "Bước ưu tiên: hướng tới OCR/tạo món/tạo ảnh món và nêu rõ thao tác áp dụng vào menu.";
+  }
+  if (input.setupBlockers.length || input.intent === "setup" || input.intent === "settings") {
+    return "Bước ưu tiên: xử lý blocker đầu tiên trong Settings/Menu/Bàn trước, sau đó mới tối ưu tăng trưởng.";
+  }
+  if (input.intent === "growth") {
+    return "Bước ưu tiên: tạo nội dung thương hiệu dùng được ngay và đưa action áp dụng/lưu thay vì chỉ tư vấn.";
+  }
+  return "Bước ưu tiên: trả lời bằng 1 việc cần làm ngay, kèm nút/màn thao tác an toàn.";
+}
+
+function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unknown; context?: Record<string, unknown> }) {
+  const snapshot = recordFromUnknown(input.snapshot);
+  const context = recordFromUnknown(input.context);
+  const summary = recordFromUnknown(snapshot?.summary24h);
+  const restaurant = recordFromUnknown(snapshot?.restaurant);
+  const readiness = recordFromUnknown(restaurant?.setupReadiness);
+  const tables = recordFromUnknown(snapshot?.tables);
+  const menu = recordFromUnknown(snapshot?.menu);
+  const payments = recordFromUnknown(snapshot?.payments);
+  const route = textValue(context?.route) || textValue(context?.currentPath) || textValue(context?.pathname);
+  const attentionOrders = topAttentionOrders(snapshot);
+  const setupBlockers = [
+    ...textArray(readiness?.launchBlockers),
+    ...textArray(readiness?.criticalMissing),
+    ...textArray(readiness?.nextActions)
+  ].slice(0, 5);
+  const waitingConfirmPayments = numberValue(payments?.waitingConfirm);
+  const menuItemCount = numberValue(menu?.itemCount);
+  const menuUnavailableCount = numberValue(menu?.unavailableCount);
+  const orderStatus = statusCountText(summary?.statusCount);
+  const paymentStatus = statusCountText(summary?.paymentStatusCount);
+  const lines = [
+    `Context digest ưu tiên: intent=${input.intent}${route ? `, route=${route}` : ""}.`,
+    summary
+      ? `Ca 24h: ${numberValue(summary.orderCount)} đơn, doanh thu đã thanh toán ${formatVnd(summary.paidRevenue)}${orderStatus ? `, order ${orderStatus}` : ""}${paymentStatus ? `, payment ${paymentStatus}` : ""}.`
+      : "Ca 24h: chưa có summary trong snapshot.",
+    attentionOrders.length ? `Đơn cần chú ý: ${attentionOrders.join(" | ")}.` : "Đơn cần chú ý: chưa thấy đơn khẩn trong recentOrders.",
+    tables
+      ? `Bàn/QR: ${numberValue(tables.activeTableCount)}/${numberValue(tables.tableCount)} bàn đang hoạt động, ${numberValue(tables.qrDisabledCount)} QR tắt.`
+      : "",
+    menu ? `Menu: ${menuItemCount} món, ${menuUnavailableCount} món tạm hết/chưa bán.` : "",
+    payments ? `Thanh toán: ${waitingConfirmPayments} giao dịch chờ xác nhận trong snapshot.` : "",
+    readiness ? `Setup: điểm ${numberValue(readiness.score)}, blocker ${setupBlockers.slice(0, 3).join(" | ") || "không có blocker rõ"}.` : "",
+    buildOwnerNextStep({ intent: input.intent, attentionOrders, waitingConfirmPayments, menuItemCount, menuUnavailableCount, setupBlockers })
+  ];
+  return lines.filter(Boolean).join("\n").slice(0, 1800);
+}
+
+function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: unknown; orderStatus?: unknown; menuSnapshot?: unknown; reservationStatus?: unknown }) {
+  const menu = recordFromUnknown(input.menuSnapshot);
+  const cart = recordFromUnknown(input.cart);
+  const orderStatus = recordFromUnknown(input.orderStatus);
+  const reservationStatus = recordFromUnknown(input.reservationStatus);
+  const categories = recordArray(menu?.categories);
+  const menuItemCount = numberValue(menu?.itemCount) || categories.reduce((sum, category) => sum + recordArray(category.items).length, 0);
+  const promotions = recordArray(menu?.promotions);
+  const cartItems = recordArray(cart?.items ?? input.cart);
+  const orderState = textValue(orderStatus?.status) || textValue(orderStatus?.orderStatus);
+  const paymentState = textValue(orderStatus?.paymentStatus);
+  const reservationState = textValue(reservationStatus?.status);
+  const reservationDepositState = textValue(reservationStatus?.depositStatus);
+  const reservationStartsAt = textValue(reservationStatus?.startsAt);
+  const reservationHoldExpiresAt = textValue(reservationStatus?.holdExpiresAt);
+  const nextStep =
+    input.intent === "reservation"
+      ? reservationState
+        ? "Bước tiếp: giải thích trạng thái lịch đặt, cọc/giữ bàn và dẫn khách tới CTA cập nhật, chuyển cọc, hủy có xác nhận hoặc gọi quán."
+        : "Bước tiếp: dẫn khách chọn ngày, số khách, khung giờ và chuẩn bị số điện thoại."
+      : input.intent === "cart" && cartItems.length
+      ? "Bước tiếp: nhắc khách mở giỏ, kiểm tra số lượng/ghi chú rồi gửi đơn."
+      : orderState || paymentState
+        ? "Bước tiếp: giải thích đúng trạng thái đơn/thanh toán và dẫn tới hóa đơn hoặc nút thanh toán."
+        : menuItemCount > 0
+          ? "Bước tiếp: gợi ý tối đa 3 món có trong menu thật và nhắc nút thêm món."
+          : "Bước tiếp: nói menu chưa đủ dữ liệu, hướng khách xem danh mục hoặc hỏi khẩu vị.";
+
+  return [
+    `Context khách ưu tiên: intent=${input.intent}.`,
+    `Menu đang có: ${categories.length} danh mục, ${menuItemCount} món, ${promotions.length} khuyến mãi.`,
+    `Giỏ hàng: ${cartItems.length} dòng món.`,
+    orderState || paymentState ? `Đơn hiện tại: ${orderState || "chưa rõ trạng thái"}${paymentState ? `/${paymentState}` : ""}.` : "",
+    reservationState
+      ? `Lịch đặt hiện tại: status=${reservationState}${reservationDepositState ? `, deposit=${reservationDepositState}` : ""}${reservationStartsAt ? `, startsAt=${reservationStartsAt}` : ""}${reservationHoldExpiresAt ? `, holdExpiresAt=${reservationHoldExpiresAt}` : ""}.`
+      : input.intent === "reservation"
+        ? "Lịch đặt hiện tại: chưa có booking trong context."
+        : "",
+    nextStep
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, 1200);
+}
+
 function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant: AiRestaurantContext) {
   return [
     "Bạn là LogiVN AI Operating Copilot cho chủ quán F&B tại Việt Nam.",
@@ -543,6 +726,8 @@ function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant:
     "Chỉ dùng dữ liệu được cung cấp trong prompt. Nếu thiếu dữ liệu, nói rõ 'chưa có dữ liệu' và đề xuất màn cần cấu hình.",
     "Không tự xác nhận thanh toán, không hủy/xóa dữ liệu, không đổi gói, không hứa đã thay đổi dữ liệu nếu chưa có action chạy thành công.",
     "Không yêu cầu API key/env/token. Không suy đoán dữ liệu quán khác. Không expose raw JSON/tool output cho UI.",
+    "Nếu prompt có Context digest, đọc nó trước JSON thô và dùng nó làm nguồn ưu tiên để quyết định màn, rủi ro và bước tiếp.",
+    "Nếu người dùng đang ở một route cụ thể, trả lời như trợ lý nhúng trong màn đó; không chuyển chủ đề nếu không cần.",
     "Nếu câu hỏi liên quan OCR, logo, ảnh món, branding hoặc setup: trả lời theo hướng tạo draft/action dùng được ngay, không chỉ mô tả lý thuyết.",
     "Nếu câu hỏi liên quan xử lý đơn/bếp/thanh toán: ưu tiên action an toàn, batch action khi có nhiều đơn chờ, và nêu bước cần chủ quán xác nhận.",
     "Nếu không chắc intent: chọn hành động an toàn nhất là mở đúng màn hoặc tạo checklist ngắn; không im lặng.",
@@ -569,6 +754,7 @@ function buildCustomerPromptKernel(config: IntentConfig<CustomerAiIntent>, resta
     "Chỉ gợi ý món có trong menu snapshot. Nếu thiếu dữ liệu, nói rõ và hỏi lại một câu ngắn.",
     "Không yêu cầu thông tin nhạy cảm. Với dị ứng nghiêm trọng, khuyên khách gọi nhân viên.",
     "Không lặp lại danh sách món dài. UI sẽ hiển thị CTA; câu trả lời chỉ giải thích quyết định.",
+    "Nếu prompt có Context khách ưu tiên, đọc trước JSON thô và trả lời theo trạng thái menu/giỏ/đơn hiện tại.",
     `Danh mục hỗ trợ: ${config.label} (${config.intent}).`,
     config.systemAddendum,
     `Contract trả lời: ${config.responseContract}`,
@@ -596,6 +782,7 @@ export function buildOwnerAssistantMessages(input: {
   snapshot?: unknown;
 }): AiPromptMessage[] {
   const config = ownerAiIntentConfig[input.intent];
+  const contextDigest = buildOwnerContextDigest(input);
   return [
     {
       role: "system",
@@ -605,9 +792,10 @@ export function buildOwnerAssistantMessages(input: {
       role: "user",
       content: [
         `Yêu cầu của chủ quán:\n${input.message.trim()}`,
+        contextDigest ? `\n\n${contextDigest}` : "",
         input.snapshot ? `\nSnapshot vận hành đúng restaurant_id:\n${jsonBlock(input.snapshot, 9000)}` : "",
         input.context ? `\nNgữ cảnh UI từ dashboard:\n${jsonBlock(input.context, 5000)}` : "",
-        "\nHãy trả lời plain text cực gọn theo 3 dòng: Nhận định, Hành động ưu tiên, Lưu ý an toàn. Không markdown. Không liệt kê dài vì UI đã có nút action riêng."
+        "\nHãy trả lời plain text cực gọn theo 3 dòng: Tình huống, Bước tiếp, Nút/màn nên bấm. Không markdown. Không liệt kê dài vì UI đã có nút action riêng."
       ].join("")
     }
   ];
@@ -620,8 +808,10 @@ export function buildCustomerAssistantMessages(input: {
   cart?: unknown;
   orderStatus?: unknown;
   menuSnapshot?: unknown;
+  reservationStatus?: unknown;
 }): AiPromptMessage[] {
   const config = customerAiIntentConfig[input.intent];
+  const contextDigest = buildCustomerContextDigest(input);
   return [
     {
       role: "system",
@@ -631,10 +821,12 @@ export function buildCustomerAssistantMessages(input: {
       role: "user",
       content: [
         `Khách hỏi:\n${input.message.trim()}`,
+        contextDigest ? `\n\n${contextDigest}` : "",
         input.menuSnapshot ? `\nMenu/khuyến mãi đang hiển thị:\n${jsonBlock(input.menuSnapshot, 6500)}` : "",
         input.cart ? `\nGiỏ hàng hiện tại:\n${jsonBlock(input.cart, 3000)}` : "",
         input.orderStatus ? `\nTrạng thái đơn/hóa đơn hiện tại:\n${jsonBlock(input.orderStatus, 3500)}` : "",
-        "\nTrả lời plain text tối đa 2-3 dòng. Nếu phù hợp, nhắc ngắn rằng khách có thể bấm CTA bên dưới như Thêm món, Mở giỏ, Gọi nhân viên, Tôi đã thanh toán hoặc Hóa đơn."
+        input.reservationStatus ? `\nTrạng thái đặt bàn hiện tại:\n${jsonBlock(input.reservationStatus, 3500)}` : "",
+        "\nTrả lời plain text tối đa 2-3 dòng. Nếu phù hợp, nhắc ngắn rằng khách có thể bấm CTA bên dưới như Thêm món, Mở giỏ, Gọi nhân viên, Tôi đã thanh toán, Hóa đơn, Cập nhật lịch đặt hoặc Huỷ lịch có xác nhận."
       ].join("")
     }
   ];

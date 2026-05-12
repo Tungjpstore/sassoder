@@ -1,5 +1,10 @@
 import { AppError } from "@/lib/response";
 import { createSlug } from "@/lib/slug";
+import {
+  getStaffPermissionPreset,
+  normalizeStaffPermissions,
+  type StaffPermissionProfile
+} from "@/lib/staff-permissions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -42,6 +47,16 @@ type RestaurantOperationsSummary = {
 type RestaurantDashboardBundle = {
   dashboard: RestaurantDashboard;
   operations: RestaurantOperationsSummary;
+};
+type StaffProfileRow = {
+  id: string;
+  email: string;
+  role: "ADMIN" | "STAFF";
+  restaurant_id: string;
+  staff_title?: string | null;
+  permission_profile?: StaffPermissionProfile | null;
+  permissions?: Json | null;
+  account_status?: "active" | "blocked";
 };
 type DashboardSnapshotRow = {
   dashboard?: {
@@ -93,6 +108,22 @@ function writeCachedDashboardBundle(restaurantId: string, value: RestaurantDashb
     value,
     expiresAt: Date.now() + dashboardBundleTtlMs
   });
+}
+
+function isMissingStaffProfileColumn(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return error.code === "PGRST204" || /staff_title|permission_profile|permissions/i.test(error.message ?? "");
+}
+
+function hydrateStaffProfile(row: StaffProfileRow) {
+  const preset = getStaffPermissionPreset(row.permission_profile ?? (row.role === "ADMIN" ? "manager" : "service"));
+  return {
+    ...row,
+    staff_title: row.staff_title ?? preset.title,
+    permission_profile: preset.key,
+    permissions: normalizeStaffPermissions(row.permissions, preset.key),
+    account_status: row.account_status ?? "active"
+  };
 }
 
 export function invalidateRestaurantDashboardCache(restaurantId: string) {
@@ -351,33 +382,59 @@ export async function getRestaurantPaymentSettings(restaurantId: string) {
 }
 
 export async function listRestaurantUsers(restaurantId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = (await createServerSupabaseClient()) as any;
   const { data, error } = await supabase
     .from("users")
-    .select("id,email,role,restaurant_id")
+    .select("id,email,role,restaurant_id,staff_title,permission_profile,permissions,account_status")
     .eq("restaurant_id", restaurantId)
     .order("role", { ascending: true })
     .order("email", { ascending: true });
 
+  if (isMissingStaffProfileColumn(error)) {
+    const fallback = await supabase
+      .from("users")
+      .select("id,email,role,restaurant_id,account_status")
+      .eq("restaurant_id", restaurantId)
+      .order("role", { ascending: true })
+      .order("email", { ascending: true });
+    throwIfSupabaseError(fallback.error);
+    return (fallback.data ?? []).map((row: StaffProfileRow) => hydrateStaffProfile(row));
+  }
+
   throwIfSupabaseError(error);
-  return data ?? [];
+  return (data ?? []).map((row: StaffProfileRow) => hydrateStaffProfile(row));
 }
 
 export async function createRestaurantUser(input: {
   restaurantId: string;
   email: string;
   password: string;
-  role: "ADMIN" | "STAFF";
+  permissionProfile: StaffPermissionProfile;
 }) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createAdminSupabaseClient() as any;
   const normalizedEmail = input.email.toLowerCase();
+  const preset = getStaffPermissionPreset(input.permissionProfile);
+
+  const { data: existingUser, error: existingUserError } = await supabase
+    .from("users")
+    .select("id")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+  throwIfSupabaseError(existingUserError);
+  if (existingUser) {
+    throw new AppError("Email này đã có tài khoản trong hệ thống.", 409);
+  }
+
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
     email: normalizedEmail,
     password: input.password,
     email_confirm: true,
     user_metadata: {
       restaurant_id: input.restaurantId,
-      role: input.role
+      role: preset.role,
+      staff_title: preset.title,
+      permission_profile: preset.key,
+      permissions: preset.permissions
     }
   });
 
@@ -385,16 +442,34 @@ export async function createRestaurantUser(input: {
     throw new AppError(authError?.message ?? "Không tạo được tài khoản nhân viên", 400);
   }
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("users")
     .insert({
       id: authUser.user.id,
       email: normalizedEmail,
-      role: input.role,
-      restaurant_id: input.restaurantId
+      role: preset.role,
+      restaurant_id: input.restaurantId,
+      staff_title: preset.title,
+      permission_profile: preset.key,
+      permissions: preset.permissions
     })
     .select()
     .single();
+
+  if (isMissingStaffProfileColumn(error)) {
+    const fallback = await supabase
+      .from("users")
+      .insert({
+        id: authUser.user.id,
+        email: normalizedEmail,
+        role: preset.role,
+        restaurant_id: input.restaurantId
+      })
+      .select()
+      .single();
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) {
     await supabase.auth.admin.deleteUser(authUser.user.id);
@@ -408,24 +483,35 @@ export async function updateRestaurantUserRole(input: {
   restaurantId: string;
   userId: string;
   actorUserId: string;
-  role: "ADMIN" | "STAFF";
+  permissionProfile: StaffPermissionProfile;
 }) {
   if (input.userId === input.actorUserId) {
     throw new AppError("Bạn không thể đổi vai trò của chính tài khoản đang đăng nhập.", 400);
   }
 
-  const supabase = createAdminSupabaseClient();
-  const { data: user, error: userError } = await supabase
+  const preset = getStaffPermissionPreset(input.permissionProfile);
+  const supabase = createAdminSupabaseClient() as any;
+  let userResult = await supabase
     .from("users")
-    .select("id,email,role,restaurant_id")
+    .select("id,email,role,restaurant_id,permission_profile,permissions")
     .eq("id", input.userId)
     .eq("restaurant_id", input.restaurantId)
     .single();
 
-  throwIfSupabaseError(userError);
+  if (isMissingStaffProfileColumn(userResult.error)) {
+    userResult = await supabase
+      .from("users")
+      .select("id,email,role,restaurant_id")
+      .eq("id", input.userId)
+      .eq("restaurant_id", input.restaurantId)
+      .single();
+  }
+
+  const user = userResult.data as StaffProfileRow | null;
+  throwIfSupabaseError(userResult.error);
   if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
 
-  if (user.role === "ADMIN" && input.role === "STAFF") {
+  if (user.role === "ADMIN" && preset.role === "STAFF") {
     const { count, error } = await supabase
       .from("users")
       .select("id", { count: "exact", head: true })
@@ -437,25 +523,43 @@ export async function updateRestaurantUserRole(input: {
     }
   }
 
-  const { data, error } = await supabase
+  let updateResult = await supabase
     .from("users")
-    .update({ role: input.role })
+    .update({
+      role: preset.role,
+      staff_title: preset.title,
+      permission_profile: preset.key,
+      permissions: preset.permissions
+    })
     .eq("id", input.userId)
     .eq("restaurant_id", input.restaurantId)
     .select()
     .single();
 
-  throwIfSupabaseError(error);
+  if (isMissingStaffProfileColumn(updateResult.error)) {
+    updateResult = await supabase
+      .from("users")
+      .update({ role: preset.role })
+      .eq("id", input.userId)
+      .eq("restaurant_id", input.restaurantId)
+      .select()
+      .single();
+  }
+
+  throwIfSupabaseError(updateResult.error);
 
   const { error: metadataError } = await supabase.auth.admin.updateUserById(input.userId, {
     user_metadata: {
       restaurant_id: input.restaurantId,
-      role: input.role
+      role: preset.role,
+      staff_title: preset.title,
+      permission_profile: preset.key,
+      permissions: normalizeStaffPermissions(preset.permissions, preset.key)
     }
   });
   if (metadataError) throw new AppError(metadataError.message, 400);
 
-  return data;
+  return updateResult.data;
 }
 
 export async function deleteRestaurantUser(input: {

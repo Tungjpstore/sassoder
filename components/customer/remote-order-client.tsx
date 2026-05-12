@@ -36,6 +36,7 @@ import { CustomerDeliveryLocationPicker } from "@/components/location/customer-d
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
 import { RouteMiniMap } from "@/components/customer/route-mini-map";
 import { Button } from "@/components/ui/button";
+import { useRemoteCart, useRemoteMenuBrowser } from "@/hooks/customer/use-customer-menu-browser";
 import { deliveryStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import {
@@ -419,7 +420,7 @@ function SoftCard({ children, className = "" }: { children: React.ReactNode; cla
 
 function BottomAction({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky bottom-0 z-20 mt-auto border-t border-[#f0eee4] bg-[#fffefa]/94 px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
+    <div className="sticky bottom-0 z-[var(--z-customer-sticky)] mt-auto border-t border-[#f0eee4] bg-[#fffefa]/94 px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
       {children}
     </div>
   );
@@ -440,7 +441,7 @@ function FloatingRemoteActions({
 }) {
   return (
     <div
-      className="customer-floating-actions customer-floating-actions--remote pointer-events-none fixed z-[1305] flex max-w-[280px] flex-col items-end gap-2"
+      className="customer-floating-actions customer-floating-actions--remote pointer-events-none fixed z-[var(--z-customer-cart)] flex max-w-[280px] flex-col items-end gap-2"
     >
       {notice ? (
         <div role="status" className="rounded-2xl border border-[#dce9df] bg-white/96 px-3 py-2 text-right text-[12px] font-black text-[#0f6b43] shadow-[0_12px_28px_rgba(16,32,23,0.12)] backdrop-blur">
@@ -489,11 +490,10 @@ export function RemoteOrderClient({
 }) {
   const allItems = useMemo(() => flattenItems(categories), [categories]);
   const [screen, setScreen] = useState<RemoteScreen>("menu");
-  const [activeCategory, setActiveCategory] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const { activeCategory, searchQuery, setActiveCategory, setSearchQuery, visibleItems } = useRemoteMenuBrowser(allItems);
   const [mode, setMode] = useState<FulfillmentMode>(restaurant.deliveryEnabled ? "DELIVERY" : "PICKUP");
   const [paymentChoice, setPaymentChoice] = useState<PaymentChoice>(restaurant.onlinePaymentMode === "QR_PREPAID" ? "vietqr" : "cash");
-  const [cart, setCart] = useState<Record<string, RemoteCartLine>>({});
+  const { cart, cartLines, setCart } = useRemoteCart(allItems);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -520,24 +520,6 @@ export function RemoteOrderClient({
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const actionInFlightRef = useRef<"submit" | "mark_paid" | null>(null);
   const customerToastTimerRef = useRef<number | null>(null);
-
-  const visibleItems = useMemo(() => {
-    const normalizedSearch = searchQuery.trim().toLowerCase();
-    return allItems.filter((item) => {
-      const matchesCategory = activeCategory === "all" || item.categoryId === activeCategory;
-      const matchesSearch = !normalizedSearch || `${item.name} ${item.categoryName}`.toLowerCase().includes(normalizedSearch);
-      return matchesCategory && matchesSearch;
-    });
-  }, [activeCategory, allItems, searchQuery]);
-
-  const cartLines = useMemo(() => {
-    return Object.values(cart)
-      .map((line) => {
-        const item = allItems.find((menuItem) => menuItem.id === line.itemId);
-        return item ? { ...line, item } : null;
-      })
-      .filter(Boolean) as Array<RemoteCartLine & { item: MenuItemWithCategory }>;
-  }, [allItems, cart]);
 
   const cartItemCount = cartLines.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = cartLines.reduce((sum, line) => sum + line.item.price * line.quantity, 0);
@@ -1115,8 +1097,14 @@ export function RemoteOrderClient({
 
             <div className="grid grid-cols-[1fr_44px] gap-2">
               <label className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9aa49a]" size={18} />
+                <span className="sr-only">Tìm món trong menu</span>
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9aa49a]" size={18} aria-hidden="true" />
                 <input
+                  name="menuSearch"
+                  type="search"
+                  aria-label="Tìm món trong menu"
+                  autoComplete="off"
+                  enterKeyHint="search"
                   value={searchQuery}
                   onChange={(event) => setSearchQuery(event.target.value)}
                   placeholder="Tìm món, vd: cà phê, trà sữa..."

@@ -1,0 +1,174 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { categorySchema, menuItemSchema, updateMenuItemSchema } from "@/lib/validators";
+import { persistMenuImageUrl, uploadMenuImageFile } from "@/services/menu-image-service";
+import {
+  createCategory,
+  createMenuItem,
+  deleteMenuItem,
+  importMenuItemsFromDraft,
+  invalidateMenuCache,
+  updateMenuItem,
+  updateMenuItemAvailability
+} from "@/services/menu-service";
+import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
+import { assertRestaurantResourceLimit } from "@/services/subscription-service";
+import { requireOperationalAdminSession } from "./shared";
+
+const menuOcrImportItemSchema = z.object({
+  categoryName: z.string().trim().max(80).optional().or(z.literal("")),
+  name: z.string().trim().min(2).max(120),
+  price: z.coerce.number().int().min(1000).max(100000000)
+});
+
+export async function createCategoryAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = categorySchema.parse({ name: formData.get("name") });
+  await createCategory(session.restaurantId, parsed.name);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+}
+
+export async function createMenuItemAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuItemSchema.parse({
+    categoryId: formData.get("categoryId"),
+    name: formData.get("name"),
+    price: formData.get("price"),
+    image: formData.get("image") ?? ""
+  });
+  const uploadedImage = await uploadMenuImageFile({
+    restaurantId: session.restaurantId,
+    file: formData.get("imageFile")
+  });
+  const persistedImage = uploadedImage
+    ? uploadedImage
+    : await persistMenuImageUrl({
+        restaurantId: session.restaurantId,
+        imageUrl: parsed.image || undefined
+      });
+  await assertRestaurantResourceLimit({
+    restaurantId: session.restaurantId,
+    featureKey: "menu_management",
+    table: "menu_items",
+    label: "món"
+  });
+
+  await createMenuItem({
+    restaurantId: session.restaurantId,
+    ...parsed,
+    image: persistedImage ?? (parsed.image || undefined)
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+}
+
+export async function importMenuOcrItemsAction(
+  _prevState: { error?: string; success?: string; inserted?: number; skipped?: number; categoriesCreated?: number; skippedNames?: string[] } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const rawItems = String(formData.get("itemsJson") ?? "");
+  let parsedJson: unknown = [];
+
+  try {
+    parsedJson = JSON.parse(rawItems);
+  } catch {
+    parsedJson = [];
+  }
+
+  const parsed = z.array(menuOcrImportItemSchema).max(80).safeParse(parsedJson);
+  if (!parsed.success || parsed.data.length === 0) {
+    return { error: "Không có món hợp lệ để nhập vào menu." };
+  }
+
+  const result = await importMenuItemsFromDraft({
+    restaurantId: session.restaurantId,
+    items: parsed.data,
+    beforeInsert: async (increment) => {
+      await assertRestaurantResourceLimit({
+        restaurantId: session.restaurantId,
+        featureKey: "menu_management",
+        table: "menu_items",
+        label: "món",
+        increment
+      });
+    }
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+
+  if (result.inserted === 0) {
+    return {
+      ...result,
+      success: result.skipped > 0 ? `Không thêm món mới vì ${result.skipped} món đã có trong menu.` : "Không có món mới để thêm."
+    };
+  }
+
+  return {
+    ...result,
+    success: `Đã thêm ${result.inserted} món vào menu${result.skipped ? `, bỏ qua ${result.skipped} món trùng` : ""}.`
+  };
+}
+
+export async function deleteMenuItemAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const itemId = String(formData.get("itemId") ?? "");
+  await deleteMenuItem(session.restaurantId, itemId);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+}
+
+export async function toggleMenuItemAvailabilityAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const itemId = String(formData.get("itemId") ?? "");
+  const isAvailable = String(formData.get("isAvailable") ?? "") === "true";
+  await updateMenuItemAvailability(session.restaurantId, itemId, isAvailable);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+}
+
+export async function updateMenuItemAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = updateMenuItemSchema.parse({
+    itemId: formData.get("itemId"),
+    categoryId: formData.get("categoryId"),
+    name: formData.get("name"),
+    price: formData.get("price"),
+    image: formData.get("image") ?? "",
+    isAvailable: formData.get("isAvailable") === "true"
+  });
+  const uploadedImage = await uploadMenuImageFile({
+    restaurantId: session.restaurantId,
+    file: formData.get("imageFile")
+  });
+  const persistedImage = uploadedImage
+    ? uploadedImage
+    : await persistMenuImageUrl({
+        restaurantId: session.restaurantId,
+        imageUrl: parsed.image || undefined
+      });
+
+  await updateMenuItem({
+    restaurantId: session.restaurantId,
+    itemId: parsed.itemId,
+    categoryId: parsed.categoryId,
+    name: parsed.name,
+    price: parsed.price,
+    image: persistedImage ?? (parsed.image || undefined),
+    isAvailable: parsed.isAvailable
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+}

@@ -190,6 +190,11 @@ export async function proxy(request: NextRequest) {
       return NextResponse.rewrite(url);
     }
 
+    if (tenantPath === "/reserve") {
+      url.pathname = `/r/${tenantSlug}/reserve`;
+      return NextResponse.rewrite(url);
+    }
+
     if (tenantPath === "/menu") {
       url.pathname = `/r/${tenantSlug}`;
       return NextResponse.rewrite(url);

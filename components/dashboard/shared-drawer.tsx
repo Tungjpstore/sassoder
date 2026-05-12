@@ -38,7 +38,7 @@ export function DashboardDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] overflow-hidden overscroll-contain">
+    <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
       <button
         type="button"
         tabIndex={-1}
@@ -55,7 +55,7 @@ export function DashboardDrawer({
         tabIndex={-1}
         className={`drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
           <div>
             {subtitle && (
                 <p id={subtitleId} className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
@@ -75,9 +75,9 @@ export function DashboardDrawer({
                 <X size={18} aria-hidden="true" />
               </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">{children}</div>
         {footer && (
-          <div className="border-t border-[var(--border)] px-5 py-4">
+          <div className="shrink-0 border-t border-[var(--border)] px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-5 sm:py-4">
             {footer}
           </div>
         )}

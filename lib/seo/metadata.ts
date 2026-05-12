@@ -45,6 +45,16 @@ export function createSeoMetadata({
     alternates: {
       canonical
     },
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "any" },
+        { url: "/favicon-48x48.png", type: "image/png", sizes: "48x48" },
+        { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+        { url: "/icon.png", type: "image/png", sizes: "512x512" }
+      ],
+      shortcut: ["/favicon.ico"],
+      apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }]
+    },
     robots: noIndex
       ? {
           index: false,

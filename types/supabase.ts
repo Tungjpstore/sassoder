@@ -249,6 +249,9 @@ export type Database = {
           email: string;
           role: "ADMIN" | "STAFF";
           restaurant_id: string;
+          staff_title: string;
+          permission_profile: "manager" | "cashier" | "kitchen" | "service" | "delivery" | "viewer";
+          permissions: Json;
           account_status: "active" | "blocked";
           blocked_at: string | null;
           blocked_reason: string | null;
@@ -258,6 +261,9 @@ export type Database = {
           email: string;
           role?: "ADMIN" | "STAFF";
           restaurant_id: string;
+          staff_title?: string;
+          permission_profile?: "manager" | "cashier" | "kitchen" | "service" | "delivery" | "viewer";
+          permissions?: Json;
           account_status?: "active" | "blocked";
           blocked_at?: string | null;
           blocked_reason?: string | null;
@@ -266,6 +272,9 @@ export type Database = {
           email?: string;
           role?: "ADMIN" | "STAFF";
           restaurant_id?: string;
+          staff_title?: string;
+          permission_profile?: "manager" | "cashier" | "kitchen" | "service" | "delivery" | "viewer";
+          permissions?: Json;
           account_status?: "active" | "blocked";
           blocked_at?: string | null;
           blocked_reason?: string | null;

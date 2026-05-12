@@ -1,6 +1,6 @@
 # LogiVN SEO Foundation Report
 
-Generated: 2026-05-11T04:34:39.051Z
+Generated: 2026-05-11T14:45:01.573Z
 Score: 100/100
 
 | Area | Status | Confidence | Finding | Evidence | Fix |
@@ -11,6 +11,8 @@ Score: 100/100
 | crawl-optimization | PASS | CONFIRMED | RSS feed route exists for editorial discovery. | app/feed.xml/route.ts exists and emits RSS from shared blog posts | Keep feed.xml generated from the shared blog registry so new posts are discoverable without hardcoded URLs. |
 | metadata | PASS | CONFIRMED | Landing metadata is pinned to the Week 1 brand and QR ordering keyword target. | app/page.tsx exists and uses SEO_HOME_TITLE + SEO_HOME_DESCRIPTION | Keep the home title unique, brand-led and aligned with the H1. |
 | geo | PASS | CONFIRMED | AI search guidance file exists. | app/llms.txt/route.ts exists | Update llms.txt when product positioning, pricing or public pages change. |
+| metadata | PASS | CONFIRMED | Root favicon assets exist for browser and Google Search result discovery. | root favicon.ico, 48x48 PNG, 512x512 icon and apple icon exist | Keep /favicon.ico and 48x48+ PNG favicon variants crawlable at stable root URLs. |
+| metadata | PASS | CONFIRMED | Shared metadata emits icon links for public pages. | lib/seo/metadata.ts exists and emits favicon/apple icon metadata | Keep rel icon and apple icon metadata wired through createSeoMetadata. |
 | indexing | PASS | CONFIRMED | Dashboard route group has noindex metadata. | app/dashboard/layout.tsx exists and imports noIndexMetadata | Do not override this in child dashboard routes. |
 | schema | PASS | CONFIRMED | Organization, WebSite and SoftwareApplication JSON-LD are emitted from shared schema builders. | components/seo/site-json-ld.tsx exists and uses shared schema builders | Validate stable @id fragments and schema output in CI after every schema change. |
 | validation | PASS | CONFIRMED | Lighthouse CI thresholds are configured for SEO, performance and accessibility. | lighthouserc.cjs exists | Keep thresholds aligned with release risk. |
