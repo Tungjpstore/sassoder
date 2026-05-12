@@ -687,8 +687,20 @@ export async function markReservationDepositPaid(reservationId: string, token: s
 export async function cancelPublicReservation(reservationId: string, token: string): Promise<PublicReservationResult> {
   const restaurantId = await assertReservationAccess(reservationId, token);
   const reservation = await getFreshReservationById(reservationId, restaurantId);
+  const supabase = createAdminSupabaseClient();
 
   if (reservation.status === "cancelled" || closedReservationStatuses.includes(reservation.status)) {
+    if (reservation.status === "cancelled" && reservation.depositRequiredAmount > 0) {
+      await ensureReservationDepositLogEvent(supabase, {
+        reservationId,
+        restaurantId,
+        method: reservation.paymentMethod ?? "QR",
+        status: "cancelled",
+        amount: reservation.depositRequiredAmount,
+        source: "reservation_customer_cancel",
+        transitionKey: reservationDepositTransitionKey(reservationId, "customer-cancel")
+      });
+    }
     return getPublicReservation(reservationId, token);
   }
   if (reservation.status === "seated") {
@@ -704,7 +716,6 @@ export async function cancelPublicReservation(reservationId: string, token: stri
     throw new AppError("Lịch đặt đã có yêu cầu cọc. Vui lòng gọi quán để được hỗ trợ huỷ.", 409);
   }
 
-  const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
   const { data: updated, error } = await supabase
     .from("reservations")
@@ -877,7 +888,21 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
 
 export async function cancelReservation(restaurantId: string, reservationId: string) {
   const reservation = await getFreshReservationById(reservationId, restaurantId);
-  if (reservation.status === "cancelled") return reservation;
+  const supabase = createAdminSupabaseClient();
+  if (reservation.status === "cancelled") {
+    if (reservation.depositRequiredAmount > 0) {
+      await ensureReservationDepositLogEvent(supabase, {
+        reservationId,
+        restaurantId,
+        method: reservation.paymentMethod ?? "QR",
+        status: "cancelled",
+        amount: reservation.depositRequiredAmount,
+        source: "merchant_reservation_cancel",
+        transitionKey: reservationDepositTransitionKey(reservationId, "merchant-cancel")
+      });
+    }
+    return reservation;
+  }
   if (reservation.status === "seated") {
     throw new AppError("Không thể huỷ đặt bàn khi khách đã được nhận vào bàn.", 400);
   }
@@ -885,7 +910,6 @@ export async function cancelReservation(restaurantId: string, reservationId: str
     throw new AppError("Không thể huỷ đặt bàn đã kết thúc.", 400);
   }
 
-  const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
   const { error } = await supabase
     .from("reservations")
@@ -900,6 +924,18 @@ export async function cancelReservation(restaurantId: string, reservationId: str
     .eq("reservation_id", reservationId)
     .eq("restaurant_id", restaurantId);
   throwIfSupabaseError(lockError);
+
+  if (reservation.depositRequiredAmount > 0) {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId,
+      restaurantId,
+      method: reservation.paymentMethod ?? "QR",
+      status: "cancelled",
+      amount: reservation.depositRequiredAmount,
+      source: "merchant_reservation_cancel",
+      transitionKey: reservationDepositTransitionKey(reservationId, "merchant-cancel")
+    });
+  }
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
