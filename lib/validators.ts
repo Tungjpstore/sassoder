@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { staffPermissionProfiles } from "@/lib/staff-permissions";
+import { STAFF_PERMISSION_KEYS, staffPermissionProfiles } from "@/lib/staff-permissions";
 import { authPasswordMaxLength, authPasswordMinLength, authPasswordPolicyPatterns } from "@/lib/auth-password-policy";
 
 export const paymentMethodSchema = z.enum(["QR", "CASH"]);
@@ -26,6 +26,9 @@ const optionalIntegerInput = (min: number, max: number) =>
     (value) => (value === "" || value === null ? undefined : value),
     z.coerce.number().int().min(min).max(max).optional()
   );
+
+const optionalNumberInput = (schema: z.ZodNumber) =>
+  z.preprocess((value) => (value === "" || value === null ? undefined : value), schema.optional());
 
 const jsonArrayInput = <T extends z.ZodTypeAny>(schema: T, max: number) =>
   z.preprocess((value) => {
@@ -220,6 +223,10 @@ export const reservationIdSchema = z.object({
   reservationId: z.string().uuid()
 });
 
+export const reservationMoveTableSchema = z.object({
+  tableId: z.string().uuid()
+});
+
 export const reservationSettingsSchema = z.object({
   reservationsEnabled: z.coerce.boolean().optional(),
   reservationDepositEnabled: z.coerce.boolean().optional(),
@@ -241,6 +248,11 @@ export const authEmailSchema = z.string().trim().toLowerCase().email();
 export const loginSchema = z.object({
   email: authEmailSchema,
   password: z.string().min(8)
+});
+
+export const pinLoginSchema = z.object({
+  restaurantSlug: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{2,80}$/),
+  pin: z.string().trim().regex(/^\d{4,8}$/)
 });
 
 const strongPasswordSchema = z
@@ -451,7 +463,14 @@ export const updateMenuItemSchema = menuItemSchema.extend({
 export const tableSchema = z.object({
   name: z.string().min(1).max(80),
   area: z.string().trim().min(1).max(80).optional().or(z.literal("")),
-  capacity: z.coerce.number().int().min(1).max(50).optional()
+  capacity: z.coerce.number().int().min(1).max(50).optional(),
+  floorLabel: z.string().trim().min(1).max(80).optional().or(z.literal("")),
+  seatingZone: z.enum(["indoor", "outdoor", "mixed"]).optional(),
+  tableKind: z.enum(["standard", "vip", "bar", "community"]).optional(),
+  reservationPriority: z.coerce.number().int().min(1).max(999).optional(),
+  isBookable: z.coerce.boolean().optional(),
+  isHidden: z.coerce.boolean().optional(),
+  isUnderMaintenance: z.coerce.boolean().optional()
 });
 
 export const tableIdSchema = z.object({
@@ -492,10 +511,160 @@ export const promotionDisplaySchema = promotionIdSchema.extend({
   showOnCustomerMenu: z.coerce.boolean()
 });
 
+export const inventoryIngredientSchema = z.object({
+  categoryId: z.string().uuid().optional().or(z.literal("")),
+  name: z.string().trim().min(1).max(160),
+  unit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/),
+  onHandQuantity: z.coerce.number().finite().min(0).max(100000000),
+  minimumQuantity: z.coerce.number().finite().min(0).max(100000000),
+  referenceUnitCost: z.coerce.number().int().min(0).max(100000000),
+  storageArea: z.string().trim().max(80).optional().or(z.literal("")),
+  shelfCode: z.string().trim().max(80).optional().or(z.literal("")),
+  storageNote: z.string().trim().max(160).optional().or(z.literal("")),
+  reorderLeadDays: z.coerce.number().int().min(0).max(60).optional()
+});
+
+export const updateInventoryIngredientSchema = inventoryIngredientSchema.extend({
+  ingredientId: z.string().uuid()
+});
+
+export const inventoryIngredientIdSchema = z.object({
+  ingredientId: z.string().uuid()
+});
+
+export const inventoryCategorySchema = z.object({
+  name: z.string().trim().min(1).max(120)
+});
+
+export const inventoryRecipeLineSchema = z.object({
+  menuItemId: z.string().uuid(),
+  ingredientId: z.string().uuid(),
+  quantityPerItem: z.coerce.number().finite().gt(0).max(100000000),
+  wastePercent: z.coerce.number().finite().min(0).max(100).optional()
+});
+
+export const inventoryRecipeLineIdSchema = z.object({
+  recipeLineId: z.string().uuid()
+});
+
+export const inventoryMovementSchema = z.object({
+  ingredientId: z.string().uuid(),
+  movementType: z.enum(["receive", "adjust_increase", "adjust_decrease", "waste", "rollback"]),
+  quantity: z.coerce.number().finite().gt(0).max(100000000),
+  unitCost: z.coerce.number().int().min(0).max(100000000).optional(),
+  reason: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventorySupplierSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  address: z.string().trim().max(240).optional().or(z.literal("")),
+  defaultLeadDays: z.coerce.number().int().min(0).max(120).optional(),
+  isPreferred: z.coerce.boolean().optional()
+});
+
+export const inventoryPurchaseOrderSchema = z.object({
+  supplierId: z.string().uuid().optional().or(z.literal("")),
+  locationId: z.string().uuid().optional().or(z.literal("")),
+  ingredientId: z.string().uuid(),
+  orderQuantity: z.coerce.number().finite().gt(0).max(100000000),
+  orderUnit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/).optional().or(z.literal("")),
+  unitCost: z.coerce.number().int().min(0).max(100000000),
+  expectedDeliveryAt: z.string().trim().max(40).optional().or(z.literal("")),
+  expirationDate: z.string().trim().max(20).optional().or(z.literal("")),
+  batchCode: z.string().trim().regex(/^[A-Za-z0-9_.:/ -]{1,64}$/).optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventoryPurchaseOrderIdSchema = z.object({
+  purchaseOrderId: z.string().uuid()
+});
+
+export const inventoryCountSchema = z.object({
+  title: z.string().trim().max(160).optional().or(z.literal("")),
+  locationId: z.string().uuid().optional().or(z.literal("")),
+  ingredientId: z.string().uuid().optional().or(z.literal("")),
+  countedQuantity: optionalNumberInput(z.coerce.number().finite().min(0).max(100000000)),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+const inventoryCountLineSchema = z.object({
+  ingredientId: z.string().uuid(),
+  countedQuantity: z.coerce.number().finite().min(0).max(100000000),
+  locationId: z.string().uuid().optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventoryCountRowsSchema = z.object({
+  rows: jsonArrayInput(inventoryCountLineSchema, 300)
+});
+
+export const inventoryTransferSchema = z.object({
+  fromLocationId: z.string().uuid(),
+  toLocationId: z.string().uuid(),
+  ingredientId: z.string().uuid().optional().or(z.literal("")),
+  quantity: optionalNumberInput(z.coerce.number().finite().gt(0).max(100000000)),
+  unit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/).optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+}).refine((value) => value.fromLocationId !== value.toLocationId, {
+  message: "Kho xuất và kho nhận phải khác nhau.",
+  path: ["toLocationId"]
+});
+
+const inventoryTransferLineSchema = z.object({
+  ingredientId: z.string().uuid(),
+  quantity: z.coerce.number().finite().gt(0).max(100000000),
+  unit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/).optional().or(z.literal("")),
+  batchId: z.string().uuid().optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventoryTransferRowsSchema = z.object({
+  rows: jsonArrayInput(inventoryTransferLineSchema, 100)
+});
+
+export const inventoryAlertStatusSchema = z.object({
+  alertId: z.string().uuid(),
+  status: z.enum(["acknowledged", "resolved", "dismissed"])
+});
+
+export const inventoryImportRowsSchema = z.object({
+  rows: jsonArrayInput(
+    z.object({
+      name: z.string().trim().min(1).max(160),
+      unit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/),
+      quantity: z.coerce.number().finite().min(0).max(100000000),
+      minimumQuantity: z.coerce.number().finite().min(0).max(100000000).default(0),
+      referenceUnitCost: z.coerce.number().int().min(0).max(100000000).default(0),
+      categoryName: z.string().trim().max(120).optional().or(z.literal(""))
+    }),
+    120
+  )
+});
+
 export const staffInviteSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
-  permissionProfile: z.enum(staffPermissionProfiles).default("service")
+  email: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return undefined;
+      const normalized = value.trim().toLowerCase();
+      return normalized.length > 0 ? normalized : undefined;
+    },
+    z.string().email("Email nhân sự không hợp lệ.").optional()
+  ),
+  password: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") return undefined;
+      const normalized = value.trim();
+      return normalized.length > 0 ? normalized : undefined;
+    },
+    z.string().min(8, "Mật khẩu nhân sự cần ít nhất 8 ký tự.").optional()
+  ),
+  pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
+  fullName: z.string().trim().min(2).max(120),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/).default("waiter"),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  notes: z.string().trim().max(500).optional().or(z.literal(""))
 });
 
 export const staffRoleSchema = z.object({
@@ -505,4 +674,281 @@ export const staffRoleSchema = z.object({
 
 export const staffUserSchema = z.object({
   userId: z.string().uuid()
+});
+
+export const staffProfileSchema = z.object({
+  userId: z.string().uuid(),
+  fullName: z.string().trim().min(2).max(120),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  username: z.string().trim().regex(/^[a-z0-9._-]{3,40}$/).optional().or(z.literal("")),
+  pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
+  roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  employmentStatus: z.enum(["active", "suspended", "resigned"]).default("active"),
+  emergencyContactName: z.string().trim().max(120).optional().or(z.literal("")),
+  emergencyContactPhone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  notes: z.string().trim().max(500).optional().or(z.literal(""))
+});
+
+export const staffAccountStateSchema = z.object({
+  userId: z.string().uuid(),
+  nextState: z.enum(["active", "suspended", "archived"]),
+  reason: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffRolePermissionUpdateSchema = z.object({
+  roleId: z.string().uuid(),
+  permissions: z.array(z.enum(STAFF_PERMISSION_KEYS)).min(1).max(STAFF_PERMISSION_KEYS.length)
+});
+
+export const staffRoleCloneSchema = z.object({
+  sourceRoleId: z.string().uuid(),
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+const deviceFingerprintSchema = z.string().trim().regex(/^[a-zA-Z0-9._:-]{12,160}$/);
+
+export const staffSessionHeartbeatSchema = z.object({
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  sessionType: z.enum(["dashboard", "mobile", "kiosk", "pwa"]).default("dashboard"),
+  loginMethod: z.enum(["password", "pin", "recovery"]).default("password"),
+  deviceFingerprint: deviceFingerprintSchema,
+  deviceName: z.string().trim().max(120).optional().or(z.literal("")),
+  metadata: z.record(z.unknown()).optional().default({})
+});
+
+export const staffSessionForceLogoutSchema = z
+  .object({
+    sessionId: z.string().uuid().optional().or(z.literal("")),
+    staffMemberId: z.string().uuid().optional().or(z.literal("")),
+    reason: z.string().trim().max(240).optional().or(z.literal(""))
+  })
+  .refine((value) => Boolean(value.sessionId || value.staffMemberId), {
+    message: "Cần chọn phiên hoặc nhân sự để buộc đăng xuất."
+  });
+
+const shiftTimeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Giờ ca phải theo định dạng HH:mm.");
+const shiftDateSchema = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày phân ca không hợp lệ.");
+
+export const staffShiftTemplateSchema = z
+  .object({
+    name: z.string().trim().min(2).max(120),
+    branchId: z.string().uuid().optional().or(z.literal("")),
+    startTime: shiftTimeSchema,
+    endTime: shiftTimeSchema,
+    allowedLateMinutes: z.coerce.number().int().min(0).max(180).default(10),
+    overtimeThresholdMinutes: z.coerce.number().int().min(0).max(720).default(30),
+    attendanceRadiusMeters: z.coerce.number().int().min(50).max(150).default(80),
+    recurringWeekdays: jsonArrayInput(z.coerce.number().int().min(0).max(6), 7).default([])
+  })
+  .refine((value) => value.startTime !== value.endTime, {
+    message: "Giờ bắt đầu và kết thúc ca không được trùng nhau.",
+    path: ["endTime"]
+  });
+
+export const staffShiftAssignmentSchema = z.object({
+  staffMemberId: z.string().uuid(),
+  shiftId: z.string().uuid(),
+  scheduledDate: shiftDateSchema,
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffShiftAssignmentCancelSchema = z.object({
+  shiftAssignmentId: z.string().uuid("Ca làm cần huỷ không hợp lệ."),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffOperationalRequestSchema = z
+  .object({
+    requestType: z.enum(["leave_request", "shift_swap", "overtime"]),
+    staffMemberId: z.string().uuid().optional().or(z.literal("")),
+    branchId: z.string().uuid().optional().or(z.literal("")),
+    shiftAssignmentId: z.string().uuid().optional().or(z.literal("")),
+    targetStaffMemberId: z.string().uuid().optional().or(z.literal("")),
+    leaveType: z.enum(["paid", "unpaid", "sick", "emergency", "other"]).optional().or(z.literal("")),
+    fromDate: shiftDateSchema.optional().or(z.literal("")),
+    toDate: shiftDateSchema.optional().or(z.literal("")),
+    overtimeMinutes: optionalIntegerInput(15, 720),
+    reason: z.string().trim().max(500).optional().or(z.literal(""))
+  })
+  .superRefine((value, context) => {
+    if (value.requestType === "leave_request") {
+      if (!value.fromDate) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cần chọn ngày bắt đầu nghỉ.",
+          path: ["fromDate"]
+        });
+      }
+
+      if (!value.toDate) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cần chọn ngày kết thúc nghỉ.",
+          path: ["toDate"]
+        });
+      }
+
+      if (value.fromDate && value.toDate && value.toDate < value.fromDate) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Ngày kết thúc nghỉ phải sau ngày bắt đầu.",
+          path: ["toDate"]
+        });
+      }
+    }
+
+    if (value.requestType === "shift_swap" && !value.shiftAssignmentId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cần chọn ca muốn đổi.",
+        path: ["shiftAssignmentId"]
+      });
+    }
+
+    if (value.requestType === "overtime") {
+      if (!value.fromDate) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cần chọn ngày tăng ca.",
+          path: ["fromDate"]
+        });
+      }
+
+      if (!value.overtimeMinutes) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cần nhập số phút tăng ca.",
+          path: ["overtimeMinutes"]
+        });
+      }
+    }
+  });
+
+export const staffReviewCreateSchema = z.object({
+  staffMemberId: z.string().uuid(),
+  periodLabel: z.string().trim().min(2).max(80),
+  score: z.coerce.number().min(1).max(5),
+  note: z.string().trim().max(500).optional().or(z.literal(""))
+});
+
+export const staffContractCreateSchema = z
+  .object({
+    staffMemberId: z.string().uuid(),
+    contractType: z.enum(["official", "probation", "part_time", "service", "other"]).default("official"),
+    templateCode: z.enum(["restaurant_fixed_term", "restaurant_indefinite", "restaurant_part_time", "restaurant_probation"]).default("restaurant_fixed_term"),
+    contractNumber: z.string().trim().max(80).optional().or(z.literal("")),
+    jobTitle: z.string().trim().max(120).optional().or(z.literal("")),
+    workLocation: z.string().trim().max(240).optional().or(z.literal("")),
+    salaryAmount: z.preprocess(
+      (value) => (value === "" || value === null ? undefined : value),
+      z.coerce.number().min(0).max(1_000_000_000).optional()
+    ),
+    salaryPaymentMethod: z.string().trim().max(160).optional().or(z.literal("")),
+    workingTime: z.string().trim().max(600).optional().or(z.literal("")),
+    restTime: z.string().trim().max(600).optional().or(z.literal("")),
+    startDate: shiftDateSchema,
+    endDate: shiftDateSchema.optional().or(z.literal("")),
+    eSignatureStatus: z.enum(["draft", "pending_employee", "pending_employer", "signed", "declined", "voided"]).default("draft"),
+    eContractProvider: z.string().trim().max(120).optional().or(z.literal("")),
+    eContractId: z.string().trim().max(160).optional().or(z.literal("")),
+    signedDocumentUrl: z.string().trim().url("Link hợp đồng đã ký không hợp lệ.").optional().or(z.literal("")),
+    note: z.string().trim().max(500).optional().or(z.literal(""))
+  })
+  .refine((value) => !value.endDate || value.endDate >= value.startDate, {
+    message: "Ngày kết thúc hợp đồng phải sau ngày bắt đầu.",
+    path: ["endDate"]
+  });
+
+export const staffDocumentCreateSchema = z.object({
+  staffMemberId: z.string().uuid(),
+  documentName: z.string().trim().min(2).max(160),
+  documentType: z.enum(["identity_card", "health_certificate", "contract", "training", "other"]).default("other"),
+  fileUrl: z.string().trim().url("Link tài liệu không hợp lệ.").optional().or(z.literal("")),
+  note: z.string().trim().max(500).optional().or(z.literal(""))
+});
+
+export const staffDeviceCreateSchema = z.object({
+  staffMemberId: z.string().uuid().optional().or(z.literal("")),
+  deviceName: z.string().trim().min(2).max(160),
+  deviceType: z.enum(["phone", "tablet", "pos", "cash_drawer", "other"]).default("other"),
+  serialNumber: z.string().trim().max(120).optional().or(z.literal("")),
+  issuedAt: shiftDateSchema,
+  note: z.string().trim().max(500).optional().or(z.literal(""))
+});
+
+const attendanceDeviceInfoSchema = z
+  .record(z.unknown())
+  .optional()
+  .default({});
+
+const attendanceLatSchema = optionalCoordinateInput(-90, 90);
+const attendanceLngSchema = optionalCoordinateInput(-180, 180);
+
+function hasPartialCoordinatePair(value: { lat?: number; lng?: number }) {
+  return (value.lat === undefined && value.lng !== undefined) || (value.lat !== undefined && value.lng === undefined);
+}
+
+const attendanceCaptureBaseSchema = z.object({
+  staffMemberId: z.string().uuid().optional().or(z.literal("")),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  lat: attendanceLatSchema,
+  lng: attendanceLngSchema,
+  accuracyMeters: optionalIntegerInput(0, 5000),
+  capturedAt: z.string().datetime().optional(),
+  deviceInfo: attendanceDeviceInfoSchema,
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const attendanceClockInSchema = attendanceCaptureBaseSchema
+  .extend({
+    shiftAssignmentId: z.string().uuid().optional().or(z.literal("")),
+    source: z.enum(["gps", "qr", "manual", "offline_sync"]).default("gps"),
+    offlineQueueKey: z.string().trim().regex(/^[a-zA-Z0-9._:-]{8,120}$/).optional().or(z.literal(""))
+  })
+  .superRefine((value, context) => {
+    if (hasPartialCoordinatePair(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cần gửi đủ cả vĩ độ và kinh độ.",
+        path: ["lat"]
+      });
+    }
+
+    if (value.source === "gps" && (value.lat === undefined || value.lng === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Chấm công GPS cần vị trí thiết bị.",
+        path: ["lat"]
+      });
+    }
+  });
+
+export const attendanceClockOutSchema = attendanceCaptureBaseSchema
+  .extend({
+    attendanceLogId: z.string().uuid().optional().or(z.literal("")),
+    source: z.enum(["gps", "qr", "manual", "offline_sync"]).default("gps")
+  })
+  .superRefine((value, context) => {
+    if (hasPartialCoordinatePair(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Cần gửi đủ cả vĩ độ và kinh độ.",
+        path: ["lat"]
+      });
+    }
+
+    if (value.source === "gps" && (value.lat === undefined || value.lng === undefined)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Kết ca GPS cần vị trí thiết bị.",
+        path: ["lat"]
+      });
+    }
+  });
+
+export const attendanceApprovalReviewSchema = z.object({
+  decision: z.enum(["approved", "rejected"]),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
 });

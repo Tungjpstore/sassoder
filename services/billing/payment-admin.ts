@@ -120,6 +120,21 @@ export async function rejectSubscriptionPayment({
 
   if (error) throw error;
   if (!data) throw new AppError("Giao dịch này không còn chờ xác minh.", 409);
+
+  const { error: auditError } = await supabase.from("platform_audit_logs").insert({
+    actor: rejectedBy,
+    action: "subscription_payment_rejected_runtime",
+    target_type: "subscription_payment",
+    target_id: paymentId,
+    metadata: {
+      restaurantId: data.restaurant_id,
+      reason: reason || null
+    }
+  });
+  if (auditError && !isMissingSchemaError(auditError)) {
+    console.error("[subscription-service] Failed to write subscription rejection audit log", auditError);
+  }
+
   invalidateRestaurantEntitlementCache(data.restaurant_id);
   await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
 }

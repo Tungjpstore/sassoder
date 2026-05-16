@@ -22,10 +22,10 @@ export default async function ForgotPasswordPage({
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(15,77,58,0.08),transparent_30%),radial-gradient(circle_at_88%_10%,rgba(242,140,40,0.09),transparent_22%),linear-gradient(180deg,#fffcf6,#f7efe4)]" />
 
         <header className="relative z-10 flex min-h-14 items-center justify-between border-b border-[#123b2b]/10 bg-[#fffdf8]/76 px-5 py-3 backdrop-blur sm:px-8">
-          <LogiVNLogo href="/" className="h-8" priority />
+          <LogiVNLogo href="/" className="h-11" priority />
           <Link
             href="/dashboard/register"
-            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#0f4d3a]/15 bg-white/50 px-4 text-sm font-bold text-[#0f4d3a] transition hover:border-[#0f4d3a]/35"
+            className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-[#0f4d3a]/15 bg-white/50 px-4 text-sm font-bold text-[#0f4d3a] transition hover:border-[#0f4d3a]/35"
           >
             Tạo quán mới
           </Link>

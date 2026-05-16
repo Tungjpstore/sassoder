@@ -25,6 +25,7 @@ type OwnerIntent =
   | "orders"
   | "kitchen"
   | "menu"
+  | "inventory"
   | "tables"
   | "payments"
   | "promotions"
@@ -71,6 +72,7 @@ const ownerIntentOptions: Array<{ intent: OwnerIntent; label: string; routeHint:
   { intent: "orders", label: "Đơn", routeHint: "/dashboard/orders" },
   { intent: "kitchen", label: "Bếp", routeHint: "/dashboard/orders" },
   { intent: "menu", label: "Menu", routeHint: "/dashboard/menu" },
+  { intent: "inventory", label: "Kho hàng", routeHint: "/dashboard/inventory" },
   { intent: "tables", label: "Bàn", routeHint: "/dashboard/tables" },
   { intent: "payments", label: "Thanh toán", routeHint: "/dashboard/payments" },
   { intent: "online", label: "Online", routeHint: "/dashboard/online" },
@@ -88,6 +90,7 @@ const quickPrompts: Record<OwnerIntent, string[]> = {
   orders: ["Đơn nào cần xử lý trước và thao tác tiếp theo là gì?", "Kiểm tra đơn có nguy cơ trễ hoặc sai trạng thái"],
   kitchen: ["Sắp xếp thứ tự ra món cho bếp theo mức độ ưu tiên", "Có món/bàn nào quá giờ ra món không?"],
   menu: ["Món nào nên đẩy lên đầu menu khách?", "Đề xuất chỉnh danh mục để khách gọi nhanh hơn"],
+  inventory: ["Kho đang thiếu gì trước giờ cao điểm?", "Món nào thiếu định mức nguyên liệu?", "Gợi ý nhập hàng theo cảnh báo kho"],
   tables: ["Bàn nào cần chú ý ngay?", "Tóm tắt bàn trống, bàn đang phục vụ và bàn chờ thanh toán"],
   payments: ["Giao dịch nào đang cần đối soát?", "Kiểm tra rủi ro thanh toán VietQR/tiền mặt"],
   promotions: ["Tạo một mã khuyến mãi an toàn cho cuối tuần", "Mã nào nên bật hiển thị ở menu khách?"],
@@ -233,6 +236,7 @@ function agentEndpointText(payload: Record<string, unknown>) {
 function inferIntentFromPath(pathname: string): OwnerIntent {
   if (pathname.includes("/orders")) return "orders";
   if (pathname.includes("/menu")) return "menu";
+  if (pathname.includes("/inventory")) return "inventory";
   if (pathname.includes("/tables")) return "tables";
   if (pathname.includes("/payments")) return "payments";
   if (pathname.includes("/promotions")) return "promotions";
@@ -594,7 +598,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5"
+        className="fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 lg:bottom-5 lg:right-5"
       >
         <span className="grid h-12 w-12 overflow-hidden rounded-full">
           <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full object-cover" priority />
@@ -603,7 +607,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       </button>
 
       {open ? (
-        <section className="fixed bottom-20 right-5 z-[var(--z-dashboard-panel)] flex h-[min(720px,calc(100vh-112px))] w-[min(820px,calc(100vw-32px))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)]">
+        <section className="fixed inset-x-3 bottom-[calc(var(--dashboard-mobile-floating-bottom)_+_4.5rem)] z-[var(--z-dashboard-panel)] flex h-[min(720px,calc(100dvh_-_var(--dashboard-mobile-nav-height)_-_11rem))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)] lg:inset-x-auto lg:bottom-20 lg:right-5 lg:w-[min(820px,calc(100vw-32px))]">
           <header className="flex items-center justify-between bg-[var(--primary)] px-4 py-3 text-white">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-[var(--surface)] p-0.5">

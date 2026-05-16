@@ -11,7 +11,7 @@ function firstParam(value: string | string[] | undefined) {
 export default async function LoginPage({
   searchParams
 }: {
-  searchParams: Promise<{ authError?: string | string[]; reset?: string | string[]; email?: string | string[] }>;
+  searchParams: Promise<{ authError?: string | string[]; reset?: string | string[]; email?: string | string[]; session?: string | string[] }>;
 }) {
   const requestHeaders = await headers();
   const params = await searchParams;
@@ -24,6 +24,7 @@ export default async function LoginPage({
       tenantSlug={tenantSlug ?? ""}
       authError={firstParam(params.authError)}
       resetStatus={firstParam(params.reset)}
+      sessionStatus={firstParam(params.session)}
       initialEmail={firstParam(params.email)?.trim().toLowerCase() ?? ""}
     />
   );

@@ -1,13 +1,19 @@
 import { AppError } from "@/lib/response";
 import { createSlug } from "@/lib/slug";
 import {
+  STAFF_ROLE_TEMPLATES,
   getStaffPermissionPreset,
+  getStaffRoleTemplate,
+  mapPermissionProfileToRoleTemplateCode,
   normalizeStaffPermissions,
-  type StaffPermissionProfile
+  type StaffPermissionKey,
+  type StaffPermissionProfile,
+  type StaffRoleTemplateCode
 } from "@/lib/staff-permissions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { hashStaffPin, staffPinLookupHash } from "@/features/staff/services/staff-pin-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
 import { createInitialRestaurantSubscription } from "@/services/subscription-service";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
@@ -124,6 +130,253 @@ function hydrateStaffProfile(row: StaffProfileRow) {
     permissions: normalizeStaffPermissions(row.permissions, preset.key),
     account_status: row.account_status ?? "active"
   };
+}
+
+function isMissingStaffOperationsTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return error.code === "PGRST204" || error.code === "42P01" || /staff_members|staff_branch_assignments|staff_roles/i.test(error.message ?? "");
+}
+
+function nullIfBlank(value: string | null | undefined) {
+  if (!value) return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+type StaffOperationsRoleConfig = {
+  id: string | null;
+  code: string;
+  title: string;
+  scope: "ADMIN" | "STAFF";
+  profile: StaffPermissionProfile;
+  permissions: StaffPermissionKey[];
+};
+
+type StaffRoleConfigRow = {
+  id: string;
+  code: string;
+  name: string;
+  legacy_permission_profile: StaffPermissionProfile;
+  role_scope: "ADMIN" | "STAFF";
+};
+
+type StaffRolePermissionConfigRow = {
+  permission_key: StaffPermissionKey;
+};
+
+function isTemplateRoleCode(roleCode: string): roleCode is StaffRoleTemplateCode {
+  return STAFF_ROLE_TEMPLATES.some((role) => role.code === roleCode);
+}
+
+async function resolveStaffOperationsRole(supabase: any, restaurantId: string, roleCode: string): Promise<StaffOperationsRoleConfig> {
+  const roleResult = await supabase
+    .from("staff_roles")
+    .select("id,code,name,legacy_permission_profile,role_scope")
+    .eq("restaurant_id", restaurantId)
+    .eq("code", roleCode)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (roleResult.error && !isMissingStaffOperationsTable(roleResult.error)) {
+    throw new AppError(roleResult.error.message, 400);
+  }
+
+  const role = roleResult.data as StaffRoleConfigRow | null;
+  if (role) {
+    const permissionResult = await supabase
+      .from("staff_role_permissions")
+      .select("permission_key")
+      .eq("restaurant_id", restaurantId)
+      .eq("role_id", role.id);
+
+    if (permissionResult.error && !isMissingStaffOperationsTable(permissionResult.error)) {
+      throw new AppError(permissionResult.error.message, 400);
+    }
+
+    const template = STAFF_ROLE_TEMPLATES.find((item) => item.code === role.code);
+    const fallback = template?.permissions ?? getStaffPermissionPreset(role.legacy_permission_profile).permissions;
+    const permissionRows = (permissionResult.data ?? []) as StaffRolePermissionConfigRow[];
+    const permissions = permissionRows.length > 0 ? permissionRows.map((item) => item.permission_key) : fallback;
+
+    return {
+      id: role.id,
+      code: role.code,
+      title: role.name,
+      scope: role.role_scope,
+      profile: role.legacy_permission_profile,
+      permissions: normalizeStaffPermissions(permissions, role.legacy_permission_profile)
+    };
+  }
+
+  if (!isTemplateRoleCode(roleCode)) {
+    throw new AppError("Vai trò nhân sự không tồn tại hoặc đã bị tắt.", 404);
+  }
+
+  const template = getStaffRoleTemplate(roleCode);
+  return {
+    id: null,
+    code: template.code,
+    title: template.title,
+    scope: template.role,
+    profile: template.profile,
+    permissions: template.permissions
+  };
+}
+
+function profileNameFromEmail(email: string) {
+  return email
+    .split("@")[0]
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function upsertStaffOperationsProfile(
+  supabase: any,
+  input: {
+    restaurantId: string;
+    userId: string;
+    email: string;
+    roleCode: string;
+    roleConfig?: StaffOperationsRoleConfig;
+    fullName?: string | null;
+    phone?: string | null;
+    username?: string | null;
+    pin?: string | null;
+    employmentStatus?: "active" | "suspended" | "resigned";
+    emergencyContactName?: string | null;
+    emergencyContactPhone?: string | null;
+    notes?: string | null;
+  }
+) {
+  const role = input.roleConfig ?? await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  const pinPayload = input.pin
+    ? (() => {
+        const { pinHash, normalizedPin } = hashStaffPin(input.pin);
+        return {
+          pin_hash: pinHash,
+          pin_lookup_hash: staffPinLookupHash(input.restaurantId, normalizedPin),
+          pin_attempts: 0,
+          pin_locked_until: null,
+          pin_updated_at: new Date().toISOString()
+        };
+      })()
+    : {};
+
+  const profileResult = await supabase.from("staff_members").upsert(
+    {
+      restaurant_id: input.restaurantId,
+      user_id: input.userId,
+      role_id: role.id,
+      role_code: role.code,
+      full_name: nullIfBlank(input.fullName) ?? profileNameFromEmail(input.email),
+      phone: nullIfBlank(input.phone),
+      username: nullIfBlank(input.username),
+      employment_status: input.employmentStatus ?? "active",
+      emergency_contact_name: nullIfBlank(input.emergencyContactName),
+      emergency_contact_phone: nullIfBlank(input.emergencyContactPhone),
+      notes: nullIfBlank(input.notes),
+      archived_at: input.employmentStatus === "resigned" ? new Date().toISOString() : null,
+      ...pinPayload
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (profileResult.error && !isMissingStaffOperationsTable(profileResult.error)) {
+    if (profileResult.error.code === "23505" && /pin/i.test(profileResult.error.message ?? "")) {
+      throw new AppError("PIN này đã được dùng bởi nhân sự khác trong quán.", 409);
+    }
+    throw new AppError(profileResult.error.message, 400);
+  }
+
+  return role;
+}
+
+async function syncStaffPrimaryBranch(
+  supabase: any,
+  input: {
+    restaurantId: string;
+    userId: string;
+    branchId?: string | null;
+  }
+) {
+  if (!input.branchId) return;
+
+  const memberResult = await supabase
+    .from("staff_members")
+    .select("id")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+
+  if (memberResult.error) {
+    if (isMissingStaffOperationsTable(memberResult.error)) return;
+    throw new AppError(memberResult.error.message, 400);
+  }
+
+  const memberId = memberResult.data?.id;
+  if (!memberId) return;
+
+  const pauseExistingResult = await supabase
+    .from("staff_branch_assignments")
+    .update({
+      is_primary: false,
+      assignment_status: "paused",
+      ended_at: new Date().toISOString()
+    })
+    .eq("restaurant_id", input.restaurantId)
+    .eq("staff_member_id", memberId)
+    .eq("is_primary", true)
+    .neq("branch_id", input.branchId)
+    .is("ended_at", null);
+
+  if (pauseExistingResult.error && !isMissingStaffOperationsTable(pauseExistingResult.error)) {
+    throw new AppError(pauseExistingResult.error.message, 400);
+  }
+
+  const existingAssignment = await supabase
+    .from("staff_branch_assignments")
+    .select("id")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("staff_member_id", memberId)
+    .eq("branch_id", input.branchId)
+    .maybeSingle();
+
+  if (existingAssignment.error) {
+    if (isMissingStaffOperationsTable(existingAssignment.error)) return;
+    throw new AppError(existingAssignment.error.message, 400);
+  }
+
+  if (existingAssignment.data?.id) {
+    const activateResult = await supabase
+      .from("staff_branch_assignments")
+      .update({
+        is_primary: true,
+        assignment_status: "active",
+        ended_at: null,
+        starts_at: new Date().toISOString()
+      })
+      .eq("id", existingAssignment.data.id);
+
+    if (activateResult.error && !isMissingStaffOperationsTable(activateResult.error)) {
+      throw new AppError(activateResult.error.message, 400);
+    }
+
+    return;
+  }
+
+  const insertResult = await supabase.from("staff_branch_assignments").insert({
+    restaurant_id: input.restaurantId,
+    staff_member_id: memberId,
+    branch_id: input.branchId,
+    is_primary: true,
+    assignment_status: "active"
+  });
+
+  if (insertResult.error && !isMissingStaffOperationsTable(insertResult.error)) {
+    throw new AppError(insertResult.error.message, 400);
+  }
 }
 
 export function invalidateRestaurantDashboardCache(restaurantId: string) {
@@ -409,11 +662,16 @@ export async function createRestaurantUser(input: {
   restaurantId: string;
   email: string;
   password: string;
-  permissionProfile: StaffPermissionProfile;
+  roleCode: string;
+  fullName: string;
+  pin?: string | null;
+  phone?: string | null;
+  branchId?: string | null;
+  notes?: string | null;
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const normalizedEmail = input.email.toLowerCase();
-  const preset = getStaffPermissionPreset(input.permissionProfile);
+  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
 
   const { data: existingUser, error: existingUserError } = await supabase
     .from("users")
@@ -431,10 +689,10 @@ export async function createRestaurantUser(input: {
     email_confirm: true,
     user_metadata: {
       restaurant_id: input.restaurantId,
-      role: preset.role,
-      staff_title: preset.title,
-      permission_profile: preset.key,
-      permissions: preset.permissions
+      role: roleConfig.scope,
+      staff_title: roleConfig.title,
+      permission_profile: roleConfig.profile,
+      permissions: roleConfig.permissions
     }
   });
 
@@ -447,11 +705,11 @@ export async function createRestaurantUser(input: {
     .insert({
       id: authUser.user.id,
       email: normalizedEmail,
-      role: preset.role,
+      role: roleConfig.scope,
       restaurant_id: input.restaurantId,
-      staff_title: preset.title,
-      permission_profile: preset.key,
-      permissions: preset.permissions
+      staff_title: roleConfig.title,
+      permission_profile: roleConfig.profile,
+      permissions: roleConfig.permissions
     })
     .select()
     .single();
@@ -462,7 +720,7 @@ export async function createRestaurantUser(input: {
       .insert({
         id: authUser.user.id,
         email: normalizedEmail,
-        role: preset.role,
+        role: roleConfig.scope,
         restaurant_id: input.restaurantId
       })
       .select()
@@ -475,6 +733,24 @@ export async function createRestaurantUser(input: {
     await supabase.auth.admin.deleteUser(authUser.user.id);
     throw new AppError(error.message, 400);
   }
+
+  await upsertStaffOperationsProfile(supabase, {
+    restaurantId: input.restaurantId,
+    userId: authUser.user.id,
+    email: normalizedEmail,
+    roleCode: roleConfig.code,
+    roleConfig,
+    fullName: input.fullName,
+    pin: input.pin ?? null,
+    phone: input.phone ?? null,
+    notes: input.notes ?? null
+  });
+
+  await syncStaffPrimaryBranch(supabase, {
+    restaurantId: input.restaurantId,
+    userId: authUser.user.id,
+    branchId: input.branchId ?? null
+  });
 
   return data;
 }
@@ -558,6 +834,248 @@ export async function updateRestaurantUserRole(input: {
     }
   });
   if (metadataError) throw new AppError(metadataError.message, 400);
+
+  return updateResult.data;
+}
+
+export async function updateRestaurantUserOperationsProfile(input: {
+  restaurantId: string;
+  userId: string;
+  actorUserId: string;
+  fullName: string;
+  phone?: string | null;
+  username?: string | null;
+  pin?: string | null;
+  roleCode: string;
+  branchId?: string | null;
+  employmentStatus: "active" | "suspended" | "resigned";
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  notes?: string | null;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+
+  if (input.userId === input.actorUserId && roleConfig.scope !== "ADMIN") {
+    throw new AppError("Bạn không thể tự hạ quyền quản trị của tài khoản đang đăng nhập.", 400);
+  }
+
+  const currentMemberResult = await supabase
+    .from("staff_members")
+    .select("full_name,phone,username,notes,employment_status,emergency_contact_name,emergency_contact_phone")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+
+  if (currentMemberResult.error && !isMissingStaffOperationsTable(currentMemberResult.error)) {
+    throw new AppError(currentMemberResult.error.message, 400);
+  }
+
+  const userResult = await supabase
+    .from("users")
+    .select("id,email,role,restaurant_id")
+    .eq("id", input.userId)
+    .eq("restaurant_id", input.restaurantId)
+    .single();
+
+  throwIfSupabaseError(userResult.error);
+  const user = userResult.data as StaffProfileRow | null;
+  if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
+  const currentMember = currentMemberResult.data as
+    | {
+        full_name: string;
+        phone: string | null;
+        username: string | null;
+        notes: string | null;
+        employment_status: "active" | "suspended" | "resigned";
+        emergency_contact_name: string | null;
+        emergency_contact_phone: string | null;
+      }
+    | null;
+
+  if (user.role === "ADMIN" && roleConfig.scope === "STAFF") {
+    const { count, error } = await supabase
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", input.restaurantId)
+      .eq("role", "ADMIN")
+      .eq("account_status", "active");
+    throwIfSupabaseError(error);
+    if ((count ?? 0) <= 1) {
+      throw new AppError("Cần giữ lại ít nhất một tài khoản quản trị đang hoạt động cho quán.", 400);
+    }
+  }
+
+  let updateResult = await supabase
+    .from("users")
+    .update({
+      role: roleConfig.scope,
+      staff_title: roleConfig.title,
+      permission_profile: roleConfig.profile,
+      permissions: roleConfig.permissions,
+      account_status: input.employmentStatus === "suspended" ? "blocked" : "active",
+      blocked_at: input.employmentStatus === "suspended" ? new Date().toISOString() : null,
+      blocked_reason: input.employmentStatus === "suspended" ? "Suspended from staff operations console" : null
+    })
+    .eq("id", input.userId)
+    .eq("restaurant_id", input.restaurantId)
+    .select()
+    .single();
+
+  if (isMissingStaffProfileColumn(updateResult.error)) {
+    updateResult = await supabase
+      .from("users")
+      .update({ role: roleConfig.scope })
+      .eq("id", input.userId)
+      .eq("restaurant_id", input.restaurantId)
+      .select()
+      .single();
+  }
+
+  throwIfSupabaseError(updateResult.error);
+
+  const { error: metadataError } = await supabase.auth.admin.updateUserById(input.userId, {
+    user_metadata: {
+      restaurant_id: input.restaurantId,
+      role: roleConfig.scope,
+      staff_title: roleConfig.title,
+      permission_profile: roleConfig.profile,
+      permissions: normalizeStaffPermissions(roleConfig.permissions, roleConfig.profile)
+    }
+  });
+  if (metadataError) throw new AppError(metadataError.message, 400);
+
+  await upsertStaffOperationsProfile(supabase, {
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    email: user.email,
+    roleCode: roleConfig.code,
+    roleConfig,
+    fullName: input.fullName,
+    pin: input.pin ?? null,
+    phone: input.phone ?? currentMember?.phone ?? null,
+    username: input.username ?? currentMember?.username ?? null,
+    employmentStatus: input.employmentStatus,
+    emergencyContactName: input.emergencyContactName ?? currentMember?.emergency_contact_name ?? null,
+    emergencyContactPhone: input.emergencyContactPhone ?? currentMember?.emergency_contact_phone ?? null,
+    notes: input.notes ?? currentMember?.notes ?? null
+  });
+
+  await syncStaffPrimaryBranch(supabase, {
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    branchId: input.branchId ?? null
+  });
+
+  return updateResult.data;
+}
+
+export async function setRestaurantUserAccountState(input: {
+  restaurantId: string;
+  userId: string;
+  actorUserId: string;
+  nextState: "active" | "suspended" | "archived";
+  reason?: string | null;
+}) {
+  if (input.userId === input.actorUserId && input.nextState !== "active") {
+    throw new AppError("Bạn không thể tự khoá hoặc lưu trữ chính tài khoản đang đăng nhập.", 400);
+  }
+
+  const supabase = createAdminSupabaseClient() as any;
+  const currentMemberResult = await supabase
+    .from("staff_members")
+    .select("full_name")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+
+  if (currentMemberResult.error && !isMissingStaffOperationsTable(currentMemberResult.error)) {
+    throw new AppError(currentMemberResult.error.message, 400);
+  }
+
+  const userResult = await supabase
+    .from("users")
+    .select("id,email,role,restaurant_id,permission_profile")
+    .eq("id", input.userId)
+    .eq("restaurant_id", input.restaurantId)
+    .single();
+
+  throwIfSupabaseError(userResult.error);
+  const user = userResult.data as StaffProfileRow | null;
+  if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
+  const currentMember = currentMemberResult.data as { full_name: string } | null;
+
+  if (user.role === "ADMIN" && input.nextState !== "active") {
+    const { count, error } = await supabase
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", input.restaurantId)
+      .eq("role", "ADMIN")
+      .eq("account_status", "active");
+    throwIfSupabaseError(error);
+    if ((count ?? 0) <= 1) {
+      throw new AppError("Cần giữ lại ít nhất một tài khoản quản trị đang hoạt động cho quán.", 400);
+    }
+  }
+
+  const updates =
+    input.nextState === "active"
+      ? {
+          account_status: "active",
+          blocked_at: null,
+          blocked_reason: null
+        }
+      : {
+          account_status: "blocked",
+          blocked_at: new Date().toISOString(),
+          blocked_reason: nullIfBlank(input.reason) ?? (input.nextState === "archived" ? "Archived from staff operations console" : "Suspended from staff operations console")
+        };
+
+  const updateResult = await supabase
+    .from("users")
+    .update(updates)
+    .eq("id", input.userId)
+    .eq("restaurant_id", input.restaurantId)
+    .select()
+    .single();
+
+  throwIfSupabaseError(updateResult.error);
+
+  const employmentStatus = input.nextState === "archived" ? "resigned" : input.nextState === "suspended" ? "suspended" : "active";
+  await upsertStaffOperationsProfile(supabase, {
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    email: user.email,
+    roleCode: user.role === "ADMIN" ? "owner" : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service"),
+    fullName: currentMember?.full_name ?? profileNameFromEmail(user.email),
+    employmentStatus,
+    notes: nullIfBlank(input.reason)
+  });
+
+  const profileUpdate = await supabase
+    .from("staff_members")
+    .update({
+      suspended_at: input.nextState === "suspended" ? new Date().toISOString() : null,
+      archived_at: input.nextState === "archived" ? new Date().toISOString() : null
+    })
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.userId);
+
+  if (profileUpdate.error && !isMissingStaffOperationsTable(profileUpdate.error)) {
+    throw new AppError(profileUpdate.error.message, 400);
+  }
+
+  const sessionUpdate = await supabase
+    .from("staff_sessions")
+    .update({
+      forced_logout_at: input.nextState === "active" ? null : new Date().toISOString()
+    })
+    .eq("restaurant_id", input.restaurantId)
+    .eq("staff_user_id", input.userId);
+
+  if (sessionUpdate.error && !isMissingStaffOperationsTable(sessionUpdate.error)) {
+    throw new AppError(sessionUpdate.error.message, 400);
+  }
 
   return updateResult.data;
 }

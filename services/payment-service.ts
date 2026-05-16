@@ -4,6 +4,7 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
 import { billStatusToOrderPaymentState, ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
+import { completeReservationForBill } from "@/services/reservation-service";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
@@ -653,6 +654,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         method: bill.payment_method ?? typedOrder.payment_method ?? "QR",
         source: "merchant_bill_manual_confirm"
       });
+      await completeReservationForBill(restaurantId, bill.id);
       return getMerchantPaymentOrder(supabase, restaurantId, orderId);
     }
     if (bill.status === "cancelled") {
@@ -694,6 +696,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
           method: currentBill.payment_method ?? bill.payment_method,
           source: "merchant_bill_manual_confirm"
         });
+        await completeReservationForBill(restaurantId, currentBill.id);
         return currentOrder;
       }
       throw new AppError("Không thể xác nhận thanh toán cho hóa đơn này", 409);
@@ -713,6 +716,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
       method: bill.payment_method,
       source: "merchant_bill_manual_confirm"
     });
+    await completeReservationForBill(restaurantId, bill.id);
 
     invalidateRestaurantDashboardCache(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);

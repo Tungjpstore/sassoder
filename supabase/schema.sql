@@ -164,6 +164,22 @@ create table public.users (
   constraint users_permissions_array_check check (jsonb_typeof(permissions) = 'array')
 );
 
+create table public.table_areas (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  name text not null,
+  floor_label text not null default 'Tầng trệt',
+  seating_zone text not null default 'indoor',
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (restaurant_id, name),
+  constraint table_areas_seating_zone_check check (seating_zone in ('indoor', 'outdoor', 'mixed')),
+  constraint table_areas_metadata_object_check check (jsonb_typeof(metadata) = 'object')
+);
+
 create table public.tables (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -171,10 +187,25 @@ create table public.tables (
   area text not null default 'Khu chính',
   capacity integer not null default 4 check (capacity >= 1 and capacity <= 50),
   qr_enabled boolean not null default true,
+  table_area_id uuid references public.table_areas(id) on delete set null,
+  floor_label text not null default 'Tầng trệt',
+  seating_zone text not null default 'indoor',
+  table_kind text not null default 'standard',
+  reservation_priority integer not null default 100,
+  is_bookable boolean not null default true,
+  is_hidden boolean not null default false,
+  is_under_maintenance boolean not null default false,
+  metadata jsonb not null default '{}'::jsonb,
   qr_token_version integer not null default 1,
   qr_token_enforced boolean not null default false,
   qr_token_rotated_at timestamptz,
   constraint tables_qr_token_version_positive check (qr_token_version >= 1),
+  constraint tables_reservation_metadata_check check (
+    seating_zone in ('indoor', 'outdoor', 'mixed')
+    and table_kind in ('standard', 'vip', 'bar', 'community')
+    and reservation_priority between 1 and 999
+    and jsonb_typeof(metadata) = 'object'
+  ),
   unique (restaurant_id, name)
 );
 
@@ -210,6 +241,21 @@ create table public.store_branches (
     and delivery_eta_minutes between 1 and 240
   ),
   unique (restaurant_id, name)
+);
+
+create table public.delivery_couriers (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  name text not null,
+  phone text,
+  status text not null default 'offline',
+  metadata jsonb not null default '{}'::jsonb,
+  last_location_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint delivery_couriers_status_check check (status in ('offline', 'available', 'assigned', 'busy', 'paused')),
+  constraint delivery_couriers_phone_format check (phone is null or phone ~ '^[0-9+() .-]{6,24}$'),
+  constraint delivery_couriers_metadata_object_check check (jsonb_typeof(metadata) = 'object')
 );
 
 create table public.menu_categories (
@@ -374,6 +420,104 @@ create table public.promotions (
   unique (restaurant_id, code)
 );
 
+create table public.ingredient_categories (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint ingredient_categories_name_length check (length(trim(name)) between 1 and 120),
+  constraint ingredient_categories_unique unique (restaurant_id, name)
+);
+
+create table public.ingredients (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  category_id uuid references public.ingredient_categories(id) on delete set null,
+  name text not null,
+  unit text not null default 'unit',
+  on_hand_quantity numeric(14, 3) not null default 0,
+  minimum_quantity numeric(14, 3) not null default 0,
+  reference_unit_cost integer not null default 0,
+  is_active boolean not null default true,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint ingredients_name_length check (length(trim(name)) between 1 and 160),
+  constraint ingredients_unit_format check (unit ~ '^[a-zA-Z0-9_%/ .-]{1,24}$'),
+  constraint ingredients_quantity_non_negative check (on_hand_quantity >= 0 and minimum_quantity >= 0),
+  constraint ingredients_unit_cost_non_negative check (reference_unit_cost >= 0),
+  constraint ingredients_metadata_object check (jsonb_typeof(metadata) = 'object'),
+  constraint ingredients_unique unique (restaurant_id, name)
+);
+
+create table public.menu_item_recipes (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  menu_item_id uuid not null references public.menu_items(id) on delete cascade,
+  ingredient_id uuid not null references public.ingredients(id) on delete restrict,
+  quantity_per_item numeric(14, 3) not null,
+  waste_percent numeric(5, 2) not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint menu_item_recipes_quantity_positive check (quantity_per_item > 0),
+  constraint menu_item_recipes_waste_percent_range check (waste_percent >= 0 and waste_percent <= 100),
+  constraint menu_item_recipes_unique unique (restaurant_id, menu_item_id, ingredient_id)
+);
+
+create table public.inventory_movements (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  ingredient_id uuid not null references public.ingredients(id) on delete restrict,
+  movement_type text not null,
+  quantity_delta numeric(14, 3) not null,
+  unit_cost integer,
+  source_type text not null default 'manual',
+  source_id uuid,
+  reason text,
+  actor_user_id uuid references public.users(id) on delete set null,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint inventory_movements_type_check check (movement_type in ('receive','deduct_sale','adjust_increase','adjust_decrease','waste','rollback')),
+  constraint inventory_movements_source_type_check check (source_type in ('manual','order','count','recipe','system')),
+  constraint inventory_movements_quantity_non_zero check (quantity_delta <> 0),
+  constraint inventory_movements_unit_cost_non_negative check (unit_cost is null or unit_cost >= 0),
+  constraint inventory_movements_metadata_object check (jsonb_typeof(metadata) = 'object')
+);
+
+create table public.inventory_counts (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  status text not null default 'draft',
+  title text not null default 'Kiem ke kho',
+  started_at timestamptz not null default now(),
+  submitted_at timestamptz,
+  applied_at timestamptz,
+  cancelled_at timestamptz,
+  actor_user_id uuid references public.users(id) on delete set null,
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint inventory_counts_status_check check (status in ('draft','submitted','applied','cancelled')),
+  constraint inventory_counts_title_length check (length(trim(title)) between 1 and 160)
+);
+
+create table public.inventory_count_lines (
+  id uuid primary key default gen_random_uuid(),
+  count_id uuid not null references public.inventory_counts(id) on delete cascade,
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  ingredient_id uuid not null references public.ingredients(id) on delete restrict,
+  expected_quantity numeric(14, 3) not null default 0,
+  counted_quantity numeric(14, 3),
+  variance_quantity numeric(14, 3) generated always as (coalesce(counted_quantity, expected_quantity) - expected_quantity) stored,
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint inventory_count_lines_expected_non_negative check (expected_quantity >= 0),
+  constraint inventory_count_lines_counted_non_negative check (counted_quantity is null or counted_quantity >= 0),
+  constraint inventory_count_lines_unique unique (count_id, ingredient_id)
+);
+
 alter table public.orders
   add constraint orders_promotion_id_fkey
   foreign key (promotion_id) references public.promotions(id) on delete set null;
@@ -419,12 +563,15 @@ create table public.reservations (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   confirmed_at timestamptz,
+  checked_in_at timestamptz,
   seated_at timestamptz,
+  completed_at timestamptz,
   cancelled_at timestamptz,
+  rejected_at timestamptz,
   expired_at timestamptz,
   no_show_at timestamptz,
   constraint reservations_time_range check (starts_at < ends_at),
-  constraint reservations_status_check check (status in ('draft','holding','waiting_deposit_confirm','confirmed','seated','completed','cancelled','expired','no_show')),
+  constraint reservations_status_check check (status in ('draft','pending','holding','waiting_deposit_confirm','confirmed','checked_in','seated','completed','cancelled','rejected','expired','no_show')),
   constraint reservations_deposit_status_check check (deposit_status in ('none','required','waiting_payment','waiting_confirm','paid','refundable','forfeited','refunded')),
   constraint reservations_deposit_amount_range check (deposit_required_amount >= 0 and deposit_paid_amount >= 0 and deposit_paid_amount <= deposit_required_amount),
   constraint reservations_customer_phone_format check (customer_phone ~ '^[0-9+() .-]{6,24}$'),
@@ -447,6 +594,43 @@ create table public.reservation_table_locks (
     table_id with =,
     tstzrange(starts_at, ends_at, '[)') with &&
   ) where (status = 'active')
+);
+
+create table public.reservation_status_logs (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  reservation_id uuid not null references public.reservations(id) on delete cascade,
+  from_status text,
+  to_status text not null,
+  actor_type text not null default 'system',
+  actor_user_id uuid references public.users(id) on delete set null,
+  note text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint reservation_status_logs_status_check check (
+    (from_status is null or from_status in ('draft','pending','holding','waiting_deposit_confirm','confirmed','checked_in','seated','completed','cancelled','rejected','expired','no_show'))
+    and to_status in ('draft','pending','holding','waiting_deposit_confirm','confirmed','checked_in','seated','completed','cancelled','rejected','expired','no_show')
+  ),
+  constraint reservation_status_logs_actor_type_check check (actor_type in ('customer', 'merchant', 'staff', 'system')),
+  constraint reservation_status_logs_metadata_object_check check (jsonb_typeof(metadata) = 'object')
+);
+
+create table public.occupancy_logs (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  table_id uuid references public.tables(id) on delete set null,
+  table_bill_id uuid references public.table_bills(id) on delete set null,
+  reservation_id uuid references public.reservations(id) on delete set null,
+  event_type text not null,
+  party_size integer,
+  metadata jsonb not null default '{}'::jsonb,
+  occurred_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  constraint occupancy_logs_event_type_check check (
+    event_type in ('reservation_created', 'reservation_cancelled', 'reservation_no_show', 'reservation_checked_in', 'reservation_seated', 'reservation_completed', 'table_released')
+  ),
+  constraint occupancy_logs_party_size_check check (party_size is null or party_size between 1 and 100),
+  constraint occupancy_logs_metadata_object_check check (jsonb_typeof(metadata) = 'object')
 );
 
 create table public.reservation_deposit_logs (
@@ -581,21 +765,6 @@ create table public.delivery_quote_metric_logs (
     check (latency_ms >= 0)
 );
 
-create table public.delivery_couriers (
-  id uuid primary key default gen_random_uuid(),
-  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
-  name text not null,
-  phone text,
-  status text not null default 'offline',
-  metadata jsonb not null default '{}'::jsonb,
-  last_location_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  constraint delivery_couriers_status_check check (status in ('offline', 'available', 'assigned', 'busy', 'paused')),
-  constraint delivery_couriers_phone_format check (phone is null or phone ~ '^[0-9+() .-]{6,24}$'),
-  constraint delivery_couriers_metadata_object_check check (jsonb_typeof(metadata) = 'object')
-);
-
 create table public.courier_locations (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -667,8 +836,13 @@ create index restaurants_store_geog_gist_idx
 create index restaurants_map_provider_idx on public.restaurants (map_provider, map_geocoding_provider, map_routing_provider);
 create index users_restaurant_id_idx on public.users (restaurant_id);
 create index users_permission_profile_idx on public.users (restaurant_id, permission_profile);
+create index table_areas_restaurant_sort_idx on public.table_areas (restaurant_id, is_active, sort_order, name);
 create index tables_restaurant_id_idx on public.tables (restaurant_id);
 create index tables_restaurant_qr_enforced_idx on public.tables (restaurant_id, qr_token_enforced, qr_enabled);
+create index tables_restaurant_bookable_idx
+  on public.tables (restaurant_id, is_bookable, is_hidden, is_under_maintenance, capacity, reservation_priority, name);
+create index tables_restaurant_area_floor_idx
+  on public.tables (restaurant_id, table_area_id, floor_label, seating_zone);
 create index store_branches_restaurant_active_idx on public.store_branches (restaurant_id, is_active, is_primary desc);
 create index store_branches_coordinates_idx on public.store_branches (latitude, longitude);
 create index store_branches_location_geog_gist_idx
@@ -757,6 +931,23 @@ create unique index payment_logs_transition_key_idx
   on public.payment_logs (transition_key)
   where transition_key is not null;
 create index promotions_restaurant_status_idx on public.promotions (restaurant_id, is_active, starts_at desc, created_at desc);
+create index ingredient_categories_restaurant_idx on public.ingredient_categories (restaurant_id, name);
+create index ingredients_restaurant_active_idx on public.ingredients (restaurant_id, is_active, name);
+create index ingredients_restaurant_low_stock_idx
+  on public.ingredients (restaurant_id, on_hand_quantity, minimum_quantity)
+  where is_active = true;
+create index menu_item_recipes_restaurant_menu_idx on public.menu_item_recipes (restaurant_id, menu_item_id);
+create index menu_item_recipes_restaurant_ingredient_idx on public.menu_item_recipes (restaurant_id, ingredient_id);
+create index inventory_movements_restaurant_created_idx on public.inventory_movements (restaurant_id, created_at desc);
+create index inventory_movements_ingredient_created_idx on public.inventory_movements (ingredient_id, created_at desc);
+create unique index inventory_movements_order_deduction_unique_idx
+  on public.inventory_movements (restaurant_id, source_id, ingredient_id, movement_type)
+  where source_type = 'order' and movement_type = 'deduct_sale' and source_id is not null;
+create unique index inventory_movements_order_rollback_unique_idx
+  on public.inventory_movements (restaurant_id, source_id, ingredient_id, movement_type)
+  where source_type = 'order' and movement_type = 'rollback' and source_id is not null;
+create index inventory_counts_restaurant_status_idx on public.inventory_counts (restaurant_id, status, created_at desc);
+create index inventory_count_lines_count_idx on public.inventory_count_lines (count_id);
 create index service_requests_restaurant_status_created_idx
   on public.service_requests (restaurant_id, status, created_at desc);
 create index service_requests_restaurant_table_created_idx
@@ -765,12 +956,24 @@ create index reservations_restaurant_status_starts_idx
   on public.reservations (restaurant_id, status, starts_at desc);
 create index reservations_restaurant_phone_created_idx
   on public.reservations (restaurant_id, customer_phone, created_at desc);
+create index reservations_restaurant_checked_in_idx
+  on public.reservations (restaurant_id, status, checked_in_at desc)
+  where checked_in_at is not null;
 create unique index reservations_restaurant_idempotency_idx
   on public.reservations (restaurant_id, idempotency_key)
   where idempotency_key is not null;
 create index reservation_locks_restaurant_table_time_idx
   on public.reservation_table_locks (restaurant_id, table_id, starts_at, ends_at)
   where status = 'active';
+create index reservation_status_logs_reservation_created_idx
+  on public.reservation_status_logs (reservation_id, created_at desc);
+create index reservation_status_logs_restaurant_created_idx
+  on public.reservation_status_logs (restaurant_id, created_at desc);
+create index occupancy_logs_restaurant_table_time_idx
+  on public.occupancy_logs (restaurant_id, table_id, occurred_at desc);
+create index occupancy_logs_reservation_time_idx
+  on public.occupancy_logs (reservation_id, occurred_at desc)
+  where reservation_id is not null;
 create index reservation_deposit_logs_reservation_created_idx
   on public.reservation_deposit_logs (reservation_id, created_at desc);
 create unique index reservation_deposit_logs_transition_key_idx
@@ -916,6 +1119,7 @@ grant execute on function public.find_nearest_delivery_stores(text, double preci
 
 alter table public.restaurants enable row level security;
 alter table public.users enable row level security;
+alter table public.table_areas enable row level security;
 alter table public.tables enable row level security;
 alter table public.store_branches enable row level security;
 alter table public.menu_categories enable row level security;
@@ -925,9 +1129,17 @@ alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
 alter table public.payment_logs enable row level security;
 alter table public.promotions enable row level security;
+alter table public.ingredient_categories enable row level security;
+alter table public.ingredients enable row level security;
+alter table public.menu_item_recipes enable row level security;
+alter table public.inventory_movements enable row level security;
+alter table public.inventory_counts enable row level security;
+alter table public.inventory_count_lines enable row level security;
 alter table public.service_requests enable row level security;
 alter table public.reservations enable row level security;
 alter table public.reservation_table_locks enable row level security;
+alter table public.reservation_status_logs enable row level security;
+alter table public.occupancy_logs enable row level security;
 alter table public.reservation_deposit_logs enable row level security;
 alter table public.registration_intents enable row level security;
 alter table public.report_schedules enable row level security;
@@ -1109,6 +1321,10 @@ begin
 end;
 $$;
 
+create trigger table_areas_set_updated_at
+before update on public.table_areas
+for each row execute function public.set_updated_at();
+
 create trigger orders_set_updated_at
 before update on public.orders
 for each row execute function public.set_updated_at();
@@ -1126,6 +1342,103 @@ for each row execute function public.set_updated_at();
 create trigger reservations_set_updated_at
 before update on public.reservations
 for each row execute function public.set_updated_at();
+
+create trigger ingredient_categories_set_updated_at
+before update on public.ingredient_categories
+for each row execute function public.set_updated_at();
+
+create trigger ingredients_set_updated_at
+before update on public.ingredients
+for each row execute function public.set_updated_at();
+
+create trigger menu_item_recipes_set_updated_at
+before update on public.menu_item_recipes
+for each row execute function public.set_updated_at();
+
+create trigger inventory_counts_set_updated_at
+before update on public.inventory_counts
+for each row execute function public.set_updated_at();
+
+create trigger inventory_count_lines_set_updated_at
+before update on public.inventory_count_lines
+for each row execute function public.set_updated_at();
+
+create or replace function public.apply_inventory_movement(
+  target_restaurant_id uuid,
+  target_ingredient_id uuid,
+  target_movement_type text,
+  target_quantity_delta numeric,
+  target_unit_cost integer default null,
+  target_source_type text default 'manual',
+  target_source_id uuid default null,
+  target_reason text default null,
+  target_actor_user_id uuid default auth.uid(),
+  target_metadata jsonb default '{}'::jsonb
+)
+returns public.inventory_movements
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  inserted_movement public.inventory_movements;
+begin
+  if target_restaurant_id <> public.current_restaurant_id() then
+    raise exception 'Inventory restaurant scope mismatch';
+  end if;
+
+  if target_quantity_delta = 0 then
+    raise exception 'Inventory movement quantity cannot be zero';
+  end if;
+
+  update public.ingredients
+  set
+    on_hand_quantity = on_hand_quantity + target_quantity_delta,
+    reference_unit_cost = case
+      when target_unit_cost is not null and target_unit_cost >= 0 and target_quantity_delta > 0 then target_unit_cost
+      else reference_unit_cost
+    end,
+    updated_at = now()
+  where id = target_ingredient_id
+    and restaurant_id = target_restaurant_id
+    and on_hand_quantity + target_quantity_delta >= 0;
+
+  if not found then
+    raise exception 'Inventory movement would make stock negative or ingredient is missing';
+  end if;
+
+  insert into public.inventory_movements (
+    restaurant_id,
+    ingredient_id,
+    movement_type,
+    quantity_delta,
+    unit_cost,
+    source_type,
+    source_id,
+    reason,
+    actor_user_id,
+    metadata
+  )
+  values (
+    target_restaurant_id,
+    target_ingredient_id,
+    target_movement_type,
+    target_quantity_delta,
+    target_unit_cost,
+    target_source_type,
+    target_source_id,
+    nullif(trim(coalesce(target_reason, '')), ''),
+    target_actor_user_id,
+    coalesce(target_metadata, '{}'::jsonb)
+  )
+  returning * into inserted_movement;
+
+  return inserted_movement;
+end;
+$$;
+
+revoke all on function public.apply_inventory_movement(uuid, uuid, text, numeric, integer, text, uuid, text, uuid, jsonb) from public;
+grant execute on function public.apply_inventory_movement(uuid, uuid, text, numeric, integer, text, uuid, text, uuid, jsonb) to authenticated, service_role;
 
 create or replace function public.recalculate_table_bill_total(target_bill_id uuid)
 returns void
@@ -1208,6 +1521,17 @@ using (restaurant_id = public.current_restaurant_id());
 
 create policy "admins can manage own restaurant users"
 on public.users for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "users can read own table areas"
+on public.table_areas for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own table areas"
+on public.table_areas for all
 to authenticated
 using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
 with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
@@ -1358,6 +1682,71 @@ to authenticated
 using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
 with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
 
+create policy "staff can read own ingredient categories"
+on public.ingredient_categories for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own ingredient categories"
+on public.ingredient_categories for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "staff can read own ingredients"
+on public.ingredients for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own ingredients"
+on public.ingredients for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "staff can read own menu recipes"
+on public.menu_item_recipes for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own menu recipes"
+on public.menu_item_recipes for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "staff can read own inventory movements"
+on public.inventory_movements for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can create own inventory movements"
+on public.inventory_movements for insert
+to authenticated
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "staff can read own inventory counts"
+on public.inventory_counts for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own inventory counts"
+on public.inventory_counts for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "staff can read own inventory count lines"
+on public.inventory_count_lines for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own inventory count lines"
+on public.inventory_count_lines for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
 create policy "staff can read own service requests"
 on public.service_requests for select
 to authenticated
@@ -1382,6 +1771,16 @@ with check (restaurant_id = public.current_restaurant_id());
 
 create policy "staff can read own reservation locks"
 on public.reservation_table_locks for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "staff can read own reservation status logs"
+on public.reservation_status_logs for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "staff can read own occupancy logs"
+on public.occupancy_logs for select
 to authenticated
 using (restaurant_id = public.current_restaurant_id());
 
@@ -1451,6 +1850,7 @@ alter publication supabase_realtime add table public.orders;
 alter publication supabase_realtime add table public.order_items;
 alter publication supabase_realtime add table public.payment_logs;
 alter publication supabase_realtime add table public.reservations;
+alter publication supabase_realtime add table public.table_areas;
 alter publication supabase_realtime add table public.courier_locations;
 alter publication supabase_realtime add table public.delivery_tracking_events;
 

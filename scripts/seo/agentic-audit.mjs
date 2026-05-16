@@ -193,6 +193,11 @@ async function main() {
   const blogIndex = await readText("app/blog/page.tsx");
   const blogArticle = await readText("app/blog/[slug]/page.tsx");
   const blogSource = await readText("lib/seo/blog.ts");
+  const intentSource = await readText("lib/seo/intent-pages.ts");
+  const intentExpansionSource = await readText("lib/seo/intent-page-expansions.ts");
+  const intentExpansionBatch2Source = await readText("lib/seo/intent-page-expansion-batch-2.ts");
+  const combinedIntentSource = `${intentSource}\n${intentExpansionSource}\n${intentExpansionBatch2Source}`;
+  const intentRoute = await readText("app/giai-phap/[slug]/page.tsx");
   const robots = await readText("app/robots.ts");
   const sitemap = await readText("app/sitemap.ts");
   const llms = await readText("app/llms.txt/route.ts");
@@ -223,8 +228,11 @@ async function main() {
   const sameAsConfigured = /SEO_ORGANIZATION_SAME_AS\s*=\s*\[[\s\S]*https?:\/\//.test(seoConfig);
   const gscReadinessReady = gscReadinessScript.includes("gsc-week1-readiness.json") && gscReadinessReport?.status === "ready";
   const firecrawlReadinessReady = firecrawlReadinessScript.includes("/v2/map") && Boolean(firecrawlReadinessReport?.status);
-  const blogSlugCount = [...blogSource.matchAll(/slug:\s*"([^"]+)"/g)].length;
-  const expectedPublicUrlCount = blogSlugCount + 3;
+  const [blogPostSource = "", blogHubAndEnhancementSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
+  const [blogHubSource = ""] = blogHubAndEnhancementSource.split("type BlogArticleEnhancement");
+  const blogSlugCount = [...blogPostSource.matchAll(/slug:\s*"([^"]+)"/g)].length + [...blogHubSource.matchAll(/slug:\s*"([^"]+)"/g)].length;
+  const intentPageCount = [...combinedIntentSource.matchAll(/path:\s*"[^"]*\/giai-phap\/[^"]+"/g)].length;
+  const expectedPublicUrlCount = blogSlugCount + intentPageCount + 4;
   const firecrawlCoversExpectedUrls =
     firecrawlSummary.configured && (firecrawlSummary.totalPages ?? 0) >= expectedPublicUrlCount && (firecrawlSummary.issueCount ?? 0) === 0;
   const blogReady =
@@ -234,6 +242,14 @@ async function main() {
     sitemap.includes("getAllBlogPosts") &&
     blogSlugCount >= 8 &&
     blogExpansionReport?.status === "ready";
+  const intentReady =
+    intentPageCount >= 4 &&
+    intentRoute.includes("generateStaticParams") &&
+    intentRoute.includes("buildIntentLandingSchema") &&
+    intentRoute.includes("buildFaqSchema") &&
+    sitemap.includes("getAllSeoIntentPages") &&
+    llms.includes("Trang giải pháp theo nhu cầu") &&
+    lighthouserc.includes("/giai-phap/");
 
   const findings = [
     createFinding({
@@ -371,6 +387,25 @@ async function main() {
       impact: "Expands indexable surface beyond the landing and pricing pages while preserving controlled metadata and structured data.",
       fix: "Keep adding articles through the shared blog registry so each post receives metadata, canonical URL, Article schema and sitemap inclusion.",
       status: blogReady ? "passed" : "recommended"
+    }),
+    createFinding({
+      agent: "Content Quality Agent",
+      area: "content-seo",
+      severity: "high",
+      confidence: intentReady ? "CONFIRMED" : "LIKELY",
+      finding: "Commercial-intent landing pages are published for high-value solution queries.",
+      evidence: [
+        fileEvidence("lib/seo/intent-pages.ts", `${intentPageCount} /giai-phap intent pages detected`),
+        fileEvidence(
+          "app/giai-phap/[slug]/page.tsx",
+          intentRoute.includes("buildIntentLandingSchema") ? "renders static metadata, FAQ and Service JSON-LD" : "intent route schema wiring missing"
+        ),
+        fileEvidence("app/sitemap.ts", sitemap.includes("getAllSeoIntentPages") ? "maps intent pages into sitemap" : "intent sitemap wiring missing"),
+        fileEvidence("app/llms.txt/route.ts", llms.includes("Trang giải pháp theo nhu cầu") ? "lists intent pages for AI search" : "intent llms.txt section missing")
+      ],
+      impact: "Creates crawlable bridge pages between editorial content and buying-intent queries such as QR ordering, VietQR, tea shop management and deposits.",
+      fix: "Keep each new /giai-phap page in the shared intent registry with unique metadata, visible FAQ, related blog links and sitemap coverage.",
+      status: intentReady ? "passed" : "recommended"
     }),
     createFinding({
       agent: "Internal Link Agent",
@@ -537,6 +572,7 @@ async function main() {
     routeInventory: {
       pages: pageFiles.length,
       apiAndSpecialRoutes: routeFiles.length,
+      intentPages: intentPageCount,
       pageFiles,
       routeFiles
     },

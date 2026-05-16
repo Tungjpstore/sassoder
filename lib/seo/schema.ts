@@ -10,6 +10,7 @@ import {
   absoluteSeoUrl
 } from "@/lib/seo/config";
 import type { BlogPost } from "@/lib/seo/blog";
+import type { SeoIntentPage } from "@/lib/seo/intent-pages";
 
 function seoRootUrl() {
   return absoluteSeoUrl("/").replace(/\/+$/, "");
@@ -98,7 +99,10 @@ export function buildSoftwareApplicationSchema() {
       "Quản lý đơn theo thời gian thực",
       "Thanh toán VietQR và tiền mặt",
       "Đặt món online và đặt bàn trước",
-      "Trợ lý thông minh hỗ trợ vận hành quán"
+      "Trợ lý thông minh hỗ trợ vận hành quán",
+      "Quản lý nhân viên, ca làm và phân quyền",
+      "Quản lý tồn kho, định mức nguyên liệu và cảnh báo thiếu hàng",
+      "Báo cáo doanh thu và món bán chạy"
     ]
   };
 }
@@ -185,5 +189,48 @@ export function buildItemListSchema(items: Array<{ name: string; path: string; d
       name: item.name,
       description: item.description
     }))
+  };
+}
+
+export function buildIntentLandingSchema(page: SeoIntentPage) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "@id": `${absoluteSeoUrl(page.path)}#service`,
+    name: page.h1,
+    serviceType: page.eyebrow,
+    description: page.description,
+    url: absoluteSeoUrl(page.path),
+    inLanguage: "vi-VN",
+    provider: {
+      "@id": schemaId("organization")
+    },
+    areaServed: {
+      "@type": "Country",
+      name: "Việt Nam"
+    },
+    audience: {
+      "@type": "Audience",
+      audienceType: "Chủ quán cafe, trà sữa và nhà hàng Việt"
+    },
+    keywords: page.keywords.join(", "),
+    hasOfferCatalog: {
+      "@type": "OfferCatalog",
+      name: "Gói LogiVN cho quán Việt",
+      itemListElement: [
+        {
+          "@type": "Offer",
+          url: absoluteSeoUrl("/pricing"),
+          itemOffered: {
+            "@type": "SoftwareApplication",
+            "@id": schemaId("software")
+          }
+        }
+      ]
+    },
+    mainEntityOfPage: {
+      "@type": "WebPage",
+      "@id": absoluteSeoUrl(page.path)
+    }
   };
 }

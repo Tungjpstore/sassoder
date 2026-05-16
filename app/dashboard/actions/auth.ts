@@ -2,11 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { buildAppUrl } from "@/lib/app-url";
+import { AppError } from "@/lib/response";
 import { getSessionProfile } from "@/lib/session";
 import {
   emailOtpSchema,
   forgotPasswordSchema,
   loginSchema,
+  pinLoginSchema,
   registerAccountSchema,
   registerOnboardingSchema,
   resendEmailOtpSchema,
@@ -22,6 +24,7 @@ import {
   updateRecoveredPassword,
   verifySignupEmailOtp
 } from "@/services/auth-service";
+import { loginWithStaffPin } from "@/features/staff/services/staff-pin-service";
 import { consumeRegistrationIntentForUser, createRegistrationIntent } from "@/services/restaurant-service";
 import { checkActionRateLimit, getDashboardDestination } from "./shared";
 
@@ -49,6 +52,36 @@ export async function loginAction(_prevState: { error?: string } | undefined, fo
   if (!session) redirect("/dashboard/onboarding");
 
   redirect(await getDashboardDestination(session.restaurant.slug));
+}
+
+export async function pinLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
+  const parsed = pinLoginSchema.safeParse({
+    restaurantSlug: formData.get("restaurantSlug"),
+    pin: formData.get("pin")
+  });
+
+  if (!parsed.success) {
+    return { error: "Vui lòng nhập mã quán và PIN gồm 4-8 chữ số." };
+  }
+
+  if (!(await checkActionRateLimit(`pin-login:${parsed.data.restaurantSlug}`, 6, 60_000))) {
+    return { error: "Bạn thử PIN quá nhanh. Vui lòng chờ một chút." };
+  }
+
+  try {
+    await loginWithStaffPin({
+      restaurantSlug: parsed.data.restaurantSlug,
+      pin: parsed.data.pin
+    });
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "PIN hoặc mã quán không đúng." };
+  }
+
+  const session = await getSessionProfile();
+  if (!session) redirect("/dashboard/onboarding");
+
+  redirect("/dashboard/staff/mobile");
 }
 
 export async function registerAccountAction(

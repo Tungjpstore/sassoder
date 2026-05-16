@@ -1,18 +1,44 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState } from "react";
-import { CheckCircle2, Copy, Download, Grid3X3, Link2, Plus, Printer, QrCode, Save, Search, Table2, Trash2, Users, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, useTransition, type ElementType } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Copy,
+  Crown,
+  Download,
+  EyeOff,
+  Grid3X3,
+  Layers3,
+  Link2,
+  Plus,
+  Printer,
+  QrCode,
+  RadioTower,
+  RefreshCw,
+  Save,
+  Search,
+  Table2,
+  Trash2,
+  Users,
+  Wrench,
+  X
+} from "lucide-react";
 import { createTableAction, deleteTableAction, rotateTableQrAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { buildTenantUrl } from "@/lib/tenant-domain";
+import { cn } from "@/lib/utils";
 import type { RestaurantTableWithStatus, TableOperationalStatus } from "@/services/table-service";
 
 type TablesWorkspaceProps = {
+  restaurantId: string;
   restaurantSlug: string;
   restaurantName: string;
   dashboardTableCount: number;
@@ -21,6 +47,7 @@ type TablesWorkspaceProps = {
 
 type StatusFilter = TableOperationalStatus | "all";
 type TablePanelMode = "closed" | "table" | "create";
+type RealtimeState = "connecting" | "connected" | "error";
 
 const statusOptions: Array<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "Tất cả trạng thái" },
@@ -63,6 +90,111 @@ function formatVnd(value: number) {
 function formatTime(value: string | null) {
   if (!value) return "Chưa có";
   return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }).format(new Date(value));
+}
+
+function formatClock(value: Date | null) {
+  if (!value) return "Đang đồng bộ";
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
+}
+
+function minutesUntil(value: string | null, nowMs: number) {
+  if (!value) return null;
+  return Math.ceil((new Date(value).getTime() - nowMs) / 60_000);
+}
+
+function realtimeLabel(status: RealtimeState) {
+  if (status === "connected") return "Bàn live";
+  if (status === "error") return "Live gián đoạn";
+  return "Đang nối live";
+}
+
+function realtimeTone(status: RealtimeState): "green" | "yellow" | "red" {
+  if (status === "connected") return "green";
+  if (status === "error") return "red";
+  return "yellow";
+}
+
+function statusPriority(status: TableOperationalStatus) {
+  const priority = {
+    overdue: 5,
+    needs_confirm: 4,
+    awaiting_payment: 3,
+    serving: 2,
+    available: 1
+  } satisfies Record<TableOperationalStatus, number>;
+  return priority[status];
+}
+
+function tableActionCopy(table: RestaurantTableWithStatus, nowMs: number) {
+  if (table.is_hidden) return "Bàn đang ẩn khỏi sơ đồ vận hành";
+  if (table.is_under_maintenance) return "Bàn đang bảo trì, không nhận đặt trước";
+  if (table.is_bookable === false) return "Không nhận đặt bàn trước";
+  if (table.status === "overdue") {
+    const lateBy = Math.abs(minutesUntil(table.nextServiceDueAt, nowMs) ?? 0);
+    return lateBy ? `Trễ ${lateBy} phút, cần đẩy bếp/phục vụ` : "Đơn đã quá giờ phục vụ";
+  }
+  if (table.status === "needs_confirm") return "Có order mới cần nhận ngay";
+  if (table.status === "awaiting_payment") return `${formatVnd(table.unpaidTotal)} đang chờ thu`;
+  if (table.status === "serving") {
+    const dueIn = minutesUntil(table.nextServiceDueAt, nowMs);
+    return dueIn === null ? "Đang phục vụ" : dueIn <= 5 ? `Còn ${Math.max(dueIn, 0)} phút tới hạn` : `Tới hạn sau ${dueIn} phút`;
+  }
+  return table.qr_enabled ? "Sẵn sàng nhận khách" : "QR đang tắt";
+}
+
+function seatingZoneLabel(value?: string | null) {
+  if (value === "outdoor") return "Ngoài trời";
+  if (value === "mixed") return "Linh hoạt";
+  return "Trong nhà";
+}
+
+function tableKindLabel(value?: string | null) {
+  if (value === "vip") return "VIP";
+  if (value === "bar") return "Quầy bar";
+  if (value === "community") return "Bàn chung";
+  return "Tiêu chuẩn";
+}
+
+function tableAreaLabel(table: Pick<RestaurantTableWithStatus, "area" | "floor_label">) {
+  const area = table.area || "Khu chính";
+  const floor = table.floor_label || "Tầng trệt";
+  return `${floor} · ${area}`;
+}
+
+function TablesMetric({
+  icon: Icon,
+  label,
+  value,
+  meta,
+  tone
+}: {
+  icon: ElementType;
+  label: string;
+  value: string | number;
+  meta: string;
+  tone: "green" | "yellow" | "red" | "blue";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-[var(--accent)]/30 bg-[var(--danger-soft)] text-[var(--tertiary)]"
+      : tone === "yellow"
+        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+        : tone === "blue"
+          ? "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]"
+          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
+
+  return (
+    <article className="admin-stat-tile rounded-[14px] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <span className={cn("grid h-10 w-10 place-items-center rounded-xl border", toneClass)}>
+          <Icon size={18} />
+        </span>
+        <Badge tone={tone}>{label}</Badge>
+      </div>
+      <p className="metric-number mt-3 text-2xl font-black text-[var(--foreground)]">{value}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
+    </article>
+  );
 }
 
 function escapeXml(value: string) {
@@ -283,7 +415,9 @@ function QrPrintPoster({
   );
 }
 
-export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTableCount, tables }: TablesWorkspaceProps) {
+export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, dashboardTableCount, tables }: TablesWorkspaceProps) {
+  const router = useRouter();
+  const refreshTimerRef = useRef<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panelMode, setPanelMode] = useState<TablePanelMode>("closed");
   const [areaFilter, setAreaFilter] = useState("all");
@@ -291,9 +425,53 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
   const [query, setQuery] = useState("");
   const [copied, setCopied] = useState(false);
   const [qrActionState, setQrActionState] = useState<"idle" | "printing" | "downloading">("idle");
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [isRefreshing, startRefreshTransition] = useTransition();
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const scheduleRefresh = () => {
+      setRealtimeState("connected");
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        startRefreshTransition(() => {
+          router.refresh();
+          setLastSyncedAt(new Date());
+        });
+      }, 260);
+    };
+
+    const channel = supabase
+      .channel(`admin-tables:${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRealtimeState("connected");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+      });
+
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [restaurantId, router]);
+
+  function refreshTables() {
+    startRefreshTransition(() => {
+      router.refresh();
+      setLastSyncedAt(new Date());
+    });
+  }
 
   const areas = useMemo(() => {
-    return ["all", ...Array.from(new Set(tables.map((table) => table.area || "Khu chính")))];
+    return ["all", ...Array.from(new Set(tables.map(tableAreaLabel)))];
   }, [tables]);
 
   const counts = useMemo(() => {
@@ -309,17 +487,18 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
   const filteredTables = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return tables.filter((table) => {
-      const area = table.area || "Khu chính";
+      const area = tableAreaLabel(table);
       const matchesArea = areaFilter === "all" || area === areaFilter;
       const matchesStatus = statusFilter === "all" || table.status === statusFilter;
-      const matchesKeyword = !keyword || table.name.toLowerCase().includes(keyword) || area.toLowerCase().includes(keyword);
+      const metadata = `${tableKindLabel(table.table_kind)} ${seatingZoneLabel(table.seating_zone)}`.toLowerCase();
+      const matchesKeyword = !keyword || table.name.toLowerCase().includes(keyword) || area.toLowerCase().includes(keyword) || metadata.includes(keyword);
       return matchesArea && matchesStatus && matchesKeyword;
     });
   }, [areaFilter, query, statusFilter, tables]);
 
   const groupedTables = useMemo(() => {
     return [...filteredTables.reduce((map, table) => {
-      const key = table.area || "Khu chính";
+      const key = tableAreaLabel(table);
       map.set(key, [...(map.get(key) ?? []), table]);
       return map;
     }, new Map<string, RestaurantTableWithStatus[]>())].map(([title, items]) => ({ title, items }));
@@ -330,7 +509,46 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
   const selectedQrUrl = selected ? qrImageUrl(selectedUrl) : "";
   const total = tables.length || dashboardTableCount;
   const serving = counts.serving + counts.needs_confirm;
+  const activeTables = total - counts.available;
+  const occupancyRate = Math.round((activeTables / Math.max(total, 1)) * 100);
   const qrEnabled = tables.filter((table) => table.qr_enabled).length;
+  const qrDisabled = Math.max(0, total - qrEnabled);
+  const areaStats = useMemo(() => {
+    return areas
+      .filter((area) => area !== "all")
+      .map((area) => {
+        const items = tables.filter((table) => tableAreaLabel(table) === area);
+        const active = items.filter((table) => table.status !== "available").length;
+        return {
+          area,
+          total: items.length,
+          active,
+          available: items.filter((table) => table.status === "available").length,
+          overdue: items.filter((table) => table.status === "overdue").length,
+          awaitingPayment: items.filter((table) => table.status === "awaiting_payment").length,
+          qrDisabled: items.filter((table) => !table.qr_enabled).length,
+          capacity: items.reduce((sum, table) => sum + table.capacity, 0),
+          occupancyRate: Math.round((active / Math.max(items.length, 1)) * 100)
+        };
+      });
+  }, [areas, tables]);
+  const actionQueue = useMemo(() => {
+    return [...tables]
+      .filter((table) => table.status !== "available" || !table.qr_enabled)
+      .sort((left, right) => {
+        const priorityDiff = statusPriority(right.status) - statusPriority(left.status);
+        if (priorityDiff !== 0) return priorityDiff;
+        return new Date(left.nextServiceDueAt ?? left.oldestOrderAt ?? 0).getTime() - new Date(right.nextServiceDueAt ?? right.oldestOrderAt ?? 0).getTime();
+      })
+      .slice(0, 5);
+  }, [tables]);
+  const pressureLabel = counts.overdue
+    ? `${counts.overdue} bàn quá giờ`
+    : counts.needs_confirm
+      ? `${counts.needs_confirm} bàn chờ nhận`
+      : counts.awaiting_payment
+        ? `${counts.awaiting_payment} bàn chờ thu`
+        : "Mặt sàn ổn";
 
   async function copySelectedUrl() {
     if (!selectedUrl) return;
@@ -408,27 +626,45 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 
   return (
     <div className="grid gap-3">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Tổng số bàn", value: total, meta: "đang quản lý", icon: Table2, tone: "orange" },
-          { label: "Bàn trống", value: counts.available, meta: `${Math.round((counts.available / Math.max(total, 1)) * 100)}% sẵn sàng`, icon: CheckCircle2, tone: "green" },
-          { label: "Đang phục vụ", value: serving, meta: `${counts.overdue} quá giờ`, icon: Users, tone: counts.overdue > 0 ? "orange" : "green" },
-          { label: "QR đang bật", value: qrEnabled, meta: `${Math.round((qrEnabled / Math.max(total, 1)) * 100)}% bàn`, icon: QrCode, tone: "orange" }
-        ].map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <div key={stat.label} className="admin-stat-tile rounded-[14px] p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="dashboard-stat-icon">
-                  <Icon size={18} />
+      <section className="admin-hero-panel rounded-[14px] p-4">
+        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={realtimeTone(realtimeState)}>
+                <span className="inline-flex items-center gap-1.5">
+                  <RadioTower size={13} />
+                  {realtimeLabel(realtimeState)}
                 </span>
-              </div>
-              <p className="mt-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stat.value}</p>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{stat.meta}</p>
+              </Badge>
+              <Badge tone={counts.overdue ? "red" : counts.needs_confirm ? "yellow" : "green"}>{pressureLabel}</Badge>
+              <Badge tone={qrDisabled ? "yellow" : "green"}>{qrDisabled ? `${qrDisabled} QR tắt` : "QR sẵn sàng"}</Badge>
             </div>
-          );
-        })}
+            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Mặt sàn & QR vận hành</h2>
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+              Theo dõi trạng thái bàn theo khu vực, xử lý bàn đang chờ order/thanh toán và in QR đúng token để khách gọi món nhanh trong giờ cao điểm.
+            </p>
+          </div>
+          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Cập nhật</span>
+              <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+              <div className={cn("h-full rounded-full", occupancyRate >= 85 ? "bg-[var(--tertiary)]" : occupancyRate >= 60 ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${Math.min(100, occupancyRate)}%` }} />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span>Công suất bàn</span>
+              <strong className="text-[var(--foreground)]">{occupancyRate}%</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <TablesMetric icon={Table2} label="Tổng bàn" value={total} meta={`${areaStats.length || 1} khu vực đang quản lý`} tone="blue" />
+        <TablesMetric icon={CheckCircle2} label="Bàn trống" value={counts.available} meta={`${Math.round((counts.available / Math.max(total, 1)) * 100)}% sẵn sàng nhận khách`} tone="green" />
+        <TablesMetric icon={Users} label="Đang phục vụ" value={serving} meta={counts.overdue ? `${counts.overdue} bàn quá giờ` : `${counts.awaiting_payment} bàn chờ thu`} tone={counts.overdue > 0 ? "red" : counts.needs_confirm > 0 ? "yellow" : "green"} />
+        <TablesMetric icon={QrCode} label="QR active" value={qrEnabled} meta={qrDisabled ? `${qrDisabled} bàn cần bật/in lại QR` : "Tất cả QR đang bật"} tone={qrDisabled ? "yellow" : "green"} />
       </section>
 
       <section className="grid gap-3">
@@ -436,10 +672,16 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
           <div className="dashboard-panel p-4">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-[var(--foreground)]">Sơ đồ bàn</h2>
-                <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Màn chính chỉ giữ trạng thái và số lượng bàn. Bấm vào từng bàn để xem chi tiết, QR và thao tác vận hành.</p>
+                <h2 className="text-lg font-black text-[var(--foreground)]">Sơ đồ bàn realtime</h2>
+                <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[var(--muted-foreground)]">
+                  Bàn được nhóm theo khu vực, màu theo trạng thái vận hành. Bấm vào từng bàn để mở QR, chỉnh thông tin, xoay token hoặc xử lý bàn đang có hóa đơn.
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={refreshTables} disabled={isRefreshing} className="shadow-none hover:shadow-none">
+                  <RefreshCw size={16} className={isRefreshing ? "animate-spin" : undefined} />
+                  Làm mới
+                </Button>
                 <Button type="button" variant="secondary" onClick={() => printPosters("all")} disabled={qrActionState !== "idle" || tables.length === 0} className="shadow-none hover:shadow-none">
                   <Printer size={16} />
                   In tất cả
@@ -457,7 +699,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                 <select
                   value={areaFilter}
                   onChange={(event) => setAreaFilter(event.target.value)}
-                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+                  className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
                 >
                   {areas.map((area) => (
                     <option key={area} value={area}>{area === "all" ? "Tất cả khu vực" : area}</option>
@@ -469,7 +711,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+                  className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
                 >
                   {statusOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -483,7 +725,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Tên bàn, khu vực..."
-                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
+                  className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
                 />
               </label>
               <Button type="button" variant="secondary" className="self-end" onClick={() => {
@@ -493,6 +735,86 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
               }}>
                 Xoá lọc
               </Button>
+            </div>
+
+            <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Layers3 size={16} className="text-[var(--primary)]" />
+                    <h3 className="text-sm font-black text-[var(--foreground)]">Khu vực & công suất</h3>
+                  </div>
+                  <Badge tone={occupancyRate >= 85 ? "red" : occupancyRate >= 60 ? "yellow" : "green"}>{occupancyRate}% bận</Badge>
+                </div>
+                {areaStats.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                    Chưa có khu vực. Tạo bàn đầu tiên để bắt đầu sơ đồ quán.
+                  </div>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                    {areaStats.map((area) => (
+                      <button
+                        key={area.area}
+                        type="button"
+                        onClick={() => setAreaFilter(area.area)}
+                        className={cn(
+                          "rounded-lg border bg-[var(--surface)] p-3 text-left transition hover:border-[var(--primary)]",
+                          areaFilter === area.area ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/15" : "border-[var(--border)]"
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="truncate text-sm font-black text-[var(--foreground)]">{area.area}</p>
+                          <span className="text-xs font-black text-[var(--primary)]">{area.active}/{area.total}</span>
+                        </div>
+                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+                          <div className={cn("h-full rounded-full", area.overdue ? "bg-[var(--tertiary)]" : area.occupancyRate >= 70 ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${Math.min(100, area.occupancyRate)}%` }} />
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-[var(--muted-foreground)]">
+                          <span>{area.available} trống</span>
+                          <span>{area.capacity} chỗ</span>
+                          {area.overdue ? <span className="text-[var(--tertiary)]">{area.overdue} quá giờ</span> : null}
+                          {area.qrDisabled ? <span className="text-[var(--accent-strong)]">{area.qrDisabled} QR tắt</span> : null}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={16} className={counts.overdue ? "text-[var(--tertiary)]" : "text-[var(--accent)]"} />
+                    <h3 className="text-sm font-black text-[var(--foreground)]">Cần xử lý</h3>
+                  </div>
+                  <Badge tone={actionQueue.length ? (counts.overdue ? "red" : "yellow") : "green"}>{actionQueue.length || "Ổn"}</Badge>
+                </div>
+                <div className="grid gap-2">
+                  {actionQueue.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                      Không có bàn cần can thiệp. Mặt sàn đang sẵn sàng.
+                    </div>
+                  ) : (
+                    actionQueue.map((table) => {
+                      const meta = statusMeta(table.status);
+                      return (
+                        <button
+                          key={table.id}
+                          type="button"
+                          onClick={() => openTableDrawer(table.id)}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm font-black text-[var(--foreground)]">{table.name}</span>
+                            <Badge tone={meta.tone}>{meta.label}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{tableAreaLabel(table)} · {tableActionCopy(table, nowMs)}</p>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -520,21 +842,33 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                         {group.items.map((table) => {
                           const meta = statusMeta(table.status);
                           const isSelected = selected?.id === table.id;
+                          const dueIn = minutesUntil(table.nextServiceDueAt, nowMs);
                           return (
                             <button
                               key={table.id}
                               type="button"
-	                              onClick={() => openTableDrawer(table.id)}
-                              className={`min-h-[76px] rounded-xl border px-3 py-2 text-center transition hover:border-[var(--primary)] ${meta.className} ${
-	                                isSelected ? "ring-2 ring-[var(--primary)]/24 ring-offset-2 ring-offset-white" : ""
-	                              }`}
+                              onClick={() => openTableDrawer(table.id)}
+                              className={cn(
+                                "min-h-[112px] rounded-xl border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]",
+                                meta.className,
+                                isSelected ? "ring-2 ring-[var(--primary)]/24 ring-offset-2 ring-offset-[var(--surface)]" : ""
+                              )}
                             >
-                              <p className="text-sm font-semibold">{table.name}</p>
-                              <p className="mt-1 text-xs font-medium">{table.capacity} chỗ</p>
-                              <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold">
-                                <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
-                                {meta.label}
-                              </span>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-black">{table.name}</p>
+                                  <p className="mt-1 truncate text-xs font-bold opacity-75">{table.capacity} chỗ · {tableKindLabel(table.table_kind)}</p>
+                                </div>
+                                <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} />
+                              </div>
+                              <p className="mt-3 text-[11px] font-black uppercase tracking-[0.06em]">{meta.label}</p>
+                              <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold opacity-80">
+                                {table.unpaidTotal > 0 ? <span>{formatVnd(table.unpaidTotal)}</span> : <span>{seatingZoneLabel(table.seating_zone)}</span>}
+                                {!table.qr_enabled ? <span>QR tắt</span> : <span>QR bật</span>}
+                                {table.is_under_maintenance ? <span>Bảo trì</span> : null}
+                                {table.is_hidden ? <span>Ẩn</span> : null}
+                                {dueIn !== null ? <span>{dueIn < 0 ? `Trễ ${Math.abs(dueIn)}p` : `${dueIn}p`}</span> : null}
+                              </div>
                             </button>
                           );
                         })}
@@ -598,9 +932,9 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	                    {panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
 	                  </h3>
 	                </div>
-	                <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng chi tiết bàn">
-	                  <X size={18} />
-	                </button>
+		                <button type="button" onClick={closeDrawer} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng chi tiết bàn">
+		                  <X size={18} />
+		                </button>
 	              </div>
 	              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
 	                {panelMode === "create" && (
@@ -609,7 +943,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	                      Tên bàn
 	                      <Input name="name" placeholder="Bàn 13" required />
 	                    </label>
-	                    <div className="grid grid-cols-[1fr_100px] gap-3">
+                    <div className="grid gap-3 sm:grid-cols-[1fr_100px]">
 	                      <label className="grid gap-2 text-sm font-semibold">
 	                        Khu vực
 	                        <Input name="area" placeholder="Khu chính" />
@@ -619,6 +953,47 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
 	                        <Input name="capacity" type="number" min={1} max={50} defaultValue={4} />
 	                      </label>
 	                    </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-2 text-sm font-semibold">
+                          Tầng
+                          <Input name="floorLabel" placeholder="Tầng trệt" />
+                        </label>
+                        <label className="grid gap-2 text-sm font-semibold">
+                          Ưu tiên đặt bàn
+                          <Input name="reservationPriority" type="number" min={1} max={999} defaultValue={100} />
+                        </label>
+                        <label className="grid gap-2 text-sm font-semibold">
+                          Không gian
+                          <select name="seatingZone" defaultValue="indoor" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                            <option value="indoor">Trong nhà</option>
+                            <option value="outdoor">Ngoài trời</option>
+                            <option value="mixed">Linh hoạt</option>
+                          </select>
+                        </label>
+                        <label className="grid gap-2 text-sm font-semibold">
+                          Loại bàn
+                          <select name="tableKind" defaultValue="standard" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                            <option value="standard">Tiêu chuẩn</option>
+                            <option value="vip">VIP</option>
+                            <option value="bar">Quầy bar</option>
+                            <option value="community">Bàn chung</option>
+                          </select>
+                        </label>
+                      </div>
+                      <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                        <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                          Nhận đặt trước
+                          <input type="checkbox" name="isBookable" value="true" defaultChecked className="h-5 w-5 accent-[var(--accent)]" />
+                        </label>
+                        <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                          Ẩn khỏi sơ đồ
+                          <input type="checkbox" name="isHidden" value="true" className="h-5 w-5 accent-[var(--accent)]" />
+                        </label>
+                        <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                          Đang bảo trì
+                          <input type="checkbox" name="isUnderMaintenance" value="true" className="h-5 w-5 accent-[var(--accent)]" />
+                        </label>
+                      </div>
 	                    <Button className="shadow-none hover:shadow-none">
 	                      <Plus size={16} />
 	                      Thêm bàn mới
@@ -642,7 +1017,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                             Tên bàn
                             <Input name="name" defaultValue={selected.name} required />
                           </label>
-                          <div className="grid grid-cols-[1fr_110px] gap-3">
+                          <div className="grid gap-3 sm:grid-cols-[1fr_110px]">
                             <label className="grid gap-2 text-sm font-semibold">
                               Khu vực
                               <Input name="area" defaultValue={selected.area || "Khu chính"} />
@@ -650,6 +1025,47 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                             <label className="grid gap-2 text-sm font-semibold">
                               Sức chứa
                               <Input name="capacity" type="number" min={1} max={50} defaultValue={selected.capacity} />
+                            </label>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="grid gap-2 text-sm font-semibold">
+                              Tầng
+                              <Input name="floorLabel" defaultValue={selected.floor_label || "Tầng trệt"} />
+                            </label>
+                            <label className="grid gap-2 text-sm font-semibold">
+                              Ưu tiên đặt bàn
+                              <Input name="reservationPriority" type="number" min={1} max={999} defaultValue={selected.reservation_priority ?? 100} />
+                            </label>
+                            <label className="grid gap-2 text-sm font-semibold">
+                              Không gian
+                              <select name="seatingZone" defaultValue={selected.seating_zone ?? "indoor"} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                                <option value="indoor">Trong nhà</option>
+                                <option value="outdoor">Ngoài trời</option>
+                                <option value="mixed">Linh hoạt</option>
+                              </select>
+                            </label>
+                            <label className="grid gap-2 text-sm font-semibold">
+                              Loại bàn
+                              <select name="tableKind" defaultValue={selected.table_kind ?? "standard"} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                                <option value="standard">Tiêu chuẩn</option>
+                                <option value="vip">VIP</option>
+                                <option value="bar">Quầy bar</option>
+                                <option value="community">Bàn chung</option>
+                              </select>
+                            </label>
+                          </div>
+                          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                            <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                              Nhận đặt trước
+                              <input type="checkbox" name="isBookable" value="true" defaultChecked={selected.is_bookable !== false} className="h-5 w-5 accent-[var(--accent)]" />
+                            </label>
+                            <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                              Ẩn khỏi sơ đồ
+                              <input type="checkbox" name="isHidden" value="true" defaultChecked={Boolean(selected.is_hidden)} className="h-5 w-5 accent-[var(--accent)]" />
+                            </label>
+                            <label className="flex min-h-11 items-center justify-between gap-3 text-sm font-semibold">
+                              Đang bảo trì
+                              <input type="checkbox" name="isUnderMaintenance" value="true" defaultChecked={Boolean(selected.is_under_maintenance)} className="h-5 w-5 accent-[var(--accent)]" />
                             </label>
                           </div>
                           <Button className="w-full shadow-none hover:shadow-none">
@@ -660,6 +1076,14 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                       </div>
 
                       <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Vị trí</span><strong>{tableAreaLabel(selected)}</strong></div>
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Không gian</span><strong>{seatingZoneLabel(selected.seating_zone)}</strong></div>
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Loại bàn</span><strong>{tableKindLabel(selected.table_kind)}</strong></div>
+                        <div className="flex flex-wrap gap-2">
+                          {selected.table_kind === "vip" ? <Badge tone="yellow"><Crown size={13} /> VIP</Badge> : null}
+                          {selected.is_hidden ? <Badge tone="neutral"><EyeOff size={13} /> Đang ẩn</Badge> : null}
+                          {selected.is_under_maintenance ? <Badge tone="red"><Wrench size={13} /> Bảo trì</Badge> : null}
+                        </div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn đang mở</span><strong>{selected.activeOrderCount}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Tổng chưa thanh toán</span><strong>{formatVnd(selected.unpaidTotal)}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn quá giờ</span><strong>{selected.overdueCount}</strong></div>
@@ -678,7 +1102,7 @@ export function TablesWorkspace({ restaurantSlug, restaurantName, dashboardTable
                             <QrPrintPoster restaurantName={restaurantName} tableName={selected.name} qrUrl={selectedQrUrl} />
                           </div>
                           <div className="grid content-start gap-3">
-                            <a href={selectedUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-sm font-semibold text-white">
+                            <a href={selectedUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-sm font-semibold text-white">
                               <Link2 size={16} />
                               Mở link gọi món
                             </a>

@@ -238,6 +238,34 @@ function realtimeLabel(state: RealtimeState) {
   return "Đang nối";
 }
 
+type BrowserAudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+
+function playActionNoticeSound(tone: QuickAction["tone"]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const AudioContextConstructor = window.AudioContext ?? (window as BrowserAudioWindow).webkitAudioContext;
+    if (!AudioContextConstructor) return;
+
+    const audioContext = new AudioContextConstructor();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const frequency = tone === "red" ? 760 : tone === "yellow" ? 620 : 520;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.22, audioContext.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.045, audioContext.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.2);
+    window.setTimeout(() => void audioContext.close().catch(() => undefined), 300);
+  } catch {}
+}
+
 export function AdminLiveActionCenter({
   initialOrders,
   initialRequests,
@@ -369,7 +397,10 @@ export function AdminLiveActionCenter({
     }
 
     const freshAction = actions.find((action) => !knownKeys.has(action.key) && !dismissedNoticeKeysRef.current.has(action.key));
-    if (freshAction) setNoticeAction(freshAction);
+    if (freshAction) {
+      setNoticeAction(freshAction);
+      playActionNoticeSound(freshAction.tone);
+    }
 
     setNoticeAction((current) => {
       if (!current) return current;
@@ -567,7 +598,7 @@ export function AdminLiveActionCenter({
         </button>
 
         {open && (
-          <div className="absolute right-0 top-[calc(100%+10px)] z-[var(--z-dashboard-panel)] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+          <div className="fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))] z-[var(--z-dashboard-panel)] max-h-[calc(100dvh-8rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:absolute md:inset-x-auto md:right-0 md:top-[calc(100%+10px)] md:w-[min(420px,calc(100vw-24px))] md:max-h-none">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--foreground)]">Luồng thao tác nhanh</p>
@@ -578,7 +609,7 @@ export function AdminLiveActionCenter({
               </button>
             </div>
             {error && <div className="mx-4 mt-3 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-xs font-bold text-[var(--accent-strong)]">{error}</div>}
-            <div className="max-h-[460px] overflow-y-auto p-3">
+            <div className="max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain p-3 md:max-h-[460px]">
               {loading && actions.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 rounded-lg bg-[var(--soft-surface)] p-5 text-sm font-medium text-[var(--muted-foreground)]">
                   <Loader2 className="animate-spin" size={17} />

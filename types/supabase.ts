@@ -281,10 +281,103 @@ export type Database = {
         };
         Relationships: [];
       };
+      table_areas: {
+        Row: {
+          id: string;
+          restaurant_id: string;
+          name: string;
+          floor_label: string;
+          seating_zone: "indoor" | "outdoor" | "mixed";
+          sort_order: number;
+          is_active: boolean;
+          metadata: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          name: string;
+          floor_label?: string;
+          seating_zone?: "indoor" | "outdoor" | "mixed";
+          sort_order?: number;
+          is_active?: boolean;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          restaurant_id?: string;
+          name?: string;
+          floor_label?: string;
+          seating_zone?: "indoor" | "outdoor" | "mixed";
+          sort_order?: number;
+          is_active?: boolean;
+          metadata?: Json;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       tables: {
-        Row: { id: string; restaurant_id: string; name: string; area: string; capacity: number; qr_enabled: boolean };
-        Insert: { id?: string; restaurant_id: string; name: string; area?: string; capacity?: number; qr_enabled?: boolean };
-        Update: { restaurant_id?: string; name?: string; area?: string; capacity?: number; qr_enabled?: boolean };
+        Row: {
+          id: string;
+          restaurant_id: string;
+          name: string;
+          area: string;
+          capacity: number;
+          qr_enabled: boolean;
+          table_area_id: string | null;
+          floor_label: string;
+          seating_zone: "indoor" | "outdoor" | "mixed";
+          table_kind: "standard" | "vip" | "bar" | "community";
+          reservation_priority: number;
+          is_bookable: boolean;
+          is_hidden: boolean;
+          is_under_maintenance: boolean;
+          metadata: Json;
+          qr_token_version: number;
+          qr_token_enforced: boolean;
+          qr_token_rotated_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          name: string;
+          area?: string;
+          capacity?: number;
+          qr_enabled?: boolean;
+          table_area_id?: string | null;
+          floor_label?: string;
+          seating_zone?: "indoor" | "outdoor" | "mixed";
+          table_kind?: "standard" | "vip" | "bar" | "community";
+          reservation_priority?: number;
+          is_bookable?: boolean;
+          is_hidden?: boolean;
+          is_under_maintenance?: boolean;
+          metadata?: Json;
+          qr_token_version?: number;
+          qr_token_enforced?: boolean;
+          qr_token_rotated_at?: string | null;
+        };
+        Update: {
+          restaurant_id?: string;
+          name?: string;
+          area?: string;
+          capacity?: number;
+          qr_enabled?: boolean;
+          table_area_id?: string | null;
+          floor_label?: string;
+          seating_zone?: "indoor" | "outdoor" | "mixed";
+          table_kind?: "standard" | "vip" | "bar" | "community";
+          reservation_priority?: number;
+          is_bookable?: boolean;
+          is_hidden?: boolean;
+          is_under_maintenance?: boolean;
+          metadata?: Json;
+          qr_token_version?: number;
+          qr_token_enforced?: boolean;
+          qr_token_rotated_at?: string | null;
+        };
         Relationships: [];
       };
       store_branches: {
@@ -934,7 +1027,19 @@ export type Database = {
         Row: {
           id: string;
           restaurant_id: string;
-          status: "draft" | "holding" | "waiting_deposit_confirm" | "confirmed" | "seated" | "completed" | "cancelled" | "expired" | "no_show";
+          status:
+            | "draft"
+            | "pending"
+            | "holding"
+            | "waiting_deposit_confirm"
+            | "confirmed"
+            | "checked_in"
+            | "seated"
+            | "completed"
+            | "cancelled"
+            | "rejected"
+            | "expired"
+            | "no_show";
           customer_name: string;
           customer_phone: string;
           customer_email: string | null;
@@ -955,15 +1060,30 @@ export type Database = {
           created_at: string;
           updated_at: string | null;
           confirmed_at: string | null;
+          checked_in_at: string | null;
           seated_at: string | null;
+          completed_at: string | null;
           cancelled_at: string | null;
+          rejected_at: string | null;
           expired_at: string | null;
           no_show_at: string | null;
         };
         Insert: {
           id?: string;
           restaurant_id: string;
-          status?: "draft" | "holding" | "waiting_deposit_confirm" | "confirmed" | "seated" | "completed" | "cancelled" | "expired" | "no_show";
+          status?:
+            | "draft"
+            | "pending"
+            | "holding"
+            | "waiting_deposit_confirm"
+            | "confirmed"
+            | "checked_in"
+            | "seated"
+            | "completed"
+            | "cancelled"
+            | "rejected"
+            | "expired"
+            | "no_show";
           customer_name: string;
           customer_phone: string;
           customer_email?: string | null;
@@ -984,13 +1104,28 @@ export type Database = {
           created_at?: string;
           updated_at?: string | null;
           confirmed_at?: string | null;
+          checked_in_at?: string | null;
           seated_at?: string | null;
+          completed_at?: string | null;
           cancelled_at?: string | null;
+          rejected_at?: string | null;
           expired_at?: string | null;
           no_show_at?: string | null;
         };
         Update: {
-          status?: "draft" | "holding" | "waiting_deposit_confirm" | "confirmed" | "seated" | "completed" | "cancelled" | "expired" | "no_show";
+          status?:
+            | "draft"
+            | "pending"
+            | "holding"
+            | "waiting_deposit_confirm"
+            | "confirmed"
+            | "checked_in"
+            | "seated"
+            | "completed"
+            | "cancelled"
+            | "rejected"
+            | "expired"
+            | "no_show";
           customer_name?: string;
           customer_phone?: string;
           customer_email?: string | null;
@@ -1010,8 +1145,11 @@ export type Database = {
           seated_table_bill_id?: string | null;
           updated_at?: string | null;
           confirmed_at?: string | null;
+          checked_in_at?: string | null;
           seated_at?: string | null;
+          completed_at?: string | null;
           cancelled_at?: string | null;
+          rejected_at?: string | null;
           expired_at?: string | null;
           no_show_at?: string | null;
         };
@@ -1045,6 +1183,101 @@ export type Database = {
           starts_at?: string;
           ends_at?: string;
           status?: "active" | "released";
+        };
+        Relationships: [];
+      };
+      reservation_status_logs: {
+        Row: {
+          id: string;
+          restaurant_id: string;
+          reservation_id: string;
+          from_status: string | null;
+          to_status: string;
+          actor_type: "customer" | "merchant" | "staff" | "system";
+          actor_user_id: string | null;
+          note: string | null;
+          metadata: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          reservation_id: string;
+          from_status?: string | null;
+          to_status: string;
+          actor_type?: "customer" | "merchant" | "staff" | "system";
+          actor_user_id?: string | null;
+          note?: string | null;
+          metadata?: Json;
+          created_at?: string;
+        };
+        Update: {
+          restaurant_id?: string;
+          reservation_id?: string;
+          from_status?: string | null;
+          to_status?: string;
+          actor_type?: "customer" | "merchant" | "staff" | "system";
+          actor_user_id?: string | null;
+          note?: string | null;
+          metadata?: Json;
+        };
+        Relationships: [];
+      };
+      occupancy_logs: {
+        Row: {
+          id: string;
+          restaurant_id: string;
+          table_id: string | null;
+          table_bill_id: string | null;
+          reservation_id: string | null;
+          event_type:
+            | "reservation_created"
+            | "reservation_cancelled"
+            | "reservation_no_show"
+            | "reservation_checked_in"
+            | "reservation_seated"
+            | "reservation_completed"
+            | "table_released";
+          party_size: number | null;
+          metadata: Json;
+          occurred_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          table_id?: string | null;
+          table_bill_id?: string | null;
+          reservation_id?: string | null;
+          event_type:
+            | "reservation_created"
+            | "reservation_cancelled"
+            | "reservation_no_show"
+            | "reservation_checked_in"
+            | "reservation_seated"
+            | "reservation_completed"
+            | "table_released";
+          party_size?: number | null;
+          metadata?: Json;
+          occurred_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          restaurant_id?: string;
+          table_id?: string | null;
+          table_bill_id?: string | null;
+          reservation_id?: string | null;
+          event_type?:
+            | "reservation_created"
+            | "reservation_cancelled"
+            | "reservation_no_show"
+            | "reservation_checked_in"
+            | "reservation_seated"
+            | "reservation_completed"
+            | "table_released";
+          party_size?: number | null;
+          metadata?: Json;
+          occurred_at?: string;
         };
         Relationships: [];
       };

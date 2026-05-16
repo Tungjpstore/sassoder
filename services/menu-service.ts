@@ -56,6 +56,7 @@ export type PublicMenuRestaurant = {
   service_fee_min: number;
   service_fee_max: number | null;
   promotions: PublicPromotion[];
+  onlinePromotions: PublicPromotion[];
   categories: AdminMenuCategory[];
 };
 
@@ -82,10 +83,10 @@ export const getCachedPublicMenu = unstable_cache(
       .maybeSingle();
 
     throwIfSupabaseError(restaurantError);
-    const restaurant = restaurantData as Omit<PublicMenuRestaurant, "categories"> | null;
+    const restaurant = restaurantData as Omit<PublicMenuRestaurant, "categories" | "promotions" | "onlinePromotions"> | null;
     if (!restaurant) return null;
 
-    const [categoriesResult, promotions] = await Promise.all([
+    const [categoriesResult, promotions, onlinePromotions] = await Promise.all([
       supabase
         .from("menu_categories")
         .select("id,restaurant_id,name,items:menu_items(id,restaurant_id,category_id,name,price,image_url,is_available)")
@@ -93,7 +94,8 @@ export const getCachedPublicMenu = unstable_cache(
         .eq("items.is_available", true)
         .order("name", { ascending: true })
         .order("name", { referencedTable: "menu_items", ascending: true }),
-      restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "QR_MENU") : Promise.resolve([])
+      restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "QR_MENU") : Promise.resolve([]),
+      restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "WEBSITE") : Promise.resolve([])
     ]);
 
     throwIfSupabaseError(categoriesResult.error);
@@ -101,6 +103,7 @@ export const getCachedPublicMenu = unstable_cache(
     return {
       ...restaurant,
       promotions,
+      onlinePromotions,
       categories: (categoriesResult.data ?? []) as unknown as AdminMenuCategory[]
     };
   },

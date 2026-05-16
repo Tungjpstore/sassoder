@@ -203,7 +203,7 @@ export function OnlineWorkspace({
                   <h2 className="text-lg font-semibold text-[var(--foreground)]">Đơn mới cần nhìn nhanh</h2>
                   <p className="mt-1 text-sm text-[var(--muted-foreground)]">Giữ cho màn này gọn, chỉ hiển thị những đơn mới nhất và đáng chú ý.</p>
                 </div>
-                <button type="button" onClick={() => setDrawer("orders")} className="text-sm font-semibold text-[var(--primary)]">
+                <button type="button" onClick={() => setDrawer("orders")} className="inline-flex min-h-11 items-center text-sm font-semibold text-[var(--primary)]">
                   Xem đầy đủ
                 </button>
               </div>
@@ -278,7 +278,7 @@ export function OnlineWorkspace({
                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Link public</p>
                 <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Kênh chia sẻ cho khách</h2>
               </div>
-              <a href={onlineUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
+              <a href={onlineUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
                 <ExternalLink size={15} />
                 Mở
               </a>
@@ -353,7 +353,7 @@ export function OnlineWorkspace({
               <button
                 type="button"
                 onClick={() => setDrawer("closed")}
-                className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
+                className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
               >
                 <ArrowLeft size={16} aria-hidden="true" />
                 Quay lại
@@ -370,7 +370,7 @@ export function OnlineWorkspace({
             <button
               type="button"
               onClick={() => setDrawer("closed")}
-              className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
+              className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
               aria-label="Thu nhỏ cấu hình bán online"
             >
               <X size={18} aria-hidden="true" />

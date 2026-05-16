@@ -1,5 +1,6 @@
 export {
   generateAiImage,
+  generateInventoryOcrDraft,
   generateMenuOcrDraft,
   generateOnboardingAiImage,
   generateOnboardingBranding,

@@ -32,9 +32,22 @@ type ReservationSettings = {
   reservation_arrival_grace_minutes: number;
 };
 
+type ReservationTableOption = {
+  id: string;
+  name: string;
+  area: string;
+  capacity: number;
+  floorLabel?: string | null;
+  seatingZone?: string | null;
+  tableKind?: string | null;
+  isBookable?: boolean;
+  isHidden?: boolean;
+  isUnderMaintenance?: boolean;
+};
+
 type DrawerMode = "closed" | "detail" | "settings" | "share";
 type RealtimeState = "connecting" | "connected" | "error";
-type FilterKey = "today" | "holding" | "waiting_deposit_confirm" | "confirmed" | "seated" | "history";
+type FilterKey = "today" | "holding" | "waiting_deposit_confirm" | "confirmed" | "checked_in" | "seated" | "history";
 
 function todayInputValue() {
   const now = new Date();
@@ -56,14 +69,14 @@ function shortId(id: string) {
 }
 
 function statusTone(status: ReservationDto["status"]): "neutral" | "green" | "yellow" | "blue" | "red" {
-  if (status === "confirmed" || status === "seated" || status === "completed") return "green";
+  if (status === "confirmed" || status === "checked_in" || status === "seated" || status === "completed") return "green";
   if (status === "holding" || status === "waiting_deposit_confirm") return "yellow";
-  if (status === "cancelled" || status === "expired" || status === "no_show") return "red";
+  if (status === "cancelled" || status === "rejected" || status === "expired" || status === "no_show") return "red";
   return "neutral";
 }
 
 function isHistory(status: ReservationDto["status"]) {
-  return ["completed", "cancelled", "expired", "no_show"].includes(status);
+  return ["completed", "cancelled", "rejected", "expired", "no_show"].includes(status);
 }
 
 function holdCountdown(reservation: ReservationDto) {
@@ -73,6 +86,10 @@ function holdCountdown(reservation: ReservationDto) {
 }
 
 function canSeatReservation(reservation: ReservationDto) {
+  return reservation.status === "confirmed" || reservation.status === "checked_in";
+}
+
+function canCheckInReservation(reservation: ReservationDto) {
   return reservation.status === "confirmed";
 }
 
@@ -80,13 +97,26 @@ function canCancelReservation(reservation: ReservationDto) {
   return !isHistory(reservation.status) && reservation.status !== "seated";
 }
 
+function canRejectReservation(reservation: ReservationDto) {
+  if (reservation.status === "checked_in" || reservation.status === "seated") return false;
+  if (reservation.depositPaidAmount > 0 || reservation.depositStatus === "paid" || reservation.depositStatus === "waiting_confirm") return false;
+  return !isHistory(reservation.status);
+}
+
 function canMarkNoShow(reservation: ReservationDto, arrivalGraceMinutes: number) {
   if (reservation.status !== "confirmed") return false;
   return Date.now() >= new Date(reservation.startsAt).getTime() + arrivalGraceMinutes * 60_000;
 }
 
-function actionEndpoint(action: "confirm-deposit" | "seat" | "cancel" | "no-show", reservationId: string) {
+function actionEndpoint(action: "confirm-deposit" | "check-in" | "seat" | "cancel" | "reject" | "no-show" | "move-table", reservationId: string) {
   return `/api/admin/reservations/${reservationId}/${action}`;
+}
+
+function tableOptionLabel(table: ReservationTableOption) {
+  const floor = table.floorLabel || "Tầng trệt";
+  const area = table.area || "Khu chính";
+  const flags = [table.tableKind === "vip" ? "VIP" : null, table.seatingZone === "outdoor" ? "ngoài trời" : null].filter(Boolean).join(", ");
+  return `${table.name} · ${floor} · ${area} · ${table.capacity} khách${flags ? ` · ${flags}` : ""}`;
 }
 
 function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
@@ -116,7 +146,7 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
               {settings.address || "Chưa có địa chỉ quán."}{" "}
               {settings.store_lat !== null && settings.store_lng !== null ? "Đã có toạ độ cho chỉ đường." : "Chưa ghim toạ độ."}
             </p>
-            <Link href="/dashboard/settings?section=online" className="mt-2 inline-flex text-sm font-black text-[var(--primary)] hover:text-[var(--primary-strong)]">
+            <Link href="/dashboard/settings?section=online" className="mt-2 inline-flex min-h-11 items-center text-sm font-black text-[var(--primary)] hover:text-[var(--primary-strong)]">
               Cập nhật vị trí trên bản đồ
             </Link>
           </div>
@@ -180,11 +210,13 @@ export function ReservationsWorkspace({
   restaurantId,
   settings,
   initialReservations,
+  tableOptions,
   publicUrl
 }: {
   restaurantId: string;
   settings: ReservationSettings;
   initialReservations: ReservationDto[];
+  tableOptions: ReservationTableOption[];
   publicUrl: string;
 }) {
   const [date, setDate] = useState(todayInputValue());
@@ -194,6 +226,7 @@ export function ReservationsWorkspace({
   const [filter, setFilter] = useState<FilterKey>("today");
   const [loading, setLoading] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
+  const [moveTableId, setMoveTableId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const refreshTimerRef = useRef<number | null>(null);
@@ -205,6 +238,7 @@ export function ReservationsWorkspace({
       holding: reservations.filter((item) => item.status === "holding").length,
       waitingDeposit: reservations.filter((item) => item.status === "waiting_deposit_confirm").length,
       confirmed: reservations.filter((item) => item.status === "confirmed").length,
+      checkedIn: reservations.filter((item) => item.status === "checked_in").length,
       seated: reservations.filter((item) => item.status === "seated").length
     };
   }, [reservations]);
@@ -235,11 +269,36 @@ export function ReservationsWorkspace({
     }
   }, [date]);
 
-  async function runAction(action: "confirm-deposit" | "seat" | "cancel" | "no-show", reservationId: string) {
+  const moveTableOptions = useMemo(() => {
+    if (!selected) return [];
+    const currentTableIds = new Set(selected.tables.map((table) => table.id));
+    return tableOptions.filter(
+      (table) =>
+        !currentTableIds.has(table.id) &&
+        table.capacity >= selected.partySize &&
+        table.isBookable !== false &&
+        !table.isHidden &&
+        !table.isUnderMaintenance
+    );
+  }, [selected, tableOptions]);
+
+  const selectedMoveTableId = moveTableOptions.some((table) => table.id === moveTableId)
+    ? moveTableId
+    : moveTableOptions[0]?.id ?? "";
+
+  async function runAction(action: "confirm-deposit" | "check-in" | "seat" | "cancel" | "reject" | "no-show" | "move-table", reservationId: string, body?: Record<string, string>) {
     setMutatingId(reservationId);
     setError(null);
     try {
-      const response = await fetch(actionEndpoint(action, reservationId), { method: "POST" });
+      const response = await fetch(actionEndpoint(action, reservationId), {
+        method: "POST",
+        ...(body
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body)
+            }
+          : {})
+      });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại.");
       const updated = json.data as ReservationDto;
@@ -302,12 +361,13 @@ export function ReservationsWorkspace({
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-5">
+            <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               {[
                 { label: "Tổng lịch", value: stats.total, icon: CalendarCheck },
                 { label: "Đang giữ", value: stats.holding, icon: Clock3 },
                 { label: "Chờ cọc", value: stats.waitingDeposit, icon: Banknote },
                 { label: "Đã xác nhận", value: stats.confirmed, icon: Check },
+                { label: "Đã check-in", value: stats.checkedIn, icon: UserRoundCheck },
                 { label: "Đã đến", value: stats.seated, icon: Sofa }
               ].map((item) => {
                 const Icon = item.icon;
@@ -350,6 +410,7 @@ export function ReservationsWorkspace({
                 ["holding", "Đang giữ"],
                 ["waiting_deposit_confirm", "Chờ cọc"],
                 ["confirmed", "Đã xác nhận"],
+                ["checked_in", "Check-in"],
                 ["seated", "Đã đến"],
                 ["history", "Lịch sử"]
               ].map(([key, label]) => (
@@ -357,7 +418,7 @@ export function ReservationsWorkspace({
                   key={key}
                   type="button"
                   onClick={() => setFilter(key as FilterKey)}
-                  className={`h-9 shrink-0 rounded-md px-3 text-sm font-semibold transition ${filter === key ? "bg-[var(--surface)] text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
+                  className={`h-11 shrink-0 rounded-md px-3 text-sm font-semibold transition ${filter === key ? "bg-[var(--surface)] text-[var(--primary)]" : "text-[var(--muted-foreground)]"}`}
                 >
                   {label}
                 </button>
@@ -458,7 +519,7 @@ export function ReservationsWorkspace({
                   {drawer === "settings" ? "Thiết lập đặt bàn" : drawer === "share" ? "Link đặt bàn" : "Chi tiết lịch đặt"}
                 </h2>
               </div>
-              <button type="button" onClick={() => setDrawer("closed")} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] text-[var(--muted-foreground)]" aria-label="Đóng">
+              <button type="button" onClick={() => setDrawer("closed")} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] text-[var(--muted-foreground)]" aria-label="Đóng">
                 <X size={17} />
               </button>
             </div>
@@ -558,6 +619,10 @@ export function ReservationsWorkspace({
                         Xác nhận cọc
                       </Button>
                     ) : null}
+                    <Button type="button" variant="secondary" onClick={() => runAction("check-in", selected.id)} disabled={mutatingId === selected.id || !canCheckInReservation(selected)}>
+                      <UserRoundCheck size={16} />
+                      Check-in khách
+                    </Button>
                     <Button type="button" variant="secondary" onClick={() => runAction("seat", selected.id)} disabled={mutatingId === selected.id || !canSeatReservation(selected)}>
                       <UserRoundCheck size={16} />
                       Nhận khách vào bàn
@@ -570,7 +635,43 @@ export function ReservationsWorkspace({
                       <X size={16} />
                       Huỷ lịch đặt
                     </Button>
+                    <Button type="button" variant="danger" onClick={() => runAction("reject", selected.id)} disabled={mutatingId === selected.id || !canRejectReservation(selected)}>
+                      <X size={16} />
+                      Từ chối lịch
+                    </Button>
                   </div>
+
+                  {!isHistory(selected.status) && selected.status !== "seated" ? (
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                        <Sofa size={16} className="text-[var(--primary)]" />
+                        Đổi bàn giữ chỗ
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <select
+                          value={selectedMoveTableId}
+                          onChange={(event) => setMoveTableId(event.target.value)}
+                          className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none focus:border-[var(--primary)]"
+                          disabled={moveTableOptions.length === 0}
+                        >
+                          {moveTableOptions.length === 0 ? <option value="">Không có bàn phù hợp</option> : null}
+                          {moveTableOptions.map((table) => (
+                            <option key={table.id} value={table.id}>
+                              {tableOptionLabel(table)}
+                            </option>
+                          ))}
+                        </select>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => selectedMoveTableId && runAction("move-table", selected.id, { tableId: selectedMoveTableId })}
+                          disabled={mutatingId === selected.id || !selectedMoveTableId}
+                        >
+                          Đổi bàn
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>

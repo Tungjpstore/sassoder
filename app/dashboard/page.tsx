@@ -10,16 +10,21 @@ import {
   ReceiptText,
   ShoppingBag,
   TrendingUp,
+  Warehouse,
   WalletCards
 } from "lucide-react";
 import { AdminShell } from "@/components/dashboard/app-shell";
+import { AiOpsInsightCards } from "@/components/dashboard/ai-ops-insight-cards";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { Badge } from "@/components/ui/badge";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { buildOperationInsights } from "@/lib/ai/operation-insights";
 import { buildTenantUrl } from "@/lib/tenant-domain";
+import { persistAiOperationInsightsDeck } from "@/services/ai-operation-insights-service";
 import { getAdminDashboardOverview } from "@/services/dashboard-overview-service";
+import { getInventorySnapshot } from "@/services/inventory-service";
 import type { TableOperationalStatus } from "@/services/table-service";
 
 export const dynamic = "force-dynamic";
@@ -103,7 +108,10 @@ function AdminDashboardSkeleton() {
 }
 
 async function AdminDashboardContent({ restaurantId }: { restaurantId: string }) {
-  const { dashboard, operations, tables, recentOrders, topItems, monthRevenue } = await getAdminDashboardOverview(restaurantId);
+  const [{ dashboard, operations, tables, recentOrders, topItems, monthRevenue }, inventory] = await Promise.all([
+    getAdminDashboardOverview(restaurantId),
+    getInventorySnapshot(restaurantId)
+  ]);
   const tenantUrl = buildTenantUrl(dashboard.restaurant.slug, "/");
   const totalTables = Math.max(tables.length, dashboard.tables);
   const activeTables = tables.filter((table) => table.status !== "available").length;
@@ -117,8 +125,89 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
   const recentActionOrders = recentOrders
     .filter((order) => !["paid", "cancelled"].includes(order.status))
     .slice(0, 6);
+  const generatedOperationInsights = buildOperationInsights({
+    summary24h: {
+      orderCount: operations.todayOrders,
+      paidRevenue: operations.todayRevenue,
+      statusCount: {
+        pending: operations.pending,
+        ordering: operations.ordering,
+        completed: operations.completed,
+        waiting_payment: operations.waitingPayment,
+        waiting_confirm: operations.waitingConfirm,
+        paid: operations.paid
+      },
+      paymentStatusCount: {
+        waiting_payment: operations.waitingPayment,
+        waiting_confirm: operations.waitingConfirm,
+        paid: operations.paid
+      }
+    },
+    recentOrders: operations.recentOrders.map((order) => ({
+      id: order.id,
+      status: order.status,
+      total: order.total,
+      createdAt: order.createdAt,
+      tableName: order.tableName
+    })),
+    topItems: topItems.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      revenue: item.revenue
+    })),
+    menu: {
+      itemCount: dashboard.menuItems,
+      unavailableCount: 0
+    },
+    tables: {
+      tableCount: totalTables,
+      activeTableCount: activeTables,
+      qrDisabledCount: tables.filter((table) => !table.qr_enabled).length,
+      tables: tables.map((table) => ({
+        id: table.id,
+        name: table.name,
+        status: table.status,
+        activeOrderCount: table.activeOrderCount,
+        overdueCount: table.overdueCount,
+        qrEnabled: table.qr_enabled,
+        unpaidTotal: table.unpaidTotal
+      }))
+    },
+    payments: {
+      waitingConfirm: operations.waitingConfirm,
+      waitingPayment: operations.waitingPayment
+    },
+    inventory: {
+      schemaReady: inventory.schemaReady,
+      activeIngredientCount: inventory.activeIngredientCount,
+      lowStockCount: inventory.lowStockCount,
+      recipeCoveragePercent: inventory.recipeCoveragePercent,
+      recipeReadyItemCount: inventory.recipeReadyItemCount,
+      menuItemCount: inventory.menuItemCount,
+      totalReferenceValue: inventory.totalReferenceValue,
+      lowStockIngredients: inventory.lowStockIngredients.map((ingredient) => ({
+        name: ingredient.name,
+        unit: ingredient.unit,
+        onHandQuantity: ingredient.onHandQuantity,
+        minimumQuantity: ingredient.minimumQuantity,
+        referenceUnitCost: ingredient.referenceUnitCost
+      }))
+    }
+  });
+  const { deck: operationInsights } = await persistAiOperationInsightsDeck({
+    restaurantId,
+    deck: generatedOperationInsights
+  });
 
   const priorityCards = [
+    {
+      title: "Kho thiếu",
+      value: inventory.schemaReady ? inventory.lowStockCount : 0,
+      helper: inventory.schemaReady ? `${inventory.activeIngredientCount} nguyên liệu` : "Cần bật kho",
+      href: "/dashboard/inventory",
+      icon: Warehouse,
+      tone: inventory.schemaReady && inventory.lowStockCount > 0 ? "orange" : "green"
+    },
     {
       title: "Đơn mới",
       value: operations.pending,
@@ -149,7 +238,13 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
     { label: "Doanh thu hôm nay", value: formatVnd(operations.todayRevenue), meta: `${operations.paid} đơn`, icon: Banknote },
     { label: "Đơn đang mở", value: openOrderCount, meta: "Chưa đóng", icon: ReceiptText },
     { label: "VietQR", value: `${qrRatio}%`, meta: formatVnd(operations.qrRevenue), icon: QrCode },
-    { label: "Tháng này", value: formatVnd(monthRevenue), meta: "Doanh thu", icon: TrendingUp }
+    { label: "Tháng này", value: formatVnd(monthRevenue), meta: "Doanh thu", icon: TrendingUp },
+    {
+      label: "Kho & định mức",
+      value: inventory.schemaReady ? `${inventory.recipeCoveragePercent.toFixed(0)}%` : "--",
+      meta: inventory.schemaReady ? `${inventory.recipeReadyItemCount}/${inventory.menuItemCount} món` : "Chưa sẵn sàng",
+      icon: Warehouse
+    }
   ];
 
   return (
@@ -179,6 +274,10 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
               <ChefHat size={16} />
               Bếp
             </Link>
+            <Link href="/dashboard/inventory" className="dashboard-secondary-action">
+              <Warehouse size={16} />
+              Kho hàng
+            </Link>
             <a href={tenantUrl} target="_blank" rel="noreferrer" className="dashboard-secondary-action">
               <ExternalLink size={16} />
               Link gọi món
@@ -187,8 +286,10 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
         </div>
       </section>
 
+      <AiOpsInsightCards deck={operationInsights} />
+
       {/* ── Bento grid: Priority + Revenue ── */}
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         {/* Priority cards — large emphasis tiles */}
         {priorityCards.map((card) => {
           const Icon = card.icon;
@@ -235,7 +336,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       </section>
 
       {/* ── Revenue metrics — compact inline row ── */}
-      <section className="grid gap-2.5 md:grid-cols-4">
+      <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-5">
         {shiftMetrics.map((metric) => {
           const Icon = metric.icon;
           return (

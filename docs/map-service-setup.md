@@ -39,6 +39,8 @@ MAPS_TELEMETRY_SAMPLE_RATE="0.2"
 MAPS_DB_TELEMETRY_ENABLED="true"
 MAPS_DB_TELEMETRY_SAMPLE_RATE="0.15"
 MAPS_CACHE_NAMESPACE="logivn:maps:v1"
+MAPS_RATE_LIMIT_REDIS_ENABLED="true"
+MAPS_RATE_LIMIT_NAMESPACE="logivn:maps:rate-limit:v1"
 MAPS_GOONG_PLACES_ENABLED="true"
 MAPS_GOONG_PLACES_AUTOCOMPLETE_TTL_MS="600000"
 MAPS_GOONG_PLACE_DETAIL_TTL_MS="2592000000"
@@ -117,8 +119,9 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - Chỉ khi user chọn một gợi ý, frontend mới gọi `/api/maps/place-detail` để lấy tọa độ chính xác. Nếu provider fallback đã có sẵn tọa độ, client dùng luôn và không gọi detail.
   - Autocomplete cache ngắn hạn theo query + location bias; place detail cache dài hạn theo `placeId` để giảm chi phí Goong.
 - Ops:
-  - Nếu cấu hình `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, geocode/reverse/route/quote cache sẽ dùng Redis REST chung giữa các Vercel instances.
-  - Cache key được hash SHA-256, không lưu raw address trong key.
+- Nếu cấu hình `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, geocode/reverse/route/quote cache sẽ dùng Redis REST chung giữa các Vercel instances.
+- Các map API dùng cùng Redis REST để rate limit xuyên Vercel instances; nếu chưa cấu hình Redis, hệ thống tự fallback về memory bucket theo từng instance.
+- Cache key được hash SHA-256, không lưu raw address trong key.
   - Provider/cache/quote metrics được ghi vào `map_provider_request_logs`, `map_cache_event_logs`, `delivery_quote_metric_logs` theo sampling.
   - Dashboard API nội bộ: `GET /api/admin/maps/metrics?windowHours=24`.
 - Realtime delivery:

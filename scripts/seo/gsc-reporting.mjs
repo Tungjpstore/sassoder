@@ -86,20 +86,32 @@ function summarizePerformance(rows, performanceExport, combinedExport) {
 function summarizeIndexing(indexingExport, combinedExport, actionLog, readiness) {
   const source = indexingExport || combinedExport?.indexing || {};
   const summary = source.summary || {};
+  const actionPageIndexing = actionLog?.reports?.pageIndexing || {};
   const inspections = asArray(actionLog?.urlInspection);
+  const completedInspections = inspections.filter(
+    (item) => item?.state !== "pending-inspection" && !String(item?.actionTaken || "").startsWith("pending-")
+  );
   const expectedInspectionUrls = asArray(readiness?.urlsToInspect);
-  const inspectedUrlSet = new Set(inspections.map((item) => normalizeUrl(item?.url)));
+  const inspectedUrlSet = new Set(completedInspections.map((item) => normalizeUrl(item?.url)));
   const missingInspectionUrls = expectedInspectionUrls.filter((url) => !inspectedUrlSet.has(normalizeUrl(url)));
-  const indexedObservedCount = inspections.filter((item) => item?.state === "indexed").length;
-  const discoveredNotIndexedCount = inspections.filter((item) => item?.state === "discovered-not-indexed").length;
-  const requestedIndexingCount = inspections.filter((item) => String(item?.actionTaken || "").includes("requested")).length;
+  const indexedObservedCount = completedInspections.filter((item) => item?.state === "indexed").length;
+  const discoveredNotIndexedCount = completedInspections.filter((item) => item?.state === "discovered-not-indexed").length;
+  const requestedIndexingCount = completedInspections.filter((item) => String(item?.actionTaken || "").includes("requested")).length;
 
   return {
-    indexedPages: numberOrNull(summary.indexedPages) ?? numberOrNull(source.indexedPages) ?? (indexedObservedCount || null),
-    excludedPages: numberOrNull(summary.excludedPages) ?? numberOrNull(source.excludedPages) ?? null,
+    indexedPages:
+      numberOrNull(summary.indexedPages) ??
+      numberOrNull(source.indexedPages) ??
+      numberOrNull(actionPageIndexing.indexedPages) ??
+      (indexedObservedCount || null),
+    excludedPages: numberOrNull(summary.excludedPages) ?? numberOrNull(source.excludedPages) ?? numberOrNull(actionPageIndexing.excludedPages),
     expectedInspectionUrls: expectedInspectionUrls.length,
     missingInspectionUrls,
-    inspectedUrls: inspections.length,
+    inspectedUrls: completedInspections.length,
+    pendingInspectionUrls: inspections
+      .filter((item) => item?.state === "pending-inspection" || String(item?.actionTaken || "").startsWith("pending-"))
+      .map((item) => item.url)
+      .filter(Boolean),
     indexedObservedCount,
     discoveredNotIndexedCount,
     requestedIndexingCount,
@@ -161,9 +173,18 @@ function getRecommendations({ evidenceLevel, actionSummary, indexingSummary, per
   if (actionSummary.pendingReports.length) {
     recommendations.push(`Re-check GSC reports after Google processing completes: ${actionSummary.pendingReports.join(", ")}.`);
   }
+  if (
+    actionSummary.sitemapDiscoveredPages !== null &&
+    indexingSummary.expectedInspectionUrls > 0 &&
+    actionSummary.sitemapDiscoveredPages < indexingSummary.expectedInspectionUrls
+  ) {
+    recommendations.push(
+      `GSC currently reports ${actionSummary.sitemapDiscoveredPages}/${indexingSummary.expectedInspectionUrls} sitemap URLs discovered; re-check the sitemap table after Google's next crawl refresh.`
+    );
+  }
   if (indexingSummary.missingInspectionUrls.length) {
     recommendations.push(
-      `After the Week 2 blog URLs are deployed, inspect and request indexing for: ${indexingSummary.missingInspectionUrls.join(", ")}.`
+      `Inspect and request indexing for newly deployed public URLs: ${indexingSummary.missingInspectionUrls.join(", ")}.`
     );
   }
   if (indexingSummary.discoveredNotIndexedCount > 0) {
@@ -190,6 +211,8 @@ function renderMarkdown(report) {
     "",
     `- Sitemap status: ${report.summary.sitemapStatus || "unknown"}`,
     `- Sitemap discovered pages: ${report.summary.sitemapDiscoveredPages ?? "unknown"}`,
+    `- Indexed pages: ${report.summary.indexedPages ?? "unknown"}`,
+    `- Excluded/not indexed pages: ${report.summary.excludedPages ?? "unknown"}`,
     `- Expected URL inspections: ${report.summary.expectedInspectionUrls}`,
     `- Inspected URLs: ${report.summary.inspectedUrls}`,
     `- Missing URL inspections: ${report.summary.missingInspectionCount}`,

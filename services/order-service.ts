@@ -4,6 +4,7 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { buildDeliveryQuoteSnapshot, calculateServiceFee, getPublicOrderingSettingsBySlug, quoteDeliveryForRestaurant } from "@/services/delivery-service";
 import { recordDeliveryStatusTrackingEvent } from "@/services/delivery-tracking-service";
 import { ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
+import { deductInventoryForOrder, rollbackInventoryForOrder } from "@/services/inventory-service";
 import { getPaymentInstructions } from "@/services/payment-service";
 import { resolvePromotionForOrder } from "@/services/promotion-service";
 import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-boundary";
@@ -1138,7 +1139,7 @@ export async function listKitchenOrdersForRestaurant(restaurantId: string) {
   return orders;
 }
 
-export async function acceptOrder(restaurantId: string, orderId: string, minutes = 15) {
+export async function acceptOrder(restaurantId: string, orderId: string, minutes = 15, actorUserId?: string | null) {
   const supabase = createAdminSupabaseClient();
   const { data: order, error } = await supabase
     .from("orders")
@@ -1153,6 +1154,8 @@ export async function acceptOrder(restaurantId: string, orderId: string, minutes
   if (order.status !== "pending" && order.status !== "ordering") {
     throw new AppError("Chỉ đơn mới hoặc đang ra món mới có thể xác nhận", 400);
   }
+
+  await deductInventoryForOrder(restaurantId, orderId, actorUserId);
 
   const now = new Date();
   const serviceDueAt = new Date(now.getTime() + minutes * 60_000).toISOString();
@@ -1286,7 +1289,24 @@ export async function updateOrderDeliveryStatus(
   return updated;
 }
 
-async function cancelOrderInternal(supabase: OrderSupabaseClient, restaurantId: string, orderId: string) {
+async function tryRollbackOrderInventory(restaurantId: string, orderId: string, actorUserId?: string | null) {
+  try {
+    await rollbackInventoryForOrder(restaurantId, orderId, actorUserId);
+  } catch (error) {
+    console.error("inventory_order_rollback_failed", {
+      restaurantId,
+      orderId,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  }
+}
+
+async function cancelOrderInternal(
+  supabase: OrderSupabaseClient,
+  restaurantId: string,
+  orderId: string,
+  actorUserId?: string | null
+) {
   const order = await getMutableOrder(supabase, restaurantId, orderId);
   const cancelLogKey = paymentTransitionKey({ orderId, stage: "cancelled" });
   assertOrderNotPaid(order);
@@ -1302,6 +1322,7 @@ async function cancelOrderInternal(supabase: OrderSupabaseClient, restaurantId: 
         transitionKey: cancelLogKey
       });
     }
+    await tryRollbackOrderInventory(restaurantId, orderId, actorUserId);
     await closeBillIfNoActiveOrders(supabase, restaurantId, order.bill_id);
     return order;
   }
@@ -1344,6 +1365,7 @@ async function cancelOrderInternal(supabase: OrderSupabaseClient, restaurantId: 
       transitionKey: cancelLogKey
     });
   }
+  await tryRollbackOrderInventory(restaurantId, orderId, actorUserId);
   await closeBillIfNoActiveOrders(supabase, restaurantId, order.bill_id);
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
@@ -1440,9 +1462,9 @@ async function deleteTestOrderInternal(supabase: OrderSupabaseClient, restaurant
   };
 }
 
-export async function cancelOrder(restaurantId: string, orderId: string) {
+export async function cancelOrder(restaurantId: string, orderId: string, actorUserId?: string | null) {
   const supabase = createAdminSupabaseClient();
-  return cancelOrderInternal(supabase, restaurantId, orderId);
+  return cancelOrderInternal(supabase, restaurantId, orderId, actorUserId);
 }
 
 export async function deleteTestOrder(restaurantId: string, orderId: string) {

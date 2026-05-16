@@ -82,7 +82,7 @@ function OtpInput({
   );
 
   return (
-    <div className="flex justify-center gap-2 sm:gap-3" onPaste={handlePaste}>
+    <div className="flex justify-center gap-1 sm:gap-3" onPaste={handlePaste}>
       {Array.from({ length: 6 }).map((_, i) => (
         <input
           key={i}
@@ -95,7 +95,7 @@ function OtpInput({
           onKeyDown={(e) => handleKeyDown(i, e)}
           aria-label={`Số OTP thứ ${i + 1}`}
           disabled={disabled}
-          className="h-12 w-10 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] text-center text-xl font-black text-[var(--foreground)] outline-none transition focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:h-14 sm:w-12 sm:text-2xl"
+          className="h-12 w-11 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] text-center text-xl font-black text-[var(--foreground)] outline-none transition focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:h-14 sm:w-12 sm:text-2xl"
           autoComplete={i === 0 ? "one-time-code" : "off"}
         />
       ))}
@@ -144,11 +144,11 @@ export function VerifyEmailForm({ email }: { email: string }) {
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(15,77,58,0.08),transparent_30%),radial-gradient(circle_at_88%_10%,rgba(242,140,40,0.09),transparent_22%),linear-gradient(180deg,#fffcf6,#f7efe4)]" />
 
         <header className="relative z-10 flex min-h-14 items-center justify-center border-b border-[#123b2b]/10 bg-[#fffdf8]/76 px-5 py-3 backdrop-blur">
-          <LogiVNLogo href="/" className="h-8" priority />
+          <LogiVNLogo href="/" className="h-11" priority />
         </header>
 
         <section className="auth-fade-in relative z-10 mx-auto flex w-full max-w-[430px] flex-1 flex-col items-center justify-center gap-5 px-5 py-8">
-          <div className="w-full rounded-[24px] border border-[#123b2b]/10 bg-[#fffdf8]/95 p-5 shadow-[0_20px_60px_rgba(15,77,58,0.07)] sm:p-6">
+          <div className="w-full rounded-[24px] border border-[#123b2b]/10 bg-[#fffdf8]/95 p-4 shadow-[0_20px_60px_rgba(15,77,58,0.07)] sm:p-6">
             {/* Icon + heading */}
             <div className="mb-5 border-b border-[#123b2b]/10 pb-5 text-center">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#0f4d3a]">
@@ -173,7 +173,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
                     name="visibleEmail"
                     type="email"
                     inputMode="email"
-                    className="h-11 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] px-4 text-sm font-semibold text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                    className="h-12 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] px-4 text-sm font-semibold text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
                     placeholder="admin@example.com"
                     autoComplete="email"
                   />
@@ -191,7 +191,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
               )}
 
               <button
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#0f4d3a] px-5 text-sm font-black uppercase tracking-[0.1em] text-[#FFF7EB] shadow-[0_12px_28px_rgba(15,77,58,0.16)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#0f4d3a] px-5 text-sm font-black uppercase tracking-[0.1em] text-[#FFF7EB] shadow-[0_12px_28px_rgba(15,77,58,0.16)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
                 disabled={verifyPending || !canVerify}
               >
                 {verifyPending ? "Đang xác thực..." : "Xác nhận mã"}
@@ -204,7 +204,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
               <input type="hidden" name="email" value={effectiveEmail} />
               <button
                 type="submit"
-                className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#123b2b]/10 bg-white/55 px-4 text-sm font-bold text-[#0f4d3a] transition hover:border-[#0f4d3a]/35 disabled:opacity-50"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#123b2b]/10 bg-white/55 px-4 text-sm font-bold text-[#0f4d3a] transition hover:border-[#0f4d3a]/35 disabled:opacity-50"
                 disabled={!canResend}
               >
                 <RefreshCw className={resendPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
@@ -220,7 +220,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
               <span>Email phải được xác thực trước khi LogiVN mở onboarding tạo quán và cấp quyền quản trị dashboard.</span>
             </div>
 
-            <Link className="mt-5 block text-center text-sm font-semibold text-[var(--muted-foreground)] transition hover:text-[var(--primary)]" href="/dashboard/login">
+            <Link className="mt-5 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[var(--muted-foreground)] transition hover:text-[var(--primary)]" href="/dashboard/login">
               Quay lại đăng nhập
             </Link>
           </div>

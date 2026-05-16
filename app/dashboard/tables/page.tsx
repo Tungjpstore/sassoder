@@ -22,6 +22,7 @@ export default async function AdminTablesPage() {
       subtitle="Quản lý sơ đồ bàn, trạng thái sử dụng và mã QR từng bàn."
     >
       <TablesWorkspace
+        restaurantId={session.restaurantId}
         restaurantSlug={dashboard.restaurant.slug}
         restaurantName={dashboard.restaurant.name}
         dashboardTableCount={dashboard.tables}

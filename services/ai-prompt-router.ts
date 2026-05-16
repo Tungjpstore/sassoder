@@ -1,5 +1,7 @@
 import "server-only";
 
+import { passportDigest, sanitizeOperationalPassport } from "@/lib/ai/operational-passport";
+
 export type AiPromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -21,6 +23,7 @@ export type OwnerAiIntent =
   | "orders"
   | "kitchen"
   | "menu"
+  | "inventory"
   | "tables"
   | "payments"
   | "promotions"
@@ -222,6 +225,21 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
       "Đóng vai menu engineer cho F&B Việt Nam. Đề xuất ít nhưng rõ: món nên đẩy, món nên ẩn, danh mục nên đổi, ảnh/menu preview nên tạo.",
     responseContract: "Trả lời theo: Nhận xét menu, Cơ hội tăng doanh thu, Việc nên chỉnh trong dashboard.",
     suggestions: ["Món nào nên đẩy lên đầu?", "Gợi ý mô tả cho món mới", "Tối ưu danh mục menu giúp dễ gọi"]
+  },
+  inventory: {
+    intent: "inventory",
+    label: "Kho hàng",
+    description: "Theo dõi nguyên liệu thấp, định mức món, lô sắp hết hạn, cảnh báo kho và gợi ý nhập hàng.",
+    dataScope: "Inventory snapshot, nguyên liệu dưới ngưỡng, recipe coverage, giá trị tồn kho, alert và lô sắp hết hạn nếu có.",
+    guardrails: [
+      "Không bịa số lượng tồn hoặc giá vốn.",
+      "Không tự tạo phiếu nhập/đơn mua nếu chưa có action xác nhận.",
+      "Ưu tiên nguyên liệu ảnh hưởng món bán chạy hoặc ca cao điểm."
+    ],
+    systemAddendum:
+      "Đóng vai inventory controller cho F&B. Ưu tiên thiếu nguyên liệu, định mức món chưa đủ, lô sắp hết hạn, hao hụt và hành động nhập hàng có thể làm ngay.",
+    responseContract: "Trả lời theo: Rủi ro kho, Món/ca bị ảnh hưởng, Việc cần làm ngay trong Kho hàng.",
+    suggestions: ["Kho đang thiếu gì?", "Món nào thiếu định mức?", "Gợi ý nhập hàng trước giờ cao điểm"]
   },
   tables: {
     intent: "tables",
@@ -425,6 +443,7 @@ const ownerKeywordMap: Record<OwnerAiIntent, string[]> = {
   orders: ["don", "order", "nhan don", "xac nhan", "phuc vu", "trang thai don", "xu ly don", "don cho"],
   kitchen: ["bep", "ra mon", "tre mon", "qua gio", "sla", "dang nau", "uu tien bep"],
   menu: ["menu", "mon", "danh muc", "gia", "hinh anh", "ocr", "nhap menu", "anh mon", "tao anh mon", "anh do an", "food photo", "mo ta mon"],
+  inventory: ["kho", "ton kho", "nguyen lieu", "dinh muc", "recipe", "het hang", "nhap kho", "dat hang", "nha cung cap", "food cost", "hao hut"],
   tables: ["ban", "qr", "trong", "dang phuc vu", "so do ban", "ma qr", "in qr"],
   payments: ["thanh toan", "vietqr", "tien mat", "chuyen khoan", "hoa don", "doi soat", "xac nhan tien"],
   promotions: ["khuyen mai", "ma giam", "voucher", "campaign", "uu dai", "giam gia"],
@@ -453,6 +472,7 @@ const ownerRouteRules: Array<IntentRouteRule<OwnerAiIntent>> = [
   { intent: "orders", weight: 5, patterns: ["xu ly tat ca don", "xu ly don cho", "nhan don", "accept order", "don nao can xu ly"] },
   { intent: "payments", weight: 5, patterns: ["xac nhan thanh toan", "doi soat", "vietqr", "da chuyen khoan", "xac nhan tien"] },
   { intent: "menu", weight: 6, patterns: ["tao anh mon", "anh mon an", "anh do an", "food photo", "ocr menu", "quet menu", "nhap menu", "them mon tu ocr"] },
+  { intent: "inventory", weight: 6, patterns: ["ton kho", "nguyen lieu", "thieu hang", "het hang", "dinh muc", "food cost", "nhap kho", "dat hang"] },
   { intent: "growth", weight: 6, patterns: ["tao logo", "prompt logo", "tao slogan", "viet slogan", "bo nhan dien", "thuong hieu", "branding"] },
   { intent: "setup", weight: 5, patterns: ["ke hoach setup", "setup quan", "thiet lap quan", "san sang ban that", "hoan thien setup"] },
   { intent: "tables", weight: 4, patterns: ["in qr", "tai qr", "ma qr", "ban nao", "so do ban"] },
@@ -624,6 +644,9 @@ function buildOwnerNextStep(input: {
   if (input.intent === "menu" || input.menuItemCount === 0 || input.menuUnavailableCount > 0) {
     return "Bước ưu tiên: hướng tới OCR/tạo món/tạo ảnh món và nêu rõ thao tác áp dụng vào menu.";
   }
+  if (input.intent === "inventory") {
+    return "Bước ưu tiên: mở Kho hàng, xử lý nguyên liệu dưới ngưỡng và bổ sung định mức cho món bán chạy.";
+  }
   if (input.setupBlockers.length || input.intent === "setup" || input.intent === "settings") {
     return "Bước ưu tiên: xử lý blocker đầu tiên trong Settings/Menu/Bàn trước, sau đó mới tối ưu tăng trưởng.";
   }
@@ -641,8 +664,14 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const readiness = recordFromUnknown(restaurant?.setupReadiness);
   const tables = recordFromUnknown(snapshot?.tables);
   const menu = recordFromUnknown(snapshot?.menu);
+  const inventory = recordFromUnknown(snapshot?.inventory);
   const payments = recordFromUnknown(snapshot?.payments);
+  const operationInsights = recordFromUnknown(snapshot?.operationInsights);
+  const insightRows = recordArray(operationInsights?.insights);
+  const primaryInsightId = textValue(operationInsights?.primaryInsightId);
+  const primaryInsight = insightRows.find((insight) => textValue(insight.id) === primaryInsightId) ?? insightRows[0];
   const route = textValue(context?.route) || textValue(context?.currentPath) || textValue(context?.pathname);
+  const passport = sanitizeOperationalPassport(context?.operationalPassport) || sanitizeOperationalPassport(context?.passport);
   const attentionOrders = topAttentionOrders(snapshot);
   const setupBlockers = [
     ...textArray(readiness?.launchBlockers),
@@ -664,18 +693,34 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
       ? `Bàn/QR: ${numberValue(tables.activeTableCount)}/${numberValue(tables.tableCount)} bàn đang hoạt động, ${numberValue(tables.qrDisabledCount)} QR tắt.`
       : "",
     menu ? `Menu: ${menuItemCount} món, ${menuUnavailableCount} món tạm hết/chưa bán.` : "",
+    inventory
+      ? `Kho: ${numberValue(inventory.lowStockCount)} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(numberValue(inventory.recipeCoveragePercent))}%, ${numberValue(inventory.openAlertCount)} alert mở.`
+      : "",
     payments ? `Thanh toán: ${waitingConfirmPayments} giao dịch chờ xác nhận trong snapshot.` : "",
     readiness ? `Setup: điểm ${numberValue(readiness.score)}, blocker ${setupBlockers.slice(0, 3).join(" | ") || "không có blocker rõ"}.` : "",
+    operationInsights ? `AI Ops: ${textValue(operationInsights.summary) || `health ${numberValue(operationInsights.healthScore)}/100`}.` : "",
+    primaryInsight
+      ? `Insight ưu tiên: ${textValue(primaryInsight.title)} - ${textValue(primaryInsight.detail)} Action: ${textValue(primaryInsight.action)}.`
+      : "",
+    passport ? passportDigest(passport) : "",
     buildOwnerNextStep({ intent: input.intent, attentionOrders, waitingConfirmPayments, menuItemCount, menuUnavailableCount, setupBlockers })
   ];
-  return lines.filter(Boolean).join("\n").slice(0, 1800);
+  return lines.filter(Boolean).join("\n").slice(0, 2200);
 }
 
-function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: unknown; orderStatus?: unknown; menuSnapshot?: unknown; reservationStatus?: unknown }) {
+function buildCustomerContextDigest(input: {
+  intent: CustomerAiIntent;
+  cart?: unknown;
+  orderStatus?: unknown;
+  menuSnapshot?: unknown;
+  reservationStatus?: unknown;
+  context?: Record<string, unknown>;
+}) {
   const menu = recordFromUnknown(input.menuSnapshot);
   const cart = recordFromUnknown(input.cart);
   const orderStatus = recordFromUnknown(input.orderStatus);
   const reservationStatus = recordFromUnknown(input.reservationStatus);
+  const context = recordFromUnknown(input.context);
   const categories = recordArray(menu?.categories);
   const menuItemCount = numberValue(menu?.itemCount) || categories.reduce((sum, category) => sum + recordArray(category.items).length, 0);
   const promotions = recordArray(menu?.promotions);
@@ -686,6 +731,7 @@ function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: un
   const reservationDepositState = textValue(reservationStatus?.depositStatus);
   const reservationStartsAt = textValue(reservationStatus?.startsAt);
   const reservationHoldExpiresAt = textValue(reservationStatus?.holdExpiresAt);
+  const passport = sanitizeOperationalPassport(context?.operationalPassport) || sanitizeOperationalPassport(context?.passport);
   const nextStep =
     input.intent === "reservation"
       ? reservationState
@@ -709,6 +755,7 @@ function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: un
       : input.intent === "reservation"
         ? "Lịch đặt hiện tại: chưa có booking trong context."
         : "",
+    passport ? passportDigest(passport) : "",
     nextStep
   ]
     .filter(Boolean)
@@ -809,6 +856,7 @@ export function buildCustomerAssistantMessages(input: {
   orderStatus?: unknown;
   menuSnapshot?: unknown;
   reservationStatus?: unknown;
+  context?: Record<string, unknown>;
 }): AiPromptMessage[] {
   const config = customerAiIntentConfig[input.intent];
   const contextDigest = buildCustomerContextDigest(input);
@@ -964,6 +1012,25 @@ export function buildMenuOcrPrompt(input: { imageUrl?: string; imageBase64?: str
     "Không đưa tiêu đề quán, chữ MENU, số điện thoại, địa chỉ hoặc ghi chú không có giá vào danh sách items.",
     "Không tự thêm món không có trong ảnh/nội dung. Chuẩn hóa lỗi OCR phổ biến nhưng giữ tên món dễ nhận biết.",
     "Tags nên là các nhãn ngắn như bán chạy, đồ uống, món nóng, ăn nhẹ, chay, cay, signature nếu có căn cứ.",
+    contentSource
+  ].join("\n");
+}
+
+export function buildInventoryOcrPrompt(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
+  const contentSource = input.rawText
+    ? `Nội dung hóa đơn/danh sách nhập kho thô:\n${input.rawText}`
+    : `Ảnh hóa đơn/phiếu nhập kho: ${input.imageUrl || input.imageBase64?.slice(0, 120) || "không có"}`;
+
+  return [
+    "Bạn là AI nhập liệu kho cho quán F&B Việt Nam. Hãy trích xuất nguyên liệu/hàng hóa từ hóa đơn, phiếu nhập hoặc danh sách mua hàng.",
+    "Chỉ trả JSON hợp lệ, không markdown, không giải thích ngoài JSON.",
+    "Schema bắt buộc: {\"rows\":[{\"name\":string,\"unit\":string,\"quantity\":number,\"minimumQuantity\":number,\"referenceUnitCost\":number,\"categoryName\":string|null}],\"warnings\":[string],\"confidence\":number}",
+    "name là tên nguyên liệu ngắn gọn, bỏ mã hàng nếu không cần. unit chỉ dùng ký tự latin như kg, g, ml, l, chai, lon, goi, hop, cai, thung, bao.",
+    "quantity là số lượng nhập. Nếu hóa đơn có thành tiền và đơn giá, referenceUnitCost là đơn giá VND dạng số nguyên. Nếu chỉ có tổng tiền, hãy chia theo quantity khi đủ căn cứ.",
+    "minimumQuantity nếu không có trong nội dung thì trả 0, không tự bịa định mức.",
+    "categoryName nên là nhóm ngắn như Bar, Bếp nóng, Dairy, Bao bì, Gia vị nếu có căn cứ; nếu không chắc thì null.",
+    "Không đưa VAT, tổng cộng, phí giao hàng, số điện thoại, địa chỉ, mã đơn, ngày tháng vào rows.",
+    "Nếu OCR mơ hồ, vẫn trả dòng có thể đọc được và thêm cảnh báo rõ trong warnings.",
     contentSource
   ].join("\n");
 }

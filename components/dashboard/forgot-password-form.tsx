@@ -13,7 +13,7 @@ export function ForgotPasswordForm({ initialEmail = "" }: { initialEmail?: strin
       action={formAction}
       className="w-full rounded-[24px] border border-[#123b2b]/10 bg-[#fffdf8]/95 p-5 shadow-[0_20px_60px_rgba(15,77,58,0.07)] sm:p-6"
     >
-      <Link href="/dashboard/login" className="mb-5 inline-flex items-center gap-2 text-sm font-bold text-[#0f4d3a] transition hover:text-[var(--primary)]">
+      <Link href="/dashboard/login" className="mb-5 inline-flex min-h-11 items-center gap-2 text-sm font-bold text-[#0f4d3a] transition hover:text-[var(--primary)]">
         <ArrowLeft className="h-4 w-4" />
         Quay lại đăng nhập
       </Link>
@@ -36,7 +36,7 @@ export function ForgotPasswordForm({ initialEmail = "" }: { initialEmail?: strin
             name="email"
             type="email"
             defaultValue={initialEmail}
-            className="h-11 w-full rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+            className="h-12 w-full rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
             placeholder="admin@example.com"
             autoComplete="email"
             required

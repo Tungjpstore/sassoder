@@ -12,6 +12,7 @@ import {
   buildBrandingMessages,
   buildCustomerAssistantMessages,
   buildImageGenerationPrompt,
+  buildInventoryOcrPrompt,
   buildMenuOcrPrompt,
   buildOwnerAssistantMessages,
   buildStoreSetupDraftMessages,
@@ -29,6 +30,12 @@ import {
   type StoreSetupDraftKind
 } from "@/services/ai-prompt-router";
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
+import { buildAgentMission } from "@/lib/ai/agent-mission";
+import { buildCommandDeck } from "@/lib/ai/command-deck";
+import { buildOperationalPassport } from "@/lib/ai/operational-passport";
+import { buildOperationInsights } from "@/lib/ai/operation-insights";
+import { looksLikeRawAiPayload, normalizeAiReply, sanitizeAiDisplayText } from "@/lib/ai/response-contract";
+import { getInventorySnapshot } from "@/services/inventory-service";
 import {
   assertFeatureEntitlement,
   assertRestaurantEntitlement,
@@ -55,31 +62,65 @@ type ExecutedAiToolCall = {
 };
 
 function sanitizeAssistantText(value: string, maxLength = 900) {
-  return value
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/\*(.*?)\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*]\s+/gm, "- ")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, maxLength);
+  return sanitizeAiDisplayText(value, maxLength);
 }
 
 function looksLikeRawAssistantPayload(value: string) {
-  const text = sanitizeAssistantText(value, 1800);
-  if (!text) return true;
-  if (/^[{[]/.test(text)) return true;
-  if (/^"(summary|reply|actions|agentPlan|readinessScore|launchBlockers)"\s*:/.test(text)) return true;
-  if (/"(summary|reply|actions|agentPlan|launchBlockers|expressSetup)"\s*:/.test(text) && /[{}[\]]/.test(text)) return true;
-  if (/\b(tool_call|tool_calls|function_call|raw|arguments)\b/i.test(text) && /[{}[\]]/.test(text)) return true;
-  return false;
+  return looksLikeRawAiPayload(value);
 }
 
 function formatCurrency(value: number) {
   return `${Math.max(0, Number(value || 0)).toLocaleString("vi-VN")}đ`;
+}
+
+function buildOwnerPassport(input: {
+  intent: string;
+  intentLabel: string;
+  route?: string | null;
+  summary: string;
+  nextActionId?: string | null;
+  nextActionLabel?: string | null;
+  checkpoint?: string | null;
+  confidence?: "high" | "medium" | "low";
+}) {
+  return buildOperationalPassport({
+    surface: "dashboard",
+    title: `Chủ quán · ${input.intentLabel}`,
+    status: input.intent,
+    goal: input.summary,
+    route: input.route ?? null,
+    nextActionId: input.nextActionId ?? null,
+    nextActionLabel: input.nextActionLabel ?? null,
+    checkpoint: input.checkpoint ?? null,
+    handoffRoute: input.route ?? null,
+    handoffLabel: input.intentLabel,
+    confidence: input.confidence ?? "medium"
+  });
+}
+
+function buildCustomerPassport(input: {
+  intent: string;
+  intentLabel: string;
+  route?: string | null;
+  summary: string;
+  nextActionId?: string | null;
+  nextActionLabel?: string | null;
+  checkpoint?: string | null;
+  confidence?: "high" | "medium" | "low";
+}) {
+  return buildOperationalPassport({
+    surface: "customer",
+    title: `Khách · ${input.intentLabel}`,
+    status: input.intent,
+    goal: input.summary,
+    route: input.route ?? null,
+    nextActionId: input.nextActionId ?? null,
+    nextActionLabel: input.nextActionLabel ?? null,
+    checkpoint: input.checkpoint ?? null,
+    handoffRoute: input.route ?? null,
+    handoffLabel: input.intentLabel,
+    confidence: input.confidence ?? "medium"
+  });
 }
 
 type AiImageResult = {
@@ -339,6 +380,79 @@ function normalizeMenuOcrDraft(value: unknown) {
       })
       .filter((category) => category.items.length > 0)
       .slice(0, 20),
+    warnings,
+    confidence
+  };
+}
+
+function parseInventoryNumber(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value !== "string") return 0;
+  const cleaned = value.replace(/[^\d,.-]/g, "").trim();
+  if (!cleaned) return 0;
+  const lastSeparator = Math.max(cleaned.lastIndexOf(","), cleaned.lastIndexOf("."));
+  if (lastSeparator > -1) {
+    const integerPart = cleaned.slice(0, lastSeparator).replace(/[.,]/g, "");
+    const decimalPart = cleaned.slice(lastSeparator + 1);
+    const normalized =
+      decimalPart.length === 3 && integerPart.length > 0 ? `${integerPart}${decimalPart}` : `${integerPart}.${decimalPart}`;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeInventoryUnit(value: unknown) {
+  const raw = readShortText(value, 24).toLowerCase();
+  const normalized = raw
+    .replaceAll("lít", "l")
+    .replaceAll("lit", "l")
+    .replaceAll("gói", "goi")
+    .replaceAll("hộp", "hop")
+    .replaceAll("cái", "cai")
+    .replace(/[^a-zA-Z0-9_%/ .-]/g, "")
+    .trim();
+  const match = normalized.match(/\b(kg|g|gram|ml|l|chai|lon|goi|hop|cai|thung|bao|phan|suat|unit)\b/);
+  return match?.[1] ?? (normalized || "unit");
+}
+
+function normalizeInventoryOcrDraft(value: unknown) {
+  const record = asToolRecord(value);
+  const warnings = readStringList(record?.warnings, 8, 180);
+  const confidence = Math.min(1, Math.max(0, Number(record?.confidence ?? 0.7)));
+  const rows = Array.isArray(record?.rows) ? record.rows : [];
+
+  return {
+    rows: rows
+      .map((row) => {
+        const rowRecord = asToolRecord(row);
+        const name = readShortText(rowRecord?.name, 160);
+        const quantity = parseInventoryNumber(rowRecord?.quantity);
+        if (!name || !Number.isFinite(quantity) || quantity <= 0) return null;
+
+        return {
+          name,
+          unit: normalizeInventoryUnit(rowRecord?.unit),
+          quantity,
+          minimumQuantity: Math.max(0, parseInventoryNumber(rowRecord?.minimumQuantity)),
+          referenceUnitCost: Math.max(0, Math.round(parseInventoryNumber(rowRecord?.referenceUnitCost))),
+          categoryName: readShortText(rowRecord?.categoryName, 120) || null
+        };
+      })
+      .filter(
+        (
+          row
+        ): row is {
+          name: string;
+          unit: string;
+          quantity: number;
+          minimumQuantity: number;
+          referenceUnitCost: number;
+          categoryName: string | null;
+        } => Boolean(row)
+      )
+      .slice(0, 120),
     warnings,
     confidence
   };
@@ -753,10 +867,33 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
   const data = (snapshot ?? {}) as {
     summary24h?: { orderCount?: number; paidRevenue?: number };
     recentOrders?: Array<Record<string, unknown>>;
-    tables?: { activeTableCount?: number };
+    tables?: {
+      activeTableCount?: number;
+      tableCount?: number;
+      qrDisabledCount?: number;
+      tables?: Array<{ name?: string; activeOrderCount?: number; qrEnabled?: boolean; capacity?: number; area?: string | null }>;
+    };
     payments?: { waitingConfirm?: number };
     menu?: { unavailableCount?: number; itemCount?: number };
+    inventory?: { lowStockCount?: number; recipeCoveragePercent?: number; openAlertCount?: number };
+    operationInsights?: {
+      primaryInsightId?: string | null;
+      summary?: string;
+      insights?: Array<Record<string, unknown>>;
+    };
   };
+  const insights = Array.isArray(data.operationInsights?.insights) ? data.operationInsights.insights : [];
+  const primaryInsight =
+    insights.find((insight) => String(insight.id ?? "") === data.operationInsights?.primaryInsightId) ?? insights[0];
+
+  if (primaryInsight) {
+    const title = typeof primaryInsight.title === "string" ? primaryInsight.title : "";
+    const detail = typeof primaryInsight.detail === "string" ? primaryInsight.detail : "";
+    const action = typeof primaryInsight.action === "string" ? primaryInsight.action : "";
+    return [title ? `AI Ops: ${title}.` : data.operationInsights?.summary, detail, action ? `Bước nên làm: ${action}` : ""]
+      .filter(Boolean)
+      .join(" ");
+  }
 
   switch (intent) {
     case "payments":
@@ -764,12 +901,34 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
         ? `Hiện có ${data.payments.waitingConfirm} giao dịch đang chờ kiểm tra.`
         : "";
     case "tables":
-      return typeof data.tables?.activeTableCount === "number"
+      if (!data.tables) return "";
+      if (Array.isArray(data.tables.tables) && data.tables.tables.length) {
+        const freeTables = data.tables.tables.filter((table) => Number(table.activeOrderCount ?? 0) <= 0);
+        const busyTables = data.tables.tables.filter((table) => Number(table.activeOrderCount ?? 0) > 0);
+        const freeNames = freeTables
+          .map((table) => {
+            const capacity = typeof table.capacity === "number" && table.capacity > 0 ? ` (${table.capacity} chỗ)` : "";
+            return `${table.name || "Bàn chưa đặt tên"}${capacity}`;
+          })
+          .slice(0, 8);
+        return [
+          freeNames.length ? `Bàn đang rảnh: ${freeNames.join(", ")}${freeTables.length > freeNames.length ? ` và ${freeTables.length - freeNames.length} bàn khác` : ""}.` : "Hiện chưa thấy bàn rảnh trong snapshot.",
+          `${busyTables.length}/${data.tables.tableCount ?? data.tables.tables.length} bàn đang có đơn mở.`,
+          typeof data.tables.qrDisabledCount === "number" && data.tables.qrDisabledCount > 0 ? `${data.tables.qrDisabledCount} bàn đang tắt QR.` : ""
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+      return typeof data.tables.activeTableCount === "number"
         ? `${data.tables.activeTableCount} bàn đang có đơn mở trong ca hiện tại.`
         : "";
     case "menu":
       return typeof data.menu?.unavailableCount === "number" && typeof data.menu?.itemCount === "number"
         ? `Menu hiện có ${data.menu.itemCount} món, trong đó ${data.menu.unavailableCount} món đang tạm ẩn hoặc hết.`
+        : "";
+    case "inventory":
+      return data.inventory
+        ? `Kho hiện có ${data.inventory.lowStockCount ?? 0} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(Number(data.inventory.recipeCoveragePercent ?? 0))}% và ${data.inventory.openAlertCount ?? 0} alert mở.`
         : "";
     case "reports":
       return data.summary24h
@@ -850,6 +1009,40 @@ function buildCustomerFallbackReply(input: {
     });
 
   return [fact || "Mình đã kiểm tra dữ liệu thật trước khi gợi ý.", actionCue(input.actions, "customer"), safetyCue(input.actions)]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildReadinessFallbackText(readiness: { score?: number; nextActions?: Array<{ action?: string; label?: string }>; criticalMissing?: Array<{ action?: string }> }) {
+  const nextAction = readiness.nextActions?.[0];
+  const blocker = readiness.criticalMissing?.[0];
+  return [
+    `Điểm sẵn sàng hiện tại ${Number(readiness.score ?? 0)}%.`,
+    blocker?.action ? `Cần xử lý trước: ${blocker.action}.` : "",
+    nextAction?.action || nextAction?.label ? `Bước tiếp theo: ${nextAction.action || nextAction.label}.` : "Mở đúng khu vực để hoàn tất cấu hình."
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildBrandingFallbackText(data: ReturnType<typeof normalizeBrandBoard>) {
+  return [
+    data.slogans.length ? `Slogan đề xuất: ${data.slogans.slice(0, 2).join(" · ")}.` : "",
+    data.description ? `Mô tả thương hiệu: ${data.description}` : "",
+    data.logoPrompt ? "Đã tạo prompt logo an toàn để dùng cho ảnh AI." : ""
+  ]
+    .filter(Boolean)
+    .join(" ") || "Đã tạo bản nháp thương hiệu gồm slogan, mô tả và prompt hình ảnh để bạn áp dụng.";
+}
+
+function buildMenuOcrReplyText(data: MenuOcrDraft) {
+  const itemCount = data.categories.reduce((sum, category) => sum + category.items.length, 0);
+  const firstCategory = data.categories[0]?.name;
+  return [
+    `Đã đọc được ${data.categories.length} danh mục với ${itemCount} món.`,
+    firstCategory ? `Danh mục đầu tiên: ${firstCategory}.` : "",
+    data.warnings[0] ? `Lưu ý: ${data.warnings[0]}` : "Bạn có thể kiểm tra trùng món rồi nhập vào menu."
+  ]
     .filter(Boolean)
     .join(" ");
 }
@@ -957,7 +1150,7 @@ async function getRestaurantSetupBundle(restaurantId: string) {
   };
 }
 
-async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAiIntent, restaurant: RestaurantAiContext) {
+export async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAiIntent, restaurant: RestaurantAiContext) {
   const supabase = createAdminSupabaseClient() as any;
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const monthStart = monthStartIso();
@@ -1027,6 +1220,10 @@ async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAi
       )
     : Promise.resolve(null);
 
+  const inventoryPromise = intentNeeds(intent, ["inventory", "overview", "reports"])
+    ? getInventorySnapshot(restaurantId).catch(() => null)
+    : Promise.resolve(null);
+
   const reservationsPromise = intentNeeds(intent, ["reservations", "reports"])
     ? safeSupabaseQuery<any[]>(
         supabase
@@ -1038,13 +1235,14 @@ async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAi
       )
     : Promise.resolve(null);
 
-  const [recentOrdersRaw, todayOrdersRaw, menuRaw, tablesRaw, paymentsRaw, promotionsRaw, reservationsRaw] = await Promise.all([
+  const [recentOrdersRaw, todayOrdersRaw, menuRaw, tablesRaw, paymentsRaw, promotionsRaw, inventoryRaw, reservationsRaw] = await Promise.all([
     recentOrdersPromise,
     todayOrdersPromise,
     menuPromise,
     tablesPromise,
     paymentsPromise,
     promotionsPromise,
+    inventoryPromise,
     reservationsPromise
   ]);
 
@@ -1090,7 +1288,7 @@ async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAi
     };
   });
 
-  return {
+  const snapshot = {
     generatedAt: new Date().toISOString(),
     intent,
     restaurant: {
@@ -1161,6 +1359,24 @@ async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAi
           endsAt: promotion.ends_at
         }))
       : null,
+    inventory: inventoryRaw
+      ? {
+          schemaReady: inventoryRaw.schemaReady,
+          activeIngredientCount: inventoryRaw.activeIngredientCount,
+          lowStockCount: inventoryRaw.lowStockCount,
+          recipeCoveragePercent: inventoryRaw.recipeCoveragePercent,
+          recipeReadyItemCount: inventoryRaw.recipeReadyItemCount,
+          menuItemCount: inventoryRaw.menuItemCount,
+          totalReferenceValue: inventoryRaw.totalReferenceValue,
+          lowStockIngredients: inventoryRaw.lowStockIngredients.slice(0, 5).map((ingredient) => ({
+            name: ingredient.name,
+            unit: ingredient.unit,
+            onHandQuantity: ingredient.onHandQuantity,
+            minimumQuantity: ingredient.minimumQuantity,
+            referenceUnitCost: ingredient.referenceUnitCost
+          }))
+        }
+      : null,
     reservations: reservationsRaw
       ? reservationsRaw.map((reservation) => ({
           id: String(reservation.id ?? "").slice(0, 8),
@@ -1174,6 +1390,11 @@ async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAi
           depositStatus: reservation.deposit_status
         }))
       : null
+  };
+
+  return {
+    ...snapshot,
+    operationInsights: buildOperationInsights(snapshot)
   };
 }
 
@@ -1660,17 +1881,48 @@ export async function runOwnerAssistant(input: {
       metadata: { intent }
     });
     const actions = buildOwnerAgentActions(intent, ownerAiIntentConfig[intent].suggestions, snapshot, toolRuns);
-    const reply = hasUsableAssistantReply(result.text)
-      ? sanitizeAssistantText(result.text, 520)
-      : sanitizeAssistantText(
-          buildOwnerFallbackReply({
-            intent,
-            snapshot,
-            toolRuns,
-            actions
-          }),
-          520
-        );
+    const currentRoute = typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null;
+    const agentPlan = buildOwnerAgentPlan(intent, actions);
+    const replyContract = normalizeAiReply({
+      rawText: result.text,
+      fallbackText: buildOwnerFallbackReply({
+        intent,
+        snapshot,
+        toolRuns,
+        actions
+      }),
+      emptyText: "Mình đã đọc dữ liệu vận hành và chuẩn bị action an toàn để bạn tiếp tục.",
+      maxLength: 520
+    });
+    const reply = replyContract.reply;
+    const passport = buildOwnerPassport({
+      intent,
+      intentLabel: ownerAiIntentConfig[intent].label,
+      route: currentRoute,
+      summary: agentPlan.summary,
+      nextActionId: agentPlan.nextBestActionId ?? actions[0]?.id ?? null,
+      nextActionLabel: actions.find((action) => action.id === agentPlan.nextBestActionId)?.label ?? actions[0]?.label ?? null,
+      confidence: agentPlan.confidence
+    });
+    const mission = buildAgentMission({
+      surface: "dashboard",
+      title: agentPlan.title,
+      outcome: agentPlan.summary,
+      route: currentRoute,
+      actions,
+      urgency: actions.some((action) => action.priority === "primary" && (action.type === "api" || action.type === "ui")) ? "now" : "soon",
+      estimatedMinutes: Math.max(3, Math.min(12, actions.length * 2)),
+      operatorNote: agentPlan.safetyNote
+    });
+    const commandDeck = buildCommandDeck({
+      surface: "dashboard",
+      title: agentPlan.title,
+      headline: reply,
+      actions,
+      mission,
+      passport,
+      confidence: agentPlan.confidence
+    });
     const conversationId = await persistAiConversationMessage({
       restaurantId: input.restaurantId,
       userId: input.userId,
@@ -1695,12 +1947,16 @@ export async function runOwnerAssistant(input: {
         intentLabel: ownerAiIntentConfig[intent].label,
         suggestions: ownerAiIntentConfig[intent].suggestions,
         actions,
-        agentPlan: buildOwnerAgentPlan(intent, actions),
+        agentPlan,
         actionIds: actions.map((action) => action.id),
         tools: toolRuns.map((tool) => tool.name),
         attempts: result.attempts,
         latencyMs: result.latencyMs,
-        threadId: input.threadId ?? null
+        threadId: input.threadId ?? null,
+        replyQuality: replyContract.quality,
+        commandDeck,
+        mission,
+        passport
       }
     });
     return {
@@ -1711,7 +1967,11 @@ export async function runOwnerAssistant(input: {
       intentLabel: ownerAiIntentConfig[intent].label,
       suggestions: ownerAiIntentConfig[intent].suggestions,
       actions,
-      agentPlan: buildOwnerAgentPlan(intent, actions)
+      agentPlan,
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   } catch (error) {
     await logAiUsage({
@@ -1728,15 +1988,47 @@ export async function runOwnerAssistant(input: {
 
     const actions = buildOwnerAgentActions(intent, ownerAiIntentConfig[intent].suggestions, snapshot, []);
     const agentPlan = buildOwnerAgentPlan(intent, actions);
-    const reply = sanitizeAssistantText(
-      buildOwnerFallbackReply({
+    const passport = buildOwnerPassport({
+      intent,
+      intentLabel: ownerAiIntentConfig[intent].label,
+      route: typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null,
+      summary: agentPlan.summary,
+      nextActionId: agentPlan.nextBestActionId ?? actions[0]?.id ?? null,
+      nextActionLabel: actions.find((action) => action.id === agentPlan.nextBestActionId)?.label ?? actions[0]?.label ?? null,
+      confidence: agentPlan.confidence
+    });
+    const mission = buildAgentMission({
+      surface: "dashboard",
+      title: agentPlan.title,
+      outcome: agentPlan.summary,
+      route: typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null,
+      actions,
+      urgency: "soon",
+      estimatedMinutes: Math.max(3, Math.min(12, actions.length * 2)),
+      operatorNote: agentPlan.safetyNote
+    });
+    const replyContract = normalizeAiReply({
+      rawText: "",
+      fallbackText: buildOwnerFallbackReply({
         intent,
         snapshot,
         toolRuns: [],
         actions
       }) || "Mình chưa gọi được model AI, nhưng đã chuẩn bị action an toàn để bạn tiếp tục thao tác ngay.",
-      520
-    );
+      emptyText: "Mình đã chuẩn bị action an toàn để bạn tiếp tục thao tác ngay.",
+      maxLength: 520
+    });
+    const reply = replyContract.reply;
+    const commandDeck = buildCommandDeck({
+      surface: "dashboard",
+      title: agentPlan.title,
+      headline: reply,
+      actions,
+      mission,
+      passport,
+      confidence: agentPlan.confidence,
+      premiumReason: "Ngay cả khi model lỗi, Command Deck vẫn giữ luồng xử lý bằng router hành động an toàn."
+    });
 
     try {
       const conversationId = await persistAiConversationMessage({
@@ -1766,7 +2058,11 @@ export async function runOwnerAssistant(input: {
           agentPlan,
           actionIds: actions.map((action) => action.id),
           fallback: true,
-          threadId: input.threadId ?? null
+          threadId: input.threadId ?? null,
+          replyQuality: replyContract.quality,
+          commandDeck,
+          mission,
+          passport
         }
       });
     } catch {
@@ -1781,7 +2077,11 @@ export async function runOwnerAssistant(input: {
       intentLabel: ownerAiIntentConfig[intent].label,
       suggestions: ownerAiIntentConfig[intent].suggestions,
       actions,
-      agentPlan
+      agentPlan,
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   }
 }
@@ -1835,13 +2135,67 @@ export async function generateStoreSetupPlan(input: {
       outputTokens: result.outputTokens,
       metadata: { intent: "setup", mode: input.mode ?? "audit" }
     });
+    const nextSetupAction = readiness.nextActions[0] ?? null;
+    const passport = buildOperationalPassport({
+      surface: "dashboard",
+      title: "Chủ quán · Setup quán",
+      status: input.mode ?? "audit",
+      goal: `Điểm sẵn sàng ${readiness.score}%`,
+      route: "/dashboard/settings",
+      nextActionId: nextSetupAction?.key ?? null,
+      nextActionLabel: nextSetupAction?.action ?? null,
+      checkpoint: readiness.criticalMissing[0]?.action ?? null,
+      handoffRoute: nextSetupAction?.route ?? "/dashboard/settings",
+      handoffLabel: nextSetupAction?.label ?? "Mở cài đặt quán",
+      confidence: readiness.score >= 80 ? "high" : readiness.score >= 50 ? "medium" : "low"
+    });
+    const data = extractJsonObject(result.text);
+    const replyContract = normalizeAiReply({
+      rawText: result.text,
+      fallbackText: buildReadinessFallbackText(readiness),
+      emptyText: "Đã tạo kế hoạch setup quán với bước tiếp theo rõ ràng.",
+      maxLength: 520
+    });
+    const mission = buildAgentMission({
+      surface: "dashboard",
+      title: "Setup Commander",
+      outcome: replyContract.reply,
+      route: nextSetupAction?.route ?? "/dashboard/settings",
+      urgency: readiness.score < 70 ? "now" : "soon",
+      estimatedMinutes: 30,
+      fallbackSteps: readiness.nextActions.slice(0, 4).map((action, index) => ({
+        id: `setup-${action.key || index}`,
+        label: action.action || action.label,
+        description: action.label,
+        status: index === 0 ? "ready" : "queued"
+      })),
+      successCriteria: [
+        `Điểm sẵn sàng đạt tối thiểu ${Math.min(100, Math.max(80, readiness.score))}%.`,
+        "Không còn blocker quan trọng trước khi bán thật.",
+        "Chủ quán biết màn cần mở để áp dụng bước tiếp theo."
+      ]
+    });
+    const commandDeck = buildCommandDeck({
+      surface: "dashboard",
+      title: "Setup Commander",
+      headline: replyContract.reply,
+      mission,
+      passport,
+      confidence: passport.confidence,
+      premiumReason: "Setup Commander gom readiness, blocker và nút mở đúng màn thành một luồng setup thương mại hóa được."
+    });
     return {
       provider: result.provider,
       model: result.model,
-      text: result.text,
-      data: extractJsonObject(result.text),
+      reply: replyContract.reply,
+      text: replyContract.reply,
+      data,
       readiness,
-      suggestions: ownerAiIntentConfig.setup.suggestions
+      suggestions: ownerAiIntentConfig.setup.suggestions,
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   } catch (error) {
     await logAiUsage({
@@ -1912,13 +2266,75 @@ export async function generateStoreSetupDraft(input: {
       outputTokens: result.outputTokens,
       metadata: { intent: "setup", draftKind: kind }
     });
+    const nextSetupAction = readiness.nextActions[0] ?? null;
+    const passport = buildOperationalPassport({
+      surface: "dashboard",
+      title: `Chủ quán · ${storeSetupDraftConfig[kind].label}`,
+      status: kind,
+      goal: storeSetupDraftConfig[kind].outputFocus,
+      route: storeSetupDraftConfig[kind].route,
+      nextActionId: nextSetupAction?.key ?? null,
+      nextActionLabel: nextSetupAction?.action ?? null,
+      checkpoint: readiness.criticalMissing[0]?.action ?? null,
+      handoffRoute: nextSetupAction?.route ?? storeSetupDraftConfig[kind].route,
+      handoffLabel: nextSetupAction?.label ?? storeSetupDraftConfig[kind].label,
+      confidence: readiness.score >= 80 ? "high" : readiness.score >= 50 ? "medium" : "low"
+    });
+    const data = extractJsonObject(result.text);
+    const replyContract = normalizeAiReply({
+      rawText: result.text,
+      fallbackText: `${storeSetupDraftConfig[kind].label}: ${storeSetupDraftConfig[kind].outputFocus}. ${buildReadinessFallbackText(readiness)}`,
+      emptyText: "Đã tạo bản nháp setup để bạn mở đúng khu vực và áp dụng.",
+      maxLength: 520
+    });
+    const mission = buildAgentMission({
+      surface: "dashboard",
+      title: storeSetupDraftConfig[kind].label,
+      outcome: replyContract.reply,
+      route: storeSetupDraftConfig[kind].route,
+      urgency: "soon",
+      estimatedMinutes: 8,
+      fallbackSteps: [
+        {
+          id: `draft-${kind}-review`,
+          label: "Xem bản nháp AI",
+          description: storeSetupDraftConfig[kind].outputFocus,
+          status: "ready"
+        },
+        {
+          id: `draft-${kind}-apply`,
+          label: "Mở nơi áp dụng",
+          description: `Đi tới ${storeSetupDraftConfig[kind].route} để kiểm tra và dùng bản nháp.`,
+          status: "queued"
+        }
+      ],
+      successCriteria: [
+        "Bản nháp có nơi áp dụng rõ ràng.",
+        "Không hiển thị JSON thô hoặc hướng dẫn cho dev.",
+        "Chủ quán có thể quyết định dùng, sửa hoặc tạo lại."
+      ]
+    });
+    const commandDeck = buildCommandDeck({
+      surface: "dashboard",
+      title: storeSetupDraftConfig[kind].label,
+      headline: replyContract.reply,
+      mission,
+      passport,
+      confidence: passport.confidence,
+      premiumReason: "Draft Agent biến bản nháp AI thành một điểm áp dụng cụ thể thay vì chỉ sinh văn bản."
+    });
     return {
       provider: result.provider,
       model: result.model,
-      text: result.text,
-      data: extractJsonObject(result.text),
+      reply: replyContract.reply,
+      text: replyContract.reply,
+      data,
       readiness,
-      config: storeSetupDraftConfig[kind]
+      config: storeSetupDraftConfig[kind],
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   } catch (error) {
     await logAiUsage({
@@ -1945,6 +2361,7 @@ export async function runCustomerAssistant(input: {
   cart?: unknown;
   orderStatus?: unknown;
   reservationStatus?: unknown;
+  context?: Record<string, unknown>;
 }) {
   await assertAiEntitlement({
     restaurantId: input.restaurantId,
@@ -1965,7 +2382,8 @@ export async function runCustomerAssistant(input: {
     cart: input.cart,
     orderStatus: input.orderStatus,
     reservationStatus: input.reservationStatus,
-    menuSnapshot
+    menuSnapshot,
+    context: input.context
   });
 
   try {
@@ -2003,20 +2421,50 @@ export async function runCustomerAssistant(input: {
       toolRuns
     });
     const agentPlan = buildCustomerAgentPlan(intent, actions);
-    const reply = hasUsableAssistantReply(result.text)
-      ? sanitizeAssistantText(result.text, 360)
-      : sanitizeAssistantText(
-          buildCustomerFallbackReply({
-            intent,
-            menuSnapshot,
-            cart: input.cart,
-            orderStatus: input.orderStatus,
-            reservationStatus: input.reservationStatus,
-            toolRuns,
-            actions
-          }),
-          360
-        );
+    const currentRoute = typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null;
+    const passport = buildCustomerPassport({
+      intent,
+      intentLabel: customerAiIntentConfig[intent].label,
+      route: currentRoute,
+      summary: agentPlan.summary,
+      nextActionId: agentPlan.nextBestActionId ?? actions[0]?.id ?? null,
+      nextActionLabel: actions.find((action) => action.id === agentPlan.nextBestActionId)?.label ?? actions[0]?.label ?? null,
+      confidence: agentPlan.confidence
+    });
+    const mission = buildAgentMission({
+      surface: "customer",
+      title: agentPlan.title,
+      outcome: agentPlan.summary,
+      route: currentRoute,
+      actions,
+      urgency: intent === "payment" || intent === "order_status" ? "now" : "soon",
+      estimatedMinutes: Math.max(1, Math.min(8, actions.length * 2)),
+      operatorNote: agentPlan.safetyNote
+    });
+    const replyContract = normalizeAiReply({
+      rawText: result.text,
+      fallbackText: buildCustomerFallbackReply({
+        intent,
+        menuSnapshot,
+        cart: input.cart,
+        orderStatus: input.orderStatus,
+        reservationStatus: input.reservationStatus,
+        toolRuns,
+        actions
+      }),
+      emptyText: "Mình đã kiểm tra dữ liệu thật và chuẩn bị nút an toàn cho bước tiếp theo.",
+      maxLength: 360
+    });
+    const reply = replyContract.reply;
+    const commandDeck = buildCommandDeck({
+      surface: "customer",
+      title: agentPlan.title,
+      headline: reply,
+      actions,
+      mission,
+      passport,
+      confidence: agentPlan.confidence
+    });
     const conversationId = await persistAiConversationMessage({
       restaurantId: input.restaurantId,
       customerSessionId: input.customerSessionId,
@@ -2046,7 +2494,11 @@ export async function runCustomerAssistant(input: {
         tools: toolRuns.map((tool) => tool.name),
         attempts: result.attempts,
         latencyMs: result.latencyMs,
-        threadId: input.threadId ?? null
+        threadId: input.threadId ?? null,
+        replyQuality: replyContract.quality,
+        commandDeck,
+        mission,
+        passport
       }
     });
     return {
@@ -2057,7 +2509,11 @@ export async function runCustomerAssistant(input: {
       intentLabel: customerAiIntentConfig[intent].label,
       suggestions: customerAiIntentConfig[intent].suggestions,
       actions,
-      agentPlan
+      agentPlan,
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   } catch (error) {
     await logAiUsage({
@@ -2081,8 +2537,28 @@ export async function runCustomerAssistant(input: {
       toolRuns: []
     });
     const agentPlan = buildCustomerAgentPlan(intent, actions);
-    const reply = sanitizeAssistantText(
-      buildCustomerFallbackReply({
+    const passport = buildCustomerPassport({
+      intent,
+      intentLabel: customerAiIntentConfig[intent].label,
+      route: typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null,
+      summary: agentPlan.summary,
+      nextActionId: agentPlan.nextBestActionId ?? actions[0]?.id ?? null,
+      nextActionLabel: actions.find((action) => action.id === agentPlan.nextBestActionId)?.label ?? actions[0]?.label ?? null,
+      confidence: agentPlan.confidence
+    });
+    const mission = buildAgentMission({
+      surface: "customer",
+      title: agentPlan.title,
+      outcome: agentPlan.summary,
+      route: typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null,
+      actions,
+      urgency: "soon",
+      estimatedMinutes: Math.max(1, Math.min(8, actions.length * 2)),
+      operatorNote: agentPlan.safetyNote
+    });
+    const replyContract = normalizeAiReply({
+      rawText: "",
+      fallbackText: buildCustomerFallbackReply({
         intent,
         menuSnapshot,
         cart: input.cart,
@@ -2091,8 +2567,20 @@ export async function runCustomerAssistant(input: {
         toolRuns: [],
         actions
       }) || "Mình chưa gọi được model AI, nhưng đã chuẩn bị nút an toàn để bạn tiếp tục.",
-      360
-    );
+      emptyText: "Mình đã chuẩn bị nút an toàn để bạn tiếp tục.",
+      maxLength: 360
+    });
+    const reply = replyContract.reply;
+    const commandDeck = buildCommandDeck({
+      surface: "customer",
+      title: agentPlan.title,
+      headline: reply,
+      actions,
+      mission,
+      passport,
+      confidence: agentPlan.confidence,
+      premiumReason: "Nếu model tạm lỗi, Command Deck vẫn đưa khách tới bước đặt món hoặc thanh toán an toàn."
+    });
 
     try {
       const conversationId = await persistAiConversationMessage({
@@ -2122,7 +2610,11 @@ export async function runCustomerAssistant(input: {
           agentPlan,
           actionIds: actions.map((action) => action.id),
           fallback: true,
-          threadId: input.threadId ?? null
+          threadId: input.threadId ?? null,
+          replyQuality: replyContract.quality,
+          commandDeck,
+          mission,
+          passport
         }
       });
     } catch {
@@ -2137,7 +2629,11 @@ export async function runCustomerAssistant(input: {
       intentLabel: customerAiIntentConfig[intent].label,
       suggestions: customerAiIntentConfig[intent].suggestions,
       actions,
-      agentPlan
+      agentPlan,
+      replyQuality: replyContract.quality,
+      commandDeck,
+      mission,
+      passport
     };
   }
 }
@@ -2270,11 +2766,57 @@ export async function generateRestaurantBranding(input: {
     outputTokens: result.outputTokens
   });
 
+  const data = normalizeBrandBoard(extractJsonObject(result.text));
+  const replyContract = normalizeAiReply({
+    rawText: result.text,
+    fallbackText: buildBrandingFallbackText(data),
+    emptyText: "Đã tạo bản nháp thương hiệu để bạn áp dụng.",
+    maxLength: 520
+  });
+  const mission = buildAgentMission({
+    surface: "dashboard",
+    title: "Brand Growth Agent",
+    outcome: replyContract.reply,
+    route: "/dashboard/settings?section=brand",
+    urgency: "soon",
+    estimatedMinutes: 6,
+    fallbackSteps: [
+      {
+        id: "brand-review-slogan",
+        label: data.slogans[0] ? `Chọn slogan: ${data.slogans[0]}` : "Chọn slogan",
+        description: "Dùng slogan ngắn, dễ đọc trên mobile.",
+        status: "ready"
+      },
+      {
+        id: "brand-apply-profile",
+        label: "Áp dụng vào hồ sơ thương hiệu",
+        description: "Kiểm mô tả, giọng thương hiệu và logo prompt trước khi lưu.",
+        status: "queued"
+      }
+    ],
+    successCriteria: [
+      "Có slogan ngắn dùng được ngay.",
+      "Có mô tả thương hiệu không phóng đại.",
+      "Có prompt logo tránh chữ nhỏ lỗi typography."
+    ]
+  });
+  const commandDeck = buildCommandDeck({
+    surface: "dashboard",
+    title: "Brand Growth Agent",
+    headline: replyContract.reply,
+    mission,
+    premiumReason: "Brand Command Deck tập trung slogan, mô tả và hướng áp dụng thương hiệu thay vì sinh nội dung rời rạc."
+  });
+
   return {
     provider: result.provider,
     model: result.model,
-    text: result.text,
-    data: normalizeBrandBoard(extractJsonObject(result.text))
+    reply: replyContract.reply,
+    text: replyContract.reply,
+    data,
+    commandDeck,
+    mission,
+    replyQuality: replyContract.quality
   };
 }
 
@@ -2315,18 +2857,64 @@ export async function generateOnboardingBranding(input: {
   ];
   const result = await runChat(messages, "qwen", providerDefaults.qwenChatModel, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
 
+  const data = normalizeBrandBoard(extractJsonObject(result.text));
+  const replyContract = normalizeAiReply({
+    rawText: result.text,
+    fallbackText: buildBrandingFallbackText(data),
+    emptyText: "Đã tạo bản nháp thương hiệu để bạn áp dụng.",
+    maxLength: 520
+  });
+  const mission = buildAgentMission({
+    surface: "onboarding",
+    title: "Onboarding Brand Agent",
+    outcome: replyContract.reply,
+    route: "/dashboard/onboarding",
+    urgency: "soon",
+    estimatedMinutes: 5,
+    fallbackSteps: [
+      {
+        id: "onboarding-brand-choose",
+        label: data.slogans[0] ? `Chọn slogan: ${data.slogans[0]}` : "Chọn slogan",
+        description: "Giữ slogan ngắn để hiển thị tốt trên mobile.",
+        status: "ready"
+      },
+      {
+        id: "onboarding-brand-apply",
+        label: "Áp dụng vào hồ sơ quán",
+        description: "Dùng mô tả và voice thương hiệu làm bản nháp.",
+        status: "queued"
+      }
+    ]
+  });
+  const commandDeck = buildCommandDeck({
+    surface: "onboarding",
+    title: "Onboarding Brand Agent",
+    headline: replyContract.reply,
+    mission,
+    premiumReason: "Onboarding Command Deck giúp người mới chọn và áp dụng bản sắc quán ngay trong luồng tạo quán."
+  });
+
   return {
     provider: result.provider,
     model: result.model,
-    text: result.text,
-    data: normalizeBrandBoard(extractJsonObject(result.text))
+    reply: replyContract.reply,
+    text: replyContract.reply,
+    data,
+    commandDeck,
+    mission,
+    replyQuality: replyContract.quality
   };
 }
 
 type MenuOcrDraft = ReturnType<typeof normalizeMenuOcrDraft>;
+type InventoryOcrDraft = ReturnType<typeof normalizeInventoryOcrDraft>;
 
 function hasMenuOcrItems(draft: MenuOcrDraft) {
   return draft.categories.some((category) => category.items.length > 0);
+}
+
+function hasInventoryOcrRows(draft: InventoryOcrDraft) {
+  return draft.rows.length > 0;
 }
 
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
@@ -2382,6 +2970,59 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
   return { result, data };
 }
 
+async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
+  const prompt = buildInventoryOcrPrompt(input);
+  const qwenConfig = getRequiredQwenProviderConfig("AI OCR nhập kho");
+  const result =
+    input.imageUrl || input.imageBase64
+      ? await qwenMultimodalOcr({
+          config: qwenConfig,
+          prompt,
+          imageUrl: input.imageUrl,
+          imageBase64: input.imageBase64
+        })
+      : await qwenChat(
+          qwenConfig,
+          providerDefaults.qwenChatModel,
+          [
+            { role: "system", content: "Bạn chuyên OCR hóa đơn và chuẩn hóa nhập kho F&B Việt Nam. Trả JSON thuần." },
+            { role: "user", content: prompt }
+          ],
+          { jsonMode: true }
+        );
+
+  let data = normalizeInventoryOcrDraft(extractJsonObject(result.text));
+
+  if (!hasInventoryOcrRows(data) && result.text.trim()) {
+    const repairResult = await qwenChat(
+      qwenConfig,
+      providerDefaults.qwenChatModel,
+      [
+        {
+          role: "system",
+          content: "Bạn là bộ chuẩn hóa kết quả OCR nhập kho F&B Việt Nam. Chỉ trả JSON hợp lệ theo schema, không markdown."
+        },
+        {
+          role: "user",
+          content: buildInventoryOcrPrompt({ rawText: result.text })
+        }
+      ],
+      { jsonMode: true }
+    );
+    const repairedData = normalizeInventoryOcrDraft(extractJsonObject(repairResult.text));
+    if (hasInventoryOcrRows(repairedData)) {
+      return { result: repairResult, data: repairedData };
+    }
+    data = repairedData;
+  }
+
+  if (!hasInventoryOcrRows(data)) {
+    throw new AppError("AI đã đọc nội dung nhưng chưa tách được dòng nhập kho. Vui lòng chụp rõ hóa đơn hoặc dán text có tên, số lượng, đơn vị.", 422);
+  }
+
+  return { result, data };
+}
+
 export async function generateMenuOcrDraft(input: {
   restaurantId: string;
   userId: string;
@@ -2402,7 +3043,80 @@ export async function generateMenuOcrDraft(input: {
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens
   });
-  return { provider: result.provider, model: result.model, text: result.text, data };
+  const text = buildMenuOcrReplyText(data);
+  const mission = buildAgentMission({
+    surface: "dashboard",
+    title: "Menu OCR Agent",
+    outcome: text,
+    route: "/dashboard/menu",
+    urgency: "now",
+    estimatedMinutes: Math.max(3, Math.min(12, data.categories.length + 2)),
+    fallbackSteps: [
+      {
+        id: "ocr-review-duplicates",
+        label: "Đối chiếu món trùng",
+        description: "So tên món/giá trước khi nhập vào database.",
+        status: "ready"
+      },
+      {
+        id: "ocr-import-menu",
+        label: "Nhập vào menu",
+        description: "Chỉ nhập các món đã đọc được giá hợp lệ.",
+        status: "needs_confirmation"
+      }
+    ]
+  });
+  const commandDeck = buildCommandDeck({
+    surface: "dashboard",
+    title: "Menu OCR Agent",
+    headline: text,
+    mission,
+    premiumReason: "OCR Command Deck nhấn mạnh đối chiếu trùng và trạng thái nhập menu để tránh cảm giác bấm xong bị đứng."
+  });
+  return {
+    provider: result.provider,
+    model: result.model,
+    text,
+    data,
+    commandDeck,
+    mission
+  };
+}
+
+export async function generateInventoryOcrDraft(input: {
+  restaurantId: string;
+  userId: string;
+  imageUrl?: string;
+  imageBase64?: string;
+  rawText?: string;
+}) {
+  await assertAiEntitlement({ restaurantId: input.restaurantId, featureKey: "ai_menu_ocr", userId: input.userId });
+  const { result, data } = await runInventoryOcrDraft(input);
+  await logAiUsage({
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    featureKey: "ai_menu_ocr",
+    provider: result.provider,
+    model: result.model,
+    requestKind: "ocr",
+    status: "success",
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens
+  });
+
+  const totalQuantity = data.rows.reduce((sum, row) => sum + row.quantity, 0);
+  const text = [
+    `Đã đọc được ${data.rows.length} dòng nhập kho.`,
+    `Tổng số lượng nhận diện: ${Number(totalQuantity.toFixed(3)).toLocaleString("vi-VN")}.`,
+    data.warnings[0] ? `Lưu ý: ${data.warnings[0]}` : "Bạn có thể rà lại bảng nháp rồi nhập vào kho."
+  ].join(" ");
+
+  return {
+    provider: result.provider,
+    model: result.model,
+    text,
+    data
+  };
 }
 
 export async function generateOnboardingMenuOcrDraft(input: {
@@ -2412,11 +3126,43 @@ export async function generateOnboardingMenuOcrDraft(input: {
 }) {
   const { result, data } = await runMenuOcrDraft(input);
 
+  const text = buildMenuOcrReplyText(data);
+  const mission = buildAgentMission({
+    surface: "onboarding",
+    title: "Onboarding OCR Agent",
+    outcome: text,
+    route: "/dashboard/onboarding",
+    urgency: "now",
+    estimatedMinutes: Math.max(3, Math.min(12, data.categories.length + 2)),
+    fallbackSteps: [
+      {
+        id: "onboarding-ocr-review",
+        label: "Kiểm món OCR",
+        description: "Xem lại tên món, giá và danh mục trước khi lưu.",
+        status: "ready"
+      },
+      {
+        id: "onboarding-ocr-apply",
+        label: "Áp dụng vào menu onboarding",
+        description: "Menu sẽ lưu khi người dùng hoàn tất tạo quán.",
+        status: "needs_confirmation"
+      }
+    ]
+  });
+  const commandDeck = buildCommandDeck({
+    surface: "onboarding",
+    title: "Onboarding OCR Agent",
+    headline: text,
+    mission,
+    premiumReason: "Onboarding OCR Command Deck làm rõ món đã đọc, bước kiểm tra và thời điểm lưu vào quán."
+  });
   return {
     provider: result.provider,
     model: result.model,
-    text: result.text,
-    data
+    text,
+    data,
+    commandDeck,
+    mission
   };
 }
 

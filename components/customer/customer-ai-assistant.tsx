@@ -1,18 +1,24 @@
 "use client";
 
 import Image from "next/image";
-import { forwardRef, useEffect, useMemo, useState, useSyncExternalStore, type ButtonHTMLAttributes, type MouseEvent } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ButtonHTMLAttributes, type MouseEvent } from "react";
+import { usePathname } from "next/navigation";
 import { CopilotSidebar, useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
 import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotReadable } from "@copilotkit/react-core";
 import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { motion } from "framer-motion";
-import { Loader2, Play, ShieldCheck, Sparkles } from "lucide-react";
+import { Loader2, Play, ShieldCheck } from "lucide-react";
+import { AiCommandDeckPanel } from "@/components/ai/ai-command-deck-panel";
+import { CopilotThinkingIndicator } from "@/components/ai/copilot-thinking-indicator";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
 import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
 import { useCopilotHistoryReplay } from "@/components/ai/use-copilot-history-replay";
+import { buildAgentMission } from "@/lib/ai/agent-mission";
+import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
+import { buildOperationalPassport, type AiOperationalPassport } from "@/lib/ai/operational-passport";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
-import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
+import type { AiAgentAction, AiAgentMission, AiAgentPlan, AiCommandDeck } from "@/types/ai-agent";
 
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
 
@@ -46,6 +52,9 @@ type CustomerAiResponse = {
   suggestions?: string[];
   actions?: AiAgentAction[];
   agentPlan?: AiAgentPlan;
+  mission?: AiAgentMission;
+  commandDeck?: AiCommandDeck | null;
+  passport?: AiOperationalPassport | null;
   provider?: string;
   model?: string;
 };
@@ -83,6 +92,7 @@ async function askCustomerAssistant(body: {
   cart?: unknown;
   orderStatus?: unknown;
   reservationStatus?: unknown;
+  context?: Record<string, unknown>;
 }) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12_000);
@@ -173,22 +183,6 @@ function customerSafetyLabel(action: AiAgentAction) {
   return "Một chạm";
 }
 
-function summarizeCustomerActions(actions: AiAgentAction[]) {
-  let confirmCount = 0;
-  let primaryCount = 0;
-
-  for (const action of actions) {
-    if (action.safety === "confirm" || action.safety === "manual_only") confirmCount += 1;
-    if (action.priority === "primary") primaryCount += 1;
-  }
-
-  return {
-    total: actions.length,
-    confirmCount,
-    primaryCount
-  };
-}
-
 function buildCustomerWorkflowRuntimeResult({
   mode,
   cart,
@@ -270,6 +264,29 @@ function buildCustomerWorkflowRuntimeResult({
     });
 
     const nextAction = mode === "summary" ? null : actions[0] ?? null;
+    const visibleActions = nextAction ? [nextAction, ...actions.filter((action) => action.id !== nextAction.id).slice(0, 3)] : actions.slice(0, 4);
+    const passport = buildOperationalPassport({
+      surface: "customer",
+      title: "Khách · Đặt bàn",
+      status: "reservation",
+      goal: hasReservation ? "Theo dõi lịch đặt hiện tại." : "Tiếp tục luồng đặt bàn.",
+      route: null,
+      nextActionId: nextAction?.id ?? null,
+      nextActionLabel: nextAction?.label ?? null,
+      checkpoint: hasReservation ? `Status: ${status}${depositStatus ? `/${depositStatus}` : ""}` : "Chưa có booking",
+      handoffRoute: null,
+      handoffLabel: "Đặt bàn",
+      confidence: hasReservation ? "high" : "medium"
+    });
+    const mission = buildAgentMission({
+      surface: "customer",
+      title: "Reservation Mission",
+      outcome: hasReservation ? "Giữ khách trong đúng luồng đặt bàn hiện tại." : "Dẫn khách bắt đầu đặt bàn.",
+      actions: visibleActions,
+      urgency: hasReservation ? "now" : "soon",
+      estimatedMinutes: hasReservation ? 2 : 4,
+      operatorNote: "LogiBot không tự huỷ, cọc hoặc giữ bàn nếu khách chưa xác nhận."
+    });
     return {
       reply: hasReservation
         ? nextAction
@@ -278,12 +295,14 @@ function buildCustomerWorkflowRuntimeResult({
         : "Bạn có thể tiếp tục chọn giờ và để lại số điện thoại để quán giữ bàn.",
       intent: "reservation",
       intentLabel: "Đặt bàn",
-      actions: nextAction ? [nextAction, ...actions.filter((action) => action.id !== nextAction.id).slice(0, 3)] : actions.slice(0, 4),
+      actions: visibleActions,
       suggestions: actions.slice(0, 3).map((action) => action.label),
       workflowStatus: hasReservation ? "order_active" : "needs_menu",
       nextActionId: nextAction?.id ?? null,
       cartItemCount: 0,
-      hasOrderStatus: hasReservation
+      hasOrderStatus: hasReservation,
+      mission,
+      passport
     };
   }
 
@@ -368,17 +387,49 @@ function buildCustomerWorkflowRuntimeResult({
       : nextAction
         ? `${nextAction.label} là bước tiếp theo hợp lý.`
         : "Mình chưa thấy bước nào cần thao tác ngay.";
+  const passport = buildOperationalPassport({
+    surface: "customer",
+    title: "Khách · Gọi món",
+    status: workflowStatus,
+    goal:
+      workflowStatus === "payment_pending"
+        ? "Đang chờ thanh toán hoặc xác nhận."
+        : workflowStatus === "cart_ready"
+          ? `Giỏ đang có ${cartItemCount} món.`
+          : hasOrderStatus
+            ? "Đang theo dõi đơn gần nhất."
+            : "Đang khám phá menu thật.",
+    route: null,
+    nextActionId: nextAction?.id ?? null,
+    nextActionLabel: nextAction?.label ?? null,
+    checkpoint: mode === "summary" ? reply : null,
+    handoffRoute: null,
+    handoffLabel: nextAction?.label ?? "Mở menu",
+    confidence: paymentPending || cartItemCount > 0 ? "high" : "medium"
+  });
+  const visibleActions = nextAction ? [nextAction, ...actions.filter((action) => action.id !== nextAction.id).slice(0, 3)] : actions.slice(0, 4);
+  const mission = buildAgentMission({
+    surface: "customer",
+    title: "Ordering Mission",
+    outcome: reply,
+    actions: visibleActions,
+    urgency: paymentPending || cartItemCount > 0 ? "now" : "soon",
+    estimatedMinutes: paymentPending ? 2 : cartItemCount > 0 ? 3 : 5,
+    operatorNote: "LogiBot chỉ mở đúng thao tác; khách tự thêm món, gửi đơn và xác nhận thanh toán."
+  });
 
   return {
     reply,
     intent: paymentPending ? "payment" : cartItemCount > 0 ? "cart" : hasOrderStatus ? "order_status" : "menu_discovery",
     intentLabel: "Luồng gọi món",
-    actions: nextAction ? [nextAction, ...actions.filter((action) => action.id !== nextAction.id).slice(0, 3)] : actions.slice(0, 4),
+    actions: visibleActions,
     suggestions: actions.slice(0, 3).map((action) => action.label),
     workflowStatus,
     nextActionId: nextAction?.id ?? null,
     cartItemCount,
-    hasOrderStatus
+    hasOrderStatus,
+    mission,
+    passport
   };
 }
 
@@ -396,8 +447,22 @@ function CustomerToolResult({
   const text = typeof result === "string" ? result : data?.reply || "Mình đã chuẩn bị gợi ý phù hợp.";
   const actions = data?.actions ?? emptyAgentActions;
   const visibleActions = useMemo(() => actions.slice(0, 4), [actions]);
-  const actionStats = useMemo(() => summarizeCustomerActions(actions), [actions]);
   const agentPlan = data?.agentPlan ?? null;
+  const mission = data?.mission ?? null;
+  const commandDeck =
+    data?.commandDeck ??
+    (mission
+      ? buildCommandDeck({
+          surface: "customer",
+          title: mission.title,
+          headline: text,
+          actions,
+          mission,
+          passport: data?.passport ?? null,
+          confidence: agentPlan?.confidence ?? data?.passport?.confidence ?? "medium"
+        })
+      : null);
+  const shouldShowAnswerBrief = !isLoading && Boolean(text.trim());
   const contextLabel = data?.intent === "reservation" ? "Theo trạng thái lịch đặt" : "Gợi ý theo dữ liệu quán";
   const [confirmationActionId, setConfirmationActionId] = useState<string | null>(null);
 
@@ -432,40 +497,24 @@ function CustomerToolResult({
           <p className="truncate text-xs text-[var(--muted-foreground)]">{isLoading ? "Đang đọc dữ liệu thật..." : contextLabel}</p>
         </div>
       </div>
-      <div className="relative z-[1] mt-4 grid grid-cols-3 gap-2">
-        <div className="rounded-2xl border border-[rgba(15,77,58,0.1)] bg-white/55 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Nút</p>
-          <p className="mt-1 text-lg font-black text-[var(--foreground)]">{actionStats.total}</p>
-        </div>
-        <div className="rounded-2xl border border-[rgba(15,77,58,0.1)] bg-white/55 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Ưu tiên</p>
-          <p className="mt-1 text-lg font-black text-[var(--primary)]">{actionStats.primaryCount}</p>
-        </div>
-        <div className="rounded-2xl border border-[rgba(242,140,40,0.18)] bg-[#fff2df] px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Xác nhận</p>
-          <p className="mt-1 text-lg font-black text-[var(--accent-strong)]">{actionStats.confirmCount}</p>
-        </div>
-      </div>
       {isLoading ? (
         <div className="relative z-[1] mt-4 space-y-2">
           <div className="h-3 w-11/12 rounded-full bg-[rgba(15,77,58,0.12)] logibot-skeleton" />
           <div className="h-3 w-7/12 rounded-full bg-[rgba(15,77,58,0.1)] logibot-skeleton" />
           <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-[var(--primary)]">
             <span className="logibot-typing-bars" />
-            Đang chọn nút phù hợp, không để khách chờ màn trống...
+            Đang đọc menu, giỏ hàng và chuẩn bị câu trả lời chính...
           </div>
         </div>
-      ) : (
-        <p className="relative z-[1] mt-3 whitespace-pre-line leading-6 text-[var(--text-secondary)]">{text}</p>
-      )}
-      {agentPlan ? (
-        <div className="relative z-[1] mt-3 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/60 px-3 py-3">
-          <div className="flex items-center gap-2">
-            <Sparkles size={14} className="text-[var(--primary)]" />
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--primary)]">{agentPlan.title}</p>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--foreground)]">{agentPlan.summary}</p>
-          {agentPlan.safetyNote ? <p className="mt-2 text-[11px] leading-5 text-[var(--muted-foreground)]">{agentPlan.safetyNote}</p> : null}
+      ) : shouldShowAnswerBrief ? (
+        <div className="logibot-answer-brief relative z-[1] mt-3">
+          <span>Trả lời chính</span>
+          <p className="logibot-card-brief whitespace-pre-line leading-6 text-[var(--text-secondary)]">{text}</p>
+        </div>
+      ) : null}
+      {!isLoading && visibleActions.length ? (
+        <div className="relative z-[1] mt-3">
+          <AiCommandDeckPanel deck={commandDeck} compact />
         </div>
       ) : null}
       {visibleActions.length ? (
@@ -475,7 +524,7 @@ function CustomerToolResult({
               key={action.id}
               type="button"
               onClick={() => handleAction(action)}
-              className={`rounded-2xl border px-3 py-3 text-left transition hover:-translate-y-0.5 active:scale-[0.99] ${customerActionClass(action)}`}
+              className={`logibot-action-tile rounded-2xl border px-3 py-3 text-left transition hover:-translate-y-0.5 active:scale-[0.99] ${customerActionClass(action)}`}
             >
               <span className="flex items-start justify-between gap-3">
                 <span className="flex items-center gap-2 text-sm font-semibold">
@@ -498,11 +547,6 @@ function CustomerToolResult({
               ) : null}
             </button>
           ))}
-          {actionStats.total > visibleActions.length ? (
-            <p className="rounded-2xl border border-dashed border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
-              Còn {actionStats.total - visibleActions.length} nút phụ, LogiBot ẩn bớt để khách không bị rối.
-            </p>
-          ) : null}
         </div>
       ) : null}
     </motion.div>
@@ -562,6 +606,7 @@ function CustomerAiAssistantExperience({
   surface?: "ordering" | "reservation";
   onAgentAction?: (action: AiAgentAction) => void;
 }) {
+  const pathname = usePathname();
   const historyUrl = useMemo(() => {
     if (!customerSessionId) return null;
     const params = new URLSearchParams({
@@ -578,12 +623,6 @@ function CustomerAiAssistantExperience({
     return () => document.body.classList.remove("customer-logibot-surface");
   }, []);
 
-  useCopilotResponseWatchdog({
-    timeoutMs: 12_000,
-    fallbackText:
-      "LogiBot chưa nhận được phản hồi đầy đủ, nhưng bạn vẫn có thể tiếp tục ngay bằng các nút an toàn trên màn hình: xem menu, mở giỏ, kiểm tra đơn hoặc gọi nhân viên."
-  });
-
   useCopilotHistoryReplay({
     threadId,
     historyUrl,
@@ -594,6 +633,35 @@ function CustomerAiAssistantExperience({
     () => buildCustomerWorkflowRuntimeResult({ mode: "resume", cart, orderStatus, reservationStatus, surface }),
     [cart, orderStatus, reservationStatus, surface]
   );
+  const customerPassport = useMemo(
+    () =>
+      buildOperationalPassport({
+        surface: "customer",
+        title: surface === "reservation" ? "Khách · Đặt bàn" : "Khách · Gọi món",
+        status: customerWorkflowRuntime.workflowStatus,
+        goal:
+          surface === "reservation"
+            ? customerWorkflowRuntime.hasOrderStatus
+              ? "Đang theo dõi lịch đặt hiện tại."
+              : "Đang hoàn tất luồng đặt bàn."
+            : customerWorkflowRuntime.cartItemCount > 0
+              ? `Giỏ đang có ${customerWorkflowRuntime.cartItemCount} món.`
+              : customerWorkflowRuntime.hasOrderStatus
+                ? "Đang theo dõi đơn gần nhất."
+                : "Đang khám phá menu thật.",
+        route: pathname,
+        nextActionId: customerWorkflowRuntime.nextActionId,
+        nextActionLabel:
+          customerWorkflowRuntime.actions?.find((action) => action.id === customerWorkflowRuntime.nextActionId)?.label ??
+          customerWorkflowRuntime.actions?.[0]?.label ??
+          null,
+        checkpoint: customerWorkflowRuntime.reply,
+        handoffRoute: pathname,
+        handoffLabel: surface === "reservation" ? "Tiếp tục đặt bàn" : "Tiếp tục gọi món",
+        confidence: customerWorkflowRuntime.workflowStatus === "payment_pending" ? "high" : customerWorkflowRuntime.cartItemCount > 0 ? "high" : "medium"
+      }),
+    [customerWorkflowRuntime.actions, customerWorkflowRuntime.cartItemCount, customerWorkflowRuntime.hasOrderStatus, customerWorkflowRuntime.nextActionId, customerWorkflowRuntime.reply, customerWorkflowRuntime.workflowStatus, pathname, surface]
+  );
 
   function runAction(action: AiAgentAction) {
     if (action.type === "link" && action.href) {
@@ -602,6 +670,43 @@ function CustomerAiAssistantExperience({
     }
     onAgentAction?.(action);
   }
+
+  const handleCopilotFallback = useCallback(
+    async (lastUserMessage: string) => {
+      try {
+        const result = await askCustomerAssistant({
+          restaurantSlug,
+          customerSessionId,
+          threadId,
+          message: lastUserMessage,
+          cart,
+          orderStatus,
+          reservationStatus,
+          context: {
+            currentPath: pathname,
+            operationalPassport: customerPassport,
+            surface: surface === "reservation" ? "customer_reservation" : "customer_ordering",
+            source: "copilotkit_watchdog_followup"
+          }
+        });
+        return result.reply;
+      } catch {
+        return surface === "reservation"
+          ? "Mình vẫn ở đây. Nếu bạn hỏi tiếp về đặt bàn, mình có thể hướng dẫn đổi giờ, cọc, giữ bàn hoặc gọi quán ngay."
+          : "Mình vẫn ở đây. Nếu bạn hỏi tiếp về món, giỏ hàng hoặc thanh toán, mình sẽ dựa trên menu và trạng thái hiện tại để hướng dẫn bước tiếp theo.";
+      }
+    },
+    [cart, customerPassport, customerSessionId, orderStatus, pathname, reservationStatus, restaurantSlug, surface, threadId]
+  );
+
+  useCopilotResponseWatchdog({
+    timeoutMs: 9_500,
+    fallbackText:
+      surface === "reservation"
+        ? "LogiBot chưa nhận được phản hồi đầy đủ, nhưng bạn vẫn có thể tiếp tục bằng các nút đặt bàn an toàn trên màn hình."
+        : "LogiBot chưa nhận được phản hồi đầy đủ, nhưng bạn vẫn có thể tiếp tục ngay bằng các nút an toàn trên màn hình: xem menu, mở giỏ, kiểm tra đơn hoặc gọi nhân viên.",
+    onFallback: handleCopilotFallback
+  });
 
   useCopilotAdditionalInstructions({ instructions: buildCopilotSystemInstructions("customer") }, []);
   useCopilotReadable(
@@ -614,6 +719,7 @@ function CustomerAiAssistantExperience({
         cart,
         orderStatus,
         reservationStatus,
+        operationalPassport: customerPassport,
         workflowRuntime: {
           status: customerWorkflowRuntime.workflowStatus,
           nextActionId: customerWorkflowRuntime.nextActionId,
@@ -634,7 +740,7 @@ function CustomerAiAssistantExperience({
               ]
       }
     },
-    [restaurantSlug, customerSessionId, cart, orderStatus, reservationStatus, customerWorkflowRuntime, surface]
+    [customerPassport, restaurantSlug, customerSessionId, cart, orderStatus, reservationStatus, customerWorkflowRuntime, surface]
   );
   useCopilotChatSuggestions(
     {
@@ -642,18 +748,18 @@ function CustomerAiAssistantExperience({
       suggestions:
         surface === "reservation"
           ? [
-              { title: "Tiếp tục", message: "Hướng dẫn tôi bước tiếp theo trong đặt bàn." },
-              { title: "Cọc", message: "Lịch đặt này có cần cọc không và tôi cần làm gì?" },
-              { title: "Đến muộn", message: "Nếu tôi đến muộn thì bàn được giữ bao lâu?" },
-              { title: "Đổi giờ", message: "Tôi muốn đổi giờ hoặc hủy lịch thì làm thế nào?" },
-              { title: "Gọi quán", message: "Khi nào tôi nên gọi quán để được hỗ trợ?" }
+              { title: "01 Tiếp tục", message: "Hướng dẫn bước tiếp theo trong đặt bàn và đưa nút thao tác phù hợp." },
+              { title: "02 Cọc", message: "Lịch đặt này có cần cọc không và tôi cần làm gì ngay?" },
+              { title: "03 Đến muộn", message: "Nếu tôi đến muộn thì bàn được giữ bao lâu và nên gọi quán khi nào?" },
+              { title: "04 Đổi giờ", message: "Tôi muốn đổi giờ hoặc hủy lịch thì làm thế nào an toàn?" },
+              { title: "05 Gọi quán", message: "Mở cách liên hệ quán nếu cần hỗ trợ đặt bàn." }
             ]
           : [
-              { title: "Tiếp tục", message: "Tiếp tục bước hợp lý nhất theo giỏ hàng hoặc trạng thái đơn hiện tại." },
-              { title: "Gợi ý món", message: "Gợi ý món dễ gọi và có nút thêm vào giỏ." },
-              { title: "Combo", message: "Tạo combo cho 3 người dưới 300k." },
-              { title: "Ít ngọt", message: "Tôi muốn đồ uống ít ngọt, dễ uống." },
-              { title: "Thanh toán", message: "Tôi muốn kiểm tra đơn và thanh toán." }
+              { title: "01 Tiếp tục", message: "Tiếp tục bước hợp lý nhất theo giỏ hàng hoặc trạng thái đơn hiện tại." },
+              { title: "02 Gợi ý món", message: "Gợi ý món dễ gọi từ menu thật và đưa nút thêm vào giỏ." },
+              { title: "03 Combo", message: "Tạo combo cho 3 người dưới 300k, ưu tiên món đang bán." },
+              { title: "04 Ít ngọt", message: "Tôi muốn đồ uống ít ngọt, dễ uống, có nút chọn món." },
+              { title: "05 Thanh toán", message: "Kiểm tra đơn hiện tại và mở bước thanh toán phù hợp." }
             ]
     },
     [restaurantSlug, surface]
@@ -662,6 +768,7 @@ function CustomerAiAssistantExperience({
   useCopilotAction(
     {
       name: "continue_customer_ordering",
+      followUp: false,
       description:
         "Tiếp tục luồng khách hàng bằng runtime deterministic dựa trên giỏ hàng và trạng thái đơn. Dùng khi khách hỏi tiếp theo làm gì, mở giỏ, xem đơn hoặc thanh toán.",
       parameters: [
@@ -689,6 +796,7 @@ function CustomerAiAssistantExperience({
   useCopilotAction(
     {
       name: "answer_customer_request",
+      followUp: false,
       description:
         "Catch-all bắt buộc cho mọi câu hỏi tự do của khách. Nhận nguyên câu hỏi, backend tự suy luận intent, đọc menu/giỏ/đơn thật khi cần và luôn trả card có CTA.",
       parameters: [
@@ -716,7 +824,12 @@ function CustomerAiAssistantExperience({
             intent: isCustomerIntent(intent) ? intent : undefined,
             cart,
             orderStatus,
-            reservationStatus
+            reservationStatus,
+            context: {
+              currentPath: pathname,
+              operationalPassport: customerPassport,
+              surface: surface === "reservation" ? "customer_reservation" : "customer_ordering"
+            }
           });
         } catch {
           return {
@@ -727,12 +840,13 @@ function CustomerAiAssistantExperience({
       },
       render: ({ status, result }) => <CustomerToolResult status={status} result={result as CustomerAiResponse} onAction={runAction} />
     },
-    [restaurantSlug, customerSessionId, threadId, cart, orderStatus, reservationStatus, surface]
+    [restaurantSlug, customerSessionId, threadId, cart, orderStatus, reservationStatus, surface, pathname, customerPassport]
   );
 
   useCopilotAction(
     {
       name: "ask_customer_waiter",
+      followUp: false,
       description: "Đọc menu thật, giỏ hàng và trạng thái đơn để gợi ý món, combo, khuyến mãi hoặc bước thanh toán tiếp theo.",
       parameters: [
         {
@@ -759,7 +873,12 @@ function CustomerAiAssistantExperience({
             intent: intent as CustomerIntent,
             cart,
             orderStatus,
-            reservationStatus
+            reservationStatus,
+            context: {
+              currentPath: pathname,
+              operationalPassport: customerPassport,
+              surface: surface === "reservation" ? "customer_reservation" : "customer_ordering"
+            }
           });
         } catch {
           return {
@@ -770,12 +889,13 @@ function CustomerAiAssistantExperience({
       },
       render: ({ status, result }) => <CustomerToolResult status={status} result={result as CustomerAiResponse} onAction={runAction} />
     },
-    [restaurantSlug, customerSessionId, threadId, cart, orderStatus, reservationStatus, surface]
+    [restaurantSlug, customerSessionId, threadId, cart, orderStatus, reservationStatus, surface, pathname, customerPassport]
   );
 
   useCopilotAction(
     {
       name: "open_customer_cart",
+      followUp: false,
       description: "Mở giỏ hàng của khách để kiểm tra món hoặc thanh toán.",
       handler: async () => {
         const action: AiAgentAction = {
@@ -797,6 +917,7 @@ function CustomerAiAssistantExperience({
   useCopilotAction(
     {
       name: "call_staff_from_table",
+      followUp: false,
       description: "Gọi nhân viên hỗ trợ tại bàn. Chỉ dùng khi khách yêu cầu.",
       handler: async () => {
         const action: AiAgentAction = {
@@ -818,6 +939,7 @@ function CustomerAiAssistantExperience({
   useCopilotAction(
     {
       name: "mark_customer_paid",
+      followUp: false,
       description: "Khi khách nói đã chuyển khoản, chuyển màn hình sang trạng thái đã thanh toán để hệ thống chờ quán xác nhận.",
       handler: async () => {
         const action: AiAgentAction = {
@@ -838,25 +960,28 @@ function CustomerAiAssistantExperience({
   );
 
   return (
-    <CopilotSidebar
-      defaultOpen={false}
-      width="min(420px, 100vw)"
-      toggleButton={CustomerLogibotToggle}
-      labels={{
-        modalHeaderTitle: surface === "reservation" ? "LogiBot đặt bàn" : "LogiBot gọi món",
-        welcomeMessageText:
-          surface === "reservation"
-            ? "Mình có thể giải thích cọc, giữ bàn, đến muộn, đổi/hủy lịch và mở đúng nút an toàn cho bạn."
-            : "Mình đọc menu thật của quán để gợi ý món, tạo combo, thêm vào giỏ, gọi nhân viên và mở thanh toán đúng bước.",
-        chatInputPlaceholder: surface === "reservation" ? "VD: tôi đến muộn, đổi giờ, có cần cọc không..." : "VD: combo 3 người dưới 300k, món ít cay, mở giỏ...",
-        chatDisclaimerText:
-          surface === "reservation"
-            ? "LogiBot không tự xác nhận cọc hoặc tự hủy lịch nếu bạn chưa bấm xác nhận."
-            : "LogiBot không xác nhận thanh toán thay quán; giao dịch vẫn được nhân viên/hệ thống xác nhận.",
-        chatToggleOpenLabel: "Mở LogiBot",
-        chatToggleCloseLabel: "Đóng LogiBot"
-      }}
-    />
+    <>
+      <CopilotSidebar
+        defaultOpen={false}
+        width="min(420px, 100vw)"
+        toggleButton={CustomerLogibotToggle}
+        labels={{
+          modalHeaderTitle: surface === "reservation" ? "LogiBot đặt bàn" : "LogiBot gọi món",
+          welcomeMessageText:
+            surface === "reservation"
+              ? "Mình có thể giải thích cọc, giữ bàn, đến muộn, đổi/hủy lịch và mở đúng nút an toàn cho bạn."
+              : "Mình đọc menu thật của quán để gợi ý món, tạo combo, thêm vào giỏ, gọi nhân viên và mở thanh toán đúng bước.",
+          chatInputPlaceholder: surface === "reservation" ? "VD: tôi đến muộn, đổi giờ, có cần cọc không..." : "VD: combo 3 người dưới 300k, món ít cay, mở giỏ...",
+          chatDisclaimerText:
+            surface === "reservation"
+              ? "LogiBot không tự xác nhận cọc hoặc tự hủy lịch nếu bạn chưa bấm xác nhận."
+              : "LogiBot không xác nhận thanh toán thay quán; giao dịch vẫn được nhân viên/hệ thống xác nhận.",
+          chatToggleOpenLabel: "Mở LogiBot",
+          chatToggleCloseLabel: "Đóng LogiBot"
+        }}
+      />
+      <CopilotThinkingIndicator surface="customer" />
+    </>
   );
 }
 

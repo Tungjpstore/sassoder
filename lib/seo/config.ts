@@ -5,7 +5,7 @@ export const SEO_COMPANY_NAME = "LogiVN";
 export const SEO_LEGAL_NAME = "LogiVN";
 export const SEO_HOME_TITLE = "LogiVN - Phần mềm gọi món QR cho quán cafe, nhà hàng";
 export const SEO_HOME_DESCRIPTION =
-  "LogiVN giúp quán cafe, nhà hàng tạo menu QR, nhận đơn theo thời gian thực, quản lý bàn, thanh toán VietQR và vận hành trên một bảng quản lý rõ ràng.";
+  "LogiVN giúp quán cafe, trà sữa và nhà hàng quản lý QR ordering, bàn, VietQR, AI, nhân viên, tồn kho và báo cáo trên một dashboard rõ ràng.";
 export const SEO_DEFAULT_TITLE = SEO_HOME_TITLE;
 export const SEO_TITLE_TEMPLATE = "%s | LogiVN";
 export const SEO_DEFAULT_DESCRIPTION = SEO_HOME_DESCRIPTION;
@@ -39,6 +39,22 @@ export const SEO_PUBLIC_ROUTES = [
     changeFrequency: "weekly" as const,
     title: "Blog LogiVN - Gọi món QR, VietQR và vận hành quán cafe",
     description: "Kiến thức thực chiến về gọi món QR, thanh toán VietQR, quản lý đơn theo thời gian thực và chuyển đổi số cho quán cafe, nhà hàng Việt."
+  },
+  {
+    path: "/giai-phap",
+    priority: 0.82,
+    changeFrequency: "weekly" as const,
+    title: "Giải pháp LogiVN cho quán cafe, trà sữa và nhà hàng",
+    description:
+      "Tổng hợp giải pháp LogiVN theo nhu cầu triển khai: QR ordering, AI, quản lý bàn, nhân viên, tồn kho, VietQR, đặt bàn và báo cáo vận hành."
+  },
+  {
+    path: "/so-sanh",
+    priority: 0.78,
+    changeFrequency: "weekly" as const,
+    title: "So sánh LogiVN với KiotViet, CukCuk, Sapo, iPOS và PosApp",
+    description:
+      "Cụm trang so sánh LogiVN với các phần mềm POS phổ biến theo QR ordering, AI vận hành, VietQR, nhân viên, tồn kho, báo cáo và chi phí triển khai."
   }
 ];
 

@@ -21,12 +21,15 @@ export type PaymentLogStatus = "pending" | "waiting_confirm" | "confirmed" | "fa
 export type ServiceRequestStatus = "open" | "acknowledged" | "resolved" | "cancelled";
 export type ReservationStatus =
   | "draft"
+  | "pending"
   | "holding"
   | "waiting_deposit_confirm"
   | "confirmed"
+  | "checked_in"
   | "seated"
   | "completed"
   | "cancelled"
+  | "rejected"
   | "expired"
   | "no_show";
 export type ReservationDepositStatus =
@@ -39,6 +42,21 @@ export type ReservationDepositStatus =
   | "forfeited"
   | "refunded";
 export type ReservationDepositType = "FIXED" | "PER_PERSON";
+export type InventoryMovementType =
+  | "receive"
+  | "deduct_sale"
+  | "adjust_increase"
+  | "adjust_decrease"
+  | "waste"
+  | "rollback"
+  | "transfer_in"
+  | "transfer_out"
+  | "expired"
+  | "internal_use"
+  | "supplier_return"
+  | "reserve"
+  | "release_reserve";
+export type InventoryCountStatus = "draft" | "submitted" | "applied" | "cancelled";
 
 export type SessionProfile = {
   userId: string;
@@ -167,8 +185,11 @@ export type ReservationDto = {
   createdAt: string;
   updatedAt: string | null;
   confirmedAt: string | null;
+  checkedInAt: string | null;
   seatedAt: string | null;
+  completedAt: string | null;
   cancelledAt: string | null;
+  rejectedAt: string | null;
   expiredAt: string | null;
   noShowAt: string | null;
   seatedTableBillId: string | null;
@@ -177,5 +198,8 @@ export type ReservationDto = {
     name: string;
     area: string;
     capacity: number;
+    floorLabel?: string | null;
+    seatingZone?: "indoor" | "outdoor" | "mixed" | string | null;
+    tableKind?: "standard" | "vip" | "bar" | "community" | string | null;
   }>;
 };

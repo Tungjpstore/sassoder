@@ -20,6 +20,8 @@ const publicDashboardPaths = new Set([
   "/dashboard/forgot-password",
   "/dashboard/reset-password"
 ]);
+const staffSlugLoginPathPattern = /^\/staff\/[a-z0-9-]{2,80}\/login$/;
+const staffSubdomainSlugPathPattern = /^\/([a-z0-9-]{2,80})(?:\/login)?$/;
 
 function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
@@ -65,6 +67,7 @@ function shouldBypassProxySessionRefresh(request: NextRequest, pathname: string)
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/api/") ||
     publicDashboardPaths.has(pathname) ||
+    isPublicStaffPath(pathname) ||
     isServerActionRequest(request) ||
     isPrefetchOrRscRequest(request)
   );
@@ -101,7 +104,7 @@ function appendExpiredCookie(response: NextResponse, request: NextRequest, name:
 
 function repairOversizedSupabaseCookieHeader(request: NextRequest) {
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard/login";
+  url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
   url.search = "?session=cleared&reason=header";
 
   const response = NextResponse.redirect(url);
@@ -116,7 +119,7 @@ function repairOversizedSupabaseCookieHeader(request: NextRequest) {
 
 function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") {
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard/login";
+  url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
   url.search = `?session=cleared&reason=${encodeURIComponent(reason)}`;
 
   const response = pathnameNeedsLoginRedirect(request.nextUrl.pathname)
@@ -137,6 +140,14 @@ function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") 
 
 function pathnameNeedsLoginRedirect(pathname: string) {
   return pathname.startsWith("/dashboard") && !publicDashboardPaths.has(pathname);
+}
+
+function loginRedirectPathForPathname(pathname: string) {
+  return pathname.startsWith("/dashboard/staff/mobile") ? "/staff/login" : "/dashboard/login";
+}
+
+function isPublicStaffPath(pathname: string) {
+  return pathname === "/staff/login" || staffSlugLoginPathPattern.test(pathname);
 }
 
 function appendExpiredTransientCookies(response: NextResponse, request: NextRequest) {
@@ -163,6 +174,21 @@ export async function proxy(request: NextRequest) {
     return noStoreNoContent();
   }
 
+  if (host === `staff.${ROOT_DOMAIN}` && (pathname === "/" || pathname === "/login")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/staff/login";
+    return NextResponse.rewrite(url);
+  }
+
+  if (host === `staff.${ROOT_DOMAIN}`) {
+    const slugMatch = pathname.match(staffSubdomainSlugPathPattern);
+    if (slugMatch?.[1]) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/staff/${slugMatch[1]}/login`;
+      return NextResponse.rewrite(url);
+    }
+  }
+
   if (
     pathname.startsWith("/dashboard") &&
     !publicDashboardPaths.has(pathname) &&
@@ -171,7 +197,7 @@ export async function proxy(request: NextRequest) {
     !isServerActionRequest(request)
   ) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard/login";
+    url.pathname = loginRedirectPathForPathname(pathname);
     url.search = "";
     return NextResponse.redirect(url);
   }

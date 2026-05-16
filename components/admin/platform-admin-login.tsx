@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { ArrowRight, KeyRound, LockKeyhole, ShieldAlert, ShieldCheck } from "lucide-react";
+import { ArrowRight, KeyRound, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserRoundCog } from "lucide-react";
 import { platformAdminLoginAction } from "@/app/admin/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
@@ -9,6 +9,9 @@ type PlatformAdminLoginProps = {
   configured: boolean;
   devFallbackEnabled: boolean;
   requiresFirstPasswordChange: boolean;
+  rbacConfigured: boolean;
+  adminUsersConfigured: boolean;
+  bootstrapFallbackEnabled: boolean;
   sessionTtlHours: number;
 };
 
@@ -16,9 +19,13 @@ export function PlatformAdminLogin({
   configured,
   devFallbackEnabled,
   requiresFirstPasswordChange,
+  rbacConfigured,
+  adminUsersConfigured,
+  bootstrapFallbackEnabled,
   sessionTtlHours
 }: PlatformAdminLoginProps) {
   const [state, formAction, pending] = useActionState(platformAdminLoginAction, undefined);
+  const authMode = adminUsersConfigured ? "RBAC theo role" : bootstrapFallbackEnabled ? "Bootstrap fallback" : "Chưa bật RBAC";
 
   return (
     <main className="stitch-admin min-h-screen bg-[var(--background)] text-[var(--foreground)]">
@@ -41,7 +48,7 @@ export function PlatformAdminLogin({
           <div className="grid max-w-3xl gap-3 sm:grid-cols-3">
             {[
               { label: "Tenant control", value: "100-300 quán" },
-              { label: "Security", value: "Cookie nội bộ" },
+              { label: "Security", value: authMode },
               { label: "Session", value: `${sessionTtlHours} giờ` }
             ].map((item) => (
               <div key={item.label} className="rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] p-4">
@@ -58,8 +65,22 @@ export function PlatformAdminLogin({
           </div>
           <h2 className="text-2xl font-semibold tracking-tight">Mở khoá dev console</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-            Nhập mật khẩu nội bộ. Mật khẩu được kiểm tra ở server và chỉ tạo cookie HTTP-only cho namespace `/admin`.
+            Đăng nhập bằng tài khoản platform admin theo role, hoặc dùng mật khẩu bootstrap khi hệ thống chưa có admin user.
           </p>
+
+          <div className="mt-5 grid gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] p-4 text-sm leading-6 text-[var(--muted-foreground)]">
+            <div className="flex items-center gap-2 font-semibold text-[var(--foreground)]">
+              <UserRoundCog className="h-4 w-4 text-[var(--accent)]" />
+              {authMode}
+            </div>
+            <p>
+              {adminUsersConfigured
+                ? "Role và permission đang được đọc từ Supabase. Nhập email để dùng đúng phạm vi quyền theo tài khoản."
+                : rbacConfigured
+                  ? "Schema RBAC đã sẵn sàng. Nhập email cùng mật khẩu bootstrap để tạo owner đầu tiên."
+                  : "Chưa chạy migration RBAC, form vẫn cho phép mở bằng mật khẩu bootstrap hiện tại."}
+            </p>
+          </div>
 
           {!configured ? (
             <div className="mt-5 rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-4 text-sm leading-6 text-[var(--accent-strong)]">
@@ -89,7 +110,23 @@ export function PlatformAdminLogin({
           ) : null}
 
           <label className="mt-5 grid gap-2 text-sm font-semibold text-[var(--text-secondary)]">
-            Mật khẩu nội bộ
+            Email quản trị
+            <span className="relative">
+              <Mail className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--outline)]" />
+              <input
+                name="email"
+                type="email"
+                autoComplete="username"
+                className="h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--surface-strong)] pl-11 pr-4 text-base outline-none transition focus:border-[var(--primary)] focus:ring-4 focus:ring-[var(--primary)]/10 disabled:bg-[var(--surface-container)]"
+                placeholder={adminUsersConfigured ? "owner@logivn.com" : "Tạo owner đầu tiên"}
+                disabled={!configured || pending}
+                required={adminUsersConfigured}
+              />
+            </span>
+          </label>
+
+          <label className="mt-5 grid gap-2 text-sm font-semibold text-[var(--text-secondary)]">
+            Mật khẩu
             <span className="relative">
               <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--outline)]" />
               <input

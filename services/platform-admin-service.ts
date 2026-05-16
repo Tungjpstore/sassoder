@@ -209,6 +209,26 @@ type DeliveryQuoteSnapshotRow = {
   created_at: string;
 };
 
+type CronRunStatus = "success" | "warn" | "error";
+
+type CronRunLogRow = {
+  job_key: string;
+  status: CronRunStatus;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  result_summary: unknown;
+  error_message: string | null;
+};
+
+type CronRunHistory = {
+  status: CronRunStatus;
+  startedAt: string;
+  durationMs: number;
+  summary: Record<string, unknown>;
+  error: string | null;
+};
+
 type ContentSurface = {
   key: string;
   name: string;
@@ -244,6 +264,16 @@ type CronJobHealth = {
   guard: string;
   owner: string;
   note: string;
+  lastRunAt?: string | null;
+  lastRunStatus?: CronRunStatus | null;
+  lastDurationMs?: number | null;
+  lastSummary?: Record<string, unknown>;
+  lastError?: string | null;
+  nextRunAt?: string | null;
+  lastRunAgeHours?: number | null;
+  failureStreak?: number;
+  attentionStreak?: number;
+  recentRuns?: CronRunHistory[];
 };
 
 type AdminCapability = {
@@ -364,6 +394,16 @@ const missionControlCronJobs: CronJobHealth[] = [
     note: "Gửi báo cáo định kỳ cho quán theo report_schedules."
   },
   {
+    key: "ai-ops",
+    name: "AI Ops insights",
+    path: "/api/cron/ai-ops",
+    schedule: "30 1 * * *",
+    status: "needs_config",
+    guard: "CRON_SECRET",
+    owner: "AI Ops",
+    note: "Tạo thẻ vận hành thông minh hằng ngày cho các quán active."
+  },
+  {
     key: "reservations-expire",
     name: "Expire reservation holds",
     path: "/api/cron/reservations/expire",
@@ -407,6 +447,61 @@ function average(values: number[]) {
   const safeValues = values.filter((value) => Number.isFinite(value));
   if (safeValues.length === 0) return 0;
   return Math.round((safeValues.reduce((sum, value) => sum + value, 0) / safeValues.length) * 100) / 100;
+}
+
+function latestCronRunMap(rows: CronRunLogRow[]) {
+  const map = new Map<string, CronRunLogRow>();
+  rows.forEach((row) => {
+    if (!map.has(row.job_key)) map.set(row.job_key, row);
+  });
+  return map;
+}
+
+function cronRunsByJob(rows: CronRunLogRow[]) {
+  return rows.reduce<Map<string, CronRunLogRow[]>>((map, row) => {
+    map.set(row.job_key, [...(map.get(row.job_key) ?? []), row]);
+    return map;
+  }, new Map());
+}
+
+function cronRunHistory(rows: CronRunLogRow[], limit = 5): CronRunHistory[] {
+  return rows.slice(0, limit).map((row) => ({
+    status: row.status,
+    startedAt: row.started_at,
+    durationMs: row.duration_ms,
+    summary: asObject(row.result_summary, {}),
+    error: row.error_message
+  }));
+}
+
+function cronStatusStreak(rows: CronRunLogRow[], predicate: (status: CronRunStatus) => boolean) {
+  let streak = 0;
+  for (const row of rows) {
+    if (!predicate(row.status)) break;
+    streak += 1;
+  }
+  return streak;
+}
+
+function nextDailyCronRunAt(schedule: string, now = new Date()) {
+  const match = schedule.match(/^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*$/);
+  if (!match) return null;
+
+  const minute = Number(match[1]);
+  const hour = Number(match[2]);
+  if (!Number.isInteger(minute) || !Number.isInteger(hour) || minute < 0 || minute > 59 || hour < 0 || hour > 23) return null;
+
+  const next = new Date(now);
+  next.setUTCHours(hour, minute, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
+function hoursSince(value: string | null | undefined, now = Date.now()) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.round(Math.max(0, now - timestamp) / 36_000) / 100;
 }
 
 function percentage(part: number, total: number) {
@@ -1355,10 +1450,10 @@ function buildProjectAtlas({
       observe: "partial",
       control: "planned",
       audit: "partial",
-      routes: ["/api/cron/reports", "/api/cron/reservations/expire", "/api/cron/subscriptions"],
-      dependencies: ["Vercel Cron", "CRON_SECRET", "report schedules", "subscription lifecycle"],
+      routes: ["/api/cron/reports", "/api/cron/ai-ops", "/api/cron/reservations/expire", "/api/cron/subscriptions"],
+      dependencies: ["Vercel Cron", "CRON_SECRET", "report schedules", "AI Ops insights", "subscription lifecycle"],
       note: "Cron routes được bảo vệ bằng bearer secret và khai báo trong vercel.json.",
-      nextStep: "Thêm cron_run_logs, last run/next run, duration và failure alert."
+      nextStep: "Thêm push/email alert khi cron lỗi liên tiếp và run detail theo execution id."
     },
     {
       key: "deployment-ci-plane",
@@ -1500,7 +1595,8 @@ export async function updateSaasPlan({
   monthlyPrice,
   trialDays,
   features,
-  isActive
+  isActive,
+  updatedBy = "platform-admin"
 }: {
   planId: string;
   name: string;
@@ -1509,6 +1605,7 @@ export async function updateSaasPlan({
   trialDays: number;
   features: string[];
   isActive: boolean;
+  updatedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const { error } = await supabase
@@ -1526,6 +1623,7 @@ export async function updateSaasPlan({
 
   if (error) throw error;
   await writePlatformAuditLog({
+    actor: updatedBy,
     action: "saas_plan_updated",
     targetType: "saas_plan",
     targetId: planId,
@@ -1537,11 +1635,13 @@ export async function updateSaasPlan({
 export async function updateTenantPlatformStatus({
   restaurantId,
   status,
-  reason
+  reason,
+  updatedBy = "platform-admin"
 }: {
   restaurantId: string;
   status: PlatformStatus;
   reason?: string;
+  updatedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date().toISOString();
@@ -1564,6 +1664,7 @@ export async function updateTenantPlatformStatus({
   }
 
   await writePlatformAuditLog({
+    actor: updatedBy,
     action: "tenant_status_updated",
     targetType: "restaurant",
     targetId: restaurantId,
@@ -1575,11 +1676,13 @@ export async function updateTenantPlatformStatus({
 export async function updatePlatformUserStatus({
   userId,
   status,
-  reason
+  reason,
+  updatedBy = "platform-admin"
 }: {
   userId: string;
   status: UserAccountStatus;
   reason?: string;
+  updatedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const update =
@@ -1590,6 +1693,7 @@ export async function updatePlatformUserStatus({
   const { error } = await supabase.from("users").update(update).eq("id", userId);
   if (error) throw error;
   await writePlatformAuditLog({
+    actor: updatedBy,
     action: "platform_user_status_updated",
     targetType: "user",
     targetId: userId,
@@ -1679,11 +1783,13 @@ async function mirrorAnomalySubscriptionStateToBillingV2({
 export async function resolveBillingAnomaly({
   key,
   subscriptionId,
-  paymentId
+  paymentId,
+  resolvedBy = "platform-admin"
 }: {
   key: BillingAnomalyKey;
   subscriptionId?: string;
   paymentId?: string;
+  resolvedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date();
@@ -1716,7 +1822,7 @@ export async function resolveBillingAnomaly({
     const metadata = {
       ...asRecord(subscription.metadata),
       requestedPlanCode: "premium",
-      normalizedBy: "platform_admin_anomaly_action",
+      normalizedBy: resolvedBy,
       normalizedAt: nowIso,
       normalizedReason: "premium_trial_subscription"
     };
@@ -1744,6 +1850,7 @@ export async function resolveBillingAnomaly({
     });
 
     await writePlatformAuditLog({
+      actor: resolvedBy,
       action: "billing_anomaly_resolved",
       targetType: "restaurant_subscription",
       targetId: subscription.id,
@@ -1781,7 +1888,7 @@ export async function resolveBillingAnomaly({
     const nextStatus: "active" | "expired" = accessEnd && new Date(accessEnd).getTime() >= now.getTime() ? "active" : "expired";
     const metadata = {
       ...asRecord(subscription.metadata),
-      normalizedBy: "platform_admin_anomaly_action",
+      normalizedBy: resolvedBy,
       normalizedAt: nowIso,
       normalizedReason: "pending_without_payment",
       previousStatus: "pending_payment"
@@ -1811,6 +1918,7 @@ export async function resolveBillingAnomaly({
     });
 
     await writePlatformAuditLog({
+      actor: resolvedBy,
       action: "billing_anomaly_resolved",
       targetType: "restaurant_subscription",
       targetId: subscription.id,
@@ -1893,7 +2001,7 @@ export async function resolveBillingAnomaly({
       fromPlanName: currentPlan.name,
       planCode: targetPlan.code,
       planName: targetPlan.name,
-      normalizedBy: "platform_admin_anomaly_action",
+      normalizedBy: resolvedBy,
       normalizedAt: nowIso
     };
 
@@ -1906,6 +2014,7 @@ export async function resolveBillingAnomaly({
     if (updateError) throw updateError;
 
     await writePlatformAuditLog({
+      actor: resolvedBy,
       action: "billing_anomaly_resolved",
       targetType: "subscription_payment",
       targetId: payment.id,
@@ -2085,7 +2194,7 @@ async function readPlatformAdminSnapshot() {
     countRows(supabase, "upgrade_events", warnings)
   ]);
 
-  const [aiUsageRows, mapProviderLogs, mapCacheLogs, deliveryQuoteLogs] = await Promise.all([
+  const [aiUsageRows, mapProviderLogs, mapCacheLogs, deliveryQuoteLogs, cronRunRows] = await Promise.all([
     safeData<AiUsageSnapshotRow[]>(
       "ai_usage_logs_recent",
       supabase
@@ -2127,6 +2236,16 @@ async function readPlatformAdminSnapshot() {
         .gte("created_at", since24h)
         .order("created_at", { ascending: false })
         .limit(5000),
+      [],
+      warnings
+    ),
+    safeData<CronRunLogRow[]>(
+      "cron_run_logs_recent",
+      supabase
+        .from("cron_run_logs")
+        .select("job_key,status,started_at,finished_at,duration_ms,result_summary,error_message")
+        .order("started_at", { ascending: false })
+        .limit(100),
       [],
       warnings
     )
@@ -2189,9 +2308,21 @@ async function readPlatformAdminSnapshot() {
   const aiControl = summarizeAiControl(aiUsageRows);
   const mapControl = summarizeMapControl({ providerLogs: mapProviderLogs, cacheLogs: mapCacheLogs, quoteLogs: deliveryQuoteLogs });
   const integrations = buildIntegrationHealthList(platformAuthStatus.configured);
+  const latestCronRuns = latestCronRunMap(cronRunRows);
+  const cronRunGroups = cronRunsByJob(cronRunRows);
   const cronJobs = missionControlCronJobs.map((job) => ({
     ...job,
-    status: process.env.CRON_SECRET?.trim() ? "configured" as ControlPlaneStatus : "needs_config" as ControlPlaneStatus
+    status: process.env.CRON_SECRET?.trim() ? "configured" as ControlPlaneStatus : "needs_config" as ControlPlaneStatus,
+    lastRunAt: latestCronRuns.get(job.key)?.started_at ?? null,
+    lastRunStatus: latestCronRuns.get(job.key)?.status ?? null,
+    lastDurationMs: latestCronRuns.get(job.key)?.duration_ms ?? null,
+    lastSummary: asObject(latestCronRuns.get(job.key)?.result_summary, {}),
+    lastError: latestCronRuns.get(job.key)?.error_message ?? null,
+    nextRunAt: nextDailyCronRunAt(job.schedule),
+    lastRunAgeHours: hoursSince(latestCronRuns.get(job.key)?.started_at),
+    failureStreak: cronStatusStreak(cronRunGroups.get(job.key) ?? [], (status) => status === "error"),
+    attentionStreak: cronStatusStreak(cronRunGroups.get(job.key) ?? [], (status) => status !== "success"),
+    recentRuns: cronRunHistory(cronRunGroups.get(job.key) ?? [])
   }));
   const adminCapabilities = buildAdminCapabilities({ contentSurfaces, integrations, cronJobs });
   const adminMutations = buildAdminMutations();

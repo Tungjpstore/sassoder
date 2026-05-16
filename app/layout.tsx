@@ -1,16 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { SiteJsonLd } from "@/components/seo/site-json-ld";
 import { defaultSeoMetadata } from "@/lib/seo/metadata";
 import "./globals.css";
 
 export const preferredRegion = "sin1";
-
-const inter = Inter({
-  subsets: ["vietnamese", "latin"],
-  variable: "--font-inter",
-  display: "swap"
-});
 
 export const metadata: Metadata = defaultSeoMetadata;
 
@@ -26,7 +19,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
         <SiteJsonLd />
       </head>
-      <body className={inter.variable}>
+      <body>
         <a className="skip-link" href="#main-content">
           Bỏ qua điều hướng
         </a>

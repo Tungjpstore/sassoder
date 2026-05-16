@@ -19,7 +19,7 @@ The current Mission Control scope is:
 - `/admin/ai` tracks AI routing, provider readiness, 24h usage, tokens, failures, and model names.
 - `/admin/maps` tracks map provider calls, failures, estimated cost, cache hit rate, delivery quote acceptance, and routing fallback config.
 - `/admin/atlas` maps the full project surface across frontend, backend, data, automation, and external integrations.
-- `/admin/ops` tracks Vercel Cron jobs, integration readiness, storage/R2 readiness, cache readiness, and env/secret guardrails.
+- `/admin/ops` tracks Vercel Cron jobs, next-run ETA, recent run history, failure streaks, integration readiness, cache readiness, and env/secret guardrails.
 - `/admin/governance` tracks capability coverage, mutation risk, audit/rollback readiness, and RBAC role readiness.
 
 ## Safety Rules
@@ -38,7 +38,7 @@ The current Mission Control scope is:
 2. Add immutable `platform_content_revisions` for landing/pricing/blog with draft, preview, publish, and rollback.
 3. Add synthetic checks for critical Atlas flows: QR order, checkout, reservation, dashboard login, billing, and cron.
 4. Add `platform_change_requests` for approval on dangerous changes.
-5. Add platform-wide cron execution logs and alerting so `/admin/ops` can show last run, next run, duration, and error.
+5. Extend platform-wide cron execution logs with push/email alerts and drill-down details per execution.
 6. Add R2 migration plan for platform assets with dual-read fallback to Supabase Storage.
 
 ## Governance Model

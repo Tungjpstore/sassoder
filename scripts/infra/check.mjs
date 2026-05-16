@@ -46,8 +46,12 @@ function collectSourceFiles(startDir, results = []) {
   for (const entry of readdirSync(startDir)) {
     const absolutePath = path.join(startDir, entry);
     const relativePath = path.relative(rootDir, absolutePath);
+    const firstSegment = relativePath.split(path.sep)[0];
 
-    if ([...ignoredDirectories].some((ignoredDir) => relativePath === ignoredDir || relativePath.startsWith(`${ignoredDir}${path.sep}`))) {
+    if (
+      firstSegment.startsWith(".next") ||
+      [...ignoredDirectories].some((ignoredDir) => relativePath === ignoredDir || relativePath.startsWith(`${ignoredDir}${path.sep}`))
+    ) {
       continue;
     }
 

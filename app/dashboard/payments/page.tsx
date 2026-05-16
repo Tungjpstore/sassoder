@@ -39,6 +39,7 @@ export default async function AdminPaymentsPage() {
       <PaymentsWorkspace
         stats={stats}
         transactions={report.paymentTransactions}
+        restaurantId={session.restaurantId}
         bankCode={dashboard.restaurant.bank_code}
         bankAccount={dashboard.restaurant.bank_account}
         bankAccountName={dashboard.restaurant.bank_account_name}

@@ -29,6 +29,8 @@ type CheckoutState<Screen extends string> = {
   screen: Screen;
 };
 
+const CUSTOMER_PHONE_PATTERN = /^[0-9+() .-]{6,24}$/;
+
 export type RemoteCheckoutAction =
   | { type: "CONTINUE_FROM_CART"; mode: RemoteFulfillmentMode }
   | {
@@ -70,7 +72,7 @@ export function validateRemoteCheckoutBasics(input: {
     return { ok: false, error: "Vui lòng chọn ít nhất một món.", screen: "cart" };
   }
 
-  if (!input.customerName.trim() || !input.customerPhone.trim()) {
+  if (input.customerName.trim().length < 2 || !input.customerPhone.trim()) {
     return {
       ok: false,
       error: "Vui lòng nhập tên và số điện thoại để quán xác nhận đơn.",
@@ -78,7 +80,34 @@ export function validateRemoteCheckoutBasics(input: {
     };
   }
 
+  if (!CUSTOMER_PHONE_PATTERN.test(input.customerPhone.trim())) {
+    return {
+      ok: false,
+      error: "Số điện thoại chưa đúng. Bạn kiểm tra lại để quán liên hệ khi cần.",
+      screen: "cart"
+    };
+  }
+
   return { ok: true };
+}
+
+function normalizeQuoteCoordinate(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+export function buildDeliveryQuoteFingerprint(input: {
+  subtotal: number;
+  deliveryAddress?: string;
+  deliveryLat?: number | null;
+  deliveryLng?: number | null;
+}) {
+  return JSON.stringify({
+    subtotal: Math.max(0, Math.round(input.subtotal)),
+    deliveryAddress: input.deliveryAddress?.trim().replace(/\s+/g, " ") ?? "",
+    deliveryLat: normalizeQuoteCoordinate(input.deliveryLat),
+    deliveryLng: normalizeQuoteCoordinate(input.deliveryLng)
+  });
 }
 
 export function remoteCheckoutReducer(

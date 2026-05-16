@@ -23,7 +23,8 @@ export function fail(error: unknown) {
   }
 
   if (error instanceof AppError) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    const code = (error as AppError & { code?: string }).code;
+    return NextResponse.json({ ok: false, error: error.message, ...(code ? { code } : {}) }, { status: error.status });
   }
 
   console.error(error);

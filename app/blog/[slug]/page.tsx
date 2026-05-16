@@ -503,6 +503,13 @@ const styles = `
   font-weight: 760;
 }
 
+.article-nav-links a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding-inline: 8px;
+}
+
 .article-nav-links a:hover {
   color: var(--article-green);
 }
@@ -520,6 +527,7 @@ const styles = `
 
 .article-back {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 8px;
   color: var(--article-green);
@@ -687,6 +695,9 @@ const styles = `
 }
 
 .article-faq summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
   color: var(--article-green-strong);
   cursor: pointer;
   font-weight: 850;
@@ -829,6 +840,11 @@ const styles = `
 
   .article-hero {
     padding-top: 34px;
+  }
+
+  .article-hero h1 {
+    font-size: clamp(2.35rem, 10vw, 3rem);
+    line-height: 1;
   }
 }
 `;

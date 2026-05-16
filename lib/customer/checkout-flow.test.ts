@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildDeliveryQuoteFingerprint,
   dineInCheckoutReducer,
   remoteCheckoutReducer,
   validateRemoteCheckoutBasics,
@@ -58,9 +59,36 @@ test("remote checkout validates cart and customer identity before checkout", () 
     error: "Vui lòng nhập tên và số điện thoại để quán xác nhận đơn.",
     screen: "cart"
   });
-  assert.deepEqual(validateRemoteCheckoutBasics({ cartLineCount: 1, customerName: "Lan", customerPhone: "090" }), {
+  assert.deepEqual(validateRemoteCheckoutBasics({ cartLineCount: 1, customerName: "L", customerPhone: "0901234567" }), {
+    ok: false,
+    error: "Vui lòng nhập tên và số điện thoại để quán xác nhận đơn.",
+    screen: "cart"
+  });
+  assert.deepEqual(validateRemoteCheckoutBasics({ cartLineCount: 1, customerName: "Lan", customerPhone: "abc" }), {
+    ok: false,
+    error: "Số điện thoại chưa đúng. Bạn kiểm tra lại để quán liên hệ khi cần.",
+    screen: "cart"
+  });
+  assert.deepEqual(validateRemoteCheckoutBasics({ cartLineCount: 1, customerName: "Lan", customerPhone: "0901234567" }), {
     ok: true
   });
+});
+
+test("remote checkout fingerprints delivery quotes by payable inputs", () => {
+  assert.equal(
+    buildDeliveryQuoteFingerprint({
+      subtotal: 100000.4,
+      deliveryAddress: "  12 Nguyen Trai   Quan 1 ",
+      deliveryLat: 10.1234567,
+      deliveryLng: 106.7654321
+    }),
+    buildDeliveryQuoteFingerprint({
+      subtotal: 100000,
+      deliveryAddress: "12 Nguyen Trai Quan 1",
+      deliveryLat: 10.123457,
+      deliveryLng: 106.765432
+    })
+  );
 });
 
 test("dine-in checkout restores existing order screens from payment state", () => {

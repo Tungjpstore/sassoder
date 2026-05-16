@@ -3,6 +3,7 @@
 import {
   loginAction as runLoginAction,
   logoutAction as runLogoutAction,
+  pinLoginAction as runPinLoginAction,
   registerAccountAction as runRegisterAccountAction,
   registerOnboardingAction as runRegisterOnboardingAction,
   requestPasswordResetAction as runRequestPasswordResetAction,
@@ -11,6 +12,24 @@ import {
   verifyEmailOtpAction as runVerifyEmailOtpAction
 } from "./actions/auth";
 import { requestSubscriptionPaymentAction as runRequestSubscriptionPaymentAction } from "./actions/billing";
+import { updateAiOperationInsightStatusAction as runUpdateAiOperationInsightStatusAction } from "./actions/ai-insights";
+import {
+  applyInventoryCountAction as runApplyInventoryCountAction,
+  createInventoryCategoryAction as runCreateInventoryCategoryAction,
+  createInventoryIngredientAction as runCreateInventoryIngredientAction,
+  createInventoryPurchaseOrderAction as runCreateInventoryPurchaseOrderAction,
+  createInventorySupplierAction as runCreateInventorySupplierAction,
+  createInventoryTransferAction as runCreateInventoryTransferAction,
+  deactivateInventoryIngredientAction as runDeactivateInventoryIngredientAction,
+  deleteInventoryRecipeLineAction as runDeleteInventoryRecipeLineAction,
+  importInventoryIntakeAction as runImportInventoryIntakeAction,
+  receiveInventoryPurchaseOrderAction as runReceiveInventoryPurchaseOrderAction,
+  recordInventoryMovementAction as runRecordInventoryMovementAction,
+  refreshInventoryAlertsAction as runRefreshInventoryAlertsAction,
+  updateInventoryAlertStatusAction as runUpdateInventoryAlertStatusAction,
+  updateInventoryIngredientAction as runUpdateInventoryIngredientAction,
+  upsertInventoryRecipeLineAction as runUpsertInventoryRecipeLineAction
+} from "./actions/inventory";
 import {
   createCategoryAction as runCreateCategoryAction,
   createMenuItemAction as runCreateMenuItemAction,
@@ -28,7 +47,13 @@ import {
 } from "./actions/promotions";
 import {
   createStaffAction as runCreateStaffAction,
+  assignStaffShiftAction as runAssignStaffShiftAction,
+  cloneStaffRoleAction as runCloneStaffRoleAction,
+  createStaffShiftTemplateAction as runCreateStaffShiftTemplateAction,
   deleteStaffAction as runDeleteStaffAction,
+  setStaffAccountStateAction as runSetStaffAccountStateAction,
+  updateStaffProfileAction as runUpdateStaffProfileAction,
+  updateStaffRolePermissionsAction as runUpdateStaffRolePermissionsAction,
   updateStaffRoleAction as runUpdateStaffRoleAction,
   type StaffActionState
 } from "./actions/staff";
@@ -50,6 +75,10 @@ import {
 
 export async function loginAction(_prevState: { error?: string } | undefined, formData: FormData) {
   return runLoginAction(_prevState, formData);
+}
+
+export async function pinLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
+  return runPinLoginAction(_prevState, formData);
 }
 
 export async function registerAccountAction(
@@ -133,6 +162,73 @@ export async function requestSubscriptionPaymentAction(formData: FormData) {
   return runRequestSubscriptionPaymentAction(formData);
 }
 
+export async function updateAiOperationInsightStatusAction(formData: FormData) {
+  return runUpdateAiOperationInsightStatusAction(formData);
+}
+
+export async function createInventoryCategoryAction(formData: FormData) {
+  return runCreateInventoryCategoryAction(formData);
+}
+
+export async function createInventorySupplierAction(formData: FormData) {
+  return runCreateInventorySupplierAction(formData);
+}
+
+export async function createInventoryPurchaseOrderAction(formData: FormData) {
+  return runCreateInventoryPurchaseOrderAction(formData);
+}
+
+export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
+  return runReceiveInventoryPurchaseOrderAction(formData);
+}
+
+export async function refreshInventoryAlertsAction(formData?: FormData) {
+  return runRefreshInventoryAlertsAction(formData);
+}
+
+export async function applyInventoryCountAction(formData: FormData) {
+  return runApplyInventoryCountAction(formData);
+}
+
+export async function createInventoryTransferAction(formData: FormData) {
+  return runCreateInventoryTransferAction(formData);
+}
+
+export async function updateInventoryAlertStatusAction(formData: FormData) {
+  return runUpdateInventoryAlertStatusAction(formData);
+}
+
+export async function createInventoryIngredientAction(formData: FormData) {
+  return runCreateInventoryIngredientAction(formData);
+}
+
+export async function updateInventoryIngredientAction(formData: FormData) {
+  return runUpdateInventoryIngredientAction(formData);
+}
+
+export async function deactivateInventoryIngredientAction(formData: FormData) {
+  return runDeactivateInventoryIngredientAction(formData);
+}
+
+export async function recordInventoryMovementAction(formData: FormData) {
+  return runRecordInventoryMovementAction(formData);
+}
+
+export async function importInventoryIntakeAction(
+  _prevState: { error?: string; success?: string; inserted?: number; updated?: number; movements?: number; skipped?: number } | undefined,
+  formData: FormData
+) {
+  return runImportInventoryIntakeAction(_prevState, formData);
+}
+
+export async function upsertInventoryRecipeLineAction(formData: FormData) {
+  return runUpsertInventoryRecipeLineAction(formData);
+}
+
+export async function deleteInventoryRecipeLineAction(formData: FormData) {
+  return runDeleteInventoryRecipeLineAction(formData);
+}
+
 export async function createCategoryAction(formData: FormData) {
   return runCreateCategoryAction(formData);
 }
@@ -204,6 +300,30 @@ export async function updateStaffRoleAction(_prevState: StaffActionState | undef
   return runUpdateStaffRoleAction(_prevState, formData);
 }
 
+export async function updateStaffRolePermissionsAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runUpdateStaffRolePermissionsAction(_prevState, formData);
+}
+
+export async function cloneStaffRoleAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runCloneStaffRoleAction(_prevState, formData);
+}
+
+export async function updateStaffProfileAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runUpdateStaffProfileAction(_prevState, formData);
+}
+
+export async function setStaffAccountStateAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runSetStaffAccountStateAction(_prevState, formData);
+}
+
 export async function deleteStaffAction(_prevState: StaffActionState | undefined, formData: FormData) {
   return runDeleteStaffAction(_prevState, formData);
+}
+
+export async function createStaffShiftTemplateAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runCreateStaffShiftTemplateAction(_prevState, formData);
+}
+
+export async function assignStaffShiftAction(_prevState: StaffActionState | undefined, formData: FormData) {
+  return runAssignStaffShiftAction(_prevState, formData);
 }

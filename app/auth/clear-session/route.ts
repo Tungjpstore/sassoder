@@ -9,8 +9,12 @@ import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 
 function safeNextPath(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard/login?session=cleared";
-  if (!value.startsWith("/dashboard") && value !== "/") return "/dashboard/login?session=cleared";
+  if (!value.startsWith("/dashboard") && !isSafeStaffLoginPath(value) && value !== "/") return "/dashboard/login?session=cleared";
   return value;
+}
+
+function isSafeStaffLoginPath(value: string) {
+  return value === "/staff/login" || /^\/staff\/[a-z0-9-]{2,80}\/login(?:[?#].*)?$/.test(value);
 }
 
 function cookieNames(request: Request) {

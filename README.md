@@ -53,7 +53,7 @@ MAPBOX_ACCESS_TOKEN
 
 `SUPABASE_SERVICE_ROLE_KEY` chỉ dùng ở server/API routes. Không đưa key này ra client.
 `PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` bảo vệ dev console `/admin`.
-`RESEND_API_KEY` dùng để gửi OTP xác thực, báo cáo tự động và email hệ thống. `AUTH_EMAIL_FROM` là sender riêng cho OTP đăng ký/xác thực. `CRON_SECRET` bảo vệ endpoint cron `/api/cron/reports`.
+`RESEND_API_KEY` dùng để gửi OTP xác thực, báo cáo tự động và email hệ thống. `AUTH_EMAIL_FROM` là sender riêng cho OTP đăng ký/xác thực. `CRON_SECRET` bảo vệ các endpoint cron như `/api/cron/reports`, `/api/cron/ai-ops`, `/api/cron/reservations/expire` và `/api/cron/subscriptions`.
 `MAPBOX_ACCESS_TOKEN` dùng ở server để định vị địa chỉ giao hàng và đo quãng đường lái xe bằng Mapbox. Không cần đặt `NEXT_PUBLIC_` cho token này.
 Danh sách biến đầy đủ, scope theo môi trường và checklist rollout/rollback nằm ở `docs/infrastructure-runbook.md`.
 

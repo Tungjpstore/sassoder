@@ -21,7 +21,8 @@ export function AdminShell({
   subtitle,
   topbarVariant = "default",
   hideHeading = false,
-  showLiveActionCenter = true
+  showLiveActionCenter = true,
+  focusMode = false
 }: {
   children: React.ReactNode;
   title: string;
@@ -32,6 +33,7 @@ export function AdminShell({
   topbarVariant?: "default" | "overview";
   hideHeading?: boolean;
   showLiveActionCenter?: boolean;
+  focusMode?: boolean;
 }) {
   const today = new Intl.DateTimeFormat("vi-VN", {
     weekday: "long",
@@ -50,7 +52,7 @@ export function AdminShell({
     <ToastProvider>
       <main className="stitch-admin admin-shell-bg dashboard-density relative min-h-screen overflow-x-clip text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
-        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[204px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] lg:flex">
+        <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[204px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "lg:hidden" : "lg:flex"}`}>
           {/* Subtle gradient overlay */}
           <div
             className="pointer-events-none absolute inset-0"
@@ -62,7 +64,20 @@ export function AdminShell({
             </span>
           </Link>
           <AdminDesktopNav />
-          <div className="relative z-[1] mx-2.5 mt-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2.5">
+          {entitlement && "planName" in entitlement ? (
+            <Link
+              href="/dashboard/settings?section=billing"
+              className="relative z-[1] mx-2.5 mt-auto block rounded-xl border border-[var(--primary)]/15 bg-[linear-gradient(135deg,var(--primary-soft),#fff)] p-3 transition hover:border-[var(--primary)]/35"
+            >
+              <span className="text-[11px] font-black uppercase tracking-[0.12em] text-[var(--primary)]">Gói hiện tại</span>
+              <span className="mt-1 block truncate text-sm font-black text-[var(--foreground)]">{entitlement.planName}</span>
+              <span className="mt-1 block text-xs font-semibold text-[var(--muted-foreground)]">
+                {"daysLeft" in entitlement ? `Còn ${entitlement.daysLeft} ngày` : "Quản lý gói"}
+              </span>
+              <span className="mt-2 inline-flex text-xs font-black text-[var(--primary)]">Nâng cấp gói</span>
+            </Link>
+          ) : null}
+          <div className={`relative z-[1] mx-2.5 ${entitlement && "planName" in entitlement ? "mt-2" : "mt-auto"} rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2.5`}>
             <div className="flex items-center gap-3">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]">
                 <Store size={16} />
@@ -86,11 +101,11 @@ export function AdminShell({
         </aside>
 
         {/* ── Main content ── */}
-        <section className="relative lg:pl-[204px]">
+        <section className={`relative ${focusMode ? "" : "lg:pl-[204px]"}`}>
           <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(255,247,235,0.86)] px-3 py-1.5 backdrop-blur-xl md:px-4">
             <div className="flex min-h-10 items-center justify-between gap-2.5">
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="lg:hidden">
+                <div className={focusMode ? "block" : "lg:hidden"}>
                   <LogiVNLogo className="h-8" priority />
                 </div>
                 {topbarVariant === "overview" ? (
@@ -119,14 +134,16 @@ export function AdminShell({
               <div className="flex items-center gap-2">
                 {restaurantId && showLiveActionCenter ? <AdminLiveActionCenter restaurantId={restaurantId} /> : null}
                 <DarkModeToggle />
-                <Link
-                  href="/dashboard/settings"
-                  className="hidden h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:border-[var(--primary)]/25 md:inline-flex"
+                <button
+                  type="button"
+                  disabled
+                  className="hidden h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] opacity-70 md:inline-flex"
                   aria-label="Trợ giúp"
+                  title="Trợ giúp sẽ được mở ở phiên bản tiếp theo"
                 >
                   <CircleHelp size={16} />
                   <span className="hidden xl:inline">Trợ giúp</span>
-                </Link>
+                </button>
                 <Link
                   href="/dashboard/settings"
                   className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 md:inline-flex"
@@ -155,9 +172,9 @@ export function AdminShell({
                 <LogoutButton compact />
               </div>
             </div>
-            <AdminMobileNav />
+            {focusMode ? null : <AdminMobileNav />}
           </header>
-          <div className="mx-auto w-full max-w-[1680px] px-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-2.5 md:px-4 lg:pb-4">
+          <div className="mx-auto w-full max-w-[1680px] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-2.5 md:px-4 lg:pb-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${

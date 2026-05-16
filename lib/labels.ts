@@ -48,12 +48,15 @@ export function deliveryStatusLabel(status: DeliveryStatus | string | null | und
 export function reservationStatusLabel(status: ReservationStatus | string | null | undefined) {
   const labels: Record<ReservationStatus, string> = {
     draft: "Nháp",
+    pending: "Chờ quán xác nhận",
     holding: "Đang giữ bàn",
     waiting_deposit_confirm: "Chờ xác nhận cọc",
     confirmed: "Đã xác nhận",
+    checked_in: "Đã check-in",
     seated: "Khách đã đến",
     completed: "Đã hoàn tất",
     cancelled: "Đã huỷ",
+    rejected: "Quán từ chối",
     expired: "Đã hết hạn",
     no_show: "Khách không đến"
   };

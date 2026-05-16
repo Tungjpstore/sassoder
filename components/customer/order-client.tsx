@@ -22,8 +22,10 @@ import {
   ReceiptText,
   Search,
   ShoppingCart,
+  SlidersHorizontal,
   Trash2,
-  Utensils
+  Utensils,
+  X
 } from "lucide-react";
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
@@ -452,7 +454,7 @@ function QuantityControl({
   compact?: boolean;
 }) {
   return (
-    <div className={cx("flex items-center rounded-full bg-white", compact ? "gap-1" : "gap-2")}>
+    <div className={cx("flex items-center rounded-full bg-white", compact ? "w-full justify-between gap-1" : "gap-2")}>
       <button type="button" onClick={onMinus} className="grid h-11 w-11 place-items-center rounded-full border border-[#e7e5df] text-[#101713] active:scale-95">
         <Minus size={14} />
       </button>
@@ -739,6 +741,7 @@ export function CustomerOrderClient({
   const [qrSeconds, setQrSeconds] = useState(5 * 60);
   const [error, setError] = useState<string | null>(null);
   const [customerToast, setCustomerToast] = useState<string | null>(null);
+  const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const createRequestInFlightRef = useRef(false);
   const paymentRequestInFlightRef = useRef(false);
@@ -1257,18 +1260,29 @@ export function CustomerOrderClient({
         />
 
         <div className="px-4 pb-28">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8a918b]" size={16} aria-hidden="true" />
-            <input
-              name="menuSearch"
-              type="search"
-              aria-label="Tìm món trong menu"
-              autoComplete="off"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Tìm món, ví dụ: cà phê, trà, bánh..."
-              className="h-11 w-full rounded-2xl border-0 bg-[#f3f2ee] pl-11 pr-4 text-[12px] font-semibold outline-none placeholder:text-[#9a9f99] focus:ring-2 focus:ring-[#d6e7dd]"
-            />
+          <div className="grid grid-cols-[minmax(0,1fr)_44px] gap-2">
+            <label className="relative">
+              <span className="sr-only">Tìm món trong menu</span>
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8a918b]" size={16} aria-hidden="true" />
+              <input
+                name="menuSearch"
+                type="search"
+                aria-label="Tìm món trong menu"
+                autoComplete="off"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Tìm món, ví dụ: cà phê, trà, bánh..."
+                className="h-11 w-full rounded-2xl border-0 bg-[#f3f2ee] pl-11 pr-4 text-[12px] font-semibold outline-none placeholder:text-[#9a9f99] focus:ring-2 focus:ring-[#d6e7dd]"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setCategoryMenuOpen(true)}
+              className="grid h-11 w-11 place-items-center rounded-2xl bg-[#f3f2ee] text-[#006b3c] active:scale-95"
+              aria-label="Mở danh mục món"
+            >
+              <SlidersHorizontal size={17} />
+            </button>
           </div>
 
           <div className="hide-scrollbar -mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1">
@@ -1290,6 +1304,68 @@ export function CustomerOrderClient({
               </button>
             ))}
           </div>
+
+          {categoryMenuOpen ? (
+            <div className="fixed inset-0 z-[1320]">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/24 backdrop-blur-[2px]"
+                onClick={() => setCategoryMenuOpen(false)}
+                aria-label="Đóng danh mục"
+              />
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-label="Danh mục món"
+                className="absolute inset-x-3 bottom-3 mx-auto flex max-h-[72dvh] max-w-[390px] flex-col overflow-hidden rounded-[28px] border border-[#e7eadf] bg-[#fffefa] shadow-[0_24px_80px_rgba(16,32,23,0.24)]"
+              >
+                <div className="flex items-center justify-between gap-3 border-b border-[#eef0e7] px-4 py-3">
+                  <div>
+                    <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#006b3c]">Menu</p>
+                    <h2 className="text-[16px] font-black text-[#111713]">Danh mục món</h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCategoryMenuOpen(false)}
+                    className="grid h-11 w-11 place-items-center rounded-2xl border border-[#e7eadf] bg-white text-[#59665f]"
+                    aria-label="Đóng danh mục"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+                  <div className="grid grid-cols-2 gap-2">
+                    {[{ id: "all", name: "Tất cả", count: menuItemCount }, ...categories.map((category) => ({ id: category.id, name: category.name, count: category.items.length }))].map((category) => {
+                      const selected = categoryId === category.id;
+
+                      return (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() => {
+                            setCategoryId(category.id);
+                            setCategoryMenuOpen(false);
+                          }}
+                          className={cx(
+                            "flex min-h-14 items-center gap-3 rounded-2xl border px-3 text-left",
+                            selected ? "border-[#0f7b4b] bg-[#edf6ef] text-[#006b3c]" : "border-[#ecefe6] bg-white text-[#111713]"
+                          )}
+                        >
+                          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#f6f4ee]">
+                            <Utensils size={17} />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-black">{category.name}</span>
+                            <span className="mt-0.5 block text-[11px] font-semibold text-[#6f7a70]">{category.count} món</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            </div>
+          ) : null}
 
           {staffCallSent ? (
             <div className="mt-3 rounded-2xl border border-[#cfe0d5] bg-[#eff8f2] px-4 py-3 text-[12px] font-black text-[#006b3c]">
@@ -1326,52 +1402,55 @@ export function CustomerOrderClient({
                   <h2 className="text-[15px] font-black">{category.name}</h2>
                   {categoryId === "all" ? <button type="button" onClick={() => setCategoryId(category.id)} className="text-[11px] font-black text-[#006b3c]">Xem tất cả</button> : null}
                 </div>
-                <div className="grid gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   {category.items.length === 0 ? (
-                    <div className="rounded-2xl bg-[#f6f4ef] p-4 text-[12px] font-semibold text-[#69746e]">Danh mục này chưa có món khả dụng.</div>
+                    <div className="col-span-2 rounded-2xl bg-[#f6f4ef] p-4 text-[12px] font-semibold text-[#69746e]">Danh mục này chưa có món khả dụng.</div>
                   ) : (
                     category.items.map((item, index) => {
                       const quantity = items[item.id]?.quantity ?? 0;
                       return (
-                        <article key={item.id} className="flex items-center gap-3 rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
-                          <div className="h-[58px] w-[58px] shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
+                        <article key={item.id} className="flex min-h-[236px] min-w-0 flex-col rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
+                          <div className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
                             <ProductThumb src={item.image} alt={item.name} seed={categoryIndex + index} />
                           </div>
-                          <div className="min-w-0 flex-1">
-                            <h3 className="truncate text-[13px] font-black">{item.name}</h3>
+                          <div className="flex min-h-[64px] min-w-0 flex-1 flex-col pt-2">
+                            <h3 className="line-clamp-2 text-[13px] font-black leading-4">{item.name}</h3>
                             <p className="mt-1 text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
                           </div>
-                          {quantity > 0 ? (
-                            <QuantityControl
-                              quantity={quantity}
-                              onMinus={() => decrement(item.id)}
-                              onPlus={() =>
-                                add({
-                                  menuItemId: item.id,
-                                  name: item.name,
-                                  price: item.price,
-                                  image: item.image
-                                })
-                              }
-                              compact
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                add({
-                                  menuItemId: item.id,
-                                  name: item.name,
-                                  price: item.price,
-                                  image: item.image
-                                })
-                              }
-                              aria-label={`Thêm ${item.name}`}
-                              className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#006b3c] text-white active:scale-95"
-                            >
-                              <Plus size={16} />
-                            </button>
-                          )}
+                          <div className="mt-auto pt-2">
+                            {quantity > 0 ? (
+                              <QuantityControl
+                                quantity={quantity}
+                                onMinus={() => decrement(item.id)}
+                                onPlus={() =>
+                                  add({
+                                    menuItemId: item.id,
+                                    name: item.name,
+                                    price: item.price,
+                                    image: item.image
+                                  })
+                                }
+                                compact
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  add({
+                                    menuItemId: item.id,
+                                    name: item.name,
+                                    price: item.price,
+                                    image: item.image
+                                  })
+                                }
+                                aria-label={`Thêm ${item.name}`}
+                                className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#006b3c] px-2 text-[12px] font-black text-white active:scale-95"
+                              >
+                                <Plus size={15} />
+                                Thêm
+                              </button>
+                            )}
+                          </div>
                         </article>
                       );
                     })

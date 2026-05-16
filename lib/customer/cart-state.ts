@@ -16,10 +16,39 @@ export type RemoteCartLine = {
 
 export type RemoteCart = Record<string, RemoteCartLine>;
 
+export type RemoteCartSnapshot = {
+  version: 1;
+  lines: RemoteCartLine[];
+};
+
 type ReorderableOrderItem = {
   quantity: number;
   menuItem: { id?: string | null } | null;
 };
+
+const REMOTE_CART_MAX_QUANTITY_PER_ITEM = 50;
+
+function normalizeRemoteQuantity(value: unknown) {
+  const quantity = Math.floor(Number(value));
+  if (!Number.isFinite(quantity) || quantity <= 0) return 0;
+  return Math.min(quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM);
+}
+
+function remoteCartFromLines(lines: unknown[]) {
+  const cart: RemoteCart = {};
+  for (const line of lines) {
+    if (!line || typeof line !== "object" || Array.isArray(line)) continue;
+    const record = line as Partial<RemoteCartLine>;
+    if (typeof record.itemId !== "string") continue;
+    const quantity = normalizeRemoteQuantity(record.quantity);
+    if (quantity <= 0) continue;
+    cart[record.itemId] = {
+      itemId: record.itemId,
+      quantity: Math.min((cart[record.itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM)
+    };
+  }
+  return cart;
+}
 
 export function addDineInCartItem(items: DineInCartItems, item: Omit<DineInCartItem, "quantity">): DineInCartItems {
   const current = items[item.menuItemId];
@@ -68,7 +97,7 @@ export function setDineInCartItemNote(items: DineInCartItems, menuItemId: string
 
 export function updateRemoteCartQuantity(cart: RemoteCart, itemId: string, delta: number): RemoteCart {
   const currentLine = cart[itemId];
-  const nextQuantity = Math.max(0, (currentLine?.quantity ?? 0) + delta);
+  const nextQuantity = Math.min(REMOTE_CART_MAX_QUANTITY_PER_ITEM, Math.max(0, (currentLine?.quantity ?? 0) + delta));
 
   if (nextQuantity === 0) {
     if (!currentLine) return cart;
@@ -81,6 +110,56 @@ export function updateRemoteCartQuantity(cart: RemoteCart, itemId: string, delta
     ...cart,
     [itemId]: { itemId, quantity: nextQuantity }
   };
+}
+
+export function normalizeRemoteCart(cart: RemoteCart, availableItemIds?: Iterable<string>): RemoteCart {
+  const allowed = availableItemIds ? new Set(availableItemIds) : null;
+  const nextCart: RemoteCart = {};
+
+  for (const [fallbackItemId, line] of Object.entries(cart)) {
+    if (!line || typeof line !== "object" || Array.isArray(line)) continue;
+    const itemId = typeof line.itemId === "string" && line.itemId.trim() ? line.itemId : fallbackItemId;
+    if (!itemId || (allowed && !allowed.has(itemId))) continue;
+
+    const quantity = normalizeRemoteQuantity(line.quantity);
+    if (quantity <= 0) continue;
+
+    nextCart[itemId] = {
+      itemId,
+      quantity: Math.min((nextCart[itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM)
+    };
+  }
+
+  return nextCart;
+}
+
+export function serializeRemoteCartSnapshot(cart: RemoteCart): RemoteCartSnapshot {
+  return {
+    version: 1,
+    lines: Object.values(normalizeRemoteCart(cart))
+  };
+}
+
+export function restoreRemoteCartSnapshot(value: string | null, availableItemIds?: Iterable<string>): RemoteCart {
+  if (!value) return {};
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object") return {};
+
+    if (Array.isArray(parsed)) {
+      return normalizeRemoteCart(remoteCartFromLines(parsed), availableItemIds);
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (Array.isArray(record.lines)) {
+      return normalizeRemoteCart(remoteCartFromLines(record.lines), availableItemIds);
+    }
+
+    return normalizeRemoteCart(record as RemoteCart, availableItemIds);
+  } catch {
+    return {};
+  }
 }
 
 export function buildRemoteCartFromOrderItems(items?: readonly ReorderableOrderItem[] | null): RemoteCart {
@@ -96,5 +175,5 @@ export function buildRemoteCartFromOrderItems(items?: readonly ReorderableOrderI
     };
   }
 
-  return nextCart;
+  return normalizeRemoteCart(nextCart);
 }

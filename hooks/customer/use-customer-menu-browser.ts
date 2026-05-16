@@ -1,7 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { RemoteCartLine } from "@/lib/customer/cart-state";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  normalizeRemoteCart,
+  restoreRemoteCartSnapshot,
+  serializeRemoteCartSnapshot,
+  type RemoteCartLine
+} from "@/lib/customer/cart-state";
 
 function normalizeMenuSearch(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -38,10 +43,10 @@ export function useRemoteMenuBrowser<TItem extends { name: string; categoryId: s
   const [searchQuery, setSearchQuery] = useState("");
 
   const visibleItems = useMemo(() => {
-    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const normalizedSearch = normalizeMenuSearch(searchQuery.trim());
     return items.filter((item) => {
       const matchesCategory = activeCategory === "all" || item.categoryId === activeCategory;
-      const matchesSearch = !normalizedSearch || `${item.name} ${item.categoryName}`.toLowerCase().includes(normalizedSearch);
+      const matchesSearch = !normalizedSearch || normalizeMenuSearch(`${item.name} ${item.categoryName}`).includes(normalizedSearch);
       return matchesCategory && matchesSearch;
     });
   }, [activeCategory, items, searchQuery]);
@@ -55,20 +60,49 @@ export function useRemoteMenuBrowser<TItem extends { name: string; categoryId: s
   };
 }
 
-export function useRemoteCart<TItem extends { id: string }>(items: TItem[]) {
+export function useRemoteCart<TItem extends { id: string }>(items: TItem[], options: { storageKey?: string } = {}) {
   const [cart, setCart] = useState<Record<string, RemoteCartLine>>({});
+  const hydratedStorageKeyRef = useRef<string | null>(null);
+  const restoredSnapshotPendingRef = useRef(false);
+  const validItemIds = useMemo(() => new Set(items.map((item) => item.id)), [items]);
+  const normalizedCart = useMemo(() => normalizeRemoteCart(cart, validItemIds), [cart, validItemIds]);
+
+  useEffect(() => {
+    if (!options.storageKey || hydratedStorageKeyRef.current === options.storageKey) return;
+
+    hydratedStorageKeyRef.current = options.storageKey;
+    restoredSnapshotPendingRef.current = true;
+    setCart(restoreRemoteCartSnapshot(window.localStorage.getItem(options.storageKey), validItemIds));
+  }, [options.storageKey, validItemIds]);
+
+  useEffect(() => {
+    if (!options.storageKey || hydratedStorageKeyRef.current !== options.storageKey) return;
+
+    if (restoredSnapshotPendingRef.current) {
+      restoredSnapshotPendingRef.current = false;
+      return;
+    }
+
+    const snapshot = serializeRemoteCartSnapshot(normalizedCart);
+    if (snapshot.lines.length === 0) {
+      window.localStorage.removeItem(options.storageKey);
+      return;
+    }
+
+    window.localStorage.setItem(options.storageKey, JSON.stringify(snapshot));
+  }, [normalizedCart, options.storageKey]);
 
   const cartLines = useMemo(() => {
-    return Object.values(cart)
+    return Object.values(normalizedCart)
       .map((line) => {
         const item = items.find((menuItem) => menuItem.id === line.itemId);
         return item ? { ...line, item } : null;
       })
       .filter(Boolean) as Array<RemoteCartLine & { item: TItem }>;
-  }, [items, cart]);
+  }, [items, normalizedCart]);
 
   return {
-    cart,
+    cart: normalizedCart,
     cartLines,
     setCart
   };

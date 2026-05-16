@@ -3,6 +3,7 @@ import { ReservationsWorkspace } from "@/components/dashboard/reservations-works
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
+import { listTablesWithStatus } from "@/services/table-service";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +15,10 @@ function todayInputValue() {
 
 export default async function ReservationsPage() {
   const { session, entitlement } = await requireDashboardAccess("reservations");
-  const [settings, reservations] = await Promise.all([
+  const [settings, reservations, tables] = await Promise.all([
     getReservationSettings(session.restaurantId),
-    listReservationsForRestaurant(session.restaurantId, todayInputValue())
+    listReservationsForRestaurant(session.restaurantId, todayInputValue()),
+    listTablesWithStatus(session.restaurantId)
   ]);
 
   return (
@@ -31,6 +33,18 @@ export default async function ReservationsPage() {
         restaurantId={session.restaurantId}
         settings={settings}
         initialReservations={JSON.parse(JSON.stringify(reservations))}
+        tableOptions={tables.map((table) => ({
+          id: table.id,
+          name: table.name,
+          area: table.area,
+          capacity: table.capacity,
+          floorLabel: table.floor_label ?? null,
+          seatingZone: table.seating_zone ?? null,
+          tableKind: table.table_kind ?? null,
+          isBookable: table.is_bookable !== false,
+          isHidden: Boolean(table.is_hidden),
+          isUnderMaintenance: Boolean(table.is_under_maintenance)
+        }))}
         publicUrl={buildTenantUrl(settings.slug, "/reserve")}
       />
     </AdminShell>

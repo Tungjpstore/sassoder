@@ -1,7 +1,7 @@
 import { deliveryQuoteSchema } from "@/lib/validators";
 import { AppError, fail, ok } from "@/lib/response";
 import { getRequestIpKey } from "@/lib/security/request-ip";
-import { assertMapRateLimit } from "@/services/maps/provider-service";
+import { assertMapRateLimit, buildRateLimitHeaders } from "@/services/maps/provider-service";
 import { recordDeliveryQuoteEvent } from "@/services/maps/observability-service";
 import { buildDeliveryQuoteCacheKey, withDeliveryQuoteCache } from "@/services/delivery-quote-cache";
 import { getPublicOrderingSettingsBySlug, quoteDeliveryForRestaurant } from "@/services/delivery-service";
@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
   const startedAt = Date.now();
   try {
     const { restaurantSlug } = await params;
-    assertMapRateLimit(`delivery:quote:${restaurantSlug}:${await getRequestIpKey()}`, 12, 60_000);
+    const rateLimit = await assertMapRateLimit(`delivery:quote:${restaurantSlug}:${await getRequestIpKey()}`, 12, 60_000);
     const body = deliveryQuoteSchema.parse({
       restaurantSlug,
       ...(await request.json())
@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ res
       latencyMs: Date.now() - startedAt
     });
 
-    return ok(quote);
+    return ok(quote, { headers: buildRateLimitHeaders(rateLimit) });
   } catch (error) {
     return fail(error);
   }

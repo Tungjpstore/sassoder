@@ -188,15 +188,16 @@ function depositDescription(restaurant: RestaurantInfo, partySize: number) {
 }
 
 function resultTone(status: ReservationDto["status"]): "green" | "yellow" | "blue" | "red" | "neutral" {
-  if (status === "confirmed" || status === "seated" || status === "completed") return "green";
+  if (status === "confirmed" || status === "checked_in" || status === "seated" || status === "completed") return "green";
   if (status === "holding" || status === "waiting_deposit_confirm") return "yellow";
-  if (status === "cancelled" || status === "expired" || status === "no_show") return "red";
+  if (status === "cancelled" || status === "rejected" || status === "expired" || status === "no_show") return "red";
   return "neutral";
 }
 
 function resultHeroTitle(status: ReservationDto["status"]) {
   if (status === "confirmed") return "Đặt bàn thành công!";
   if (status === "cancelled") return "Lịch đặt đã huỷ";
+  if (status === "rejected") return "Quán chưa thể nhận lịch này";
   if (status === "expired") return "Lịch giữ bàn đã hết hạn";
   if (status === "no_show") return "Lịch đã đánh dấu không đến";
   if (status === "completed") return "Cảm ơn bạn đã ghé quán";
@@ -234,13 +235,14 @@ function ReservationTimeline({ reservation }: { reservation: ReservationDto }) {
     { id: "holding", label: reservation.depositRequiredAmount > 0 ? "Giữ bàn" : "Đã đặt" },
     { id: "waiting_deposit_confirm", label: "Chờ cọc" },
     { id: "confirmed", label: "Quán xác nhận" },
+    { id: "checked_in", label: "Check-in" },
     { id: "seated", label: "Đến quán" }
   ];
   const activeIndex = Math.max(
     0,
     steps.findIndex((step) => step.id === current)
   );
-  const isClosed = ["cancelled", "expired", "no_show", "completed"].includes(current);
+  const isClosed = ["cancelled", "rejected", "expired", "no_show", "completed"].includes(current);
 
   return (
     <div className="rounded-3xl border border-[rgba(15,77,58,0.12)] bg-white p-4">

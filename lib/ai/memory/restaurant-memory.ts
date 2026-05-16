@@ -1,6 +1,9 @@
 import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { sanitizeAgentMission } from "@/lib/ai/agent-mission";
+import { sanitizeCommandDeck } from "@/lib/ai/command-deck";
+import { sanitizeOperationalPassport } from "@/lib/ai/operational-passport";
 import type { AiConversationReplayPayload, AiConversationWorkflowSnapshot, AiWorkflowCheckpoint, AiWorkflowCheckpointStatus } from "@/types/ai-history";
 import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
 
@@ -151,6 +154,9 @@ function extractWorkflowSnapshot(metadata: unknown, updatedAt?: string | null): 
   const suggestions = sanitizeStringArray(record.suggestions, 6);
   const checkpoints = sanitizeStringArray(record.workflowCheckpointIds, 20);
   const latestCheckpoint = sanitizeWorkflowCheckpoint(record.latestCheckpoint);
+  const passport = sanitizeOperationalPassport(record.passport);
+  const mission = sanitizeAgentMission(record.mission);
+  const commandDeck = sanitizeCommandDeck(record.commandDeck);
   const pendingApprovalActionId =
     typeof record.pendingApprovalActionId === "string" && !blockedActionIds.has(record.pendingApprovalActionId)
       ? record.pendingApprovalActionId
@@ -163,6 +169,9 @@ function extractWorkflowSnapshot(metadata: unknown, updatedAt?: string | null): 
     !completedActionIds.length &&
     !declinedActionIds.length &&
     !checkpoints.length &&
+    !passport &&
+    !mission &&
+    !commandDeck &&
     typeof record.intent !== "string" &&
     typeof record.intentLabel !== "string"
   ) {
@@ -179,6 +188,9 @@ function extractWorkflowSnapshot(metadata: unknown, updatedAt?: string | null): 
     declinedActionIds,
     pendingApprovalActionId,
     latestCheckpoint,
+    mission,
+    commandDeck,
+    passport,
     updatedAt: updatedAt ?? null
   };
 }

@@ -1,6 +1,6 @@
 type OperationalEventInput = {
   event: string;
-  area: "ai" | "audit" | "billing" | "entitlement" | "payment";
+  area: "ai" | "audit" | "billing" | "entitlement" | "ops" | "payment";
   restaurantId?: string | null;
   status?: "success" | "warn" | "error";
   latencyMs?: number;

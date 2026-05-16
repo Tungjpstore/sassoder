@@ -47,6 +47,12 @@ const ownerAgentMeta: Record<OwnerAiIntent, OwnerAgentMeta> = {
     summary: "Tối ưu danh mục, món, tag, mô tả và nháp menu từ AI.",
     safetyNote: "AI không tự thêm món vào database."
   },
+  inventory: {
+    route: "/dashboard/inventory",
+    title: "Inventory Controller",
+    summary: "Theo dõi tồn kho, định mức món, cảnh báo thiếu hàng và gợi ý nhập trước cao điểm.",
+    safetyNote: "AI không tự tạo phiếu nhập hoặc đơn mua nếu chủ quán chưa xác nhận."
+  },
   tables: {
     route: "/dashboard/tables",
     title: "Floor Manager",
@@ -197,6 +203,7 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
     tables?: { tables?: Array<Record<string, unknown>> };
     payments?: { waitingConfirm?: number; logs?: Array<Record<string, unknown>> };
     menu?: { unavailableCount?: number; categories?: Array<Record<string, unknown>> };
+    inventory?: { lowStockCount?: number; recipeCoveragePercent?: number; openAlertCount?: number };
   };
   const actions: AiAgentAction[] = [];
   const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
@@ -309,6 +316,28 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
           href: `/dashboard/menu?item=${String(item.id)}`,
           intent: "menu",
           priority: "primary"
+        })
+      );
+    }
+  }
+
+  if (intent === "inventory" || intent === "overview") {
+    const lowStockCount = Number(data.inventory?.lowStockCount ?? 0);
+    const recipeCoveragePercent = Number(data.inventory?.recipeCoveragePercent ?? 0);
+    const openAlertCount = Number(data.inventory?.openAlertCount ?? 0);
+    if (lowStockCount > 0 || openAlertCount > 0 || (recipeCoveragePercent > 0 && recipeCoveragePercent < 70)) {
+      actions.push(
+        action({
+          id: "open-inventory-ai-risk",
+          type: "link",
+          label: lowStockCount > 0 ? `Xử lý ${lowStockCount} nguyên liệu thiếu` : "Mở cảnh báo kho",
+          description:
+            lowStockCount > 0
+              ? `Ưu tiên nhập hàng trước khi nhận thêm cao điểm.`
+              : `Recipe coverage ${Math.round(recipeCoveragePercent)}% · ${openAlertCount} alert mở.`,
+          href: "/dashboard/inventory",
+          intent: "inventory",
+          priority: intent === "inventory" ? "primary" : "secondary"
         })
       );
     }
@@ -438,12 +467,40 @@ function buildOwnerToolActions(intent: OwnerAiIntent, snapshot: unknown, toolRun
   return actions;
 }
 
+function buildOwnerInsightAction(intent: OwnerAiIntent, snapshot?: unknown) {
+  const data = asRecord(snapshot);
+  const operationInsights = asRecord(data?.operationInsights);
+  const insights = Array.isArray(operationInsights?.insights) ? (operationInsights.insights as Array<Record<string, unknown>>) : [];
+  const primaryInsightId = String(operationInsights?.primaryInsightId ?? "");
+  const insight = insights.find((item) => String(item.id ?? "") === primaryInsightId) ?? insights[0];
+  if (!insight) return null;
+
+  const title = String(insight.title ?? "").trim();
+  const actionText = String(insight.action ?? "").trim();
+  if (!title || !actionText) return null;
+
+  const severity = String(insight.severity ?? "");
+  const actionIntent = String(insight.actionIntent ?? intent);
+  return action({
+    id: `ops-insight-${String(insight.id ?? title).slice(0, 80)}`,
+    type: "prompt",
+    label: `Xử lý: ${title.slice(0, 54)}`,
+    description: actionText.slice(0, 150),
+    prompt: `Dựa trên insight vận hành "${title}", đề xuất bước xử lý ngắn, an toàn và có thể làm ngay trong LogiVN.`,
+    intent: actionIntent,
+    priority: severity === "critical" || severity === "warning" ? "primary" : "secondary",
+    safety: "safe"
+  });
+}
+
 export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: string[] = [], snapshot?: unknown, toolRuns: ToolRunRecord[] = []) {
   const route = ownerAgentMeta[intent].route;
   const dataActions = buildOwnerDataActions(intent, snapshot);
   const toolActions = buildOwnerToolActions(intent, snapshot, toolRuns);
+  const insightAction = buildOwnerInsightAction(intent, snapshot);
   const actions: AiAgentAction[] = [
     ...toolActions,
+    ...(insightAction ? [insightAction] : []),
     ...dataActions,
     action({
       id: `open-${intent}`,

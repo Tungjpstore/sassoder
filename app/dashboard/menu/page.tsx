@@ -24,6 +24,7 @@ export default async function AdminMenuPage() {
       subtitle="Quản lý danh mục món ăn, giá bán, hình ảnh và tình trạng phục vụ"
     >
       <MenuWorkspace
+        restaurantId={session.restaurantId}
         categories={categories}
         topItemIds={report.topItems.map((item) => item.id)}
         topItemNames={report.topItems.map((item) => item.name)}

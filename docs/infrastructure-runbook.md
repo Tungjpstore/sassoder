@@ -12,8 +12,9 @@
 ### Vercel
 
 - Ứng dụng chạy trên Vercel với `preferredRegion = "sin1"` cho các route nhạy cảm về latency.
-- `vercel.json` đang đăng ký 3 cron production:
+- `vercel.json` đang đăng ký 4 cron production:
   - `/api/cron/reports` lúc `0 1 * * *`
+  - `/api/cron/ai-ops` lúc `30 1 * * *`
   - `/api/cron/reservations/expire` lúc `0 2 * * *`
   - `/api/cron/subscriptions` lúc `15 2 * * *`
 - Theo tài liệu Vercel, cron dùng timezone UTC và production deployment mới chỉ cập nhật cron sau khi redeploy. Thời điểm kích hoạt không nên coi là chính xác tuyệt đối.
@@ -44,6 +45,7 @@
   - `SUPABASE_SERVICE_ROLE_KEY`
   - `NEXT_PUBLIC_APP_URL`
   - `AUTH_RATE_LIMIT_SECRET`
+  - `STAFF_PIN_PEPPER`
   - `MAPBOX_ACCESS_TOKEN`
 - Production-only hoặc sensitive:
   - `PLATFORM_ADMIN_PASSWORD`
@@ -105,13 +107,17 @@
 ### Khả năng scale hiện tại
 
 - `/api/cron/reports` giờ xử lý nhiều batch trong một lần chạy thay vì dừng ở trang đầu tiên. Response trả thêm `batches` và `hasMore` để biết có còn backlog không.
+- `/api/cron/ai-ops` tạo lại AI Ops Radar cho các quán `active`, lưu lifecycle vào `ai_operation_insights`, và trả summary theo tenant để kiểm tra nhanh.
 - `/api/cron/reservations/expire` cũng xử lý nhiều batch trong cùng một invocation, tránh bỏ sót reservation hết hạn khi volume tăng.
-- Cả 3 cron routes đều có `maxDuration = 60` để ràng buộc runtime và giảm runaway executions.
+- Cả 4 cron routes đều có `maxDuration = 60` để ràng buộc runtime và giảm runaway executions.
+- Mỗi cron route ghi `cron_run_logs` bằng service-role sau khi vượt qua `CRON_SECRET`. `/admin/ops` dùng bảng này để hiển thị lần chạy gần nhất, next-run ETA, age, duration, failure streak, recent history, summary và lỗi cuối cùng.
 
 ### Kiểm thử thủ công
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/reports
+curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/ai-ops
+curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&intent=inventory"
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/reservations/expire
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/subscriptions
 ```

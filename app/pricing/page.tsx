@@ -12,9 +12,47 @@ export const revalidate = 3600;
 
 export const metadata = createSeoMetadata({
   title: "Bảng giá LogiVN - Pro, Premium cho quán cafe và nhà hàng",
-  description: "So sánh gói LogiVN Pro, Premium và gói tư vấn cho gọi món QR, đặt món online, đặt bàn, thanh toán VietQR và báo cáo.",
+  description:
+    "So sánh LogiVN Pro 99K và Premium 199K cho QR ordering, order tại bàn, AI assistant, VietQR, nhân sự, tồn kho và báo cáo.",
   path: "/pricing"
 });
+
+const pricingSignals = [
+  { value: "99K", label: "Pro để bắt đầu QR ordering gọn" },
+  { value: "199K", label: "Premium cho AI và vận hành sâu hơn" },
+  { value: "30 ngày", label: "dùng thử trước khi nâng cấp" },
+  { value: "0 POS", label: "không bắt buộc mua máy riêng" }
+];
+
+const planIntentCopy: Record<string, { badge: string; bestFor: string; roi: string; unlocks: string[] }> = {
+  pro: {
+    badge: "Bắt đầu nhanh",
+    bestFor: "Quán cafe, trà sữa, quán ăn nhỏ cần thay menu giấy và nhận order tại bàn nhanh hơn.",
+    roi: "Tối ưu chi phí ở giai đoạn đầu: đủ QR, đơn realtime, dashboard và VietQR để kiểm tra độ hợp với quán.",
+    unlocks: ["QR ordering", "Order tại bàn", "VietQR", "Dashboard cơ bản"]
+  },
+  premium: {
+    badge: "Đề xuất tăng trưởng",
+    bestFor: "Quán đã có nhịp order ổn định và muốn thêm AI, đặt bàn, báo cáo sâu, quy trình nhân sự và tồn kho.",
+    roi: "Tăng đòn bẩy vận hành: AI giúp đọc doanh thu, dự đoán giờ cao điểm, gợi ý combo và giảm thao tác thủ công.",
+    unlocks: ["AI assistant", "Reservation", "Reports nâng cao", "Tồn kho & nhân sự"]
+  },
+  enterprise: {
+    badge: "Nhiều chi nhánh",
+    bestFor: "Chuỗi F&B cần tư vấn triển khai, quyền riêng và tích hợp quy trình sẵn có.",
+    roi: "Thiết kế phạm vi riêng để rollout theo chi nhánh, hạn chế gián đoạn vận hành.",
+    unlocks: ["Tư vấn rollout", "Tích hợp riêng", "Nhiều chi nhánh", "Hỗ trợ ưu tiên"]
+  }
+};
+
+const comparisonRows = [
+  { feature: "QR ordering tại bàn", pro: "Có", premium: "Có" },
+  { feature: "Đặt món online", pro: "Có", premium: "Có" },
+  { feature: "Thanh toán VietQR", pro: "Có", premium: "Có" },
+  { feature: "AI assistant vận hành", pro: "Cơ bản", premium: "Nâng cao" },
+  { feature: "Đặt bàn, nhận cọc", pro: "Giới hạn", premium: "Đầy đủ" },
+  { feature: "Báo cáo, tồn kho, nhân sự", pro: "Cốt lõi", premium: "Mở rộng" }
+];
 
 function getPlanHref(planCode: string | null | undefined, email: string) {
   if (planCode === "enterprise") {
@@ -79,6 +117,15 @@ function planCodeLabel(planCode: string | null) {
   return planCode.toUpperCase();
 }
 
+function getPlanIntent(planCode: string | null) {
+  return planIntentCopy[planCode || "pro"] ?? {
+    badge: "Gói LogiVN",
+    bestFor: "Phù hợp với quán muốn bắt đầu số hóa gọi món và vận hành trên một dashboard rõ ràng.",
+    roi: "Giữ chi phí phần mềm dễ hiểu, chỉ nâng cấp khi quán thực sự cần thêm tính năng.",
+    unlocks: ["QR ordering", "VietQR", "Dashboard", "Báo cáo"]
+  };
+}
+
 function buildFallbackPlans(siteConfig: Awaited<ReturnType<typeof getPlatformSiteConfig>>): PublicPricingPlan[] {
   return siteConfig.plans.map((plan, index) => ({
     id: `fallback-${plan.code || index}`,
@@ -131,6 +178,8 @@ export default async function PricingPage() {
             <Link href="/pricing" className="is-active">
               Bảng giá
             </Link>
+            <a href="#compare">So sánh</a>
+            <a href="#pricing-faq-title">FAQ</a>
             <Link href="/dashboard/login">Đăng nhập</Link>
           </nav>
           <div className="lp-nav-actions">
@@ -152,10 +201,10 @@ export default async function PricingPage() {
         <div className="lp-container lp-hero-grid">
           <div className="lp-copy">
             <span className="lp-kicker">Bảng giá LogiVN</span>
-            <h1>Chọn gói tăng trưởng phù hợp với nhịp phục vụ của quán.</h1>
+            <h1>Giá đơn giản cho quán muốn gọi món nhanh hơn và vận hành thông minh hơn.</h1>
             <p>
-              Mỗi quán được dùng thử {trialDays} ngày. Khi sẵn sàng gia hạn hoặc nâng cấp, chủ quán tạo VietQR, LogiVN xác
-              minh thanh toán và mở đúng nhóm tính năng đã chọn để hành trình mua hàng vẫn giữ được cảm giác tin cậy.
+              Bắt đầu với Pro 99K để đưa QR ordering vào quán. Nâng Premium 199K khi cần AI assistant, báo cáo sâu,
+              đặt bàn, nhân sự và tồn kho. Mỗi quán đều có {trialDays} ngày để kiểm tra trước khi trả phí.
             </p>
 
             <div className="lp-actions">
@@ -169,18 +218,12 @@ export default async function PricingPage() {
             </div>
 
             <div className="lp-proof-grid">
-              <article className="lp-proof-card">
-                <strong>{trialDays} ngày</strong>
-                <span>dùng thử để kiểm tra độ hợp với nhịp vận hành</span>
-              </article>
-              <article className="lp-proof-card">
-                <strong>VietQR</strong>
-                <span>gia hạn và nâng cấp minh bạch, đúng thói quen thanh toán</span>
-              </article>
-              <article className="lp-proof-card">
-                <strong>Tính năng đúng gói</strong>
-                <span>mỗi gói mở đúng tính năng quán thực sự đã chọn</span>
-              </article>
+              {pricingSignals.map((signal) => (
+                <article className="lp-proof-card" key={signal.value}>
+                  <strong>{signal.value === "30 ngày" ? `${trialDays} ngày` : signal.value}</strong>
+                  <span>{signal.label}</span>
+                </article>
+              ))}
             </div>
           </div>
 
@@ -226,13 +269,14 @@ export default async function PricingPage() {
 
           <div className="lp-plan-grid">
             {plans.map((plan) => {
-              const featured = plan.code === "pro";
+              const featured = plan.code === "premium" || (!premium && plan.code === "pro");
               const href = getPlanHref(plan.code, siteConfig.brand.email);
               const isContact = plan.monthly_price <= 0;
+              const intent = getPlanIntent(plan.code);
 
               return (
                 <article className={`lp-plan-card ${featured ? "is-featured" : ""}`} key={plan.id}>
-                  {featured ? <span className="lp-badge">Phổ biến</span> : null}
+                  {featured ? <span className="lp-badge">{intent.badge}</span> : null}
 
                   <div className="lp-plan-head">
                     <p>{planCodeLabel(plan.code)}</p>
@@ -240,11 +284,22 @@ export default async function PricingPage() {
                     <span>{plan.description}</span>
                   </div>
 
+                  <div className="lp-plan-fit">
+                    <strong>Phù hợp với</strong>
+                    <p>{intent.bestFor}</p>
+                  </div>
+
                   <strong className="lp-price">
                     {isContact ? "Liên hệ" : formatVnd(plan.monthly_price)}
                     {isContact ? null : <small>/ tháng</small>}
                   </strong>
                   <p className="lp-trial">Dùng thử {plan.trial_days} ngày</p>
+
+                  <div className="lp-plan-unlocks" aria-label={`Tính năng nổi bật của ${plan.name}`}>
+                    {intent.unlocks.map((unlock) => (
+                      <span key={unlock}>{unlock}</span>
+                    ))}
+                  </div>
 
                   <ul>
                     {plan.features.slice(0, 8).map((feature) => (
@@ -254,6 +309,8 @@ export default async function PricingPage() {
                       </li>
                     ))}
                   </ul>
+
+                  <p className="lp-roi-note">{intent.roi}</p>
 
                   {href.startsWith("mailto:") ? (
                     <a className={`lp-btn ${featured ? "lp-btn-primary" : "lp-btn-tertiary"}`} href={href}>
@@ -267,6 +324,47 @@ export default async function PricingPage() {
                 </article>
               );
             })}
+          </div>
+        </div>
+      </section>
+
+      <section className="lp-section lp-compare" id="compare" aria-labelledby="pricing-compare-title">
+        <div className="lp-container lp-compare-shell">
+          <div className="lp-section-head">
+            <span className="lp-kicker">Pro hay Premium?</span>
+            <h2 id="pricing-compare-title">Chọn theo mức độ vận hành, không theo danh sách tính năng dài</h2>
+            <p>
+              Nếu quán cần thay đổi cách nhận order, bắt đầu bằng Pro. Nếu quán đã có dữ liệu và muốn AI hỗ trợ quyết định
+              ca, combo, tồn kho, báo cáo, Premium là gói có đòn bẩy rõ hơn.
+            </p>
+          </div>
+
+          <div className="lp-compare-table" role="table" aria-label="So sánh nhanh LogiVN Pro và Premium">
+            <div className="lp-compare-row lp-compare-head" role="row">
+              <span role="columnheader">Nhu cầu</span>
+              <strong role="columnheader">Pro 99K</strong>
+              <strong role="columnheader">Premium 199K</strong>
+            </div>
+            {comparisonRows.map((row) => (
+              <div className="lp-compare-row" role="row" key={row.feature}>
+                <span role="cell">{row.feature}</span>
+                <strong role="cell">{row.pro}</strong>
+                <strong role="cell">{row.premium}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div className="lp-decision-band">
+            <article>
+              <Sparkles size={18} />
+              <strong>Muốn thử nhanh?</strong>
+              <span>Chọn Pro, đưa menu lên, in QR và đo phản ứng khách trong tuần đầu.</span>
+            </article>
+            <article>
+              <ShieldCheck size={18} />
+              <strong>Muốn tăng trưởng?</strong>
+              <span>Chọn Premium để mở AI, báo cáo sâu và các workflow giảm thao tác thủ công.</span>
+            </article>
           </div>
         </div>
       </section>
@@ -440,6 +538,19 @@ const styles = `
   transition: color 180ms ease, transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
+.lp-link,
+.lp-nav-links a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+
+.lp-nav-links a {
+  justify-content: center;
+  min-width: 48px;
+  padding-inline: 8px;
+}
+
 .lp-nav-links a:hover,
 .lp-link:hover {
   color: var(--lp-orange);
@@ -486,7 +597,7 @@ const styles = `
   color: var(--lp-orange);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -543,7 +654,7 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: clamp(3rem, 6.4vw, 5.4rem);
   line-height: 0.95;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lp-copy p,
@@ -656,7 +767,7 @@ const styles = `
   color: var(--lp-orange);
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -664,7 +775,7 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: 22px;
   line-height: 1.02;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .lp-stage-card p {
@@ -710,7 +821,7 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: clamp(2.1rem, 5vw, 3.3rem);
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lp-plan-grid {
@@ -755,11 +866,13 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: 34px;
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lp-plan-head span,
-.lp-trial {
+.lp-trial,
+.lp-plan-fit p,
+.lp-roi-note {
   display: block;
   margin-top: 10px;
   color: var(--lp-muted);
@@ -768,12 +881,52 @@ const styles = `
   font-weight: 600;
 }
 
+.lp-plan-fit {
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 18px;
+  background: rgba(15, 77, 58, 0.05);
+}
+
+.lp-plan-fit strong {
+  color: var(--lp-green);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.lp-plan-fit p {
+  margin-top: 7px;
+  line-height: 1.55;
+}
+
 .lp-price {
   display: block;
   margin-top: 22px;
   color: var(--lp-green-strong);
   font-size: 34px;
   line-height: 1;
+  font-weight: 800;
+}
+
+.lp-plan-unlocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.lp-plan-unlocks span {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--lp-green);
+  background: rgba(15, 77, 58, 0.08);
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -797,7 +950,111 @@ const styles = `
 
 .lp-plan-card .lp-btn {
   width: 100%;
+  margin-top: 18px;
+}
+
+.lp-roi-note {
   margin-top: auto;
+  padding-top: 18px;
+  color: rgba(32, 51, 41, 0.78);
+}
+
+.lp-compare {
+  padding-top: 34px;
+}
+
+.lp-compare-shell {
+  padding: 30px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 34px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(242, 140, 40, 0.13), transparent 18rem),
+    rgba(255, 255, 255, 0.58);
+  box-shadow: var(--lp-shadow-soft);
+}
+
+.lp-compare-table {
+  display: grid;
+  gap: 10px;
+  margin-top: 26px;
+}
+
+.lp-compare-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 58px;
+  padding: 12px 16px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 252, 246, 0.68);
+}
+
+.lp-compare-row span {
+  color: var(--lp-muted);
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
+.lp-compare-row strong {
+  color: var(--lp-green);
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 900;
+}
+
+.lp-compare-head {
+  background: rgba(15, 77, 58, 0.08);
+}
+
+.lp-compare-head span,
+.lp-compare-head strong {
+  color: var(--lp-green-strong);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.lp-decision-band {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.lp-decision-band article {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 16px;
+  border-radius: 20px;
+  color: var(--lp-green);
+  background: rgba(15, 77, 58, 0.08);
+}
+
+.lp-decision-band svg {
+  margin-top: 2px;
+}
+
+.lp-decision-band strong,
+.lp-decision-band span {
+  grid-column: 2;
+}
+
+.lp-decision-band strong {
+  color: var(--lp-green-strong);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.lp-decision-band span {
+  color: var(--lp-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 700;
 }
 
 .lp-activation-grid {
@@ -831,7 +1088,7 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: 24px;
   line-height: 1.02;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .lp-activation-card p {
@@ -862,7 +1119,7 @@ const styles = `
   color: var(--lp-green-strong);
   font-size: 21px;
   line-height: 1.12;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .lp-faq-card p {
@@ -914,6 +1171,7 @@ const styles = `
   .lp-hero-grid,
   .lp-proof-grid,
   .lp-plan-grid,
+  .lp-decision-band,
   .lp-activation-grid,
   .lp-faq-grid {
     grid-template-columns: 1fr;
@@ -926,6 +1184,15 @@ const styles = `
   .lp-final-shell {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .lp-compare-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .lp-compare-head {
+    display: none;
   }
 }
 
@@ -959,6 +1226,15 @@ const styles = `
     bottom: auto;
     width: 100%;
     margin-top: 14px;
+  }
+
+  .lp-compare-shell {
+    padding: 18px;
+    border-radius: 24px;
+  }
+
+  .lp-decision-band article {
+    grid-template-columns: 32px 1fr;
   }
 }
 

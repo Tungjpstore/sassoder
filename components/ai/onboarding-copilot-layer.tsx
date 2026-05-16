@@ -1,14 +1,20 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotReadable } from "@copilotkit/react-core";
 import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { CopilotSidebar } from "@copilotkit/react-core/v2";
 import { Bot, Sparkles, X } from "lucide-react";
+import { AiCommandDeckPanel } from "@/components/ai/ai-command-deck-panel";
+import { CopilotThinkingIndicator } from "@/components/ai/copilot-thinking-indicator";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
 import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
+import { buildAgentMission } from "@/lib/ai/agent-mission";
+import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
+import { buildOperationalPassport, type AiOperationalPassport } from "@/lib/ai/operational-passport";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
+import type { AiAgentMission, AiCommandDeck } from "@/types/ai-agent";
 
 /* ─── Types ─── */
 export type OnboardingAiState = {
@@ -46,6 +52,9 @@ type OnboardingAiResult = {
   text: string;
   actions?: OnboardingAgentAction[];
   metrics?: Array<{ label: string; value: string | number }>;
+  mission?: AiAgentMission;
+  commandDeck?: AiCommandDeck | null;
+  passport?: AiOperationalPassport | null;
 };
 
 /* ─── Step Contexts ─── */
@@ -62,10 +71,34 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
   const [isOpen, setIsOpen] = useState(false);
 
   useCopilotResponseWatchdog({
-    timeoutMs: 12_000,
+    timeoutMs: 10_000,
     fallbackText:
       "LogiBot chưa nhận được phản hồi đầy đủ, nhưng mình vẫn có thể tiếp tục bằng lộ trình an toàn: hoàn tất thông tin quán, tạo menu mẫu, chọn số bàn và kiểm tra VietQR trước khi tạo quán."
   });
+  const operationalPassport = useMemo(
+    () =>
+      buildOperationalPassport({
+        surface: "onboarding",
+        title: "Thiết lập quán mới",
+        status: `Bước ${state.step + 1}/5`,
+        goal: stepContextMap[state.step] ?? "Đang hoàn tất setup quán.",
+        route: "/dashboard/onboarding",
+        nextActionId: `onboarding-step-${state.step + 1}`,
+        nextActionLabel:
+          state.step === 2
+            ? "Tạo menu mẫu"
+            : state.step === 3
+              ? "Gợi ý số bàn"
+              : state.step === 4
+                ? "Hoàn tất setup"
+                : "Tiếp tục bước kế tiếp",
+        checkpoint: state.restaurantName ? `Quán: ${state.restaurantName}` : "Chưa có tên quán",
+        handoffRoute: "/dashboard/settings",
+        handoffLabel: "Chuyển sang dashboard",
+        confidence: state.planCode === "premium" ? "high" : "medium"
+      }),
+    [state.planCode, state.restaurantName, state.step]
+  );
 
   // Readable state
   useCopilotReadable(
@@ -80,10 +113,11 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
         businessType: state.businessType,
         tableCount: state.tableCount,
         planCode: state.planCode,
-        hasBankInfo: Boolean(state.bankCode && state.bankAccount)
+        hasBankInfo: Boolean(state.bankCode && state.bankAccount),
+        operationalPassport
       }
     },
-    [state]
+    [operationalPassport, state]
   );
 
   // System instructions
@@ -109,6 +143,7 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
   useCopilotAction(
     {
       name: "generateSampleMenu",
+      followUp: false,
       description: "Tạo menu mẫu phù hợp với loại quán. Trả về danh sách danh mục và món kèm giá tham khảo.",
       parameters: [
         {
@@ -153,16 +188,18 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="Menu mẫu AI"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    [onApplyMenuSuggestion]
+    [onApplyMenuSuggestion, operationalPassport]
   );
 
   // Action: Suggest table count
   useCopilotAction(
     {
       name: "suggestTableCount",
+      followUp: false,
       description: "Gợi ý số bàn phù hợp dựa trên mô hình quán và diện tích (nếu có).",
       parameters: [
         {
@@ -196,16 +233,18 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="Gợi ý số bàn"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    [onApplyTableCount]
+    [onApplyTableCount, operationalPassport]
   );
 
   // Action: Explain plan differences
   useCopilotAction(
     {
       name: "explainPlans",
+      followUp: false,
       description: "So sánh chi tiết gói Pro và Premium cho user đang cân nhắc.",
       parameters: [],
       handler: async () => {
@@ -216,16 +255,18 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="So sánh gói dịch vụ"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    []
+    [operationalPassport]
   );
 
   // Action: Suggest business type
   useCopilotAction(
     {
       name: "suggestBusinessType",
+      followUp: false,
       description: "Gợi ý loại quán phù hợp dựa trên mô tả của user.",
       parameters: [
         {
@@ -253,15 +294,17 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="Gợi ý mô hình quán"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    [onApplyBusinessType]
+    [onApplyBusinessType, operationalPassport]
   );
 
   useCopilotAction(
     {
       name: "answer_onboarding_request",
+      followUp: false,
       description:
         "Catch-all bắt buộc cho mọi câu hỏi tự do trong onboarding. Luôn trả card hành động rõ ràng; nếu phù hợp thì tự áp dụng menu mẫu, số bàn hoặc mô hình quán.",
       parameters: [
@@ -287,15 +330,17 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="Onboarding Agent"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    [onApplyBusinessType, onApplyMenuSuggestion, onApplyTableCount, state]
+    [onApplyBusinessType, onApplyMenuSuggestion, onApplyTableCount, operationalPassport, state]
   );
 
   useCopilotAction(
     {
       name: "continue_onboarding_setup",
+      followUp: false,
       description: "Tiếp tục setup theo bước hiện tại bằng runtime deterministic, không gọi model nếu chỉ cần chỉ bước tiếp theo.",
       parameters: [],
       handler: async () => buildOnboardingStepResult(state),
@@ -304,10 +349,11 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
           title="Bước tiếp theo"
           status={status}
           result={result as OnboardingAiResult}
+          passport={operationalPassport}
         />
       )
     },
-    [state]
+    [operationalPassport, state]
   );
 
   return (
@@ -330,18 +376,21 @@ function OnboardingCopilotExperience({ state, onApplyMenuSuggestion, onApplyTabl
 
       {/* Sidebar */}
       {isOpen && (
-        <CopilotSidebar
-          defaultOpen={true}
-          width="min(420px, 100vw)"
-          labels={{
-            modalHeaderTitle: "LogiBot · Trợ lý thiết lập",
-            welcomeMessageText: "Mình sẽ biến onboarding thành checklist có hành động: chọn loại quán, tạo menu mẫu, gợi ý số bàn và chỉ bước tiếp theo.",
-            chatInputPlaceholder: "VD: quán phở 60m2 cần bao nhiêu bàn, tạo menu mẫu...",
-            chatDisclaimerText: "LogiBot chỉ tạo gợi ý và bản nháp; bạn xác nhận trước khi lưu dữ liệu thật.",
-            chatToggleOpenLabel: "Mở trợ lý",
-            chatToggleCloseLabel: "Đóng trợ lý"
-          }}
-        />
+        <>
+          <CopilotSidebar
+            defaultOpen={true}
+            width="min(420px, 100vw)"
+            labels={{
+              modalHeaderTitle: "LogiBot · Trợ lý thiết lập",
+              welcomeMessageText: "Mình sẽ biến onboarding thành checklist có hành động: chọn loại quán, tạo menu mẫu, gợi ý số bàn và chỉ bước tiếp theo.",
+              chatInputPlaceholder: "VD: quán phở 60m2 cần bao nhiêu bàn, tạo menu mẫu...",
+              chatDisclaimerText: "LogiBot chỉ tạo gợi ý và bản nháp; bạn xác nhận trước khi lưu dữ liệu thật.",
+              chatToggleOpenLabel: "Mở trợ lý",
+              chatToggleCloseLabel: "Đóng trợ lý"
+            }}
+          />
+          <CopilotThinkingIndicator enabled={isOpen} surface="onboarding" />
+        </>
       )}
     </>
   );
@@ -352,24 +401,24 @@ function useStepSuggestions(step: number, businessType: string) {
   return useCallback(() => {
     const map: Record<number, { title: string; message: string }[]> = {
       0: [
-        { title: "So sánh gói", message: "So sánh gói Pro và Premium cho mình" },
-        { title: "Google hay email?", message: "Đăng ký bằng Google hay email tốt hơn?" }
+        { title: "01 So sánh gói", message: "So sánh gói Pro và Premium, chốt gói nên chọn ngay." },
+        { title: "02 Google/email", message: "Đăng ký bằng Google hay email tốt hơn cho quán của mình?" }
       ],
       1: [
-        { title: "Gợi ý tên quán", message: `Gợi ý tên quán hay cho một quán ${businessType.toLowerCase()}` },
-        { title: "Subdomain là gì?", message: "Subdomain hoạt động như thế nào?" }
+        { title: "01 Tên quán", message: `Gợi ý tên quán hay cho một quán ${businessType.toLowerCase()} và cách đặt subdomain đẹp.` },
+        { title: "02 Subdomain", message: "Subdomain hoạt động như thế nào và nên đặt sao cho dễ nhớ?" }
       ],
       2: [
-        { title: "Tạo menu mẫu", message: `Tạo menu mẫu cho quán ${businessType.toLowerCase()} của mình` },
-        { title: "Loại quán nào?", message: "Mình bán cà phê và bánh ngọt, nên chọn loại quán nào?" }
+        { title: "01 Tạo menu", message: `Tạo menu mẫu cho quán ${businessType.toLowerCase()} và đưa nút áp dụng.` },
+        { title: "02 Loại quán", message: "Mình bán cà phê và bánh ngọt, nên chọn loại quán nào?" }
       ],
       3: [
-        { title: "Gợi ý số bàn", message: `Quán ${businessType.toLowerCase()} khoảng 60m2 nên có bao nhiêu bàn?` },
-        { title: "VietQR là gì?", message: "VietQR hoạt động thế nào? Cần thiết lập gì?" }
+        { title: "01 Số bàn", message: `Quán ${businessType.toLowerCase()} khoảng 60m2 nên có bao nhiêu bàn và áp dụng thế nào?` },
+        { title: "02 VietQR", message: "VietQR hoạt động thế nào? Cần thiết lập gì để nhận tiền?" }
       ],
       4: [
-        { title: "Kiểm tra lại", message: "Kiểm tra lại thông tin quán cho mình trước khi tạo" },
-        { title: "Sau khi tạo?", message: "Sau khi tạo quán xong, mình cần làm gì tiếp theo?" }
+        { title: "01 Kiểm tra", message: "Kiểm tra lại thông tin quán trước khi tạo và nêu 1 rủi ro cần sửa." },
+        { title: "02 Bước sau", message: "Sau khi tạo quán xong, mình cần làm gì tiếp theo trong dashboard?" }
       ]
     };
     return map[step] ?? [];
@@ -713,12 +762,14 @@ function AiResultCard({
   title,
   status,
   text,
-  result
+  result,
+  passport
 }: {
   title: string;
   status?: string;
   text?: string;
   result?: OnboardingAiResult | string;
+  passport?: AiOperationalPassport | null;
 }) {
   const isLoading = status === "executing" || status === "inProgress";
   const payload = typeof result === "string" ? { text: result } : result;
@@ -726,6 +777,34 @@ function AiResultCard({
   const displayText = sanitizeCardText(payload?.text ?? text);
   const actions = payload?.actions ?? [];
   const metrics = payload?.metrics ?? [];
+  const visiblePassport = payload?.passport ?? passport ?? null;
+  const visibleMission =
+    payload?.mission ??
+    buildAgentMission({
+      surface: "onboarding",
+      title: displayTitle,
+      outcome: displayText,
+      route: "/dashboard/onboarding",
+      urgency: actions.some((action) => action.tone === "primary") ? "now" : "soon",
+      estimatedMinutes: Math.max(2, Math.min(10, actions.length * 2 || 3)),
+      fallbackSteps: actions.slice(0, 4).map((action, index) => ({
+        id: `onboarding-${action.id}`,
+        label: action.label,
+        description: action.description,
+        status: action.tone === "primary" || index === 0 ? "ready" : "queued"
+      }))
+    });
+  const commandDeck =
+    payload?.commandDeck ??
+    buildCommandDeck({
+      surface: "onboarding",
+      title: visibleMission.title,
+      headline: displayText,
+      mission: visibleMission,
+      passport: visiblePassport,
+      confidence: visiblePassport?.confidence ?? "medium"
+    });
+  const shouldShowAnswerBrief = !isLoading && Boolean(displayText.trim());
 
   return (
     <div className="logibot-agent-card rounded-[28px] border border-[var(--border)] p-4 text-sm text-[var(--foreground)] shadow-[var(--shadow-soft)]">
@@ -738,6 +817,19 @@ function AiResultCard({
           <p className="truncate text-xs text-[var(--muted-foreground)]">{isLoading ? "Đang xử lý..." : "Setup action card"}</p>
         </div>
       </div>
+      {isLoading ? (
+        <p className="logibot-card-brief relative z-[1] mt-3 whitespace-pre-line leading-6 text-[var(--text-secondary)]">Đang xử lý...</p>
+      ) : shouldShowAnswerBrief ? (
+        <div className="logibot-answer-brief relative z-[1] mt-3">
+          <span>Trả lời chính</span>
+          <p className="logibot-card-brief whitespace-pre-line leading-6 text-[var(--text-secondary)]">{displayText}</p>
+        </div>
+      ) : null}
+      {!isLoading && actions.length ? (
+        <div className="relative z-[1] mt-3">
+          <AiCommandDeckPanel deck={commandDeck} compact />
+        </div>
+      ) : null}
       {metrics.length ? (
         <div className="relative z-[1] mt-3 grid grid-cols-2 gap-2">
           {metrics.slice(0, 2).map((metric) => (
@@ -748,15 +840,12 @@ function AiResultCard({
           ))}
         </div>
       ) : null}
-      <p className="relative z-[1] mt-3 whitespace-pre-line leading-6 text-[var(--text-secondary)]">
-        {isLoading ? "Đang xử lý..." : displayText}
-      </p>
       {actions.length ? (
         <div className="relative z-[1] mt-3 grid gap-2">
           {actions.slice(0, 4).map((action) => (
             <div
               key={action.id}
-              className={`rounded-2xl border px-3 py-3 ${
+              className={`logibot-action-tile rounded-2xl border px-3 py-3 ${
                 action.tone === "primary"
                   ? "border-[var(--primary)] bg-[var(--primary)] text-[#FFF7EB]"
                   : "border-[var(--border)] bg-white/60 text-[var(--foreground)]"

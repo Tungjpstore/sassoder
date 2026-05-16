@@ -4,7 +4,10 @@ import {
   addDineInCartItem,
   buildRemoteCartFromOrderItems,
   decrementDineInCartItem,
+  normalizeRemoteCart,
   removeDineInCartItem,
+  restoreRemoteCartSnapshot,
+  serializeRemoteCartSnapshot,
   setDineInCartItemNote,
   updateRemoteCartQuantity,
   type DineInCartItems,
@@ -75,6 +78,53 @@ test("remote cart quantity updates are immutable and remove zero quantities", ()
   assert.equal(incremented.pho.quantity, 3);
   assert.deepEqual(removed, {});
   assert.equal(initial.pho.quantity, 1);
+});
+
+test("remote cart quantity is capped for a single menu item", () => {
+  const next = updateRemoteCartQuantity({}, "milk-tea", 80);
+
+  assert.equal(next["milk-tea"].quantity, 50);
+});
+
+test("remote cart snapshots restore only available menu items", () => {
+  const snapshot = JSON.stringify({
+    version: 1,
+    lines: [
+      { itemId: "coffee", quantity: 2 },
+      { itemId: "coffee", quantity: 3 },
+      { itemId: "sold-out", quantity: 1 },
+      { itemId: "tea", quantity: 99 }
+    ]
+  });
+
+  assert.deepEqual(restoreRemoteCartSnapshot(snapshot, ["coffee", "tea"]), {
+    coffee: { itemId: "coffee", quantity: 5 },
+    tea: { itemId: "tea", quantity: 50 }
+  });
+});
+
+test("remote cart normalization drops broken persisted rows", () => {
+  const cart = {
+    coffee: { itemId: "coffee", quantity: 1 },
+    bad: { itemId: "bad", quantity: -2 },
+    missing: null
+  } as unknown as RemoteCart;
+
+  assert.deepEqual(normalizeRemoteCart(cart, ["coffee", "bad"]), {
+    coffee: { itemId: "coffee", quantity: 1 }
+  });
+});
+
+test("remote cart snapshots serialize normalized lines", () => {
+  const snapshot = serializeRemoteCartSnapshot({
+    coffee: { itemId: "coffee", quantity: 2 },
+    tea: { itemId: "tea", quantity: 0 }
+  });
+
+  assert.deepEqual(snapshot, {
+    version: 1,
+    lines: [{ itemId: "coffee", quantity: 2 }]
+  });
 });
 
 test("remote reorder cart merges duplicate order items and skips invalid rows", () => {

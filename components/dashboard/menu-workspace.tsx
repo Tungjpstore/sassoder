@@ -1,8 +1,31 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Eye, EyeOff, Flame, ImageIcon, Loader2, Pencil, Plus, Save, Search, Sparkles, Tags, TimerReset, Trash2, Utensils, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type ElementType, type FormEvent } from "react";
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Flame,
+  ImageIcon,
+  Layers3,
+  Loader2,
+  Pencil,
+  Plus,
+  RadioTower,
+  RefreshCw,
+  Save,
+  Search,
+  Sparkles,
+  Tags,
+  TimerReset,
+  Trash2,
+  Utensils,
+  X
+} from "lucide-react";
 import {
   createCategoryAction,
   createMenuItemAction,
@@ -17,11 +40,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatVnd } from "@/lib/money";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import { cn } from "@/lib/utils";
 import type { AdminMenuCategory, AdminMenuItem } from "@/services/menu-service";
 
 type MenuItemWithCategory = AdminMenuItem & { categoryName: string };
 type AvailabilityFilter = "all" | "available" | "paused";
 type MenuPanelMode = "closed" | "stats" | "aiOcr" | "createCategory" | "createItem" | "editItem";
+type RealtimeState = "connecting" | "connected" | "error";
 type OcrDraft = {
   categories: Array<{
     name: string;
@@ -97,17 +122,74 @@ function menuImportDuplicateKey(value: string) {
     .replace(/\s+/g, " ");
 }
 
+function realtimeLabel(status: RealtimeState) {
+  if (status === "connected") return "Menu live";
+  if (status === "error") return "Live gián đoạn";
+  return "Đang nối live";
+}
+
+function realtimeTone(status: RealtimeState): "green" | "yellow" | "red" {
+  if (status === "connected") return "green";
+  if (status === "error") return "red";
+  return "yellow";
+}
+
+function formatClock(value: Date | null) {
+  if (!value) return "Đang đồng bộ";
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
+}
+
+function MenuMetric({
+  icon: Icon,
+  label,
+  value,
+  meta,
+  tone
+}: {
+  icon: ElementType;
+  label: string;
+  value: string | number;
+  meta: string;
+  tone: "green" | "yellow" | "red" | "blue";
+}) {
+  const toneClass =
+    tone === "red"
+      ? "border-[var(--accent)]/30 bg-[var(--danger-soft)] text-[var(--tertiary)]"
+      : tone === "yellow"
+        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+        : tone === "blue"
+          ? "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]"
+          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
+
+  return (
+    <article className="admin-stat-tile rounded-[14px] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <span className={cn("grid h-10 w-10 place-items-center rounded-xl border", toneClass)}>
+          <Icon size={18} />
+        </span>
+        <Badge tone={tone}>{label}</Badge>
+      </div>
+      <p className="metric-number mt-3 text-2xl font-black text-[var(--foreground)]">{value}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
+    </article>
+  );
+}
+
 export function MenuWorkspace({
+  restaurantId,
   categories,
   topItemIds,
   topItemNames,
   restaurantName
 }: {
+  restaurantId: string;
   categories: AdminMenuCategory[];
   topItemIds: string[];
   topItemNames: string[];
   restaurantName: string;
 }) {
+  const router = useRouter();
+  const refreshTimerRef = useRef<number | null>(null);
   const topIdSet = useMemo(() => new Set(topItemIds), [topItemIds]);
   const items = useMemo(
     () => categories.flatMap((category) => category.items.map((item) => ({ ...item, categoryName: category.name }))),
@@ -129,7 +211,45 @@ export function MenuWorkspace({
   const [aiFoodImageError, setAiFoodImageError] = useState<string | null>(null);
   const [aiFoodImageLoading, setAiFoodImageLoading] = useState<"create" | "edit" | null>(null);
   const [appliedAiFoodImageUrl, setAppliedAiFoodImageUrl] = useState<string | null>(null);
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [isRefreshing, startRefreshTransition] = useTransition();
   const [ocrImportState, importOcrFormAction, ocrImportPending] = useActionState<OcrImportActionState | undefined, FormData>(importMenuOcrItemsAction, undefined);
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const scheduleRefresh = () => {
+      setRealtimeState("connected");
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        startRefreshTransition(() => {
+          router.refresh();
+          setLastSyncedAt(new Date());
+        });
+      }, 260);
+    };
+
+    const channel = supabase
+      .channel(`admin-menu:${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_categories", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_items", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRealtimeState("connected");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+      });
+
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [restaurantId, router]);
+
+  function refreshMenu() {
+    startRefreshTransition(() => {
+      router.refresh();
+      setLastSyncedAt(new Date());
+    });
+  }
 
   const selectedItem = selectedItemId ? items.find((item) => item.id === selectedItemId) ?? null : null;
   const aiOcrImportItems = useMemo(() => flattenOcrDraft(aiOcrDraft), [aiOcrDraft]);
@@ -159,6 +279,33 @@ export function MenuWorkspace({
 
   const availableItems = items.filter((item) => item.is_available).length;
   const pausedItems = items.length - availableItems;
+  const missingImageItems = items.filter((item) => !item.image_url).length;
+  const averagePrice = items.length ? Math.round(items.reduce((sum, item) => sum + item.price, 0) / items.length) : 0;
+  const menuReadiness = items.length
+    ? Math.min(100, Math.round(((availableItems * 0.55 + (items.length - missingImageItems) * 0.3 + Math.min(categories.length, items.length) * 0.15) / items.length) * 100))
+    : 0;
+  const categoryHealth = categories.map((category) => {
+    const active = category.items.filter((item) => item.is_available).length;
+    const missingImage = category.items.filter((item) => !item.image_url).length;
+    return {
+      id: category.id,
+      name: category.name,
+      total: category.items.length,
+      active,
+      missingImage,
+      paused: category.items.length - active
+    };
+  });
+  const menuActionQueue = [
+    ...items
+      .filter((item) => !item.is_available)
+      .slice(0, 3)
+      .map((item) => ({ key: `paused-${item.id}`, label: item.name, meta: `${item.categoryName} · đang tạm hết`, tone: "yellow" as const, itemId: item.id })),
+    ...items
+      .filter((item) => item.is_available && !item.image_url)
+      .slice(0, 3)
+      .map((item) => ({ key: `image-${item.id}`, label: item.name, meta: `${item.categoryName} · thiếu ảnh menu`, tone: "blue" as const, itemId: item.id }))
+  ].slice(0, 5);
   const stats = [
     { label: "Tổng món đang bán", value: availableItems, meta: "Đang hiển thị với khách", icon: Sparkles, tone: "orange" },
     { label: "Món bán chạy", value: topItemIds.length, meta: topItemNames[0] ?? "Chưa có dữ liệu bán", icon: Flame, tone: "orange" },
@@ -482,6 +629,53 @@ export function MenuWorkspace({
 
   return (
     <div className="grid gap-3">
+      <section className="admin-hero-panel rounded-[14px] p-4">
+        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={realtimeTone(realtimeState)}>
+                <span className="inline-flex items-center gap-1.5">
+                  <RadioTower size={13} />
+                  {realtimeLabel(realtimeState)}
+                </span>
+              </Badge>
+              <Badge tone={menuReadiness >= 85 ? "green" : menuReadiness >= 65 ? "yellow" : "red"}>{menuReadiness}% sẵn sàng</Badge>
+              <Badge tone={pausedItems ? "yellow" : "green"}>{pausedItems ? `${pausedItems} món tạm hết` : "Không thiếu món"}</Badge>
+            </div>
+            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Menu vận hành & QR ordering</h2>
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+              Quản lý món, ảnh, giá và tình trạng bán theo nhịp vận hành thực tế. Menu sạch giúp khách gọi món nhanh hơn, bếp ít nhầm hơn và AI có dữ liệu tốt hơn để upsell.
+            </p>
+          </div>
+          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Cập nhật</span>
+              <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+              <div className={cn("h-full rounded-full", menuReadiness >= 85 ? "bg-[var(--primary)]" : menuReadiness >= 65 ? "bg-[var(--accent)]" : "bg-[var(--tertiary)]")} style={{ width: `${menuReadiness}%` }} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" onClick={refreshMenu} disabled={isRefreshing} className="h-10 flex-1 shadow-none hover:shadow-none">
+                <RefreshCw size={15} className={isRefreshing ? "animate-spin" : undefined} />
+                Làm mới
+              </Button>
+              <Button type="button" onClick={() => openPanel("createItem")} className="h-10 flex-1 shadow-none hover:shadow-none">
+                <Plus size={15} />
+                Thêm món
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <MenuMetric icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
+        <MenuMetric icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
+        <MenuMetric icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
+        <MenuMetric icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
+      </section>
+
       <section className="dashboard-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -519,12 +713,12 @@ export function MenuWorkspace({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên món hoặc danh mục..."
-                className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
+                className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
               />
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Danh mục
-              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả danh mục</option>
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>{category.name}</option>
@@ -533,7 +727,7 @@ export function MenuWorkspace({
             </label>
             <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
               Trạng thái
-              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
                 <option value="available">Đang bán</option>
                 <option value="paused">Tạm hết</option>
@@ -541,11 +735,90 @@ export function MenuWorkspace({
             </label>
         </div>
 
+        <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Layers3 size={16} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-black text-[var(--foreground)]">Danh mục & độ phủ</h3>
+              </div>
+              <Badge tone={categories.length ? "green" : "yellow"}>{categories.length || "Chưa có"}</Badge>
+            </div>
+            {categoryHealth.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Chưa có danh mục. Tạo danh mục trước để menu khách dễ quét và bếp dễ đọc.
+              </div>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                {categoryHealth.map((category) => {
+                  const activeRate = Math.round((category.active / Math.max(category.total, 1)) * 100);
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setCategoryFilter(category.id)}
+                      className={cn(
+                        "rounded-lg border bg-[var(--surface)] p-3 text-left transition hover:border-[var(--primary)]",
+                        categoryFilter === category.id ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/15" : "border-[var(--border)]"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="truncate text-sm font-black text-[var(--foreground)]">{category.name}</p>
+                        <span className="text-xs font-black text-[var(--primary)]">{category.active}/{category.total}</span>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+                        <div className={cn("h-full rounded-full", category.paused ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${activeRate}%` }} />
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-[var(--muted-foreground)]">
+                        <span>{activeRate}% đang bán</span>
+                        {category.missingImage ? <span className="text-[var(--accent-strong)]">{category.missingImage} thiếu ảnh</span> : null}
+                        {category.paused ? <span>{category.paused} tạm hết</span> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={16} className={menuActionQueue.length ? "text-[var(--accent)]" : "text-[var(--primary)]"} />
+                <h3 className="text-sm font-black text-[var(--foreground)]">Cần hoàn thiện</h3>
+              </div>
+              <Badge tone={menuActionQueue.length ? "yellow" : "green"}>{menuActionQueue.length || "Ổn"}</Badge>
+            </div>
+            <div className="grid gap-2">
+              {menuActionQueue.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                  Menu đã đủ trạng thái cơ bản. Có thể tập trung tối ưu giá, combo và upsell.
+                </div>
+              ) : (
+                menuActionQueue.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => openPanel("editItem", item.itemId)}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-sm font-black text-[var(--foreground)]">{item.label}</span>
+                      <Badge tone={item.tone}>{item.tone === "yellow" ? "Tạm hết" : "Thiếu ảnh"}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{item.meta}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
           <button
             type="button"
             onClick={() => setCategoryFilter("all")}
-            className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
+            className={`h-11 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
           >
             Tất cả ({items.length})
           </button>
@@ -554,7 +827,7 @@ export function MenuWorkspace({
               key={category.id}
               type="button"
               onClick={() => setCategoryFilter(category.id)}
-              className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
+              className={`h-11 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
             >
               {category.name} ({category.items.length})
             </button>
@@ -602,7 +875,7 @@ export function MenuWorkspace({
                     <button
                       type="button"
                       onClick={() => openPanel("editItem", item.id)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]"
+                      className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]"
                     >
                       <Pencil size={14} />
                       Sửa
@@ -610,7 +883,7 @@ export function MenuWorkspace({
                     <form action={toggleMenuItemAvailabilityAction}>
                       <input type="hidden" name="itemId" value={item.id} />
                       <input type="hidden" name="isAvailable" value={String(!item.is_available)} />
-                      <button className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
+                      <button className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
                         {item.is_available ? <EyeOff size={14} /> : <Eye size={14} />}
                         {item.is_available ? "Tạm hết" : "Bật bán"}
                       </button>
@@ -647,7 +920,7 @@ export function MenuWorkspace({
                   {panelMode === "editItem" && (selectedItem?.name ?? "Sửa món")}
                 </h3>
               </div>
-              <button type="button" onClick={closePanel} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]" aria-label="Đóng bảng nổi">
+              <button type="button" onClick={closePanel} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]" aria-label="Đóng bảng nổi">
                 <X size={18} />
               </button>
             </div>
@@ -681,7 +954,7 @@ export function MenuWorkspace({
                         <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm text-[var(--muted-foreground)]">Chưa có dữ liệu bán chạy thật.</p>
                       ) : (
                         topMenuItems.map((item) => (
-                          <button key={item.id} type="button" onClick={() => openPanel("editItem", item.id)} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-left">
+                          <button key={item.id} type="button" onClick={() => openPanel("editItem", item.id)} className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-left">
                             <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 40)}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-semibold">{item.name}</span>
@@ -834,7 +1107,7 @@ export function MenuWorkspace({
                   <input type="hidden" name="image" defaultValue="" />
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none" required>
+                    <select name="categoryId" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none" required>
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
@@ -879,7 +1152,7 @@ export function MenuWorkspace({
                   </label>
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
+                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}

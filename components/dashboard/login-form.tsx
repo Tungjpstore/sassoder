@@ -11,6 +11,7 @@ type LoginFormProps = {
   tenantSlug?: string;
   authError?: string;
   resetStatus?: string;
+  sessionStatus?: string;
   initialEmail?: string;
 };
 
@@ -30,18 +31,26 @@ function getGoogleAuthErrorMessage(authError?: string) {
   return messages[authError] ?? "Không hoàn tất được đăng nhập Google. Vui lòng thử lại hoặc dùng email và mật khẩu.";
 }
 
-export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus, initialEmail = "" }: LoginFormProps) {
+function getSessionStatusMessage(sessionStatus?: string) {
+  if (sessionStatus === "forced") return "Phiên làm việc đã bị quản lý đăng xuất. Vui lòng đăng nhập lại để tiếp tục ca.";
+  if (sessionStatus === "cleared") return "Phiên cũ đã được dọn sạch. Bạn có thể đăng nhập lại an toàn.";
+  return null;
+}
+
+export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus, sessionStatus, initialEmail = "" }: LoginFormProps) {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
   const tenantHost = tenantSlug ? `${tenantSlug}.${rootDomain}` : rootDomain;
   const googleAuthErrorMessage = getGoogleAuthErrorMessage(authError);
+  const sessionStatusMessage = getSessionStatusMessage(sessionStatus);
+  const staffLoginHref = tenantSlug ? `/staff/${encodeURIComponent(tenantSlug)}/login` : "/staff/login";
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#fff8ec] text-[#102a1f]">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_-10%,rgba(15,77,58,0.11),transparent_34%),radial-gradient(circle_at_92%_12%,rgba(242,140,40,0.08),transparent_24%)]" />
       <section className="auth-fade-in relative mx-auto flex min-h-screen w-full max-w-[440px] flex-col justify-center px-5 py-8">
         <div className="mb-7 flex flex-col items-center text-center">
-          <LogiVNLogo href="/" className="h-9" priority />
+          <LogiVNLogo href="/" className="h-11" priority />
           <div className="mt-6 grid h-12 w-12 place-items-center rounded-2xl bg-[#0f4d3a] shadow-[0_16px_36px_rgba(15,77,58,0.18)]">
             <ShieldCheck className="h-5 w-5 text-[#fff8ec]" />
           </div>
@@ -51,8 +60,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
           </p>
         </div>
 
-          <form
-            action={formAction}
+          <div
             className="w-full rounded-[32px] border border-[#123b2b]/10 bg-[#fffdf8]/92 p-4 shadow-[0_24px_80px_rgba(15,77,58,0.08)] backdrop-blur sm:p-5"
           >
             <a
@@ -68,84 +76,95 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
               Đăng nhập bằng Google
             </a>
 
+            {sessionStatusMessage ? (
+              <p className="mb-4 rounded-2xl border border-[#0f4d3a]/15 bg-[#eff7ef] p-3 text-sm font-bold leading-5 text-[#0f4d3a]">
+                {sessionStatusMessage}
+              </p>
+            ) : null}
+
             <div className="mb-4 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--muted-foreground)]">
               <span className="h-px flex-1 bg-[#123b2b]/10" />
-              Hoặc email
+              Email bảo mật
               <span className="h-px flex-1 bg-[#123b2b]/10" />
             </div>
 
-            <div className="grid gap-3">
-              <label className="grid gap-2 text-sm font-semibold">
-                Địa chỉ email
-                <div className="relative">
-                  <Mail className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-                  <input
-                    name="email"
-                    type="email"
-                    defaultValue={initialEmail}
-                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
-                    placeholder="admin@example.com"
-                    autoComplete="email"
-                    required
-                  />
-                </div>
-              </label>
+            <form action={formAction}>
+              <div className="grid gap-3">
+                <label className="grid gap-2 text-sm font-semibold">
+                  Địa chỉ email
+                  <div className="relative">
+                    <Mail className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                    <input
+                      name="email"
+                      type="email"
+                      defaultValue={initialEmail}
+                      className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                      placeholder="admin@example.com"
+                      autoComplete="email"
+                      required
+                    />
+                  </div>
+                </label>
 
-              <label className="grid gap-2 text-sm font-semibold">
-                <span className="flex items-center justify-between gap-3">
-                  Mật khẩu
-                  <Link href="/dashboard/forgot-password" className="text-xs font-bold text-[var(--primary-strong)] transition hover:text-[var(--primary)]">
-                    Quên mật khẩu?
-                  </Link>
-                </span>
-                <div className="relative">
-                  <Lock className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
-                  <input
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-12 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
-                    placeholder="Nhập mật khẩu"
-                    autoComplete="current-password"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--muted-foreground)] transition hover:text-[var(--foreground)]"
-                    aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </label>
-            </div>
+                <label className="grid gap-2 text-sm font-semibold">
+                  <span className="flex items-center justify-between gap-3">
+                    Mật khẩu
+                    <Link href="/dashboard/forgot-password" className="inline-flex min-h-12 items-center text-xs font-bold text-[var(--primary-strong)] transition hover:text-[var(--primary)]">
+                      Quên mật khẩu?
+                    </Link>
+                  </span>
+                  <div className="relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                    <input
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-14 text-sm font-semibold leading-6 text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                      placeholder="Nhập mật khẩu"
+                      autoComplete="current-password"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-xl text-[var(--muted-foreground)] transition hover:bg-[#0f4d3a]/5 hover:text-[var(--foreground)]"
+                      aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                    >
+                      {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                    </button>
+                  </div>
+                </label>
+              </div>
 
-            {resetStatus === "success" && (
-              <p className="mt-4 rounded-xl border border-[var(--success)]/30 bg-[var(--success-soft)] p-3 text-sm font-semibold text-[var(--primary-strong)]">
-                Mật khẩu đã được cập nhật. Vui lòng đăng nhập lại để tiếp tục.
-              </p>
-            )}
-            {state?.error && <p className="mt-4 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-sm text-[var(--accent-strong)]">{state.error}</p>}
+              {resetStatus === "success" && (
+                <p className="mt-4 rounded-xl border border-[var(--success)]/30 bg-[var(--success-soft)] p-3 text-sm font-semibold text-[var(--primary-strong)]">
+                  Mật khẩu đã được cập nhật. Vui lòng đăng nhập lại để tiếp tục.
+                </p>
+              )}
+              {state?.error && <p className="mt-4 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-sm text-[var(--accent-strong)]">{state.error}</p>}
+
+              <button
+                className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#0f4d3a] px-5 text-sm font-black text-[#FFF7EB] shadow-[0_16px_36px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                disabled={pending}
+              >
+                {pending ? "Đang đăng nhập..." : "Vào dashboard"}
+                <ArrowRight className="h-5 w-5" />
+              </button>
+            </form>
             {googleAuthErrorMessage && (
               <p className="mt-4 rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-sm text-[var(--accent-strong)]">
                 {googleAuthErrorMessage}
               </p>
             )}
 
-            <button
-              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[#0f4d3a] px-5 text-sm font-black text-[#FFF7EB] shadow-[0_16px_36px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
-              disabled={pending}
-            >
-              {pending ? "Đang đăng nhập..." : "Vào dashboard"}
-              <ArrowRight className="h-5 w-5" />
-            </button>
-
             <div className="mt-5 flex flex-col gap-2 text-center text-sm text-[var(--muted-foreground)]">
-              <Link href="/dashboard/register" className="font-semibold text-[var(--primary-strong)] transition hover:text-[var(--primary)]">
+              <Link href={staffLoginHref} className="inline-flex min-h-11 items-center justify-center font-semibold text-[#8b541c] transition hover:text-[#c36513]">
+                Nhân viên vào ca bằng PIN
+              </Link>
+              <Link href="/dashboard/register" className="inline-flex min-h-11 items-center justify-center font-semibold text-[var(--primary-strong)] transition hover:text-[var(--primary)]">
                 Chưa có tài khoản? Đăng ký và thiết lập quán
               </Link>
             </div>
-          </form>
+          </div>
       </section>
     </main>
   );

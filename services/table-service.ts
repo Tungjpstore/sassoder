@@ -14,6 +14,14 @@ export type RestaurantTable = {
   area: string;
   capacity: number;
   qr_enabled: boolean;
+  table_area_id?: string | null;
+  floor_label?: string | null;
+  seating_zone?: "indoor" | "outdoor" | "mixed";
+  table_kind?: "standard" | "vip" | "bar" | "community";
+  reservation_priority?: number;
+  is_bookable?: boolean;
+  is_hidden?: boolean;
+  is_under_maintenance?: boolean;
   qr_token_version?: number;
   qr_token_enforced?: boolean;
   qr_token_rotated_at?: string | null;
@@ -32,7 +40,7 @@ export type RestaurantTableWithStatus = RestaurantTable & {
 };
 
 export async function listTables(restaurantId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = (await createServerSupabaseClient()) as any;
   const { data, error } = await supabase
     .from("tables")
     .select("*")
@@ -111,7 +119,7 @@ function getTableStatus(orders: TableOrderRow[]): TableOperationalStatus {
 }
 
 export async function listTablesWithStatus(restaurantId: string): Promise<RestaurantTableWithStatus[]> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = (await createServerSupabaseClient()) as any;
   const [tablesResult, ordersResult] = await Promise.all([
     supabase.from("tables").select("*").eq("restaurant_id", restaurantId).order("name", { ascending: true }),
     supabase
@@ -182,16 +190,30 @@ export async function createTable(
     name: string;
     area?: string;
     capacity?: number;
+    floorLabel?: string;
+    seatingZone?: "indoor" | "outdoor" | "mixed";
+    tableKind?: "standard" | "vip" | "bar" | "community";
+    reservationPriority?: number;
+    isBookable?: boolean;
+    isHidden?: boolean;
+    isUnderMaintenance?: boolean;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = (await createServerSupabaseClient()) as any;
   const { data, error } = await supabase
     .from("tables")
     .insert({
       restaurant_id: restaurantId,
       name: input.name,
       area: input.area || "Khu chính",
-      capacity: input.capacity ?? 4
+      capacity: input.capacity ?? 4,
+      floor_label: input.floorLabel || "Tầng trệt",
+      seating_zone: input.seatingZone ?? "indoor",
+      table_kind: input.tableKind ?? "standard",
+      reservation_priority: input.reservationPriority ?? 100,
+      is_bookable: input.isBookable ?? true,
+      is_hidden: input.isHidden ?? false,
+      is_under_maintenance: input.isUnderMaintenance ?? false
     })
     .select()
     .single();
@@ -235,15 +257,29 @@ export async function updateTable(
     name: string;
     area?: string;
     capacity?: number;
+    floorLabel?: string;
+    seatingZone?: "indoor" | "outdoor" | "mixed";
+    tableKind?: "standard" | "vip" | "bar" | "community";
+    reservationPriority?: number;
+    isBookable?: boolean;
+    isHidden?: boolean;
+    isUnderMaintenance?: boolean;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = (await createServerSupabaseClient()) as any;
   const { data, error } = await supabase
     .from("tables")
     .update({
       name: input.name,
       area: input.area || "Khu chính",
-      capacity: input.capacity ?? 4
+      capacity: input.capacity ?? 4,
+      floor_label: input.floorLabel || "Tầng trệt",
+      seating_zone: input.seatingZone ?? "indoor",
+      table_kind: input.tableKind ?? "standard",
+      reservation_priority: input.reservationPriority ?? 100,
+      is_bookable: input.isBookable ?? true,
+      is_hidden: input.isHidden ?? false,
+      is_under_maintenance: input.isUnderMaintenance ?? false
     })
     .eq("id", input.tableId)
     .eq("restaurant_id", restaurantId)

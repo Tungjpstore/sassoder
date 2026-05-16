@@ -16,6 +16,7 @@ import {
   Settings,
   ShoppingBag,
   UserRound,
+  Warehouse,
 } from "lucide-react";
 
 type CommandItem = {
@@ -28,16 +29,17 @@ type CommandItem = {
 };
 
 const commands: CommandItem[] = [
-  { id: "overview", label: "Tổng quan", href: "/dashboard", icon: LayoutDashboard, group: "Vận hành", keywords: "dashboard home tong quan" },
+  { id: "overview", label: "Ca bán hôm nay", href: "/dashboard", icon: LayoutDashboard, group: "Hôm nay", keywords: "dashboard home tong quan ca ban hom nay" },
   { id: "orders", label: "Đơn hàng", href: "/dashboard/orders", icon: ListOrdered, group: "Vận hành", keywords: "order don hang" },
   { id: "kitchen", label: "Bếp", href: "/dashboard/kitchen", icon: ChefHat, group: "Vận hành", keywords: "kitchen bep nau" },
-  { id: "online", label: "Đặt online", href: "/dashboard/online", icon: ShoppingBag, group: "Vận hành", keywords: "online dat mon giao hang" },
-  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: CalendarCheck, group: "Vận hành", keywords: "reservation dat ban truoc" },
+  { id: "tables", label: "Bàn & QR", href: "/dashboard/tables", icon: QrCode, group: "Vận hành", keywords: "table ban qr code" },
+  { id: "payments", label: "Thanh toán", href: "/dashboard/payments", icon: CreditCard, group: "Vận hành", keywords: "payment thanh toan vietqr" },
+  { id: "online", label: "Đặt online", href: "/dashboard/online", icon: ShoppingBag, group: "Bán hàng", keywords: "online dat mon giao hang" },
+  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: CalendarCheck, group: "Bán hàng", keywords: "reservation dat ban truoc" },
+  { id: "promotions", label: "Khuyến mãi", href: "/dashboard/promotions", icon: Gift, group: "Bán hàng", keywords: "promotion khuyen mai giam gia voucher" },
   { id: "menu", label: "Menu món", href: "/dashboard/menu", icon: Menu, group: "Quản lý", keywords: "menu mon an food" },
-  { id: "tables", label: "Bàn & QR", href: "/dashboard/tables", icon: QrCode, group: "Quản lý", keywords: "table ban qr code" },
-  { id: "payments", label: "Thanh toán", href: "/dashboard/payments", icon: CreditCard, group: "Quản lý", keywords: "payment thanh toan vietqr" },
-  { id: "promotions", label: "Khuyến mãi", href: "/dashboard/promotions", icon: Gift, group: "Quản lý", keywords: "promotion khuyen mai giam gia voucher" },
-  { id: "staff", label: "Nhân viên", href: "/dashboard/staff", icon: UserRound, group: "Hệ thống", keywords: "staff nhan vien" },
+  { id: "inventory", label: "Kho hàng", href: "/dashboard/inventory", icon: Warehouse, group: "Quản lý", keywords: "inventory kho hang ton kho nguyen lieu ocr nhap hang" },
+  { id: "staff", label: "Nhân viên", href: "/dashboard/staff", icon: UserRound, group: "Quản lý", keywords: "staff nhan vien" },
   { id: "analytics", label: "Báo cáo", href: "/dashboard/analytics", icon: BarChart3, group: "Hệ thống", keywords: "analytics bao cao doanh thu" },
   { id: "settings", label: "Cài đặt", href: "/dashboard/settings", icon: Settings, group: "Hệ thống", keywords: "settings cai dat thiet lap" },
 ];

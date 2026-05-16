@@ -17,7 +17,8 @@ const customerAiSchema = z.object({
   category: z.string().trim().max(60).optional(),
   cart: z.unknown().optional(),
   orderStatus: z.unknown().optional(),
-  reservationStatus: z.unknown().optional()
+  reservationStatus: z.unknown().optional(),
+  context: z.record(z.unknown()).optional()
 });
 
 export async function POST(request: Request) {
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
       intent,
       cart: body.cart,
       orderStatus: body.orderStatus,
-      reservationStatus: body.reservationStatus
+      reservationStatus: body.reservationStatus,
+      context: body.context
     });
     writeOperationalEvent({
       area: "ai",

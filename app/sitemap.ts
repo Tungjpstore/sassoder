@@ -1,6 +1,8 @@
 import type { MetadataRoute } from "next";
 import { getAllBlogPosts, getAllBlogTopicHubs, getBlogPath, getBlogTopicHubPath } from "@/lib/seo/blog";
+import { getAllComparisonPages } from "@/lib/seo/comparison-pages";
 import { SEO_PUBLIC_ROUTES, absoluteSeoUrl } from "@/lib/seo/config";
+import { getAllSeoIntentPages } from "@/lib/seo/intent-pages";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date();
@@ -23,6 +25,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: new Date(hub.updatedAt),
       changeFrequency: "weekly" as const,
       priority: 0.68
+    })),
+    ...getAllSeoIntentPages().map((page) => ({
+      url: absoluteSeoUrl(page.path),
+      lastModified: new Date(page.updatedAt),
+      changeFrequency: page.changeFrequency,
+      priority: page.priority
+    })),
+    ...getAllComparisonPages().map((page) => ({
+      url: absoluteSeoUrl(page.path),
+      lastModified: new Date(page.updatedAt),
+      changeFrequency: page.changeFrequency,
+      priority: page.priority
     }))
   ];
 }

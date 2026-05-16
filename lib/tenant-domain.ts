@@ -1,5 +1,5 @@
 export const ROOT_DOMAIN = "logivn.com";
-export const RESERVED_SUBDOMAINS = new Set(["www", "admin", "dashboard", "app", "api", "static", "assets"]);
+export const RESERVED_SUBDOMAINS = new Set(["www", "admin", "dashboard", "app", "api", "static", "assets", "staff"]);
 
 export function getTenantSlugFromHost(host: string | null | undefined) {
   if (!host) return null;

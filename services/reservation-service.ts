@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
 import { ensureReservationDepositLogEvent, reservationDepositTransitionKey } from "@/services/payment-log-service";
+import { rankReservationTablesForAssignment, reservationAssignmentReason, type ReservationAssignableTable } from "@/services/reservation-assignment";
 import { roundUpToSlotBoundary } from "@/services/reservation-time";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
@@ -13,8 +15,23 @@ import type { Database } from "@/types/supabase";
 
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 type ReservationRow = Database["public"]["Tables"]["reservations"]["Row"];
+type ReservationDbStatus = ReservationRow["status"];
+type ReservationSupabaseClient = SupabaseClient<Database>;
 type ReservationLockRow = Database["public"]["Tables"]["reservation_table_locks"]["Row"] & {
-  table?: { id: string; name: string; area: string; capacity: number } | { id: string; name: string; area: string; capacity: number }[] | null;
+  table?:
+    | { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }
+    | { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }[]
+    | null;
+};
+
+type CandidateReservationTable = ReservationAssignableTable & {
+  floor_label: string | null;
+  seating_zone: "indoor" | "outdoor" | "mixed";
+  table_kind: "standard" | "vip" | "bar" | "community";
+  reservation_priority: number;
+  is_bookable: boolean;
+  is_hidden: boolean;
+  is_under_maintenance: boolean;
 };
 
 export type ReservationSettings = Pick<
@@ -65,11 +82,15 @@ export type ReservationAvailabilitySlot = {
 };
 
 const VN_UTC_OFFSET_MINUTES = 7 * 60;
-const activeHoldStatuses: ReservationStatus[] = ["holding", "waiting_deposit_confirm"];
-const closedReservationStatuses: ReservationStatus[] = ["completed", "cancelled", "expired", "no_show"];
+const ACTIVE_BILL_AVOIDANCE_MINUTES = 120;
+const activeHoldStatuses = ["holding", "waiting_deposit_confirm"] satisfies ReservationDbStatus[];
+const closedReservationStatuses = ["completed", "cancelled", "rejected", "expired", "no_show"] satisfies ReservationDbStatus[];
 
 const reservationSelect =
-  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,seated_at,cancelled_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity))";
+  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,floor_label,seating_zone,table_kind))";
+
+const candidateTableSelect =
+  "id,name,area,capacity,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
 
 const reservationSettingsSelect =
   "id,name,slug,bank_code,bank_account,bank_account_name,logo_url,address,store_lat,store_lng,hotline,contact_email,opening_time,closing_time,reservations_enabled,reservation_deposit_enabled,reservation_deposit_type,reservation_deposit_value,reservation_hold_minutes,reservation_duration_minutes,reservation_buffer_minutes,reservation_min_notice_minutes,reservation_max_days_ahead,reservation_arrival_grace_minutes";
@@ -122,7 +143,11 @@ function calculateDepositAmount(settings: ReservationSettings, partySize: number
 }
 
 function isActiveHoldStatus(status: ReservationStatus) {
-  return activeHoldStatuses.includes(status);
+  return activeHoldStatuses.some((item) => item === status);
+}
+
+function isClosedReservationStatus(status: ReservationStatus) {
+  return closedReservationStatuses.some((item) => item === status);
 }
 
 function hasExpiredHold(reservation: Pick<ReservationDto, "status" | "holdExpiresAt">, now = new Date()) {
@@ -220,6 +245,11 @@ function reservationPayment(
 
 function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | null }): ReservationDto {
   const locks = row.locks ?? [];
+  const lifecycle = row as ReservationRow & {
+    checked_in_at?: string | null;
+    completed_at?: string | null;
+    rejected_at?: string | null;
+  };
 
   return {
     id: row.id,
@@ -241,16 +271,97 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     confirmedAt: row.confirmed_at,
+    checkedInAt: lifecycle.checked_in_at ?? null,
     seatedAt: row.seated_at,
+    completedAt: lifecycle.completed_at ?? null,
     cancelledAt: row.cancelled_at,
+    rejectedAt: lifecycle.rejected_at ?? null,
     expiredAt: row.expired_at,
     noShowAt: row.no_show_at,
     seatedTableBillId: row.seated_table_bill_id,
     tables: locks
       .filter((lock) => lock.status === "active")
       .map((lock) => firstOrNull(lock.table))
-      .filter((table): table is { id: string; name: string; area: string; capacity: number } => Boolean(table))
+      .filter(
+        (table): table is { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null } =>
+          Boolean(table)
+      )
+      .map((table) => ({
+        id: table.id,
+        name: table.name,
+        area: table.area,
+        capacity: table.capacity,
+        floorLabel: table.floor_label ?? null,
+        seatingZone: table.seating_zone ?? null,
+        tableKind: table.table_kind ?? null
+      }))
   };
+}
+
+async function recordReservationStatusChange(
+  supabase: ReservationSupabaseClient,
+  input: {
+    restaurantId: string;
+    reservationId: string;
+    fromStatus: ReservationStatus | string | null;
+    toStatus: ReservationStatus | string;
+    actorType: "customer" | "merchant" | "staff" | "system";
+    actorUserId?: string | null;
+    note?: string | null;
+    metadata?: Record<string, string | number | boolean | null | undefined>;
+  }
+) {
+  if (input.fromStatus === input.toStatus && !input.note) return;
+  const { error } = await (supabase as any).from("reservation_status_logs").insert({
+    restaurant_id: input.restaurantId,
+    reservation_id: input.reservationId,
+    from_status: input.fromStatus,
+    to_status: input.toStatus,
+    actor_type: input.actorType,
+    actor_user_id: input.actorUserId ?? null,
+    note: input.note ?? null,
+    metadata: input.metadata ?? {}
+  });
+
+  if (error) {
+    console.error("reservation_status_log_failed", {
+      reservationId: input.reservationId,
+      fromStatus: input.fromStatus,
+      toStatus: input.toStatus,
+      error: error.message
+    });
+  }
+}
+
+async function recordOccupancyEvent(
+  supabase: ReservationSupabaseClient,
+  input: {
+    restaurantId: string;
+    tableId?: string | null;
+    tableBillId?: string | null;
+    reservationId?: string | null;
+    eventType: "reservation_created" | "reservation_cancelled" | "reservation_no_show" | "reservation_checked_in" | "reservation_seated" | "reservation_completed" | "table_released";
+    partySize?: number | null;
+    metadata?: Record<string, string | number | boolean | null | undefined>;
+  }
+) {
+  const { error } = await (supabase as any).from("occupancy_logs").insert({
+    restaurant_id: input.restaurantId,
+    table_id: input.tableId ?? null,
+    table_bill_id: input.tableBillId ?? null,
+    reservation_id: input.reservationId ?? null,
+    event_type: input.eventType,
+    party_size: input.partySize ?? null,
+    metadata: input.metadata ?? {}
+  });
+
+  if (error) {
+    console.error("occupancy_log_failed", {
+      reservationId: input.reservationId,
+      eventType: input.eventType,
+      error: error.message
+    });
+  }
 }
 
 async function getSettingsBySlug(slug: string) {
@@ -297,7 +408,7 @@ export async function expireReservationHolds(
     const now = new Date().toISOString();
     let query = supabase
       .from("reservations")
-      .select("id,restaurant_id")
+      .select("id,restaurant_id,status")
       .in("status", activeHoldStatuses)
       .lt("hold_expires_at", now)
       .limit(limit);
@@ -325,7 +436,17 @@ export async function expireReservationHolds(
       .in("reservation_id", ids);
     throwIfSupabaseError(lockError);
 
-    for (const row of rows) invalidateRestaurantDashboardCache(row.restaurant_id);
+    for (const row of rows) {
+      await recordReservationStatusChange(supabase, {
+        restaurantId: row.restaurant_id,
+        reservationId: row.id,
+        fromStatus: row.status,
+        toStatus: "expired",
+        actorType: "system",
+        note: "reservation_hold_expired"
+      });
+      invalidateRestaurantDashboardCache(row.restaurant_id);
+    }
     expired += rows.length;
 
     if (rows.length < limit) {
@@ -337,9 +458,9 @@ export async function expireReservationHolds(
   return { batches, expired, hasMore: hasMore && batches === maxBatches };
 }
 
-async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date) {
+async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date, excludeReservationId?: string) {
   const supabase = createAdminSupabaseClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("reservation_table_locks")
     .select("id,reservation_id,restaurant_id,table_id,starts_at,ends_at,status")
     .eq("restaurant_id", restaurantId)
@@ -347,6 +468,8 @@ async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date
     .lt("starts_at", endsAt.toISOString())
     .gt("ends_at", startsAt.toISOString());
 
+  if (excludeReservationId) query = query.neq("reservation_id", excludeReservationId);
+  const { data, error } = await query;
   throwIfSupabaseError(error);
   return data ?? [];
 }
@@ -355,32 +478,87 @@ async function getCandidateTables(restaurantId: string, partySize: number) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("tables")
-    .select("id,name,area,capacity")
+    .select(candidateTableSelect)
     .eq("restaurant_id", restaurantId)
+    .eq("is_bookable", true)
+    .eq("is_hidden", false)
+    .eq("is_under_maintenance", false)
     .gte("capacity", partySize)
     .order("capacity", { ascending: true })
+    .order("reservation_priority", { ascending: true })
     .order("name", { ascending: true });
 
   throwIfSupabaseError(error);
-  return data ?? [];
+  return rankReservationTablesForAssignment((data ?? []) as CandidateReservationTable[], partySize);
+}
+
+async function getBookableTableById(restaurantId: string, tableId: string) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("tables")
+    .select(candidateTableSelect)
+    .eq("id", tableId)
+    .eq("restaurant_id", restaurantId)
+    .eq("is_bookable", true)
+    .eq("is_hidden", false)
+    .eq("is_under_maintenance", false)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  return data as CandidateReservationTable | null;
+}
+
+async function getActiveReservationLock(restaurantId: string, reservationId: string) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("reservation_table_locks")
+    .select("id,reservation_id,restaurant_id,table_id,starts_at,ends_at,status")
+    .eq("restaurant_id", restaurantId)
+    .eq("reservation_id", reservationId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  return data;
 }
 
 async function getAvailableTables(restaurantId: string, partySize: number, startsAt: Date, endsAt: Date) {
-  const [tables, locks] = await Promise.all([
+  const [tables, locks, activeBillTableIds] = await Promise.all([
     getCandidateTables(restaurantId, partySize),
-    getActiveLocks(restaurantId, startsAt, endsAt)
+    getActiveLocks(restaurantId, startsAt, endsAt),
+    getActiveBillTableIds(restaurantId)
   ]);
   const lockedIds = new Set(locks.map((lock) => lock.table_id));
-  return tables.filter((table) => !lockedIds.has(table.id));
+  return tables.filter((table) => !lockedIds.has(table.id) && !hasNearTermActiveBill(table.id, startsAt, activeBillTableIds));
 }
 
 async function getAvailabilityContext(restaurantId: string, partySize: number, startsAt: Date, endsAt: Date) {
-  const [tables, locks] = await Promise.all([
+  const [tables, locks, activeBillTableIds] = await Promise.all([
     getCandidateTables(restaurantId, partySize),
-    getActiveLocks(restaurantId, startsAt, endsAt)
+    getActiveLocks(restaurantId, startsAt, endsAt),
+    getActiveBillTableIds(restaurantId)
   ]);
 
-  return { tables, locks };
+  return { tables, locks, activeBillTableIds };
+}
+
+async function getActiveBillTableIds(restaurantId: string) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("table_bills")
+    .select("table_id")
+    .eq("restaurant_id", restaurantId)
+    .in("status", ["open", "waiting_payment", "waiting_confirm"]);
+
+  throwIfSupabaseError(error);
+  return new Set((data ?? []).map((bill) => bill.table_id));
+}
+
+function hasNearTermActiveBill(tableId: string, startsAt: Date, activeBillTableIds: Set<string>) {
+  if (!activeBillTableIds.has(tableId)) return false;
+  return startsAt.getTime() <= addMinutes(new Date(), ACTIVE_BILL_AVOIDANCE_MINUTES).getTime();
 }
 
 function assertBookableTime(settings: ReservationSettings, startsAt: Date) {
@@ -412,12 +590,16 @@ export async function getReservationAvailability(input: {
   const duration = Number(settings.reservation_duration_minutes);
   const buffer = Number(settings.reservation_buffer_minutes);
   const slots: ReservationAvailabilitySlot[] = [];
-  const { tables, locks } = await getAvailabilityContext(settings.id, input.partySize, start, addMinutes(end, buffer));
+  const { tables, locks, activeBillTableIds } = await getAvailabilityContext(settings.id, input.partySize, start, addMinutes(end, buffer));
 
   for (let slotStart = roundUpToSlotBoundary(new Date(Math.max(start.getTime(), firstAllowed.getTime()))); addMinutes(slotStart, duration) <= end; slotStart = addMinutes(slotStart, 30)) {
     const slotEnd = addMinutes(slotStart, duration);
     const lockEnd = addMinutes(slotEnd, buffer);
-    const availableTables = tables.filter((table) => !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), slotStart, lockEnd)));
+    const availableTables = tables.filter(
+      (table) =>
+        !hasNearTermActiveBill(table.id, slotStart, activeBillTableIds) &&
+        !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), slotStart, lockEnd))
+    );
     const hint = slotAvailabilityHint(slotStart, availableTables.length);
     slots.push({
       startsAt: slotStart.toISOString(),
@@ -425,7 +607,8 @@ export async function getReservationAvailability(input: {
       available: availableTables.length > 0,
       tableCount: availableTables.length,
       bestTableName: availableTables[0]?.name ?? null,
-      ...hint
+      ...hint,
+      recommendationReason: availableTables[0] ? reservationAssignmentReason(availableTables[0], input.partySize) : hint.recommendationReason
     });
   }
 
@@ -531,6 +714,26 @@ export async function createReservation(input: {
     });
   }
 
+  await recordReservationStatusChange(supabase, {
+    restaurantId: settings.id,
+    reservationId: reservation.id,
+    fromStatus: null,
+    toStatus: reservation.status,
+    actorType: "customer",
+    note: "reservation_created",
+    metadata: {
+      tableId: table.id,
+      assignmentReason: reservationAssignmentReason(table, input.partySize)
+    }
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId: settings.id,
+    tableId: table.id,
+    reservationId: reservation.id,
+    eventType: "reservation_created",
+    partySize: input.partySize
+  });
+
   const nextReservation = await getReservationById(reservation.id, settings.id);
   invalidateRestaurantDashboardCache(settings.id);
   return {
@@ -570,6 +773,15 @@ async function expireReservationHoldIfNeeded(reservation: ReservationDto, restau
     .eq("restaurant_id", restaurantId)
     .eq("status", "active");
   throwIfSupabaseError(lockError);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId: reservation.id,
+    fromStatus: reservation.status,
+    toStatus: "expired",
+    actorType: "system",
+    note: "reservation_hold_expired"
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservation.id, restaurantId);
@@ -679,6 +891,14 @@ export async function markReservationDepositPaid(reservationId: string, token: s
     source: "reservation_customer_paid_button",
     transitionKey: waitingConfirmKey
   });
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "waiting_deposit_confirm",
+    actorType: "customer",
+    note: "reservation_deposit_submitted"
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getPublicReservation(reservationId, token);
@@ -689,7 +909,7 @@ export async function cancelPublicReservation(reservationId: string, token: stri
   const reservation = await getFreshReservationById(reservationId, restaurantId);
   const supabase = createAdminSupabaseClient();
 
-  if (reservation.status === "cancelled" || closedReservationStatuses.includes(reservation.status)) {
+  if (reservation.status === "cancelled" || isClosedReservationStatus(reservation.status)) {
     if (reservation.status === "cancelled" && reservation.depositRequiredAmount > 0) {
       await ensureReservationDepositLogEvent(supabase, {
         reservationId,
@@ -749,6 +969,22 @@ export async function cancelPublicReservation(reservationId: string, token: stri
       transitionKey: reservationDepositTransitionKey(reservationId, "customer-cancel")
     });
   }
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "cancelled",
+    actorType: "customer",
+    note: "reservation_customer_cancel"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    reservationId,
+    eventType: "reservation_cancelled",
+    partySize: reservation.partySize
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getPublicReservation(reservationId, token);
@@ -831,7 +1067,7 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
     });
     return reservation;
   }
-  if (closedReservationStatuses.includes(reservation.status)) {
+  if (isClosedReservationStatus(reservation.status)) {
     throw new AppError("Không thể xác nhận cọc cho đặt bàn đã kết thúc.", 400);
   }
   if (reservation.status !== "waiting_deposit_confirm" || reservation.depositStatus !== "waiting_confirm") {
@@ -881,6 +1117,14 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
     source: "merchant_reservation_deposit_confirm",
     transitionKey: confirmKey
   });
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "confirmed",
+    actorType: "merchant",
+    note: "reservation_deposit_confirmed"
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
@@ -906,7 +1150,7 @@ export async function cancelReservation(restaurantId: string, reservationId: str
   if (reservation.status === "seated") {
     throw new AppError("Không thể huỷ đặt bàn khi khách đã được nhận vào bàn.", 400);
   }
-  if (closedReservationStatuses.includes(reservation.status)) {
+  if (isClosedReservationStatus(reservation.status)) {
     throw new AppError("Không thể huỷ đặt bàn đã kết thúc.", 400);
   }
 
@@ -937,6 +1181,196 @@ export async function cancelReservation(restaurantId: string, reservationId: str
     });
   }
 
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "cancelled",
+    actorType: "merchant",
+    note: "reservation_merchant_cancel"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    reservationId,
+    eventType: "reservation_cancelled",
+    partySize: reservation.partySize
+  });
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservationId, restaurantId);
+}
+
+export async function rejectReservation(restaurantId: string, reservationId: string) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  const supabase = createAdminSupabaseClient();
+  if (reservation.status === "rejected") return reservation;
+  if (reservation.status === "seated" || reservation.status === "checked_in" || reservation.seatedTableBillId) {
+    throw new AppError("Không thể từ chối lịch đã check-in hoặc đã vào bàn.", 400);
+  }
+  if (isClosedReservationStatus(reservation.status)) {
+    throw new AppError("Không thể từ chối đặt bàn đã kết thúc.", 400);
+  }
+  if (reservation.depositPaidAmount > 0 || reservation.depositStatus === "paid" || reservation.depositStatus === "waiting_confirm") {
+    throw new AppError("Lịch đặt đã phát sinh cọc. Hãy huỷ lịch và xử lý hoàn cọc theo quy trình vận hành.", 409);
+  }
+
+  const now = new Date().toISOString();
+  const { data: updated, error } = await supabase
+    .from("reservations")
+    .update({ status: "rejected", rejected_at: now })
+    .eq("id", reservationId)
+    .eq("restaurant_id", restaurantId)
+    .in("status", ["draft", "pending", "holding", "confirmed"])
+    .select("id")
+    .maybeSingle();
+  throwIfSupabaseError(error);
+  if (!updated) throw new AppError("Trạng thái đặt bàn vừa thay đổi. Vui lòng tải lại trước khi từ chối.", 409);
+
+  const { error: lockError } = await supabase
+    .from("reservation_table_locks")
+    .update({ status: "released" })
+    .eq("reservation_id", reservationId)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "active");
+  throwIfSupabaseError(lockError);
+
+  if (reservation.depositRequiredAmount > 0) {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId,
+      restaurantId,
+      method: reservation.paymentMethod ?? "QR",
+      status: "cancelled",
+      amount: reservation.depositRequiredAmount,
+      source: "merchant_reservation_reject",
+      transitionKey: reservationDepositTransitionKey(reservationId, "merchant-reject")
+    });
+  }
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "rejected",
+    actorType: "merchant",
+    note: "reservation_merchant_reject"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    reservationId,
+    eventType: "reservation_cancelled",
+    partySize: reservation.partySize,
+    metadata: { reason: "rejected" }
+  });
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservationId, restaurantId);
+}
+
+export async function checkInReservation(restaurantId: string, reservationId: string) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  if (reservation.status === "checked_in" || reservation.status === "seated") return reservation;
+  if (reservation.status !== "confirmed") {
+    throw new AppError("Chỉ có thể check-in đặt bàn đã xác nhận.", 400);
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const now = new Date().toISOString();
+  const { data: updated, error } = await supabase
+    .from("reservations")
+    .update({ status: "checked_in", checked_in_at: now })
+    .eq("id", reservationId)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "confirmed")
+    .select("id")
+    .maybeSingle();
+  throwIfSupabaseError(error);
+  if (!updated) throw new AppError("Trạng thái đặt bàn vừa thay đổi. Vui lòng tải lại trước khi check-in.", 409);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "checked_in",
+    actorType: "merchant",
+    note: "reservation_checked_in"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    reservationId,
+    eventType: "reservation_checked_in",
+    partySize: reservation.partySize
+  });
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservationId, restaurantId);
+}
+
+export async function moveReservationTable(restaurantId: string, reservationId: string, nextTableId: string) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  if (reservation.seatedTableBillId || reservation.status === "seated") {
+    throw new AppError("Lịch đã vào bàn. Hãy đổi bàn trong hóa đơn đang phục vụ.", 400);
+  }
+  if (isClosedReservationStatus(reservation.status)) {
+    throw new AppError("Không thể đổi bàn cho lịch đặt đã kết thúc.", 400);
+  }
+
+  const currentLock = await getActiveReservationLock(restaurantId, reservationId);
+  if (!currentLock) throw new AppError("Lịch đặt chưa có bàn đang giữ.", 400);
+  if (currentLock.table_id === nextTableId) return reservation;
+
+  const nextTable = await getBookableTableById(restaurantId, nextTableId);
+  if (!nextTable) throw new AppError("Bàn mới không khả dụng cho đặt trước.", 400);
+  if (nextTable.capacity < reservation.partySize) {
+    throw new AppError("Bàn mới không đủ sức chứa cho số khách của lịch đặt.", 400);
+  }
+
+  const startsAt = new Date(currentLock.starts_at);
+  const endsAt = new Date(currentLock.ends_at);
+  const [locks, activeBillTableIds] = await Promise.all([
+    getActiveLocks(restaurantId, startsAt, endsAt, reservationId),
+    getActiveBillTableIds(restaurantId)
+  ]);
+  if (locks.some((lock) => lock.table_id === nextTableId) || hasNearTermActiveBill(nextTableId, startsAt, activeBillTableIds)) {
+    throw new AppError("Bàn mới đang bận trong khung giờ này.", 409);
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const { error: insertError } = await supabase.from("reservation_table_locks").insert({
+    reservation_id: reservationId,
+    restaurant_id: restaurantId,
+    table_id: nextTableId,
+    starts_at: currentLock.starts_at,
+    ends_at: currentLock.ends_at
+  });
+
+  if ((insertError as { code?: string } | null)?.code === "23P01") {
+    throw new AppError("Bàn mới vừa được giữ bởi lịch khác. Vui lòng chọn bàn khác.", 409);
+  }
+  throwIfSupabaseError(insertError);
+
+  const { error: releaseError } = await supabase
+    .from("reservation_table_locks")
+    .update({ status: "released" })
+    .eq("id", currentLock.id)
+    .eq("restaurant_id", restaurantId);
+  throwIfSupabaseError(releaseError);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: reservation.status,
+    actorType: "merchant",
+    note: "reservation_table_moved",
+    metadata: {
+      fromTableId: currentLock.table_id,
+      toTableId: nextTableId
+    }
+  });
+
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
 }
@@ -944,7 +1378,7 @@ export async function cancelReservation(restaurantId: string, reservationId: str
 export async function seatReservation(restaurantId: string, reservationId: string) {
   const reservation = await getFreshReservationById(reservationId, restaurantId);
   if (reservation.seatedTableBillId) return reservation;
-  if (reservation.status !== "confirmed") {
+  if (reservation.status !== "confirmed" && reservation.status !== "checked_in") {
     throw new AppError("Chỉ có thể nhận khách cho đặt bàn đã xác nhận.", 400);
   }
   const table = reservation.tables[0];
@@ -972,10 +1406,27 @@ export async function seatReservation(restaurantId: string, reservationId: strin
 
   const { error } = await supabase
     .from("reservations")
-    .update({ status: "seated", seated_at: now, seated_table_bill_id: bill.id })
+    .update({ status: "seated", checked_in_at: reservation.checkedInAt ?? now, seated_at: now, seated_table_bill_id: bill.id })
     .eq("id", reservationId)
     .eq("restaurant_id", restaurantId);
   throwIfSupabaseError(error);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "seated",
+    actorType: "merchant",
+    note: "reservation_seated"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: table.id,
+    tableBillId: bill.id,
+    reservationId,
+    eventType: "reservation_seated",
+    partySize: reservation.partySize
+  });
 
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
@@ -1011,8 +1462,84 @@ export async function markReservationNoShow(restaurantId: string, reservationId:
     .eq("restaurant_id", restaurantId);
   throwIfSupabaseError(lockError);
 
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: "no_show",
+    actorType: "merchant",
+    note: "reservation_no_show"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    reservationId,
+    eventType: "reservation_no_show",
+    partySize: reservation.partySize
+  });
+
   invalidateRestaurantDashboardCache(restaurantId);
   return getReservationById(reservationId, restaurantId);
+}
+
+export async function completeReservationForBill(
+  restaurantId: string,
+  billId: string
+) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("reservations")
+    .select(reservationSelect)
+    .eq("restaurant_id", restaurantId)
+    .eq("seated_table_bill_id", billId)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  if (!data) return null;
+
+  const reservation = mapReservation(data as unknown as ReservationRow & { locks?: ReservationLockRow[] });
+  if (reservation.status === "completed") return reservation;
+  if (reservation.status !== "seated") return reservation;
+
+  const now = new Date().toISOString();
+  const { data: updated, error: updateError } = await supabase
+    .from("reservations")
+    .update({ status: "completed", completed_at: now })
+    .eq("id", reservation.id)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "seated")
+    .select("id")
+    .maybeSingle();
+  throwIfSupabaseError(updateError);
+  if (!updated) return getReservationById(reservation.id, restaurantId);
+
+  const { error: releaseError } = await supabase
+    .from("reservation_table_locks")
+    .update({ status: "released" })
+    .eq("reservation_id", reservation.id)
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "active");
+  throwIfSupabaseError(releaseError);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId: reservation.id,
+    fromStatus: reservation.status,
+    toStatus: "completed",
+    actorType: "system",
+    note: "reservation_bill_paid"
+  });
+  await recordOccupancyEvent(supabase, {
+    restaurantId,
+    tableId: reservation.tables[0]?.id ?? null,
+    tableBillId: billId,
+    reservationId: reservation.id,
+    eventType: "reservation_completed",
+    partySize: reservation.partySize
+  });
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservation.id, restaurantId);
 }
 
 export function reservationDepositMessage(settings: ReservationSettings, partySize: number) {
