@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -25,6 +26,13 @@ type BusinessPreset = {
   label: string;
   value: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER";
   icon: typeof Coffee;
+};
+
+type OnboardingVisual = {
+  src: string;
+  alt: string;
+  eyebrow: string;
+  title: string;
 };
 
 type OnboardingPlan = {
@@ -106,6 +114,38 @@ const businessPresets: BusinessPreset[] = [
 ];
 
 const steps = ["Thông tin quán", "Chọn gói", "Thiết lập", "Bàn & QR", "Menu"];
+const onboardingVisuals: OnboardingVisual[] = [
+  {
+    src: "/onboarding/flow/store-profile.png",
+    alt: "Minh hoạ tạo hồ sơ quán trên LogiVN",
+    eyebrow: "Hồ sơ quán",
+    title: "Thông tin đủ để mở dashboard"
+  },
+  {
+    src: "/onboarding/flow/plan-selection.png",
+    alt: "Minh hoạ chọn gói vận hành LogiVN",
+    eyebrow: "Gói vận hành",
+    title: "Chọn gói phù hợp quy mô hiện tại"
+  },
+  {
+    src: "/onboarding/flow/setup-checklist.png",
+    alt: "Minh hoạ kiểm tra tiến độ thiết lập quán",
+    eyebrow: "Kiểm tra",
+    title: "Rà lại các phần cần sẵn sàng"
+  },
+  {
+    src: "/onboarding/flow/table-qr.png",
+    alt: "Minh hoạ tạo bàn và mã QR gọi món",
+    eyebrow: "Bàn & QR",
+    title: "Sinh QR cho khu vực phục vụ"
+  },
+  {
+    src: "/onboarding/flow/menu-import.png",
+    alt: "Minh hoạ nhập menu đầu tiên",
+    eyebrow: "Menu",
+    title: "Tạo menu đầu tiên để bán ngay"
+  }
+];
 const fieldClass =
   "h-11 w-full rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10";
 const iconFieldClass = `${fieldClass} pl-10`;
@@ -140,6 +180,12 @@ function locationQualityLabel(accuracy: number | null) {
   if (accuracy <= 25) return `Rất chính xác ±${Math.round(accuracy)}m`;
   if (accuracy <= 80) return `Khá chính xác ±${Math.round(accuracy)}m`;
   return `Cần chỉnh lại pin ±${Math.round(accuracy)}m`;
+}
+
+function shortText(value: string, fallback = "Chưa có") {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed.length > 30 ? `${trimmed.slice(0, 29)}...` : trimmed;
 }
 
 function readOnboardingDraft(draftKey: string) {
@@ -182,6 +228,41 @@ function StepHeader({ eyebrow, title, description = "" }: { eyebrow: string; tit
       <h2 className="mt-1 text-xl font-black tracking-[-0.03em] text-[#111827] sm:text-2xl">{title}</h2>
       {description ? <p className="mt-1 max-w-2xl text-sm leading-5 text-[#667085]">{description}</p> : null}
     </div>
+  );
+}
+
+function SupportLine({ label, value, active = false }: { label: string; value: string; active?: boolean }) {
+  return (
+    <div className="flex min-h-9 items-center justify-between gap-2 rounded-md border border-white/70 bg-white px-2.5 py-2 text-[11px] lg:min-h-10 lg:px-3 lg:text-xs">
+      <span className="font-bold text-[#667085]">{label}</span>
+      <span className={`min-w-0 truncate text-right font-black ${active ? "text-[#0F4D3A]" : "text-[#111827]"}`}>{value}</span>
+    </div>
+  );
+}
+
+function StepSupportPanel({ step, children }: { step: number; children: ReactNode }) {
+  const visual = onboardingVisuals[step] ?? onboardingVisuals[0];
+
+  return (
+    <aside className={`order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start`}>
+      <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 sm:grid-cols-[124px_minmax(0,1fr)] lg:block">
+        <div className="relative aspect-square overflow-hidden rounded-md border border-[#d8dee9] bg-white">
+          <Image
+            src={visual.src}
+            alt={visual.alt}
+            fill
+            sizes="(min-width: 1024px) 300px, 124px"
+            priority={step === 0}
+            className="object-cover"
+          />
+        </div>
+        <div className="min-w-0 self-center lg:mt-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#0F4D3A]">{visual.eyebrow}</p>
+          <h3 className="mt-1 text-base font-black leading-tight text-[#111827]">{visual.title}</h3>
+          <div className="mt-2 grid grid-cols-2 gap-1.5 lg:mt-3 lg:grid-cols-1 lg:gap-2">{children}</div>
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -667,7 +748,7 @@ export function RestaurantOnboardingFlow({
 
   return (
     <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <form action={action} encType="multipart/form-data" className="mx-auto flex h-svh w-full max-w-5xl flex-col gap-3 overflow-hidden px-3 py-3 sm:px-4">
+      <form action={action} encType="multipart/form-data" className="mx-auto flex h-svh w-full max-w-6xl flex-col gap-3 overflow-hidden px-3 py-3 sm:px-4">
         <input type="hidden" name="name" value={name} />
         <input type="hidden" name="slug" value={slug} />
         <input type="hidden" name="businessType" value={selectedPreset.value} />
@@ -722,8 +803,14 @@ export function RestaurantOnboardingFlow({
             {step === 0 ? (
               <>
                 <StepHeader eyebrow="Bước 1" title="Thông tin quán" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-5">
-                  <div className="grid content-start gap-4">
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <StepSupportPanel step={0}>
+                    <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
+                    <SupportLine label="Loại hình" value={selectedPreset.label} active />
+                    <SupportLine label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
+                    <SupportLine label="GPS" value={hasPinnedLocation ? "Đã ghim" : "Có thể chỉnh sau"} active={hasPinnedLocation} />
+                  </StepSupportPanel>
+                  <div className="grid min-w-0 content-start gap-4">
                     <label className="grid gap-2 text-sm font-black">
                       Tên quán
                       <input value={name} onChange={(event) => setName(event.target.value)} className={fieldClass} placeholder="Nhập tên quán" />
@@ -877,8 +964,14 @@ export function RestaurantOnboardingFlow({
             {step === 1 ? (
               <>
                 <StepHeader eyebrow="Bước 2" title="Chọn gói" />
-                <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
-                  <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <StepSupportPanel step={1}>
+                    <SupportLine label="Đang chọn" value={selectedPlan?.name ?? "Chưa chọn"} active={Boolean(selectedPlan)} />
+                    <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
+                    <SupportLine label="Chi phí" value={selectedPlan ? formatVnd(selectedPlan.monthly_price) : "-"} active={Boolean(selectedPlan)} />
+                    <SupportLine label="Bàn khởi tạo" value={`${tableCount} bàn`} active />
+                  </StepSupportPanel>
+                  <div className="grid min-w-0 content-start gap-3 lg:grid-cols-2">
                     {plans.map((plan) => {
                       const active = planCode === plan.code;
                       return (
@@ -924,33 +1017,48 @@ export function RestaurantOnboardingFlow({
             {step === 2 ? (
               <>
                 <StepHeader eyebrow="Bước 3" title="Kiểm tra" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-5">
-                  <div className={`rounded-lg border ${sectionLine} bg-white p-4`}>
-                    <div className="flex items-center justify-between text-sm font-black">
-                      <span>Tiến độ hoàn tất</span>
-                      <span className="text-[#0F4D3A]">{setupProgress}%</span>
-                    </div>
-                    <div className="mt-3 h-1.5 rounded-full bg-[#eef7f2]">
-                      <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
-                    </div>
-                    <p className="mt-3 text-sm font-bold text-[#667085]">{setupDoneCount}/{setupTasks.length} mục sẵn sàng</p>
-                  </div>
-                  <div className={`divide-y ${sectionLine} border-y ${sectionLine}`}>
-                    {setupTasks.map((item) => (
-                      <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm font-black">
-                        <span className="flex items-center gap-3">
-                          {item.done ? <CheckCircle2 className="h-5 w-5 text-[#0F4D3A]" /> : <span className="h-5 w-5 rounded-full border border-[#98a2b3]" />}
-                          <span>{item.label}</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => advanceTo(item.targetStep)}
-                          className={item.done ? "text-[#0F4D3A]" : "text-[#98a2b3] hover:text-[#0F4D3A]"}
-                        >
-                          {item.done ? "Đã áp dụng" : "Mở"}
-                        </button>
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <StepSupportPanel step={2}>
+                    <div className="col-span-2 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
+                      <div className="flex items-center justify-between text-xs font-black">
+                        <span className="text-[#667085]">Tiến độ</span>
+                        <span className="text-[#0F4D3A]">{setupProgress}%</span>
                       </div>
-                    ))}
+                      <div className="mt-2 h-1.5 rounded-full bg-[#eef7f2]">
+                        <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
+                      </div>
+                    </div>
+                    <SupportLine label="Sẵn sàng" value={`${setupDoneCount}/${setupTasks.length}`} active={setupDoneCount === setupTasks.length} />
+                    <SupportLine label="Mở quán" value={canSubmitOnboarding ? "Có thể tạo" : "Cần menu"} active={canSubmitOnboarding} />
+                  </StepSupportPanel>
+                  <div className="grid min-w-0 content-start gap-4">
+                    <div className={`rounded-lg border ${sectionLine} bg-white p-4`}>
+                      <div className="flex items-center justify-between text-sm font-black">
+                        <span>Tiến độ hoàn tất</span>
+                        <span className="text-[#0F4D3A]">{setupProgress}%</span>
+                      </div>
+                      <div className="mt-3 h-1.5 rounded-full bg-[#eef7f2]">
+                        <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
+                      </div>
+                      <p className="mt-3 text-sm font-bold text-[#667085]">{setupDoneCount}/{setupTasks.length} mục sẵn sàng</p>
+                    </div>
+                    <div className={`divide-y ${sectionLine} border-y ${sectionLine}`}>
+                      {setupTasks.map((item) => (
+                        <div key={item.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3 text-sm font-black">
+                          <span className="flex items-center gap-3">
+                            {item.done ? <CheckCircle2 className="h-5 w-5 text-[#0F4D3A]" /> : <span className="h-5 w-5 rounded-full border border-[#98a2b3]" />}
+                            <span>{item.label}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => advanceTo(item.targetStep)}
+                            className={`min-h-11 rounded-md px-3 ${item.done ? "text-[#0F4D3A]" : "text-[#98a2b3] hover:text-[#0F4D3A]"}`}
+                          >
+                            {item.done ? "Đã áp dụng" : "Mở"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </>
@@ -959,12 +1067,12 @@ export function RestaurantOnboardingFlow({
             {step === 3 ? (
               <>
                 <StepHeader eyebrow="Bước 4" title="Bàn & QR" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_220px]">
-                  <div>
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
+                      <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
                       <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
-                      <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))} className={`h-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
+                      <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
                       <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
                         {selectedPlan?.name ?? planCode}
                       </span>
@@ -979,14 +1087,19 @@ export function RestaurantOnboardingFlow({
                       ))}
                     </div>
                   </div>
-                  <aside className={`rounded-lg border ${sectionLine} bg-white p-4`}>
-                    <div className="grid place-items-center">
-                      <div className="grid h-32 w-32 place-items-center rounded-md border border-[#d8dee9] bg-white">
-                        <QrCode className="h-20 w-20 text-[#111827]" />
+                  <StepSupportPanel step={3}>
+                    <SupportLine label="Tổng bàn" value={`${tableCount}`} active />
+                    <SupportLine label="QR mẫu" value="Sẵn sàng" active />
+                    <div className="col-span-2 flex items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
+                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-[#d8dee9] bg-white">
+                        <QrCode className="h-8 w-8 text-[#111827]" />
                       </div>
-                      <p className="mt-3 text-sm font-black text-[#0F4D3A]">{name || "LogiVN"} QR</p>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-black text-[#111827]">{name || "LogiVN"} QR</p>
+                        <p className="mt-0.5 text-xs font-bold text-[#667085]">In sau khi tạo quán</p>
+                      </div>
                     </div>
-                  </aside>
+                  </StepSupportPanel>
                 </div>
               </>
             ) : null}
@@ -994,8 +1107,29 @@ export function RestaurantOnboardingFlow({
             {step === 4 ? (
               <>
                 <StepHeader eyebrow="Bước 5" title="Menu" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-5">
-                  <div className={`grid gap-4 rounded-lg border ${sectionLine} bg-white p-4`}>
+                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                  <StepSupportPanel step={4}>
+                    <SupportLine label="Món đầu" value={shortText(itemName)} active={Boolean(itemName.trim())} />
+                    <SupportLine label="Menu quét" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : "Tuỳ chọn"} active={confirmedMenuItems.length > 0} />
+                    <SupportLine label="Trạng thái" value={canSubmitOnboarding ? "Có thể tạo" : "Cần món"} active={canSubmitOnboarding} />
+                    <div className="col-span-2 hidden items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 sm:flex lg:col-span-1">
+                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-[#d8dee9] bg-white">
+                        <Image
+                          src="/onboarding/flow/launch-dashboard.png"
+                          alt="Minh hoạ dashboard sẵn sàng vận hành"
+                          fill
+                          sizes="48px"
+                          className="object-cover"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-black text-[#111827]">Dashboard</p>
+                        <p className="mt-0.5 text-xs font-bold text-[#667085]">Mở sau khi hoàn tất</p>
+                      </div>
+                    </div>
+                  </StepSupportPanel>
+                  <div className="grid min-w-0 content-start gap-4">
+                    <div className={`grid gap-4 rounded-lg border ${sectionLine} bg-white p-4`}>
                     <label className="grid gap-2 text-sm font-black">
                       Tên món
                       <input value={itemName} onChange={(event) => setItemName(event.target.value)} className={fieldClass} placeholder="Cà phê sữa đá" />
@@ -1095,8 +1229,9 @@ export function RestaurantOnboardingFlow({
                         </p>
                       ) : null}
                     </details>
+                    </div>
+                    {state?.error ? <p className="rounded-md border border-[#F28C28]/30 bg-[#fff7ed] p-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p> : null}
                   </div>
-                  {state?.error ? <p className="rounded-md border border-[#F28C28]/30 bg-[#fff7ed] p-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p> : null}
                 </div>
               </>
             ) : null}
