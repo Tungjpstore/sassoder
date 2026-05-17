@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   buildDeliveryQuoteFingerprint,
   dineInCheckoutReducer,
+  formatDeliveryQuoteUpdatedAt,
   remoteCheckoutReducer,
+  resolveDeliveryQuoteCustomerInsight,
   resolveDeliveryQuoteCheckoutState,
   validateRemoteCheckoutBasics,
   type DineInCheckoutScreen,
@@ -173,6 +175,55 @@ test("remote checkout quote state returns fresh delivery quote errors", () => {
   assert.equal(state.fresh, true);
   assert.equal(state.accepted, false);
   assert.equal(state.message, "Ngoài vùng giao hàng.");
+});
+
+test("remote checkout summarizes accepted delivery quote quality for customers", () => {
+  const strong = resolveDeliveryQuoteCustomerInsight({
+    accepted: true,
+    distanceKm: 2.2,
+    etaMinutes: 18,
+    routeProvider: "goong",
+    confidence: "high",
+    addressQualitySnapshot: { level: "high", score: 92, warnings: [] },
+    deliveryAreaSnapshot: { status: "inside_custom_area" }
+  });
+  const estimated = resolveDeliveryQuoteCustomerInsight({
+    accepted: true,
+    distanceKm: 2.2,
+    etaMinutes: 18,
+    routeProvider: "haversine",
+    confidence: "low",
+    isEstimated: true,
+    addressQualitySnapshot: { level: "low", score: 42, warnings: ["Thiếu số nhà hoặc số hẻm."] }
+  });
+
+  assert.equal(strong.tone, "green");
+  assert.equal(strong.badges.includes("2.2 km"), true);
+  assert.equal(estimated.tone, "yellow");
+  assert.equal(estimated.detail, "Thiếu số nhà hoặc số hẻm.");
+});
+
+test("remote checkout summarizes blocked delivery zones", () => {
+  const blocked = resolveDeliveryQuoteCustomerInsight({
+    accepted: false,
+    deliveryAreaSnapshot: { status: "excluded", matchedExclusionName: "Chợ đêm" },
+    addressQualitySnapshot: { level: "medium", score: 62, warnings: ["Thiếu phường/xã."] }
+  });
+  const manual = resolveDeliveryQuoteCustomerInsight({
+    accepted: false,
+    deliveryAreaSnapshot: { status: "outside_requires_confirmation" }
+  });
+
+  assert.equal(blocked.tone, "red");
+  assert.equal(blocked.title, "Khu vực không nhận giao");
+  assert.equal(manual.tone, "yellow");
+});
+
+test("remote checkout formats quote freshness copy", () => {
+  assert.equal(formatDeliveryQuoteUpdatedAt(null), null);
+  assert.equal(formatDeliveryQuoteUpdatedAt(1_000, 8_000), "vừa cập nhật");
+  assert.equal(formatDeliveryQuoteUpdatedAt(1_000, 25_000), "24s trước");
+  assert.equal(formatDeliveryQuoteUpdatedAt(1_000, 125_000), "2 phút trước");
 });
 
 test("dine-in checkout restores existing order screens from payment state", () => {

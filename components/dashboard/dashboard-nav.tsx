@@ -8,14 +8,21 @@ import {
   BrainCircuit,
   CalendarCheck,
   ChefHat,
+  FileCheck2,
   CreditCard,
   Gift,
+  GitBranch,
+  Headphones,
+  ClipboardCheck,
   LayoutDashboard,
   ListOrdered,
   Menu,
   QrCode,
+  Rocket,
+  Search,
   Settings,
   ShoppingBag,
+  TrendingUp,
   UserRound,
   Warehouse,
   X,
@@ -42,6 +49,13 @@ const navGroups: NavGroup[] = [
     links: [
       { href: "/dashboard", label: "Ca bán hôm nay", icon: LayoutDashboard },
       { href: "/dashboard/ai-ops", label: "AI Ops", icon: BrainCircuit },
+      { href: "/dashboard/ai-control", label: "AI Control", icon: Settings },
+      { href: "/dashboard/ai-execution", label: "AI Execution", icon: ClipboardCheck },
+      { href: "/dashboard/ai-apply", label: "AI Apply", icon: FileCheck2 },
+      { href: "/dashboard/ai-production", label: "AI Production", icon: Rocket },
+      { href: "/dashboard/ai-automation", label: "AI Automation", icon: GitBranch },
+      { href: "/dashboard/ai-support", label: "AI Support", icon: Headphones },
+      { href: "/dashboard/ai-menu", label: "AI Menu", icon: ChefHat },
     ],
   },
   {
@@ -61,6 +75,7 @@ const navGroups: NavGroup[] = [
       { href: "/dashboard/online", label: "Đặt online", icon: ShoppingBag },
       { href: "/dashboard/reservations", label: "Đặt bàn", icon: CalendarCheck },
       { href: "/dashboard/promotions", label: "Khuyến mãi", icon: Gift },
+      { href: "/dashboard/ai-growth", label: "AI Growth", icon: TrendingUp },
     ],
   },
   {
@@ -160,7 +175,28 @@ export function AdminDesktopNav() {
 export function AdminMobileNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const activeGroupId = useMemo(() => navGroups.find((group) => group.links.some((link) => isActive(pathname, link.href)))?.id ?? navGroups[0].id, [pathname]);
+  const [selectedGroupId, setSelectedGroupId] = useState(activeGroupId);
+  const [query, setQuery] = useState("");
   const moreActive = useMemo(() => mobileMoreLinks.some((link) => isActive(pathname, link.href)), [pathname]);
+  const normalizedQuery = query.trim().toLocaleLowerCase("vi-VN");
+  const visibleGroups = useMemo(() => {
+    if (!normalizedQuery) return navGroups;
+    return navGroups
+      .map((group) => ({
+        ...group,
+        links: group.links.filter((link) => `${group.title} ${link.label}`.toLocaleLowerCase("vi-VN").includes(normalizedQuery))
+      }))
+      .filter((group) => group.links.length > 0);
+  }, [normalizedQuery]);
+
+  useEffect(() => {
+    if (!open) return;
+    queueMicrotask(() => {
+      setSelectedGroupId(activeGroupId);
+      setQuery("");
+    });
+  }, [activeGroupId, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -288,15 +324,27 @@ export function AdminMobileNav() {
                   );
                 })}
               </div>
+              <label className="relative mt-2 block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--outline)]" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Tìm chức năng..."
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] pl-10 pr-3 text-sm font-semibold text-[var(--foreground)] outline-none transition focus:border-[var(--primary)] focus:bg-[var(--surface)] focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </label>
             </div>
             <div className="hide-scrollbar flex shrink-0 gap-1.5 overflow-x-auto border-b border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
-              {navGroups.map((group) => {
-                const active = group.links.some((link) => isActive(pathname, link.href));
+              {visibleGroups.map((group) => {
+                const active = selectedGroupId === group.id || group.links.some((link) => isActive(pathname, link.href));
                 return (
                   <button
                     key={group.id}
                     type="button"
-                    onClick={() => document.getElementById(group.id)?.scrollIntoView({ block: "start" })}
+                    onClick={() => {
+                      setSelectedGroupId(group.id);
+                      document.getElementById(group.id)?.scrollIntoView({ block: "start" });
+                    }}
                     className={cn(
                       "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition",
                       active
@@ -313,7 +361,16 @@ export function AdminMobileNav() {
               })}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-              {navGroups.map((group) => (
+              {visibleGroups.length === 0 ? (
+                <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-center">
+                  <div>
+                    <Search className="mx-auto h-5 w-5 text-[var(--primary)]" />
+                    <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">Không thấy chức năng phù hợp</p>
+                    <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">Thử tìm theo “đơn”, “bàn”, “kho”, “cài đặt”.</p>
+                  </div>
+                </div>
+              ) : null}
+              {visibleGroups.map((group) => (
                 <div key={group.title} id={group.id} className="scroll-mt-2 py-1">
                   <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase text-[var(--muted-foreground)]">
                     {group.title}

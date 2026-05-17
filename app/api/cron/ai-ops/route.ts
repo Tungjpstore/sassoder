@@ -21,13 +21,15 @@ export async function GET(request: Request) {
     const emailMorningBrief = emailParam === "true" ? true : emailParam === "false" ? false : undefined;
     const branchesParam = url.searchParams.get("branches");
     const branchInsights = branchesParam === "true" ? true : branchesParam === "false" ? false : undefined;
+    const inventoryParam = url.searchParams.get("inventory");
+    const inventoryJobs = inventoryParam === "true" ? true : inventoryParam === "false" ? false : undefined;
     const maxBranchesPerRestaurant = Number(url.searchParams.get("branchLimit") ?? url.searchParams.get("maxBranches") ?? "8");
 
     return ok(
       await runLoggedCron({
         request,
         jobKey: "ai-ops",
-        metadata: { intent, maxRestaurants, morningBrief, emailMorningBrief, branchInsights, maxBranchesPerRestaurant },
+        metadata: { intent, maxRestaurants, morningBrief, emailMorningBrief, branchInsights, inventoryJobs, maxBranchesPerRestaurant },
         run: () =>
           runAiOpsCron({
             maxRestaurants,
@@ -35,6 +37,7 @@ export async function GET(request: Request) {
             morningBrief,
             emailMorningBrief,
             branchInsights,
+            inventoryJobs,
             maxBranchesPerRestaurant
           }),
         statusFromResult: (result) =>
@@ -43,7 +46,9 @@ export async function GET(request: Request) {
           result.morningBriefs.failed > 0 ||
           result.morningBriefs.schemaMissing > 0 ||
           result.branchInsights.failed > 0 ||
-          result.branchInsights.schemaMissing > 0
+          result.branchInsights.schemaMissing > 0 ||
+          result.inventoryJobs.failed > 0 ||
+          result.inventoryJobs.schemaMissing > 0
             ? "warn"
             : "success",
         summaryFromResult: (result) => ({
@@ -63,7 +68,12 @@ export async function GET(request: Request) {
           branchInsightsPersisted: result.branchInsights.persisted,
           branchInsightsSkipped: result.branchInsights.skipped,
           branchInsightsFailed: result.branchInsights.failed,
-          branchInsightsSchemaMissing: result.branchInsights.schemaMissing
+          branchInsightsSchemaMissing: result.branchInsights.schemaMissing,
+          inventoryJobsGenerated: result.inventoryJobs.generated,
+          inventoryJobsPersisted: result.inventoryJobs.persisted,
+          inventoryJobsSkipped: result.inventoryJobs.skipped,
+          inventoryJobsFailed: result.inventoryJobs.failed,
+          inventoryJobsSchemaMissing: result.inventoryJobs.schemaMissing
         })
       })
     );

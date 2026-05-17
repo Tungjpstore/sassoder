@@ -16,7 +16,6 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hashStaffPin, staffPinLookupHash } from "@/features/staff/services/staff-pin-service";
 import { searchAddress } from "@/services/maps/geocoding/geocoder-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
-import { createInitialRestaurantSubscription } from "@/services/subscription-service";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
 import type { Json } from "@/types/supabase";
@@ -1430,14 +1429,6 @@ const categoryTemplates: Record<BusinessType, MenuTemplate> = {
   ]
 };
 
-type SeedMenuItem = {
-  restaurant_id: string;
-  category_id: string;
-  name: string;
-  price: number;
-  is_available: boolean;
-};
-
 function menuItemSeedKey(name: string) {
   return name.trim().normalize("NFC").toLowerCase();
 }
@@ -1530,78 +1521,97 @@ export async function completeRestaurantOnboarding(input: {
   const brandDescription = input.brandDescription?.trim();
   const brandSlogan = input.brandSlogan?.trim();
   const primaryBranchLocation = await resolvePrimaryBranchLocation(input);
-
-  const { data: restaurant, error: restaurantError } = await supabase
-    .from("restaurants")
-    .insert({
-      name: input.name,
-      slug,
-      business_type: input.businessType,
-      table_count: input.tableCount,
-      contact_email: input.email.toLowerCase(),
-      address: input.address || null,
-      store_lat: input.storeLat ?? null,
-      store_lng: input.storeLng ?? null,
-      hotline: input.hotline || null,
-      description: brandDescription || (customBusinessType ? `Loại hình: ${customBusinessType}` : null),
-      logo_url: input.logoUrl || null,
-      brand_primary: "#0F4D3A",
-      brand_accent: "#F28C28",
-      receipt_footer: brandSlogan || null,
-      bank_code: input.bankCode || null,
-      bank_account: input.bankAccount || null,
-      bank_account_name: input.bankAccountName || null
-    })
-    .select()
-    .single();
-
-  if (restaurantError || !restaurant) {
-    throw new AppError(restaurantError?.message ?? "Không tạo được quán", 400);
-  }
-
-  let onboardedRestaurant = restaurant;
-
-  const { error: profileError } = await supabase.from("users").insert({
-    id: input.userId,
-    email: input.email.toLowerCase(),
-    role: "ADMIN",
-    restaurant_id: restaurant.id
+  const requestedInitialMenuItems = [
+    ...(input.initialMenuItems ?? []),
+    ...(input.initialMenuItem ? [input.initialMenuItem] : [])
+  ];
+  const categorySeedNames = new Set<string>();
+  const categories = categoryTemplates[input.businessType].map((category) => {
+    categorySeedNames.add(menuItemSeedKey(category.name));
+    return { name: category.name };
   });
 
-  if (profileError) {
-    const existingAfterProfileConflict = await getRestaurantRowForUser(input.userId, input.email);
-    await supabase.from("restaurants").delete().eq("id", restaurant.id);
-    if (existingAfterProfileConflict) return existingAfterProfileConflict;
-    throw new AppError(profileError.message, 400);
+  for (const initialMenuItem of requestedInitialMenuItems) {
+    const categoryName = initialMenuItem.categoryName?.trim();
+    if (!categoryName) continue;
+    const key = menuItemSeedKey(categoryName);
+    if (!key || categorySeedNames.has(key)) continue;
+    categorySeedNames.add(key);
+    categories.push({ name: categoryName });
   }
 
-  let primaryBranchId: string | null = null;
-  if (primaryBranchLocation) {
-    const { data: primaryBranch, error: primaryBranchError } = await (supabase as any)
-      .from("store_branches")
-      .insert({
-        restaurant_id: restaurant.id,
-        name: "Chi nhánh chính",
-        address: primaryBranchLocation.address,
-        latitude: primaryBranchLocation.latitude,
-        longitude: primaryBranchLocation.longitude,
-        is_primary: true,
-        is_active: true,
-        metadata: {
-          createdFrom: "onboarding",
-          locationSource: primaryBranchLocation.source
-        }
-      })
-      .select("id")
-      .single();
+  const menuItems: Array<{ name: string; price: number; categoryName?: string }> = [];
+  const seenMenuItemNames = new Set<string>();
 
-    if (primaryBranchError || !primaryBranch?.id) {
-      await supabase.from("restaurants").delete().eq("id", restaurant.id);
-      throw new AppError(primaryBranchError?.message ?? "Không tạo được chi nhánh đầu tiên", 400);
+  function appendMenuItem(item: { name: string; price: number; categoryName?: string }) {
+    const key = menuItemSeedKey(item.name);
+    if (!key || seenMenuItemNames.has(key)) return;
+    seenMenuItemNames.add(key);
+    menuItems.push({
+      name: item.name.trim(),
+      price: item.price,
+      categoryName: item.categoryName?.trim() || undefined
+    });
+  }
+
+  for (const initialMenuItem of requestedInitialMenuItems) {
+    if (!initialMenuItem.name || !Number.isFinite(initialMenuItem.price) || initialMenuItem.price <= 0) continue;
+    appendMenuItem({
+      name: initialMenuItem.name,
+      price: initialMenuItem.price,
+      categoryName: initialMenuItem.categoryName
+    });
+  }
+
+  for (const category of categoryTemplates[input.businessType]) {
+    for (const item of category.items) {
+      appendMenuItem({
+        name: item.name,
+        price: item.price,
+        categoryName: category.name
+      });
     }
-
-    primaryBranchId = primaryBranch.id;
   }
+
+  const { data: rpcRestaurant, error: onboardingError } = await (supabase as any).rpc("create_restaurant_onboarding_core", {
+    p_user_id: input.userId,
+    p_owner_email: input.email.toLowerCase(),
+    p_name: input.name,
+    p_slug: slug,
+    p_business_type: input.businessType,
+    p_table_count: input.tableCount,
+    p_address: input.address || null,
+    p_store_lat: input.storeLat ?? null,
+    p_store_lng: input.storeLng ?? null,
+    p_hotline: input.hotline || null,
+    p_description: brandDescription || (customBusinessType ? `Loại hình: ${customBusinessType}` : null),
+    p_logo_url: input.logoUrl || null,
+    p_receipt_footer: brandSlogan || null,
+    p_bank_code: input.bankCode || null,
+    p_bank_account: input.bankAccount || null,
+    p_bank_account_name: input.bankAccountName || null,
+    p_primary_branch: primaryBranchLocation
+      ? {
+          name: "Chi nhánh chính",
+          address: primaryBranchLocation.address,
+          latitude: primaryBranchLocation.latitude,
+          longitude: primaryBranchLocation.longitude,
+          source: primaryBranchLocation.source
+        }
+      : null,
+    p_categories: categories,
+    p_menu_items: menuItems,
+    p_plan_code: input.planCode === "premium" ? "premium" : "pro"
+  });
+
+  if (onboardingError || !rpcRestaurant) {
+    const existingAfterConflict = await getRestaurantRowForUser(input.userId, input.email);
+    if (existingAfterConflict) return existingAfterConflict;
+    throw new AppError(onboardingError?.message ?? "Không tạo được dữ liệu khởi tạo quán", 400);
+  }
+
+  const restaurant = (Array.isArray(rpcRestaurant) ? rpcRestaurant[0] : rpcRestaurant) as RestaurantRow;
+  let onboardedRestaurant = restaurant;
 
   if (input.logoFile) {
     try {
@@ -1637,107 +1647,6 @@ export async function completeRestaurantOnboarding(input: {
     } catch (error) {
       console.error("Failed to persist onboarding AI logo", error);
     }
-  }
-
-  const requestedInitialMenuItems = [
-    ...(input.initialMenuItems ?? []),
-    ...(input.initialMenuItem ? [input.initialMenuItem] : [])
-  ];
-  const categorySeedNames = new Set<string>();
-  const categories = categoryTemplates[input.businessType].map((category) => {
-    categorySeedNames.add(menuItemSeedKey(category.name));
-    return {
-      restaurant_id: restaurant.id,
-      name: category.name
-    };
-  });
-
-  for (const initialMenuItem of requestedInitialMenuItems) {
-    const categoryName = initialMenuItem.categoryName?.trim();
-    if (!categoryName) continue;
-    const key = menuItemSeedKey(categoryName);
-    if (!key || categorySeedNames.has(key)) continue;
-    categorySeedNames.add(key);
-    categories.push({
-      restaurant_id: restaurant.id,
-      name: categoryName
-    });
-  }
-
-  const tables = Array.from({ length: input.tableCount }, (_, index) => ({
-    restaurant_id: restaurant.id,
-    name: `Bàn ${index + 1}`,
-    ...(primaryBranchId ? { branch_id: primaryBranchId } : {})
-  }));
-
-  const [{ error: tableError }, { data: insertedCategories, error: categoryError }] = await Promise.all([
-    (supabase as any).from("tables").insert(tables),
-    supabase.from("menu_categories").insert(categories).select("id,name")
-  ]);
-
-  if (tableError || categoryError) {
-    await supabase.from("restaurants").delete().eq("id", restaurant.id);
-    throw new AppError(tableError?.message ?? categoryError?.message ?? "Không tạo được dữ liệu khởi tạo", 400);
-  }
-
-  const categoryByName = new Map((insertedCategories ?? []).map((category) => [category.name, category.id]));
-  const menuItems: SeedMenuItem[] = [];
-  const seenMenuItemNames = new Set<string>();
-
-  function appendMenuItem(item: SeedMenuItem) {
-    const key = menuItemSeedKey(item.name);
-    if (!key || seenMenuItemNames.has(key)) return;
-    seenMenuItemNames.add(key);
-    menuItems.push({ ...item, name: item.name.trim() });
-  }
-
-  for (const initialMenuItem of requestedInitialMenuItems) {
-    if (!initialMenuItem.name || !Number.isFinite(initialMenuItem.price) || initialMenuItem.price <= 0) continue;
-    const fallbackCategoryId = insertedCategories?.[0]?.id;
-    const categoryId = categoryByName.get(initialMenuItem.categoryName || "") ?? fallbackCategoryId;
-    if (categoryId) {
-      appendMenuItem({
-        restaurant_id: restaurant.id,
-        category_id: categoryId,
-        name: initialMenuItem.name,
-        price: initialMenuItem.price,
-        is_available: true
-      });
-    }
-  }
-
-  for (const category of categoryTemplates[input.businessType]) {
-    const categoryId = categoryByName.get(category.name);
-    if (!categoryId) continue;
-
-    for (const item of category.items) {
-      appendMenuItem({
-        restaurant_id: restaurant.id,
-        category_id: categoryId,
-        name: item.name,
-        price: item.price,
-        is_available: true
-      });
-    }
-  }
-
-  if (menuItems.length > 0) {
-    const { error: menuItemError } = await supabase.from("menu_items").insert(menuItems);
-    if (menuItemError) {
-      await supabase.from("restaurants").delete().eq("id", restaurant.id);
-      throw new AppError(menuItemError.message, 400);
-    }
-  }
-
-  try {
-    await createInitialRestaurantSubscription({
-      restaurantId: restaurant.id,
-      ownerUserId: input.userId,
-      ownerEmail: input.email,
-      planCode: input.planCode
-    });
-  } catch (error) {
-    console.error("Failed to create initial restaurant subscription", error);
   }
 
   return onboardedRestaurant;

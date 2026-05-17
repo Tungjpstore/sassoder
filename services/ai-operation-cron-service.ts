@@ -1,8 +1,10 @@
 import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { buildAiAutomationWorkflows } from "@/lib/ai/automation-workflows";
 import { getOwnerOperationalSnapshot } from "@/services/ai/runtime";
 import { generateAiBranchOperationInsightsForRestaurant } from "@/services/ai-branch-operation-insights-service";
+import { persistAiAutomationRuns } from "@/services/ai-automation-run-service";
 import { createAiMorningBriefRun } from "@/services/ai-morning-brief-service";
 import { persistAiOperationInsightsDeck } from "@/services/ai-operation-insights-service";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
@@ -20,6 +22,7 @@ export type RunAiOpsCronInput = {
   morningBrief?: boolean;
   emailMorningBrief?: boolean;
   branchInsights?: boolean;
+  inventoryJobs?: boolean;
   maxBranchesPerRestaurant?: number;
 };
 
@@ -39,6 +42,13 @@ export type RunAiOpsCronResult = {
   };
   branchInsights: {
     scanned: number;
+    generated: number;
+    persisted: number;
+    skipped: number;
+    failed: number;
+    schemaMissing: number;
+  };
+  inventoryJobs: {
     generated: number;
     persisted: number;
     skipped: number;
@@ -87,6 +97,7 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
   const shouldCreateMorningBrief = input.morningBrief ?? intent === "overview";
   const emailMorningBrief = input.emailMorningBrief;
   const shouldGenerateBranchInsights = input.branchInsights ?? intent === "overview";
+  const shouldGenerateInventoryJobs = input.inventoryJobs ?? intent === "overview";
 
   const restaurantsResult = await supabase
     .from("restaurants")
@@ -114,6 +125,13 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
     },
     branchInsights: {
       scanned: 0,
+      generated: 0,
+      persisted: 0,
+      skipped: 0,
+      failed: 0,
+      schemaMissing: 0
+    },
+    inventoryJobs: {
       generated: 0,
       persisted: 0,
       skipped: 0,
@@ -187,6 +205,35 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
         );
       }
 
+      if (shouldGenerateInventoryJobs) {
+        try {
+          const inventoryWorkflows = buildAiAutomationWorkflows({ snapshot, limit: 8 }).filter((workflow) => workflow.domain === "inventory");
+          if (inventoryWorkflows.length === 0) {
+            result.inventoryJobs.skipped += 1;
+          } else {
+            result.inventoryJobs.generated += inventoryWorkflows.length;
+            const automationResult = await persistAiAutomationRuns({
+              restaurantId: restaurant.id,
+              workflows: inventoryWorkflows,
+              generatedAt: deck.generatedAt
+            });
+            if (automationResult.schemaReady) result.inventoryJobs.persisted += automationResult.workflows.length;
+            else result.inventoryJobs.schemaMissing += 1;
+          }
+        } catch (error) {
+          result.inventoryJobs.failed += 1;
+          writeOperationalEvent({
+            area: "ai",
+            event: "ai_inventory_jobs_failed",
+            restaurantId: restaurant.id,
+            status: "warn",
+            metadata: {
+              error: error instanceof Error ? error.message : "Unknown inventory AI job failure"
+            }
+          });
+        }
+      }
+
       result.primaryInsights.push({
         restaurantId: restaurant.id,
         restaurantName: restaurant.name,
@@ -217,7 +264,8 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
       failed: result.failed,
       schemaMissing: result.schemaMissing,
       morningBriefs: result.morningBriefs,
-      branchInsights: result.branchInsights
+      branchInsights: result.branchInsights,
+      inventoryJobs: result.inventoryJobs
     }
   });
 

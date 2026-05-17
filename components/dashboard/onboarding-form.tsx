@@ -53,7 +53,7 @@ const mapPreviewImage =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuBB8RZcre6xll9lfda0im8Aqid9Zje7w7-YdIQODt5HDtsUTVxDLSC4jm0DiKxgI0Xso2Tcyv3fLjAovZzV-hJH9Vepfj1X-vTbWGMXg1N0GWhuIcMuztTCxDGFoNkB4sCzFqcJPpQlCC_Ew6CjtZgj6_OB2jj3QvM54WNLfXEl4-Aw_T9DafSohQTm_UqIpDcYHNeDW9qymacOTn3Y1Bw14cCFnKRBpLlmPzo6jNDG_RUWYTJnUVLZPn--zCFl0-fUthJbeDF6DxYd";
 
 type SlugState = "idle" | "checking" | "available" | "taken" | "invalid";
-type RegisterEmailStatus = "idle" | "checking" | "available" | "registered" | "pending_verification" | "invalid" | "rate_limited" | "error";
+type RegisterEmailStatus = "idle" | "checking" | "available" | "registered" | "pending_verification" | "delivery_unavailable" | "invalid" | "rate_limited" | "error";
 type EmailStatusResponse = {
   email?: string;
   status?: RegisterEmailStatus;
@@ -262,7 +262,13 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
         const payload = (await response.json().catch(() => null)) as EmailStatusResponse | null;
         if (controller.signal.aborted) return;
 
-        if (payload?.status === "available" || payload?.status === "registered" || payload?.status === "pending_verification" || payload?.status === "rate_limited") {
+        if (
+          payload?.status === "available" ||
+          payload?.status === "registered" ||
+          payload?.status === "pending_verification" ||
+          payload?.status === "delivery_unavailable" ||
+          payload?.status === "rate_limited"
+        ) {
           setRegisterEmailCheck({ email: checkedEmail, status: payload.status });
           return;
         }
@@ -404,7 +410,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
           </aside>
 
           <section className="flex min-h-[calc(100vh-2rem)] items-center justify-center">
-            <div className="auth-zen-card auth-fade-in relative w-full max-w-[430px] overflow-hidden rounded-[28px] border border-[#eadfce] bg-[#fffaf2]/92 px-8 py-9 shadow-[0_24px_70px_rgba(52,41,27,0.16)] backdrop-blur-xl sm:px-9">
+            <div className="auth-zen-card auth-fade-in relative w-full max-w-[430px] overflow-hidden rounded-[24px] border border-[#eadfce] bg-[#fffaf2]/92 px-5 py-7 shadow-[0_24px_70px_rgba(52,41,27,0.16)] backdrop-blur-xl sm:rounded-[28px] sm:px-9 sm:py-9">
               <div className="auth-bamboo" />
               <div className="relative z-10">
                 <div className="mb-7 text-center">
@@ -1210,6 +1216,20 @@ function RegisterEmailStatusCard({ status, email }: { status: RegisterEmailStatu
       <div role="status" aria-live="polite" className="flex items-center gap-2 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary-strong)]">
         <CheckCircle2 className="h-4 w-4" />
         Email này có thể dùng để đăng ký quán mới.
+      </div>
+    );
+  }
+
+  if (status === "delivery_unavailable") {
+    return (
+      <div role="status" aria-live="polite" className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 p-4 text-sm">
+        <div className="flex gap-2 font-semibold text-[var(--accent-strong)]">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Email hợp lệ, nhưng hệ thống gửi mã xác thực chưa sẵn sàng.</span>
+        </div>
+        <p className="mt-2 text-xs font-semibold text-[var(--muted-foreground)]">
+          Vui lòng cấu hình Resend trước khi đăng ký bằng email.
+        </p>
       </div>
     );
   }

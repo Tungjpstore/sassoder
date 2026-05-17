@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculatePublicPromotionDiscount,
+  evaluatePublicPromotion,
   findPublicPromotionByCode,
   normalizePromotionCode,
+  promotionEligibilityMessage,
   promotionDescription
 } from "./promotion-preview";
 import { formatVnd } from "@/lib/money";
@@ -17,6 +19,9 @@ const fixedPromotion: PublicPromotion = {
   discountType: "FIXED",
   discountValue: 20000,
   minOrderAmount: 80000,
+  totalUsageLimit: null,
+  perCustomerUsageLimit: null,
+  remainingTotalUsage: null,
   startsAt: null,
   endsAt: null
 };
@@ -75,4 +80,32 @@ test("promotion preview applies free delivery campaigns to delivery fee only", (
     0
   );
   assert.equal(promotionDescription(freeDeliveryPromotion), `Miễn phí giao hàng cho đơn từ ${formatVnd(100000)}`);
+});
+
+test("promotion preview explains eligibility state for checkout UX", () => {
+  assert.deepEqual(evaluatePublicPromotion({ itemSubtotal: 90000, deliveryFee: 18000, promotion: freeDeliveryPromotion }), {
+    eligible: false,
+    discountAmount: 0,
+    eligibleAmount: 18000,
+    missingAmount: 10000,
+    reason: "minimum_not_met"
+  });
+  assert.equal(
+    promotionEligibilityMessage({
+      itemSubtotal: 90000,
+      deliveryFee: 18000,
+      promotion: freeDeliveryPromotion,
+      isDeliveryMode: true
+    }),
+    `Cần thêm ${formatVnd(10000)} để dùng mã FREESHIP.`
+  );
+  assert.equal(
+    promotionEligibilityMessage({
+      itemSubtotal: 90000,
+      deliveryFee: 0,
+      promotion: freeDeliveryPromotion,
+      isDeliveryMode: false
+    }),
+    "Mã này chỉ áp dụng cho đơn giao hàng."
+  );
 });

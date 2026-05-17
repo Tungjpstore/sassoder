@@ -20,6 +20,7 @@ import {
   inventorySupplierSchema,
   inventoryTransferRowsSchema,
   inventoryTransferSchema,
+  inventoryTransferWorkflowSchema,
   updateInventoryIngredientSchema
 } from "@/lib/validators";
 import {
@@ -32,6 +33,7 @@ import {
   deactivateInventoryIngredient,
   deleteInventoryRecipeLine,
   importInventoryIntakeRows,
+  processInventoryTransfer,
   receiveInventoryPurchaseOrder,
   recordInventoryMovement,
   refreshInventoryAlerts,
@@ -272,6 +274,24 @@ export async function createInventoryTransferAction(formData: FormData) {
     note: parsed.note || undefined,
     actorUserId: session.userId,
     lines
+  });
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard");
+}
+
+export async function processInventoryTransferAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("inventory_management");
+  const parsed = inventoryTransferWorkflowSchema.parse({
+    transferId: formData.get("transferId"),
+    action: formData.get("action"),
+    note: formData.get("note")
+  });
+
+  await processInventoryTransfer(session.restaurantId, {
+    transferId: parsed.transferId,
+    action: parsed.action,
+    note: parsed.note || undefined,
+    actorUserId: session.userId
   });
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");

@@ -1,5 +1,5 @@
 import { formatVnd } from "@/lib/money";
-import { calculatePromotionDiscountAmount } from "@/lib/promotion-discount";
+import { calculatePromotionDiscountAmount, evaluatePromotionDiscount } from "@/lib/promotion-discount";
 import type { PublicPromotion } from "@/types";
 
 export function normalizePromotionCode(code: string) {
@@ -29,6 +29,47 @@ export function calculatePublicPromotionDiscount(input: {
         }
       : null
   });
+}
+
+export function evaluatePublicPromotion(input: {
+  itemSubtotal: number;
+  deliveryFee?: number;
+  promotion: PublicPromotion | null;
+}) {
+  return evaluatePromotionDiscount({
+    itemSubtotal: input.itemSubtotal,
+    deliveryFee: input.deliveryFee,
+    rule: input.promotion
+      ? {
+          discountScope: input.promotion.discountScope,
+          discountType: input.promotion.discountType,
+          discountValue: input.promotion.discountValue,
+          minOrderAmount: input.promotion.minOrderAmount
+        }
+      : null
+  });
+}
+
+export function promotionEligibilityMessage(input: {
+  promotion: PublicPromotion | null;
+  itemSubtotal: number;
+  deliveryFee?: number;
+  isDeliveryMode?: boolean;
+}) {
+  if (!input.promotion) return "Mã sẽ được kiểm tra khi gửi đơn.";
+
+  const evaluation = evaluatePublicPromotion(input);
+  if (evaluation.eligible) return `Đã tạm giảm ${formatVnd(evaluation.discountAmount)}.`;
+  if (input.promotion.discountScope === "DELIVERY_FEE" && input.isDeliveryMode === false) {
+    return "Mã này chỉ áp dụng cho đơn giao hàng.";
+  }
+  if (evaluation.reason === "minimum_not_met") {
+    return `Cần thêm ${formatVnd(evaluation.missingAmount)} để dùng mã ${input.promotion.code}.`;
+  }
+  if (input.promotion.discountScope === "DELIVERY_FEE") {
+    return "Mã sẽ áp dụng khi phí giao hàng hợp lệ.";
+  }
+  return "Mã hợp lệ nhưng chưa đủ điều kiện áp dụng.";
 }
 
 export function promotionDescription(promotion: PublicPromotion) {

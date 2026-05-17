@@ -41,6 +41,15 @@ MAPS_DB_TELEMETRY_SAMPLE_RATE="0.15"
 MAPS_CACHE_NAMESPACE="logivn:maps:v1"
 MAPS_RATE_LIMIT_REDIS_ENABLED="true"
 MAPS_RATE_LIMIT_NAMESPACE="logivn:maps:rate-limit:v1"
+MAPS_DISABLED_PROVIDERS=""
+MAPS_DISABLED_GEOCODERS=""
+MAPS_DISABLED_ROUTERS=""
+MAPS_DISABLED_GEOCODE_PROVIDERS=""
+MAPS_DISABLED_REVERSE_PROVIDERS=""
+MAPS_DISABLED_ROUTE_PROVIDERS=""
+MAPS_MAX_DAILY_PROVIDER_REQUESTS=""
+MAPS_MAX_DAILY_COST_VND=""
+MAPS_MAX_DAILY_GOONG_ROUTE_REQUESTS=""
 MAPS_ROUTE_GEOMETRY_MAX_POINTS="140"
 MAPS_ROUTE_GEOMETRY_TOLERANCE_DEGREES="0.00005"
 MAPS_GOONG_PLACES_ENABLED="true"
@@ -89,6 +98,7 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - Onboarding cũng dùng cùng map picker để tọa độ quán trở thành source-of-truth ngay từ lúc đăng ký.
   - Chủ quán dùng `DeliveryZoneMapEditor` để vẽ vùng giao hàng trực tiếp trên MapLibre, kéo vertex marker, thêm điểm bằng click map và xem diện tích/khoảng cách tối đa.
   - Các map vận hành hỗ trợ chuyển lớp `Đường / Vệ tinh / Hybrid` để chủ quán kiểm tra mặt tiền, hẻm, cổng vào và vùng giao hàng rõ hơn.
+  - Settings > Đặt món online có `BranchDeliveryControls` để bật/tắt giao hàng, pause khi bếp quá tải, đóng tạm và đặt giờ giao riêng cho từng chi nhánh; panel cũng hiển thị số chi nhánh sẵn sàng nhận giao và cảnh báo thiếu một mốc giờ giao.
 - Customer:
   - Remote order cho khách chọn tỉnh/xã, dùng GPS, tìm địa chỉ, chạm/kéo pin trên bản đồ, rồi tính khoảng cách, ETA và phí ship.
   - Pickup/đến lấy dùng `RestaurantVisitMapCard` để khách xem tuyến đến quán, mở Google Maps/Apple Maps và ước tính ETA.
@@ -98,7 +108,7 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
 - Frontend Map Kit:
   - `components/maps/logivn-marker.ts` chuẩn hóa marker quán/khách/tài xế/GPS để không copy style marker giữa các map.
   - `components/maps/route-preview-layer.ts` chuẩn hóa route GeoJSON layer, fit bounds và fallback polyline cho route preview/tracking.
-  - `components/maps/map-canvas.tsx` và `components/maps/address-search-box.tsx` là primitive nhẹ cho màn hình map mới, giữ backend proxy `/api/maps/*` là nguồn dữ liệu duy nhất.
+  - `components/maps/map-canvas.tsx` và `components/maps/address-search-box.tsx` là primitive nhẹ cho màn hình map mới, giữ backend proxy `/api/maps/*` là nguồn dữ liệu duy nhất. `StoreLocationPicker` và `DeliveryZoneMapEditor` đã dùng `MapCanvas`, marker factory và fit-bounds helper chung.
 - Reservation:
   - Public reservation page dùng `RestaurantVisitMapCard` để khách xem khoảng cách/tuyến đến quán trước khi giữ bàn.
   - Dashboard reservation hiển thị cùng map preview khi chủ quán chia sẻ link/QR đặt bàn.
@@ -123,7 +133,11 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - Quote dùng PostGIS để lọc chi nhánh gần nhất theo geography index, sau đó mới gọi Goong cho 1-2 ứng viên tốt nhất.
   - API `/api/location/nearest-store` cũng dùng PostGIS prefilter rồi route top-N qua routing provider của tenant, không chỉ trả chi nhánh gần nhất theo đường chim bay.
   - Chi nhánh dùng các cột chuẩn trên `store_branches` để tạm dừng giao hàng mà không xóa khỏi hệ thống: `accepting_delivery`, `delivery_paused`, `temporarily_closed`, `delivery_opening_time`, `delivery_closing_time`, `delivery_availability_note`. Các key cũ trong `store_branches.metadata` (`deliveryPaused`, `temporarilyClosed`, `acceptingDelivery=false`, `openingTime`, `closingTime`, `availabilityNote`) vẫn được đọc như fallback/backward-compatible.
+  - Dashboard update các cột availability qua server action `updateBranchDeliveryAvailabilityAction`; quote và nearest-store sẽ tự loại chi nhánh không khả dụng khỏi route-distance selection.
   - Snapshot pricing trong quote lưu `pricingVersion`, free-shipping flag, tier match và multiplier để audit phí ship, debug surge/rainy-day rollout và xử lý tranh chấp.
+  - Quote trả thêm `addressQualitySnapshot` để dashboard/customer flow biết địa chỉ có đủ số nhà, đường, phường/xã, quận/huyện, tọa độ và route confidence hay chưa. Đây là lớp chống lệch điểm giao cho hẻm/ngõ/kiệt ở Việt Nam.
+  - Delivery zone logic được tách thành `services/delivery/delivery-zone-service.ts`: exclusion zone luôn được ưu tiên chặn trước custom polygon, sau đó mới xét outside-area blocked/confirmation/allowed.
+  - `deliveryAreaSnapshot` lưu thêm trạng thái đánh giá vùng giao (`inside_custom_area`, `outside_requires_confirmation`, `outside_blocked`, `excluded`, ...), tên vùng loại trừ nếu match và flag outside custom area.
   - Quote dùng provider theo tenant (`map_geocoding_provider`, `map_routing_provider`) và fallback chain server-side.
   - Geocoding fallback production mặc định là Goong -> Vietmap -> Mapbox -> Nominatim. Goong vẫn là primary cho Việt Nam, Mapbox là lớp cứu hộ khi địa chỉ khó hoặc provider trả kết quả kém chất lượng.
   - Country scope mặc định là Việt Nam qua `MAPS_GEOCODER_COUNTRY_CODES=vn`. Khi cần test tại Nhật có thể bật `vn,jp` để Mapbox/Nominatim fallback xử lý địa chỉ Nhật nhưng vẫn giữ Goong là primary cho Việt Nam.
@@ -131,22 +145,36 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - Route geometry từ provider được simplify trước khi cache/trả về client để giảm payload và render mượt hơn trên Android yếu; chỉnh bằng `MAPS_ROUTE_GEOMETRY_MAX_POINTS`.
   - Order lưu `delivery_quote_snapshot`, `delivery_route_provider`, `delivery_route_confidence`, `delivery_quote_version` để xử lý tranh chấp, analytics và debug provider.
 - Address intelligence:
+  - `services/maps/address-quality-service.ts` phân tích địa chỉ Việt Nam thành số nhà, đường, phường/xã, quận/huyện, tỉnh/thành và alley hint để chấm điểm chất lượng giao hàng.
   - Frontend dùng `/api/maps/autocomplete` khi chủ quán/khách tìm địa chỉ, truyền `sessionToken` theo phiên nhập để Goong Places gom request đúng khuyến nghị.
   - Chỉ khi user chọn một gợi ý, frontend mới gọi `/api/maps/place-detail` để lấy tọa độ chính xác. Nếu provider fallback đã có sẵn tọa độ, client dùng luôn và không gọi detail.
   - Autocomplete cache ngắn hạn theo query + location bias; place detail cache dài hạn theo `placeId` để giảm chi phí Goong.
+- Customer delivery UX:
+  - Remote order checkout dùng `resolveDeliveryQuoteCustomerInsight` để tóm tắt phí ship, ETA, provider/route confidence, trạng thái vùng giao và chất lượng địa chỉ từ quote metadata.
+  - Màn `Thông tin giao hàng` hiển thị cảnh báo địa chỉ mơ hồ/hẻm nhỏ, trạng thái ngoài vùng giao hoặc vùng loại trừ, và nút `Thử tính lại` khi provider/mạng lỗi.
+  - Quote request trên client có debounce, request cancellation và retry mềm có giới hạn để không spam provider khi mạng yếu.
 - Ops:
-- Nếu cấu hình `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, geocode/reverse/route/quote cache sẽ dùng Redis REST chung giữa các Vercel instances.
-- Các map API dùng cùng Redis REST để rate limit xuyên Vercel instances; nếu chưa cấu hình Redis, hệ thống tự fallback về memory bucket theo từng instance.
-- Cache key được hash SHA-256, không lưu raw address trong key.
+  - Nếu cấu hình `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`, geocode/reverse/route/quote cache sẽ dùng Redis REST chung giữa các Vercel instances.
+  - Các map API dùng cùng Redis REST để rate limit xuyên Vercel instances; nếu chưa cấu hình Redis, hệ thống tự fallback về memory bucket theo từng instance.
+  - Cache key được hash SHA-256, không lưu raw address trong key.
   - Provider/cache/quote metrics được ghi vào `map_provider_request_logs`, `map_cache_event_logs`, `delivery_quote_metric_logs` theo sampling.
   - Dashboard API nội bộ: `GET /api/admin/maps/metrics?windowHours=24`.
+  - Settings > Đặt món online hiển thị `MapOperationalMetricsPanel` từ `getMapOperationalMetrics`, gồm provider failure, cache hit, quote acceptance, estimated rate, latency và cost estimate.
+  - Metrics panel có health warning cho provider failure cao, cache hit thấp, quote dùng Haversine nhiều và quote latency chậm.
+  - Provider policy guard cho phép tắt nhanh provider bằng env (`MAPS_DISABLED_PROVIDERS`, `MAPS_DISABLED_GEOCODERS`, `MAPS_DISABLED_ROUTERS`, hoặc theo operation), đặt soft cap request/cost hằng ngày và tự skip provider trước khi gọi HTTP.
+  - Cost guard dùng `MAPS_COST_VND_{PROVIDER}_{OPERATION}` để ước tính chi phí theo request; khi vượt cap, provider trả về fallback chain thay vì làm hỏng API public.
+  - `getMapDeliveryReadiness` kiểm tra readiness trước deploy: geocoding, routing, Redis cache, distributed rate limit, map tiles/style và DB telemetry. Kết quả hiển thị trong `MapOperationalMetricsPanel`.
 - Realtime delivery:
   - Trạng thái giao hàng ghi thêm `delivery_tracking_events` để audit và broadcast realtime tới channel `customer-order:{orderId}`.
   - Endpoint nội bộ `POST /api/admin/orders/{orderId}/delivery-location` nhận GPS ping từ dashboard/driver app tương lai.
   - Endpoint nội bộ `GET/POST /api/admin/delivery/couriers` quản lý đội shipper theo từng tenant/quán.
   - Endpoint nội bộ `POST /api/admin/orders/{orderId}/delivery-courier` phân công hoặc gỡ shipper khỏi đơn giao.
+  - Endpoint nội bộ `GET /api/admin/orders/{orderId}/dispatch-candidates` xếp hạng shipper theo trạng thái, GPS mới nhất, active order count và route-distance tới điểm pickup.
+  - `services/maps/distance-matrix-service.ts` cung cấp distance matrix abstraction có route resolver, concurrency limit và Haversine fallback khi matrix quá lớn hoặc provider lỗi.
+  - `services/delivery/dispatch-ranking-engine.ts` là lõi pure để sau này tái dùng cho driver app, multi-driver dispatch hoặc AI route optimization mà không phụ thuộc Supabase.
   - `courier_locations` lưu lịch sử vị trí append-only, có `geography(Point, 4326)` và GiST index để mở rộng dispatch/nearby courier.
   - Dashboard Orders có điều phối shipper, nút `Gửi vị trí hiện tại` cho đơn giao hàng, dùng browser GPS và cập nhật marker shipper trên mini map.
+  - Dashboard Orders tự hydrate top dispatch candidates khi mở đơn giao, hiển thị shipper đề xuất và cho phép gán nhanh từ danh sách top 3.
   - Khi shipper được phân công, hệ thống ghi `delivery_courier_id`, `delivery_assigned_at`, event `assigned/unassigned` và gắn `courier_id` vào GPS/status events để audit.
 
 ## Database
@@ -198,6 +226,8 @@ Các migration map chính:
   - GPS/geocode quality guard: lọc kết quả Goong dạng tọa độ giả địa chỉ, chặn GPS/IP quá rộng và tự repair tọa độ quán khi quote phát hiện drift lớn. Ngưỡng repair chỉnh bằng `MAPS_STORE_COORDINATE_REPAIR_TRIGGER_KM`.
 - Giai đoạn 13:
   - Nếu routing volume lớn, cân nhắc self-host OSRM/Valhalla cho degraded routing hoặc route precomputation theo cụm địa chỉ.
+- Giai đoạn 14:
+  - Delivery Intelligence v2: distance matrix abstraction, dispatch candidate ranking và health warning cho map ops đã sẵn sàng để mở rộng sang driver app/live tracking.
 
 Xem thêm blueprint research: [`docs/map-supermap-research.md`](./map-supermap-research.md).
 

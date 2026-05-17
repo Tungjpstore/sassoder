@@ -1,30 +1,72 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import Link from "next/link";
+import { useActionState, useCallback, useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { updateRecoveredPasswordAction } from "@/app/dashboard/actions";
+import { resendPasswordResetOtpAction, updateRecoveredPasswordAction } from "@/app/dashboard/actions";
 import { OtpInput } from "@/components/dashboard/verify-email-form";
 import { PasswordPolicyList } from "@/components/dashboard/password-policy-list";
 import { isAuthPasswordPolicySatisfied } from "@/lib/auth-password-policy";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { buildDashboardLoginPath } from "@/lib/auth-onboarding-intent";
+import { buildOtpCooldownStorageKey, otpCooldownExpiresAt, remainingOtpCooldownSeconds } from "@/lib/auth-otp-flow";
 
 type ResetPasswordFormProps = {
   email?: string;
   requiresOtp?: boolean;
+  nextPath?: string;
 };
 
-export function ResetPasswordForm({ email, requiresOtp = false }: ResetPasswordFormProps) {
+export function ResetPasswordForm({ email, requiresOtp = false, nextPath = "" }: ResetPasswordFormProps) {
   const [state, formAction, pending] = useActionState(updateRecoveredPasswordAction, undefined);
+  const [resendState, resendAction, resendPending] = useActionState(resendPasswordResetOtpAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [cooldown, setCooldown] = useState(requiresOtp ? 60 : 0);
+  const normalizedEmail = email?.trim().toLowerCase() ?? "";
+  const cooldownStorageKey = buildOtpCooldownStorageKey({ email: normalizedEmail, purpose: "recovery" });
+  const canResend = requiresOtp && Boolean(normalizedEmail) && cooldown === 0 && !resendPending;
+  const loginHref = buildDashboardLoginPath({ email: normalizedEmail, next: nextPath });
   const canSubmit =
     (!requiresOtp || /^\d{6}$/.test(otp)) &&
     isAuthPasswordPolicySatisfied(password) &&
     confirmPassword.length > 0 &&
     password === confirmPassword;
+
+  const handleResendSubmit = useCallback(() => {
+    setOtp("");
+    setCooldown(60);
+    if (cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey]);
+
+  useEffect(() => {
+    if (!cooldownStorageKey) return;
+    const timeout = window.setTimeout(() => {
+      setCooldown((current) => Math.max(current, remainingOtpCooldownSeconds(window.sessionStorage.getItem(cooldownStorageKey))));
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [cooldownStorageKey]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const interval = window.setInterval(() => {
+      setCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [cooldown]);
+
+  useEffect(() => {
+    if (resendState?.success && cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey, resendState?.success]);
 
   return (
     <form
@@ -35,10 +77,16 @@ export function ResetPasswordForm({ email, requiresOtp = false }: ResetPasswordF
         <LogiVNLogo href="/" className="h-10" priority />
         <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Tạo mật khẩu mới</h1>
         {email ? <p className="mt-2 text-xs font-bold text-[#667085]">{email}</p> : null}
+        {requiresOtp ? (
+          <p className="mt-2 max-w-[280px] text-sm font-semibold leading-6 text-[#667085]">
+            Nhập mã 6 số trong email rồi đặt mật khẩu mới cho tài khoản LogiVN.
+          </p>
+        ) : null}
       </div>
 
       <input type="hidden" name="email" value={requiresOtp ? email ?? "" : ""} />
       <input type="hidden" name="token" value={requiresOtp ? otp : ""} />
+      <input type="hidden" name="next" value={nextPath} />
 
       <div className="grid gap-3">
         {requiresOtp ? (
@@ -111,6 +159,25 @@ export function ResetPasswordForm({ email, requiresOtp = false }: ResetPasswordF
       >
         {pending ? "Đang cập nhật..." : "Cập nhật mật khẩu"}
       </button>
+
+      {requiresOtp ? (
+        <div className="mt-4 grid gap-3 border-t border-[#e5e7eb] pt-4">
+          <button
+            formAction={resendAction}
+            onClick={handleResendSubmit}
+            className="flex h-11 w-full items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-bold text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 disabled:opacity-50"
+            disabled={!canResend}
+          >
+            {resendPending ? "Đang gửi..." : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
+          </button>
+          <input type="hidden" name="email" value={normalizedEmail} />
+          {resendState?.success ? <p className="text-center text-sm font-semibold text-[#0F4D3A]">{resendState.success}</p> : null}
+          {resendState?.error ? <p className="text-center text-sm font-semibold text-[#9a4a17]">{resendState.error}</p> : null}
+          <Link href={loginHref} className="inline-flex min-h-11 items-center justify-center text-sm font-bold text-[#0F4D3A] transition hover:text-[#0b3d2e]">
+            Quay lại đăng nhập
+          </Link>
+        </div>
+      ) : null}
     </form>
   );
 }

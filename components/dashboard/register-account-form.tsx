@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, EyeOff, Loader2 } from "lucide-react";
 import { registerAccountAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { PasswordPolicyList } from "@/components/dashboard/password-policy-list";
+import { buildDashboardLoginPath, buildForgotPasswordPath, buildOnboardingIntentPath } from "@/lib/auth-onboarding-intent";
 import { isAuthPasswordPolicySatisfied } from "@/lib/auth-password-policy";
 
-type EmailStatus = "idle" | "checking" | "available" | "registered" | "pending_verification" | "invalid" | "error" | "rate_limited";
+type EmailStatus = "idle" | "checking" | "available" | "registered" | "pending_verification" | "delivery_unavailable" | "invalid" | "error" | "rate_limited";
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -19,8 +20,9 @@ function emailStatusCopy(status: EmailStatus) {
   if (status === "available") return "Email này có thể đăng ký.";
   if (status === "registered") return "Email này đã có tài khoản LogiVN.";
   if (status === "pending_verification") return "Email này đang chờ xác thực.";
+  if (status === "delivery_unavailable") return "Email hợp lệ, nhưng hệ thống gửi mã xác thực chưa sẵn sàng.";
   if (status === "rate_limited") return "Bạn kiểm tra email hơi nhanh, thử lại sau ít phút.";
-  if (status === "error") return "Chưa kiểm tra được email lúc này.";
+  if (status === "error") return "Chưa kiểm tra được email lúc này, bạn vẫn có thể tiếp tục.";
   return "";
 }
 
@@ -28,14 +30,22 @@ function getSignupPlanContext(planCode: "pro" | "premium") {
   if (planCode === "premium") {
     return {
       name: "LogiVN Premium",
-      headline: "Tạo tài khoản"
+      headline: "Tạo quán trong vài phút",
+      description: "Xác thực email rồi mở dashboard với đặt bàn, báo cáo sâu và công cụ vận hành nâng cao.",
+      cta: "Bắt đầu miễn phí"
     };
   }
 
   return {
     name: "LogiVN Pro",
-    headline: "Tạo tài khoản"
+    headline: "Tạo quán trong vài phút",
+    description: "Tạo tài khoản, xác thực OTP và thiết lập QR ordering đầu tiên cho quán của bạn.",
+    cta: "Tạo quán ngay"
   };
+}
+
+function emailStatusBlocksSubmit(status: EmailStatus) {
+  return status === "registered" || status === "pending_verification" || status === "delivery_unavailable";
 }
 
 type RegisterAccountFormProps = {
@@ -50,14 +60,6 @@ type RegisterAccountFormProps = {
 
 function isEmailLike(value: string | undefined) {
   return Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()));
-}
-
-function buildNextPath(planCode: "pro" | "premium", source?: string, variant?: string, pilotGoal?: string) {
-  const params = new URLSearchParams({ plan: planCode });
-  if (source) params.set("source", source);
-  if (variant) params.set("variant", variant);
-  if (pilotGoal) params.set("pilotGoal", pilotGoal);
-  return `/dashboard/onboarding?${params.toString()}`;
 }
 
 export function RegisterAccountForm({
@@ -78,14 +80,22 @@ export function RegisterAccountForm({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const normalizedEmail = email.trim().toLowerCase();
   const passwordReady = isAuthPasswordPolicySatisfied(password) && password === confirmPassword;
-  const canSubmit = isValidEmail(email) && passwordReady && emailStatus !== "registered" && emailStatus !== "pending_verification";
-  const onboardingNext = buildNextPath(initialPlanCode, initialSource, initialVariant, initialPilotGoal);
+  const canSubmit = isValidEmail(email) && passwordReady && !emailStatusBlocksSubmit(emailStatus);
+  const onboardingNext = buildOnboardingIntentPath({
+    plan: initialPlanCode,
+    source: initialSource,
+    variant: initialVariant,
+    pilotGoal: initialPilotGoal
+  });
   const googleNext = `/auth/google?next=${encodeURIComponent(onboardingNext)}`;
+  const loginHref = buildDashboardLoginPath({ email: normalizedEmail, next: onboardingNext });
+  const forgotPasswordHref = buildForgotPasswordPath({ email: normalizedEmail, next: onboardingNext });
+  const verifyEmailHref = `/dashboard/verify-email?email=${encodeURIComponent(normalizedEmail)}&next=${encodeURIComponent(onboardingNext)}`;
   const planContext = getSignupPlanContext(initialPlanCode);
 
   const statusTone = useMemo(() => {
     if (emailStatus === "available") return "border-[#0F4D3A]/20 bg-[#eef7f2] text-[#0F4D3A]";
-    if (emailStatus === "registered" || emailStatus === "pending_verification" || emailStatus === "rate_limited") {
+    if (emailStatus === "registered" || emailStatus === "pending_verification" || emailStatus === "delivery_unavailable" || emailStatus === "rate_limited") {
       return "border-[#F28C28]/35 bg-[#fff7ed] text-[#9a4a17]";
     }
     return "border-[#d8dee9] bg-[#f8fafc] text-[#667085]";
@@ -127,17 +137,18 @@ export function RegisterAccountForm({
   }, [email, normalizedEmail]);
 
   return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <section className="relative mx-auto flex min-h-svh w-full max-w-[420px] flex-col justify-center px-4 py-6 sm:px-5">
+    <main className="dashboard-auth-page min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <section className="dashboard-auth-shell relative mx-auto flex min-h-svh w-full max-w-[420px] flex-col justify-center px-4 py-6 sm:px-5">
         <div className="mb-4 flex flex-col items-center text-center">
           <LogiVNLogo href="/" className="h-10" priority />
           <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">{planContext.headline}</h1>
+          <p className="mt-2 text-sm font-semibold leading-6 text-[#667085]">{planContext.description}</p>
         </div>
 
-        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+        <div className="dashboard-auth-card w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
+          <div className="dashboard-auth-action-row mb-4 flex items-center justify-between gap-3 text-sm">
             <p className="truncate text-sm font-black text-[#111827]">{planContext.name}</p>
-            <Link href="/pricing" className="inline-flex min-h-11 shrink-0 items-center text-xs font-black text-[#0F4D3A]">
+            <Link href="/pricing" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md px-3 text-xs font-black text-[#0F4D3A] transition hover:bg-[#eef7f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0F4D3A]/20">
               Đổi
             </Link>
           </div>
@@ -189,23 +200,34 @@ export function RegisterAccountForm({
               {emailStatus !== "idle" && emailStatus !== "invalid" ? (
                 <div className={`rounded-md border px-4 py-3 text-sm font-semibold ${statusTone}`}>
                   <div className="flex items-start gap-2">
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                    {emailStatus === "checking" ? (
+                      <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                    ) : emailStatus === "available" ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                    ) : (
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    )}
                     <span>{emailStatusCopy(emailStatus)}</span>
                   </div>
                   {emailStatus === "registered" ? (
                     <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                      <Link href={`/dashboard/login?email=${encodeURIComponent(normalizedEmail)}`} className="inline-flex min-h-11 items-center font-black underline">
+                      <Link href={loginHref} className="inline-flex min-h-11 items-center font-black underline">
                         Đăng nhập
                       </Link>
-                      <Link href={`/dashboard/forgot-password?email=${encodeURIComponent(normalizedEmail)}`} className="inline-flex min-h-11 items-center font-black underline">
+                      <Link href={forgotPasswordHref} className="inline-flex min-h-11 items-center font-black underline">
                         Quên mật khẩu
                       </Link>
                     </div>
                   ) : null}
                   {emailStatus === "pending_verification" ? (
-                    <Link href={`/dashboard/verify-email?email=${encodeURIComponent(normalizedEmail)}`} className="mt-2 inline-flex min-h-11 items-center text-xs font-black underline">
+                    <Link href={verifyEmailHref} className="mt-2 inline-flex min-h-11 items-center text-xs font-black underline">
                       Mở trang xác thực
                     </Link>
+                  ) : null}
+                  {emailStatus === "delivery_unavailable" ? (
+                    <p className="mt-2 text-xs font-bold leading-5">
+                      Vui lòng cấu hình Resend trước khi tạo tài khoản bằng email.
+                    </p>
                   ) : null}
                 </div>
               ) : null}
@@ -225,7 +247,7 @@ export function RegisterAccountForm({
                   <button
                     type="button"
                     onClick={() => setShowPassword((value) => !value)}
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
+                    className="absolute right-0.5 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
                     aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -248,7 +270,7 @@ export function RegisterAccountForm({
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword((value) => !value)}
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
+                    className="absolute right-0.5 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
                     aria-label={showConfirmPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
                     {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -266,13 +288,13 @@ export function RegisterAccountForm({
                 className="mt-1 flex h-12 items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
                 disabled={pending || !canSubmit}
               >
-                {pending ? "Đang tạo..." : "Tạo tài khoản"}
+                {pending ? "Đang tạo..." : planContext.cta}
               </button>
             </form>
 
             <p className="mt-5 border-t border-[#e5e7eb] pt-4 text-center text-sm text-[#667085]">
               Đã có tài khoản?{" "}
-              <Link href="/dashboard/login" className="inline-flex min-h-11 items-center font-black text-[#0F4D3A]">
+              <Link href={buildDashboardLoginPath({ next: onboardingNext })} className="inline-flex min-h-11 items-center font-black text-[#0F4D3A]">
                 Đăng nhập
               </Link>
             </p>

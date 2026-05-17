@@ -1,10 +1,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { promotionDisplaySchema, promotionIdSchema, promotionSchema, promotionStatusSchema } from "@/lib/validators";
+import { promotionDisplaySchema, promotionIdSchema, promotionSchema, promotionStatusSchema, updatePromotionSchema } from "@/lib/validators";
 import { invalidateMenuCache } from "@/services/menu-service";
-import { createPromotion, deletePromotion, updatePromotionActiveStatus, updatePromotionCustomerVisibility } from "@/services/promotion-service";
+import { createPromotion, deletePromotion, updatePromotion, updatePromotionActiveStatus, updatePromotionCustomerVisibility } from "@/services/promotion-service";
 import { requireOperationalAdminSession } from "./shared";
+
+function revalidatePromotionWorkspace(slug: string) {
+  invalidateMenuCache();
+  revalidatePath("/dashboard/promotions");
+  revalidatePath(`/r/${slug}`);
+}
 
 export async function createPromotionAction(formData: FormData) {
   const session = await requireOperationalAdminSession("promotions");
@@ -15,15 +21,36 @@ export async function createPromotionAction(formData: FormData) {
     discountType: formData.get("discountType"),
     discountValue: formData.get("discountValue"),
     minOrderAmount: formData.get("minOrderAmount"),
+    totalUsageLimit: formData.get("totalUsageLimit"),
+    perCustomerUsageLimit: formData.get("perCustomerUsageLimit"),
     startsAt: formData.get("startsAt"),
     endsAt: formData.get("endsAt"),
     channels: formData.getAll("channels")
   });
 
   await createPromotion(session.restaurantId, parsed);
-  invalidateMenuCache();
-  revalidatePath("/dashboard/promotions");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidatePromotionWorkspace(session.restaurant.slug);
+}
+
+export async function updatePromotionAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("promotions");
+  const parsed = updatePromotionSchema.parse({
+    promotionId: formData.get("promotionId"),
+    name: formData.get("name"),
+    code: formData.get("code"),
+    discountScope: formData.get("discountScope") ?? "ORDER",
+    discountType: formData.get("discountType"),
+    discountValue: formData.get("discountValue"),
+    minOrderAmount: formData.get("minOrderAmount"),
+    totalUsageLimit: formData.get("totalUsageLimit"),
+    perCustomerUsageLimit: formData.get("perCustomerUsageLimit"),
+    startsAt: formData.get("startsAt"),
+    endsAt: formData.get("endsAt"),
+    channels: formData.getAll("channels")
+  });
+
+  await updatePromotion(session.restaurantId, parsed);
+  revalidatePromotionWorkspace(session.restaurant.slug);
 }
 
 export async function togglePromotionAction(formData: FormData) {
@@ -38,9 +65,7 @@ export async function togglePromotionAction(formData: FormData) {
     isActive: parsed.isActive
   });
 
-  invalidateMenuCache();
-  revalidatePath("/dashboard/promotions");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidatePromotionWorkspace(session.restaurant.slug);
 }
 
 export async function togglePromotionDisplayAction(formData: FormData) {
@@ -51,9 +76,7 @@ export async function togglePromotionDisplayAction(formData: FormData) {
   });
 
   await updatePromotionCustomerVisibility(session.restaurantId, parsed);
-  invalidateMenuCache();
-  revalidatePath("/dashboard/promotions");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidatePromotionWorkspace(session.restaurant.slug);
 }
 
 export async function deletePromotionAction(formData: FormData) {
@@ -63,7 +86,5 @@ export async function deletePromotionAction(formData: FormData) {
   });
 
   await deletePromotion(session.restaurantId, parsed.promotionId);
-  invalidateMenuCache();
-  revalidatePath("/dashboard/promotions");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidatePromotionWorkspace(session.restaurant.slug);
 }

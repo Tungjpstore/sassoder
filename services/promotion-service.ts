@@ -2,22 +2,15 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
-import { calculatePromotionDiscountAmount } from "@/lib/promotion-discount";
+import { calculatePromotionDiscountAmount, evaluatePromotionDiscount } from "@/lib/promotion-discount";
+import { evaluatePromotionUsageLimit } from "@/lib/promotion-usage";
+import { AppError } from "@/lib/response";
 import type { Database } from "@/types/supabase";
+import type { PublicPromotion as SharedPublicPromotion } from "@/types";
 
 export type Promotion = Database["public"]["Tables"]["promotions"]["Row"];
 export type PromotionStatus = "active" | "scheduled" | "ended" | "paused";
-export type PublicPromotion = {
-  id: string;
-  name: string;
-  code: string;
-  discountScope: "ORDER" | "DELIVERY_FEE";
-  discountType: "PERCENT" | "FIXED";
-  discountValue: number;
-  minOrderAmount: number;
-  startsAt: string | null;
-  endsAt: string | null;
-};
+export type PublicPromotion = SharedPublicPromotion;
 export type PromotionUsageSummary = {
   promotionId: string;
   orders: number;
@@ -36,27 +29,73 @@ type PublicPromotionRow = {
   discount_type: "PERCENT" | "FIXED";
   discount_value: number;
   min_order_amount: number;
+  total_usage_limit?: number | null;
+  per_customer_usage_limit?: number | null;
   starts_at: string | null;
   ends_at: string | null;
 };
 
-const publicPromotionSelect = "id,name,code,discount_scope,discount_type,discount_value,min_order_amount,starts_at,ends_at";
-const legacyPublicPromotionSelect = publicPromotionSelect.replace("discount_scope,", "");
+const publicPromotionSelect = "id,name,code,discount_scope,discount_type,discount_value,min_order_amount,total_usage_limit,per_customer_usage_limit,starts_at,ends_at";
+const legacyPublicPromotionSelect = publicPromotionSelect
+  .replace("discount_scope,", "")
+  .replace("total_usage_limit,per_customer_usage_limit,", "");
 
 function isMissingPromotionDiscountScope(error: PostgrestError | null | undefined) {
   if (!error) return false;
   const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
   return (
     (error.code === "42703" || error.code === "PGRST204") &&
-    /discount_scope/i.test(message)
+    /discount_scope|total_usage_limit|per_customer_usage_limit/i.test(message)
   );
+}
+
+function throwPromotionWriteError(error: PostgrestError | null, code: string) {
+  if ((error as { code?: string } | null)?.code === "23505") {
+    throw new AppError(`Mã ${code} đã tồn tại trong quán. Vui lòng dùng mã khác.`, 409);
+  }
+  throwIfSupabaseError(error);
 }
 
 function withDefaultDiscountScope<T extends { discount_scope?: "ORDER" | "DELIVERY_FEE" | null }>(promotion: T) {
   return {
     ...promotion,
-    discount_scope: promotion.discount_scope ?? "ORDER"
+    discount_scope: promotion.discount_scope ?? "ORDER",
+    total_usage_limit: "total_usage_limit" in promotion ? promotion.total_usage_limit ?? null : null,
+    per_customer_usage_limit: "per_customer_usage_limit" in promotion ? promotion.per_customer_usage_limit ?? null : null
   };
+}
+
+async function readPromotionUsageCounts(
+  supabase: ReturnType<typeof createAdminSupabaseClient>,
+  input: {
+    restaurantId: string;
+    promotionIds: string[];
+    customerSessionId?: string | null;
+  }
+) {
+  if (input.promotionIds.length === 0) return new Map<string, { totalUsed: number; customerUsed: number }>();
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("promotion_id,customer_session_id")
+    .eq("restaurant_id", input.restaurantId)
+    .in("promotion_id", input.promotionIds)
+    .neq("status", "cancelled");
+
+  throwIfSupabaseError(error);
+
+  const counts = new Map<string, { totalUsed: number; customerUsed: number }>();
+  for (const row of data ?? []) {
+    if (!row.promotion_id) continue;
+    const current = counts.get(row.promotion_id) ?? { totalUsed: 0, customerUsed: 0 };
+    current.totalUsed += 1;
+    if (input.customerSessionId && row.customer_session_id === input.customerSessionId) {
+      current.customerUsed += 1;
+    }
+    counts.set(row.promotion_id, current);
+  }
+
+  return counts;
 }
 
 export function getPromotionStatus(promotion: Promotion, now = new Date()): PromotionStatus {
@@ -132,7 +171,7 @@ export function calculatePromotionDiscount(input: {
   });
 }
 
-export async function listPublicPromotions(restaurantId: string, channel: "QR_MENU" | "WEBSITE" = "QR_MENU") {
+export async function listPublicPromotions(restaurantId: string, channel: "QR_MENU" | "WEBSITE" = "QR_MENU"): Promise<PublicPromotion[]> {
   const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
   const buildQuery = (select: string) =>
@@ -154,17 +193,37 @@ export async function listPublicPromotions(restaurantId: string, channel: "QR_ME
   }
 
   throwIfSupabaseError(error);
-  return ((data ?? []) as unknown as PublicPromotionRow[]).map((promotion) => ({
-    id: promotion.id,
-    name: promotion.name,
-    code: promotion.code,
-    discountScope: promotion.discount_scope ?? "ORDER",
-    discountType: promotion.discount_type,
-    discountValue: promotion.discount_value,
-    minOrderAmount: promotion.min_order_amount,
-    startsAt: promotion.starts_at,
-    endsAt: promotion.ends_at
-  })) satisfies PublicPromotion[];
+  const rows = (data ?? []) as unknown as PublicPromotionRow[];
+  const usageCounts = await readPromotionUsageCounts(supabase, {
+    restaurantId,
+    promotionIds: rows.filter((promotion) => promotion.total_usage_limit).map((promotion) => promotion.id)
+  });
+
+  return rows
+    .map((promotion) => {
+      const usage = usageCounts.get(promotion.id);
+      const usageLimit = evaluatePromotionUsageLimit({
+        totalUsageLimit: promotion.total_usage_limit ?? null,
+        perCustomerUsageLimit: null,
+        totalUsed: usage?.totalUsed ?? 0
+      });
+
+      return {
+        id: promotion.id,
+        name: promotion.name,
+        code: promotion.code,
+        discountScope: promotion.discount_scope ?? "ORDER",
+        discountType: promotion.discount_type,
+        discountValue: promotion.discount_value,
+        minOrderAmount: promotion.min_order_amount,
+        totalUsageLimit: promotion.total_usage_limit ?? null,
+        perCustomerUsageLimit: promotion.per_customer_usage_limit ?? null,
+        remainingTotalUsage: usageLimit.remainingTotalUsage,
+        startsAt: promotion.starts_at,
+        endsAt: promotion.ends_at
+      };
+    })
+    .filter((promotion) => promotion.remainingTotalUsage !== 0) satisfies PublicPromotion[];
 }
 
 export async function resolvePromotionForOrder({
@@ -172,13 +231,15 @@ export async function resolvePromotionForOrder({
   code,
   subtotal,
   deliveryFee,
-  channel
+  channel,
+  customerSessionId
 }: {
   restaurantId: string;
   code?: string;
   subtotal: number;
   deliveryFee?: number;
   channel: "QR_MENU" | "WEBSITE";
+  customerSessionId?: string | null;
 }) {
   const normalizedCode = code?.trim().toUpperCase();
   if (!normalizedCode) return { promotion: null, discountAmount: 0 };
@@ -197,17 +258,51 @@ export async function resolvePromotionForOrder({
     .maybeSingle();
 
   throwIfSupabaseError(error);
-  if (!data) return { promotion: null, discountAmount: 0 };
+  if (!data) {
+    throw new AppError("Mã khuyến mãi không khả dụng hoặc không áp dụng cho kênh đặt món này.", 400);
+  }
 
   const promotion = withDefaultDiscountScope(data as Promotion);
-  const discountAmount = calculatePromotionDiscount({
+  const usageCounts = await readPromotionUsageCounts(supabase, {
+    restaurantId,
+    promotionIds: [promotion.id],
+    customerSessionId
+  });
+  const usage = usageCounts.get(promotion.id);
+  const usageLimit = evaluatePromotionUsageLimit({
+    totalUsageLimit: promotion.total_usage_limit,
+    perCustomerUsageLimit: customerSessionId ? promotion.per_customer_usage_limit : null,
+    totalUsed: usage?.totalUsed ?? 0,
+    customerUsed: usage?.customerUsed ?? 0
+  });
+  if (!usageLimit.available) {
+    if (usageLimit.reason === "customer_limit_reached") {
+      throw new AppError(`Bạn đã dùng hết lượt cho mã ${promotion.code}.`, 400);
+    }
+    throw new AppError(`Mã ${promotion.code} đã hết lượt sử dụng.`, 400);
+  }
+
+  const evaluation = evaluatePromotionDiscount({
     itemSubtotal: subtotal,
     deliveryFee,
-    promotion
+    rule: {
+      discountScope: promotion.discount_scope,
+      discountType: promotion.discount_type,
+      discountValue: promotion.discount_value,
+      minOrderAmount: promotion.min_order_amount
+    }
   });
-  if (discountAmount <= 0) return { promotion: null, discountAmount: 0 };
+  if (!evaluation.eligible) {
+    if (evaluation.reason === "minimum_not_met") {
+      throw new AppError(`Đơn hàng cần thêm ${evaluation.missingAmount.toLocaleString("vi-VN")}đ để áp dụng mã ${promotion.code}.`, 400);
+    }
+    if (promotion.discount_scope === "DELIVERY_FEE") {
+      throw new AppError("Mã này chỉ áp dụng khi đơn có phí giao hàng hợp lệ.", 400);
+    }
+    throw new AppError("Mã khuyến mãi chưa đủ điều kiện áp dụng.", 400);
+  }
 
-  return { promotion, discountAmount };
+  return { promotion, discountAmount: evaluation.discountAmount };
 }
 
 export async function createPromotion(
@@ -219,6 +314,8 @@ export async function createPromotion(
     discountType: "PERCENT" | "FIXED";
     discountValue: number;
     minOrderAmount?: number;
+    totalUsageLimit?: number | null;
+    perCustomerUsageLimit?: number | null;
     startsAt?: string;
     endsAt?: string;
     channels: string[];
@@ -233,6 +330,8 @@ export async function createPromotion(
     discount_type: input.discountType,
     discount_value: input.discountValue,
     min_order_amount: input.minOrderAmount ?? 0,
+    total_usage_limit: input.totalUsageLimit ?? null,
+    per_customer_usage_limit: input.perCustomerUsageLimit ?? null,
     starts_at: input.startsAt ? new Date(input.startsAt).toISOString() : null,
     ends_at: input.endsAt ? new Date(input.endsAt).toISOString() : null,
     channels: input.channels
@@ -245,8 +344,15 @@ export async function createPromotion(
     .single();
 
   if (isMissingPromotionDiscountScope(error)) {
-    const { discount_scope: _discountScope, ...legacyPayload } = payload;
+    const {
+      discount_scope: _discountScope,
+      total_usage_limit: _totalUsageLimit,
+      per_customer_usage_limit: _perCustomerUsageLimit,
+      ...legacyPayload
+    } = payload;
     void _discountScope;
+    void _totalUsageLimit;
+    void _perCustomerUsageLimit;
     ({ data, error } = await supabase
       .from("promotions")
       .insert(legacyPayload)
@@ -254,7 +360,70 @@ export async function createPromotion(
       .single());
   }
 
-  throwIfSupabaseError(error);
+  throwPromotionWriteError(error, input.code);
+  return withDefaultDiscountScope(data as Promotion);
+}
+
+export async function updatePromotion(
+  restaurantId: string,
+  input: {
+    promotionId: string;
+    name: string;
+    code: string;
+    discountScope?: "ORDER" | "DELIVERY_FEE";
+    discountType: "PERCENT" | "FIXED";
+    discountValue: number;
+    minOrderAmount?: number;
+    totalUsageLimit?: number | null;
+    perCustomerUsageLimit?: number | null;
+    startsAt?: string;
+    endsAt?: string;
+    channels: string[];
+  }
+) {
+  const supabase = await createServerSupabaseClient();
+  const payload = {
+    name: input.name,
+    code: input.code,
+    discount_scope: input.discountScope ?? "ORDER",
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_order_amount: input.minOrderAmount ?? 0,
+    total_usage_limit: input.totalUsageLimit ?? null,
+    per_customer_usage_limit: input.perCustomerUsageLimit ?? null,
+    starts_at: input.startsAt ? new Date(input.startsAt).toISOString() : null,
+    ends_at: input.endsAt ? new Date(input.endsAt).toISOString() : null,
+    channels: input.channels
+  } satisfies Database["public"]["Tables"]["promotions"]["Update"];
+
+  let { data, error } = await supabase
+    .from("promotions")
+    .update(payload)
+    .eq("id", input.promotionId)
+    .eq("restaurant_id", restaurantId)
+    .select()
+    .single();
+
+  if (isMissingPromotionDiscountScope(error)) {
+    const {
+      discount_scope: _discountScope,
+      total_usage_limit: _totalUsageLimit,
+      per_customer_usage_limit: _perCustomerUsageLimit,
+      ...legacyPayload
+    } = payload;
+    void _discountScope;
+    void _totalUsageLimit;
+    void _perCustomerUsageLimit;
+    ({ data, error } = await supabase
+      .from("promotions")
+      .update(legacyPayload)
+      .eq("id", input.promotionId)
+      .eq("restaurant_id", restaurantId)
+      .select()
+      .single());
+  }
+
+  throwPromotionWriteError(error, input.code);
   return withDefaultDiscountScope(data as Promotion);
 }
 

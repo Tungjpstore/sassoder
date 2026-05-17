@@ -13,6 +13,7 @@ type LoginFormProps = {
   resetStatus?: string;
   sessionStatus?: string;
   initialEmail?: string;
+  nextPath?: string;
 };
 
 function getGoogleAuthErrorMessage(authError?: string) {
@@ -37,13 +38,18 @@ function getSessionStatusMessage(sessionStatus?: string) {
   return null;
 }
 
-export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus, sessionStatus, initialEmail = "" }: LoginFormProps) {
+export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus, sessionStatus, initialEmail = "", nextPath = "" }: LoginFormProps) {
   const [state, formAction, pending] = useActionState(loginAction, undefined);
   const [showPassword, setShowPassword] = useState(false);
   const tenantHost = tenantSlug ? `${tenantSlug}.${rootDomain}` : rootDomain;
   const googleAuthErrorMessage = getGoogleAuthErrorMessage(authError);
   const sessionStatusMessage = getSessionStatusMessage(sessionStatus);
   const staffLoginHref = tenantSlug ? `/staff/${encodeURIComponent(tenantSlug)}/login` : "/staff/login";
+  const googleLoginHref = nextPath ? `/auth/google?next=${encodeURIComponent(nextPath)}` : "/auth/google";
+  const forgotPasswordParams = new URLSearchParams();
+  if (initialEmail) forgotPasswordParams.set("email", initialEmail);
+  if (nextPath) forgotPasswordParams.set("next", nextPath);
+  const forgotPasswordHref = forgotPasswordParams.size > 0 ? `/dashboard/forgot-password?${forgotPasswordParams.toString()}` : "/dashboard/forgot-password";
 
   useEffect(() => {
     if (state?.redirectTo) {
@@ -52,17 +58,17 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
   }, [state?.redirectTo]);
 
   return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
+    <main className="dashboard-auth-page min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <section className="auth-fade-in dashboard-auth-shell mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
         <div className="mb-4 flex flex-col items-center text-center">
           <LogiVNLogo href="/" className="h-10" priority />
           <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Đăng nhập</h1>
           {tenantSlug ? <p className="mt-2 text-xs font-bold text-[#667085]">{tenantHost}</p> : null}
         </div>
 
-        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
+        <div className="dashboard-auth-card w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
           <a
-            href="/auth/google"
+            href={googleLoginHref}
             className="mb-4 flex h-12 w-full items-center justify-center gap-3 rounded-md border border-[#d8dee9] bg-white px-5 text-sm font-black text-[#1f2937] transition hover:border-[#0F4D3A]/45 hover:bg-[#f8fbff]"
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
@@ -85,6 +91,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
           </div>
 
           <form action={formAction}>
+            <input type="hidden" name="next" value={nextPath} />
             <div className="grid gap-3">
               <label className="grid gap-2 text-sm font-semibold">
                 Email
@@ -102,7 +109,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
               <label className="grid gap-2 text-sm font-semibold">
                 <span className="flex items-center justify-between gap-3">
                   Mật khẩu
-                  <Link href="/dashboard/forgot-password" className="inline-flex min-h-12 items-center text-xs font-bold text-[#0F4D3A] transition hover:text-[#0b3d2e]">
+                  <Link href={forgotPasswordHref} className="inline-flex min-h-12 items-center text-xs font-bold text-[#0F4D3A] transition hover:text-[#0b3d2e]">
                     Quên mật khẩu?
                   </Link>
                 </span>
@@ -118,7 +125,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
                   <button
                     type="button"
                     onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
+                    className="absolute right-0.5 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
                     aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -142,7 +149,7 @@ export function LoginForm({ rootDomain, tenantSlug = "", authError, resetStatus,
 
           {googleAuthErrorMessage ? <p className="mt-4 rounded-md border border-[#F28C28]/35 bg-[#fff7ed] p-3 text-sm font-semibold text-[#9a4a17]">{googleAuthErrorMessage}</p> : null}
 
-          <div className="mt-5 flex flex-col gap-2 text-center text-sm text-[#667085]">
+          <div className="dashboard-auth-action-row mt-5 flex flex-col gap-2 text-center text-sm text-[#667085]">
             <Link href={staffLoginHref} className="inline-flex min-h-11 items-center justify-center font-semibold text-[#475467] transition hover:text-[#111827]">
               Nhân viên vào ca bằng PIN
             </Link>

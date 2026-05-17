@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ArrowDownUp,
   AudioLines,
+  BadgePercent,
+  BarChart3,
   Bell,
   Boxes,
   BrainCircuit,
@@ -21,10 +23,13 @@ import {
   PackageCheck,
   PackagePlus,
   Pencil,
+  RadioTower,
   ReceiptText,
+  RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
+  TrendingDown,
   Trash2,
   Truck,
   Upload,
@@ -33,7 +38,9 @@ import {
   X,
   type LucideIcon
 } from "lucide-react";
-import { useActionState, useMemo, useRef, useState, useTransition, type ChangeEvent, type ReactNode, type RefObject } from "react";
+import { useRouter } from "next/navigation";
+import { useFormStatus } from "react-dom";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type ChangeEvent, type ReactNode, type RefObject } from "react";
 import {
   applyInventoryCountAction,
   createInventoryCategoryAction,
@@ -44,6 +51,7 @@ import {
   deactivateInventoryIngredientAction,
   deleteInventoryRecipeLineAction,
   importInventoryIntakeAction,
+  processInventoryTransferAction,
   receiveInventoryPurchaseOrderAction,
   recordInventoryMovementAction,
   refreshInventoryAlertsAction,
@@ -51,10 +59,16 @@ import {
   updateInventoryIngredientAction,
   upsertInventoryRecipeLineAction
 } from "@/app/dashboard/actions";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
+import { buildInventoryAuditReport, type InventoryAuditReport } from "@/lib/inventory-audit-engine";
+import { buildInventoryAnalytics, type InventoryAnalytics } from "@/lib/inventory-analytics-engine";
+import { buildInventoryBranchBalancingReport, type InventoryBranchBalancingReport } from "@/lib/inventory-branch-balancer-engine";
+import { buildInventoryPurchasePlan, type InventoryPurchasePlan, type PurchasePlanLine } from "@/lib/inventory-purchase-planner-engine";
 import { formatVnd } from "@/lib/money";
+import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type {
   InventoryActionPriority,
   InventoryCategory,
@@ -65,15 +79,17 @@ import type {
   InventorySnapshot,
   InventoryStockBalance,
   InventoryStockBalanceStatus,
+  InventoryTransfer,
   InventoryWarehouseCommandCenter
 } from "@/services/inventory-service";
 import type { InventoryMovementType } from "@/types/domain";
 
 type IntakeMode = "text" | "file" | "voice" | "ocr";
-type WorkbenchTab = "intake" | "ingredients" | "stock" | "waste" | "counting" | "transfers" | "purchasing" | "recipes" | "alerts" | "ledger";
+type WorkbenchTab = "intake" | "ingredients" | "stock" | "waste" | "counting" | "transfers" | "balancing" | "purchasing" | "recipes" | "alerts" | "analytics" | "audit" | "ledger";
 type DrawerState = { mode: "create" } | { mode: "edit"; ingredient: InventoryIngredient } | null;
 type ManualMovementType = Extract<InventoryMovementType, "receive" | "adjust_increase" | "adjust_decrease" | "waste" | "expired" | "internal_use" | "supplier_return" | "rollback">;
 type LossMovementType = Extract<InventoryMovementType, "waste" | "expired" | "internal_use" | "supplier_return" | "adjust_decrease">;
+type RealtimeState = "connecting" | "connected" | "error";
 
 type IntakeDraftRow = {
   name: string;
@@ -122,6 +138,10 @@ type PurchaseReceiptDraftLine = {
   expirationDate: string;
   batchCode: string;
   note: string;
+};
+
+type SubmitButtonProps = ButtonProps & {
+  pendingLabel?: ReactNode;
 };
 
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
@@ -182,6 +202,11 @@ function formatDateTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatSyncClock(value: Date | null) {
+  if (!value) return "Đang đồng bộ";
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("vi-VN", {
     day: "2-digit",
@@ -226,6 +251,18 @@ function movementLabel(type: InventoryMovementType) {
   return labels[type];
 }
 
+function realtimeLabel(status: RealtimeState) {
+  if (status === "connected") return "Kho live";
+  if (status === "error") return "Live gián đoạn";
+  return "Đang nối live";
+}
+
+function realtimeTone(status: RealtimeState): "green" | "yellow" | "red" {
+  if (status === "connected") return "green";
+  if (status === "error") return "red";
+  return "yellow";
+}
+
 function movementTone(type: InventoryMovementType): "green" | "yellow" | "blue" | "red" {
   if (type === "receive" || type === "adjust_increase" || type === "rollback" || type === "transfer_in" || type === "release_reserve") {
     return "green";
@@ -247,6 +284,16 @@ function priorityText(priority: InventoryActionPriority) {
   if (priority === "high") return "Gấp";
   if (priority === "medium") return "Quan trọng";
   return "Theo dõi";
+}
+
+function auditScoreTone(score: number): "green" | "yellow" | "red" {
+  if (score >= 85) return "green";
+  if (score >= 65) return "yellow";
+  return "red";
+}
+
+function auditSeverityTone(severity: InventoryAuditReport["controls"][number]["severity"]): "green" | "yellow" | "red" | "blue" {
+  return severity;
 }
 
 function stockStatusLabel(status: InventoryStockBalanceStatus) {
@@ -359,6 +406,22 @@ function alertStatusLabel(status: string) {
     dismissed: "Bỏ qua"
   };
   return labels[status] ?? status;
+}
+
+function costStatusLabel(status: InventoryRecipeMenuItem["costStatus"]) {
+  const labels: Record<InventoryRecipeMenuItem["costStatus"], string> = {
+    healthy: "Margin tốt",
+    watch: "Theo dõi cost",
+    high: "Cost cao",
+    critical: "Rủi ro margin"
+  };
+  return labels[status];
+}
+
+function costStatusTone(status: InventoryRecipeMenuItem["costStatus"]): "green" | "yellow" | "red" {
+  if (status === "healthy") return "green";
+  if (status === "watch") return "yellow";
+  return "red";
 }
 
 function alertPriorityScore(alert: { severity: string; alertType: string; detectedAt: string }) {
@@ -487,6 +550,7 @@ function fileToBase64(file: File) {
 }
 
 export function InventoryWorkspaceV2({
+  restaurantId,
   snapshot,
   categories,
   ingredients,
@@ -494,6 +558,7 @@ export function InventoryWorkspaceV2({
   intelligence,
   warehouse
 }: {
+  restaurantId: string;
   snapshot: InventorySnapshot;
   categories: InventoryCategory[];
   ingredients: InventoryIngredient[];
@@ -501,7 +566,10 @@ export function InventoryWorkspaceV2({
   intelligence: InventoryIntelligence;
   warehouse: InventoryWarehouseCommandCenter;
 }) {
+  const router = useRouter();
+  const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const refreshTimerRef = useRef<number | null>(null);
   const [activeTab, setActiveTab] = useState<WorkbenchTab>("intake");
   const [intakeMode, setIntakeMode] = useState<IntakeMode>("text");
   const [rawIntake, setRawIntake] = useState("");
@@ -513,7 +581,69 @@ export function InventoryWorkspaceV2({
   const [aiOcrError, setAiOcrError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [isParsing, startTransition] = useTransition();
+  const [isRefreshing, startRefreshTransition] = useTransition();
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
   const [importState, importAction, importPending] = useActionState(importInventoryIntakeAction, undefined);
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const watchedTables = [
+      "ingredients",
+      "ingredient_categories",
+      "menu_item_recipes",
+      "inventory_movements",
+      "stock_balances",
+      "inventory_batches",
+      "inventory_alerts",
+      "inventory_counts",
+      "inventory_count_lines",
+      "purchase_orders",
+      "purchase_order_lines",
+      "branch_transfers",
+      "branch_transfer_lines",
+      "suppliers"
+    ];
+
+    const scheduleRefresh = () => {
+      setRealtimeState("connected");
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        startRefreshTransition(() => {
+          router.refresh();
+          setLastSyncedAt(new Date());
+        });
+      }, 320);
+    };
+
+    const channel = watchedTables.reduce(
+      (currentChannel, table) =>
+        currentChannel.on("postgres_changes", { event: "*", schema: "public", table, filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh),
+      supabase.channel(`inventory-workspace:${restaurantId}`)
+    );
+
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") setRealtimeState("connected");
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+    });
+
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [restaurantId, router]);
+
+  useEffect(() => {
+    if (importState?.success) toast.success(importState.success);
+    if (importState?.error) toast.error(importState.error);
+  }, [importState?.error, importState?.success, toast]);
+
+  const refreshInventory = () => {
+    startRefreshTransition(() => {
+      router.refresh();
+      setLastSyncedAt(new Date());
+    });
+  };
 
   const rowsJson = useMemo(() => JSON.stringify(draftRows), [draftRows]);
   const filteredIngredients = useMemo(() => {
@@ -526,6 +656,218 @@ export function InventoryWorkspaceV2({
     );
   }, [ingredients, query]);
   const recipeBacklog = useMemo(() => recipeMenuItems.filter((item) => item.recipeLines.length === 0), [recipeMenuItems]);
+  const costInsights = useMemo(() => {
+    const recipeReadyItems = recipeMenuItems.filter((item) => item.recipeLines.length > 0);
+    const riskyItems = recipeReadyItems
+      .filter((item) => item.costStatus === "high" || item.costStatus === "critical")
+      .sort((left, right) => right.recipeCostPercent - left.recipeCostPercent || right.totalRecipeCost - left.totalRecipeCost);
+    const watchItems = recipeReadyItems.filter((item) => item.costStatus === "watch").length;
+    const totalRecipeCost = recipeReadyItems.reduce((sum, item) => sum + item.totalRecipeCost, 0);
+    const totalGrossProfit = recipeReadyItems.reduce((sum, item) => sum + item.grossProfit, 0);
+    const averageCostPercent =
+      recipeReadyItems.length > 0
+        ? recipeReadyItems.reduce((sum, item) => sum + item.recipeCostPercent, 0) / recipeReadyItems.length
+        : 0;
+
+    return {
+      recipeReadyCount: recipeReadyItems.length,
+      riskyItems,
+      watchItems,
+      totalRecipeCost,
+      totalGrossProfit,
+      averageCostPercent
+    };
+  }, [recipeMenuItems]);
+  const stockRiskInsights = useMemo(() => {
+    const expiringRows = warehouse.stockBalances.filter((row) => {
+      const days = daysUntilDate(row.expirationDate);
+      return days !== null && days <= 7 && row.availableQuantity > 0;
+    });
+    const riskyRows = warehouse.stockBalances
+      .filter((row) => row.status !== "available" || expiringRows.some((expiringRow) => expiringRow.id === row.id))
+      .sort((left, right) => {
+        const rank = { expired: 5, out_of_stock: 4, low: 3, pending_import: 2, available: 1 } satisfies Record<InventoryStockBalanceStatus, number>;
+        return rank[right.status] - rank[left.status] || right.availableQuantity * right.referenceUnitCost - left.availableQuantity * left.referenceUnitCost;
+      })
+      .slice(0, 6);
+    const lowOrOutRows = warehouse.stockBalances.filter((row) => row.status === "low" || row.status === "out_of_stock");
+    const expiredRows = warehouse.stockBalances.filter((row) => row.status === "expired");
+    const incomingRows = warehouse.stockBalances.filter((row) => row.incomingQuantity > 0);
+
+    return {
+      lowOrOutCount: lowOrOutRows.length,
+      expiredCount: expiredRows.length,
+      expiringCount: expiringRows.length,
+      incomingCount: incomingRows.length,
+      reservedValue: warehouse.stockBalances.reduce((sum, row) => sum + Math.round(row.reservedQuantity * row.referenceUnitCost), 0),
+      incomingValue: incomingRows.reduce((sum, row) => sum + Math.round(row.incomingQuantity * row.referenceUnitCost), 0),
+      riskValue: [...new Map([...lowOrOutRows, ...expiredRows, ...expiringRows].map((row) => [row.id, row])).values()].reduce(
+        (sum, row) => sum + Math.round(Math.max(row.availableQuantity, row.onHandQuantity) * row.referenceUnitCost),
+        0
+      ),
+      riskyRows
+    };
+  }, [warehouse.stockBalances]);
+  const inventoryAnalytics = useMemo(
+    () =>
+      buildInventoryAnalytics({
+        stockBalances: warehouse.stockBalances.map((row) => ({
+          id: row.id,
+          ingredientName: row.ingredientName,
+          ingredientUnit: row.ingredientUnit,
+          locationName: row.locationName,
+          branchName: row.branchName,
+          batchCode: row.batchCode,
+          expirationDate: row.expirationDate,
+          onHandQuantity: row.onHandQuantity,
+          availableQuantity: row.availableQuantity,
+          reservedQuantity: row.reservedQuantity,
+          incomingQuantity: row.incomingQuantity,
+          referenceUnitCost: row.referenceUnitCost,
+          status: row.status
+        })),
+        purchaseOrders: warehouse.purchaseOrders.map((order) => ({
+          id: order.id,
+          status: order.status,
+          supplierName: order.supplierName,
+          totalAmount: order.totalAmount,
+          expectedDeliveryAt: order.expectedDeliveryAt,
+          lineCount: order.lineCount
+        })),
+        countSessions: warehouse.countSessions.map((session) => ({
+          id: session.id,
+          title: session.title,
+          status: session.status,
+          locationName: session.locationName,
+          lineCount: session.lineCount,
+          totalAbsVariance: session.totalAbsVariance,
+          totalVarianceValue: session.totalVarianceValue
+        })),
+        recipeItems: recipeMenuItems.map((item) => ({
+          id: item.id,
+          name: item.name,
+          categoryName: item.categoryName,
+          price: item.price,
+          recipeLineCount: item.recipeLines.length,
+          recipeCostPercent: item.recipeCostPercent,
+          grossProfit: item.grossProfit,
+          grossMarginPercent: item.grossMarginPercent,
+          costStatus: item.costStatus
+        })),
+        alerts: warehouse.alerts.map((alert) => ({
+          id: alert.id,
+          alertType: alert.alertType,
+          severity: alert.severity,
+          status: alert.status
+        }))
+      }),
+    [recipeMenuItems, warehouse.alerts, warehouse.countSessions, warehouse.purchaseOrders, warehouse.stockBalances]
+  );
+  const purchasePlan = useMemo(
+    () =>
+      buildInventoryPurchasePlan({
+        reorderSuggestions: intelligence.reorderSuggestions.map((item) => ({
+          ingredientId: item.ingredientId,
+          name: item.name,
+          unit: item.unit,
+          onHandQuantity: item.onHandQuantity,
+          minimumQuantity: item.minimumQuantity,
+          dailyUsage: item.dailyUsage,
+          daysLeft: item.daysLeft,
+          reorderQuantity: item.reorderQuantity,
+          estimatedCost: item.estimatedCost,
+          urgency: item.urgency
+        })),
+        suppliers: warehouse.suppliers.map((supplier) => ({
+          id: supplier.id,
+          name: supplier.name,
+          defaultLeadDays: supplier.defaultLeadDays,
+          isPreferred: supplier.isPreferred,
+          productCount: supplier.productCount
+        })),
+        purchaseOrders: warehouse.purchaseOrders.map((order) => ({
+          id: order.id,
+          status: order.status,
+          supplierName: order.supplierName,
+          totalAmount: order.totalAmount,
+          expectedDeliveryAt: order.expectedDeliveryAt,
+          lineCount: order.lineCount
+        }))
+      }),
+    [intelligence.reorderSuggestions, warehouse.purchaseOrders, warehouse.suppliers]
+  );
+  const auditReport = useMemo(
+    () =>
+      buildInventoryAuditReport({
+        movements: snapshot.recentMovements.map((movement) => ({
+          id: movement.id,
+          movementType: movement.movementType,
+          quantityDelta: movement.quantityDelta,
+          unitCost: movement.unitCost,
+          sourceType: movement.sourceType,
+          reason: movement.reason,
+          createdAt: movement.createdAt,
+          ingredientName: movement.ingredientName,
+          ingredientUnit: movement.ingredientUnit
+        })),
+        countSessions: warehouse.countSessions.map((session) => ({
+          id: session.id,
+          title: session.title,
+          status: session.status,
+          locationName: session.locationName,
+          lineCount: session.lineCount,
+          adjustedLineCount: session.adjustedLineCount,
+          totalAbsVariance: session.totalAbsVariance,
+          totalVarianceValue: session.totalVarianceValue
+        })),
+        alerts: warehouse.alerts.map((alert) => ({
+          id: alert.id,
+          alertType: alert.alertType,
+          severity: alert.severity,
+          status: alert.status,
+          title: alert.title
+        }))
+      }),
+    [snapshot.recentMovements, warehouse.alerts, warehouse.countSessions]
+  );
+  const branchBalancingReport = useMemo(
+    () =>
+      buildInventoryBranchBalancingReport({
+        locations: warehouse.locations.map((location) => ({
+          id: location.id,
+          branchName: location.branchName,
+          name: location.name,
+          locationType: location.locationType,
+          isPrimary: location.isPrimary
+        })),
+        stockBalances: warehouse.stockBalances.map((row) => ({
+          id: row.id,
+          ingredientId: row.ingredientId,
+          ingredientName: row.ingredientName,
+          ingredientUnit: row.ingredientUnit,
+          locationId: row.locationId,
+          branchName: row.branchName,
+          locationName: row.locationName,
+          batchCode: row.batchCode,
+          expirationDate: row.expirationDate,
+          availableQuantity: row.availableQuantity,
+          reservedQuantity: row.reservedQuantity,
+          incomingQuantity: row.incomingQuantity,
+          minimumQuantity: row.minimumQuantity,
+          referenceUnitCost: row.referenceUnitCost,
+          status: row.status
+        })),
+        transfers: warehouse.transfers.map((transfer) => ({
+          id: transfer.id,
+          status: transfer.status,
+          fromLocationId: transfer.fromLocationId,
+          toLocationId: transfer.toLocationId,
+          lineCount: transfer.lineCount,
+          totalQuantity: transfer.totalQuantity
+        }))
+      }),
+    [warehouse.locations, warehouse.stockBalances, warehouse.transfers]
+  );
   const reorderSuggestions = intelligence.reorderSuggestions.slice(0, 6);
   const urgentActions = intelligence.actionQueue.slice(0, 3);
   const importTotalValue = draftRows.reduce((total, row) => total + row.quantity * row.referenceUnitCost, 0);
@@ -655,8 +997,15 @@ export function InventoryWorkspaceV2({
   }
 
   return (
-    <div className="inventory-redesign space-y-5">
-      <InventoryPageHeader query={query} onQueryChange={setQuery} />
+    <div className="inventory-redesign dashboard-operations-stack space-y-5">
+      <InventoryPageHeader
+        query={query}
+        onQueryChange={setQuery}
+        realtimeState={realtimeState}
+        lastSyncedAt={lastSyncedAt}
+        isRefreshing={isRefreshing}
+        onRefresh={refreshInventory}
+      />
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
@@ -685,6 +1034,8 @@ export function InventoryWorkspaceV2({
       </section>
 
       <WarehouseOperationsStrip warehouse={warehouse} />
+
+      <StockRiskCockpit insights={stockRiskInsights} />
 
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
@@ -719,17 +1070,35 @@ export function InventoryWorkspaceV2({
         <SmartReorderTable suggestions={reorderSuggestions} ingredients={ingredients} />
       </section>
 
-      <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
-        <div className="flex flex-wrap gap-2 border-b border-[var(--border)] pb-3">
+      <CostControlPanel insights={costInsights} recipeBacklog={recipeBacklog} />
+
+      <InventoryAnalyticsCommandCenter analytics={inventoryAnalytics} />
+
+      <AuditControlPanel report={auditReport} />
+
+      <BranchBalancingCommandCenter report={branchBalancingReport} />
+
+      <InventoryCloseControlCenter
+        analytics={inventoryAnalytics}
+        auditReport={auditReport}
+        purchasePlan={purchasePlan}
+        stockRiskInsights={stockRiskInsights}
+      />
+
+      <section className="dashboard-workbench-surface rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="dashboard-segmented-scroll flex flex-nowrap gap-2 overflow-x-auto border-b border-[var(--border)] pb-3">
           <WorkbenchButton active={activeTab === "intake"} icon={Sparkles} label="AI nhập kho" onClick={() => setActiveTab("intake")} />
           <WorkbenchButton active={activeTab === "ingredients"} icon={Boxes} label="Quản lý nguyên liệu" onClick={() => setActiveTab("ingredients")} />
           <WorkbenchButton active={activeTab === "stock"} icon={Warehouse} label="Stock board" onClick={() => setActiveTab("stock")} />
           <WorkbenchButton active={activeTab === "waste"} icon={Trash2} label="Hao hụt & HSD" onClick={() => setActiveTab("waste")} />
           <WorkbenchButton active={activeTab === "counting"} icon={ClipboardList} label="Kiểm kê" onClick={() => setActiveTab("counting")} />
           <WorkbenchButton active={activeTab === "transfers"} icon={ArrowDownUp} label="Điều chuyển" onClick={() => setActiveTab("transfers")} />
+          <WorkbenchButton active={activeTab === "balancing"} icon={GitBranch} label="Cân bằng kho" onClick={() => setActiveTab("balancing")} />
           <WorkbenchButton active={activeTab === "purchasing"} icon={Truck} label="NCC & PO" onClick={() => setActiveTab("purchasing")} />
           <WorkbenchButton active={activeTab === "recipes"} icon={ClipboardCheck} label="Giá vốn món" onClick={() => setActiveTab("recipes")} />
           <WorkbenchButton active={activeTab === "alerts"} icon={Bell} label="Cảnh báo" onClick={() => setActiveTab("alerts")} />
+          <WorkbenchButton active={activeTab === "analytics"} icon={BarChart3} label="Analytics" onClick={() => setActiveTab("analytics")} />
+          <WorkbenchButton active={activeTab === "audit"} icon={ShieldCheck} label="Audit" onClick={() => setActiveTab("audit")} />
           <WorkbenchButton active={activeTab === "ledger"} icon={ReceiptText} label="Nhật ký kho" onClick={() => setActiveTab("ledger")} />
         </div>
 
@@ -778,13 +1147,19 @@ export function InventoryWorkspaceV2({
 
           {activeTab === "transfers" ? <InventoryTransferDesk warehouse={warehouse} ingredients={ingredients} /> : null}
 
-          {activeTab === "purchasing" ? <SupplierPurchaseDesk warehouse={warehouse} ingredients={ingredients} /> : null}
+          {activeTab === "balancing" ? <BranchBalancingDesk report={branchBalancingReport} /> : null}
+
+          {activeTab === "purchasing" ? <SupplierPurchaseDesk warehouse={warehouse} ingredients={ingredients} purchasePlan={purchasePlan} /> : null}
 
           {activeTab === "recipes" ? (
             <RecipesAndCategories categories={categories} ingredients={ingredients} recipeMenuItems={recipeMenuItems} recipeBacklog={recipeBacklog} />
           ) : null}
 
           {activeTab === "alerts" ? <InventoryAlertDesk warehouse={warehouse} /> : null}
+
+          {activeTab === "analytics" ? <InventoryAnalyticsDesk analytics={inventoryAnalytics} /> : null}
+
+          {activeTab === "audit" ? <InventoryAuditDesk report={auditReport} snapshot={snapshot} /> : null}
 
           {activeTab === "ledger" ? <InventoryLedger snapshot={snapshot} /> : null}
         </div>
@@ -795,7 +1170,21 @@ export function InventoryWorkspaceV2({
   );
 }
 
-function InventoryPageHeader({ query, onQueryChange }: { query: string; onQueryChange: (value: string) => void }) {
+function InventoryPageHeader({
+  query,
+  onQueryChange,
+  realtimeState,
+  lastSyncedAt,
+  isRefreshing,
+  onRefresh
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  realtimeState: RealtimeState;
+  lastSyncedAt: Date | null;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
   return (
     <section className="rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -805,6 +1194,25 @@ function InventoryPageHeader({ query, onQueryChange }: { query: string; onQueryC
           <p className="dashboard-body-copy mt-1 max-w-2xl">Tối ưu nhập hàng, cảnh báo sớm và kiểm soát nguyên liệu cho quán.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-white/80 px-3 py-2 text-xs font-black text-[var(--muted-foreground)] shadow-sm">
+            <Badge tone={realtimeTone(realtimeState)}>
+              <span className="inline-flex items-center gap-1.5">
+                <RadioTower className="h-3.5 w-3.5" />
+                {realtimeLabel(realtimeState)}
+              </span>
+            </Badge>
+            <span>Sync {formatSyncClock(lastSyncedAt)}</span>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="inline-grid h-8 w-8 place-items-center rounded-xl text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50"
+              aria-label="Làm mới kho"
+              title="Làm mới kho"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
+            </button>
+          </div>
           <label className="relative min-w-0 sm:w-96">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
             <Input className="h-11 rounded-2xl bg-white pl-9" value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Tìm nguyên liệu, nhóm, vị trí..." />
@@ -812,6 +1220,23 @@ function InventoryPageHeader({ query, onQueryChange }: { query: string; onQueryC
         </div>
       </div>
     </section>
+  );
+}
+
+function SubmitButton({ children, disabled, pendingLabel = "Đang xử lý...", ...props }: SubmitButtonProps) {
+  const { pending } = useFormStatus();
+
+  return (
+    <Button type="submit" disabled={pending || disabled} {...props}>
+      {pending ? (
+        <>
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          {pendingLabel}
+        </>
+      ) : (
+        children
+      )}
+    </Button>
   );
 }
 
@@ -910,6 +1335,1127 @@ function ActionCard({ priority, title, detail, value }: { priority: InventoryAct
   );
 }
 
+function InventoryAnalyticsCommandCenter({ analytics }: { analytics: InventoryAnalytics }) {
+  const riskTone = analytics.riskScore >= 80 ? "green" : analytics.riskScore >= 60 ? "yellow" : "red";
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Inventory analytics</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Command center vận hành kho</h2>
+        </div>
+        <Badge tone={riskTone}>Risk score {analytics.riskScore}/100</Badge>
+      </div>
+      <div className="grid gap-3 xl:grid-cols-[0.86fr_1.14fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Tồn khả dụng" value={formatVnd(analytics.workingCapital.availableValue)} />
+          <MiniMetric label="Rủi ro tồn" value={formatVnd(analytics.workingCapital.riskValue)} />
+          <MiniMetric label="PO đang mở" value={formatVnd(analytics.purchasing.openPurchaseValue)} />
+          <MiniMetric label="Lệch kiểm kê" value={formatVnd(analytics.counting.varianceValue)} />
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          {analytics.actionQueue.length === 0 ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 md:col-span-3">
+              <p className="font-black text-emerald-800">Không có action analytics khẩn</p>
+              <p className="mt-1 text-sm font-semibold text-emerald-700">Kho đang có dữ liệu vận hành ổn, tiếp tục theo dõi realtime và chốt định mức mới.</p>
+            </div>
+          ) : (
+            analytics.actionQueue.slice(0, 3).map((item) => (
+              <article key={item.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-black text-[var(--foreground)]">{item.title}</p>
+                  <Badge tone={item.severity}>{item.value}</Badge>
+                </div>
+                <p className="mt-2 text-xs font-bold text-[var(--muted-foreground)]">{item.detail}</p>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AuditControlPanelMobileDraft({ report }: { report: InventoryAuditReport }) {
+  const scoreTone = auditScoreTone(report.auditScore);
+  const hasAuditRisk = report.lossValue > 0 || report.unreasonedMovementCount > 0 || report.openControlAlertCount > 0 || report.countVarianceValue > 0;
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.74fr_1.26fr]">
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Audit control</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Chống thất thoát realtime</h2>
+          </div>
+          <Badge tone={scoreTone}>Audit {report.auditScore}/100</Badge>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Loss gần đây" value={formatVnd(report.lossValue)} />
+          <MiniMetric label="Điều chỉnh tay" value={formatVnd(report.manualAdjustmentValue)} />
+          <MiniMetric label="Lệch kiểm kê" value={formatVnd(report.countVarianceValue)} />
+          <MiniMetric label="Movement thiếu lý do" value={report.unreasonedMovementCount.toLocaleString("vi-VN")} />
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-2xl bg-red-50 px-3 py-2 text-sm font-black text-red-800">
+            <TrendingDown className="mb-1 h-4 w-4" />
+            {report.lossMovementCount.toLocaleString("vi-VN")} dòng xuất giảm
+          </div>
+          <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">
+            <AlertTriangle className="mb-1 h-4 w-4" />
+            {report.openControlAlertCount.toLocaleString("vi-VN")} alert kiểm soát
+          </div>
+          <div className="rounded-2xl bg-blue-50 px-3 py-2 text-sm font-black text-blue-800">
+            <ReceiptText className="mb-1 h-4 w-4" />
+            {report.movementCount.toLocaleString("vi-VN")} movement
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Loss radar</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Nguyên liệu thất thoát nổi bật</h2>
+          </div>
+          <Badge tone={hasAuditRisk ? "yellow" : "green"}>{report.topLossItems.length} SKU</Badge>
+        </div>
+        {report.topLossItems.length === 0 ? (
+          <EmptyState icon={ShieldCheck} title="Chưa có loss nổi bật" description="Các movement gần đây chưa tạo tín hiệu thất thoát cần xử lý ngay." />
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {report.topLossItems.slice(0, 4).map((item) => (
+              <article key={item.ingredientName} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-[var(--foreground)]">{item.ingredientName}</p>
+                    <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                      {formatQuantity(item.quantity, item.ingredientUnit)} qua {item.movementCount.toLocaleString("vi-VN")} movement
+                    </p>
+                  </div>
+                  <Badge tone={item.value >= 300000 ? "red" : "yellow"}>{formatVnd(item.value)}</Badge>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function InventoryAuditDeskMobileDraft({ report, snapshot }: { report: InventoryAuditReport; snapshot: InventorySnapshot }) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Control score</p>
+              <h2 className="mt-1 text-xl font-black">Điểm kiểm soát kho</h2>
+            </div>
+            <Badge tone={auditScoreTone(report.auditScore)}>{report.auditScore}/100</Badge>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Loss value" value={formatVnd(report.lossValue)} />
+            <MiniMetric label="Rollback value" value={formatVnd(report.rollbackValue)} />
+            <MiniMetric label="Manual adjust" value={formatVnd(report.manualAdjustmentValue)} />
+            <MiniMetric label="Count variance" value={formatVnd(report.countVarianceValue)} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Control checklist</p>
+              <h2 className="mt-1 text-xl font-black">Việc cần khóa rủi ro</h2>
+            </div>
+            <Badge tone={report.controls.some((control) => control.severity === "red") ? "red" : report.controls.some((control) => control.severity === "yellow") ? "yellow" : "green"}>
+              {report.controls.length} control
+            </Badge>
+          </div>
+          <div className="grid gap-2">
+            {report.controls.map((control) => (
+              <article key={control.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-black text-[var(--foreground)]">{control.title}</p>
+                    <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">{control.detail}</p>
+                  </div>
+                  <Badge tone={auditSeverityTone(control.severity)}>{control.severity === "green" ? "OK" : "Rà soát"}</Badge>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Risky movements</p>
+              <h2 className="mt-1 text-xl font-black">Movement cần kiểm tra</h2>
+            </div>
+            <Badge tone={report.riskyMovements.length > 0 ? "yellow" : "green"}>{report.riskyMovements.length} dòng</Badge>
+          </div>
+          {report.riskyMovements.length === 0 ? (
+            <EmptyState icon={CheckCircle2} title="Movement rõ lý do" description="Chưa có movement thất thoát hoặc điều chỉnh thủ công cần rà lại." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+              <div className="hidden grid-cols-[0.8fr_1fr_0.72fr_0.56fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
+                <span>Thời gian</span>
+                <span>Movement</span>
+                <span>Giá trị</span>
+                <span>Mức</span>
+              </div>
+              <div className="divide-y divide-[var(--border)]">
+                {report.riskyMovements.map((movement) => (
+                  <div key={movement.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[0.8fr_1fr_0.72fr_0.56fr] md:items-center">
+                    <span className="font-semibold text-[var(--muted-foreground)]">{formatDateTime(movement.createdAt)}</span>
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-[var(--foreground)]">{movement.title}</p>
+                      <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{movement.detail}</p>
+                    </div>
+                    <span className="metric-number font-black text-[var(--foreground)]">{formatVnd(movement.value)}</span>
+                    <Badge tone={movement.severity}>{movement.severity === "red" ? "Cao" : movement.severity === "yellow" ? "Vừa" : "Thiếu note"}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Ledger sample</p>
+              <h2 className="mt-1 text-xl font-black">Nhật ký gần đây để đối soát</h2>
+            </div>
+            <Badge tone={snapshot.recentMovements.length > 0 ? "blue" : "green"}>{snapshot.recentMovements.length} dòng</Badge>
+          </div>
+          <div className="grid gap-2">
+            {snapshot.recentMovements.length === 0 ? (
+              <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Chưa có movement gần đây.</p>
+            ) : (
+              snapshot.recentMovements.slice(0, 6).map((movement) => (
+                <div key={movement.id} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[var(--border)] px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-[var(--foreground)]">{movement.ingredientName}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{formatDateTime(movement.createdAt)} · {movement.reason || movement.sourceType || "Chưa có lý do"}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={movementTone(movement.movementType)}>{movementLabel(movement.movementType)}</Badge>
+                    <span className={`metric-number text-sm font-black ${movement.quantityDelta >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                      {movement.quantityDelta > 0 ? "+" : ""}
+                      {formatQuantity(movement.quantityDelta, movement.ingredientUnit)}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function InventoryCloseControlCenter({
+  analytics,
+  auditReport,
+  purchasePlan,
+  stockRiskInsights
+}: {
+  analytics: InventoryAnalytics;
+  auditReport: InventoryAuditReport;
+  purchasePlan: InventoryPurchasePlan;
+  stockRiskInsights: {
+    lowOrOutCount: number;
+    expiredCount: number;
+    expiringCount: number;
+    incomingCount: number;
+    reservedValue: number;
+    incomingValue: number;
+    riskValue: number;
+    riskyRows: InventoryStockBalance[];
+  };
+}) {
+  const stockSignalCount = stockRiskInsights.lowOrOutCount + stockRiskInsights.expiredCount + stockRiskInsights.expiringCount;
+  const openControlCount = auditReport.controls.filter((control) => control.severity === "red" || control.severity === "yellow").length;
+  const closeReadinessScore = Math.max(
+    0,
+    Math.min(
+      100,
+      100 -
+        stockSignalCount * 5 -
+        auditReport.unreasonedMovementCount * 8 -
+        auditReport.openControlAlertCount * 7 -
+        purchasePlan.urgentLineCount * 6 -
+        purchasePlan.latePurchaseOrderCount * 8 -
+        Math.min(18, Math.floor(auditReport.lossValue / 100000) * 3)
+    )
+  );
+  const closeTone = closeReadinessScore >= 85 ? "green" : closeReadinessScore >= 65 ? "yellow" : "red";
+  const closeChecks = [
+    {
+      id: "stock-risk",
+      label: "Không còn SKU thiếu/hết/HSD",
+      value: stockSignalCount.toLocaleString("vi-VN"),
+      done: stockSignalCount === 0,
+      action: "Mở Stock board"
+    },
+    {
+      id: "audit-reason",
+      label: "Movement rủi ro có lý do",
+      value: auditReport.unreasonedMovementCount.toLocaleString("vi-VN"),
+      done: auditReport.unreasonedMovementCount === 0,
+      action: "Mở Audit"
+    },
+    {
+      id: "purchase-urgent",
+      label: "Đã tạo kế hoạch mua gấp",
+      value: purchasePlan.urgentLineCount.toLocaleString("vi-VN"),
+      done: purchasePlan.urgentLineCount === 0,
+      action: "Mở NCC & PO"
+    },
+    {
+      id: "late-po",
+      label: "Không có PO trễ",
+      value: purchasePlan.latePurchaseOrderCount.toLocaleString("vi-VN"),
+      done: purchasePlan.latePurchaseOrderCount === 0,
+      action: "Rà nhà cung cấp"
+    }
+  ];
+  const closeQueues = [
+    ...stockRiskInsights.riskyRows.slice(0, 3).map((row) => ({
+      id: `stock-${row.id}`,
+      title: row.ingredientName,
+      detail: `${stockStatusLabel(row.status)} · ${row.locationName ?? row.branchName ?? "Kho chính"} · ${expirationCopy(row.expirationDate)}`,
+      value: formatVnd(Math.round(Math.max(row.onHandQuantity, row.availableQuantity) * row.referenceUnitCost)),
+      tone: stockStatusTone(row.status)
+    })),
+    ...auditReport.riskyMovements.slice(0, 3).map((movement) => ({
+      id: `movement-${movement.id}`,
+      title: movement.title,
+      detail: movement.detail,
+      value: formatVnd(movement.value),
+      tone: movement.severity
+    })),
+    ...purchasePlan.lines.slice(0, 3).map((line) => ({
+      id: `purchase-${line.ingredientId}`,
+      title: line.name,
+      detail: line.reason,
+      value: formatVnd(line.estimatedCost),
+      tone: line.priority === "urgent" ? "red" as const : line.priority === "soon" ? "yellow" as const : "blue" as const
+    }))
+  ].slice(0, 6);
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Inventory close control</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Checklist chốt ca kho trước giờ cao điểm</h2>
+        </div>
+        <Badge tone={closeTone}>Close readiness {closeReadinessScore}/100</Badge>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+        <div className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Tồn rủi ro" value={formatVnd(stockRiskInsights.riskValue)} />
+            <MiniMetric label="Loss audit" value={formatVnd(auditReport.lossValue)} />
+            <MiniMetric label="Mua gấp" value={formatVnd(purchasePlan.urgentSuggestedValue)} />
+            <MiniMetric label="Vốn bị giữ" value={formatVnd(analytics.workingCapital.reservedValue)} />
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-black text-[var(--foreground)]">Mức sẵn sàng đóng ca</p>
+                <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{openControlCount} control cần rà · {closeQueues.length} việc trong hàng đợi</p>
+              </div>
+              <ScoreRing score={closeReadinessScore} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Checklist quản lý kho</p>
+              <Badge tone={closeChecks.every((item) => item.done) ? "green" : "yellow"}>{closeChecks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2">
+              {closeChecks.map((item) => (
+                <div key={item.id} className="flex items-start justify-between gap-3 rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-[var(--foreground)]">{item.label}</p>
+                    <p className="mt-0.5 text-xs font-bold text-[var(--muted-foreground)]">{item.action}</p>
+                  </div>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Hàng đợi xử lý</p>
+              <Badge tone={closeQueues.length > 0 ? "yellow" : "green"}>{closeQueues.length || "Trống"}</Badge>
+            </div>
+            <div className="grid max-h-72 gap-2 overflow-auto pr-1">
+              {closeQueues.length === 0 ? (
+                <p className="rounded-2xl bg-white px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Không có việc kho cần xử lý ngay.</p>
+              ) : (
+                closeQueues.map((item) => (
+                  <article key={item.id} className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-[var(--foreground)]">{item.title}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--muted-foreground)]">{item.detail}</p>
+                      </div>
+                      <Badge tone={item.tone}>{item.value}</Badge>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AuditControlPanel({ report }: { report: InventoryAuditReport }) {
+  const scoreTone = auditScoreTone(report.auditScore);
+  const criticalControls = report.controls.filter((control) => control.severity === "red" || control.severity === "yellow");
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Inventory audit</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Kiểm soát thất thoát và movement rủi ro</h2>
+        </div>
+        <Badge tone={scoreTone}>Audit score {report.auditScore}/100</Badge>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Loss gần đây" value={formatVnd(report.lossValue)} />
+          <MiniMetric label="Điều chỉnh thủ công" value={formatVnd(report.manualAdjustmentValue)} />
+          <MiniMetric label="Movement thiếu lý do" value={report.unreasonedMovementCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Lệch kiểm kê" value={formatVnd(report.countVarianceValue)} />
+        </div>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          {criticalControls.length === 0 ? (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 md:col-span-2">
+              <p className="font-black text-emerald-800">Kiểm soát kho đang ổn</p>
+              <p className="mt-1 text-sm font-semibold text-emerald-700">Chưa có movement thiếu lý do, loss lớn hoặc alert kiểm soát cần xử lý ngay.</p>
+            </div>
+          ) : (
+            criticalControls.slice(0, 4).map((control) => (
+              <article key={control.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-black text-[var(--foreground)]">{control.title}</p>
+                  <Badge tone={auditSeverityTone(control.severity)}>{control.severity}</Badge>
+                </div>
+                <p className="mt-2 text-xs font-bold leading-relaxed text-[var(--muted-foreground)]">{control.detail}</p>
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InventoryAuditDesk({ report, snapshot }: { report: InventoryAuditReport; snapshot: InventorySnapshot }) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Audit overview</p>
+              <h2 className="mt-1 text-xl font-black">Điểm kiểm soát kho</h2>
+            </div>
+            <Badge tone={auditScoreTone(report.auditScore)}>{report.auditScore}/100</Badge>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Movement" value={report.movementCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Movement loss" value={report.lossMovementCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Rollback" value={formatVnd(report.rollbackValue)} />
+            <MiniMetric label="Alert kiểm soát" value={report.openControlAlertCount.toLocaleString("vi-VN")} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Top loss</p>
+              <h2 className="mt-1 text-xl font-black">Nguyên liệu hao hụt cao</h2>
+            </div>
+            <Badge tone={report.topLossItems.length > 0 ? "yellow" : "green"}>{report.topLossItems.length} SKU</Badge>
+          </div>
+          <div className="grid gap-2">
+            {report.topLossItems.length === 0 ? (
+              <EmptyState icon={PackageCheck} title="Chưa có loss nổi bật" description="Movement hao hụt, hết hạn và trả nhà cung cấp sẽ được gom tại đây khi phát sinh." />
+            ) : (
+              report.topLossItems.map((item) => (
+                <div key={item.ingredientName} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 truncate font-black">{item.ingredientName}</p>
+                    <Badge tone={item.value >= 300000 ? "red" : "yellow"}>{formatVnd(item.value)}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">
+                    {formatQuantity(item.quantity, item.ingredientUnit)} · {item.movementCount.toLocaleString("vi-VN")} movement
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Risky movements</p>
+              <h2 className="mt-1 text-xl font-black">Movement cần rà trước khi chốt ca</h2>
+            </div>
+            <Badge tone={report.riskyMovements.length > 0 ? "yellow" : "green"}>{report.riskyMovements.length} dòng</Badge>
+          </div>
+          {report.riskyMovements.length === 0 ? (
+            <EmptyState icon={ShieldCheck} title="Không có movement rủi ro" description="Các movement gần đây đã có nguồn, lý do hoặc giá trị không vượt ngưỡng kiểm soát." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+              <div className="hidden grid-cols-[minmax(180px,1fr)_0.8fr_110px_120px] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
+                <span>Movement</span>
+                <span>Lý do</span>
+                <span>Giá trị</span>
+                <span>Thời gian</span>
+              </div>
+              <div className="divide-y divide-[var(--border)]">
+                {report.riskyMovements.map((movement) => (
+                  <div key={movement.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[minmax(180px,1fr)_0.8fr_110px_120px] md:items-center">
+                    <p className="truncate font-black text-[var(--foreground)]">{movement.title}</p>
+                    <p className="line-clamp-2 font-semibold text-[var(--muted-foreground)]">{movement.detail}</p>
+                    <Badge tone={movement.severity}>{formatVnd(movement.value)}</Badge>
+                    <span className="text-xs font-bold text-[var(--muted-foreground)]">{formatDateTime(movement.createdAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Control checklist</p>
+              <h2 className="mt-1 text-xl font-black">Checklist audit theo ca</h2>
+            </div>
+            <Badge tone={report.controls.some((control) => control.severity === "red") ? "red" : "green"}>{report.controls.length} control</Badge>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {report.controls.map((control) => (
+              <article key={control.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-black text-[var(--foreground)]">{control.title}</p>
+                  <Badge tone={auditSeverityTone(control.severity)}>{control.severity}</Badge>
+                </div>
+                <p className="mt-2 text-sm font-semibold leading-relaxed text-[var(--muted-foreground)]">{control.detail}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Recent ledger</p>
+              <h2 className="mt-1 text-xl font-black">Nhật ký gần đây để đối chiếu</h2>
+            </div>
+            <Badge tone={snapshot.recentMovements.length > 0 ? "blue" : "green"}>{snapshot.recentMovements.length} movement</Badge>
+          </div>
+          {snapshot.recentMovements.length === 0 ? (
+            <EmptyState icon={ReceiptText} title="Chưa có movement gần đây" description="Khi nhập, bán, điều chỉnh hoặc kiểm kê kho, movement sẽ xuất hiện để audit." />
+          ) : (
+            <div className="grid gap-2">
+              {snapshot.recentMovements.slice(0, 6).map((movement) => (
+                <div key={movement.id} className="grid gap-1 rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-[var(--foreground)]">{movement.ingredientName}</p>
+                    <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
+                      {movement.movementType} · {movement.sourceType ?? "manual"} · {formatDateTime(movement.createdAt)}
+                    </p>
+                  </div>
+                  <Badge tone={movementTone(movement.movementType)}>{formatQuantity(Math.abs(movement.quantityDelta), movement.ingredientUnit)}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function BranchBalancingCommandCenter({ report }: { report: InventoryBranchBalancingReport }) {
+  const scoreTone = report.balanceScore >= 85 ? "green" : report.balanceScore >= 65 ? "yellow" : "red";
+  const urgentTransfers = report.transferSuggestions.filter((item) => item.priority === "urgent");
+  const topBranches = report.branches.slice(0, 3);
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Multi-branch balancing</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Cân bằng tồn kho chuỗi và kho trung tâm</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={scoreTone}>Balance {report.balanceScore}/100</Badge>
+          <Badge tone={urgentTransfers.length > 0 ? "red" : report.suggestedTransferCount > 0 ? "yellow" : "green"}>
+            {report.suggestedTransferCount} gợi ý chuyển
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+        <div className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Thiếu theo chi nhánh" value={formatVnd(report.shortageValue)} />
+            <MiniMetric label="Dư có thể cân bằng" value={formatVnd(report.surplusValue)} />
+            <MiniMetric label="Sắp HSD" value={formatVnd(report.expiringValue)} />
+            <MiniMetric label="Transfer mở" value={report.openTransferCount.toLocaleString("vi-VN")} />
+          </div>
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-black text-[var(--foreground)]">Kho trung tâm</p>
+                <p className="mt-1 truncate text-xs font-bold text-[var(--muted-foreground)]">
+                  {report.centralKitchen.ready ? report.centralKitchen.locationNames.join(" · ") : "Chưa nhận diện kho trung tâm"}
+                </p>
+              </div>
+              <Badge tone={report.centralKitchen.ready ? "green" : "blue"}>{report.centralLocationCount} kho</Badge>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <MiniMetric label="Tồn trung tâm" value={formatVnd(report.centralKitchen.stockValue)} />
+              <MiniMetric label="Dư trung tâm" value={formatVnd(report.centralKitchen.surplusValue)} />
+              <MiniMetric label="Có thể cấp" value={formatVnd(report.centralKitchen.suggestedOutboundValue)} />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Điểm bán cần cân bằng</p>
+              <Badge tone={topBranches.some((branch) => branch.readinessScore < 70) ? "red" : topBranches.length > 0 ? "yellow" : "green"}>
+                {report.branchCount} cụm
+              </Badge>
+            </div>
+            <div className="grid gap-2">
+              {topBranches.length === 0 ? (
+                <p className="rounded-2xl bg-white px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Chưa có dữ liệu chi nhánh/kho.</p>
+              ) : (
+                topBranches.map((branch) => (
+                  <article key={branch.branchName} className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-black text-[var(--foreground)]">{branch.branchName}</p>
+                        <p className="mt-0.5 truncate text-xs font-semibold text-[var(--muted-foreground)]">
+                          {branch.shortageLineCount} thiếu · {branch.expiringLineCount} HSD · {branch.openInboundTransferCount} inbound
+                        </p>
+                      </div>
+                      <Badge tone={branch.readinessScore >= 85 ? "green" : branch.readinessScore >= 65 ? "yellow" : "red"}>{branch.readinessScore}/100</Badge>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Transfer gợi ý</p>
+              <Badge tone={urgentTransfers.length > 0 ? "red" : report.transferSuggestions.length > 0 ? "yellow" : "green"}>
+                {urgentTransfers.length} gấp
+              </Badge>
+            </div>
+            <div className="grid max-h-72 gap-2 overflow-auto pr-1">
+              {report.transferSuggestions.length === 0 ? (
+                <p className="rounded-2xl bg-white px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Chưa cần điều chuyển cân bằng.</p>
+              ) : (
+                report.transferSuggestions.slice(0, 4).map((item) => (
+                  <article key={item.id} className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-[var(--foreground)]">{item.ingredientName}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                          {item.fromLocationName} → {item.toLocationName} · {formatQuantity(item.quantity, item.ingredientUnit)}
+                        </p>
+                      </div>
+                      <Badge tone={item.priority === "urgent" ? "red" : item.priority === "soon" ? "yellow" : "blue"}>{formatVnd(item.value)}</Badge>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BranchBalancingDesk({ report }: { report: InventoryBranchBalancingReport }) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Balancing score</p>
+              <h2 className="mt-1 text-xl font-black">Sức khỏe cân bằng chuỗi</h2>
+            </div>
+            <ScoreRing score={report.balanceScore} />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Chi nhánh/cụm" value={report.branchCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Vị trí kho" value={report.locationCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Kho trung tâm" value={report.centralLocationCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Transfer mở" value={report.openTransferCount.toLocaleString("vi-VN")} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Branch exposure</p>
+              <h2 className="mt-1 text-xl font-black">Tồn và thiếu theo chi nhánh</h2>
+            </div>
+            <Badge tone={report.branches.some((branch) => branch.shortageValue > 0) ? "yellow" : "green"}>{report.branches.length} dòng</Badge>
+          </div>
+          <div className="grid gap-2">
+            {report.branches.length === 0 ? (
+              <EmptyState icon={Warehouse} title="Chưa có cụm kho" description="Khi có stock balance theo location/branch, hệ thống sẽ tính cân bằng từng điểm bán." />
+            ) : (
+              report.branches.slice(0, 8).map((branch) => (
+                <article key={branch.branchName} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-[var(--foreground)]">{branch.branchName}</p>
+                      <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                        {branch.locationCount} kho · {branch.shortageLineCount} thiếu · {branch.surplusLineCount} dư
+                      </p>
+                    </div>
+                    <Badge tone={branch.readinessScore >= 85 ? "green" : branch.readinessScore >= 65 ? "yellow" : "red"}>{branch.readinessScore}/100</Badge>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <MiniMetric label="Tồn" value={formatVnd(branch.stockValue)} />
+                    <MiniMetric label="Thiếu" value={formatVnd(branch.shortageValue)} />
+                    <MiniMetric label="Sắp HSD" value={formatVnd(branch.expiringValue)} />
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Suggested transfers</p>
+              <h2 className="mt-1 text-xl font-black">Gợi ý điều chuyển trước khi mua thêm</h2>
+            </div>
+            <Badge tone={report.transferSuggestions.length > 0 ? "yellow" : "green"}>{report.transferSuggestions.length} dòng</Badge>
+          </div>
+          {report.transferSuggestions.length === 0 ? (
+            <EmptyState icon={CheckCircle2} title="Không có đề xuất điều chuyển" description="Hệ thống chưa tìm thấy cặp kho dư - chi nhánh thiếu cùng nguyên liệu." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+              <div className="hidden grid-cols-[1fr_1fr_0.65fr_0.65fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
+                <span>Tuyến</span>
+                <span>Nguyên liệu</span>
+                <span>Lượng</span>
+                <span>Giá trị</span>
+              </div>
+              <div className="divide-y divide-[var(--border)]">
+                {report.transferSuggestions.map((item) => (
+                  <div key={item.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_1fr_0.65fr_0.65fr] md:items-center">
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-[var(--foreground)]">{item.fromBranchName} → {item.toBranchName}</p>
+                      <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{item.fromLocationName} → {item.toLocationName}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-black">{item.ingredientName}</p>
+                      <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{item.reason}</p>
+                    </div>
+                    <Badge tone={item.priority === "urgent" ? "red" : item.priority === "soon" ? "yellow" : "blue"}>
+                      {formatQuantity(item.quantity, item.ingredientUnit)}
+                    </Badge>
+                    <span className="metric-number font-black">{formatVnd(item.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Balancing risks</p>
+              <h2 className="mt-1 text-xl font-black">Rủi ro cần xử lý</h2>
+            </div>
+            <Badge tone={report.risks.some((risk) => risk.severity === "red") ? "red" : report.risks.length > 0 ? "yellow" : "green"}>{report.risks.length} tín hiệu</Badge>
+          </div>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {report.risks.length === 0 ? (
+              <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-3 text-sm font-bold text-[var(--muted-foreground)] lg:col-span-2">Không có rủi ro cân bằng chuỗi nổi bật.</p>
+            ) : (
+              report.risks.map((risk) => (
+                <article key={risk.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-black text-[var(--foreground)]">{risk.title}</p>
+                    <Badge tone={risk.severity}>{formatVnd(risk.value)}</Badge>
+                  </div>
+                  <p className="mt-2 text-xs font-bold text-[var(--muted-foreground)]">{risk.detail}</p>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function InventoryAnalyticsDesk({ analytics }: { analytics: InventoryAnalytics }) {
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Working capital</p>
+              <h2 className="mt-1 text-xl font-black">Vốn nằm trong kho</h2>
+            </div>
+            <Badge tone={analytics.workingCapital.riskValue > 0 ? "yellow" : "green"}>{formatVnd(analytics.workingCapital.onHandValue)}</Badge>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="On hand" value={formatVnd(analytics.workingCapital.onHandValue)} />
+            <MiniMetric label="Available" value={formatVnd(analytics.workingCapital.availableValue)} />
+            <MiniMetric label="Reserved" value={formatVnd(analytics.workingCapital.reservedValue)} />
+            <MiniMetric label="Incoming" value={formatVnd(analytics.workingCapital.incomingValue)} />
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Recipe economics</p>
+          <h2 className="mt-1 text-xl font-black">Giá vốn và margin</h2>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Recipe ready" value={analytics.recipeEconomics.recipeReadyCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Thiếu recipe" value={analytics.recipeEconomics.missingRecipeCount.toLocaleString("vi-VN")} />
+            <MiniMetric label="Food cost TB" value={formatPercent(analytics.recipeEconomics.averageFoodCostPercent)} />
+            <MiniMetric label="Gross margin TB" value={formatPercent(analytics.recipeEconomics.averageGrossMarginPercent)} />
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-4">
+        <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Location exposure</p>
+              <h2 className="mt-1 text-xl font-black">Rủi ro theo vị trí kho</h2>
+            </div>
+            <Badge tone={analytics.locationExposure.length > 0 ? "blue" : "green"}>{analytics.locationExposure.length} kho</Badge>
+          </div>
+          {analytics.locationExposure.length === 0 ? (
+            <EmptyState icon={Warehouse} title="Chưa có tồn theo vị trí" description="Khi có stock balance theo kho/lô, analytics sẽ nhóm vốn và rủi ro theo vị trí." />
+          ) : (
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+              <div className="hidden grid-cols-[1fr_0.75fr_0.75fr_0.55fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
+                <span>Vị trí</span>
+                <span>Giá trị tồn</span>
+                <span>Rủi ro</span>
+                <span>Dòng</span>
+              </div>
+              <div className="divide-y divide-[var(--border)]">
+                {analytics.locationExposure.map((location) => (
+                  <div key={location.locationName} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_0.75fr_0.75fr_0.55fr] md:items-center">
+                    <p className="truncate font-black">{location.locationName}</p>
+                    <span className="metric-number font-black">{formatVnd(location.onHandValue)}</span>
+                    <Badge tone={location.riskValue > 0 ? "red" : "green"}>{formatVnd(location.riskValue)}</Badge>
+                    <span className="font-bold text-[var(--muted-foreground)]">{location.riskLineCount}/{location.lineCount}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <AnalyticsSupplierPanel analytics={analytics} />
+          <AnalyticsAlertPanel analytics={analytics} />
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsSupplierPanel({ analytics }: { analytics: InventoryAnalytics }) {
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Supplier exposure</p>
+          <h2 className="mt-1 text-xl font-black">NCC & PO</h2>
+        </div>
+        <Badge tone={analytics.purchasing.latePurchaseOrderCount > 0 ? "red" : "green"}>{analytics.purchasing.latePurchaseOrderCount} trễ</Badge>
+      </div>
+      <div className="grid gap-2">
+        {analytics.purchasing.supplierExposure.length === 0 ? (
+          <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Không có PO mở.</p>
+        ) : (
+          analytics.purchasing.supplierExposure.map((supplier) => (
+            <div key={supplier.supplierName} className="rounded-2xl border border-[var(--border)] p-3">
+              <div className="flex items-start justify-between gap-3">
+                <p className="truncate font-black">{supplier.supplierName}</p>
+                <Badge tone={supplier.lateCount > 0 ? "red" : "blue"}>{supplier.openCount} PO</Badge>
+              </div>
+              <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">{formatVnd(supplier.openValue)} · {supplier.lineCount} dòng · {supplier.lateCount} trễ</p>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function AnalyticsAlertPanel({ analytics }: { analytics: InventoryAnalytics }) {
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Alert mix</p>
+          <h2 className="mt-1 text-xl font-black">Cơ cấu cảnh báo</h2>
+        </div>
+        <Badge tone={analytics.alertMix.length > 0 ? "yellow" : "green"}>{analytics.alertMix.length} nhóm</Badge>
+      </div>
+      <div className="grid gap-2">
+        {analytics.alertMix.length === 0 ? (
+          <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Không có cảnh báo mở.</p>
+        ) : (
+          analytics.alertMix.map((alert) => (
+            <div key={alert.label} className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--border)] px-3 py-2">
+              <span className="truncate text-sm font-black">{alertTypeLabel(alert.label)}</span>
+              <Badge tone={alert.severity}>{alert.count}</Badge>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function StockRiskCockpit({
+  insights
+}: {
+  insights: {
+    lowOrOutCount: number;
+    expiredCount: number;
+    expiringCount: number;
+    incomingCount: number;
+    reservedValue: number;
+    incomingValue: number;
+    riskValue: number;
+    riskyRows: InventoryStockBalance[];
+  };
+}) {
+  const totalSignals = insights.lowOrOutCount + insights.expiredCount + insights.expiringCount;
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Stock risk</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Tồn kho cần chú ý</h2>
+          </div>
+          <Badge tone={totalSignals > 0 ? "red" : "green"}>{totalSignals} tín hiệu</Badge>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Thiếu / sắp hết" value={insights.lowOrOutCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Hết hạn" value={insights.expiredCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Sắp HSD" value={insights.expiringCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Đang về" value={insights.incomingCount.toLocaleString("vi-VN")} />
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-2xl bg-red-50 px-3 py-2 text-sm font-black text-red-800">
+            <AlertTriangle className="mb-1 h-4 w-4" />
+            Rủi ro {formatVnd(insights.riskValue)}
+          </div>
+          <div className="rounded-2xl bg-blue-50 px-3 py-2 text-sm font-black text-blue-800">
+            <Truck className="mb-1 h-4 w-4" />
+            Incoming {formatVnd(insights.incomingValue)}
+          </div>
+          <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">
+            <ShieldCheck className="mb-1 h-4 w-4" />
+            Reserved {formatVnd(insights.reservedValue)}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Ops board</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Dòng tồn cần xử lý</h2>
+          </div>
+          <Badge tone={insights.riskyRows.length > 0 ? "yellow" : "green"}>{insights.riskyRows.length} dòng</Badge>
+        </div>
+        {insights.riskyRows.length === 0 ? (
+          <EmptyState icon={PackageCheck} title="Tồn kho đang ổn" description="Không có dòng hết hàng, sắp hết, hết hạn hoặc đang chờ nhập nổi bật." />
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {insights.riskyRows.map((row) => (
+              <article key={row.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-[var(--foreground)]">{row.ingredientName}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">
+                      {row.locationName || "Kho chính"}{row.branchName ? ` · ${row.branchName}` : ""}{row.batchCode ? ` · Lô ${row.batchCode}` : ""}
+                    </p>
+                  </div>
+                  <Badge tone={stockStatusTone(row.status)}>{stockStatusLabel(row.status)}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <MiniMetric label="Khả dụng" value={formatQuantity(row.availableQuantity, row.ingredientUnit)} />
+                  <MiniMetric label="Incoming" value={formatQuantity(row.incomingQuantity, row.ingredientUnit)} />
+                  <MiniMetric label="Giá trị" value={formatVnd(Math.round(Math.max(row.availableQuantity, row.onHandQuantity) * row.referenceUnitCost))} />
+                </div>
+                <p className="mt-2 text-xs font-bold text-[var(--muted-foreground)]">
+                  {row.expirationDate ? expirationCopy(row.expirationDate) : row.incomingQuantity > 0 ? "Có hàng đang về, cần theo dõi thời gian nhận." : "Không có HSD theo lô."}
+                </p>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CostControlPanel({
+  insights,
+  recipeBacklog
+}: {
+  insights: {
+    recipeReadyCount: number;
+    riskyItems: InventoryRecipeMenuItem[];
+    watchItems: number;
+    totalRecipeCost: number;
+    totalGrossProfit: number;
+    averageCostPercent: number;
+  };
+  recipeBacklog: InventoryRecipeMenuItem[];
+}) {
+  const topRiskItems = insights.riskyItems.slice(0, 5);
+  const hasCostRisk = topRiskItems.length > 0 || recipeBacklog.length > 0;
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Cost control</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Biên lợi nhuận món</h2>
+          </div>
+          <Badge tone={hasCostRisk ? "yellow" : "green"}>{hasCostRisk ? "Cần rà" : "Ổn"}</Badge>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Món có recipe" value={insights.recipeReadyCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Food cost TB" value={formatPercent(insights.averageCostPercent)} />
+          <MiniMetric label="Tổng giá vốn/món" value={formatVnd(insights.totalRecipeCost)} />
+          <MiniMetric label="Lợi nhuận gộp/món" value={formatVnd(insights.totalGrossProfit)} />
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-2xl bg-emerald-50 px-3 py-2 text-sm font-black text-emerald-800">
+            <BadgePercent className="mb-1 h-4 w-4" />
+            {Math.max(0, insights.recipeReadyCount - insights.riskyItems.length - insights.watchItems).toLocaleString("vi-VN")} món margin tốt
+          </div>
+          <div className="rounded-2xl bg-amber-50 px-3 py-2 text-sm font-black text-amber-800">
+            <AlertTriangle className="mb-1 h-4 w-4" />
+            {insights.watchItems.toLocaleString("vi-VN")} món cần theo dõi
+          </div>
+          <div className="rounded-2xl bg-red-50 px-3 py-2 text-sm font-black text-red-800">
+            <TrendingDown className="mb-1 h-4 w-4" />
+            {insights.riskyItems.length.toLocaleString("vi-VN")} món rủi ro
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Margin guard</p>
+            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Món cần xử lý trước</h2>
+          </div>
+          <Badge tone={topRiskItems.length > 0 ? "red" : recipeBacklog.length > 0 ? "yellow" : "green"}>{topRiskItems.length + recipeBacklog.length} tín hiệu</Badge>
+        </div>
+        {topRiskItems.length === 0 && recipeBacklog.length === 0 ? (
+          <EmptyState icon={CheckCircle2} title="Chưa có rủi ro cost" description="Các món đã có định mức đang nằm trong vùng margin an toàn." />
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {topRiskItems.map((item) => (
+              <article key={item.id} className="rounded-2xl border border-red-200 bg-red-50/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-[var(--foreground)]">{item.name}</p>
+                    <p className="mt-1 text-xs font-semibold text-red-800">{item.marginWarning ?? "Recipe cost đang cao hơn vùng an toàn."}</p>
+                  </div>
+                  <Badge tone={costStatusTone(item.costStatus)}>{formatPercent(item.recipeCostPercent)}</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <MiniMetric label="Giá bán" value={formatVnd(item.price)} />
+                  <MiniMetric label="Giá vốn" value={formatVnd(item.totalRecipeCost)} />
+                  <MiniMetric label="Margin" value={formatPercent(item.grossMarginPercent)} />
+                </div>
+              </article>
+            ))}
+            {recipeBacklog.slice(0, Math.max(0, 5 - topRiskItems.length)).map((item) => (
+              <article key={item.id} className="rounded-2xl border border-amber-200 bg-amber-50/50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-black text-[var(--foreground)]">{item.name}</p>
+                    <p className="mt-1 text-xs font-semibold text-amber-800">Chưa có định mức nên chưa tính được food cost và tự động trừ kho.</p>
+                  </div>
+                  <Badge tone="yellow">Thiếu recipe</Badge>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <MiniMetric label="Giá bán" value={formatVnd(item.price)} />
+                  <MiniMetric label="Nhóm món" value={item.categoryName || "Chưa nhóm"} />
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function SmartReorderTable({ suggestions, ingredients }: { suggestions: InventoryIntelligence["reorderSuggestions"]; ingredients: InventoryIngredient[] }) {
   return (
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
@@ -997,7 +2543,8 @@ function WorkbenchButton({ active, icon: Icon, label, onClick }: { active: boole
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-black transition ${
+      aria-pressed={active}
+      className={`inline-flex h-11 shrink-0 snap-start items-center gap-2 rounded-xl px-3 text-sm font-black transition sm:rounded-2xl sm:px-4 ${
         active ? "bg-[var(--primary)] text-white shadow-sm" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
       }`}
     >
@@ -1119,9 +2666,9 @@ function AiInventoryIntake({
         </div>
         {importState?.error ? <p className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">{importState.error}</p> : null}
         {importState?.success ? <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">{importState.success}</p> : null}
-        <Button type="submit" disabled={draftRows.length === 0 || importPending} className="mt-3 w-full rounded-2xl">
-          <PackagePlus className="h-4 w-4" /> {importPending ? "Đang nhập vào kho..." : "Nhập vào kho thật"}
-        </Button>
+        <SubmitButton disabled={draftRows.length === 0 || importPending} pendingLabel="Đang nhập vào kho..." className="mt-3 w-full rounded-2xl">
+          <PackagePlus className="h-4 w-4" /> Nhập vào kho thật
+        </SubmitButton>
       </form>
     </div>
   );
@@ -1254,7 +2801,9 @@ function IngredientDrawer({ drawer, categories, onClose }: { drawer: DrawerState
           </div>
           <Textarea name="storageNote" defaultValue={ingredient?.storageNote ?? ""} placeholder="Ghi chú vị trí hoặc kiểm soát" />
           <div className="mt-2 flex gap-2">
-            <Button type="submit" className="flex-1 rounded-2xl">{ingredient ? "Lưu thay đổi" : "Thêm nguyên liệu"}</Button>
+            <SubmitButton className="flex-1 rounded-2xl" pendingLabel={ingredient ? "Đang lưu..." : "Đang thêm..."}>
+              {ingredient ? "Lưu thay đổi" : "Thêm nguyên liệu"}
+            </SubmitButton>
             {ingredient ? (
               <button form={`archive-${ingredient.id}`} type="submit" className="inline-flex h-11 items-center gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 text-sm font-black text-red-700">
                 <Trash2 className="h-4 w-4" /> Xóa
@@ -1269,6 +2818,233 @@ function IngredientDrawer({ drawer, categories, onClose }: { drawer: DrawerState
         ) : null}
       </aside>
     </div>
+  );
+}
+
+function StockOperationsControlCenter({
+  warehouse,
+  rows
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  rows: InventoryStockBalance[];
+}) {
+  const lowRows = rows.filter((row) => row.status === "low" || row.status === "out_of_stock" || (row.minimumQuantity > 0 && row.availableQuantity <= row.minimumQuantity));
+  const reservedRows = rows.filter((row) => row.reservedQuantity > 0);
+  const incomingRows = rows.filter((row) => row.incomingQuantity > 0);
+  const expiringRows = rows
+    .map((row) => ({ row, days: daysUntilDate(row.expirationDate) }))
+    .filter((item): item is { row: InventoryStockBalance; days: number } => item.days !== null && item.row.availableQuantity > 0 && item.days <= 7)
+    .sort((a, b) => a.days - b.days);
+  const stockValue = rows.reduce((sum, row) => sum + row.availableQuantity * row.referenceUnitCost, 0);
+  const locationNames = new Set(rows.map((row) => row.locationName || row.branchName || "Kho chính"));
+  const readinessScore = Math.max(
+    35,
+    100 -
+      lowRows.length * 7 -
+      expiringRows.filter((item) => item.days <= 0).length * 10 -
+      expiringRows.filter((item) => item.days > 0).length * 4 -
+      (warehouse.schemaReady ? 0 : 12)
+  );
+  const readinessTone = readinessScore >= 82 ? "green" : readinessScore >= 62 ? "yellow" : "red";
+  const controlChecks = [
+    {
+      id: "schema",
+      label: "Warehouse v2",
+      value: warehouse.schemaReady ? "Sẵn sàng" : "V1 fallback",
+      done: warehouse.schemaReady
+    },
+    {
+      id: "low",
+      label: "Không thiếu hàng",
+      value: lowRows.length.toLocaleString("vi-VN"),
+      done: lowRows.length === 0
+    },
+    {
+      id: "expired",
+      label: "Không có lô quá hạn",
+      value: expiringRows.filter((item) => item.days <= 0).length.toLocaleString("vi-VN"),
+      done: expiringRows.every((item) => item.days > 0)
+    },
+    {
+      id: "reserved",
+      label: "Reserved được theo dõi",
+      value: reservedRows.length.toLocaleString("vi-VN"),
+      done: reservedRows.length === 0 || warehouse.schemaReady
+    }
+  ];
+
+  return (
+    <div className="mb-4 rounded-3xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className="rounded-2xl bg-white p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--primary)]">Stock control</p>
+              <h3 className="mt-1 text-lg font-black">Sức kho theo ca</h3>
+            </div>
+            <Badge tone={readinessTone}>Ready {readinessScore}/100</Badge>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Giá trị khả dụng" value={formatVnd(Math.round(stockValue))} />
+            <MiniMetric label="Vùng kho" value={locationNames.size.toLocaleString("vi-VN")} />
+            <MiniMetric label="Đang giữ hàng" value={reservedRows.length.toLocaleString("vi-VN")} />
+            <MiniMetric label="Sắp nhập" value={incomingRows.length.toLocaleString("vi-VN")} />
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-2xl bg-white p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Checklist mở ca kho</p>
+              <Badge tone={controlChecks.every((item) => item.done) ? "green" : "yellow"}>
+                {controlChecks.filter((item) => !item.done).length || "Xong"}
+              </Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {controlChecks.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl bg-[var(--soft-surface)] px-3 py-2">
+                  <span className="truncate text-xs font-black">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Hàng cần xử lý trước</p>
+              <Badge tone={lowRows.length + expiringRows.length > 0 ? "red" : "green"}>{lowRows.length + expiringRows.length}</Badge>
+            </div>
+            <div className="space-y-2">
+              {[...expiringRows.map((item) => item.row), ...lowRows].slice(0, 3).map((row) => (
+                <div key={`${row.id}:risk`} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-black">{row.ingredientName}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{row.locationName || "Kho chính"} · min {formatQuantity(row.minimumQuantity, row.ingredientUnit)}</p>
+                  </div>
+                  <Badge tone={stockStatusTone(row.status)}>{formatQuantity(row.availableQuantity, row.ingredientUnit)}</Badge>
+                </div>
+              ))}
+              {lowRows.length + expiringRows.length === 0 ? (
+                <p className="rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Không có dòng tồn cần xử lý ngay.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WasteLossCommandCenter({
+  stockRows,
+  expiringRows,
+  expiredRows,
+  lossValue,
+  expiringValue,
+  intelligence
+}: {
+  stockRows: InventoryStockBalance[];
+  expiringRows: Array<{ row: InventoryStockBalance; days: number }>;
+  expiredRows: Array<{ row: InventoryStockBalance; days: number }>;
+  lossValue: number;
+  expiringValue: number;
+  intelligence: InventoryIntelligence;
+}) {
+  const highWasteSignals = intelligence.wasteSignals.filter((item) => item.wasteCost > 200000);
+  const safeRows = stockRows.filter((row) => row.availableQuantity > 0 && daysUntilDate(row.expirationDate) === null);
+  const closureScore = Math.max(
+    40,
+    100 - expiredRows.length * 12 - expiringRows.filter((item) => item.days > 0).length * 5 - highWasteSignals.length * 8
+  );
+  const closureTone = closureScore >= 85 ? "green" : closureScore >= 65 ? "yellow" : "red";
+  const checks = [
+    {
+      id: "expired",
+      label: "Quá hạn đã xử lý",
+      value: expiredRows.length.toLocaleString("vi-VN"),
+      done: expiredRows.length === 0
+    },
+    {
+      id: "expiring",
+      label: "Sắp HSD dưới 7 ngày",
+      value: expiringRows.filter((item) => item.days > 0).length.toLocaleString("vi-VN"),
+      done: expiringRows.filter((item) => item.days > 0).length === 0
+    },
+    {
+      id: "waste",
+      label: "Waste cao cần xem",
+      value: highWasteSignals.length.toLocaleString("vi-VN"),
+      done: highWasteSignals.length === 0
+    },
+    {
+      id: "safe",
+      label: "Dòng tồn không HSD",
+      value: safeRows.length.toLocaleString("vi-VN"),
+      done: safeRows.length === 0
+    }
+  ];
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Loss prevention</p>
+          <h2 className="mt-1 text-xl font-black">Trung tâm kiểm soát HSD và hao hụt</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={closureTone}>Close {closureScore}/100</Badge>
+          <Badge tone={expiredRows.length > 0 ? "red" : "green"}>{expiredRows.length} quá hạn</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[0.75fr_1.25fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Rủi ro HSD" value={formatVnd(Math.round(expiringValue))} />
+          <MiniMetric label="Waste 30 ngày" value={formatVnd(lossValue)} />
+          <MiniMetric label="SKU waste cao" value={highWasteSignals.length.toLocaleString("vi-VN")} />
+          <MiniMetric label="Dòng cần xem" value={expiringRows.length.toLocaleString("vi-VN")} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.92fr_1.08fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Checklist đóng ca</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2">
+                  <span className="truncate text-xs font-black">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Ưu tiên xử lý</p>
+              <Badge tone={expiringRows.length > 0 ? "red" : "green"}>{expiringRows.length || "Ổn"}</Badge>
+            </div>
+            <div className="space-y-2">
+              {expiringRows.slice(0, 3).map(({ row, days }) => (
+                <div key={`${row.id}:expiry-command`} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-black">{row.ingredientName}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{row.locationName || "Kho chính"} · {formatQuantity(row.availableQuantity, row.ingredientUnit)}</p>
+                  </div>
+                  <Badge tone={days <= 0 ? "red" : "yellow"}>{expirationCopy(row.expirationDate)}</Badge>
+                </div>
+              ))}
+              {expiringRows.length === 0 ? (
+                <p className="rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Không có lô sát HSD trong 7 ngày.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1308,6 +3084,7 @@ function WarehouseStockBoard({ warehouse, ingredients }: { warehouse: InventoryW
           <Badge tone="blue">{warehouse.stockBalanceCount.toLocaleString("vi-VN")} balance</Badge>
         </div>
       </div>
+      <StockOperationsControlCenter warehouse={warehouse} rows={rows} />
       <div className="hidden overflow-hidden rounded-2xl border border-[var(--border)] xl:block">
         <div className="grid grid-cols-[1.1fr_0.8fr_0.7fr_0.65fr_0.65fr_0.65fr_0.65fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
           <span>Nguyên liệu</span>
@@ -1425,7 +3202,16 @@ function WasteExpirationDesk({
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+    <div className="grid gap-4">
+      <WasteLossCommandCenter
+        stockRows={stockRows}
+        expiringRows={expiringRows}
+        expiredRows={expiredRows}
+        lossValue={lossValue}
+        expiringValue={expiringValue}
+        intelligence={intelligence}
+      />
+      <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -1500,10 +3286,10 @@ function WasteExpirationDesk({
             </p>
           ) : null}
 
-          <Button type="submit" disabled={!selectedRow || parsedQuantity <= 0 || isOverAvailable} className="h-11 rounded-2xl">
+          <SubmitButton disabled={!selectedRow || parsedQuantity <= 0 || isOverAvailable} pendingLabel="Đang ghi nhận..." className="h-11 rounded-2xl">
             <Trash2 className="h-4 w-4" />
             Ghi nhận xuất giảm
-          </Button>
+          </SubmitButton>
         </form>
 
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -1575,7 +3361,236 @@ function WasteExpirationDesk({
           </div>
         )}
       </section>
+      </div>
     </div>
+  );
+}
+
+function CountingControlCenter({
+  warehouse,
+  countLines,
+  totalVarianceValue,
+  selectedLocationName
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  countLines: CountDraftLine[];
+  totalVarianceValue: number;
+  selectedLocationName: string;
+}) {
+  const historicalVariance = warehouse.countSessions.reduce((sum, count) => sum + count.totalVarianceValue, 0);
+  const adjustedLineCount = warehouse.countSessions.reduce((sum, count) => sum + count.adjustedLineCount, 0);
+  const openSessions = warehouse.countSessions.filter((count) => count.status !== "applied");
+  const highVarianceDrafts = countLines.filter((line) => Math.abs(line.countedQuantity - line.expectedQuantity) > 0);
+  const countReadinessScore = Math.max(45, 100 - highVarianceDrafts.length * 8 - openSessions.length * 10 - (countLines.length === 0 ? 8 : 0));
+  const countReadinessTone = countReadinessScore >= 85 ? "green" : countReadinessScore >= 65 ? "yellow" : "red";
+  const checklist = [
+    {
+      id: "draft",
+      label: "Phiếu có dòng đếm",
+      value: countLines.length.toLocaleString("vi-VN"),
+      done: countLines.length > 0
+    },
+    {
+      id: "variance",
+      label: "Dòng lệch cần xác nhận",
+      value: highVarianceDrafts.length.toLocaleString("vi-VN"),
+      done: highVarianceDrafts.length === 0
+    },
+    {
+      id: "open",
+      label: "Phiên treo",
+      value: openSessions.length.toLocaleString("vi-VN"),
+      done: openSessions.length === 0
+    },
+    {
+      id: "location",
+      label: "Kho đang kiểm",
+      value: selectedLocationName,
+      done: true
+    }
+  ];
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Count command</p>
+          <h2 className="mt-1 text-xl font-black">Kiểm soát phiên kiểm kê và lệch tồn</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={countReadinessTone}>Ready {countReadinessScore}/100</Badge>
+          <Badge tone={highVarianceDrafts.length > 0 ? "yellow" : "green"}>{highVarianceDrafts.length} dòng lệch</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Phiếu nháp" value={countLines.length.toLocaleString("vi-VN")} />
+          <MiniMetric label="Ước tính lệch" value={formatVnd(totalVarianceValue)} />
+          <MiniMetric label="Lệch lịch sử" value={formatVnd(historicalVariance)} />
+          <MiniMetric label="Dòng đã chỉnh" value={adjustedLineCount.toLocaleString("vi-VN")} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Checklist kiểm kê</p>
+              <Badge tone={checklist.every((item) => item.done) ? "green" : "yellow"}>{checklist.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checklist.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2">
+                  <span className="truncate text-xs font-black">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Dòng lệch trong phiếu</p>
+              <Badge tone={highVarianceDrafts.length > 0 ? "yellow" : "green"}>{highVarianceDrafts.length || "Không"}</Badge>
+            </div>
+            <div className="space-y-2">
+              {highVarianceDrafts.slice(0, 3).map((line) => {
+                const variance = line.countedQuantity - line.expectedQuantity;
+                return (
+                  <div key={`${line.locationId}:${line.ingredientId}:variance`} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="truncate font-black">{line.name}</p>
+                      <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{line.locationName}</p>
+                    </div>
+                    <Badge tone={variance > 0 ? "blue" : "red"}>{variance > 0 ? "+" : ""}{formatQuantity(variance, line.unit)}</Badge>
+                  </div>
+                );
+              })}
+              {highVarianceDrafts.length === 0 ? (
+                <p className="rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Chưa có dòng lệch trong phiếu hiện tại.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TransferControlCenter({
+  warehouse,
+  transferReady,
+  fromLocationId,
+  toLocationId,
+  transferLines,
+  availableFromSource,
+  selectedIngredient
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  transferReady: boolean;
+  fromLocationId: string;
+  toLocationId: string;
+  transferLines: TransferDraftLine[];
+  availableFromSource: number;
+  selectedIngredient: InventoryIngredient | null;
+}) {
+  const fromLocation = warehouse.locations.find((location) => location.id === fromLocationId);
+  const toLocation = warehouse.locations.find((location) => location.id === toLocationId);
+  const routeReady = Boolean(fromLocationId && toLocationId && fromLocationId !== toLocationId);
+  const routeLabel = routeReady
+    ? `${fromLocation?.name ?? "Kho xuất"} > ${toLocation?.name ?? "Kho nhận"}`
+    : "Chưa chọn tuyến";
+  const openTransfers = warehouse.transfers.filter((transfer) => transfer.status !== "received" && transfer.status !== "cancelled");
+  const draftQuantity = transferLines.reduce((sum, line) => sum + line.quantity, 0);
+  const sourceBlocked = Boolean(selectedIngredient && parseNumber(String(draftQuantity || 0)) > availableFromSource && transferLines.some((line) => line.ingredientId === selectedIngredient.id));
+  const transferScore = Math.max(40, 100 - (transferReady ? 0 : 18) - (routeReady ? 0 : 14) - openTransfers.length * 5 - (sourceBlocked ? 15 : 0));
+  const transferTone = transferScore >= 85 ? "green" : transferScore >= 65 ? "yellow" : "red";
+  const checklist = [
+    {
+      id: "locations",
+      label: "Có ít nhất 2 kho",
+      value: warehouse.locations.length.toLocaleString("vi-VN"),
+      done: transferReady
+    },
+    {
+      id: "route",
+      label: "Tuyến hợp lệ",
+      value: routeReady ? "OK" : "Thiếu",
+      done: routeReady
+    },
+    {
+      id: "draft",
+      label: "Phiếu có dòng",
+      value: transferLines.length.toLocaleString("vi-VN"),
+      done: transferLines.length > 0
+    },
+    {
+      id: "open",
+      label: "Phiếu mở cần theo dõi",
+      value: openTransfers.length.toLocaleString("vi-VN"),
+      done: openTransfers.length === 0
+    }
+  ];
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Transfer command</p>
+          <h2 className="mt-1 text-xl font-black">Điều phối luồng chuyển kho</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={transferTone}>Ready {transferScore}/100</Badge>
+          <Badge tone={routeReady ? "green" : "yellow"}>{routeLabel}</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-3 xl:grid-cols-[0.76fr_1.24fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Phiếu nháp" value={transferLines.length.toLocaleString("vi-VN")} />
+          <MiniMetric label="Tổng lượng nháp" value={draftQuantity.toLocaleString("vi-VN")} />
+          <MiniMetric label="Phiếu mở" value={openTransfers.length.toLocaleString("vi-VN")} />
+          <MiniMetric label="Khả dụng đang chọn" value={selectedIngredient ? formatQuantity(availableFromSource, selectedIngredient.unit) : "-"} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Checklist điều chuyển</p>
+              <Badge tone={checklist.every((item) => item.done) ? "green" : "yellow"}>{checklist.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checklist.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl bg-white px-3 py-2">
+                  <span className="truncate text-xs font-black">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black">Phiếu mở gần đây</p>
+              <Badge tone={openTransfers.length > 0 ? "blue" : "green"}>{openTransfers.length || "Không"}</Badge>
+            </div>
+            <div className="space-y-2">
+              {openTransfers.slice(0, 3).map((transfer) => (
+                <div key={`${transfer.id}:open-command`} className="flex items-center justify-between gap-3 rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-black">{transfer.transferNumber}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{transfer.fromLocationName || "Kho xuất"} &gt; {transfer.toLocationName || "Kho nhận"}</p>
+                  </div>
+                  <Badge tone={workflowStatusTone(transfer.status)}>{transfer.lineCount} dòng</Badge>
+                </div>
+              ))}
+              {openTransfers.length === 0 ? (
+                <p className="rounded-xl bg-[var(--soft-surface)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Không có phiếu điều chuyển đang treo.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1632,7 +3647,14 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+    <div className="grid gap-4">
+      <CountingControlCenter
+        warehouse={warehouse}
+        countLines={countLines}
+        totalVarianceValue={totalVarianceValue}
+        selectedLocationName={selectedLocationName}
+      />
+      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -1734,10 +3756,10 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
             <MiniMetric label="Dòng trong phiếu" value={countLines.length.toLocaleString("vi-VN")} />
             <MiniMetric label="Ước tính lệch" value={formatVnd(totalVarianceValue)} />
           </div>
-          <Button type="submit" disabled={countLines.length === 0} className="h-11 rounded-2xl">
+          <SubmitButton disabled={countLines.length === 0} pendingLabel="Đang áp dụng..." className="h-11 rounded-2xl">
             <ClipboardCheck className="h-4 w-4" />
             Áp dụng {countLines.length.toLocaleString("vi-VN")} dòng kiểm kê
-          </Button>
+          </SubmitButton>
         </form>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           <MiniMetric label="Phiên gần đây" value={warehouse.countSessions.length.toLocaleString("vi-VN")} />
@@ -1788,6 +3810,7 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }
@@ -1818,6 +3841,11 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
   const availableFromSource = selectedIngredient
     ? warehouse.stockBalances.find((balance) => balance.ingredientId === selectedIngredient.id && balance.locationId === fromLocationId)?.availableQuantity ?? selectedIngredient.onHandQuantity
     : 0;
+  const transferStageCounts = {
+    requested: warehouse.transfers.filter((transfer) => transfer.status === "requested").length,
+    approved: warehouse.transfers.filter((transfer) => transfer.status === "approved").length,
+    dispatched: warehouse.transfers.filter((transfer) => transfer.status === "dispatched").length
+  };
 
   const addTransferLine = () => {
     if (!selectedIngredient) return;
@@ -1837,7 +3865,17 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
   };
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+    <div className="grid gap-4">
+      <TransferControlCenter
+        warehouse={warehouse}
+        transferReady={transferReady}
+        fromLocationId={fromLocationId}
+        toLocationId={toLocationId}
+        transferLines={transferLines}
+        availableFromSource={availableFromSource}
+        selectedIngredient={selectedIngredient}
+      />
+      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -1919,7 +3957,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
           <DraftLinesPanel
             emptyIcon={ArrowDownUp}
             emptyTitle="Chưa có dòng điều chuyển"
-            emptyDescription="Thêm từng nguyên liệu vào phiếu nháp rồi tạo điều chuyển một lần để ghi transfer out/in đồng bộ."
+            emptyDescription="Thêm từng nguyên liệu vào phiếu nháp. Phiếu sẽ đi qua duyệt, xuất kho, nhận kho để audit rõ hàng đang đi đường."
           >
             {transferLines.map((line) => (
               <div key={line.ingredientId} className="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[1fr_auto_auto] sm:items-center">
@@ -1938,15 +3976,15 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
             <MiniMetric label="Dòng trong phiếu" value={transferLines.length.toLocaleString("vi-VN")} />
             <MiniMetric label="Tổng lượng" value={transferLines.reduce((sum, line) => sum + line.quantity, 0).toLocaleString("vi-VN")} />
           </div>
-          <Button type="submit" disabled={!transferReady || transferLines.length === 0 || !fromLocationId || !toLocationId || fromLocationId === toLocationId} className="h-11 rounded-2xl">
+          <SubmitButton disabled={!transferReady || transferLines.length === 0 || !fromLocationId || !toLocationId || fromLocationId === toLocationId} pendingLabel="Đang tạo điều chuyển..." className="h-11 rounded-2xl">
             <ArrowDownUp className="h-4 w-4" />
-            Tạo điều chuyển {transferLines.length.toLocaleString("vi-VN")} dòng
-          </Button>
+            Tạo yêu cầu {transferLines.length.toLocaleString("vi-VN")} dòng
+          </SubmitButton>
         </form>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <MiniMetric label="Điều chuyển mở" value={warehouse.transferCount.toLocaleString("vi-VN")} />
-          <MiniMetric label="Gần đây" value={warehouse.transfers.length.toLocaleString("vi-VN")} />
-          <MiniMetric label="Vị trí kho" value={warehouse.locationCount.toLocaleString("vi-VN")} />
+          <MiniMetric label="Chờ duyệt" value={transferStageCounts.requested.toLocaleString("vi-VN")} />
+          <MiniMetric label="Chờ xuất" value={transferStageCounts.approved.toLocaleString("vi-VN")} />
+          <MiniMetric label="Đang đi đường" value={transferStageCounts.dispatched.toLocaleString("vi-VN")} />
         </div>
       </section>
 
@@ -1959,19 +3997,20 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
           <Badge tone={warehouse.transfers.length > 0 ? "blue" : "neutral"}>{warehouse.transfers.length} phiếu</Badge>
         </div>
         {warehouse.transfers.length === 0 ? (
-          <EmptyState icon={ArrowDownUp} title="Chưa có điều chuyển" description="Phiếu điều chuyển sẽ ghi transfer out/in atomic để stock board cập nhật ngay và vẫn giữ audit trail." />
+          <EmptyState icon={ArrowDownUp} title="Chưa có điều chuyển" description="Phiếu điều chuyển sẽ tách rõ yêu cầu, duyệt, xuất kho và nhận kho để thấy hàng nào đang đi đường." />
         ) : (
           <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
-            <div className="hidden grid-cols-[0.75fr_1fr_0.7fr_0.55fr_0.75fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
+            <div className="hidden grid-cols-[0.72fr_1fr_0.62fr_0.45fr_0.72fr_1fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
               <span>Mã</span>
               <span>Tuyến</span>
               <span>Trạng thái</span>
               <span>Dòng</span>
               <span>Thời gian</span>
+              <span>Thao tác</span>
             </div>
             <div className="divide-y divide-[var(--border)]">
               {warehouse.transfers.map((transfer) => (
-                <div key={transfer.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[0.75fr_1fr_0.7fr_0.55fr_0.75fr] md:items-center">
+                <div key={transfer.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[0.72fr_1fr_0.62fr_0.45fr_0.72fr_1fr] md:items-center">
                   <p className="truncate font-black">{transfer.transferNumber}</p>
                   <span className="truncate font-semibold text-[var(--muted-foreground)]">
                     {transfer.fromLocationName || "Kho xuất"} &gt; {transfer.toLocationName || "Kho nhận"}
@@ -1979,17 +4018,490 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
                   <Badge tone={workflowStatusTone(transfer.status)}>{transferStatusLabel(transfer.status)}</Badge>
                   <span className="metric-number font-black">{transfer.lineCount.toLocaleString("vi-VN")}</span>
                   <span className="font-semibold text-[var(--muted-foreground)]">{formatDateTime(transfer.createdAt)}</span>
+                  <TransferWorkflowActions transfer={transfer} />
                 </div>
               ))}
             </div>
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }
 
-function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[] }) {
+function TransferWorkflowActions({ transfer }: { transfer: InventoryTransfer }) {
+  const actions =
+    transfer.status === "requested"
+      ? [
+          { action: "approve", label: "Duyệt", icon: CheckCircle2, tone: "primary" as const },
+          { action: "cancel", label: "Hủy", icon: X, tone: "secondary" as const }
+        ]
+      : transfer.status === "approved"
+        ? [
+            { action: "dispatch", label: "Xuất", icon: Truck, tone: "primary" as const },
+            { action: "cancel", label: "Hủy", icon: X, tone: "secondary" as const }
+          ]
+        : transfer.status === "dispatched"
+          ? [{ action: "receive", label: "Nhận", icon: PackageCheck, tone: "primary" as const }]
+          : [];
+
+  if (actions.length === 0) {
+    return <span className="text-xs font-black text-[var(--muted-foreground)]">Đã khóa</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {actions.map(({ action, label, icon: Icon, tone }) => (
+        <form key={`${transfer.id}:${action}`} action={processInventoryTransferAction}>
+          <input type="hidden" name="transferId" value={transfer.id} />
+          <input type="hidden" name="action" value={action} />
+          <SubmitButton variant={tone === "primary" ? "primary" : "secondary"} size="sm" pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </SubmitButton>
+        </form>
+      ))}
+    </div>
+  );
+}
+
+function PurchasingCommandCenterDraft({
+  purchasePlan,
+  suppliers,
+  openPurchaseOrders,
+  latePurchaseOrders,
+  receivableOrders,
+  receivingLineCount,
+  supplierContactGaps,
+  purchaseReadinessScore,
+  purchaseReadinessTone,
+  draftLineCount,
+  draftValue,
+  onAddAllPlanLines,
+  onAddUrgentLines
+}: {
+  purchasePlan: InventoryPurchasePlan;
+  suppliers: InventoryWarehouseCommandCenter["suppliers"];
+  openPurchaseOrders: InventoryWarehouseCommandCenter["purchaseOrders"];
+  latePurchaseOrders: InventoryWarehouseCommandCenter["purchaseOrders"];
+  receivableOrders: InventoryWarehouseCommandCenter["purchaseOrders"];
+  receivingLineCount: number;
+  supplierContactGaps: number;
+  purchaseReadinessScore: number;
+  purchaseReadinessTone: "green" | "yellow" | "red";
+  draftLineCount: number;
+  draftValue: number;
+  onAddAllPlanLines: () => void;
+  onAddUrgentLines: () => void;
+}) {
+  const hasPlanLines = purchasePlan.lines.length > 0;
+  const recommendedSupplier = purchasePlan.recommendedSupplier?.name ?? suppliers.find((supplier) => supplier.isPreferred)?.name ?? "Chưa có";
+  const commandChecks = [
+    {
+      id: "urgent",
+      label: "Không còn dòng cần mua gấp",
+      value: purchasePlan.urgentLineCount.toLocaleString("vi-VN"),
+      done: purchasePlan.urgentLineCount === 0
+    },
+    {
+      id: "late",
+      label: "PO trễ đã được xử lý",
+      value: latePurchaseOrders.length.toLocaleString("vi-VN"),
+      done: latePurchaseOrders.length === 0
+    },
+    {
+      id: "receive",
+      label: "Dòng nhận hàng đang chờ",
+      value: receivingLineCount.toLocaleString("vi-VN"),
+      done: receivingLineCount === 0
+    },
+    {
+      id: "supplier",
+      label: "NCC đủ thông tin liên hệ",
+      value: supplierContactGaps.toLocaleString("vi-VN"),
+      done: supplierContactGaps === 0
+    }
+  ];
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Purchasing command</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Điều phối mua hàng và nhận hàng</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={purchaseReadinessTone}>Ready {purchaseReadinessScore}/100</Badge>
+          <Badge tone={latePurchaseOrders.length > 0 ? "red" : "green"}>{latePurchaseOrders.length} PO trễ</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.78fr_1.22fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Đề xuất mua" value={formatVnd(purchasePlan.totalSuggestedValue)} />
+          <MiniMetric label="PO mở" value={formatVnd(purchasePlan.openPurchaseValue)} />
+          <MiniMetric label="Đang nhận" value={receivableOrders.length.toLocaleString("vi-VN")} />
+          <MiniMetric label="Phiếu nháp" value={`${draftLineCount.toLocaleString("vi-VN")} · ${formatVnd(draftValue)}`} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-black text-[var(--foreground)]">Kế hoạch đặt hàng</p>
+                <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">NCC gợi ý: {recommendedSupplier}</p>
+              </div>
+              <Badge tone={purchasePlan.urgentLineCount > 0 ? "red" : hasPlanLines ? "yellow" : "green"}>{purchasePlan.suggestedLineCount} dòng</Badge>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button type="button" size="sm" disabled={!hasPlanLines} onClick={onAddAllPlanLines} className="h-9 rounded-xl">
+                <PackagePlus className="h-4 w-4" />
+                Thêm tất cả
+              </Button>
+              <Button type="button" size="sm" variant="secondary" disabled={purchasePlan.urgentLineCount === 0} onClick={onAddUrgentLines} className="h-9 rounded-xl">
+                Thêm dòng gấp
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Checklist mua hàng</p>
+              <Badge tone={commandChecks.every((item) => item.done) ? "green" : "yellow"}>{commandChecks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {commandChecks.map((item) => (
+                <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl bg-[var(--soft-surface)] px-3 py-2">
+                  <span className="truncate text-xs font-black text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {openPurchaseOrders.length > 0 ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {openPurchaseOrders.slice(0, 3).map((order) => (
+            <div key={order.id} className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+              <div className="flex items-start justify-between gap-2">
+                <p className="truncate text-sm font-black text-[var(--foreground)]">{order.supplierName ?? "Chưa chọn NCC"}</p>
+                <Badge tone={purchaseOrderTone(order.status)}>{purchaseOrderStatusLabel(order.status)}</Badge>
+              </div>
+              <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{order.lineCount} dòng · {formatVnd(order.totalAmount)}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PurchasePlanningPanel({
+  purchasePlan,
+  onAddPlanLines
+}: {
+  purchasePlan: InventoryPurchasePlan;
+  onAddPlanLines: (lines: PurchasePlanLine[]) => void;
+}) {
+  const urgentLines = purchasePlan.lines.filter((line) => line.priority === "urgent");
+  const hasLines = purchasePlan.lines.length > 0;
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Purchase planning</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Kế hoạch mua hàng tự động</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={purchasePlan.urgentLineCount > 0 ? "red" : hasLines ? "yellow" : "green"}>{purchasePlan.suggestedLineCount} dòng đề xuất</Badge>
+          <Badge tone={purchasePlan.latePurchaseOrderCount > 0 ? "red" : "blue"}>{purchasePlan.latePurchaseOrderCount} PO trễ</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr]">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Tổng đề xuất" value={formatVnd(purchasePlan.totalSuggestedValue)} />
+          <MiniMetric label="Cần mua ngay" value={formatVnd(purchasePlan.urgentSuggestedValue)} />
+          <MiniMetric label="PO mở" value={formatVnd(purchasePlan.openPurchaseValue)} />
+          <MiniMetric label="NCC gợi ý" value={purchasePlan.recommendedSupplier?.name ?? "Chưa có"} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.85fr_1.15fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-black text-[var(--foreground)]">Nhóm ưu tiên</p>
+              <Button type="button" size="sm" disabled={!hasLines} onClick={() => onAddPlanLines(purchasePlan.lines)} className="h-9 rounded-xl">
+                <PackagePlus className="h-4 w-4" />
+                Đưa vào phiếu nháp
+              </Button>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {purchasePlan.priorityBuckets.map((bucket) => (
+                <div key={bucket.priority} className="flex items-center justify-between gap-3 rounded-xl bg-white px-3 py-2 text-sm">
+                  <div>
+                    <p className="font-black">{bucket.label}</p>
+                    <p className="text-xs font-semibold text-[var(--muted-foreground)]">{bucket.lineCount} dòng</p>
+                  </div>
+                  <Badge tone={bucket.priority === "urgent" && bucket.lineCount > 0 ? "red" : bucket.priority === "soon" && bucket.lineCount > 0 ? "yellow" : "blue"}>
+                    {formatVnd(bucket.estimatedValue)}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="font-black text-[var(--foreground)]">Dòng mua ưu tiên</p>
+              <Button type="button" size="sm" variant="secondary" disabled={urgentLines.length === 0} onClick={() => onAddPlanLines(urgentLines)} className="h-9 rounded-xl">
+                Thêm dòng gấp
+              </Button>
+            </div>
+            {purchasePlan.lines.length === 0 ? (
+              <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Chưa có dòng cần mua từ AI reorder.</p>
+            ) : (
+              <div className="max-h-60 divide-y divide-[var(--border)] overflow-auto rounded-2xl border border-[var(--border)]">
+                {purchasePlan.lines.slice(0, 8).map((line) => (
+                  <div key={line.ingredientId} className="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="truncate font-black">{line.name}</p>
+                      <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{line.reason}</p>
+                    </div>
+                    <Badge tone={line.priority === "urgent" ? "red" : line.priority === "soon" ? "yellow" : "blue"}>
+                      {formatQuantity(line.orderQuantity, line.unit)}
+                    </Badge>
+                    <span className="metric-number text-right font-black">{formatVnd(line.estimatedCost)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {purchasePlan.warnings.length > 0 ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {purchasePlan.warnings.slice(0, 3).map((warning) => (
+            <div key={warning.id} className={`rounded-2xl px-3 py-2 text-sm font-bold ${warning.severity === "red" ? "bg-red-50 text-red-800" : warning.severity === "yellow" ? "bg-amber-50 text-amber-800" : "bg-blue-50 text-blue-800"}`}>
+              <p className="font-black">{warning.title}</p>
+              <p className="mt-1 text-xs">{warning.detail}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function PurchasingCommandCenter({
+  purchasePlan,
+  suppliers,
+  openPurchaseOrders,
+  latePurchaseOrders,
+  receivableOrders,
+  receivingLineCount,
+  supplierContactGaps,
+  purchaseReadinessScore,
+  purchaseReadinessTone,
+  draftLineCount,
+  draftValue,
+  onAddAllPlanLines,
+  onAddUrgentLines
+}: {
+  purchasePlan: InventoryPurchasePlan;
+  suppliers: InventoryWarehouseCommandCenter["suppliers"];
+  openPurchaseOrders: InventoryPurchaseOrder[];
+  latePurchaseOrders: InventoryPurchaseOrder[];
+  receivableOrders: InventoryPurchaseOrder[];
+  receivingLineCount: number;
+  supplierContactGaps: number;
+  purchaseReadinessScore: number;
+  purchaseReadinessTone: "green" | "yellow" | "red";
+  draftLineCount: number;
+  draftValue: number;
+  onAddAllPlanLines: () => void;
+  onAddUrgentLines: () => void;
+}) {
+  const preferredSuppliers = suppliers.filter((supplier) => supplier.isPreferred).length;
+  const supplierPlanRows = purchasePlan.supplierPlans.slice(0, 4);
+  const purchaseChecklist = [
+    {
+      id: "urgent-lines",
+      label: "Đã xử lý nguyên liệu cần mua ngay",
+      value: purchasePlan.urgentLineCount.toLocaleString("vi-VN"),
+      done: purchasePlan.urgentLineCount === 0
+    },
+    {
+      id: "late-po",
+      label: "Không còn PO trễ hẹn",
+      value: latePurchaseOrders.length.toLocaleString("vi-VN"),
+      done: latePurchaseOrders.length === 0
+    },
+    {
+      id: "receiving",
+      label: "Hàng đang về đã có kế hoạch nhận",
+      value: receivingLineCount.toLocaleString("vi-VN"),
+      done: receivingLineCount === 0
+    },
+    {
+      id: "supplier-contact",
+      label: "NCC có thông tin liên hệ",
+      value: supplierContactGaps.toLocaleString("vi-VN"),
+      done: supplierContactGaps === 0
+    }
+  ];
+  const purchaseQueue = [
+    ...purchasePlan.lines.slice(0, 4).map((line) => ({
+      id: `plan-${line.ingredientId}`,
+      title: line.name,
+      detail: line.reason,
+      value: formatVnd(line.estimatedCost),
+      tone: line.priority === "urgent" ? "red" as const : line.priority === "soon" ? "yellow" as const : "blue" as const
+    })),
+    ...latePurchaseOrders.slice(0, 3).map((order) => ({
+      id: `late-${order.id}`,
+      title: order.poNumber,
+      detail: `${order.supplierName || "Chưa chọn NCC"} · dự kiến ${order.expectedDeliveryAt ? formatDateTime(order.expectedDeliveryAt) : "-"}`,
+      value: formatVnd(order.totalAmount),
+      tone: "red" as const
+    })),
+    ...receivableOrders.slice(0, 3).map((order) => ({
+      id: `receive-${order.id}`,
+      title: `Nhận ${order.poNumber}`,
+      detail: `${order.lines.filter((line) => line.remainingQuantity > 0).length} dòng còn nhận · ${order.supplierName || "Chưa chọn NCC"}`,
+      value: formatVnd(order.totalAmount),
+      tone: "yellow" as const
+    }))
+  ].slice(0, 6);
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Purchasing command center</p>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Điều phối mua hàng, NCC và nhận hàng</h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge tone={purchaseReadinessTone}>Purchase readiness {purchaseReadinessScore}/100</Badge>
+          <Badge tone={draftLineCount > 0 ? "blue" : "neutral"}>{draftLineCount} dòng nháp</Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <div className="grid gap-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Đề xuất mua" value={formatVnd(purchasePlan.totalSuggestedValue)} />
+            <MiniMetric label="Cần mua ngay" value={formatVnd(purchasePlan.urgentSuggestedValue)} />
+            <MiniMetric label="PO mở" value={formatVnd(purchasePlan.openPurchaseValue)} />
+            <MiniMetric label="Phiếu nháp" value={formatVnd(draftValue)} />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button type="button" onClick={onAddUrgentLines} disabled={purchasePlan.urgentLineCount === 0} className="h-10 rounded-2xl">
+              <AlertTriangle className="h-4 w-4" />
+              Đưa dòng gấp vào PO
+            </Button>
+            <Button type="button" variant="secondary" onClick={onAddAllPlanLines} disabled={purchasePlan.lines.length === 0} className="h-10 rounded-2xl">
+              <PackagePlus className="h-4 w-4" />
+              Đưa tất cả vào PO
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Checklist mua hàng</p>
+              <Badge tone={purchaseChecklist.every((item) => item.done) ? "green" : "yellow"}>{purchaseChecklist.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2">
+              {purchaseChecklist.map((item) => (
+                <div key={item.id} className="flex items-start justify-between gap-3 rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                  <p className="min-w-0 truncate text-sm font-black text-[var(--foreground)]">{item.label}</p>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="font-black text-[var(--foreground)]">Hàng đợi mua/nhận</p>
+              <Badge tone={purchaseQueue.length > 0 ? "yellow" : "green"}>{purchaseQueue.length || "Trống"}</Badge>
+            </div>
+            <div className="grid max-h-72 gap-2 overflow-auto pr-1">
+              {purchaseQueue.length === 0 ? (
+                <p className="rounded-2xl bg-white px-3 py-3 text-sm font-bold text-[var(--muted-foreground)]">Không có việc mua hàng cần xử lý ngay.</p>
+              ) : (
+                purchaseQueue.map((item) => (
+                  <article key={item.id} className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-[var(--foreground)]">{item.title}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--muted-foreground)]">{item.detail}</p>
+                      </div>
+                      <Badge tone={item.tone}>{item.value}</Badge>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-[0.86fr_1.14fr]">
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="font-black text-[var(--foreground)]">NCC đề xuất</p>
+            <Badge tone={preferredSuppliers > 0 ? "green" : "blue"}>{preferredSuppliers}/{suppliers.length} ưu tiên</Badge>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2">
+            {supplierPlanRows.length === 0 ? (
+              <p className="rounded-2xl bg-white px-3 py-3 text-sm font-bold text-[var(--muted-foreground)] md:col-span-2">Chưa có supplier plan từ reorder engine.</p>
+            ) : (
+              supplierPlanRows.map((supplier) => (
+                <div key={supplier.supplierId ?? supplier.supplierName} className="rounded-2xl border border-[var(--border)] bg-white px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-black text-[var(--foreground)]">{supplier.supplierName}</p>
+                    <Badge tone={supplier.isPreferred ? "green" : "blue"}>{supplier.defaultLeadDays} ngày</Badge>
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{supplier.lineCount} dòng · {formatVnd(supplier.estimatedValue)}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="font-black text-[var(--foreground)]">PO cần theo dõi</p>
+            <Badge tone={latePurchaseOrders.length > 0 ? "red" : openPurchaseOrders.length > 0 ? "yellow" : "green"}>{openPurchaseOrders.length} mở</Badge>
+          </div>
+          <div className="grid gap-2 md:grid-cols-3">
+            <MiniMetric label="PO trễ" value={latePurchaseOrders.length.toLocaleString("vi-VN")} />
+            <MiniMetric label="Chờ nhận" value={receivableOrders.length.toLocaleString("vi-VN")} />
+            <MiniMetric label="Dòng còn nhận" value={receivingLineCount.toLocaleString("vi-VN")} />
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function SupplierPurchaseDesk({
+  warehouse,
+  ingredients,
+  purchasePlan
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  purchasePlan: InventoryPurchasePlan;
+}) {
+  const [purchaseNowMs] = useState(() => Date.now());
   const [supplierId, setSupplierId] = useState("");
   const [locationId, setLocationId] = useState(warehouse.locations[0]?.id ?? "");
   const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
@@ -2019,6 +4531,24 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
     [purchaseLines]
   );
   const purchaseTotal = purchaseLines.reduce((sum, line) => sum + Math.round(line.orderQuantity * line.unitCost), 0);
+  const openPurchaseOrders = warehouse.purchaseOrders.filter((order) => !["cancelled", "delivered"].includes(order.status));
+  const latePurchaseOrders = openPurchaseOrders.filter((order) => Boolean(order.expectedDeliveryAt && new Date(order.expectedDeliveryAt).getTime() < purchaseNowMs));
+  const receivableOrders = openPurchaseOrders.filter((order) => order.lines.some((line) => line.remainingQuantity > 0));
+  const receivingLineCount = receivableOrders.reduce((sum, order) => sum + order.lines.filter((line) => line.remainingQuantity > 0).length, 0);
+  const supplierContactGaps = warehouse.suppliers.filter((supplier) => !supplier.phone && !supplier.address).length;
+  const purchaseReadinessScore = Math.max(
+    0,
+    Math.min(
+      100,
+      100 -
+        purchasePlan.urgentLineCount * 7 -
+        latePurchaseOrders.length * 10 -
+        receivingLineCount * 3 -
+        supplierContactGaps * 5 -
+        (purchasePlan.budget.isOverBudget ? 12 : 0)
+    )
+  );
+  const purchaseReadinessTone = purchaseReadinessScore >= 85 ? "green" : purchaseReadinessScore >= 65 ? "yellow" : "red";
 
   const addPurchaseLine = () => {
     if (!selectedIngredient) return;
@@ -2048,8 +4578,50 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
     setLineNote("");
   };
 
+  const addPlanLines = (lines: PurchasePlanLine[]) => {
+    const nextLines = lines.reduce<PurchaseDraftLine[]>((drafts, line) => {
+        const ingredient = ingredients.find((item) => item.id === line.ingredientId);
+        if (!ingredient || line.orderQuantity <= 0) return drafts;
+        drafts.push({
+          ingredientId: ingredient.id,
+          name: ingredient.name,
+          unit: ingredient.unit,
+          orderQuantity: line.orderQuantity,
+          orderUnit: line.unit || ingredient.unit,
+          unitCost: line.unitCost || Math.round(ingredient.referenceUnitCost),
+          note: line.reason
+        });
+        return drafts;
+      }, []);
+    if (nextLines.length === 0) return;
+    setPurchaseLines((current) => {
+      const merged = new Map(current.map((line) => [line.ingredientId, line]));
+      for (const line of nextLines) merged.set(line.ingredientId, line);
+      return [...merged.values()];
+    });
+    if (!supplierId && purchasePlan.recommendedSupplier?.id) setSupplierId(purchasePlan.recommendedSupplier.id);
+    if (!purchaseNote.trim()) setPurchaseNote("Tạo từ Purchase Planning & Reorder Intelligence.");
+  };
+
   return (
-    <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+    <div className="grid gap-4">
+      <PurchasingCommandCenter
+        purchasePlan={purchasePlan}
+        suppliers={warehouse.suppliers}
+        openPurchaseOrders={openPurchaseOrders}
+        latePurchaseOrders={latePurchaseOrders}
+        receivableOrders={receivableOrders}
+        receivingLineCount={receivingLineCount}
+        supplierContactGaps={supplierContactGaps}
+        purchaseReadinessScore={purchaseReadinessScore}
+        purchaseReadinessTone={purchaseReadinessTone}
+        draftLineCount={purchaseLines.length}
+        draftValue={purchaseTotal}
+        onAddAllPlanLines={() => addPlanLines(purchasePlan.lines)}
+        onAddUrgentLines={() => addPlanLines(purchasePlan.lines.filter((line) => line.priority === "urgent"))}
+      />
+      <PurchasePlanningPanel purchasePlan={purchasePlan} onAddPlanLines={addPlanLines} />
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
@@ -2062,10 +4634,10 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
           <Input name="name" required placeholder="Tên nhà cung cấp" className="h-10 rounded-xl bg-white" />
           <Input name="phone" placeholder="Số điện thoại" className="h-10 rounded-xl bg-white" />
           <Input name="defaultLeadDays" type="number" min={0} max={120} placeholder="Lead" className="h-10 rounded-xl bg-white" />
-          <Button type="submit" size="sm" className="h-10 rounded-xl">
+          <SubmitButton size="sm" pendingLabel="Đang thêm..." className="h-10 rounded-xl">
             <Building2 className="h-4 w-4" />
             Thêm NCC
-          </Button>
+          </SubmitButton>
           <Input name="address" placeholder="Địa chỉ hoặc ghi chú giao hàng" className="h-10 rounded-xl bg-white sm:col-span-2" />
           <label className="flex h-10 items-center gap-2 rounded-xl bg-white px-3 text-sm font-bold text-[var(--muted-foreground)]">
             <input name="isPreferred" type="checkbox" className="h-4 w-4 accent-[var(--primary)]" />
@@ -2170,10 +4742,10 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
             <MiniMetric label="Tạm tính" value={formatVnd(purchaseTotal)} />
           </div>
           <Textarea name="note" placeholder="Ghi chú chung: giao hàng, công nợ hoặc điều kiện nhận hàng" value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} className="min-h-16 rounded-xl bg-white" />
-          <Button type="submit" disabled={ingredients.length === 0 || purchaseLines.length === 0} className="h-11 rounded-2xl">
+          <SubmitButton disabled={ingredients.length === 0 || purchaseLines.length === 0} pendingLabel="Đang tạo PO..." className="h-11 rounded-2xl">
             <ClipboardList className="h-4 w-4" />
             Tạo PO {purchaseLines.length.toLocaleString("vi-VN")} dòng
-          </Button>
+          </SubmitButton>
         </form>
         <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
           <div className="hidden grid-cols-[0.7fr_0.9fr_0.7fr_0.6fr_0.65fr_0.65fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
@@ -2218,6 +4790,7 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }
@@ -2341,10 +4914,10 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-center">
         <MiniMetric label="Dòng nhận" value={activeLineCount.toLocaleString("vi-VN")} />
         <MiniMetric label="Giá trị nhận" value={formatVnd(receiptValue)} />
-        <Button type="submit" size="sm" variant="secondary" disabled={activeLineCount === 0} className="h-10 rounded-xl">
+        <SubmitButton size="sm" variant="secondary" disabled={activeLineCount === 0} pendingLabel="Đang nhận..." className="h-10 rounded-xl">
           <PackageCheck className="h-4 w-4" />
           Nhận hàng
-        </Button>
+        </SubmitButton>
       </div>
     </form>
   );
@@ -2369,10 +4942,10 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
         <div className="flex flex-wrap gap-2">
           <Badge tone={warehouse.openAlertCount > 0 ? "red" : "green"}>{warehouse.openAlertCount} alert mở</Badge>
           <form action={refreshInventoryAlertsAction}>
-            <Button type="submit" variant="secondary" size="sm" className="h-9 rounded-xl">
+            <SubmitButton variant="secondary" size="sm" pendingLabel="Đang quét..." className="h-9 rounded-xl">
               <Wand2 className="h-4 w-4" />
               Quét cảnh báo
-            </Button>
+            </SubmitButton>
           </form>
         </div>
       </div>
@@ -2416,27 +4989,27 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
                   <form action={updateInventoryAlertStatusAction}>
                     <input type="hidden" name="alertId" value={alert.id} />
                     <input type="hidden" name="status" value="acknowledged" />
-                    <Button type="submit" size="sm" variant="secondary" className="h-9 rounded-xl">
+                    <SubmitButton size="sm" variant="secondary" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                       <CheckCircle2 className="h-4 w-4" />
                       Đã xem
-                    </Button>
+                    </SubmitButton>
                   </form>
                 ) : null}
                 <form action={updateInventoryAlertStatusAction}>
                   <input type="hidden" name="alertId" value={alert.id} />
                   <input type="hidden" name="status" value="resolved" />
-                  <Button type="submit" size="sm" className="h-9 rounded-xl">
+                  <SubmitButton size="sm" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                     <ShieldCheck className="h-4 w-4" />
                     Xử lý xong
-                  </Button>
+                  </SubmitButton>
                 </form>
                 <form action={updateInventoryAlertStatusAction}>
                   <input type="hidden" name="alertId" value={alert.id} />
                   <input type="hidden" name="status" value="dismissed" />
-                  <Button type="submit" size="sm" variant="ghost" className="h-9 rounded-xl">
+                  <SubmitButton size="sm" variant="ghost" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                     <X className="h-4 w-4" />
                     Bỏ qua
-                  </Button>
+                  </SubmitButton>
                 </form>
               </div>
             </article>
@@ -2465,7 +5038,7 @@ function RecipesAndCategories({
         <h2 className="mt-1 text-xl font-black">Thiết lập dữ liệu nền</h2>
         <form action={createInventoryCategoryAction} className="mt-4 flex gap-2">
           <Input name="name" placeholder="Ví dụ: Bar, Bếp nóng..." required />
-          <Button type="submit" className="rounded-xl">Thêm nhóm</Button>
+          <SubmitButton pendingLabel="Đang thêm..." className="rounded-xl">Thêm nhóm</SubmitButton>
         </form>
         <div className="mt-3 flex flex-wrap gap-2">
           {categories.map((category) => <Badge key={category.id} tone="blue">{category.name}</Badge>)}
@@ -2484,7 +5057,7 @@ function RecipesAndCategories({
             <Input name="quantityPerItem" type="number" min="0.001" step="0.001" placeholder="Lượng / món" required />
             <Input name="wastePercent" type="number" min="0" max="100" step="0.1" placeholder="Hao hụt %" />
           </div>
-          <Button type="submit" className="rounded-xl">Lưu định mức</Button>
+          <SubmitButton pendingLabel="Đang lưu..." className="rounded-xl">Lưu định mức</SubmitButton>
         </form>
       </section>
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
@@ -2501,10 +5074,16 @@ function RecipesAndCategories({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-black">{item.name}</p>
-                  <p className="text-sm font-semibold text-[var(--muted-foreground)]">Cost {formatVnd(item.totalRecipeCost)} · {formatPercent(item.recipeCostPercent)}</p>
+                  <p className="text-sm font-semibold text-[var(--muted-foreground)]">
+                    Cost {formatVnd(item.totalRecipeCost)} · {formatPercent(item.recipeCostPercent)} · margin {formatPercent(item.grossMarginPercent)}
+                  </p>
                 </div>
-                <Badge tone={item.recipeLines.length > 0 ? "green" : "red"}>{item.recipeLines.length} dòng</Badge>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <Badge tone={item.recipeLines.length > 0 ? costStatusTone(item.costStatus) : "red"}>{item.recipeLines.length > 0 ? costStatusLabel(item.costStatus) : "Thiếu recipe"}</Badge>
+                  <span className="metric-number text-xs font-black text-[var(--foreground)]">{formatVnd(item.grossProfit)}</span>
+                </div>
               </div>
+              {item.marginWarning ? <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">{item.marginWarning}</p> : null}
               <div className="mt-3 space-y-2">
                 {item.recipeLines.length === 0 ? (
                   <p className="rounded-xl bg-[var(--surface-container-high)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Chưa có định mức.</p>
@@ -2514,7 +5093,9 @@ function RecipesAndCategories({
                       <span className="font-bold">{line.ingredientName} · {formatQuantity(line.quantityPerItem, line.ingredientUnit)}</span>
                       <form action={deleteInventoryRecipeLineAction}>
                         <input type="hidden" name="recipeLineId" value={line.id} />
-                        <button type="submit" className="font-black text-red-700">Xóa</button>
+                        <SubmitButton variant="ghost" size="sm" pendingLabel="Đang xóa..." className="h-8 min-h-8 rounded-xl px-2 text-red-700">
+                          Xóa
+                        </SubmitButton>
                       </form>
                     </div>
                   ))

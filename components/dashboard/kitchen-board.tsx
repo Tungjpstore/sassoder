@@ -229,6 +229,169 @@ function EmptyKitchenColumn({ icon: Icon, title, detail }: { icon: ElementType; 
   );
 }
 
+function KitchenShiftCommandCenter({
+  orders,
+  pendingOrders,
+  cookingOrders,
+  overdueOrders,
+  dueSoonCount,
+  priorityOrders,
+  totalItems,
+  totalNotes,
+  oldestAge,
+  nowMs,
+  mutatingOrderId,
+  onMutate
+}: {
+  orders: OrderDto[];
+  pendingOrders: OrderDto[];
+  cookingOrders: OrderDto[];
+  overdueOrders: OrderDto[];
+  dueSoonCount: number;
+  priorityOrders: OrderDto[];
+  totalItems: number;
+  totalNotes: number;
+  oldestAge: number;
+  nowMs: number;
+  mutatingOrderId: string | null;
+  onMutate: (orderId: string, action: KitchenAction, body?: unknown) => void;
+}) {
+  const nextOrder = overdueOrders[0] ?? pendingOrders[0] ?? priorityOrders[0] ?? null;
+  const pressureScore = orders.length ? Math.min(100, pendingOrders.length * 18 + overdueOrders.length * 26 + dueSoonCount * 12 + totalItems) : 0;
+  const readyScore = Math.max(0, 100 - pendingOrders.length * 12 - overdueOrders.length * 18 - dueSoonCount * 9 - Math.max(0, oldestAge - 20));
+  const readyTone = readyScore >= 82 ? "green" : readyScore >= 62 ? "yellow" : "red";
+  const lanes = [
+    {
+      id: "new",
+      label: "Đơn mới",
+      value: pendingOrders.length,
+      meta: `${pendingOrders.reduce((sum, order) => sum + orderItemCount(order), 0)} món chưa nhận`,
+      done: pendingOrders.length === 0,
+      tone: pendingOrders.length > 0 ? "yellow" : "green"
+    },
+    {
+      id: "due",
+      label: "Sắp trễ",
+      value: dueSoonCount,
+      meta: "Còn dưới 5 phút",
+      done: dueSoonCount === 0,
+      tone: dueSoonCount > 0 ? "yellow" : "green"
+    },
+    {
+      id: "late",
+      label: "Quá giờ",
+      value: overdueOrders.length,
+      meta: overdueOrders.length ? "Cần kéo lên ngay" : "Không có món trễ",
+      done: overdueOrders.length === 0,
+      tone: overdueOrders.length > 0 ? "red" : "green"
+    },
+    {
+      id: "notes",
+      label: "Ghi chú",
+      value: totalNotes,
+      meta: "Món cần đọc kỹ",
+      done: totalNotes === 0,
+      tone: totalNotes > 0 ? "yellow" : "green"
+    }
+  ] as const;
+
+  return (
+    <section className="dashboard-panel dashboard-command-center p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Kitchen command</p>
+              <h2 className="dashboard-section-title mt-1">Điều phối ca bếp</h2>
+            </div>
+            <Badge tone={readyTone}>Ready {readyScore}/100</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Áp lực bếp</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{pressureScore}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Món trong hàng</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{totalItems}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đang làm</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{cookingOrders.length}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Lâu nhất</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{oldestAge}p</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.92fr_1.08fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist pass bếp</p>
+              <Badge tone={lanes.every((lane) => lane.done) ? "green" : "yellow"}>{lanes.filter((lane) => !lane.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {lanes.map((lane) => (
+                <div key={lane.id} className="flex min-h-14 items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold text-[var(--foreground)]">{lane.label}</span>
+                    <span className="block truncate text-[11px] font-medium text-[var(--muted-foreground)]">{lane.meta}</span>
+                  </span>
+                  <Badge tone={lane.tone}>{lane.value}</Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Hành động tiếp theo</p>
+              <Badge tone={nextOrder ? priorityTone(kitchenPriorityScore(nextOrder, nowMs)) : "green"}>{nextOrder ? "Có đơn" : "Rỗng"}</Badge>
+            </div>
+            {nextOrder ? (
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{orderLocationLabel(nextOrder)}</span>
+                    <span className="mt-0.5 block text-xs font-medium text-[var(--muted-foreground)]">
+                      {orderItemCount(nextOrder)} món · {minutesSinceAt(orderAgeAnchor(nextOrder), nowMs)}p · {fulfillmentLabel(nextOrder)}
+                    </span>
+                  </span>
+                  <Badge tone={priorityTone(kitchenPriorityScore(nextOrder, nowMs))}>{kitchenPriorityScore(nextOrder, nowMs)}</Badge>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {nextOrder.status === "pending" ? (
+                    <Button size="sm" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "accept", { minutes: 15 })}>
+                      <Utensils size={14} />
+                      Nhận ngay
+                    </Button>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="secondary" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "timer", { minutes: 10 })}>
+                        +10p
+                      </Button>
+                      <Button size="sm" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "complete")}>
+                        <CheckCircle2 size={14} />
+                        Xong món
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Hàng bếp đang sạch, chờ đơn mới realtime.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function KitchenCard({
   order,
   mutatingOrderId,
@@ -281,6 +444,7 @@ function KitchenCard({
               <p className="truncate font-semibold text-[var(--foreground)]">
                 {item.quantity}x {item.menuItem?.name ?? "Không rõ món"}
               </p>
+              {item.modifierSummary ? <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--primary)]">{item.modifierSummary}</p> : null}
               {item.note ? <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--accent-strong)]">{item.note}</p> : null}
             </div>
           ))}
@@ -377,6 +541,8 @@ export function KitchenBoard({
   const [loading, setLoading] = useState(deferInitialLoad && !cachedInitialOrders);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [networkOnline, setNetworkOnline] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const refreshTimerRef = useRef<number | null>(null);
@@ -384,6 +550,8 @@ export function KitchenBoard({
   const queuedRefreshRef = useRef(false);
   const knownOrderIdsRef = useRef<Set<string> | null>(null);
   const loadOrdersRef = useRef<({ silent, force }?: { silent?: boolean; force?: boolean }) => Promise<void>>(async () => undefined);
+  const fallbackRefreshMs = realtimeState === "connected" ? 30_000 : 10_000;
+  const hasKitchenWork = orders.length > 0;
 
   const loadOrders = useCallback(async ({ silent = false, force = false }: { silent?: boolean; force?: boolean } = {}) => {
     if (inFlightRefreshRef.current) {
@@ -420,6 +588,34 @@ export function KitchenBoard({
   }, []);
 
   useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!networkOnline || !pageVisible || !hasKitchenWork) return;
+    const timer = window.setInterval(() => void loadOrdersRef.current({ silent: true, force: true }), fallbackRefreshMs);
+    return () => window.clearInterval(timer);
+  }, [fallbackRefreshMs, hasKitchenWork, networkOnline, pageVisible]);
+
+  useEffect(() => {
     const nextIds = new Set(orders.map((order) => order.id));
     if (!knownOrderIdsRef.current) {
       knownOrderIdsRef.current = nextIds;
@@ -454,6 +650,8 @@ export function KitchenBoard({
     try {
       const response = await fetch(`/api/admin/orders/${orderId}/${action}`, {
         method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
         ...(body
           ? {
               headers: { "Content-Type": "application/json" },
@@ -509,6 +707,7 @@ export function KitchenBoard({
     [orders, nowMs]
   );
   const totalItems = useMemo(() => orders.reduce((total, order) => total + orderItemCount(order), 0), [orders]);
+  const totalNotes = useMemo(() => orders.reduce((total, order) => total + orderNoteCount(order), 0), [orders]);
   const oldestAge = useMemo(() => orders.reduce((max, order) => Math.max(max, minutesSinceAt(orderAgeAnchor(order), nowMs)), 0), [orders, nowMs]);
   const dueSoonCount = useMemo(
     () => cookingOrders.filter((order) => {
@@ -517,9 +716,39 @@ export function KitchenBoard({
     }).length,
     [cookingOrders, nowMs]
   );
+  const channelRows = useMemo(
+    () => [
+      {
+        key: "DINE_IN",
+        label: "Tại bàn",
+        orders: orders.filter((order) => order.fulfillmentType === "DINE_IN"),
+        icon: Utensils
+      },
+      {
+        key: "PICKUP",
+        label: "Đến lấy",
+        orders: orders.filter((order) => order.fulfillmentType === "PICKUP"),
+        icon: PackageCheck
+      },
+      {
+        key: "DELIVERY",
+        label: "Giao hàng",
+        orders: orders.filter((order) => order.fulfillmentType === "DELIVERY"),
+        icon: Bell
+      }
+    ],
+    [orders]
+  );
+  const noteOrders = useMemo(
+    () => orders
+      .filter((order) => orderNoteCount(order) > 0)
+      .sort((left, right) => kitchenPriorityScore(right, nowMs) - kitchenPriorityScore(left, nowMs))
+      .slice(0, 4),
+    [orders, nowMs]
+  );
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack dashboard-kitchen-workspace grid gap-3">
       <section className="admin-hero-panel rounded-[14px] p-4">
         <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -538,7 +767,7 @@ export function KitchenBoard({
             type="button"
             onClick={() => void loadOrders({ force: true })}
             disabled={loading}
-            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary-strong)] disabled:opacity-50"
+            className="dashboard-refresh-action inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary-strong)] disabled:opacity-50"
           >
             <RefreshCw className={loading ? "animate-spin" : ""} size={16} />
             Làm mới
@@ -546,11 +775,96 @@ export function KitchenBoard({
         </div>
       </section>
 
-      <section className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-ops-metrics-grid grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <KitchenOpsMetric icon={Flame} label="Chờ nhận" value={pendingOrders.length} meta={`${pendingOrders.reduce((total, order) => total + orderItemCount(order), 0)} món chưa vào bếp`} tone={pendingOrders.length ? "yellow" : "green"} />
         <KitchenOpsMetric icon={ChefHat} label="Đang làm" value={onTimeCookingOrders.length} meta={`${dueSoonCount} đơn còn dưới 5 phút`} tone={dueSoonCount ? "yellow" : "blue"} />
         <KitchenOpsMetric icon={AlertTriangle} label="Quá giờ" value={overdueOrders.length} meta={overdueOrders.length ? `Trễ lâu nhất ${Math.max(...overdueOrders.map((order) => Math.abs(minutesUntilAt(order.serviceDueAt, nowMs) ?? 0)))}p` : "Không có đơn trễ"} tone={overdueOrders.length ? "red" : "green"} />
         <KitchenOpsMetric icon={Gauge} label="Áp lực" value={orders.length ? Math.min(99, pendingOrders.length * 18 + overdueOrders.length * 28 + dueSoonCount * 12 + totalItems).toString() : 0} meta={`${totalItems} món trong hàng đợi`} tone={overdueOrders.length ? "red" : pendingOrders.length || dueSoonCount ? "yellow" : "green"} />
+      </section>
+
+      <KitchenShiftCommandCenter
+        orders={orders}
+        pendingOrders={pendingOrders}
+        cookingOrders={cookingOrders}
+        overdueOrders={overdueOrders}
+        dueSoonCount={dueSoonCount}
+        priorityOrders={priorityOrders}
+        totalItems={totalItems}
+        totalNotes={totalNotes}
+        oldestAge={oldestAge}
+        nowMs={nowMs}
+        mutatingOrderId={mutatingOrderId}
+        onMutate={mutateOrder}
+      />
+
+      <section className="dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)]">
+        <div className="dashboard-panel p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Kitchen lanes</p>
+              <h2 className="dashboard-section-title mt-1">Tải bếp theo kênh</h2>
+            </div>
+            <Badge tone={totalNotes > 0 ? "yellow" : "green"}>{totalNotes} ghi chú</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            {channelRows.map((row) => {
+              const Icon = row.icon;
+              const items = row.orders.reduce((total, order) => total + orderItemCount(order), 0);
+              const overdue = row.orders.filter((order) => isOverdueAt(order, nowMs)).length;
+              const width = orders.length > 0 ? Math.max(6, Math.round((row.orders.length / orders.length) * 100)) : 0;
+              return (
+                <div key={row.key} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
+                        <Icon size={16} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{row.label}</span>
+                        <span className="block text-xs font-medium text-[var(--muted-foreground)]">{items} món · {overdue} trễ</span>
+                      </span>
+                    </span>
+                    <span className="metric-number text-xl font-semibold text-[var(--foreground)]">{row.orders.length}</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container)]">
+                    <div className={cn("h-full rounded-full", overdue ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${width}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="dashboard-panel p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Special notes</p>
+              <h2 className="dashboard-section-title mt-1">Món cần chú ý</h2>
+            </div>
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <AlertTriangle size={18} />
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {noteOrders.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có món kèm ghi chú trong hàng đợi.
+              </div>
+            ) : (
+              noteOrders.map((order) => (
+                <div key={order.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{orderLocationLabel(order)}</span>
+                      <span className="block text-xs font-medium text-[var(--muted-foreground)]">{orderNoteCount(order)} ghi chú · {orderItemCount(order)} món</span>
+                    </span>
+                    <Badge tone={priorityTone(kitchenPriorityScore(order, nowMs))}>{fulfillmentLabel(order)}</Badge>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </section>
 
       {priorityOrders.length ? (
@@ -584,7 +898,7 @@ export function KitchenBoard({
 
       {error ? <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div> : null}
 
-      <section className="grid gap-3 xl:min-h-[calc(100vh-380px)] xl:grid-cols-3">
+      <section className="dashboard-kanban-board dashboard-kitchen-board-grid grid gap-3 xl:min-h-[calc(100vh-380px)] xl:grid-cols-3">
         <KanbanColumn title="Chờ nhận" count={pendingOrders.length} tone="yellow" icon={Flame}>
           {pendingOrders.length ? (
             pendingOrders.map((order) => (

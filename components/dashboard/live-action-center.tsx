@@ -26,6 +26,7 @@ import {
 } from "@/components/dashboard/action-center-cache";
 import { orderStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { orderNeedsPaymentAttention, resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 import type { OrderDto, ServiceRequestDto } from "@/types/domain";
@@ -97,15 +98,7 @@ function actionSummary(orders: OrderDto[], requests: ServiceRequestDto[]) {
     if (order.status === "ordering") serving += 1;
     const dueIn = minutesUntil(order.serviceDueAt);
     if (order.status === "ordering" && dueIn !== null && dueIn < 0) overdue += 1;
-    const billStatus = order.bill?.status;
-    if (
-      billStatus === "waiting_confirm" ||
-      billStatus === "waiting_payment" ||
-      order.paymentStatus === "waiting_confirm" ||
-      order.paymentStatus === "waiting_payment" ||
-      order.status === "waiting_confirm" ||
-      order.status === "waiting_payment"
-    ) {
+    if (orderNeedsPaymentAttention(order)) {
       paymentKeys.add(order.bill?.id ?? order.id);
     }
   }
@@ -137,13 +130,12 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
   for (const order of orders) {
     const location = orderLocationLabel(order);
     const dueIn = minutesUntil(order.serviceDueAt);
-    const billStatus = order.bill?.status;
-    const paymentStatus = billStatus ?? order.paymentStatus ?? order.status;
+    const paymentStatus = resolveOrderPaymentStatus(order);
     const paymentKey = order.bill?.id ?? order.id;
 
     if (
       !paymentKeys.has(paymentKey) &&
-      (paymentStatus === "waiting_confirm" || paymentStatus === "waiting_payment")
+      orderNeedsPaymentAttention(order)
     ) {
       paymentKeys.add(paymentKey);
       actions.push({

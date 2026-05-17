@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { reservationDepositStatusLabel, reservationStatusLabel } from "@/lib/labels";
 import type { AiAgentAction } from "@/types/ai-agent";
 import type { ReservationDto } from "@/types/domain";
+import type { ReservationStatusTimelineItem } from "@/services/reservation-service";
 
 type ReservationSlot = {
   startsAt: string;
@@ -64,6 +65,7 @@ type ReservationResult = {
   reservation: ReservationDto;
   token?: string;
   payment: ReservationPayment | null;
+  timeline?: ReservationStatusTimelineItem[];
 };
 
 type RestaurantInfo = {
@@ -207,6 +209,24 @@ function formatSyncClock(value: Date) {
   }).format(value);
 }
 
+function formatTimelineTime(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: VN_TIME_ZONE,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatTimelineClock(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    timeZone: VN_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 function hourInVietnam(value: string) {
   const hour = new Intl.DateTimeFormat("en-US", {
     timeZone: VN_TIME_ZONE,
@@ -305,6 +325,56 @@ function reservationSyncTone(syncState: ReservationSyncState, autoSyncActive: bo
   return "border-[rgba(15,77,58,0.12)] bg-[#F7F2E8] text-[var(--muted-foreground)]";
 }
 
+function reservationTimelineTitle(item: Pick<ReservationStatusTimelineItem, "toStatus" | "note">) {
+  if (item.note === "reservation_created") return "Đã tạo lịch đặt";
+  if (item.note === "reservation_deposit_submitted") return "Bạn đã báo chuyển cọc";
+  if (item.note === "reservation_deposit_confirmed") return "Quán đã xác nhận cọc";
+  if (item.note === "reservation_checked_in") return "Khách đã check-in";
+  if (item.note === "reservation_seated") return "Đã nhận khách vào bàn";
+  if (item.note === "reservation_customer_cancel") return "Bạn đã huỷ lịch";
+  if (item.note === "reservation_merchant_cancel") return "Quán đã huỷ lịch";
+  if (item.note === "reservation_merchant_reject") return "Quán chưa thể nhận lịch";
+  if (item.note === "reservation_rescheduled") return "Quán đã cập nhật giờ giữ bàn";
+  if (item.note === "reservation_table_moved" || item.note === "reservation_tables_merged") return "Quán đã cập nhật bàn giữ";
+  if (item.note === "reservation_hold_expired") return "Lịch giữ bàn đã hết hạn";
+  if (item.note === "reservation_no_show" || item.note === "reservation_auto_no_show") return "Lịch được ghi nhận không đến";
+  if (item.note === "reservation_deposit_refunded") return "Quán đã ghi nhận hoàn cọc";
+  if (item.note === "reservation_bill_paid") return "Phiên bàn đã hoàn tất";
+  return reservationStatusLabel(item.toStatus as ReservationDto["status"]);
+}
+
+function reservationTimelineActor(actorType: ReservationStatusTimelineItem["actorType"]) {
+  if (actorType === "customer") return "Bạn";
+  if (actorType === "merchant" || actorType === "staff") return "Quán";
+  return "Hệ thống";
+}
+
+function timelineMetadataValue(item: ReservationStatusTimelineItem, key: string) {
+  return item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
+    ? (item.metadata as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function reservationTimelineNotice(item?: ReservationStatusTimelineItem) {
+  if (!item) return null;
+  if (item.note === "reservation_rescheduled") return "Quán vừa cập nhật giờ giữ bàn. Vui lòng kiểm tra lại thời gian đến.";
+  if (item.note === "reservation_table_moved" || item.note === "reservation_tables_merged") return "Quán vừa cập nhật bàn giữ để phù hợp tình trạng bàn thực tế.";
+  if (item.note === "reservation_deposit_confirmed") return "Cọc đã được xác nhận, lịch của bạn đã chắc bàn.";
+  if (item.note === "reservation_checked_in") return "Quán đã ghi nhận khách tới nơi.";
+  if (item.note === "reservation_seated") return "Khách đã được nhận vào bàn, tiếp tục gọi món bằng QR tại bàn.";
+  if (item.note === "reservation_deposit_refunded") return "Cọc đã được quán đánh dấu hoàn thủ công.";
+  if (item.note === "reservation_merchant_cancel" && timelineMetadataValue(item, "depositDisposition") === "refundable") return "Lịch đã huỷ và cọc được ghi nhận cần hoàn.";
+  if ((item.note === "reservation_no_show" || item.note === "reservation_auto_no_show") && timelineMetadataValue(item, "depositDisposition") === "forfeited") return "Lịch no-show, cọc được ghi nhận giữ lại theo chính sách quán.";
+  return null;
+}
+
+function reservationTableSummary(reservation: ReservationDto) {
+  const tableNames = reservation.tables.map((table) => table.name).filter(Boolean);
+  if (tableNames.length === 0) return "Quán tự chọn bàn phù hợp";
+  if (tableNames.length === 1) return tableNames[0];
+  return `${tableNames[0]} + ${tableNames.length - 1} bàn ghép`;
+}
+
 function isAccessFailureStatus(status?: number) {
   return status === 403 || status === 404 || status === 422;
 }
@@ -369,6 +439,27 @@ function ReservationFlowPreview({ depositRequired }: { depositRequired: boolean 
 }
 
 function reservationResultVisual(reservation: ReservationDto) {
+  if (reservation.depositStatus === "refundable") {
+    return {
+      src: orderFlowImageSources.paymentConfirmation,
+      title: "Lịch cần hoàn cọc",
+      caption: "Quán đã ghi nhận lịch cần hoàn cọc thủ công. Vui lòng liên hệ quán nếu cần đối soát."
+    };
+  }
+  if (reservation.depositStatus === "refunded") {
+    return {
+      src: orderFlowImageSources.completed,
+      title: "Cọc đã được ghi nhận hoàn",
+      caption: "Quán đã đánh dấu hoàn cọc thủ công cho lịch đặt này."
+    };
+  }
+  if (reservation.depositStatus === "forfeited") {
+    return {
+      src: orderFlowImageSources.cancelled,
+      title: "Lịch đã giữ cọc",
+      caption: "Lịch này được ghi nhận không đến và cọc đã được giữ lại theo chính sách quán."
+    };
+  }
   if (reservation.status === "cancelled" || reservation.status === "rejected" || reservation.status === "expired" || reservation.status === "no_show") {
     return {
       src: orderFlowImageSources.cancelled,
@@ -404,8 +495,10 @@ function reservationResultVisual(reservation: ReservationDto) {
   };
 }
 
-function ReservationTimeline({ reservation }: { reservation: ReservationDto }) {
+function ReservationTimeline({ reservation, timeline = [] }: { reservation: ReservationDto; timeline?: ReservationStatusTimelineItem[] }) {
   const current = reservation.status;
+  const latestTimelineItem = timeline.at(-1);
+  const latestNotice = reservationTimelineNotice(latestTimelineItem);
   const steps = [
     { id: "holding", label: reservation.depositRequiredAmount > 0 ? "Giữ bàn" : "Đã đặt" },
     { id: "waiting_deposit_confirm", label: "Chờ cọc" },
@@ -442,6 +535,47 @@ function ReservationTimeline({ reservation }: { reservation: ReservationDto }) {
             </div>
           );
         })}
+      </div>
+      <div className="mt-4 border-t border-[rgba(15,77,58,0.10)] pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-[var(--foreground)]">Dòng trạng thái</p>
+            {latestTimelineItem ? (
+              <p className="mt-0.5 text-xs font-bold text-[var(--muted-foreground)]">Mới nhất lúc {formatTimelineClock(latestTimelineItem.createdAt)}</p>
+            ) : null}
+          </div>
+          <Badge tone={timeline.length > 0 ? "green" : "neutral"}>{timeline.length > 0 ? `${timeline.length} cập nhật` : "Đang chờ log"}</Badge>
+        </div>
+        {latestNotice ? (
+          <div className="mt-3 rounded-2xl border border-[rgba(242,140,40,0.18)] bg-[rgba(242,140,40,0.10)] p-3 text-sm font-bold text-[var(--accent-strong)]">
+            {latestNotice}
+          </div>
+        ) : null}
+        <div className="mt-3 grid gap-2">
+          {timeline.length > 0 ? (
+            timeline.slice().reverse().map((item, index) => (
+              <div key={item.id} className="grid grid-cols-[28px_minmax(0,1fr)] gap-3">
+                <span className={cn("mt-1 grid h-7 w-7 place-items-center rounded-full", index === 0 ? "bg-[var(--primary)] text-white" : "bg-[#F7F2E8] text-[var(--primary)]")}>
+                  {index === 0 ? <CheckCircle2 size={14} /> : <Clock3 size={13} />}
+                </span>
+                <div className="min-w-0 rounded-2xl bg-[#F7F2E8] p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-black text-[var(--foreground)]">{reservationTimelineTitle(item)}</p>
+                    <span className="shrink-0 text-[11px] font-black text-[var(--muted-foreground)]">{formatTimelineTime(item.createdAt)}</span>
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
+                    {reservationTimelineActor(item.actorType)} · {reservationStatusLabel(item.toStatus as ReservationDto["status"])}
+                    {item.fromStatus && item.fromStatus !== item.toStatus ? ` · từ ${reservationStatusLabel(item.fromStatus as ReservationDto["status"])}` : ""}
+                  </p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-2xl bg-[#F7F2E8] p-3 text-sm font-bold text-[var(--muted-foreground)]">
+              Trạng thái hiện tại: {reservationStatusLabel(reservation.status)}. Màn hình vẫn tự cập nhật định kỳ khi quán xử lý lịch.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -888,7 +1022,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   </p>
                   <p className="flex items-center gap-2">
                     <UsersRound size={16} className="text-[var(--primary)]" />
-                    {result.reservation.partySize} khách · {result.reservation.tables[0]?.name ?? "Quán tự chọn bàn phù hợp"}
+                    {result.reservation.partySize} khách · {reservationTableSummary(result.reservation)}
                   </p>
                   <p className="flex items-center gap-2">
                     <Store size={16} className="text-[var(--primary)]" />
@@ -908,7 +1042,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
               </section>
 
               <div className="mt-4">
-                <ReservationTimeline reservation={result.reservation} />
+                <ReservationTimeline reservation={result.reservation} timeline={result.timeline} />
               </div>
 
               <div className="mt-4">
@@ -1055,11 +1189,11 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
   }
 
   return (
-    <main className="min-h-screen bg-[#FFF7EB] text-[var(--foreground)]">
+    <main className="customer-reservation-shell">
       <section className="mx-auto grid min-h-screen max-w-6xl gap-6 px-0 sm:px-4 lg:grid-cols-[440px_minmax(0,1fr)] lg:py-8">
-        <div className="relative min-h-screen overflow-hidden bg-white shadow-[0_24px_70px_rgba(15,77,58,0.12)] sm:min-h-[760px] sm:rounded-[2rem] sm:border sm:border-[rgba(15,77,58,0.12)]">
+        <div className="customer-reservation-phone">
           <div className="absolute inset-x-0 top-0 h-56 bg-[radial-gradient(circle_at_16%_16%,rgba(242,140,40,0.18),transparent_34%),linear-gradient(135deg,#FFF7EB_0%,#F7F0E2_46%,#E8F2E7_100%)]" />
-          <div className="relative z-10 px-5 pb-28 pt-4">
+          <div className="customer-reservation-content">
             <header className="flex items-center justify-between gap-3">
               {step !== "time" ? (
                 <button type="button" onClick={goBack} className="grid h-10 w-10 place-items-center rounded-full border border-[rgba(15,77,58,0.12)] bg-white text-[var(--primary)] shadow-sm" aria-label="Quay lại">
@@ -1083,7 +1217,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
               )}
             </header>
 
-            <section className="mt-5 rounded-[1.75rem] border border-[rgba(15,77,58,0.10)] bg-white/80 p-5 shadow-[0_18px_55px_rgba(15,77,58,0.08)] backdrop-blur">
+            <section className="customer-reservation-card mt-5 p-5 backdrop-blur">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <Badge tone={restaurant.reservationsEnabled ? "green" : "yellow"}>{restaurant.reservationsEnabled ? "Đang nhận bàn" : "Tạm tắt đặt bàn"}</Badge>
@@ -1108,7 +1242,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
               <ReservationFlowPreview depositRequired={depositAmount(restaurant, partySize) > 0} />
             </div>
 
-            <nav className="mt-4 grid grid-cols-3 gap-2">
+            <nav className="customer-reservation-stepper mt-4">
               {bookingSteps.map((item, index) => (
                 <button
                   key={item.id}
@@ -1141,7 +1275,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
 
             {restaurant.reservationsEnabled && step === "time" ? (
               <section className="mt-4 grid gap-4">
-                <div className="rounded-[1.75rem] border border-[rgba(15,77,58,0.12)] bg-white p-4">
+                <div className="customer-reservation-card p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-black">Bạn muốn đến khi nào?</h2>
@@ -1150,7 +1284,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                     {loadingSlots ? <Loader2 className="animate-spin text-[var(--primary)]" size={18} /> : null}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="mt-4 grid grid-cols-3 gap-2 max-[374px]:grid-cols-1">
                     {quickDates.map((item) => (
                       <button
                         key={item.label}
@@ -1207,7 +1341,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   </div>
 
                   {restaurant.preferenceOptions.tableAreas.length > 0 || visibleSeatingZoneChoices.length > 1 || visibleTableKindChoices.length > 1 ? (
-                    <div className="mt-4 rounded-2xl border border-[rgba(15,77,58,0.10)] bg-[#F7F2E8] p-3">
+                    <div className="customer-reservation-card mt-4 bg-[#F7F2E8] p-3">
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-sm font-black text-[var(--foreground)]">Ưu tiên vị trí</p>
                         <Badge tone={draftPreferenceSummary === "Quán tự chọn bàn phù hợp" ? "neutral" : "green"}>
@@ -1216,7 +1350,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                       </div>
 
                       {restaurant.preferenceOptions.tableAreas.length > 0 ? (
-                        <div className="mt-3 grid grid-cols-2 gap-2">
+                        <div className="customer-reservation-option-grid mt-3">
                           <button
                             type="button"
                             onClick={() => setPreferredTableAreaId("")}
@@ -1291,7 +1425,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   ) : null}
                 </div>
 
-                <div className="rounded-[1.75rem] border border-[rgba(15,77,58,0.12)] bg-white p-4">
+                <div className="customer-reservation-card p-4">
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-lg font-black">Khung giờ còn bàn</h2>
                     <Badge tone={selectedSlot ? "green" : "yellow"}>{selectedSlot ? "Đã chọn" : "Chọn giờ"}</Badge>
@@ -1308,7 +1442,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                     {groupedSlots.map((group) => (
                       <div key={group.id}>
                         <p className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{group.label}</p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="customer-reservation-slot-grid">
                           {group.slots.map((slot) => {
                             const tone = slotTone(slot);
                             const selected = selectedStartsAt === slot.startsAt;
@@ -1341,7 +1475,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
             ) : null}
 
             {restaurant.reservationsEnabled && step === "contact" ? (
-              <section className="mt-4 rounded-[1.75rem] border border-[rgba(15,77,58,0.12)] bg-white p-4">
+              <section className="customer-reservation-card mt-4 p-4">
                 <div className="flex items-center gap-3">
                   <div className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]">
                     <UserRound size={22} />
@@ -1352,7 +1486,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-3">
+                <div className="mt-4 customer-form-grid">
                   <label className="grid gap-2 text-sm font-black">
                     Tên khách
                     <Input value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="VD: Anh Minh" autoComplete="name" />
@@ -1380,7 +1514,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   title={depositAmount(restaurant, partySize) > 0 ? "Sẵn sàng giữ bàn bằng cọc" : "Sẵn sàng gửi lịch cho quán"}
                   caption={depositAmount(restaurant, partySize) > 0 ? "Sau bước này, mã VietQR sẽ hiện ngay để bạn chuyển cọc đúng nội dung." : "Quán sẽ nhận lịch và cập nhật trạng thái xác nhận trực tiếp trên màn hình này."}
                 />
-                <div className="rounded-[1.75rem] border border-[rgba(15,77,58,0.12)] bg-white p-4">
+                <div className="customer-reservation-card p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-black">Kiểm tra lại lịch đặt</h2>
@@ -1397,7 +1531,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                       <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Ưu tiên vị trí</p>
                       <p className="mt-1 text-sm font-black leading-6">{draftPreferenceSummary}</p>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="customer-reservation-option-grid">
                       <div className="rounded-2xl bg-[#F7F2E8] p-4">
                         <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Số khách</p>
                         <p className="mt-1 text-lg font-black">{partySize}</p>
@@ -1421,7 +1555,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
                   </div>
                 </div>
 
-                <div className="rounded-[1.75rem] border border-[rgba(15,77,58,0.12)] bg-[var(--primary-soft)] p-4 text-sm font-bold leading-6 text-[var(--primary)]">
+                <div className="customer-reservation-card bg-[var(--primary-soft)] p-4 text-sm font-bold leading-6 text-[var(--primary)]">
                   <ShieldCheck className="mb-2" size={22} />
                   {depositAmount(restaurant, partySize) > 0
                     ? `Sau khi giữ bàn, bạn có ${restaurant.holdMinutes} phút để chuyển cọc VietQR. Nếu quá hạn, bàn sẽ tự mở lại cho khách khác.`
@@ -1433,7 +1567,7 @@ export function ReservationClient({ restaurant }: { restaurant: RestaurantInfo }
             {error ? <p className="mt-4 rounded-2xl bg-[var(--danger-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">{error}</p> : null}
           </div>
 
-          <div className="absolute inset-x-0 bottom-0 z-20 border-t border-[rgba(15,77,58,0.12)] bg-white/95 p-4 backdrop-blur">
+          <div className="customer-reservation-bottom">
             <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl bg-[#F7F2E8] px-3 py-2">
               <div className="min-w-0">
                 <p className="truncate text-sm font-black">{selectedSlot ? formatSlot(selectedSlot.startsAt) : "Chưa chọn giờ"} · {partySize} khách</p>

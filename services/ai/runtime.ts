@@ -1,7 +1,7 @@
 import "server-only";
 
 import { runAiCompletion } from "@/lib/ai/router/model-router";
-import { persistAiConversationMessage } from "@/lib/ai/memory/restaurant-memory";
+import { getScopedRestaurantMemoryContext, persistAiConversationMessage } from "@/lib/ai/memory/restaurant-memory";
 import type { AiCompletionOptions, AiCompletionResult, AiProvider, AiProviderConfig, AiTaskType } from "@/lib/ai/router/types";
 import { AppError } from "@/lib/response";
 import { rateLimit } from "@/lib/rate-limit";
@@ -53,7 +53,8 @@ type AiMessage = AiPromptMessage;
 type RestaurantAiContext = AiRestaurantContext;
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 type LegacyAiCompletionResult = Omit<AiCompletionResult, "attempts">;
-type NativeAiProviderConfig = Pick<AiProviderConfig, "provider" | "baseUrl" | "apiKey">;
+type NativeAiProvider = Extract<AiProvider, "qwen" | "xai">;
+type NativeAiProviderConfig = Pick<AiProviderConfig, "baseUrl" | "apiKey"> & { provider: NativeAiProvider };
 type ExecutedAiToolCall = {
   id: string;
   name: string;
@@ -161,6 +162,12 @@ function monthStartIso() {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
 }
 
+function isoDateOffset(days: number) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 const legacyAiBillingFeatureMap: Partial<Record<PlanFeatureKey, BillingFeatureKey>> = {
   ai_owner_assistant: "ai_chatbot",
   ai_customer_assistant: "ai_chatbot",
@@ -177,7 +184,7 @@ function billingAccessErrorMessage(label: string, state: "locked_plan" | "quota_
   return `${label} chỉ khả dụng trên gói Premium.`;
 }
 
-function getProviderConfig(preferred?: AiProvider): NativeAiProviderConfig {
+function getProviderConfig(preferred?: NativeAiProvider): NativeAiProviderConfig {
   const qwenKey = (process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || "").trim();
   const xaiKey = process.env.XAI_API_KEY?.trim();
   const qwenBaseUrl = (
@@ -233,12 +240,34 @@ function getRequiredQwenProviderConfig(featureLabel: string): NativeAiProviderCo
   throw new AppError(`${featureLabel} yêu cầu QWEN_API_KEY hoặc DASHSCOPE_API_KEY. Không thể dùng xAI cho OCR menu.`, 500);
 }
 
-function normalizeAiProvider(value?: string | null): AiProvider | undefined {
+function normalizeNativeAiProvider(value?: string | null): NativeAiProvider | undefined {
   return value === "qwen" || value === "xai" ? value : undefined;
+}
+
+function normalizeAiProvider(value?: string | null): AiProvider | undefined {
+  const normalized = value?.trim();
+  return normalized === "qwen" ||
+    normalized === "xai" ||
+    normalized === "openai" ||
+    normalized === "gemini" ||
+    normalized === "claude" ||
+    normalized === "vercel_gateway"
+    ? normalized
+    : undefined;
 }
 
 function normalizePrompt(value: string) {
   return value.trim().replace(/\s+/g, " ").slice(0, 4000);
+}
+
+function ownerMemoryCategories(intent: OwnerAiIntent) {
+  if (intent === "inventory") return ["inventory", "menu", "operations"] as const;
+  if (intent === "staff") return ["staff", "operations", "policy"] as const;
+  if (intent === "growth") return ["marketing", "menu", "brand"] as const;
+  if (intent === "menu") return ["menu", "inventory", "marketing"] as const;
+  if (intent === "reservations") return ["policy", "operations", "branch"] as const;
+  if (intent === "reports") return ["operations", "branch", "marketing"] as const;
+  return ["operations", "brand", "policy", "branch"] as const;
 }
 
 function allowPromptOnlyImageFallback() {
@@ -730,7 +759,7 @@ function buildOwnerProactiveToolCalls(intent: OwnerAiIntent, message: string) {
     calls.push(buildSyntheticToolCall("detect_payment_issue"));
   }
 
-  if (intent === "kitchen" || intent === "reports" || intent === "staff") {
+  if (intent === "kitchen" || intent === "reports") {
     calls.push(buildSyntheticToolCall("analyze_peak_hour", { dayOfWeek: "all" }));
   }
 
@@ -883,6 +912,31 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
       wasteSignalCount?: number;
       highFoodCostItemCount?: number;
     };
+    staff?: {
+      schemaReady?: boolean;
+      memberCount?: number;
+      activeCount?: number;
+      suspendedCount?: number;
+      archivedCount?: number;
+      onlineCount?: number;
+      currentlyClockedIn?: number;
+      attendanceLogCount24h?: number;
+      lateCount24h?: number;
+      overtimeMinutes24h?: number;
+      pendingApprovalCount?: number;
+      pendingApprovalByType?: Record<string, number>;
+      roleBreakdown?: Record<string, number>;
+      assignedBranchCount?: number;
+      unassignedActiveCount?: number;
+      averageReviewScore?: number;
+      lowReviewCount?: number;
+      draftReviewCount?: number;
+      shiftCount7d?: number;
+      upcomingShiftCount?: number;
+      clockedInStaff?: Array<Record<string, unknown>>;
+      pendingRequests?: Array<Record<string, unknown>>;
+      upcomingShifts?: Array<Record<string, unknown>>;
+    };
     operationInsights?: {
       primaryInsightId?: string | null;
       summary?: string;
@@ -936,6 +990,10 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
     case "inventory":
       return data.inventory
         ? `Kho hiện có ${data.inventory.lowStockCount ?? 0} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(Number(data.inventory.recipeCoveragePercent ?? 0))}%, ${data.inventory.openAlertCount ?? 0} alert mở, dự kiến nhập ${formatCurrency(Number(data.inventory.projectedPurchaseValue ?? 0))}, ${data.inventory.wasteSignalCount ?? 0} tín hiệu hao hụt.`
+        : "";
+    case "staff":
+      return data.staff
+        ? `Nhân sự hiện có ${Number(data.staff.activeCount ?? 0)}/${Number(data.staff.memberCount ?? 0)} người đang hoạt động, ${Number(data.staff.currentlyClockedIn ?? 0)} người đang check-in, ${Number(data.staff.lateCount24h ?? 0)} lượt muộn trong 24h, ${Number(data.staff.pendingApprovalCount ?? 0)} yêu cầu chờ duyệt, ${Number(data.staff.unassignedActiveCount ?? 0)} active chưa gán chi nhánh, review TB ${Number(data.staff.averageReviewScore ?? 0).toFixed(1)}/5 và ${Number(data.staff.upcomingShiftCount ?? data.staff.shiftCount7d ?? 0)} ca sắp tới.`
         : "";
     case "reports":
       return data.summary24h
@@ -1159,10 +1217,100 @@ async function getRestaurantSetupBundle(restaurantId: string) {
   };
 }
 
+function buildStaffAiSnapshot(input: {
+  members?: any[] | null;
+  attendance?: any[] | null;
+  approvals?: any[] | null;
+  shifts?: any[] | null;
+  branchAssignments?: any[] | null;
+  reviews?: any[] | null;
+}) {
+  const members = input.members ?? [];
+  const attendance = input.attendance ?? [];
+  const approvals = input.approvals ?? [];
+  const shifts = input.shifts ?? [];
+  const branchAssignments = input.branchAssignments ?? [];
+  const reviews = input.reviews ?? [];
+  const now = Date.now();
+  const activeMembers = members.filter((member) => member.employment_status === "active" && !member.archived_at);
+  const suspendedMembers = members.filter((member) => member.employment_status === "suspended" && !member.archived_at);
+  const openAttendance = attendance.filter((log) => !log.clock_out_at);
+  const lateLogs = attendance.filter((log) => log.attendance_state === "late" || Number(log.late_minutes ?? 0) > 0);
+  const overtimeLogs = attendance.filter((log) => log.attendance_state === "overtime" || Number(log.overtime_minutes ?? 0) > 0);
+  const pendingApprovals = approvals.filter((request) => request.status === "pending");
+  const activeBranchAssignments = branchAssignments.filter((assignment) => assignment.assignment_status === "active");
+  const assignedMemberIds = new Set(activeBranchAssignments.map((assignment) => String(assignment.staff_member_id ?? "")));
+  const reviewedMemberIds = new Set(reviews.map((review) => String(review.staff_member_id ?? "")));
+  const reviewScores = reviews.map((review) => Number(review.score ?? 0)).filter((score) => Number.isFinite(score) && score > 0);
+  const lowReviewCount = reviews.filter((review) => Number(review.score ?? 0) > 0 && Number(review.score ?? 0) < 3.5).length;
+  const draftReviewCount = reviews.filter((review) => review.status !== "completed").length;
+  const onlineMembers = activeMembers.filter((member) => {
+    const seenAt = member.last_seen_at ? new Date(member.last_seen_at).getTime() : 0;
+    return Number.isFinite(seenAt) && now - seenAt <= 15 * 60 * 1000;
+  });
+  const memberNameById = new Map(members.map((member) => [String(member.id), String(member.full_name ?? "Nhân viên")]));
+
+  return {
+    schemaReady: true,
+    memberCount: members.length,
+    activeCount: activeMembers.length,
+    suspendedCount: suspendedMembers.length,
+    archivedCount: members.filter((member) => Boolean(member.archived_at)).length,
+    onlineCount: onlineMembers.length,
+    currentlyClockedIn: openAttendance.length,
+    attendanceLogCount24h: attendance.length,
+    lateCount24h: lateLogs.length,
+    overtimeMinutes24h: overtimeLogs.reduce((sum, log) => sum + Number(log.overtime_minutes ?? 0), 0),
+    pendingApprovalCount: pendingApprovals.length,
+    pendingApprovalByType: countRowsBy(pendingApprovals, "request_type"),
+    roleBreakdown: countRowsBy(activeMembers, "role_code"),
+    assignedBranchCount: activeMembers.filter((member) => assignedMemberIds.has(String(member.id))).length,
+    unassignedActiveCount: activeMembers.filter((member) => !assignedMemberIds.has(String(member.id))).length,
+    reviewedActiveCount: activeMembers.filter((member) => reviewedMemberIds.has(String(member.id))).length,
+    unreviewedActiveCount: activeMembers.filter((member) => !reviewedMemberIds.has(String(member.id))).length,
+    averageReviewScore: reviewScores.length ? Math.round((reviewScores.reduce((sum, score) => sum + score, 0) / reviewScores.length) * 10) / 10 : 0,
+    lowReviewCount,
+    draftReviewCount,
+    shiftCount7d: shifts.length,
+    upcomingShiftCount: shifts.filter((shift) => shift.status === "scheduled" || shift.status === "confirmed").length,
+    activeStaff: activeMembers.slice(0, 8).map((member) => ({
+      id: String(member.id ?? "").slice(0, 8),
+      name: member.full_name,
+      role: member.role_code,
+      lastSeenAt: member.last_seen_at ?? null
+    })),
+    clockedInStaff: openAttendance.slice(0, 8).map((log) => ({
+      staffMemberId: String(log.staff_member_id ?? "").slice(0, 8),
+      name: memberNameById.get(String(log.staff_member_id)) ?? "Nhân viên",
+      state: log.attendance_state,
+      clockInAt: log.clock_in_at,
+      lateMinutes: Number(log.late_minutes ?? 0),
+      overtimeMinutes: Number(log.overtime_minutes ?? 0)
+    })),
+    pendingRequests: pendingApprovals.slice(0, 8).map((request) => ({
+      id: String(request.id ?? "").slice(0, 8),
+      staffMemberId: String(request.staff_member_id ?? "").slice(0, 8),
+      name: memberNameById.get(String(request.staff_member_id)) ?? "Nhân viên",
+      type: request.request_type,
+      reason: request.reason ?? null,
+      createdAt: request.created_at
+    })),
+    upcomingShifts: shifts.slice(0, 8).map((shift) => ({
+      id: String(shift.id ?? "").slice(0, 8),
+      staffMemberId: String(shift.staff_member_id ?? "").slice(0, 8),
+      name: memberNameById.get(String(shift.staff_member_id)) ?? "Nhân viên",
+      scheduledDate: shift.scheduled_date,
+      status: shift.status
+    }))
+  };
+}
+
 export async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAiIntent, restaurant: RestaurantAiContext) {
   const supabase = createAdminSupabaseClient() as any;
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const monthStart = monthStartIso();
+  const today = isoDateOffset(0);
+  const nextWeek = isoDateOffset(7);
 
   const recentOrdersPromise = safeSupabaseQuery<any[]>(
     supabase
@@ -1252,7 +1400,67 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
       )
     : Promise.resolve(null);
 
-  const [recentOrdersRaw, todayOrdersRaw, menuRaw, tablesRaw, paymentsRaw, promotionsRaw, inventoryRaw, reservationsRaw] = await Promise.all([
+  const staffPromise = intentNeeds(intent, ["staff", "reports"])
+    ? Promise.all([
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("staff_members")
+            .select("id,full_name,role_code,employment_status,last_seen_at,suspended_at,archived_at,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        ),
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("attendance_logs")
+            .select("id,staff_member_id,attendance_state,approval_state,late_minutes,overtime_minutes,work_minutes,clock_in_at,clock_out_at")
+            .eq("restaurant_id", restaurantId)
+            .gte("clock_in_at", since)
+            .order("clock_in_at", { ascending: false })
+            .limit(120)
+        ),
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("attendance_approval_requests")
+            .select("id,staff_member_id,request_type,status,reason,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        ),
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("shift_assignments")
+            .select("id,staff_member_id,branch_id,shift_id,scheduled_date,status")
+            .eq("restaurant_id", restaurantId)
+            .gte("scheduled_date", today)
+            .lte("scheduled_date", nextWeek)
+            .order("scheduled_date", { ascending: true })
+            .limit(120)
+        ),
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("staff_branch_assignments")
+            .select("id,staff_member_id,branch_id,is_primary,assignment_status")
+            .eq("restaurant_id", restaurantId)
+            .eq("assignment_status", "active")
+            .limit(160)
+        ),
+        safeSupabaseQuery<any[]>(
+          supabase
+            .from("staff_reviews")
+            .select("id,staff_member_id,period_label,score,status,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        )
+      ]).then(([members, attendance, approvals, shifts, branchAssignments, reviews]) =>
+        members === null && attendance === null && approvals === null && shifts === null && branchAssignments === null && reviews === null
+          ? null
+          : buildStaffAiSnapshot({ members, attendance, approvals, shifts, branchAssignments, reviews })
+      )
+    : Promise.resolve(null);
+
+  const [recentOrdersRaw, todayOrdersRaw, menuRaw, tablesRaw, paymentsRaw, promotionsRaw, inventoryRaw, reservationsRaw, staffRaw] = await Promise.all([
     recentOrdersPromise,
     todayOrdersPromise,
     menuPromise,
@@ -1260,7 +1468,8 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
     paymentsPromise,
     promotionsPromise,
     inventoryPromise,
-    reservationsPromise
+    reservationsPromise,
+    staffPromise
   ]);
   const inventorySnapshotRaw = inventoryRaw?.snapshot ?? null;
   const inventoryEconomicsRaw = inventoryRaw?.economics ?? null;
@@ -1434,7 +1643,8 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
           depositRequiredAmount: reservation.deposit_required_amount,
           depositStatus: reservation.deposit_status
         }))
-      : null
+      : null,
+    staff: staffRaw
   };
 
   return {
@@ -1529,7 +1739,8 @@ async function logAiUsage({
   outputTokens,
   imageCount,
   errorMessage,
-  metadata
+  metadata,
+  aiResult
 }: {
   restaurantId: string;
   userId?: string | null;
@@ -1544,7 +1755,26 @@ async function logAiUsage({
   imageCount?: number | null;
   errorMessage?: string | null;
   metadata?: Record<string, unknown>;
+  aiResult?: AiCompletionResult | null;
 }) {
+  const enrichedMetadata = {
+    ...(metadata ?? {}),
+    ...(aiResult
+      ? {
+          providerAttempts: aiResult.attempts.map((attempt) => ({
+            provider: attempt.provider,
+            model: attempt.model,
+            status: attempt.status,
+            latencyMs: attempt.latencyMs,
+            estimatedCostVnd: attempt.estimatedCostVnd ?? null,
+            errorMessage: attempt.errorMessage ? attempt.errorMessage.slice(0, 220) : null
+          })),
+          estimatedCostVnd: aiResult.estimatedCostVnd ?? null,
+          cacheHit: Boolean(aiResult.cacheHit),
+          latencyMs: aiResult.latencyMs ?? null
+        }
+      : {})
+  };
   const supabase = createAdminSupabaseClient() as any;
   const { error } = await supabase.from("ai_usage_logs").insert({
     restaurant_id: restaurantId,
@@ -1559,7 +1789,7 @@ async function logAiUsage({
     output_tokens: outputTokens ?? null,
     image_count: imageCount ?? null,
     error_message: errorMessage ?? null,
-    metadata: metadata ?? {}
+    metadata: enrichedMetadata
   });
 
   if (error && !isMissingSchemaError(error)) throw error;
@@ -1591,7 +1821,7 @@ async function logAiUsage({
     model,
     status,
     metadata: {
-      ...(metadata ?? {}),
+      ...enrichedMetadata,
       customerSessionId: customerSessionId ?? null,
       requestKind
     }
@@ -1615,7 +1845,7 @@ async function logAiUsage({
       model,
       status,
       metadata: {
-        ...(metadata ?? {}),
+        ...enrichedMetadata,
         customerSessionId: customerSessionId ?? null,
         requestKind
       }
@@ -1640,7 +1870,7 @@ async function logAiUsage({
       model,
       status,
       metadata: {
-        ...(metadata ?? {}),
+        ...enrichedMetadata,
         customerSessionId: customerSessionId ?? null,
         requestKind
       }
@@ -1893,13 +2123,23 @@ export async function runOwnerAssistant(input: {
   }
 
   const restaurant = await getRestaurantContext(input.restaurantId);
-  const snapshot = await getOwnerOperationalSnapshot(input.restaurantId, intent, restaurant);
+  const [snapshot, memory] = await Promise.all([
+    getOwnerOperationalSnapshot(input.restaurantId, intent, restaurant),
+    getScopedRestaurantMemoryContext({
+      restaurantId: input.restaurantId,
+      query: input.message,
+      categories: [...ownerMemoryCategories(intent)],
+      includeSensitive: true,
+      limit: 5
+    }).catch(() => ({ context: "", items: [], schemaReady: false }))
+  ]);
   const messages = buildOwnerAssistantMessages({
     restaurant,
     intent,
     message: normalizePrompt(input.message),
     context: input.context,
-    snapshot
+    snapshot,
+    memoryContext: memory.context
   });
 
   try {
@@ -1923,7 +2163,8 @@ export async function runOwnerAssistant(input: {
       status: "success",
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
-      metadata: { intent }
+      metadata: { intent, memorySchemaReady: memory.schemaReady, memoryCount: memory.items.length },
+      aiResult: result
     });
     const actions = buildOwnerAgentActions(intent, ownerAiIntentConfig[intent].suggestions, snapshot, toolRuns);
     const currentRoute = typeof input.context?.currentPath === "string" ? input.context.currentPath : typeof input.context?.route === "string" ? input.context.route : null;
@@ -2455,7 +2696,8 @@ export async function runCustomerAssistant(input: {
       status: "success",
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
-      metadata: { intent }
+      metadata: { intent },
+      aiResult: result
     });
     const actions = buildCustomerAgentActions(intent, restaurant.slug, {
       menuSnapshot,
@@ -2698,7 +2940,7 @@ async function runAiImageGeneration(input: {
   const canFallbackToPromptOnly = allowPromptOnlyImageFallback();
 
   try {
-    const config = getProviderConfig((process.env.AI_IMAGE_PROVIDER as AiProvider | undefined) || "qwen");
+    const config = getProviderConfig(normalizeNativeAiProvider(process.env.AI_IMAGE_PROVIDER) || "qwen");
     if (config.provider === "qwen") {
       const size = input.kind === "logo" ? "1024*1024" : input.kind === "menu_preview" ? "1536*1024" : "1024*1024";
       const response = await fetch(`${config.baseUrl}/api/v1/services/aigc/multimodal-generation/generation`, {

@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { isPublicDashboardAuthPath, safeProtectedDashboardNextPath } from "@/lib/auth-flow-routes";
 import { DASHBOARD_SMOKE_SESSION_COOKIE, dashboardSmokeAuthEnabled, parseDashboardSmokeCookie } from "@/lib/dashboard-smoke-auth";
 import {
   cookieNamesFromHeader,
@@ -13,14 +14,6 @@ import {
 import { updateSession } from "@/lib/supabase/proxy";
 import { getTenantSlugFromHost, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
-const publicDashboardPaths = new Set([
-  "/dashboard/login",
-  "/dashboard/register",
-  "/dashboard/setup",
-  "/dashboard/verify-email",
-  "/dashboard/forgot-password",
-  "/dashboard/reset-password"
-]);
 const staffSlugLoginPathPattern = /^\/staff\/[a-z0-9-]{2,80}\/login$/;
 const staffSubdomainSlugPathPattern = /^\/([a-z0-9-]{2,80})(?:\/login)?$/;
 
@@ -76,7 +69,7 @@ function shouldBypassProxySessionRefresh(request: NextRequest, pathname: string)
   return (
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/api/") ||
-    publicDashboardPaths.has(pathname) ||
+    isPublicDashboardAuthPath(pathname) ||
     isPublicStaffPath(pathname) ||
     isServerActionRequest(request) ||
     isPrefetchOrRscRequest(request)
@@ -115,7 +108,13 @@ function appendExpiredCookie(response: NextResponse, request: NextRequest, name:
 function repairOversizedSupabaseCookieHeader(request: NextRequest) {
   const url = request.nextUrl.clone();
   url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
-  url.search = "?session=cleared&reason=header";
+  url.search = "";
+  url.searchParams.set("session", "cleared");
+  url.searchParams.set("reason", "header");
+  const next = protectedDashboardNextPath(request);
+  if (next && url.pathname === "/dashboard/login") {
+    url.searchParams.set("next", next);
+  }
 
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
@@ -130,7 +129,13 @@ function repairOversizedSupabaseCookieHeader(request: NextRequest) {
 function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") {
   const url = request.nextUrl.clone();
   url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
-  url.search = `?session=cleared&reason=${encodeURIComponent(reason)}`;
+  url.search = "";
+  url.searchParams.set("session", "cleared");
+  url.searchParams.set("reason", reason);
+  const next = protectedDashboardNextPath(request);
+  if (next && url.pathname === "/dashboard/login") {
+    url.searchParams.set("next", next);
+  }
 
   const response = pathnameNeedsLoginRedirect(request.nextUrl.pathname)
     ? NextResponse.redirect(url)
@@ -149,11 +154,16 @@ function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") 
 }
 
 function pathnameNeedsLoginRedirect(pathname: string) {
-  return pathname.startsWith("/dashboard") && !publicDashboardPaths.has(pathname);
+  return pathname.startsWith("/dashboard") && !isPublicDashboardAuthPath(pathname);
 }
 
 function loginRedirectPathForPathname(pathname: string) {
   return pathname.startsWith("/dashboard/staff/mobile") ? "/staff/login" : "/dashboard/login";
+}
+
+function protectedDashboardNextPath(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  return safeProtectedDashboardNextPath(`${pathname}${request.nextUrl.search}`);
 }
 
 function isPublicStaffPath(pathname: string) {
@@ -201,7 +211,7 @@ export async function proxy(request: NextRequest) {
 
   if (
     pathname.startsWith("/dashboard") &&
-    !publicDashboardPaths.has(pathname) &&
+    !isPublicDashboardAuthPath(pathname) &&
     shouldApplyDashboardPageGate(request) &&
     !hasSupabaseAuthCookie(request) &&
     !hasDashboardSmokeAuthCookie(request) &&
@@ -210,6 +220,10 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = loginRedirectPathForPathname(pathname);
     url.search = "";
+    const next = protectedDashboardNextPath(request);
+    if (next && url.pathname === "/dashboard/login") {
+      url.searchParams.set("next", next);
+    }
     return NextResponse.redirect(url);
   }
 

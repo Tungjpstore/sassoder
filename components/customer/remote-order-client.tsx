@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   ArrowLeft,
+  AlertTriangle,
   Banknote,
   Bell,
   Check,
@@ -47,14 +48,22 @@ import { useRemoteCart, useRemoteMenuBrowser } from "@/hooks/customer/use-custom
 import { deliveryStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import {
+  addRemoteCartLine,
   buildRemoteCartFromOrderItems,
   setRemoteCartItemNote,
   updateRemoteCartQuantity,
   type RemoteCartLine
 } from "@/lib/customer/cart-state";
 import {
+  resolveModifierSelections,
+  type CustomerModifierSelection,
+  type PublicModifierGroup
+} from "@/lib/customer/modifier-pricing";
+import {
   buildDeliveryQuoteFingerprint,
+  formatDeliveryQuoteUpdatedAt,
   remoteCheckoutReducer,
+  resolveDeliveryQuoteCustomerInsight,
   resolveDeliveryQuoteCheckoutState,
   validateRemoteCheckoutBasics,
   type RemoteCheckoutAction,
@@ -73,9 +82,10 @@ import {
   hasCustomerOrderSnapshotChanged
 } from "@/lib/customer/order-sync";
 import {
-  calculatePublicPromotionDiscount,
+  evaluatePublicPromotion,
   findPublicPromotionByCode,
   normalizePromotionCode,
+  promotionEligibilityMessage,
   promotionDescription
 } from "@/lib/customer/promotion-preview";
 import {
@@ -199,6 +209,36 @@ function flattenItems(categories: PublicMenuCategory[]) {
   return categories.flatMap((category) => category.items.map((item) => ({ ...item, categoryName: category.name })));
 }
 
+function hasMenuModifiers(item: Pick<PublicMenuItem, "modifierGroups">) {
+  return (item.modifierGroups?.some((group) => group.options.length > 0) ?? false);
+}
+
+function modifierMinSelect(group: PublicModifierGroup) {
+  return typeof group.minSelect === "number" ? group.minSelect : group.required ? 1 : 0;
+}
+
+function modifierMaxSelect(group: PublicModifierGroup) {
+  return group.maxSelect ?? Number.POSITIVE_INFINITY;
+}
+
+function defaultModifierSelections(groups: readonly PublicModifierGroup[] = []): CustomerModifierSelection[] {
+  return groups.flatMap((group) => {
+    const minSelect = modifierMinSelect(group);
+    if (minSelect <= 0) return [];
+    return group.options
+      .filter((option) => option.isAvailable !== false)
+      .slice(0, minSelect)
+      .map((option) => ({ groupId: group.id, optionId: option.id, quantity: 1 }));
+  });
+}
+
+function modifierSummary(selections: ReturnType<typeof resolveModifierSelections>) {
+  if (!selections.ok || selections.selections.length === 0) return "";
+  return selections.selections
+    .map((selection) => `${selection.optionName}${selection.quantity > 1 ? ` x${selection.quantity}` : ""}`)
+    .join(", ");
+}
+
 function isRemoteOrderClosed(order: OrderDto) {
   return getCustomerOrderLifecycle(order).isClosed;
 }
@@ -236,8 +276,8 @@ function getOrderStepIndex(order?: OrderDto | null) {
 
 function PhoneFrame({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <main className="min-h-dvh bg-[radial-gradient(circle_at_top,#fffdf7_0,#f8f2e7_44%,#eee7da_100%)] text-[#121813]">
-      <section className={`mx-auto min-h-dvh w-full max-w-none bg-[#fffefa] shadow-[0_22px_70px_rgba(24,36,28,0.12)] sm:my-6 sm:min-h-[860px] sm:max-w-[430px] sm:overflow-hidden sm:rounded-[34px] ${className}`}>
+    <main className="stitch-customer min-h-dvh bg-[radial-gradient(circle_at_top,#fffdf7_0,#f8f2e7_44%,#eee7da_100%)] text-[var(--customer-text)]">
+      <section className={`mx-auto min-h-dvh w-full max-w-none bg-[var(--customer-surface)] shadow-[0_22px_70px_rgba(24,36,28,0.12)] sm:my-6 sm:min-h-[860px] sm:max-w-[430px] sm:overflow-hidden sm:rounded-[34px] ${className}`}>
         {children}
       </section>
     </main>
@@ -594,6 +634,19 @@ function SoftCard({ children, className = "" }: { children: React.ReactNode; cla
   return <section className={`rounded-3xl border border-[#ebe9dd] bg-white p-4 shadow-[0_12px_34px_rgba(23,34,27,0.04)] ${className}`}>{children}</section>;
 }
 
+function deliveryInsightToneClass(tone: "green" | "yellow" | "red" | "neutral") {
+  if (tone === "green") return "border-[#cfe8d4] bg-[#f2fbf4] text-[#0a6b3e]";
+  if (tone === "red") return "border-[#f0c7b7] bg-[#fff5ef] text-[#9a3412]";
+  if (tone === "yellow") return "border-[#edd9a4] bg-[#fff9e8] text-[#805a00]";
+  return "border-[#ebe9dd] bg-[#fbfaf5] text-[#536158]";
+}
+
+function trackingSnapshotToneClass(state?: string | null) {
+  if (state === "stale") return "border-[#edd9a4] bg-[#fff9e8] text-[#805a00]";
+  if (state === "arriving" || state === "moving" || state === "completed") return "border-[#cfe8d4] bg-[#f2fbf4] text-[#0a6b3e]";
+  return "border-[#ebe9dd] bg-[#fbfaf5] text-[#536158]";
+}
+
 function BottomAction({ children }: { children: React.ReactNode }) {
   return (
     <div className="sticky bottom-0 z-[var(--z-customer-sticky)] mt-auto border-t border-[#f0eee4] bg-[#fffefa]/94 px-5 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
@@ -679,12 +732,13 @@ export function RemoteOrderClient({
   const { cart, cartLines, setCart } = useRemoteCart(allItems, { storageKey: remoteCartStorageKey });
   const [customerProfile, setCustomerProfile] = useState<RemoteCustomerProfile>(() => readStoredCustomerProfile(restaurant.id));
   const [customerNote, setCustomerNote] = useState("");
-  const [promotionCode, setPromotionCode] = useState(() => restaurant.promotions[0]?.code ?? "");
+  const [promotionCode, setPromotionCode] = useState("");
   const [sessionId] = useState(() => (typeof window === "undefined" ? "" : makeSessionId(restaurant.id)));
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
   const [quoteFingerprint, setQuoteFingerprint] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [loadingQuote, setLoadingQuote] = useState(false);
+  const [quoteUpdatedAt, setQuoteUpdatedAt] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<CreatedRemoteOrder | null>(null);
   const [history, setHistory] = useState<CreatedRemoteOrder[]>([]);
@@ -693,16 +747,26 @@ export function RemoteOrderClient({
   const [error, setError] = useState<string | null>(null);
   const [customerToast, setCustomerToast] = useState<string | null>(null);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [customizingItem, setCustomizingItem] = useState<{
+    item: MenuItemWithCategory;
+    selections: CustomerModifierSelection[];
+    quantity: number;
+    note: string;
+  } | null>(null);
   const [notificationPermission, setNotificationPermission] = useState<OrderNotificationPermission>(() => getInitialNotificationPermission());
   const [networkOnline, setNetworkOnline] = useState(() => getInitialNetworkStatus());
   const [pageVisible, setPageVisible] = useState(() => getInitialPageVisibility());
   const [trackingPollError, setTrackingPollError] = useState(false);
   const [lastOrderSyncAt, setLastOrderSyncAt] = useState<number | null>(null);
+  const [clockTick, setClockTick] = useState(() => Date.now());
   const [rating, setRating] = useState(5);
   const [qrSecondsLeft, setQrSecondsLeft] = useState(10 * 60);
   const quoteTimerRef = useRef<number | null>(null);
+  const quoteRetryTimerRef = useRef<number | null>(null);
   const quoteRequestSequenceRef = useRef(0);
   const quoteAbortRef = useRef<AbortController | null>(null);
+  const loadQuoteRef = useRef<() => Promise<void>>(async () => undefined);
+  const quoteRetryStateRef = useRef<{ fingerprint: string | null; attempts: number }>({ fingerprint: null, attempts: 0 });
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const actionInFlightRef = useRef<"submit" | "mark_paid" | null>(null);
   const customerToastTimerRef = useRef<number | null>(null);
@@ -710,14 +774,25 @@ export function RemoteOrderClient({
   const notifyOrderUpdateRef = useRef<(order: OrderDto) => void>(() => undefined);
 
   const { customerName, customerPhone, deliveryAddress, deliveryLat, deliveryLng } = customerProfile;
+  function resolveCartLineModifiers(line: RemoteCartLine & { item: MenuItemWithCategory }) {
+    return resolveModifierSelections(line.item.modifierGroups ?? [], line.modifiers ?? []);
+  }
+
+  function cartLineUnitPrice(line: RemoteCartLine & { item: MenuItemWithCategory }) {
+    const resolved = resolveCartLineModifiers(line);
+    return line.item.price + (resolved.ok ? resolved.totalDelta : 0);
+  }
+
   const cartItemCount = cartLines.reduce((sum, line) => sum + line.quantity, 0);
-  const subtotal = cartLines.reduce((sum, line) => sum + line.item.price * line.quantity, 0);
+  const subtotal = cartLines.reduce((sum, line) => sum + cartLineUnitPrice(line) * line.quantity, 0);
   const deliveryQuoteFingerprint = useMemo(
     () => buildDeliveryQuoteFingerprint({ subtotal, deliveryAddress, deliveryLat, deliveryLng }),
     [deliveryAddress, deliveryLat, deliveryLng, subtotal]
   );
   const currentQuote = quoteFingerprint === deliveryQuoteFingerprint ? quote : null;
   const currentQuoteError = quoteFingerprint === deliveryQuoteFingerprint ? quoteError : null;
+  const currentQuoteInsight = useMemo(() => resolveDeliveryQuoteCustomerInsight(currentQuote), [currentQuote]);
+  const quoteFreshnessLabel = useMemo(() => formatDeliveryQuoteUpdatedAt(quoteUpdatedAt, clockTick), [clockTick, quoteUpdatedAt]);
   const deliveryQuoteState = useMemo(
     () =>
       resolveDeliveryQuoteCheckoutState({
@@ -740,15 +815,22 @@ export function RemoteOrderClient({
     () => restaurant.branches.find((branch) => branch.id === selectedPickupBranchId) ?? restaurant.branches.find((branch) => branch.isPrimary) ?? restaurant.branches[0] ?? null,
     [restaurant.branches, selectedPickupBranchId]
   );
-  const previewDiscount = useMemo(
+  const promotionEvaluation = useMemo(
     () =>
-      calculatePublicPromotionDiscount({
+      evaluatePublicPromotion({
         itemSubtotal: subtotal,
         deliveryFee,
         promotion: selectedPromotion
       }),
     [deliveryFee, selectedPromotion, subtotal]
   );
+  const previewDiscount = promotionEvaluation.discountAmount;
+  const normalizedPromotionCode = normalizePromotionCode(promotionCode);
+  const effectivePromotionCode = selectedPromotion
+    ? promotionEvaluation.eligible
+      ? selectedPromotion.code
+      : ""
+    : normalizedPromotionCode;
   const total = Math.max(0, subtotal + deliveryFee + serviceFee - previewDiscount);
   const requiresPrepaidQr = restaurant.onlinePaymentMode === "QR_PREPAID";
   const activeHistory = useMemo(() => history.filter((entry) => !isRemoteOrderClosed(entry.order)), [history]);
@@ -856,10 +938,14 @@ export function RemoteOrderClient({
     if (mode !== "DELIVERY" || subtotal <= 0) {
       quoteRequestSequenceRef.current += 1;
       quoteAbortRef.current?.abort();
+      if (quoteRetryTimerRef.current) window.clearTimeout(quoteRetryTimerRef.current);
       quoteAbortRef.current = null;
+      quoteRetryTimerRef.current = null;
+      quoteRetryStateRef.current = { fingerprint: null, attempts: 0 };
       setQuote(null);
       setQuoteFingerprint(null);
       setQuoteError(null);
+      setQuoteUpdatedAt(null);
       setLoadingQuote(false);
       return;
     }
@@ -867,20 +953,30 @@ export function RemoteOrderClient({
     if (!networkOnline) {
       quoteRequestSequenceRef.current += 1;
       quoteAbortRef.current?.abort();
+      if (quoteRetryTimerRef.current) window.clearTimeout(quoteRetryTimerRef.current);
       quoteAbortRef.current = null;
+      quoteRetryTimerRef.current = null;
       setQuote(null);
       setQuoteFingerprint(deliveryQuoteFingerprint);
       setQuoteError("Mạng đang mất kết nối. Bạn kiểm tra lại 4G/Wi-Fi rồi tính phí giao hàng.");
+      setQuoteUpdatedAt(Date.now());
       setLoadingQuote(false);
       return;
     }
 
     const requestSequence = quoteRequestSequenceRef.current + 1;
     const requestFingerprint = deliveryQuoteFingerprint;
+    if (quoteRetryStateRef.current.fingerprint !== requestFingerprint) {
+      quoteRetryStateRef.current = { fingerprint: requestFingerprint, attempts: 0 };
+    }
     quoteRequestSequenceRef.current = requestSequence;
     quoteAbortRef.current?.abort();
     const controller = new AbortController();
     quoteAbortRef.current = controller;
+    if (quoteRetryTimerRef.current) {
+      window.clearTimeout(quoteRetryTimerRef.current);
+      quoteRetryTimerRef.current = null;
+    }
     setLoadingQuote(true);
     setQuoteError(null);
     try {
@@ -900,6 +996,8 @@ export function RemoteOrderClient({
       if (requestSequence !== quoteRequestSequenceRef.current) return;
       setQuote(json.data as DeliveryQuote);
       setQuoteFingerprint(requestFingerprint);
+      setQuoteUpdatedAt(Date.now());
+      quoteRetryStateRef.current = { fingerprint: requestFingerprint, attempts: 0 };
       if (!json.data.accepted) setQuoteError(json.data.reason ?? "Địa chỉ chưa nằm trong vùng nhận đơn.");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -907,12 +1005,27 @@ export function RemoteOrderClient({
       setQuote(null);
       setQuoteFingerprint(requestFingerprint);
       setQuoteError(err instanceof Error ? err.message : "Không tính được phí giao hàng");
+      setQuoteUpdatedAt(Date.now());
+      if (networkOnline && quoteRetryStateRef.current.attempts < 2) {
+        quoteRetryStateRef.current = {
+          fingerprint: requestFingerprint,
+          attempts: quoteRetryStateRef.current.attempts + 1
+        };
+        quoteRetryTimerRef.current = window.setTimeout(() => {
+          quoteRetryTimerRef.current = null;
+          void loadQuoteRef.current();
+        }, 1600);
+      }
     } finally {
       if (requestSequence !== quoteRequestSequenceRef.current) return;
       if (quoteAbortRef.current === controller) quoteAbortRef.current = null;
       setLoadingQuote(false);
     }
   }, [deliveryAddress, deliveryLat, deliveryLng, deliveryQuoteFingerprint, mode, networkOnline, restaurant.slug, subtotal]);
+
+  useEffect(() => {
+    loadQuoteRef.current = loadQuote;
+  }, [loadQuote]);
 
   const loadHistory = useCallback(async () => {
     if (!sessionId) return;
@@ -954,8 +1067,14 @@ export function RemoteOrderClient({
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setClockTick(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (customerToastTimerRef.current) window.clearTimeout(customerToastTimerRef.current);
+      if (quoteRetryTimerRef.current) window.clearTimeout(quoteRetryTimerRef.current);
     };
   }, []);
 
@@ -1143,12 +1262,81 @@ export function RemoteOrderClient({
     };
   }, [trackedOrder?.id]);
 
-  function updateQuantity(itemId: string, delta: number) {
-    setCart((current) => updateRemoteCartQuantity(current, itemId, delta));
+  function updateQuantity(lineId: string, delta: number) {
+    setCart((current) => updateRemoteCartQuantity(current, lineId, delta));
   }
 
-  function updateItemNote(itemId: string, note: string) {
-    setCart((current) => setRemoteCartItemNote(current, itemId, note));
+  function updateItemNote(lineId: string, note: string) {
+    setCart((current) => setRemoteCartItemNote(current, lineId, note));
+  }
+
+  function addMenuItem(item: MenuItemWithCategory) {
+    if (hasMenuModifiers(item)) {
+      setCustomizingItem({
+        item,
+        selections: defaultModifierSelections(item.modifierGroups ?? []),
+        quantity: 1,
+        note: ""
+      });
+      setError(null);
+      return;
+    }
+
+    setCart((current) => updateRemoteCartQuantity(current, item.id, 1));
+  }
+
+  function toggleModifierOption(group: PublicModifierGroup, optionId: string) {
+    setCustomizingItem((current) => {
+      if (!current) return current;
+      const option = group.options.find((candidate) => candidate.id === optionId);
+      if (!option || option.isAvailable === false) return current;
+
+      const selectionsOutsideGroup = current.selections.filter((selection) => selection.groupId !== group.id);
+      const groupSelections = current.selections.filter((selection) => selection.groupId === group.id);
+      const selected = groupSelections.some((selection) => selection.optionId === optionId);
+      const maxSelect = modifierMaxSelect(group);
+
+      if (selected) {
+        return {
+          ...current,
+          selections: [...selectionsOutsideGroup, ...groupSelections.filter((selection) => selection.optionId !== optionId)]
+        };
+      }
+
+      if (maxSelect <= 1) {
+        return {
+          ...current,
+          selections: [...selectionsOutsideGroup, { groupId: group.id, optionId, quantity: 1 }]
+        };
+      }
+
+      if (groupSelections.length >= maxSelect) return current;
+      return {
+        ...current,
+        selections: [...current.selections, { groupId: group.id, optionId, quantity: 1 }]
+      };
+    });
+  }
+
+  function confirmCustomItem() {
+    if (!customizingItem) return;
+    const resolution = resolveModifierSelections(customizingItem.item.modifierGroups ?? [], customizingItem.selections);
+    if (!resolution.ok) {
+      setError(resolution.errors[0] ?? "Vui lòng chọn đủ tùy chọn cho món.");
+      return;
+    }
+
+    setCart((current) =>
+      addRemoteCartLine(current, {
+        itemId: customizingItem.item.id,
+        quantity: customizingItem.quantity,
+        note: customizingItem.note,
+        modifiers: customizingItem.selections
+      })
+    );
+    notifyCustomer(`Đã thêm ${customizingItem.item.name} vào giỏ hàng.`);
+    setCustomizingItem(null);
+    setError(null);
   }
 
   function applyCheckoutTransition(action: RemoteCheckoutAction) {
@@ -1216,6 +1404,18 @@ export function RemoteOrderClient({
       setScreen(quoteGate.screen);
       return;
     }
+    if (selectedPromotion && !promotionEvaluation.eligible) {
+      setError(
+        promotionEligibilityMessage({
+          promotion: selectedPromotion,
+          itemSubtotal: subtotal,
+          deliveryFee,
+          isDeliveryMode: mode === "DELIVERY"
+        })
+      );
+      setScreen("cart");
+      return;
+    }
 
     const orderFingerprint = JSON.stringify({
       mode,
@@ -1226,11 +1426,13 @@ export function RemoteOrderClient({
       deliveryLat: mode === "DELIVERY" ? deliveryLat ?? null : null,
       deliveryLng: mode === "DELIVERY" ? deliveryLng ?? null : null,
       customerNote: customerNote.trim(),
-      promotionCode: normalizePromotionCode(promotionCode),
+      promotionCode: effectivePromotionCode,
       items: cartLines.map((line) => ({
-        id: line.itemId,
+        id: line.lineId,
+        menuItemId: line.itemId,
         quantity: line.quantity,
-        note: line.note?.trim() ?? ""
+        note: line.note?.trim() ?? "",
+        modifiers: line.modifiers ?? []
       }))
     });
     const existingPending = pendingCreateRequestRef.current;
@@ -1251,7 +1453,7 @@ export function RemoteOrderClient({
           customerName: customerName.trim(),
           customerPhone: customerPhone.trim(),
           customerNote: customerNote.trim(),
-          promotionCode: normalizePromotionCode(promotionCode),
+          promotionCode: effectivePromotionCode,
           deliveryAddress: deliveryAddress.trim(),
           deliveryLat,
           deliveryLng,
@@ -1259,7 +1461,8 @@ export function RemoteOrderClient({
           items: cartLines.map((line) => ({
             menuItemId: line.itemId,
             quantity: line.quantity,
-            note: line.note
+            note: line.note,
+            modifiers: line.modifiers
           }))
         })
       });
@@ -1391,9 +1594,9 @@ export function RemoteOrderClient({
       const body = action.body as { menuItemId?: string; categoryId?: string } | undefined;
       const item = allItems.find((menuItem) => menuItem.id === body?.menuItemId);
       if (!item) return;
-      updateQuantity(item.id, 1);
+      addMenuItem(item);
       if (body?.categoryId) setActiveCategory(body.categoryId);
-      notifyCustomer(`Đã thêm ${item.name} vào giỏ hàng.`);
+      if (!hasMenuModifiers(item)) notifyCustomer(`Đã thêm ${item.name} vào giỏ hàng.`);
       setScreen((current) => (current === "payment" || current === "vietqr" ? "menu" : current));
       setError(null);
       return;
@@ -1445,6 +1648,116 @@ export function RemoteOrderClient({
     }
   }
 
+  function renderModifierCustomizer() {
+    if (!customizingItem) return null;
+
+    const item = customizingItem.item;
+    const groups = item.modifierGroups ?? [];
+    const resolution = resolveModifierSelections(groups, customizingItem.selections);
+    const unitPrice = item.price + (resolution.ok ? resolution.totalDelta : 0);
+    const totalPrice = unitPrice * customizingItem.quantity;
+
+    return (
+      <div className="fixed inset-0 z-50 grid place-items-end bg-black/32 px-3 pb-3 pt-12 sm:place-items-center">
+        <section className="flex max-h-[88dvh] w-full max-w-[430px] flex-col overflow-hidden rounded-[30px] bg-[#fffefa] shadow-[0_28px_90px_rgba(0,0,0,0.25)]">
+          <div className="flex items-start justify-between gap-3 border-b border-[#ecefe6] p-4">
+            <div className="min-w-0">
+              <p className="text-[12px] font-black uppercase tracking-[0.12em] text-[#006b3c]">Tùy chọn món</p>
+              <h2 className="mt-1 truncate text-[20px] font-black text-[#111713]">{item.name}</h2>
+              <p className="mt-1 text-[13px] font-bold text-[#68746b]">{formatVnd(unitPrice)} / phần</p>
+            </div>
+            <button type="button" onClick={() => setCustomizingItem(null)} className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#f5f2ea] text-[#111713]">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
+            {groups.map((group) => {
+              const groupSelections = customizingItem.selections.filter((selection) => selection.groupId === group.id);
+              const minSelect = modifierMinSelect(group);
+              const maxSelect = modifierMaxSelect(group);
+
+              return (
+                <section key={group.id} className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-[14px] font-black text-[#111713]">{group.name}</h3>
+                      <p className="mt-0.5 text-[11px] font-bold text-[#748076]">
+                        {minSelect > 0 ? `Bắt buộc chọn ${minSelect}` : "Không bắt buộc"}
+                        {Number.isFinite(maxSelect) ? ` · tối đa ${maxSelect}` : ""}
+                      </p>
+                    </div>
+                    {minSelect > 0 ? <span className="rounded-full bg-[#edf7ef] px-2.5 py-1 text-[10px] font-black text-[#006b3c]">Bắt buộc</span> : null}
+                  </div>
+
+                  <div className="grid gap-2">
+                    {group.options.map((option) => {
+                      const selected = groupSelections.some((selection) => selection.optionId === option.id);
+                      const disabled = option.isAvailable === false;
+
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => toggleModifierOption(group, option.id)}
+                          className={`flex min-h-12 items-center justify-between gap-3 rounded-2xl border px-3 text-left transition ${
+                            selected
+                              ? "border-[#0f7b4b] bg-[#edf7ef]"
+                              : disabled
+                                ? "border-[#ecefe6] bg-[#f5f2ea] opacity-60"
+                                : "border-[#ecefe6] bg-white"
+                          }`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-black text-[#111713]">{option.name}</span>
+                            <span className="mt-0.5 block text-[11px] font-bold text-[#748076]">{disabled ? "Tạm hết" : option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "Không thêm phí"}</span>
+                          </span>
+                          <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border ${selected ? "border-[#0f7b4b] bg-[#0f7b4b] text-white" : "border-[#dce2d8] bg-white text-transparent"}`}>
+                            <Check size={14} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+
+            <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
+              Ghi chú riêng cho món
+              <input
+                value={customizingItem.note}
+                onChange={(event) => setCustomizingItem((current) => current ? { ...current, note: event.target.value } : current)}
+                maxLength={200}
+                placeholder="Ví dụ: ít đá, bỏ hành..."
+                className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]"
+              />
+            </label>
+
+            {!resolution.ok ? (
+              <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[12px] font-bold text-[#be5d00]">{resolution.errors[0]}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 border-t border-[#ecefe6] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            <div className="flex items-center justify-between gap-3">
+              <QuantityStepper
+                value={customizingItem.quantity}
+                onMinus={() => setCustomizingItem((current) => current ? { ...current, quantity: Math.max(1, current.quantity - 1) } : current)}
+                onPlus={() => setCustomizingItem((current) => current ? { ...current, quantity: Math.min(50, current.quantity + 1) } : current)}
+              />
+              <span className="text-[17px] font-black text-[#111713]">{formatVnd(totalPrice)}</span>
+            </div>
+            <PrimaryButton onClick={confirmCustomItem} disabled={!resolution.ok}>
+              Thêm vào giỏ
+            </PrimaryButton>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   function withLogibot(node: React.ReactNode) {
     return (
       <>
@@ -1454,7 +1767,7 @@ export function RemoteOrderClient({
           cart={cartLines.map((line) => ({
             menuItemId: line.itemId,
             name: line.item.name,
-            price: line.item.price,
+            price: cartLineUnitPrice(line),
             quantity: line.quantity,
             note: line.note
           }))}
@@ -1462,6 +1775,7 @@ export function RemoteOrderClient({
           onAgentAction={handleCustomerAgentAction}
         />
         {node}
+        {renderModifierCustomizer()}
         <FloatingRemoteActions
           cartCount={cartItemCount}
           cartTotal={total}
@@ -1627,7 +1941,7 @@ export function RemoteOrderClient({
             </button>
           </header>
 
-          <div className="flex-1 space-y-5 px-5 pb-5">
+          <div className="customer-bottom-buffer flex-1 space-y-5 px-5">
             <div className="flex items-center gap-1.5 text-[12px] font-semibold text-[#59665f]">
               <MapPin size={14} className="text-[#f28c28]" />
               {currentQuote?.distanceKm ? `Cách bạn ${currentQuote.distanceKm} km` : `Giao trong ${restaurant.deliveryRadiusKm} km`}
@@ -1656,7 +1970,8 @@ export function RemoteOrderClient({
 
             <CustomerFlowPreview mode={mode} prepaid={requiresPrepaidQr} />
 
-            <div className="grid grid-cols-[1fr_44px] gap-2">
+            <div className="customer-menu-controls">
+            <div className="customer-search-row">
               <label className="relative">
                 <span className="sr-only">Tìm món trong menu</span>
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9aa49a]" size={18} aria-hidden="true" />
@@ -1677,12 +1992,12 @@ export function RemoteOrderClient({
               </IconButton>
             </div>
 
-            <div className="flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="customer-category-rail">
               {[{ id: "all", name: "Đề xuất" }, ...categories].map((category, index) => {
                 const Icon = categoryIcons[index % categoryIcons.length];
                 const selected = activeCategory === category.id;
                 return (
-                  <button key={category.id} type="button" onClick={() => setActiveCategory(category.id)} className="grid min-w-[64px] justify-items-center gap-2">
+                  <button key={category.id} type="button" onClick={() => setActiveCategory(category.id)} className="customer-category-icon-tab">
                     <span className={`grid h-12 w-12 place-items-center rounded-2xl border ${selected ? "border-[#0f7b4b] bg-[#edf6ef] text-[#006b3c]" : "border-[#ecefe6] bg-white text-[#69756d]"}`}>
                       <Icon size={19} />
                     </span>
@@ -1690,6 +2005,7 @@ export function RemoteOrderClient({
                   </button>
                 );
               })}
+            </div>
             </div>
 
             {categoryMenuOpen ? (
@@ -1721,7 +2037,7 @@ export function RemoteOrderClient({
                     </button>
                   </div>
                   <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="customer-category-grid">
                       {[{ id: "all", name: "Đề xuất", count: allItems.length }, ...categories.map((category) => ({ id: category.id, name: category.name, count: category.items.length }))].map((category, index) => {
                         const Icon = categoryIcons[index % categoryIcons.length];
                         const selected = activeCategory === category.id;
@@ -1760,17 +2076,17 @@ export function RemoteOrderClient({
                     Xem tất cả
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="customer-menu-grid">
                   {featuredItems.map((item) => (
-                    <article key={item.id} className="flex min-h-[226px] min-w-0 overflow-hidden flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
-                      <ProductThumb item={item} className="aspect-square w-full" />
-                      <div className="flex min-h-[62px] min-w-0 flex-1 flex-col pt-2">
-                        <p className="line-clamp-2 break-words text-[13px] font-black leading-4 text-[#141b16]">{item.name}</p>
-                        <span className="mt-1 truncate text-[12px] font-black text-[#141b16]">{formatVnd(item.price)}</span>
+                    <article key={item.id} className="customer-menu-card">
+                      <ProductThumb item={item} className="customer-menu-thumb" />
+                      <div className="customer-menu-card-body">
+                        <p className="customer-menu-title">{item.name}</p>
+                        <span className="customer-menu-price">{formatVnd(item.price)}</span>
                       </div>
-                      <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[#006b3c] px-2 text-[12px] font-black text-white">
+                      <button type="button" onClick={() => addMenuItem(item)} className="customer-menu-action customer-menu-action--primary">
                         <Plus size={15} />
-                        Thêm
+                        {hasMenuModifiers(item) ? "Chọn" : "Thêm"}
                       </button>
                     </article>
                   ))}
@@ -1785,23 +2101,23 @@ export function RemoteOrderClient({
                   Xem tất cả
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="customer-menu-grid">
                 {visibleItems.length === 0 ? (
                   <div className="col-span-2 rounded-3xl bg-white p-5 text-center text-[13px] font-semibold text-[#68746b] shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
                     Chưa tìm thấy món phù hợp. Bạn thử từ khóa hoặc danh mục khác nhé.
                   </div>
                 ) : null}
                 {visibleItems.map((item) => (
-                  <article key={item.id} className="flex min-h-[252px] min-w-0 overflow-hidden flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
-                    <ProductThumb item={item} className="aspect-square w-full" />
-                    <div className="flex min-h-[78px] min-w-0 flex-1 flex-col pt-2.5">
-                      <h3 className="line-clamp-2 break-words text-[14px] font-black leading-4 text-[#111713]">{item.name}</h3>
-                      <p className="mt-1 line-clamp-1 text-[11px] font-semibold text-[#7c867e]">{item.categoryName}</p>
-                      <p className="mt-1.5 truncate text-[13px] font-black text-[#111713]">{formatVnd(item.price)}</p>
+                  <article key={item.id} className="customer-menu-card">
+                    <ProductThumb item={item} className="customer-menu-thumb" />
+                    <div className="customer-menu-card-body">
+                      <h3 className="customer-menu-title">{item.name}</h3>
+                      <p className="customer-menu-meta">{item.categoryName}</p>
+                      <p className="customer-menu-price">{formatVnd(item.price)}</p>
                     </div>
-                    <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[#f6f4ee] px-2 text-[12px] font-black text-[#006b3c]">
+                    <button type="button" onClick={() => addMenuItem(item)} className="customer-menu-action customer-menu-action--secondary">
                       <Plus size={16} />
-                      Thêm
+                      {hasMenuModifiers(item) ? "Chọn" : "Thêm"}
                     </button>
                   </article>
                 ))}
@@ -1840,7 +2156,7 @@ export function RemoteOrderClient({
       <PhoneFrame>
         <div className="flex min-h-dvh flex-col">
           <ScreenHeader title="Giỏ hàng của bạn" onBack={() => setScreen("menu")} right={<button type="button" className="inline-flex min-h-11 items-center px-2 text-[12px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
-          <div className="flex-1 space-y-4 px-5 pb-5">
+          <div className="customer-bottom-buffer flex-1 space-y-4 px-5">
             <button type="button" className="flex min-h-[64px] w-full items-center justify-between rounded-2xl border border-[#f3e4ca] bg-[#fff8ed] px-4 text-left">
               <span className="flex items-center gap-3">
                 <span className="grid h-8 w-8 place-items-center rounded-full bg-[#ff9800] text-white">
@@ -1869,6 +2185,11 @@ export function RemoteOrderClient({
                 <div className="grid gap-2">
                   {restaurant.promotions.slice(0, 4).map((promotion) => {
                     const selected = selectedPromotion?.id === promotion.id;
+                    const evaluation = evaluatePublicPromotion({
+                      itemSubtotal: subtotal,
+                      deliveryFee,
+                      promotion
+                    });
                     return (
                       <button
                         key={promotion.id}
@@ -1878,7 +2199,9 @@ export function RemoteOrderClient({
                       >
                         <span className="flex items-center justify-between gap-3">
                           <span className="text-[12px] font-black text-[#121813]">{promotion.code}</span>
-                          <span className={`text-[11px] font-black ${selected ? "text-[#006b3c]" : "text-[#7a857b]"}`}>{selected ? "Đã chọn" : "Chọn"}</span>
+                          <span className={`text-[11px] font-black ${selected ? "text-[#006b3c]" : "text-[#7a857b]"}`}>
+                            {selected ? "Đã chọn" : evaluation.eligible ? `-${formatVnd(evaluation.discountAmount)}` : "Chọn"}
+                          </span>
                         </span>
                         <span className="mt-1 block text-[11px] font-semibold text-[#68746b]">{promotionDescription(promotion)}</span>
                       </button>
@@ -1893,44 +2216,51 @@ export function RemoteOrderClient({
               </SoftCard>
             ) : null}
 
-            <div className="space-y-3">
+            <div className="customer-cart-list">
               {cartLines.length === 0 ? (
                 <SoftCard>
                   <p className="text-center text-[13px] font-semibold text-[#68746b]">Giỏ hàng đang trống. Quay lại menu để chọn món nhé.</p>
                 </SoftCard>
               ) : (
-                cartLines.map((line) => (
-                  <article key={line.itemId} className="flex items-start gap-3 rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
-                    <ProductThumb item={line.item} className="h-[64px] w-[64px]" />
-                    <div className="min-w-0 flex-1">
-                      <h3 className="truncate text-[14px] font-black text-[#111713]">{line.item.name}</h3>
-                      <p className="mt-2 text-[13px] font-black text-[#111713]">{formatVnd(line.item.price)}</p>
-                      <label className="mt-2 block">
-                        <span className="sr-only">Ghi chú cho {line.item.name}</span>
-                        <input
-                          name={`itemNote-${line.itemId}`}
-                          autoComplete="off"
-                          value={line.note ?? ""}
-                          onChange={(event) => updateItemNote(line.itemId, event.target.value)}
-                          maxLength={200}
-                          placeholder="Ghi chú món"
-                          className="h-10 w-full rounded-xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[12px] font-semibold text-[#121813] outline-none focus:border-[#0f7b4b]"
-                        />
-                      </label>
-                    </div>
-                    <div className="grid justify-items-end gap-2">
-                      <QuantityStepper value={line.quantity} onMinus={() => updateQuantity(line.itemId, -1)} onPlus={() => updateQuantity(line.itemId, 1)} />
-                      <button type="button" aria-label={`Xóa ${line.item.name} khỏi giỏ hàng`} onClick={() => updateQuantity(line.itemId, -line.quantity)} className="grid h-11 w-11 place-items-center rounded-xl text-[#6d766d]">
-                        <Trash2 size={15} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </article>
-                ))
+                cartLines.map((line) => {
+                  const resolvedModifiers = resolveCartLineModifiers(line);
+                  const lineSummary = modifierSummary(resolvedModifiers);
+                  const unitPrice = cartLineUnitPrice(line);
+
+                  return (
+                    <article key={line.lineId} className="customer-cart-card">
+                      <ProductThumb item={line.item} className="customer-cart-card-media" />
+                      <div className="customer-cart-card-main">
+                        <h3 className="truncate text-[14px] font-black text-[#111713]">{line.item.name}</h3>
+                        {lineSummary ? <p className="mt-1 line-clamp-2 text-[11px] font-bold text-[#68746b]">{lineSummary}</p> : null}
+                        <p className="mt-2 text-[13px] font-black text-[#111713]">{formatVnd(unitPrice)}</p>
+                        <label className="mt-2 block">
+                          <span className="sr-only">Ghi chú cho {line.item.name}</span>
+                          <input
+                            name={`itemNote-${line.lineId}`}
+                            autoComplete="off"
+                            value={line.note ?? ""}
+                            onChange={(event) => updateItemNote(line.lineId, event.target.value)}
+                            maxLength={200}
+                            placeholder="Ghi chú món"
+                            className="h-10 w-full rounded-xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[12px] font-semibold text-[#121813] outline-none focus:border-[#0f7b4b]"
+                          />
+                        </label>
+                        <div className="customer-cart-card-actions items-center gap-2">
+                          <QuantityStepper value={line.quantity} onMinus={() => updateQuantity(line.lineId, -1)} onPlus={() => updateQuantity(line.lineId, 1)} />
+                          <button type="button" aria-label={`Xóa ${line.item.name} khỏi giỏ hàng`} onClick={() => updateQuantity(line.lineId, -line.quantity)} className="grid h-11 w-11 place-items-center rounded-xl text-[#6d766d]">
+                            <Trash2 size={15} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
               )}
             </div>
 
             <SoftCard className="grid gap-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="customer-form-grid">
                 <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
                   Tên khách
                   <input name="customerName" autoComplete="name" maxLength={120} value={customerName} onChange={(event) => updateCustomerProfile({ customerName: event.target.value })} placeholder="Tên của bạn" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
@@ -1952,15 +2282,14 @@ export function RemoteOrderClient({
                 <input name="promotionCode" autoComplete="off" autoCapitalize="characters" spellCheck={false} value={promotionCode} onChange={(event) => setPromotionCode(normalizePromotionCode(event.target.value))} placeholder="Nhập mã nếu có" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-black uppercase outline-none focus:border-[#0f7b4b]" />
                 {promotionCode ? (
                   <span className={`text-[11px] font-bold ${selectedPromotion && previewDiscount > 0 ? "text-[#006b3c]" : "text-[#7c867e]"}`}>
-                    {selectedPromotion && previewDiscount > 0
-                      ? `Đã tạm giảm ${formatVnd(previewDiscount)}.`
-                      : selectedPromotion?.discountScope === "DELIVERY_FEE" && mode !== "DELIVERY"
-                        ? "Mã này áp dụng cho đơn giao hàng."
-                        : selectedPromotion?.discountScope === "DELIVERY_FEE" && !deliveryQuoteState.accepted
-                          ? "Mã sẽ áp dụng sau khi phí giao hàng hợp lệ."
-                      : selectedPromotion
-                        ? "Mã hợp lệ nhưng chưa đủ điều kiện tối thiểu."
-                        : "Mã sẽ được kiểm tra khi gửi đơn."}
+                    {selectedPromotion
+                      ? promotionEligibilityMessage({
+                          promotion: selectedPromotion,
+                          itemSubtotal: subtotal,
+                          deliveryFee,
+                          isDeliveryMode: mode === "DELIVERY"
+                        })
+                      : "Mã chưa nằm trong danh sách công khai, hệ thống sẽ kiểm tra khi gửi đơn."}
                   </span>
                 ) : null}
               </label>
@@ -2042,6 +2371,43 @@ export function RemoteOrderClient({
               <span>Phí giao hàng</span>
               <span className="font-black text-[#111713]">{deliveryFeeText}</span>
             </div>
+
+            <SoftCard className={`grid gap-3 border ${deliveryInsightToneClass(currentQuoteInsight.tone)}`}>
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-current/20 bg-white/70">
+                  {currentQuoteInsight.tone === "red" || currentQuoteInsight.tone === "yellow" ? <AlertTriangle size={18} /> : <ShieldCheck size={18} />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <p className="text-[13px] font-black">{currentQuoteInsight.title}</p>
+                      <p className="mt-1 text-[12px] font-bold leading-5 opacity-85">{currentQuoteInsight.detail}</p>
+                    </div>
+                    {quoteFreshnessLabel ? <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-black opacity-80">{quoteFreshnessLabel}</span> : null}
+                  </div>
+                  {currentQuoteInsight.badges.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {currentQuoteInsight.badges.slice(0, 4).map((badge) => (
+                        <span key={badge} className="rounded-full border border-current/15 bg-white/70 px-2.5 py-1 text-[11px] font-black">
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {!deliveryQuoteState.pending && !deliveryQuoteState.accepted ? (
+                    <button
+                      type="button"
+                      onClick={() => void loadQuote()}
+                      disabled={!networkOnline || loadingQuote}
+                      className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-2xl border border-current/20 bg-white/70 px-3 text-[12px] font-black disabled:opacity-55"
+                    >
+                      <RefreshCcw size={14} />
+                      Thử tính lại
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </SoftCard>
 
             <SoftCard>
               <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
@@ -2318,25 +2684,40 @@ export function RemoteOrderClient({
                 </p>
               </SoftCard>
             ) : order.fulfillmentType === "DELIVERY" && restaurant.deliveryTrackingEnabled ? (
-              <RouteMiniMap
-                origin={{
-                  lat: order.restaurant?.storeLat,
-                  lng: order.restaurant?.storeLng
-                }}
-                destination={{
-                  lat: order.deliveryLat,
-                  lng: order.deliveryLng
-                }}
-                route={order.deliveryRouteGeometry?.coordinates}
-                distanceKm={order.deliveryDistanceKm}
-                durationMinutes={order.deliveryRouteDurationMinutes ?? restaurant.deliveryEtaMinutes}
-                status={order.deliveryStatus}
-                courierLocation={courierLocation}
-                title="Tuyến giao đơn hàng"
-                originLabel={restaurant.name}
-                destinationLabel="Bạn"
-                compact
-              />
+              <div className="grid gap-3">
+                <RouteMiniMap
+                  origin={{
+                    lat: order.restaurant?.storeLat,
+                    lng: order.restaurant?.storeLng
+                  }}
+                  destination={{
+                    lat: order.deliveryLat,
+                    lng: order.deliveryLng
+                  }}
+                  route={order.deliveryRouteGeometry?.coordinates}
+                  distanceKm={order.deliveryDistanceKm}
+                  durationMinutes={order.deliveryRouteDurationMinutes ?? restaurant.deliveryEtaMinutes}
+                  status={order.deliveryStatus}
+                  courierLocation={courierLocation}
+                  title="Tuyến giao đơn hàng"
+                  originLabel={restaurant.name}
+                  destinationLabel="Bạn"
+                  compact
+                />
+                {order.deliveryTrackingSnapshot ? (
+                  <SoftCard className={`border ${trackingSnapshotToneClass(order.deliveryTrackingSnapshot.state)}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-current/20 bg-white/70">
+                        <Truck size={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[13px] font-black">{order.deliveryTrackingSnapshot.label}</span>
+                        <span className="mt-1 block text-[12px] font-bold leading-5 opacity-85">{order.deliveryTrackingSnapshot.detail}</span>
+                      </span>
+                    </div>
+                  </SoftCard>
+                ) : null}
+              </div>
             ) : (
               <SoftCard>
                 <h3 className="text-[15px] font-black text-[#121813]">Đang chuẩn bị món</h3>
@@ -2355,6 +2736,7 @@ export function RemoteOrderClient({
                       {matched ? <ProductThumb item={matched} className="h-10 w-10 rounded-xl" /> : <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#f4efe6] text-[#006b3c]"><Coffee size={17} /></span>}
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-black text-[#121813]">{item.menuItem?.name ?? "Món đã đặt"}</span>
+                        {item.modifierSummary ? <span className="mt-1 block truncate text-[11px] font-bold text-[#68746b]">{item.modifierSummary}</span> : null}
                         {item.note ? <span className="mt-1 block truncate text-[11px] font-semibold text-[#68746b]">Ghi chú: {item.note}</span> : null}
                       </span>
                       <span className="text-[12px] font-black text-[#111713]">x{item.quantity}</span>

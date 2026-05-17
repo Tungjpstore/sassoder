@@ -21,6 +21,7 @@ type SyncOrder = Pick<
   | "deliveryTrackingUpdatedAt"
   | "deliveryCourierLocation"
 >;
+type PollingOrderState = Pick<OrderDto, "status" | "paymentStatus" | "paymentMethod" | "fulfillmentType" | "deliveryStatus">;
 
 function locationFingerprint(order?: Pick<SyncOrder, "deliveryCourierLocation"> | null) {
   const location = order?.deliveryCourierLocation;
@@ -55,7 +56,7 @@ export function hasCustomerOrderSnapshotChanged(previous?: SyncOrder | null, nex
   );
 }
 
-export function getCustomerOrderPollingInterval(order?: SyncOrder | null, options?: { networkOnline?: boolean; pageVisible?: boolean }) {
+export function getCustomerOrderPollingInterval(order?: PollingOrderState | null, options?: { networkOnline?: boolean; pageVisible?: boolean }) {
   if (!order || options?.networkOnline === false || options?.pageVisible === false) return null;
 
   const lifecycle = getCustomerOrderLifecycle(order);

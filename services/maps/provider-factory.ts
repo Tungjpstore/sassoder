@@ -11,6 +11,7 @@ import {
   parseProviderList,
   uniqueProviders
 } from "@/services/maps/provider-runtime";
+import { isProviderEnabledForOperation } from "@/services/maps/provider-policy-service";
 import type { GeocodingProvider, MapRuntimeConfig, RoutingProvider } from "@/services/maps/types";
 import type { GeocoderProviderClient, RoutingProviderClient } from "@/services/maps/providers/types";
 
@@ -59,6 +60,14 @@ function hasProviderCredentials(provider: GeocodingProvider | RoutingProvider) {
   return true;
 }
 
+function hasGeocodingPolicy(provider: GeocodingProvider) {
+  return isProviderEnabledForOperation(provider, "geocode") || isProviderEnabledForOperation(provider, "reverse");
+}
+
+function hasRoutingPolicy(provider: RoutingProvider) {
+  return isProviderEnabledForOperation(provider, "route");
+}
+
 export function preferredGeocodingProvider(): GeocodingProvider {
   const configured = getEnv("MAPS_GEOCODER_PROVIDER");
   if (allowedGeocodingProviders.includes(configured as GeocodingProvider)) return configured as GeocodingProvider;
@@ -79,13 +88,17 @@ export function preferredRoutingProvider(): RoutingProvider {
 export function getGeocodingFallbackChain(primary = preferredGeocodingProvider()) {
   const configured = parseProviderList<GeocodingProvider>(getEnv("MAPS_GEOCODER_FALLBACKS"), allowedGeocodingProviders);
   const defaultChain: GeocodingProvider[] = [primary, "goong", "vietmap", "mapbox", "nominatim"];
-  return uniqueProviders(configured.length > 0 ? [primary, ...configured] : defaultChain).filter(hasProviderCredentials);
+  return uniqueProviders(configured.length > 0 ? [primary, ...configured] : defaultChain)
+    .filter(hasProviderCredentials)
+    .filter(hasGeocodingPolicy);
 }
 
 export function getRoutingFallbackChain(primary = preferredRoutingProvider()) {
   const configured = parseProviderList<RoutingProvider>(getEnv("MAPS_ROUTING_FALLBACKS"), allowedRoutingProviders);
   const defaultChain: RoutingProvider[] = [primary, "goong", "vietmap", primary === "mapbox" ? "mapbox" : "osrm", "osrm"];
-  return uniqueProviders(configured.length > 0 ? [primary, ...configured] : defaultChain).filter(hasProviderCredentials);
+  return uniqueProviders(configured.length > 0 ? [primary, ...configured] : defaultChain)
+    .filter(hasProviderCredentials)
+    .filter(hasRoutingPolicy);
 }
 
 export function getGeocoderProviders(primary?: GeocodingProvider) {

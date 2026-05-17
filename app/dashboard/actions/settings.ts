@@ -12,6 +12,7 @@ import {
 } from "@/lib/validators";
 import { assertAdmin } from "@/services/auth-service";
 import { updateRestaurantOrderingSettings } from "@/services/delivery-service";
+import { updateDeliveryBranchAvailability } from "@/services/delivery/branch-delivery-settings-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 import { updateReportSchedule } from "@/services/report-schedule-service";
 import { updateReservationSettings } from "@/services/reservation-service";
@@ -30,6 +31,16 @@ const aiSetupBrandApplySchema = z.object({
   brandDescription: z.string().trim().max(500).optional().or(z.literal("")),
   logoUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
   includeLogo: z.preprocess((value) => value === "true" || value === true, z.boolean().optional())
+});
+
+const branchDeliveryAvailabilitySchema = z.object({
+  branchId: z.string().uuid(),
+  acceptingDelivery: z.boolean(),
+  deliveryPaused: z.boolean(),
+  temporarilyClosed: z.boolean(),
+  deliveryOpeningTime: z.string().regex(/^\d{2}:\d{2}$/).optional().or(z.literal("")),
+  deliveryClosingTime: z.string().regex(/^\d{2}:\d{2}$/).optional().or(z.literal("")),
+  deliveryAvailabilityNote: z.string().trim().max(160).optional().or(z.literal(""))
 });
 
 export async function updatePaymentSettingsAction(
@@ -226,6 +237,38 @@ export async function updateOrderingSettingsAction(
   revalidatePath("/dashboard/orders");
   revalidatePath(`/r/${session.restaurant.slug}`);
   return { success: "Đã lưu cấu hình đặt món online." };
+}
+
+export async function updateBranchDeliveryAvailabilityAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession("online_ordering");
+  const parsed = branchDeliveryAvailabilitySchema.safeParse({
+    branchId: formData.get("branchId"),
+    acceptingDelivery: formData.get("acceptingDelivery") === "true",
+    deliveryPaused: formData.get("deliveryPaused") === "true",
+    temporarilyClosed: formData.get("temporarilyClosed") === "true",
+    deliveryOpeningTime: formData.get("deliveryOpeningTime") ?? "",
+    deliveryClosingTime: formData.get("deliveryClosingTime") ?? "",
+    deliveryAvailabilityNote: formData.get("deliveryAvailabilityNote") ?? ""
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra cấu hình giao hàng của chi nhánh." };
+  }
+
+  try {
+    await updateDeliveryBranchAvailability(session.restaurantId, parsed.data);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không cập nhật được trạng thái giao hàng của chi nhánh." };
+  }
+
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/orders");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+  return { success: "Đã cập nhật trạng thái giao hàng của chi nhánh." };
 }
 
 export async function updateReservationSettingsAction(

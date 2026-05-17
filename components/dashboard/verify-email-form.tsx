@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { resendEmailOtpAction, verifyEmailOtpAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { buildDashboardLoginPath } from "@/lib/auth-onboarding-intent";
+import { buildOtpCooldownStorageKey, normalizeOtpDigits, otpCooldownExpiresAt, remainingOtpCooldownSeconds } from "@/lib/auth-otp-flow";
 
 const resendCooldownSeconds = 60;
 
@@ -24,7 +26,7 @@ export function OtpInput({
 
   const applyDigits = useCallback(
     (index: number, digits: string) => {
-      const cleanedDigits = digits.replace(/\D/g, "").slice(0, 6 - index);
+      const cleanedDigits = normalizeOtpDigits(digits, 6 - index);
       const chars = value.padEnd(6, " ").split("");
       cleanedDigits.split("").forEach((digit, offset) => {
         chars[index + offset] = digit;
@@ -39,7 +41,7 @@ export function OtpInput({
 
   const handleChange = useCallback(
     (index: number, digit: string) => {
-      const cleaned = digit.replace(/\D/g, "");
+      const cleaned = normalizeOtpDigits(digit);
       if (cleaned.length > 1) {
         applyDigits(index, cleaned);
         return;
@@ -74,7 +76,7 @@ export function OtpInput({
   const handlePaste = useCallback(
     (event: React.ClipboardEvent) => {
       event.preventDefault();
-      const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+      const pasted = normalizeOtpDigits(event.clipboardData.getData("text"));
       applyDigits(0, pasted);
     },
     [applyDigits]
@@ -102,7 +104,7 @@ export function OtpInput({
   );
 }
 
-export function VerifyEmailForm({ email }: { email: string }) {
+export function VerifyEmailForm({ email, nextPath = "" }: { email: string; nextPath?: string }) {
   const [verifyState, verifyAction, verifyPending] = useActionState(verifyEmailOtpAction, undefined);
   const [resendState, resendAction, resendPending] = useActionState(resendEmailOtpAction, undefined);
   const [otp, setOtp] = useState("");
@@ -114,12 +116,17 @@ export function VerifyEmailForm({ email }: { email: string }) {
   const effectiveEmail = normalizedEmail || manualEmail.trim().toLowerCase();
   const canVerify = Boolean(effectiveEmail) && /^\d{6}$/.test(otp);
   const canResend = Boolean(effectiveEmail) && cooldown === 0 && !resendPending;
+  const loginHref = buildDashboardLoginPath({ email: effectiveEmail, next: nextPath });
+  const cooldownStorageKey = buildOtpCooldownStorageKey({ email: effectiveEmail, purpose: "signup" });
 
   const handleResendSubmit = useCallback(() => {
     setOtp("");
     lastSubmittedOtpRef.current = "";
     setCooldown(resendCooldownSeconds);
-  }, []);
+    if (cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey]);
 
   useEffect(() => {
     if (canVerify && !verifyPending && lastSubmittedOtpRef.current !== `${effectiveEmail}:${otp}` && formRef.current) {
@@ -127,6 +134,15 @@ export function VerifyEmailForm({ email }: { email: string }) {
       formRef.current.requestSubmit();
     }
   }, [canVerify, effectiveEmail, otp, verifyPending]);
+
+  useEffect(() => {
+    if (!cooldownStorageKey) return;
+    const timeout = window.setTimeout(() => {
+      setCooldown((current) => Math.max(current, remainingOtpCooldownSeconds(window.sessionStorage.getItem(cooldownStorageKey))));
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [cooldownStorageKey]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -137,6 +153,12 @@ export function VerifyEmailForm({ email }: { email: string }) {
     return () => window.clearInterval(interval);
   }, [cooldown]);
 
+  useEffect(() => {
+    if (resendState?.success && cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey, resendState?.success]);
+
   return (
     <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
       <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
@@ -145,6 +167,9 @@ export function VerifyEmailForm({ email }: { email: string }) {
             <LogiVNLogo href="/" className="h-10" priority />
             <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Xác thực email</h1>
             {effectiveEmail ? <p className="mt-2 text-xs font-bold text-[#667085]">{effectiveEmail}</p> : null}
+            <p className="mt-2 max-w-[280px] text-sm font-semibold leading-6 text-[#667085]">
+              Nhập mã 6 số vừa gửi qua email. Mã chỉ dùng một lần và sẽ hết hạn sau ít phút.
+            </p>
           </div>
 
             <form ref={formRef} action={verifyAction} className="grid gap-4">
@@ -165,6 +190,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
               ) : null}
               <input type="hidden" name="email" value={effectiveEmail} />
               <input type="hidden" name="token" value={otp} />
+              <input type="hidden" name="next" value={nextPath} />
 
               <OtpInput value={otp} disabled={verifyPending} onChange={setOtp} />
 
@@ -173,6 +199,9 @@ export function VerifyEmailForm({ email }: { email: string }) {
                   {verifyState.error}
                 </p>
               )}
+              {verifyPending ? (
+                <p className="text-center text-xs font-bold text-[#667085]">Đang kiểm tra mã và chuẩn bị chuyển sang bước thiết lập quán...</p>
+              ) : null}
 
               <button
                 className="flex h-12 w-full items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
@@ -184,6 +213,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
 
             <form action={resendAction} onSubmit={handleResendSubmit} className="mt-4">
               <input type="hidden" name="email" value={effectiveEmail} />
+              <input type="hidden" name="next" value={nextPath} />
               <button
                 type="submit"
                 className="flex h-11 w-full items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-bold text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 disabled:opacity-50"
@@ -195,7 +225,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
               {resendState?.error && <p className="mt-3 text-center text-sm font-semibold text-[#9a4a17]">{resendState.error}</p>}
             </form>
 
-            <Link className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[#0F4D3A] transition hover:text-[#0b3d2e]" href="/dashboard/login">
+            <Link className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[#0F4D3A] transition hover:text-[#0b3d2e]" href={loginHref}>
               Quay lại đăng nhập
             </Link>
         </div>

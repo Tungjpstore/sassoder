@@ -9,9 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { resolveDeliveryQuoteSnapshotInsight } from "@/lib/delivery/quote-snapshot-insight";
 import {
   getAllowedDeliveryStatusTransitions,
   getRestaurantOrderActionCopy,
+  orderNeedsPaymentAttention,
+  resolveOrderPaymentStatus,
   resolveMerchantAcceptTransition,
   shouldReturnOnlineOrderToKitchenAfterPayment,
   type DeliveryActionStatus
@@ -58,6 +61,19 @@ type DeliveryCourier = {
   lastLocationAt: string | null;
   createdAt: string;
   updatedAt: string | null;
+};
+type DispatchCandidate = DeliveryCourier & {
+  rank: number;
+  score: number;
+  eligible: boolean;
+  reason: string;
+  distanceToPickupKm: number | null;
+  etaToPickupMinutes: number | null;
+  totalEtaMinutes: number;
+  deliveryLegMinutes: number;
+  confidence: "high" | "medium" | "low";
+  provider: string;
+  activeOrderCount?: number;
 };
 
 const orderFilters: Array<{ label: string; value: OrderFilter }> = [
@@ -220,6 +236,8 @@ function deriveBillStatus(orders: OrderDto[], bill: OrderDto["bill"]): OrderDto[
   if (bill?.status === "cancelled") return "cancelled";
   if (bill?.status === "waiting_confirm") return "waiting_confirm";
   if (bill?.status === "waiting_payment") return "waiting_payment";
+  if (orders.some((order) => resolveOrderPaymentStatus(order) === "waiting_confirm")) return "waiting_confirm";
+  if (orders.some((order) => resolveOrderPaymentStatus(order) === "waiting_payment")) return "waiting_payment";
   if (orders.some((order) => order.status === "pending")) return "pending";
   if (orders.some((order) => order.status === "ordering")) return "ordering";
   if (orders.some((order) => order.status === "completed")) return "completed";
@@ -244,10 +262,8 @@ function buildBillGroups(orders: OrderDto[]): BillGroup[] {
       const sortedOrders = [...billOrders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const bill = sortedOrders.find((order) => order.bill)?.bill ?? null;
       const paymentOrder =
-        sortedOrders.find((order) => order.paymentStatus === "waiting_confirm") ??
-        sortedOrders.find((order) => order.paymentStatus === "waiting_payment") ??
-        sortedOrders.find((order) => order.status === "waiting_confirm") ??
-        sortedOrders.find((order) => order.status === "waiting_payment") ??
+        sortedOrders.find((order) => resolveOrderPaymentStatus(order) === "waiting_confirm") ??
+        sortedOrders.find((order) => resolveOrderPaymentStatus(order) === "waiting_payment") ??
         null;
 
       return {
@@ -279,11 +295,7 @@ function getBillGroupAge(group: BillGroup, nowMs = Date.now()) {
 }
 
 function groupNeedsPayment(group: BillGroup) {
-  return (
-    group.status === "waiting_payment" ||
-    group.status === "waiting_confirm" ||
-    group.orders.some((order) => order.paymentStatus === "waiting_payment" || order.paymentStatus === "waiting_confirm")
-  );
+  return group.status === "waiting_payment" || group.status === "waiting_confirm" || group.orders.some(orderNeedsPaymentAttention);
 }
 
 function getBillGroupRush(group: BillGroup, nowMs = Date.now()): OrderRushMeta {
@@ -394,6 +406,46 @@ function buildChannelOpsStats(groups: BillGroup[]): ChannelOpsStat[] {
   return stats;
 }
 
+function buildSlaBands(groups: BillGroup[], nowMs: number) {
+  const openGroups = groups
+    .filter((group) => isOpenBillStatus(group.status))
+    .map((group) => ({
+      ...group,
+      age: getBillGroupAge(group, nowMs),
+      rush: getBillGroupRush(group, nowMs)
+    }));
+
+  const critical = openGroups.filter((group) => group.rush.tone === "red" || group.age >= 20);
+  const warning = openGroups.filter((group) => !critical.some((item) => item.id === group.id) && (group.rush.tone === "yellow" || group.age >= 8));
+  const stable = openGroups.filter(
+    (group) => !critical.some((item) => item.id === group.id) && !warning.some((item) => item.id === group.id)
+  );
+
+  return [
+    {
+      key: "critical",
+      label: "Nguy cơ miss",
+      description: "Quá giờ, đơn già hoặc cần xử lý ngay",
+      groups: critical.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "red" as const
+    },
+    {
+      key: "warning",
+      label: "Cần theo dõi",
+      description: "Sắp trễ, chờ xác nhận hoặc đang mở lâu",
+      groups: warning.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "yellow" as const
+    },
+    {
+      key: "stable",
+      label: "Đang ổn",
+      description: "Bill mở chưa vượt ngưỡng vận hành",
+      groups: stable.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "green" as const
+    }
+  ];
+}
+
 function channelStatTone(stat: ChannelOpsStat): OrderRushTone {
   if (stat.urgent > 0) return "yellow";
   if (stat.key === "DELIVERY") return "blue";
@@ -433,6 +485,159 @@ function OrderOpsMetric({
       <p className="metric-number mt-0.5 text-2xl font-semibold">{value}</p>
       <p className="mt-0.5 truncate text-xs font-medium opacity-80">{meta}</p>
     </article>
+  );
+}
+
+function OrderShiftCommandCenter({
+  operationsSnapshot,
+  channelStats,
+  slaBands,
+  statusCounts,
+  activeTotal,
+  clockTick,
+  onFilterStatus,
+  onFilterChannel,
+  onSelectGroup
+}: {
+  operationsSnapshot: OperationsSnapshot;
+  channelStats: ChannelOpsStat[];
+  slaBands: ReturnType<typeof buildSlaBands>;
+  statusCounts: Record<OrderFilter, number>;
+  activeTotal: number;
+  clockTick: number;
+  onFilterStatus: (filter: OrderFilter) => void;
+  onFilterChannel: (channel: ChannelFilter) => void;
+  onSelectGroup: (groupId: string | null) => void;
+}) {
+  const criticalBand = slaBands.find((band) => band.key === "critical");
+  const warningBand = slaBands.find((band) => band.key === "warning");
+  const leadingGroup = operationsSnapshot.priorityGroups[0] ?? criticalBand?.groups[0] ?? warningBand?.groups[0] ?? null;
+  const totalUrgentChannels = channelStats.reduce((sum, stat) => sum + stat.urgent, 0);
+  const shiftScore = Math.max(
+    0,
+    100 -
+      operationsSnapshot.pending * 10 -
+      operationsSnapshot.overdue * 14 -
+      operationsSnapshot.payment * 7 -
+      (criticalBand?.groups.length ?? 0) * 8 -
+      Math.max(0, operationsSnapshot.oldestAge - 15)
+  );
+  const shiftTone: OrderRushTone = shiftScore >= 82 ? "green" : shiftScore >= 62 ? "yellow" : "red";
+  const checks = [
+    {
+      id: "new",
+      label: "Đơn mới đã nhận",
+      value: operationsSnapshot.pending.toLocaleString("vi-VN"),
+      done: operationsSnapshot.pending === 0,
+      action: () => onFilterStatus("pending")
+    },
+    {
+      id: "kitchen",
+      label: "Bếp không quá giờ",
+      value: operationsSnapshot.overdue.toLocaleString("vi-VN"),
+      done: operationsSnapshot.overdue === 0,
+      action: () => onFilterStatus("ordering")
+    },
+    {
+      id: "payment",
+      label: "Bill chờ tiền sạch",
+      value: operationsSnapshot.payment.toLocaleString("vi-VN"),
+      done: operationsSnapshot.payment === 0,
+      action: () => onFilterStatus("waiting_confirm")
+    },
+    {
+      id: "channel",
+      label: "Kênh nóng được tách",
+      value: totalUrgentChannels.toLocaleString("vi-VN"),
+      done: totalUrgentChannels === 0,
+      action: () => onFilterChannel(channelStats.find((stat) => stat.urgent > 0)?.key ?? "all")
+    }
+  ];
+
+  return (
+    <section className="dashboard-panel dashboard-command-center p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className={`rounded-xl border p-4 ${rushToneClass(shiftTone)}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase opacity-80">Shift command</p>
+              <h2 className="mt-1 text-xl font-semibold">Điều phối ca bán hàng</h2>
+            </div>
+            <Badge tone={shiftTone === "red" ? "red" : shiftTone === "yellow" ? "yellow" : "green"}>{shiftScore}/100</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Bill mở</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.open}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Tiền đang mở</p>
+              <p className="metric-number mt-1 text-lg font-semibold">{formatVnd(activeTotal)}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Đơn lâu nhất</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.oldestAge}p</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Lịch sử hôm nay</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{statusCounts.history}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist chạm-là-xử-lý</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={item.action}
+                  className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
+                >
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Việc đầu tiên nên làm</p>
+              <Badge tone={leadingGroup ? getBillGroupRush(leadingGroup, clockTick).tone : "green"}>{leadingGroup ? "Có việc" : "Ổn"}</Badge>
+            </div>
+            {leadingGroup ? (
+              <button
+                type="button"
+                onClick={() => onSelectGroup(leadingGroup.id)}
+                className={`w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] ${rushToneClass(getBillGroupRush(leadingGroup, clockTick).tone)}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{leadingGroup.tableName}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold opacity-80">
+                      #{leadingGroup.id.slice(0, 8).toUpperCase()} · {getBillGroupAge(leadingGroup, clockTick)} phút
+                    </span>
+                  </span>
+                  <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-xs font-semibold">{getBillGroupRush(leadingGroup, clockTick).actionLabel}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold">{getBillGroupRush(leadingGroup, clockTick).label}</p>
+                <p className="metric-number mt-1 text-sm font-semibold opacity-85">{formatVnd(leadingGroup.total)}</p>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có bill cần kéo lên đầu ca.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -596,10 +801,14 @@ export function OrdersBoard({
   const [couriers, setCouriers] = useState<DeliveryCourier[]>([]);
   const [couriersLoading, setCouriersLoading] = useState(false);
   const [courierMutationOrderId, setCourierMutationOrderId] = useState<string | null>(null);
+  const [dispatchCandidatesByOrder, setDispatchCandidatesByOrder] = useState<Record<string, DispatchCandidate[]>>({});
+  const [dispatchLoadingOrderId, setDispatchLoadingOrderId] = useState<string | null>(null);
   const [newCourierName, setNewCourierName] = useState("");
   const [newCourierPhone, setNewCourierPhone] = useState("");
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [networkOnline, setNetworkOnline] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
   const [selectedGroupId, setSelectedGroupIdValue] = useState<string | null>(searchParams.get("order"));
   const { confirm, confirmDialog } = useConfirmDialog();
   const refreshTimerRef = useRef<number | null>(null);
@@ -616,6 +825,8 @@ export function OrdersBoard({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [clockTick, setClockTick] = useState(() => Date.now());
+  const fallbackRefreshMs = realtimeState === "connected" ? 30_000 : 10_000;
+  const hasOpenOperations = orders.some((order) => order.status !== "paid" && order.status !== "cancelled");
 
   function replaceUrlState(updates: {
     channel?: ChannelFilter;
@@ -696,6 +907,34 @@ export function OrdersBoard({
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!networkOnline || !pageVisible || !hasOpenOperations) return;
+    const timer = window.setInterval(() => void loadOrdersRef.current({ silent: true }), fallbackRefreshMs);
+    return () => window.clearInterval(timer);
+  }, [fallbackRefreshMs, hasOpenOperations, networkOnline, pageVisible]);
+
   async function loadOrders({ silent = false }: { silent?: boolean } = {}) {
     if (inFlightRefreshRef.current) {
       queuedRefreshRef.current = true;
@@ -740,6 +979,23 @@ export function OrdersBoard({
       setError(err instanceof Error ? err.message : "Không tải được danh sách shipper");
     } finally {
       if (!silent) setCouriersLoading(false);
+    }
+  }
+
+  async function loadDispatchCandidates(orderId: string, { silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setDispatchLoadingOrderId(orderId);
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}/dispatch-candidates`, { cache: "no-store" });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tải được gợi ý shipper");
+      setDispatchCandidatesByOrder((current) => ({
+        ...current,
+        [orderId]: json.data as DispatchCandidate[]
+      }));
+    } catch (err) {
+      if (!silent) setError(err instanceof Error ? err.message : "Không tải được gợi ý shipper");
+    } finally {
+      if (!silent) setDispatchLoadingOrderId(null);
     }
   }
 
@@ -804,6 +1060,8 @@ export function OrdersBoard({
     try {
       const response = await fetch(`/api/admin/orders/${orderId}/${action}`, {
         method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
         ...(body
           ? {
               headers: { "Content-Type": "application/json" },
@@ -815,6 +1073,9 @@ export function OrdersBoard({
       if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại");
       if (action === "confirm-payment") {
         setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
+      }
+      if (action === "confirm-payment") {
+        void loadOrdersRef.current({ silent: true });
       }
       scheduleRefresh(80);
     } catch (err) {
@@ -1117,6 +1378,7 @@ export function OrdersBoard({
   const billGroups = useMemo(() => buildBillGroups(orders), [orders]);
   const operationsSnapshot = useMemo(() => buildOperationsSnapshot(billGroups, clockTick), [billGroups, clockTick]);
   const channelStats = useMemo(() => buildChannelOpsStats(billGroups), [billGroups]);
+  const slaBands = useMemo(() => buildSlaBands(billGroups, clockTick), [billGroups, clockTick]);
   const activeTotal = useMemo(
     () => billGroups.filter((group) => group.status !== "paid" && group.status !== "cancelled").reduce((sum, group) => sum + group.total, 0),
     [billGroups]
@@ -1151,12 +1413,16 @@ export function OrdersBoard({
     selectedGroup?.orders.find((order) => order.paymentStatus === "waiting_confirm" || order.paymentStatus === "waiting_payment") ??
     (selectedGroup && (selectedGroup.status === "waiting_confirm" || selectedGroup.status === "waiting_payment") ? selectedGroup.orders[0] : null);
   const selectedDeliveryOrder = selectedGroup?.orders.find((order) => order.fulfillmentType === "DELIVERY") ?? null;
+  const selectedDeliveryOrderId = selectedDeliveryOrder?.id ?? null;
   const selectedDeliveryTransitions = selectedDeliveryOrder
     ? getAllowedDeliveryStatusTransitions(selectedDeliveryOrder.deliveryStatus)
     : [];
   const selectedCourierLocation = selectedDeliveryOrder
     ? courierLocations[selectedDeliveryOrder.id] ?? selectedDeliveryOrder.deliveryCourierLocation ?? null
     : null;
+  const selectedDispatchCandidates = selectedDeliveryOrder ? dispatchCandidatesByOrder[selectedDeliveryOrder.id] ?? [] : [];
+  const selectedBestDispatchCandidate = selectedDispatchCandidates.find((candidate) => candidate.eligible) ?? null;
+  const selectedDeliveryQuoteInsight = resolveDeliveryQuoteSnapshotInsight(selectedDeliveryOrder?.deliveryQuoteSnapshot ?? null);
   const selectedDeliveryMapUrl = selectedDeliveryOrder
     ? buildDirectionsUrl(
         {
@@ -1184,6 +1450,32 @@ export function OrdersBoard({
       : operationsSnapshot.payment
         ? `${operationsSnapshot.payment} chờ tiền`
         : "Nhịp ổn";
+
+  useEffect(() => {
+    if (!selectedDeliveryOrderId) return;
+    if (dispatchCandidatesByOrder[selectedDeliveryOrderId]) return;
+    const orderId = selectedDeliveryOrderId;
+    let cancelled = false;
+
+    async function hydrateDispatchCandidates() {
+      try {
+        const response = await fetch(`/api/admin/orders/${orderId}/dispatch-candidates`, { cache: "no-store" });
+        const json = await response.json();
+        if (!json.ok || cancelled) return;
+        setDispatchCandidatesByOrder((current) => ({
+          ...current,
+          [orderId]: json.data as DispatchCandidate[]
+        }));
+      } catch {
+        // Manual refresh shows the actionable error; silent hydrate should not interrupt order ops.
+      }
+    }
+
+    void hydrateDispatchCandidates();
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatchCandidatesByOrder, selectedDeliveryOrderId]);
 
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null) {
@@ -1230,7 +1522,7 @@ export function OrdersBoard({
   }, [hasSelectedGroup, selectedPaymentOrderId, shortcutPendingOrderId, shortcutServingOrderId]);
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack dashboard-orders-workspace grid gap-3">
       {confirmDialog}
       {error && <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div>}
       {notice && <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">{notice}</div>}
@@ -1253,7 +1545,7 @@ export function OrdersBoard({
               Xác nhận đơn online, theo dõi bếp, chốt phục vụ, xác nhận VietQR và điều phối giao hàng trong một màn đủ nhanh cho giờ cao điểm.
             </p>
           </div>
-          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+          <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
             <div className="flex items-center justify-between gap-3">
               <span>Cập nhật</span>
               <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
@@ -1286,6 +1578,18 @@ export function OrdersBoard({
           </div>
         </div>
       </section>
+
+      <OrderShiftCommandCenter
+        operationsSnapshot={operationsSnapshot}
+        channelStats={channelStats}
+        slaBands={slaBands}
+        statusCounts={statusCounts}
+        activeTotal={activeTotal}
+        clockTick={clockTick}
+        onFilterStatus={setFilter}
+        onFilterChannel={setChannelFilter}
+        onSelectGroup={setSelectedGroupId}
+      />
 
       <section className="dashboard-panel p-3">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
@@ -1435,7 +1739,53 @@ export function OrdersBoard({
           </div>
         ) : null}
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--primary)] text-white">
+                <AlertTriangle size={15} />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-[var(--foreground)]">SLA guard chống miss đơn</p>
+                <p className="text-xs font-medium text-[var(--muted-foreground)]">Phân tầng bill mở theo tuổi đơn, quá giờ bếp và thanh toán treo.</p>
+              </div>
+            </div>
+            <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
+              {operationsSnapshot.oldestAge} phút lâu nhất
+            </span>
+          </div>
+          <div className="grid gap-2 lg:grid-cols-3">
+            {slaBands.map((band) => {
+              const firstGroup = band.groups[0];
+              const total = band.groups.reduce((sum, group) => sum + group.total, 0);
+              return (
+                <button
+                  key={band.key}
+                  type="button"
+                  onClick={() => {
+                    if (firstGroup) setSelectedGroupId(firstGroup.id);
+                  }}
+                  disabled={!firstGroup}
+                  className={`min-h-[112px] rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] disabled:cursor-default disabled:opacity-75 ${rushToneClass(band.tone)}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{band.label}</span>
+                      <span className="mt-0.5 block text-xs font-medium opacity-80">{band.description}</span>
+                    </span>
+                    <span className="metric-number shrink-0 text-2xl font-semibold">{band.groups.length}</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold opacity-85">
+                    <span className="truncate">{firstGroup ? `${firstGroup.tableName} · ${firstGroup.age} phút` : "Không có bill"}</span>
+                    <span className="metric-number shrink-0">{formatVnd(total)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="dashboard-ops-toolbar dashboard-order-filter-grid mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
           <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Trạng thái
             <select
@@ -1510,7 +1860,7 @@ export function OrdersBoard({
           </div>
         ) : null}
 
-        <div className="mt-3 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
+        <div className="dashboard-segmented-scroll mt-3 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
           {orderFilters.map((item) => (
             <button
               key={item.value}
@@ -1526,7 +1876,7 @@ export function OrdersBoard({
           ))}
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+        <div className="dashboard-data-surface mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
           <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase">
             <span>Mã đơn</span>
             <span>Nguồn</span>
@@ -1760,6 +2110,43 @@ export function OrdersBoard({
                     courierLocation={selectedCourierLocation}
                     compact
                   />
+                  {selectedDeliveryQuoteInsight ? (
+                    <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-[var(--foreground)]">Chất lượng quote giao hàng</p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">
+                            {selectedDeliveryQuoteInsight.detail}
+                          </p>
+                        </div>
+                        <Badge tone={selectedDeliveryQuoteInsight.tone}>{selectedDeliveryQuoteInsight.label}</Badge>
+                      </div>
+                      {selectedDeliveryQuoteInsight.badges.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedDeliveryQuoteInsight.badges.slice(0, 7).map((badge) => (
+                            <span key={badge} className="rounded-full border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {selectedDeliveryOrder.deliveryTrackingSnapshot ? (
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-[var(--foreground)]">Live tracking readiness</p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">
+                            {selectedDeliveryOrder.deliveryTrackingSnapshot.detail}
+                          </p>
+                        </div>
+                        <Badge tone={selectedDeliveryOrder.deliveryTrackingSnapshot.state === "stale" ? "yellow" : selectedDeliveryOrder.deliveryTrackingSnapshot.state === "moving" || selectedDeliveryOrder.deliveryTrackingSnapshot.state === "arriving" ? "green" : "neutral"}>
+                          {selectedDeliveryOrder.deliveryTrackingSnapshot.label}
+                        </Badge>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
@@ -1794,10 +2181,56 @@ export function OrdersBoard({
                         {couriers.map((courier) => (
                           <option key={courier.id} value={courier.id}>
                             {courier.name}{courier.phone ? ` · ${courier.phone}` : ""} · {courierStatusLabel(courier.status)}
+                            {selectedDispatchCandidates.find((candidate) => candidate.id === courier.id)?.rank === 1 ? " · đề xuất" : ""}
                           </option>
                         ))}
                       </select>
                     </label>
+
+                    <div className="rounded-xl border border-[var(--border)] bg-white/70 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-black uppercase text-[var(--muted-foreground)]">Gợi ý điều phối</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">
+                            {selectedBestDispatchCandidate
+                              ? `${selectedBestDispatchCandidate.name} · đến quán ~${selectedBestDispatchCandidate.etaToPickupMinutes ?? "?"} phút`
+                              : dispatchLoadingOrderId === selectedDeliveryOrder.id
+                                ? "Đang tính theo GPS và khoảng cách tuyến..."
+                                : "Chưa có shipper đủ dữ liệu GPS"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void loadDispatchCandidates(selectedDeliveryOrder.id)}
+                          disabled={dispatchLoadingOrderId === selectedDeliveryOrder.id}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-black text-[var(--foreground)] disabled:opacity-60"
+                        >
+                          <RefreshCw size={14} className={dispatchLoadingOrderId === selectedDeliveryOrder.id ? "animate-spin" : ""} />
+                          Cập nhật
+                        </button>
+                      </div>
+                      {selectedDispatchCandidates.length > 0 ? (
+                        <div className="mt-3 grid gap-2">
+                          {selectedDispatchCandidates.slice(0, 3).map((candidate) => (
+                            <button
+                              type="button"
+                              key={candidate.id}
+                              onClick={() => void assignCourier(selectedDeliveryOrder.id, candidate.id)}
+                              disabled={!candidate.eligible || courierMutationOrderId === selectedDeliveryOrder.id}
+                              className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                              <span className="flex items-center justify-between gap-2">
+                                <span>#{candidate.rank} {candidate.name}</span>
+                                <span>{candidate.etaToPickupMinutes ?? "?"} phút tới quán</span>
+                              </span>
+                              <span className="text-[var(--muted-foreground)]">
+                                {candidate.reason} · {candidate.distanceToPickupKm?.toFixed(1) ?? "?"} km · {candidate.provider}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
 
                     <form
                       onSubmit={(event) => {
@@ -2037,6 +2470,7 @@ export function OrdersBoard({
                       <div key={`${order.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_44px_96px] items-center gap-3 border-b border-[var(--border)] px-3 py-3 last:border-b-0">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">{item.menuItem?.name ?? "Không rõ món"}</p>
+                          {item.modifierSummary && <p className="mt-1 truncate text-xs font-semibold text-[var(--primary)]">{item.modifierSummary}</p>}
                           {item.note && <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{item.note}</p>}
                         </div>
                         <span className="metric-number text-center text-sm font-semibold">{item.quantity}</span>

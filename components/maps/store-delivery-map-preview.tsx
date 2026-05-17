@@ -4,7 +4,9 @@ import "@/components/maps/maplibre-gl-styles";
 
 import { useEffect, useRef, useState } from "react";
 import { MapPin } from "lucide-react";
+import { createLogiVNMarkerElement } from "@/components/maps/logivn-marker";
 import { MapLayerControl } from "@/components/maps/map-layer-control";
+import { MapCanvas } from "@/components/maps/map-canvas";
 import { MapLegend, MapMetricStrip, MapScaleBar, MapStatusPill } from "@/components/maps/map-ui-kit";
 import { applyClientMapLayer, getDefaultClientMapStyle, resolveClientMapStyle, type ClientMapLayerMode } from "@/lib/geolocation/map-style";
 import type { GeoJSONSource, Map } from "maplibre-gl";
@@ -130,9 +132,7 @@ export function StoreDeliveryMapPreview({
       map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
       if (mountPoint) {
-        const markerElement = document.createElement("div");
-        markerElement.className = "grid h-10 w-10 place-items-center rounded-2xl border border-white/80 bg-[#0F4D3A] text-white shadow-[0_18px_34px_rgba(15,77,58,0.24)]";
-        markerElement.innerHTML = '<span style="font-size:13px;font-weight:900;">Q</span>';
+        const markerElement = createLogiVNMarkerElement({ label: "Q", tone: "store", title: "Vị trí quán" });
         markerRef.current = new maplibre.Marker({ element: markerElement }).setLngLat([mountPoint.lng, mountPoint.lat]).addTo(map);
       }
 
@@ -175,7 +175,7 @@ export function StoreDeliveryMapPreview({
   }, [mapReady, point, radiusKm, styleRevision]);
 
   return (
-    <section className="dashboard-panel overflow-hidden rounded-[28px] p-0 shadow-[0_18px_55px_rgba(15,77,58,0.11)]">
+    <section className="dashboard-panel dashboard-map-surface overflow-hidden rounded-[28px] p-0 shadow-[0_18px_55px_rgba(15,77,58,0.11)]">
       <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] bg-white/80 px-4 py-3 backdrop-blur">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--primary)]">Delivery Coverage</p>
@@ -184,15 +184,15 @@ export function StoreDeliveryMapPreview({
         <MapStatusPill label="Bán kính" value={mapReady ? `${radiusKm} km` : "Loading"} tone={mapReady ? "ready" : "loading"} />
       </div>
       <div className="relative">
-        <div ref={mapContainerRef} className="h-[300px] w-full bg-[radial-gradient(circle_at_top,rgba(15,77,58,0.09),transparent_42%),linear-gradient(180deg,rgba(255,247,235,0.8),rgba(248,242,232,0.95))]" />
-        <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="absolute right-3 top-3" />
+        <MapCanvas ref={mapContainerRef} className="dashboard-map-canvas dashboard-map-canvas--preview h-[300px]" />
+        <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="dashboard-map-layer-control absolute right-3 top-3" />
         <div className="pointer-events-none absolute left-3 top-3 hidden sm:block">
           <MapLegend compact items={[{ label: "Quán", tone: "store" }, { label: "Bán kính", tone: "radius" }]} />
         </div>
         <div className="pointer-events-none absolute bottom-3 left-3">
           <MapScaleBar label="1 km" />
         </div>
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 rounded-2xl border border-white/70 bg-white/88 px-3 py-2 text-xs font-bold text-[var(--muted-foreground)] shadow-[0_14px_34px_rgba(15,77,58,0.12)] backdrop-blur-xl sm:inset-x-auto sm:left-[92px] sm:right-3">
+        <div className="dashboard-map-bottom-label pointer-events-none absolute inset-x-3 bottom-3 rounded-2xl border border-white/70 bg-white/88 px-3 py-2 text-xs font-bold text-[var(--muted-foreground)] shadow-[0_14px_34px_rgba(15,77,58,0.12)] backdrop-blur-xl sm:inset-x-auto sm:left-[92px] sm:right-3">
           <span className="flex items-center gap-2">
             <MapPin size={13} className="text-[var(--accent)]" />
             {point ? address || `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}` : "Chưa có tọa độ quán"}

@@ -5,7 +5,7 @@ import { useActionState, useEffect } from "react";
 import { requestPasswordResetAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
-export function ForgotPasswordForm({ initialEmail = "" }: { initialEmail?: string }) {
+export function ForgotPasswordForm({ initialEmail = "", nextPath = "" }: { initialEmail?: string; nextPath?: string }) {
   const [state, formAction, pending] = useActionState(requestPasswordResetAction, undefined);
 
   useEffect(() => {
@@ -19,6 +19,7 @@ export function ForgotPasswordForm({ initialEmail = "" }: { initialEmail?: strin
       action={formAction}
       className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5"
     >
+      <input type="hidden" name="next" value={nextPath} />
       <div className="mb-4 flex flex-col items-center text-center">
         <LogiVNLogo href="/" className="h-10" priority />
         <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Quên mật khẩu</h1>
@@ -51,7 +52,7 @@ export function ForgotPasswordForm({ initialEmail = "" }: { initialEmail?: strin
         {pending ? "Đang gửi..." : "Gửi mã"}
       </button>
 
-      <Link href="/dashboard/login" className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-sm font-bold text-[#0F4D3A] transition hover:text-[#0b3d2e]">
+      <Link href={nextPath ? `/dashboard/login?next=${encodeURIComponent(nextPath)}` : "/dashboard/login"} className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-sm font-bold text-[#0F4D3A] transition hover:text-[#0b3d2e]">
         Đăng nhập
       </Link>
     </form>

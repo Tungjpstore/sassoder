@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Tags,
   TimerReset,
@@ -28,10 +29,17 @@ import {
 } from "lucide-react";
 import {
   createCategoryAction,
+  createMenuModifierGroupAction,
+  createMenuModifierOptionAction,
   createMenuItemAction,
+  deleteMenuModifierGroupAction,
+  deleteMenuModifierOptionAction,
   deleteMenuItemAction,
   importMenuOcrItemsAction,
+  toggleMenuModifierOptionAvailabilityAction,
   toggleMenuItemAvailabilityAction,
+  updateMenuModifierGroupAction,
+  updateMenuModifierOptionAction,
   updateMenuItemAction
 } from "@/app/dashboard/actions";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
@@ -245,6 +253,12 @@ export function MenuWorkspace({
   const availableItems = items.filter((item) => item.is_available).length;
   const pausedItems = items.length - availableItems;
   const missingImageItems = items.filter((item) => !item.image_url).length;
+  const modifierGroupCount = items.reduce((sum, item) => sum + (item.modifierGroups?.length ?? 0), 0);
+  const modifierOptionCount = items.reduce(
+    (sum, item) => sum + (item.modifierGroups ?? []).reduce((groupSum, group) => groupSum + group.options.length, 0),
+    0
+  );
+  const itemsWithModifiers = items.filter((item) => (item.modifierGroups?.length ?? 0) > 0).length;
   const averagePrice = items.length ? Math.round(items.reduce((sum, item) => sum + item.price, 0) / items.length) : 0;
   const menuReadiness = items.length
     ? Math.min(100, Math.round(((availableItems * 0.55 + (items.length - missingImageItems) * 0.3 + Math.min(categories.length, items.length) * 0.15) / items.length) * 100))
@@ -275,6 +289,7 @@ export function MenuWorkspace({
     { label: "Tổng món đang bán", value: availableItems, meta: "Đang hiển thị với khách", icon: Sparkles, tone: "orange" },
     { label: "Món bán chạy", value: topItemIds.length, meta: topItemNames[0] ?? "Chưa có dữ liệu bán", icon: Flame, tone: "orange" },
     { label: "Món tạm hết", value: pausedItems, meta: "Không hiển thị trên menu khách", icon: TimerReset, tone: "red" },
+    { label: "Tùy chọn", value: modifierGroupCount, meta: `${modifierOptionCount} lựa chọn topping/size`, icon: SlidersHorizontal, tone: "green" },
     { label: "Danh mục", value: categories.length, meta: categories.map((category) => category.name).slice(0, 3).join(", ") || "Chưa có", icon: Utensils, tone: "green" }
   ];
 
@@ -589,11 +604,173 @@ export function MenuWorkspace({
     );
   }
 
+  function modifierRuleText(group: NonNullable<MenuItemWithCategory["modifierGroups"]>[number]) {
+    const minText = group.minSelect > 0 ? `chọn ${group.minSelect}` : "không bắt buộc";
+    const maxText = group.maxSelect === null ? "không giới hạn" : `tối đa ${group.maxSelect}`;
+    return `${minText} · ${maxText}`;
+  }
+
+  function renderModifierManager(item: MenuItemWithCategory) {
+    const groups = item.modifierGroups ?? [];
+
+    return (
+      <section className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+              <SlidersHorizontal size={15} className="text-[var(--primary)]" />
+              Topping & tùy chọn
+            </p>
+            <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+              {groups.length ? `${groups.length} nhóm · ${groups.reduce((sum, group) => sum + group.options.length, 0)} lựa chọn` : "Chưa có tùy chọn cho món này"}
+            </p>
+          </div>
+          <Badge tone={groups.length ? "green" : "yellow"}>{groups.length ? "Đã cấu hình" : "Chưa có"}</Badge>
+        </div>
+
+        <form action={createMenuModifierGroupAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-3">
+          <input type="hidden" name="itemId" value={item.id} />
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_86px_86px]">
+            <Input name="name" placeholder="Size, Đá, Đường, Topping..." required />
+            <Input name="minSelect" type="number" min={0} max={20} defaultValue={0} aria-label="Tối thiểu" />
+            <Input name="maxSelect" type="number" min={0} max={20} placeholder="Tối đa" aria-label="Tối đa" />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+              <input type="checkbox" name="isRequired" value="true" className="h-4 w-4 accent-[var(--primary)]" />
+              Bắt buộc chọn
+            </label>
+            <Button size="sm" className="shadow-none hover:shadow-none">
+              <Plus size={14} />
+              Thêm nhóm
+            </Button>
+          </div>
+        </form>
+
+        <div className="grid gap-3">
+          {groups.map((group) => (
+            <article key={group.id} className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <form action={updateMenuModifierGroupAction} className="grid gap-2">
+                <input type="hidden" name="itemId" value={item.id} />
+                <input type="hidden" name="groupId" value={group.id} />
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[var(--foreground)]">{group.name}</p>
+                    <p className="mt-0.5 text-xs font-semibold text-[var(--muted-foreground)]">{modifierRuleText(group)}</p>
+                  </div>
+                  {group.required ? <Badge tone="yellow">Bắt buộc</Badge> : <Badge>Tuỳ chọn</Badge>}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px_76px]">
+                  <Input name="name" defaultValue={group.name} required />
+                  <Input name="minSelect" type="number" min={0} max={20} defaultValue={group.minSelect} aria-label="Tối thiểu" />
+                  <Input name="maxSelect" type="number" min={0} max={20} defaultValue={group.maxSelect ?? ""} aria-label="Tối đa" />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                    <input type="checkbox" name="isRequired" value="true" defaultChecked={group.required} className="h-4 w-4 accent-[var(--primary)]" />
+                    Bắt buộc
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
+                      <Save size={14} />
+                      Lưu nhóm
+                    </Button>
+                  </div>
+                </div>
+              </form>
+
+              <div className="grid gap-2">
+                {group.options.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-3 text-xs font-semibold text-[var(--muted-foreground)]">
+                    Chưa có lựa chọn trong nhóm này.
+                  </div>
+                ) : (
+                  group.options.map((option) => (
+                    <div key={option.id} className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2">
+                      <form action={updateMenuModifierOptionAction} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                        <input type="hidden" name="groupId" value={group.id} />
+                        <input type="hidden" name="optionId" value={option.id} />
+                        <Input name="name" defaultValue={option.name} required />
+                        <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={option.priceDelta} aria-label="Giá cộng thêm" />
+                        <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
+                          <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                            <input type="checkbox" name="isAvailable" value="true" defaultChecked={option.isAvailable !== false} className="h-4 w-4 accent-[var(--primary)]" />
+                            Đang bán · {option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "không phụ phí"}
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
+                              <Save size={14} />
+                              Lưu
+                            </Button>
+                          </div>
+                        </div>
+                      </form>
+                      <div className="flex flex-wrap gap-2">
+                        <form action={toggleMenuModifierOptionAvailabilityAction}>
+                          <input type="hidden" name="optionId" value={option.id} />
+                          <input type="hidden" name="isAvailable" value={String(option.isAvailable === false)} />
+                          <Button size="sm" variant="ghost" className="shadow-none hover:shadow-none">
+                            {option.isAvailable === false ? <Eye size={14} /> : <EyeOff size={14} />}
+                            {option.isAvailable === false ? "Bật bán" : "Tạm hết"}
+                          </Button>
+                        </form>
+                        <form action={deleteMenuModifierOptionAction}>
+                          <input type="hidden" name="optionId" value={option.id} />
+                          <ConfirmActionButton
+                            size="sm"
+                            variant="danger"
+                            className="shadow-none hover:shadow-none"
+                            confirmTitle="Xóa tùy chọn"
+                            confirmDescription={`Xóa "${option.name}" khỏi nhóm ${group.name}. Các đơn cũ vẫn giữ snapshot đã đặt.`}
+                            confirmLabel="Xóa tùy chọn"
+                          >
+                            <Trash2 size={14} />
+                            Xóa
+                          </ConfirmActionButton>
+                        </form>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form action={createMenuModifierOptionAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                <input type="hidden" name="groupId" value={group.id} />
+                <Input name="name" placeholder="Trân châu, size L, ít đá..." required />
+                <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={0} aria-label="Giá cộng thêm" />
+                <input type="hidden" name="isAvailable" value="true" />
+                <Button size="sm" className="shadow-none hover:shadow-none sm:col-span-2">
+                  <Plus size={14} />
+                  Thêm lựa chọn
+                </Button>
+              </form>
+
+              <form action={deleteMenuModifierGroupAction} className="border-t border-[var(--border)] pt-2">
+                <input type="hidden" name="groupId" value={group.id} />
+                <ConfirmActionButton
+                  size="sm"
+                  variant="ghost"
+                  className="text-[var(--accent-strong)] shadow-none hover:shadow-none"
+                  confirmTitle="Xóa nhóm tùy chọn"
+                  confirmDescription={`Nhóm "${group.name}" sẽ không còn hiển thị trong menu khách.`}
+                  confirmLabel="Xóa nhóm"
+                >
+                  <Trash2 size={14} />
+                  Xóa nhóm này
+                </ConfirmActionButton>
+              </form>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   const topMenuItems = items.filter((item) => topIdSet.has(item.id)).slice(0, 5);
   const activeCategoryName = categoryFilter === "all" ? "Tất cả danh mục" : categories.find((category) => category.id === categoryFilter)?.name ?? "Danh mục";
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-menu-workspace grid gap-3">
       <section className="admin-hero-panel rounded-[14px] p-4">
         <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -612,7 +789,7 @@ export function MenuWorkspace({
               Quản lý món, ảnh, giá và tình trạng bán theo nhịp vận hành thực tế. Menu sạch giúp khách gọi món nhanh hơn, bếp ít nhầm hơn và AI có dữ liệu tốt hơn để upsell.
             </p>
           </div>
-          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+          <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
             <div className="flex items-center justify-between gap-3">
               <span>Cập nhật</span>
               <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
@@ -634,14 +811,15 @@ export function MenuWorkspace({
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-menu-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <DashboardMetricCard icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
         <DashboardMetricCard icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
         <DashboardMetricCard icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
+        <DashboardMetricCard icon={SlidersHorizontal} label="Topping" value={modifierGroupCount} meta={`${itemsWithModifiers} món có tùy chọn`} tone={modifierGroupCount ? "green" : "yellow"} />
         <DashboardMetricCard icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
       </section>
 
-      <section className="dashboard-panel p-4">
+      <section className="dashboard-panel dashboard-menu-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu operations</p>
@@ -650,7 +828,7 @@ export function MenuWorkspace({
               {availableItems} món đang bán · {pausedItems} món tạm hết · {categories.length} danh mục
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="dashboard-menu-toolbar flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className="h-10 shadow-none hover:shadow-none" onClick={() => openPanel("stats")}>
               <BarChart3 size={16} />
               Tổng quan
@@ -670,7 +848,7 @@ export function MenuWorkspace({
           </div>
         </div>
 
-        <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_210px_190px]">
+        <div className="dashboard-menu-filter-grid mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_210px_190px]">
             <label className="relative grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Tìm món
               <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[var(--outline)]" />
@@ -700,7 +878,7 @@ export function MenuWorkspace({
             </label>
         </div>
 
-        <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="dashboard-menu-insight-grid mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -779,7 +957,7 @@ export function MenuWorkspace({
           </div>
         </div>
 
-        <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+        <div className="dashboard-menu-category-rail mb-3 flex gap-2 overflow-x-auto pb-1">
           <button
             type="button"
             onClick={() => setCategoryFilter("all")}
@@ -799,7 +977,7 @@ export function MenuWorkspace({
           ))}
         </div>
 
-        <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
+        <div className="dashboard-menu-table overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
           <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
             <span>Ảnh</span>
             <span>Món ăn</span>
@@ -808,7 +986,7 @@ export function MenuWorkspace({
             <span>Trạng thái</span>
             <span>Thao tác</span>
           </div>
-          <div className="divide-y divide-[var(--border)]">
+          <div className="dashboard-menu-item-list divide-y divide-[var(--border)]">
             {filteredItems.length === 0 && (
               <div className="grid min-h-48 place-items-center px-5 py-8 text-sm font-semibold text-[var(--muted-foreground)]">
                 Không có món phù hợp với {activeCategoryName.toLowerCase()}.
@@ -825,18 +1003,24 @@ export function MenuWorkspace({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") openPanel("editItem", item.id);
                   }}
-                  className={`dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 text-left lg:grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] ${isSelected ? "dashboard-selected-row" : ""}`}
+                  className={`dashboard-menu-item-row dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 text-left lg:grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] ${isSelected ? "dashboard-selected-row" : ""}`}
                 >
-                  <span className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 48)}</span>
-                  <span className="min-w-0">
+                  <span className="dashboard-menu-image grid h-12 w-12 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 48)}</span>
+                  <span className="dashboard-menu-name min-w-0">
                     <span className="block truncate text-sm font-semibold">{item.name}</span>
                     <span className="font-mono text-xs font-medium text-[var(--muted-foreground)]">Mã: CF{String(index + 1).padStart(3, "0")}</span>
                     {topIdSet.has(item.id) ? <span className="mt-1 block text-xs font-semibold text-[var(--accent)]">Bán chạy</span> : null}
+                    {(item.modifierGroups?.length ?? 0) > 0 ? (
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--primary)]">
+                        <SlidersHorizontal size={12} />
+                        {item.modifierGroups?.length} nhóm tùy chọn
+                      </span>
+                    ) : null}
                   </span>
-                  <span className="text-sm font-medium">{item.categoryName}</span>
-                  <span className="metric-number text-sm font-semibold">{formatVnd(item.price)}</span>
-                  <span><Badge tone={item.is_available ? "green" : "yellow"}>{item.is_available ? "Đang bán" : "Tạm hết"}</Badge></span>
-                  <span className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                  <span className="dashboard-menu-field text-sm font-medium" data-label="Danh mục">{item.categoryName}</span>
+                  <span className="dashboard-menu-field metric-number text-sm font-semibold" data-label="Giá bán">{formatVnd(item.price)}</span>
+                  <span className="dashboard-menu-field" data-label="Trạng thái"><Badge tone={item.is_available ? "green" : "yellow"}>{item.is_available ? "Đang bán" : "Tạm hết"}</Badge></span>
+                  <span className="dashboard-menu-actions flex flex-wrap gap-2" data-label="Thao tác" onClick={(event) => event.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => openPanel("editItem", item.id)}
@@ -1100,7 +1284,8 @@ export function MenuWorkspace({
               )}
 
               {panelMode === "editItem" && selectedItem && (
-                <form key={selectedItem.id} action={updateMenuItemAction} onSubmit={handleMenuFormSubmit} className="grid gap-4">
+                <div key={selectedItem.id} className="grid gap-4">
+                <form action={updateMenuItemAction} onSubmit={handleMenuFormSubmit} className="grid gap-4">
                   <input type="hidden" name="itemId" value={selectedItem.id} />
                   <input type="hidden" name="image" defaultValue="" />
                   <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
@@ -1157,6 +1342,8 @@ export function MenuWorkspace({
                     </ConfirmActionButton>
                   </div>
                 </form>
+                {renderModifierManager(selectedItem)}
+                </div>
               )}
             </div>
           </aside>

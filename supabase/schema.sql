@@ -19,7 +19,7 @@ create type public.order_status as enum (
 );
 create type public.payment_method as enum ('QR', 'CASH');
 create type public.table_bill_status as enum ('open', 'waiting_payment', 'waiting_confirm', 'paid', 'cancelled');
-create type public.payment_log_status as enum ('pending', 'waiting_confirm', 'confirmed', 'failed', 'cancelled');
+create type public.payment_log_status as enum ('pending', 'waiting_confirm', 'confirmed', 'failed', 'cancelled', 'refunded');
 
 create table public.restaurants (
   id uuid primary key default gen_random_uuid(),
@@ -286,6 +286,37 @@ create table public.menu_items (
   unique (restaurant_id, name)
 );
 
+create table public.menu_modifier_groups (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  menu_item_id uuid not null references public.menu_items(id) on delete cascade,
+  name text not null,
+  is_required boolean not null default false,
+  min_select integer not null default 0,
+  max_select integer,
+  sort_order integer not null default 0,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint menu_modifier_groups_select_range check (
+    min_select >= 0
+    and (max_select is null or max_select >= min_select)
+  )
+);
+
+create table public.menu_modifier_options (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  group_id uuid not null references public.menu_modifier_groups(id) on delete cascade,
+  name text not null,
+  price_delta integer not null default 0,
+  is_available boolean not null default true,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint menu_modifier_options_price_delta_range check (price_delta >= 0)
+);
+
 create table public.orders (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -400,6 +431,9 @@ create table public.order_items (
   menu_item_id uuid not null references public.menu_items(id) on delete restrict,
   quantity integer not null check (quantity > 0 and quantity <= 50),
   price integer not null check (price > 0),
+  base_price integer not null check (base_price > 0),
+  modifier_total integer not null default 0 check (modifier_total >= 0),
+  modifier_snapshot jsonb not null default '[]'::jsonb check (jsonb_typeof(modifier_snapshot) = 'array'),
   note text
 );
 
@@ -428,11 +462,15 @@ create table public.promotions (
   ends_at timestamptz,
   channels text[] not null default array['IN_STORE', 'QR_MENU']::text[],
   show_on_customer_menu boolean not null default true,
+  total_usage_limit integer,
+  per_customer_usage_limit integer,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   constraint promotions_discount_scope_check check (discount_scope in ('ORDER', 'DELIVERY_FEE')),
   constraint promotions_discount_type_check check (discount_type in ('PERCENT', 'FIXED')),
   constraint promotions_percent_range check (discount_type <> 'PERCENT' or discount_value between 1 and 100),
+  constraint promotions_total_usage_limit_check check (total_usage_limit is null or total_usage_limit > 0),
+  constraint promotions_per_customer_usage_limit_check check (per_customer_usage_limit is null or per_customer_usage_limit > 0),
   constraint promotions_code_format check (code ~ '^[A-Z0-9_-]{3,32}$'),
   constraint promotions_date_range check (starts_at is null or ends_at is null or starts_at <= ends_at),
   unique (restaurant_id, code)
@@ -638,6 +676,26 @@ create table public.reservation_status_logs (
   constraint reservation_status_logs_metadata_object_check check (jsonb_typeof(metadata) = 'object')
 );
 
+create table public.reservation_notification_outbox (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  reservation_id uuid not null references public.reservations(id) on delete cascade,
+  audience text not null default 'customer',
+  channel text not null default 'in_app',
+  status text not null default 'queued',
+  title text not null,
+  body text not null,
+  payload jsonb not null default '{}'::jsonb,
+  scheduled_at timestamptz not null default now(),
+  sent_at timestamptz,
+  error_message text,
+  created_at timestamptz not null default now(),
+  constraint reservation_notification_outbox_audience_check check (audience in ('customer','merchant','staff')),
+  constraint reservation_notification_outbox_channel_check check (channel in ('in_app','sms','zalo','email','webhook')),
+  constraint reservation_notification_outbox_status_check check (status in ('queued','sent','failed','skipped')),
+  constraint reservation_notification_outbox_payload_object_check check (jsonb_typeof(payload) = 'object')
+);
+
 create table public.occupancy_logs (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
@@ -666,6 +724,23 @@ create table public.reservation_deposit_logs (
   transition_key text,
   raw_data jsonb,
   created_at timestamptz not null default now()
+);
+
+create table public.reservation_customer_risk_events (
+  id uuid primary key default gen_random_uuid(),
+  restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  reservation_id uuid references public.reservations(id) on delete set null,
+  customer_phone text not null,
+  customer_name text,
+  event_type text not null,
+  severity text not null default 'watch',
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  constraint reservation_customer_risk_events_event_type_check check (
+    event_type in ('no_show','deposit_forfeited','refund_due','refund_completed','deposit_cancelled')
+  ),
+  constraint reservation_customer_risk_events_severity_check check (severity in ('watch','risk','blocked')),
+  constraint reservation_customer_risk_events_metadata_object_check check (jsonb_typeof(metadata) = 'object')
 );
 
 alter table public.table_bills
@@ -877,6 +952,9 @@ create index store_branches_location_geog_gist_idx
   where is_active = true;
 create index menu_categories_restaurant_id_idx on public.menu_categories (restaurant_id);
 create index menu_items_restaurant_category_idx on public.menu_items (restaurant_id, category_id);
+create index menu_modifier_groups_item_idx on public.menu_modifier_groups (menu_item_id, is_active, sort_order);
+create index menu_modifier_groups_restaurant_idx on public.menu_modifier_groups (restaurant_id, is_active);
+create index menu_modifier_options_group_idx on public.menu_modifier_options (group_id, is_available, sort_order);
 create index table_bills_restaurant_table_status_idx on public.table_bills (restaurant_id, table_id, status, created_at desc);
 create unique index table_bills_open_table_idx
   on public.table_bills (restaurant_id, table_id)
@@ -913,6 +991,9 @@ create index orders_restaurant_unassigned_delivery_idx
 create index orders_restaurant_promotion_created_idx
   on public.orders (restaurant_id, promotion_id, created_at desc)
   where promotion_id is not null;
+create index orders_restaurant_promotion_customer_idx
+  on public.orders (restaurant_id, promotion_id, customer_session_id, created_at desc)
+  where promotion_id is not null and status <> 'cancelled';
 create index orders_restaurant_remote_customer_created_idx
   on public.orders (restaurant_id, customer_phone, created_at desc)
   where fulfillment_type in ('PICKUP', 'DELIVERY') and customer_phone is not null;
@@ -1003,6 +1084,11 @@ create index reservation_status_logs_reservation_created_idx
   on public.reservation_status_logs (reservation_id, created_at desc);
 create index reservation_status_logs_restaurant_created_idx
   on public.reservation_status_logs (restaurant_id, created_at desc);
+create index reservation_notification_outbox_due_idx
+  on public.reservation_notification_outbox (status, scheduled_at, created_at)
+  where status = 'queued';
+create index reservation_notification_outbox_reservation_idx
+  on public.reservation_notification_outbox (reservation_id, created_at desc);
 create index occupancy_logs_restaurant_table_time_idx
   on public.occupancy_logs (restaurant_id, table_id, occurred_at desc);
 create index occupancy_logs_reservation_time_idx
@@ -1013,6 +1099,10 @@ create index reservation_deposit_logs_reservation_created_idx
 create unique index reservation_deposit_logs_transition_key_idx
   on public.reservation_deposit_logs (transition_key)
   where transition_key is not null;
+create index reservation_customer_risk_events_phone_idx
+  on public.reservation_customer_risk_events (restaurant_id, customer_phone, created_at desc);
+create index reservation_customer_risk_events_reservation_idx
+  on public.reservation_customer_risk_events (reservation_id, created_at desc);
 create index registration_intents_user_pending_idx
   on public.registration_intents (user_id, created_at desc)
   where consumed_at is null;
@@ -1158,6 +1248,8 @@ alter table public.tables enable row level security;
 alter table public.store_branches enable row level security;
 alter table public.menu_categories enable row level security;
 alter table public.menu_items enable row level security;
+alter table public.menu_modifier_groups enable row level security;
+alter table public.menu_modifier_options enable row level security;
 alter table public.table_bills enable row level security;
 alter table public.orders enable row level security;
 alter table public.order_items enable row level security;
@@ -1173,8 +1265,10 @@ alter table public.service_requests enable row level security;
 alter table public.reservations enable row level security;
 alter table public.reservation_table_locks enable row level security;
 alter table public.reservation_status_logs enable row level security;
+alter table public.reservation_notification_outbox enable row level security;
 alter table public.occupancy_logs enable row level security;
 alter table public.reservation_deposit_logs enable row level security;
+alter table public.reservation_customer_risk_events enable row level security;
 alter table public.registration_intents enable row level security;
 alter table public.report_schedules enable row level security;
 alter table public.report_send_logs enable row level security;
@@ -1355,6 +1449,19 @@ begin
 end;
 $$;
 
+create or replace function public.set_order_item_modifier_defaults()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.base_price := coalesce(new.base_price, new.price);
+  new.modifier_total := coalesce(new.modifier_total, 0);
+  new.modifier_snapshot := coalesce(new.modifier_snapshot, '[]'::jsonb);
+  return new;
+end;
+$$;
+
 create trigger table_areas_set_updated_at
 before update on public.table_areas
 for each row execute function public.set_updated_at();
@@ -1522,6 +1629,70 @@ create trigger orders_sync_table_bill_total
 after insert or update of bill_id, total, status or delete on public.orders
 for each row execute function public.sync_table_bill_total();
 
+create or replace function public.enforce_promotion_usage_limits()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_total_limit integer;
+  v_customer_limit integer;
+  v_total_used integer;
+  v_customer_used integer;
+begin
+  if new.promotion_id is null or new.status = 'cancelled' then
+    return new;
+  end if;
+
+  select total_usage_limit, per_customer_usage_limit
+  into v_total_limit, v_customer_limit
+  from public.promotions
+  where id = new.promotion_id
+    and restaurant_id = new.restaurant_id
+  for update;
+
+  if not found then
+    return new;
+  end if;
+
+  if v_total_limit is not null then
+    select count(*)::integer
+    into v_total_used
+    from public.orders
+    where restaurant_id = new.restaurant_id
+      and promotion_id = new.promotion_id
+      and status <> 'cancelled'
+      and id <> new.id;
+
+    if v_total_used >= v_total_limit then
+      raise exception 'Mã khuyến mãi đã hết lượt sử dụng.' using errcode = 'P0001';
+    end if;
+  end if;
+
+  if v_customer_limit is not null and new.customer_session_id is not null then
+    select count(*)::integer
+    into v_customer_used
+    from public.orders
+    where restaurant_id = new.restaurant_id
+      and promotion_id = new.promotion_id
+      and customer_session_id = new.customer_session_id
+      and status <> 'cancelled'
+      and id <> new.id;
+
+    if v_customer_used >= v_customer_limit then
+      raise exception 'Khách này đã dùng hết lượt cho mã khuyến mãi.' using errcode = 'P0001';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger orders_promotion_usage_limits
+before insert or update of promotion_id, customer_session_id, status on public.orders
+for each row execute function public.enforce_promotion_usage_limits();
+
 create or replace function public.touch_delivery_courier_updated_at()
 returns trigger
 language plpgsql
@@ -1646,6 +1817,28 @@ using (restaurant_id = public.current_restaurant_id());
 
 create policy "admins can mutate own menu items"
 on public.menu_items for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "users can read own menu modifier groups"
+on public.menu_modifier_groups for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own menu modifier groups"
+on public.menu_modifier_groups for all
+to authenticated
+using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
+with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
+
+create policy "users can read own menu modifier options"
+on public.menu_modifier_options for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "admins can manage own menu modifier options"
+on public.menu_modifier_options for all
 to authenticated
 using (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN')
 with check (restaurant_id = public.current_restaurant_id() and public.current_user_role() = 'ADMIN');
@@ -1813,6 +2006,11 @@ on public.reservation_status_logs for select
 to authenticated
 using (restaurant_id = public.current_restaurant_id());
 
+create policy "staff can read own reservation notification outbox"
+on public.reservation_notification_outbox for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
 create policy "staff can read own occupancy logs"
 on public.occupancy_logs for select
 to authenticated
@@ -1820,6 +2018,11 @@ using (restaurant_id = public.current_restaurant_id());
 
 create policy "staff can read own reservation deposits"
 on public.reservation_deposit_logs for select
+to authenticated
+using (restaurant_id = public.current_restaurant_id());
+
+create policy "staff can read own reservation customer risk events"
+on public.reservation_customer_risk_events for select
 to authenticated
 using (restaurant_id = public.current_restaurant_id());
 
@@ -1985,6 +2188,10 @@ $$;
 create trigger order_items_realtime_touch
 after insert or update or delete on public.order_items
 for each row execute function public.touch_order_for_realtime();
+
+create trigger order_items_modifier_defaults
+before insert or update of price, base_price, modifier_total, modifier_snapshot on public.order_items
+for each row execute function public.set_order_item_modifier_defaults();
 
 create trigger payment_logs_realtime_touch
 after insert or update or delete on public.payment_logs

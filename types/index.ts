@@ -8,6 +8,9 @@ export type PublicPromotion = {
   discountType: "PERCENT" | "FIXED";
   discountValue: number;
   minOrderAmount: number;
+  totalUsageLimit: number | null;
+  perCustomerUsageLimit: number | null;
+  remainingTotalUsage: number | null;
   startsAt: string | null;
   endsAt: string | null;
 };
@@ -21,12 +24,29 @@ export type PublicStoreBranch = {
   deliveryEtaMinutes: number;
 };
 
+export type PublicMenuModifierOption = {
+  id: string;
+  name: string;
+  priceDelta: number;
+  isAvailable?: boolean;
+};
+
+export type PublicMenuModifierGroup = {
+  id: string;
+  name: string;
+  required: boolean;
+  minSelect: number;
+  maxSelect: number | null;
+  options: PublicMenuModifierOption[];
+};
+
 export type PublicMenuItem = {
   id: string;
   categoryId: string;
   name: string;
   price: number;
   image: string | null;
+  modifierGroups?: PublicMenuModifierGroup[];
 };
 
 export type PublicMenuCategory = {

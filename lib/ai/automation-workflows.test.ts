@@ -40,6 +40,23 @@ test("buildAiAutomationWorkflows creates marketing workflow for quiet revenue", 
   assert.ok(workflow?.actions.some((action) => action.type === "prompt"));
 });
 
+test("buildAiAutomationWorkflows creates inventory expiry alert sweep workflow", () => {
+  const workflows = buildAiAutomationWorkflows({
+    snapshot: {
+      inventory: {
+        expiringBatchCount: 4,
+        openAlertCount: 6
+      }
+    }
+  });
+
+  const workflow = workflows.find((item) => item.id === "workflow-inventory-expiry-alert-sweep");
+  assert.ok(workflow);
+  assert.equal(workflow.priority, "high");
+  assert.equal(workflow.executionMode, "manual_only");
+  assert.ok(workflow.evidence.includes("expiringBatches=4"));
+});
+
 test("buildAiAutomationWorkflows creates staffing workflow from operation insights", () => {
   const workflows = buildAiAutomationWorkflows({
     snapshot: {

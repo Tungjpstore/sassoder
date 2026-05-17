@@ -52,6 +52,10 @@ function todayInputValue() {
   return new Date(now.getTime() - timezoneOffset).toISOString().slice(0, 10);
 }
 
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function formatTime(value: string | null | undefined) {
   if (!value) return "--:--";
   return new Intl.DateTimeFormat("vi-VN", {
@@ -98,6 +102,13 @@ function relativeTime(value: string) {
     day: "2-digit",
     month: "2-digit"
   }).format(new Date(value));
+}
+
+function syncStatusText(queueLength: number, isOnline: boolean, syncing: boolean) {
+  if (syncing) return "Đang đồng bộ";
+  if (!isOnline) return "Mất kết nối";
+  if (queueLength > 0) return "Chờ đồng bộ";
+  return "Đã sẵn sàng";
 }
 
 function shiftStatusLabel(status: StaffOpsShiftAssignment["status"]) {
@@ -255,6 +266,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
   const [requestTargetStaffMemberId, setRequestTargetStaffMemberId] = useState("");
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(() => new Date().toISOString());
   const [isPending, startTransition] = useTransition();
   const staff = bundle.members[0] ?? null;
   const today = todayInputValue();
@@ -291,10 +303,27 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
   const pendingRequestCount = recentRequests.filter((request) => request.status === "pending").length;
   const shiftSwapCandidates = bundle.mobileOps.shiftSwapCandidates;
   const activeDuration = durationBetween(activeAttendance?.clockInAt, activeAttendance?.clockOutAt, nowMs);
+  const canUseGps = bundle.premium.gpsAttendance;
+  const primaryAction = activeAttendance ? "clock_out" : "clock_in";
+  const primarySource = canUseGps ? "gps" : "qr";
+  const leaveDateInvalid = requestKind === "leave_request" && requestToDate < requestFromDate;
+  const normalizedOvertimeMinutes = clampNumber(requestOvertimeMinutes || 15, 15, 720);
+  const selectedBranchName = bundle.branches.find((branch) => branch.id === selectedBranchId)?.name ?? staff?.primaryBranchName ?? "Chưa chọn";
+  const requestShiftAssignmentIdForSubmit = requestShiftAssignmentId || upcomingAssignments[0]?.id || "";
+  const requestBlockedReason =
+    requestKind === "leave_request" && leaveDateInvalid
+      ? "Ngày kết thúc phải sau hoặc bằng ngày bắt đầu."
+      : requestKind === "shift_swap" && !requestShiftAssignmentIdForSubmit
+        ? "Bạn chưa có ca sắp tới để xin đổi."
+        : requestKind === "overtime" && (requestOvertimeMinutes < 15 || requestOvertimeMinutes > 720)
+          ? "OT hợp lệ từ 15 đến 720 phút."
+          : null;
+  const canClock = Boolean(selectedBranchId) && !isPending;
 
   const refreshBundle = async () => {
     const next = await fetchStaffOperationsBundle("self");
     setBundle(next);
+    setLastRefreshedAt(new Date().toISOString());
     const nextBranchId = next.members[0]?.primaryBranchId ?? next.branches[0]?.id ?? "";
     setSelectedBranchId((current) => current || nextBranchId);
   };
@@ -304,6 +333,23 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     userId,
     onSynced: refreshBundle
   });
+  const readinessItems = [
+    {
+      label: "Chi nhánh",
+      value: selectedBranchName,
+      tone: selectedBranchId ? "ready" : "warning"
+    },
+    {
+      label: "Nguồn",
+      value: canUseGps ? "GPS Premium" : "QR tại quán",
+      tone: canUseGps ? "ready" : "neutral"
+    },
+    {
+      label: "Kết nối",
+      value: syncStatusText(offlineQueue.queue.length, offlineQueue.isOnline, offlineQueue.syncing),
+      tone: !offlineQueue.isOnline || offlineQueue.queue.length > 0 ? "warning" : "ready"
+    }
+  ];
 
   useEffect(() => {
     const fingerprint = getDeviceFingerprint();
@@ -332,6 +378,10 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
 
   const runClockAction = (action: "clock_in" | "clock_out", source: "gps" | "qr") => {
     if (!staff) return;
+    if (!selectedBranchId) {
+      setMessage({ tone: "warning", text: "Bạn cần chọn chi nhánh trước khi chấm công." });
+      return;
+    }
     setMessage(null);
     startTransition(() => {
       void (async () => {
@@ -443,7 +493,11 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
 
   const runRequestAction = () => {
     if (!staff) return;
-    const shiftAssignmentId = requestShiftAssignmentId || upcomingAssignments[0]?.id || "";
+    const shiftAssignmentId = requestShiftAssignmentIdForSubmit;
+    if (requestBlockedReason) {
+      setMessage({ tone: "warning", text: requestBlockedReason });
+      return;
+    }
     const payload: StaffRequestCreatePayload = {
       requestType: requestKind,
       staffMemberId: staff.id,
@@ -458,17 +512,13 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     }
 
     if (requestKind === "shift_swap") {
-      if (!shiftAssignmentId) {
-        setMessage({ tone: "warning", text: "Bạn chưa có ca sắp tới để xin đổi." });
-        return;
-      }
       payload.shiftAssignmentId = shiftAssignmentId;
       payload.targetStaffMemberId = requestTargetStaffMemberId || undefined;
     }
 
     if (requestKind === "overtime") {
       payload.fromDate = requestFromDate;
-      payload.overtimeMinutes = requestOvertimeMinutes;
+      payload.overtimeMinutes = normalizedOvertimeMinutes;
     }
 
     setSubmittingRequest(true);
@@ -504,10 +554,6 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
       </main>
     );
   }
-
-  const canUseGps = bundle.premium.gpsAttendance;
-  const primaryAction = activeAttendance ? "clock_out" : "clock_in";
-  const primarySource = canUseGps ? "gps" : "qr";
 
   return (
     <main className="stitch-admin min-h-screen bg-[var(--background)] text-[var(--foreground)]">
@@ -648,6 +694,12 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
                     ))}
                   </select>
                 </label>
+                {!upcomingAssignments.length ? (
+                  <div className="flex items-center gap-2 rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)]">
+                    <AlertTriangle size={15} />
+                    Chưa có ca sắp tới để tạo yêu cầu đổi ca.
+                  </div>
+                ) : null}
                 <label className="grid gap-1">
                   <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Người nhận ca</span>
                   <select value={requestTargetStaffMemberId} onChange={(event) => setRequestTargetStaffMemberId(event.target.value)} className="h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black outline-none">
@@ -678,6 +730,12 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
                   <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Đến ngày</span>
                   <input type="date" value={requestToDate} onChange={(event) => setRequestToDate(event.target.value)} className="h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black outline-none" />
                 </label>
+                {leaveDateInvalid ? (
+                  <div className="col-span-2 flex items-center gap-2 rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)]">
+                    <AlertTriangle size={15} />
+                    Ngày kết thúc đang nhỏ hơn ngày bắt đầu.
+                  </div>
+                ) : null}
                 <label className="col-span-2 grid gap-1">
                   <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Loại nghỉ</span>
                   <select value={requestLeaveType} onChange={(event) => setRequestLeaveType(event.target.value as typeof requestLeaveType)} className="h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black outline-none">
@@ -699,8 +757,20 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
                 </label>
                 <label className="grid gap-1">
                   <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Số phút</span>
-                  <input type="number" min="15" max="720" step="15" value={requestOvertimeMinutes} onChange={(event) => setRequestOvertimeMinutes(Number(event.target.value) || 15)} className="h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black outline-none" />
+                  <input type="number" min="15" max="720" step="15" value={requestOvertimeMinutes} onChange={(event) => setRequestOvertimeMinutes(Number(event.target.value) || 15)} onBlur={() => setRequestOvertimeMinutes(normalizedOvertimeMinutes)} className="h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black outline-none" />
                 </label>
+                <div className="col-span-2 grid grid-cols-4 gap-2">
+                  {[30, 60, 90, 120].map((minutes) => (
+                    <button
+                      key={minutes}
+                      type="button"
+                      onClick={() => setRequestOvertimeMinutes(minutes)}
+                      className={`min-h-10 rounded-2xl border px-2 text-xs font-black ${requestOvertimeMinutes === minutes ? "border-[var(--primary)] bg-[var(--primary)] text-[#FFF7EB]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]"}`}
+                    >
+                      {minutes}p
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : null}
 
@@ -711,7 +781,12 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
               placeholder="Lý do ngắn gọn..."
               className="min-h-20 rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-bold outline-none"
             />
-            <button type="button" onClick={runRequestAction} disabled={submittingRequest} className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 text-sm font-black text-[#FFF7EB] disabled:opacity-55">
+            {requestBlockedReason ? (
+              <div className="rounded-2xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)]">
+                {requestBlockedReason}
+              </div>
+            ) : null}
+            <button type="button" onClick={runRequestAction} disabled={submittingRequest || Boolean(requestBlockedReason)} className="flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-[var(--primary)] px-4 text-sm font-black text-[#FFF7EB] disabled:opacity-55">
               <Send size={16} />
               {submittingRequest ? "Đang gửi..." : `Gửi ${staffRequestLabel(requestKind).toLowerCase()}`}
             </button>
@@ -738,6 +813,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           <label className="grid gap-1">
             <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Chi nhánh</span>
             <select value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)} className="h-12 rounded-2xl border px-3 text-sm font-black outline-none">
+              {!bundle.branches.length ? <option value="">Chưa có chi nhánh</option> : null}
               {bundle.branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name}
@@ -746,18 +822,27 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
             </select>
           </label>
 
-          <div className="grid grid-cols-3 gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] p-2 text-center">
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Nguồn</p>
-              <p className="mt-0.5 text-sm font-black">{primarySource.toUpperCase()}</p>
+          <div className="grid gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] p-2">
+            <div className="grid grid-cols-3 gap-2 text-center">
+              {readinessItems.map((item) => (
+                <div
+                  key={item.label}
+                  className={`min-w-0 rounded-2xl border px-2 py-2 ${
+                    item.tone === "ready"
+                      ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]"
+                      : item.tone === "warning"
+                        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                        : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+                  }`}
+                >
+                  <p className="truncate text-[10px] font-black uppercase tracking-[0.1em]">{item.label}</p>
+                  <p className="mt-0.5 truncate text-xs font-black">{item.value}</p>
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Ca</p>
-              <p className="mt-0.5 text-sm font-black">{activeAttendance ? "Đang mở" : "Chưa vào"}</p>
-            </div>
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Offline</p>
-              <p className="mt-0.5 text-sm font-black">{offlineQueue.queue.length}</p>
+            <div className="flex items-center justify-between gap-2 px-1 text-[11px] font-bold text-[var(--muted-foreground)]">
+              <span>{activeAttendance ? `Ca đang mở ${activeDuration}` : "Chưa vào ca"}</span>
+              <span>Cập nhật {relativeTime(lastRefreshedAt)}</span>
             </div>
           </div>
 
@@ -778,7 +863,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           <button
             type="button"
             onClick={() => runClockAction(primaryAction, primarySource)}
-            disabled={isPending}
+            disabled={!canClock}
             className="flex min-h-16 items-center justify-center gap-2 rounded-[22px] bg-[var(--primary)] px-4 text-base font-black text-[#FFF7EB] shadow-[0_18px_34px_rgba(15,77,58,0.2)] disabled:opacity-55"
           >
             <MapPin size={20} />
@@ -795,7 +880,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           <button
             type="button"
             onClick={() => runClockAction(primaryAction, "qr")}
-            disabled={isPending}
+            disabled={!canClock}
             className="flex min-h-14 items-center justify-center gap-2 rounded-[20px] border border-[var(--border)] bg-[var(--surface-container)] px-4 text-sm font-black text-[var(--foreground)] disabled:opacity-55"
           >
             <Fingerprint size={18} />

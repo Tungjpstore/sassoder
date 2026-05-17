@@ -176,7 +176,7 @@ export function AdminShell({
             </div>
           </header>
           {focusMode ? null : <AdminMobileNav />}
-          <div className="mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pt-4 lg:pb-5">
+          <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pt-4 lg:pb-5">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${

@@ -4,6 +4,8 @@ import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitl
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { buildVietQrUrl } from "@/lib/vietqr";
+import { invalidateAdminReportCache } from "@/services/dashboard-report-service";
+import { invalidateRestaurantOrderCache } from "@/services/order-service";
 import { billStatusToOrderPaymentState, ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
 import { completeReservationForBill } from "@/services/reservation-service";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
@@ -62,6 +64,12 @@ function isPaidOrder(order: Pick<PaymentOrderRow, "status" | "payment_status">) 
 
 function startPaymentLogStatus(method: PaymentMethod) {
   return method === "QR" ? "pending" : "waiting_confirm";
+}
+
+function invalidatePaymentDerivedCaches(restaurantId: string) {
+  invalidateRestaurantOrderCache(restaurantId);
+  invalidateRestaurantDashboardCache(restaurantId);
+  invalidateAdminReportCache(restaurantId);
 }
 
 async function getRestaurantIdBySlug(slug: string) {
@@ -372,7 +380,7 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
       source: "customer_bill_checkout"
     });
 
-    invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+    invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
   }
 
@@ -424,7 +432,7 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
     amount: typedOrder.total,
     source: "customer_checkout"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
 
@@ -528,7 +536,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       source: "customer_bill_button"
     });
 
-    invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+    invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
   }
 
@@ -577,7 +585,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
     amount: typedOrder.total,
     source: "customer_button"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
 
@@ -630,7 +638,7 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
     amount: typedOrder.total,
     source: "remote_order_customer_paid_button"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getRemotePaymentOrder(orderId, access);
 }
 
@@ -660,6 +668,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         source: "merchant_bill_manual_confirm"
       });
       await completeReservationForBill(restaurantId, bill.id);
+      invalidatePaymentDerivedCaches(restaurantId);
       return getMerchantPaymentOrder(supabase, restaurantId, orderId);
     }
     if (bill.status === "cancelled") {
@@ -703,6 +712,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
           source: "merchant_bill_manual_confirm"
         });
         await completeReservationForBill(restaurantId, currentBill.id);
+        invalidatePaymentDerivedCaches(restaurantId);
         return currentOrder;
       }
       throw new AppError("Không thể xác nhận thanh toán cho hóa đơn này", 409);
@@ -724,7 +734,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     });
     await completeReservationForBill(restaurantId, bill.id);
 
-    invalidateRestaurantDashboardCache(restaurantId);
+    invalidatePaymentDerivedCaches(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);
   }
 
@@ -738,6 +748,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         source: "merchant_manual_confirm"
       });
     }
+    invalidatePaymentDerivedCaches(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);
   }
   if (typedOrder.status === "cancelled") {
@@ -797,6 +808,6 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     method: typedOrder.payment_method,
     source: "merchant_manual_confirm"
   });
-  invalidateRestaurantDashboardCache(restaurantId);
+  invalidatePaymentDerivedCaches(restaurantId);
   return getMerchantPaymentOrder(supabase, restaurantId, orderId);
 }

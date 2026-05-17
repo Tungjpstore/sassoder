@@ -3,8 +3,8 @@ import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { listPublicPromotions, type PublicPromotion } from "@/services/promotion-service";
-import type { PublicStoreBranch } from "@/types";
+import { listPublicPromotions } from "@/services/promotion-service";
+import type { PublicMenuModifierGroup, PublicPromotion, PublicStoreBranch } from "@/types";
 
 export type AdminMenuItem = {
   id: string;
@@ -14,6 +14,7 @@ export type AdminMenuItem = {
   price: number;
   image_url: string | null;
   is_available: boolean;
+  modifierGroups?: PublicMenuModifierGroup[];
 };
 
 export type AdminMenuCategory = {
@@ -72,7 +73,171 @@ export async function listMenuForAdmin(restaurantId: string) {
     .order("name", { referencedTable: "menu_items", ascending: true });
 
   throwIfSupabaseError(error);
-  return (data ?? []) as unknown as AdminMenuCategory[];
+  const categories = (data ?? []) as unknown as AdminMenuCategory[];
+  const itemIds = categories.flatMap((category) => category.items.map((item) => item.id));
+  const modifierGroupsByItemId = await listAdminMenuModifierGroups(supabase, restaurantId, itemIds);
+  return attachPublicMenuModifiers(categories, modifierGroupsByItemId);
+}
+
+type MenuModifierGroupRow = {
+  id: string;
+  menu_item_id: string;
+  name: string;
+  is_required: boolean;
+  min_select: number;
+  max_select: number | null;
+  sort_order: number;
+};
+
+type MenuModifierOptionRow = {
+  id: string;
+  group_id: string;
+  name: string;
+  price_delta: number;
+  is_available: boolean;
+  sort_order: number;
+};
+
+type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function isMissingMenuModifierSchema(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return (
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST205" ||
+    /menu_modifier_groups|menu_modifier_options|modifier/i.test(message)
+  );
+}
+
+async function listPublicMenuModifierGroups(
+  supabase: ReturnType<typeof createAdminSupabaseClient>,
+  restaurantId: string
+): Promise<Map<string, PublicMenuModifierGroup[]>> {
+  const [groupsResult, optionsResult] = await Promise.all([
+    supabase
+      .from("menu_modifier_groups")
+      .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("menu_modifier_options")
+      .select("id,group_id,name,price_delta,is_available,sort_order")
+      .eq("restaurant_id", restaurantId)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+  ]);
+
+  if (isMissingMenuModifierSchema(groupsResult.error) || isMissingMenuModifierSchema(optionsResult.error)) {
+    return new Map();
+  }
+
+  throwIfSupabaseError(groupsResult.error);
+  throwIfSupabaseError(optionsResult.error);
+
+  const optionsByGroupId = new Map<string, PublicMenuModifierGroup["options"]>();
+  for (const option of (optionsResult.data ?? []) as MenuModifierOptionRow[]) {
+    const groupOptions = optionsByGroupId.get(option.group_id) ?? [];
+    groupOptions.push({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.price_delta,
+      isAvailable: option.is_available
+    });
+    optionsByGroupId.set(option.group_id, groupOptions);
+  }
+
+  const groupsByItemId = new Map<string, PublicMenuModifierGroup[]>();
+  for (const group of (groupsResult.data ?? []) as MenuModifierGroupRow[]) {
+    const itemGroups = groupsByItemId.get(group.menu_item_id) ?? [];
+    itemGroups.push({
+      id: group.id,
+      name: group.name,
+      required: group.is_required,
+      minSelect: group.min_select,
+      maxSelect: group.max_select,
+      options: optionsByGroupId.get(group.id) ?? []
+    });
+    groupsByItemId.set(group.menu_item_id, itemGroups);
+  }
+
+  return groupsByItemId;
+}
+
+async function listAdminMenuModifierGroups(
+  supabase: ServerSupabaseClient,
+  restaurantId: string,
+  menuItemIds: string[]
+): Promise<Map<string, PublicMenuModifierGroup[]>> {
+  if (menuItemIds.length === 0) return new Map();
+
+  const { data: groupsData, error: groupsError } = await supabase
+    .from("menu_modifier_groups")
+    .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+    .eq("restaurant_id", restaurantId)
+    .eq("is_active", true)
+    .in("menu_item_id", menuItemIds)
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (isMissingMenuModifierSchema(groupsError)) return new Map();
+  throwIfSupabaseError(groupsError);
+
+  const groups = (groupsData ?? []) as MenuModifierGroupRow[];
+  const groupIds = groups.map((group) => group.id);
+  if (groupIds.length === 0) return new Map();
+
+  const { data: optionsData, error: optionsError } = await supabase
+    .from("menu_modifier_options")
+    .select("id,group_id,name,price_delta,is_available,sort_order")
+    .eq("restaurant_id", restaurantId)
+    .in("group_id", groupIds)
+    .order("sort_order", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (isMissingMenuModifierSchema(optionsError)) return new Map();
+  throwIfSupabaseError(optionsError);
+
+  const optionsByGroupId = new Map<string, PublicMenuModifierGroup["options"]>();
+  for (const option of (optionsData ?? []) as MenuModifierOptionRow[]) {
+    const groupOptions = optionsByGroupId.get(option.group_id) ?? [];
+    groupOptions.push({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.price_delta,
+      isAvailable: option.is_available
+    });
+    optionsByGroupId.set(option.group_id, groupOptions);
+  }
+
+  const groupsByItemId = new Map<string, PublicMenuModifierGroup[]>();
+  for (const group of groups) {
+    const itemGroups = groupsByItemId.get(group.menu_item_id) ?? [];
+    itemGroups.push({
+      id: group.id,
+      name: group.name,
+      required: group.is_required,
+      minSelect: group.min_select,
+      maxSelect: group.max_select,
+      options: optionsByGroupId.get(group.id) ?? []
+    });
+    groupsByItemId.set(group.menu_item_id, itemGroups);
+  }
+
+  return groupsByItemId;
+}
+
+function attachPublicMenuModifiers(categories: AdminMenuCategory[], groupsByItemId: Map<string, PublicMenuModifierGroup[]>): AdminMenuCategory[] {
+  return categories.map((category) => ({
+    ...category,
+    items: (category.items ?? []).map((item) => ({
+      ...item,
+      modifierGroups: groupsByItemId.get(item.id) ?? []
+    }))
+  }));
 }
 
 export const getCachedPublicMenu = unstable_cache(
@@ -88,7 +253,7 @@ export const getCachedPublicMenu = unstable_cache(
     const restaurant = restaurantData as Omit<PublicMenuRestaurant, "branches" | "categories" | "promotions" | "onlinePromotions"> | null;
     if (!restaurant) return null;
 
-    const [categoriesResult, branchesResult, promotions, onlinePromotions] = await Promise.all([
+    const [categoriesResult, branchesResult, promotions, onlinePromotions, modifierGroupsByItemId] = await Promise.all([
       supabase
         .from("menu_categories")
         .select("id,restaurant_id,name,items:menu_items(id,restaurant_id,category_id,name,price,image_url,is_available)")
@@ -104,7 +269,8 @@ export const getCachedPublicMenu = unstable_cache(
         .order("is_primary", { ascending: false })
         .order("name", { ascending: true }),
       restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "QR_MENU") : Promise.resolve([]),
-      restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "WEBSITE") : Promise.resolve([])
+      restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "WEBSITE") : Promise.resolve([]),
+      listPublicMenuModifierGroups(supabase, restaurant.id)
     ]);
 
     throwIfSupabaseError(categoriesResult.error);
@@ -122,7 +288,7 @@ export const getCachedPublicMenu = unstable_cache(
       })),
       promotions,
       onlinePromotions,
-      categories: (categoriesResult.data ?? []) as unknown as AdminMenuCategory[]
+      categories: attachPublicMenuModifiers((categoriesResult.data ?? []) as unknown as AdminMenuCategory[], modifierGroupsByItemId)
     };
   },
   ["public-menu"],
@@ -246,6 +412,233 @@ export async function updateMenuItem(input: {
     .single();
 
   throwIfSupabaseError(error);
+  invalidateMenuCache();
+  return data;
+}
+
+function throwMenuModifierError(error: Parameters<typeof throwIfSupabaseError>[0], fallback: string) {
+  if (isMissingMenuModifierSchema(error)) {
+    throw new AppError("Cấu hình topping/tùy chọn món chưa được cập nhật trong database.", 400);
+  }
+
+  throwIfSupabaseError(error, fallback);
+}
+
+async function assertMenuItemForRestaurant(supabase: ServerSupabaseClient, restaurantId: string, itemId: string) {
+  const { data, error } = await supabase
+    .from("menu_items")
+    .select("id")
+    .eq("id", itemId)
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  if (!data) throw new AppError("Không tìm thấy món trong menu", 404);
+}
+
+async function assertModifierGroupForRestaurant(supabase: ServerSupabaseClient, restaurantId: string, groupId: string) {
+  const { data, error } = await supabase
+    .from("menu_modifier_groups")
+    .select("id,menu_item_id")
+    .eq("id", groupId)
+    .eq("restaurant_id", restaurantId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  throwMenuModifierError(error, "Không tìm thấy nhóm tùy chọn");
+  if (!data) throw new AppError("Không tìm thấy nhóm tùy chọn", 404);
+  return data;
+}
+
+async function nextModifierGroupSortOrder(supabase: ServerSupabaseClient, restaurantId: string, itemId: string) {
+  const { data, error } = await supabase
+    .from("menu_modifier_groups")
+    .select("sort_order")
+    .eq("restaurant_id", restaurantId)
+    .eq("menu_item_id", itemId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  throwMenuModifierError(error, "Không đọc được thứ tự nhóm tùy chọn");
+  return Number(data?.sort_order ?? 0) + 10;
+}
+
+async function nextModifierOptionSortOrder(supabase: ServerSupabaseClient, restaurantId: string, groupId: string) {
+  const { data, error } = await supabase
+    .from("menu_modifier_options")
+    .select("sort_order")
+    .eq("restaurant_id", restaurantId)
+    .eq("group_id", groupId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  throwMenuModifierError(error, "Không đọc được thứ tự tùy chọn");
+  return Number(data?.sort_order ?? 0) + 10;
+}
+
+export async function createMenuModifierGroup(input: {
+  restaurantId: string;
+  itemId: string;
+  name: string;
+  isRequired?: boolean;
+  minSelect: number;
+  maxSelect: number | null;
+}) {
+  const supabase = await createServerSupabaseClient();
+  await assertMenuItemForRestaurant(supabase, input.restaurantId, input.itemId);
+  const sortOrder = await nextModifierGroupSortOrder(supabase, input.restaurantId, input.itemId);
+  const { data, error } = await supabase
+    .from("menu_modifier_groups")
+    .insert({
+      restaurant_id: input.restaurantId,
+      menu_item_id: input.itemId,
+      name: input.name,
+      is_required: Boolean(input.isRequired),
+      min_select: input.minSelect,
+      max_select: input.maxSelect,
+      sort_order: sortOrder,
+      is_active: true
+    })
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không tạo được nhóm tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function updateMenuModifierGroup(input: {
+  restaurantId: string;
+  itemId: string;
+  groupId: string;
+  name: string;
+  isRequired?: boolean;
+  minSelect: number;
+  maxSelect: number | null;
+}) {
+  const supabase = await createServerSupabaseClient();
+  await assertMenuItemForRestaurant(supabase, input.restaurantId, input.itemId);
+  const { data, error } = await supabase
+    .from("menu_modifier_groups")
+    .update({
+      menu_item_id: input.itemId,
+      name: input.name,
+      is_required: Boolean(input.isRequired),
+      min_select: input.minSelect,
+      max_select: input.maxSelect,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", input.groupId)
+    .eq("restaurant_id", input.restaurantId)
+    .eq("is_active", true)
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không cập nhật được nhóm tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function deleteMenuModifierGroup(restaurantId: string, groupId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("menu_modifier_groups")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", groupId)
+    .eq("restaurant_id", restaurantId)
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không xóa được nhóm tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function createMenuModifierOption(input: {
+  restaurantId: string;
+  groupId: string;
+  name: string;
+  priceDelta: number;
+  isAvailable?: boolean;
+}) {
+  const supabase = await createServerSupabaseClient();
+  await assertModifierGroupForRestaurant(supabase, input.restaurantId, input.groupId);
+  const sortOrder = await nextModifierOptionSortOrder(supabase, input.restaurantId, input.groupId);
+  const { data, error } = await supabase
+    .from("menu_modifier_options")
+    .insert({
+      restaurant_id: input.restaurantId,
+      group_id: input.groupId,
+      name: input.name,
+      price_delta: input.priceDelta,
+      is_available: input.isAvailable ?? true,
+      sort_order: sortOrder
+    })
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không tạo được tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function updateMenuModifierOption(input: {
+  restaurantId: string;
+  groupId: string;
+  optionId: string;
+  name: string;
+  priceDelta: number;
+  isAvailable?: boolean;
+}) {
+  const supabase = await createServerSupabaseClient();
+  await assertModifierGroupForRestaurant(supabase, input.restaurantId, input.groupId);
+  const { data, error } = await supabase
+    .from("menu_modifier_options")
+    .update({
+      group_id: input.groupId,
+      name: input.name,
+      price_delta: input.priceDelta,
+      is_available: input.isAvailable ?? false,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", input.optionId)
+    .eq("restaurant_id", input.restaurantId)
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không cập nhật được tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function updateMenuModifierOptionAvailability(restaurantId: string, optionId: string, isAvailable: boolean) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("menu_modifier_options")
+    .update({ is_available: isAvailable, updated_at: new Date().toISOString() })
+    .eq("id", optionId)
+    .eq("restaurant_id", restaurantId)
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không đổi được trạng thái tùy chọn");
+  invalidateMenuCache();
+  return data;
+}
+
+export async function deleteMenuModifierOption(restaurantId: string, optionId: string) {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("menu_modifier_options")
+    .delete()
+    .eq("id", optionId)
+    .eq("restaurant_id", restaurantId)
+    .select()
+    .single();
+
+  throwMenuModifierError(error, "Không xóa được tùy chọn");
   invalidateMenuCache();
   return data;
 }

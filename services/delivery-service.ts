@@ -6,7 +6,9 @@ import { readSharedCache, writeSharedCache } from "@/services/maps/cache-service
 import { buildDistanceEstimate, calculateDistance } from "@/services/maps/distance-service";
 import { resolveRestaurantAvailability, type RestaurantAvailability } from "@/services/delivery/availability-engine";
 import { resolveDeliveryStoreAvailability, type DeliveryStoreAvailabilityMetadata } from "@/services/delivery/branch-availability-engine";
+import { evaluateDeliveryZone, type DeliveryExclusionZone, type DeliveryZoneEvaluation, type DeliveryZonePoint } from "@/services/delivery/delivery-zone-service";
 import { quoteDeliveryPricing, type DeliveryPricingQuote } from "@/services/delivery/pricing-engine";
+import { analyzeVietnameseDeliveryAddress, type AddressQualitySnapshot } from "@/services/maps/address-quality-service";
 import { findNearestStore } from "@/services/maps/nearby-store-service";
 import { resolveDistanceAndEta, searchAddress } from "@/services/maps/provider-service";
 import type { Coordinate, GeocodingProvider, MapRequestContext, NearbyStoreCandidate, ResolvedRouteResult, RouteConfidence, RouteGeometry, RoutingProvider } from "@/services/maps/types";
@@ -100,6 +102,7 @@ export type DeliveryQuote = {
   quoteVersion?: string;
   pricingSnapshot?: DeliveryPricingSnapshot;
   deliveryAreaSnapshot?: DeliveryAreaSnapshot;
+  addressQualitySnapshot?: AddressQualitySnapshot;
   availabilitySnapshot?: RestaurantAvailability;
 };
 
@@ -130,6 +133,9 @@ export type DeliveryAreaSnapshot = {
   requireOutsideAreaConfirmation: boolean;
   polygonPoints: number;
   exclusionZoneCount: number;
+  status?: DeliveryZoneEvaluation["status"];
+  outsideCustomArea?: boolean;
+  matchedExclusionName?: string | null;
 };
 
 export const DELIVERY_QUOTE_VERSION = "delivery-quote-v2";
@@ -139,6 +145,15 @@ const orderingSelect =
 
 function hasCoordinate(lat?: number | null, lng?: number | null) {
   return typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng);
+}
+
+function deliveryQuoteProviderToAddressQualityProvider(
+  provider: DeliveryQuote["provider"]
+): GeocodingProvider | "browser-location" | "manual" | null {
+  if (provider === "browser-location+haversine") return "browser-location";
+  if (provider === "mapbox" || provider === "nominatim" || provider === "vietmap" || provider === "goong") return provider;
+  if (provider === "manual") return "manual";
+  return null;
 }
 
 function getMapboxAccessToken() {
@@ -161,10 +176,7 @@ export async function geocodeAddressWithMapbox(address: string, provider?: Geoco
   return first ? { lat: first.lat, lng: first.lng, address: first.address, provider: first.provider } : null;
 }
 
-type DeliveryAreaPoint = {
-  lat: number;
-  lng: number;
-};
+type DeliveryAreaPoint = DeliveryZonePoint;
 
 type DeliveryFeeTierSetting = {
   id?: string;
@@ -174,7 +186,7 @@ type DeliveryFeeTierSetting = {
   contact?: boolean;
 };
 
-type DeliveryExclusionZoneSetting = {
+type DeliveryExclusionZoneSetting = DeliveryExclusionZone & {
   id?: string;
   name?: string;
   areaKm2?: number;
@@ -242,20 +254,6 @@ function normalizeExclusionZones(value: Json | null | undefined): DeliveryExclus
     .filter((zone): zone is DeliveryExclusionZoneSetting => zone !== null);
 }
 
-function pointInPolygon(point: DeliveryAreaPoint, polygon: DeliveryAreaPoint[]) {
-  if (polygon.length < 3) return false;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].lng;
-    const yi = polygon[i].lat;
-    const xj = polygon[j].lng;
-    const yj = polygon[j].lat;
-    const intersects = yi > point.lat !== yj > point.lat && point.lng < ((xj - xi) * (point.lat - yi)) / (yj - yi) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-}
-
 export function calculateServiceFee(settings: OrderingSettings, subtotal: number) {
   if (!settings.service_fee_enabled || settings.service_fee_percent <= 0) return 0;
   const rawFee = Math.round((subtotal * Number(settings.service_fee_percent)) / 100);
@@ -296,7 +294,8 @@ function buildPricingSnapshot(
 function buildDeliveryAreaSnapshot(
   settings: OrderingSettings,
   deliveryAreaPolygon: DeliveryAreaPoint[],
-  exclusionZones: DeliveryExclusionZoneSetting[]
+  exclusionZones: DeliveryExclusionZoneSetting[],
+  evaluation?: DeliveryZoneEvaluation
 ): DeliveryAreaSnapshot {
   return {
     mode: settings.delivery_area_mode,
@@ -304,7 +303,10 @@ function buildDeliveryAreaSnapshot(
     allowOutsideDeliveryArea: Boolean(settings.allow_outside_delivery_area),
     requireOutsideAreaConfirmation: Boolean(settings.require_outside_area_confirmation),
     polygonPoints: deliveryAreaPolygon.length,
-    exclusionZoneCount: exclusionZones.length
+    exclusionZoneCount: exclusionZones.length,
+    status: evaluation?.status,
+    outsideCustomArea: evaluation?.outsideCustomArea,
+    matchedExclusionName: evaluation?.matchedExclusionName ?? null
   };
 }
 
@@ -952,6 +954,7 @@ export async function quoteDeliveryForRestaurant(
   let destination = hasCoordinate(input.deliveryLat, input.deliveryLng)
     ? { lat: Number(input.deliveryLat), lng: Number(input.deliveryLng) }
     : null;
+  let qualityAddress = input.deliveryAddress?.trim() || null;
   const mapContext: MapRequestContext = {
     restaurantId: settings.id,
     restaurantSlug: settings.slug,
@@ -963,10 +966,16 @@ export async function quoteDeliveryForRestaurant(
     if (geocodedDestination) {
       destination = geocodedDestination;
       provider = geocodedDestination.provider;
+      qualityAddress = geocodedDestination.address || qualityAddress;
     }
   }
 
   if (!destination) {
+    const addressQualitySnapshot = analyzeVietnameseDeliveryAddress({
+      address: qualityAddress,
+      coordinate: null,
+      provider: "manual"
+    });
     return {
       accepted: false,
       reason: isMapboxDeliveryProviderReady()
@@ -976,7 +985,8 @@ export async function quoteDeliveryForRestaurant(
       fee: 0,
       serviceFee: 0,
       etaMinutes: Number(settings.delivery_eta_minutes),
-      provider: "manual"
+      provider: "manual",
+      addressQualitySnapshot
     };
   }
 
@@ -1039,6 +1049,12 @@ export async function quoteDeliveryForRestaurant(
   const route = routedStore.route;
   const distanceKm = route.distanceKm;
   if (route.provider !== "haversine") provider = route.provider;
+  const addressQualitySnapshot = analyzeVietnameseDeliveryAddress({
+    address: qualityAddress,
+    coordinate: destination,
+    provider: deliveryQuoteProviderToAddressQualityProvider(provider),
+    routeConfidence: route.confidence
+  });
 
   const deliveryRadiusKm = activeMetadata?.deliveryRadiusKm ?? Number(settings.delivery_radius_km);
   const deliveryEtaMinutes = activeMetadata?.deliveryEtaMinutes ?? Number(settings.delivery_eta_minutes);
@@ -1046,7 +1062,15 @@ export async function quoteDeliveryForRestaurant(
   const exclusionZones = normalizeExclusionZones(settings.delivery_exclusion_zones);
   const feeTiers = normalizeFeeTiers(settings.delivery_fee_tiers);
   let pricingSnapshot = buildPricingSnapshot(settings, activeMetadata, deliveryRadiusKm, feeTiers);
-  const deliveryAreaSnapshot = buildDeliveryAreaSnapshot(settings, deliveryAreaPolygon, exclusionZones);
+  const deliveryZoneEvaluation = evaluateDeliveryZone({
+    destination,
+    mode: settings.delivery_area_mode,
+    polygon: deliveryAreaPolygon,
+    exclusionZones,
+    allowOutsideDeliveryArea: Boolean(settings.allow_outside_delivery_area),
+    requireOutsideAreaConfirmation: Boolean(settings.require_outside_area_confirmation)
+  });
+  const deliveryAreaSnapshot = buildDeliveryAreaSnapshot(settings, deliveryAreaPolygon, exclusionZones, deliveryZoneEvaluation);
   const routeQuoteContext = {
     routeProvider: route.provider,
     confidence: route.confidence,
@@ -1054,55 +1078,14 @@ export async function quoteDeliveryForRestaurant(
     fallbackChain: route.fallbackChain,
     quoteVersion: DELIVERY_QUOTE_VERSION,
     pricingSnapshot,
-    deliveryAreaSnapshot
+    deliveryAreaSnapshot,
+    addressQualitySnapshot
   };
-  const matchedExclusion = exclusionZones.find((zone) => zone.polygon && zone.polygon.length >= 3 && pointInPolygon(destination, zone.polygon));
 
-  if (matchedExclusion) {
+  if (!deliveryZoneEvaluation.accepted) {
     return {
       accepted: false,
-      reason: `${matchedExclusion.name || "Khu vực này"} đang nằm trong vùng loại trừ giao hàng.`,
-      distanceKm,
-      fee: 0,
-      serviceFee: 0,
-      etaMinutes: deliveryEtaMinutes,
-      origin,
-      destination,
-      nearestStore,
-      routeGeometry: route.geometry ?? null,
-      routeDurationMinutes: route.durationMinutes ?? null,
-      ...routeQuoteContext,
-      provider
-    };
-  }
-
-  const outsideCustomArea =
-    settings.delivery_area_mode === "CUSTOM" &&
-    deliveryAreaPolygon.length >= 3 &&
-    !pointInPolygon(destination, deliveryAreaPolygon);
-
-  if (outsideCustomArea && !settings.allow_outside_delivery_area) {
-    return {
-      accepted: false,
-      reason: "Địa chỉ này chưa nằm trong vùng giao hàng tùy chỉnh của quán.",
-      distanceKm,
-      fee: 0,
-      serviceFee: 0,
-      etaMinutes: deliveryEtaMinutes,
-      origin,
-      destination,
-      nearestStore,
-      routeGeometry: route.geometry ?? null,
-      routeDurationMinutes: route.durationMinutes ?? null,
-      ...routeQuoteContext,
-      provider
-    };
-  }
-
-  if (outsideCustomArea && settings.require_outside_area_confirmation) {
-    return {
-      accepted: false,
-      reason: "Địa chỉ nằm ngoài vùng giao chính, quán cần xác nhận thủ công trước khi nhận đơn.",
+      reason: deliveryZoneEvaluation.reason ?? "Địa chỉ này chưa nằm trong vùng giao hàng của quán.",
       distanceKm,
       fee: 0,
       serviceFee: 0,
@@ -1210,6 +1193,7 @@ export function buildDeliveryQuoteSnapshot(settings: OrderingSettings, quote: De
       snapshot: quote.pricingSnapshot ?? null
     },
     deliveryArea: quote.deliveryAreaSnapshot ?? null,
+    addressQuality: quote.addressQualitySnapshot ?? null,
     availability: quote.availabilitySnapshot ?? null,
     generatedAt: new Date().toISOString()
   } as Json;

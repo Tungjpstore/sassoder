@@ -17,8 +17,14 @@ import {
   Truck,
   Utensils
 } from "lucide-react";
-import { retryAiMorningBriefEmailAction, updateAiMorningBriefPreferencesAction, updateAiOperationInsightStatusAction } from "@/app/dashboard/actions";
+import {
+  retryAiMorningBriefEmailAction,
+  updateAiAutomationRunStatusAction,
+  updateAiMorningBriefPreferencesAction,
+  updateAiOperationInsightStatusAction
+} from "@/app/dashboard/actions";
 import { AdminShell } from "@/components/dashboard/app-shell";
+import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-cards";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buildAiAutomationWorkflows, type AiAutomationWorkflow } from "@/lib/ai/automation-workflows";
@@ -35,6 +41,8 @@ import {
   listRecentAiBranchOperationInsights,
   type RecentAiBranchOperationInsight
 } from "@/services/ai-operation-insights-service";
+import { listRecentAiRecommendations } from "@/services/ai-recommendation-service";
+import { persistAiAutomationRuns } from "@/services/ai-automation-run-service";
 import { getOwnerOperationalSnapshot } from "@/services/ai/runtime";
 import { getBranchAttributionQualityReport } from "@/services/branch-attribution-quality-service";
 import { getBranchPerformanceComparisonReport } from "@/services/branch-performance-comparison-service";
@@ -164,6 +172,7 @@ export default async function AiOpsPage({
     recentRuns,
     preferencesResult,
     branchInsightsResult,
+    recommendationsResult,
     branchAttributionReport,
     branchPerformanceReport,
     automationSnapshot
@@ -172,6 +181,7 @@ export default async function AiOpsPage({
     listRecentAiMorningBriefRuns(session.restaurantId, 20),
     getAiMorningBriefPreferences(session.restaurantId, session.email),
     listRecentAiBranchOperationInsights(session.restaurantId, 12),
+    listRecentAiRecommendations(session.restaurantId, 9),
     getBranchAttributionQualityReport(session.restaurantId, { windowDays: 7 }),
     getBranchPerformanceComparisonReport(session.restaurantId, { windowDays: 7 }),
     getOwnerOperationalSnapshot(session.restaurantId, "overview", {
@@ -190,6 +200,17 @@ export default async function AiOpsPage({
   const emailReady = preferencesResult.schemaReady && preferences.emailEnabled && preferences.recipients.length > 0;
   const feedback = feedbackMessage(params);
   const automationWorkflows = buildAiAutomationWorkflows({ snapshot: automationSnapshot, limit: 4 });
+  const persistedAutomation = await persistAiAutomationRuns({
+    restaurantId: session.restaurantId,
+    workflows: automationWorkflows
+  });
+  const recommendationDeck = {
+    generatedAt: new Date().toISOString(),
+    summary: recommendationsResult.recommendations.length
+      ? `${recommendationsResult.recommendations.length} gợi ý AI đang mở.`
+      : "Chưa có gợi ý AI đang mở.",
+    recommendations: recommendationsResult.recommendations
+  };
 
   const metricCards = [
     {
@@ -251,8 +272,8 @@ export default async function AiOpsPage({
       subtitle="Inbox vận hành mỗi sáng cho chủ quán"
       showLiveActionCenter={false}
     >
-      <div className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="dashboard-ai-workspace grid gap-3">
+        <div className="dashboard-ai-toolbar flex flex-wrap items-center justify-between gap-2">
           <Link href="/dashboard" className="dashboard-secondary-action">
             <ArrowLeft size={16} />
             Tổng quan
@@ -275,7 +296,7 @@ export default async function AiOpsPage({
           </section>
         ) : null}
 
-        <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+        <section className="dashboard-ai-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           {metricCards.map((card) => {
             const Icon = card.icon;
             return (
@@ -293,6 +314,8 @@ export default async function AiOpsPage({
           })}
         </section>
 
+        <AiRecommendationCards deck={recommendationDeck} schemaReady={recommendationsResult.schemaReady} />
+
         <section className="dashboard-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -302,13 +325,20 @@ export default async function AiOpsPage({
               </p>
               <h2 className="dashboard-section-title mt-1">Workflow gợi ý cần xác nhận</h2>
             </div>
-            <Badge tone={automationWorkflows.length ? "green" : "blue"}>{automationWorkflows.length} workflow</Badge>
+            <Badge tone={persistedAutomation.schemaReady ? (persistedAutomation.workflows.length ? "green" : "blue") : "yellow"}>
+              {persistedAutomation.schemaReady ? `${persistedAutomation.workflows.length} workflow` : "Cần schema"}
+            </Badge>
           </div>
 
-          {automationWorkflows.length ? (
-            <div className="mt-3 grid gap-3 xl:grid-cols-2">
-              {automationWorkflows.map((workflow) => {
+          {!persistedAutomation.schemaReady ? (
+            <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+              Cần migration `ai_automation_runs`, `ai_automation_steps` và `ai_automation_approvals` để lưu workflow AI.
+            </div>
+          ) : persistedAutomation.workflows.length ? (
+            <div className="dashboard-ai-card-grid mt-3 grid gap-3 xl:grid-cols-2">
+              {persistedAutomation.workflows.map((workflow) => {
                 const primaryLink = workflow.actions.find((action) => action.type === "link" && action.href);
+                const runId = workflow.lifecycle?.databaseId;
                 return (
                   <article key={workflow.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -316,7 +346,13 @@ export default async function AiOpsPage({
                         <div className="flex flex-wrap gap-2">
                           <Badge tone={workflowTone(workflow.priority)}>{workflow.priority}</Badge>
                           <Badge>{workflowDomainLabel(workflow.domain)}</Badge>
-                          <Badge>{workflow.executionMode === "confirm_first" ? "Cần xác nhận" : "Manual"}</Badge>
+                          <Badge>
+                            {workflow.lifecycle?.status === "approved"
+                              ? "Đã duyệt"
+                              : workflow.executionMode === "confirm_first"
+                                ? "Cần xác nhận"
+                                : "Manual"}
+                          </Badge>
                         </div>
                         <p className="mt-2 text-sm font-bold text-[var(--foreground)]">{workflow.title}</p>
                         <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{workflow.trigger}</p>
@@ -344,12 +380,42 @@ export default async function AiOpsPage({
                       <span className="text-[11px] font-medium text-[var(--muted-foreground)]">
                         {workflow.confidence === "high" ? "Độ tin cậy cao" : "Cần kiểm dữ liệu"}
                       </span>
-                      {primaryLink?.href ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {runId && workflow.executionMode === "confirm_first" && workflow.lifecycle?.status !== "approved" ? (
+                          <form action={updateAiAutomationRunStatusAction}>
+                            <input type="hidden" name="runId" value={runId} />
+                            <input type="hidden" name="status" value="approved" />
+                            <button
+                              type="submit"
+                              className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--primary)] transition hover:border-[var(--primary)]"
+                              aria-label={`Duyệt workflow ${workflow.title}`}
+                              title="Duyệt workflow"
+                            >
+                              <CheckCircle2 size={15} />
+                            </button>
+                          </form>
+                        ) : null}
+                        {runId ? (
+                          <form action={updateAiAutomationRunStatusAction}>
+                            <input type="hidden" name="runId" value={runId} />
+                            <input type="hidden" name="status" value="dismissed" />
+                            <button
+                              type="submit"
+                              className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                              aria-label={`Ẩn workflow ${workflow.title}`}
+                              title="Ẩn workflow"
+                            >
+                              <EyeOff size={15} />
+                            </button>
+                          </form>
+                        ) : null}
+                        {primaryLink?.href ? (
                         <Link href={primaryLink.href} className="dashboard-secondary-action">
                           {primaryLink.label}
                           <ArrowRight size={15} />
                         </Link>
-                      ) : null}
+                        ) : null}
+                      </div>
                     </div>
                   </article>
                 );
@@ -376,7 +442,7 @@ export default async function AiOpsPage({
             </Badge>
           </div>
 
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <div className="dashboard-ai-card-grid mt-3 grid gap-2 md:grid-cols-2">
             {!branchInsightsResult.schemaReady ? (
               <div className="grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)] md:col-span-2">
                 Cần bảng `ai_operation_insights` và `store_branches` để hiển thị cảnh báo theo chi nhánh.
@@ -659,7 +725,7 @@ export default async function AiOpsPage({
           )}
         </section>
 
-        <section className="grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
+        <section className="dashboard-ai-split-grid grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
           <div className="dashboard-panel p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>

@@ -73,6 +73,19 @@ function dateRangeLabel(fromDate?: string | "", toDate?: string | "") {
   return `${fromDate} -> ${toDate}`;
 }
 
+function daySpanInclusive(fromDate: string, toDate: string) {
+  const from = new Date(`${fromDate}T00:00:00.000Z`).getTime();
+  const to = new Date(`${toDate}T00:00:00.000Z`).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return 0;
+  return Math.floor((to - from) / 86_400_000) + 1;
+}
+
+function dateInRange(date: string, fromDate: unknown, toDate: unknown) {
+  if (typeof fromDate !== "string" || !fromDate) return false;
+  const endDate = typeof toDate === "string" && toDate ? toDate : fromDate;
+  return fromDate <= date && date <= endDate;
+}
+
 function payloadMatches(left: Record<string, unknown>, right: Record<string, unknown>, keys: string[]) {
   return keys.every((key) => left[key] === right[key]);
 }
@@ -180,6 +193,70 @@ async function readTargetStaffName(supabase: any, restaurantId: string, targetSt
   return staff.full_name;
 }
 
+async function assertNoPayrollRequestConflict({
+  supabase,
+  restaurantId,
+  staffMemberId,
+  input
+}: {
+  supabase: any;
+  restaurantId: string;
+  staffMemberId: string;
+  input: StaffOperationalRequestInput;
+}) {
+  const requestDates =
+    input.requestType === "leave_request"
+      ? { fromDate: input.fromDate || "", toDate: input.toDate || input.fromDate || "" }
+      : input.requestType === "overtime"
+        ? { fromDate: input.fromDate || "", toDate: input.fromDate || "" }
+        : null;
+
+  if (!requestDates?.fromDate) return;
+
+  const result = await supabase
+    .from("attendance_approval_requests")
+    .select("id,request_type,status,requested_payload")
+    .eq("restaurant_id", restaurantId)
+    .eq("staff_member_id", staffMemberId)
+    .in("request_type", ["leave_request", "overtime"])
+    .in("status", ["pending", "approved"])
+    .order("created_at", { ascending: false })
+    .limit(80);
+
+  if (result.error) throw result.error;
+
+  const rows = (result.data ?? []) as Array<{
+    id: string;
+    request_type: "leave_request" | "overtime";
+    status: "pending" | "approved";
+    requested_payload: Record<string, unknown> | null;
+  }>;
+
+  if (input.requestType === "overtime") {
+    const overtimeDate = input.fromDate || "";
+    const conflictingLeave = rows.find((row) => {
+      const payload = row.requested_payload ?? {};
+      return row.request_type === "leave_request" && dateInRange(overtimeDate, payload.fromDate, payload.toDate);
+    });
+
+    if (conflictingLeave) {
+      throw new AppError("Ngày này đã có nghỉ phép đang chờ/đã duyệt, không thể tạo yêu cầu tăng ca.", 409);
+    }
+  }
+
+  if (input.requestType === "leave_request") {
+    const conflictingOvertime = rows.find((row) => {
+      const payload = row.requested_payload ?? {};
+      const overtimeDate = typeof payload.overtimeDate === "string" ? payload.overtimeDate : typeof payload.fromDate === "string" ? payload.fromDate : "";
+      return row.request_type === "overtime" && overtimeDate && dateInRange(overtimeDate, requestDates.fromDate, requestDates.toDate);
+    });
+
+    if (conflictingOvertime) {
+      throw new AppError("Khoảng nghỉ này đã có tăng ca đang chờ/đã duyệt, cần xử lý payroll trước.", 409);
+    }
+  }
+}
+
 async function buildRequestDraft({
   supabase,
   session,
@@ -199,6 +276,8 @@ async function buildRequestDraft({
     const toDate = input.toDate || fromDate;
     const branchId = input.branchId || primaryBranchId;
     const label = leaveTypeLabels[leaveType] ?? leaveTypeLabels.other;
+    const leaveDays = daySpanInclusive(fromDate, toDate);
+    if (leaveDays > 31) throw new AppError("Một yêu cầu nghỉ phép chỉ được tối đa 31 ngày.", 422);
 
     return {
       requestType: "leave_request",
@@ -209,6 +288,7 @@ async function buildRequestDraft({
         leaveTypeLabel: label,
         fromDate,
         toDate,
+        leaveDays,
         payrollImpact: leaveType === "paid" ? "paid_leave" : "unpaid_leave"
       },
       notificationTitle: "Yêu cầu nghỉ phép mới",
@@ -218,6 +298,9 @@ async function buildRequestDraft({
 
   if (input.requestType === "shift_swap") {
     const { assignment, shift } = await readShiftForSwap(supabase, session, staff, input.shiftAssignmentId);
+    if (input.targetStaffMemberId && input.targetStaffMemberId === staff.id) {
+      throw new AppError("Người nhận đổi ca phải khác nhân viên tạo yêu cầu.", 422);
+    }
     const targetStaffName = await readTargetStaffName(supabase, session.restaurantId, input.targetStaffMemberId);
 
     return {
@@ -340,6 +423,13 @@ export async function createStaffOperationalRequest({
   const staff = await readStaffMemberForRequest(supabase, session, input.staffMemberId);
   const primaryBranchId = await readPrimaryBranchId(supabase, session.restaurantId, staff.id);
   const draft = await buildRequestDraft({ supabase, session, staff, input, primaryBranchId });
+
+  await assertNoPayrollRequestConflict({
+    supabase,
+    restaurantId: session.restaurantId,
+    staffMemberId: staff.id,
+    input
+  });
 
   await assertNoDuplicatePendingRequest({
     supabase,

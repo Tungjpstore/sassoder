@@ -1,8 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, Truck, X } from "lucide-react";
-import { createPromotionAction, deletePromotionAction, togglePromotionAction, togglePromotionDisplayAction } from "@/app/dashboard/actions";
+import { AlertTriangle, BarChart3, CheckCircle2, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, Truck, X } from "lucide-react";
+import { createPromotionAction, deletePromotionAction, togglePromotionAction, togglePromotionDisplayAction, updatePromotionAction } from "@/app/dashboard/actions";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { DashboardMetricCard, DashboardSectionHeader } from "@/components/dashboard/primitives";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +59,50 @@ function formatDateTime(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatDateTimeLocal(value: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function hasChannel(campaign: Promotion, channel: string) {
+  return campaign.channels.includes(channel);
+}
+
+function hasCustomerOrderingChannel(campaign: Promotion) {
+  return hasChannel(campaign, "QR_MENU") || hasChannel(campaign, "WEBSITE");
+}
+
+function campaignReadiness(campaign: PromotionWithStatus) {
+  const issues: string[] = [];
+  if (!campaign.is_active) issues.push("Đang tạm dừng");
+  if (campaign.computedStatus === "scheduled") issues.push("Chưa tới thời gian bắt đầu");
+  if (campaign.computedStatus === "ended") issues.push("Đã hết thời gian áp dụng");
+  if (!campaign.show_on_customer_menu) issues.push("Đang ẩn khỏi menu khách");
+  if (!hasCustomerOrderingChannel(campaign)) issues.push("Chưa bật kênh QR Menu hoặc Website");
+  if (campaign.discount_scope === "DELIVERY_FEE" && !hasChannel(campaign, "WEBSITE")) {
+    issues.push("Mã phí giao hàng nên bật Website");
+  }
+
+  if (issues.length === 0) {
+    return {
+      tone: "green" as const,
+      title: "Sẵn sàng cho khách dùng",
+      detail: "Đang hoạt động, hiện với khách và có kênh đặt món phù hợp.",
+      issues
+    };
+  }
+
+  return {
+    tone: campaign.computedStatus === "ended" ? "red" as const : "yellow" as const,
+    title: campaign.computedStatus === "ended" ? "Không còn chạy" : "Cần rà lại cấu hình",
+    detail: issues[0],
+    issues
+  };
+}
+
 export function PromotionsWorkspace({ campaigns, usage }: { campaigns: PromotionWithStatus[]; usage: PromotionUsageSummary[] }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [channelFilter, setChannelFilter] = useState("all");
@@ -70,7 +114,17 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
   const usageById = useMemo(() => new Map(usage.map((item) => [item.promotionId, item])), [usage]);
   const usedOrders = useMemo(() => usage.reduce((sum, item) => sum + item.orders, 0), [usage]);
   const discountTotal = useMemo(() => usage.reduce((sum, item) => sum + item.discount, 0), [usage]);
-  const publicCampaigns = campaigns.filter((campaign) => campaign.show_on_customer_menu && campaign.channels.includes("QR_MENU"));
+  const customerVisibleCampaigns = campaigns.filter((campaign) => campaign.show_on_customer_menu && campaign.computedStatus === "active" && hasCustomerOrderingChannel(campaign));
+  const qrVisibleCampaigns = customerVisibleCampaigns.filter((campaign) => hasChannel(campaign, "QR_MENU"));
+  const websiteVisibleCampaigns = customerVisibleCampaigns.filter((campaign) => hasChannel(campaign, "WEBSITE"));
+  const attentionCampaigns = campaigns
+    .filter((campaign) => campaignReadiness(campaign).tone !== "green")
+    .sort((left, right) => {
+      const leftEnded = left.computedStatus === "ended" ? 1 : 0;
+      const rightEnded = right.computedStatus === "ended" ? 1 : 0;
+      return rightEnded - leftEnded;
+    })
+    .slice(0, 4);
   const filteredCampaigns = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     return campaigns.filter((campaign) => {
@@ -88,7 +142,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
 
   const stats = [
     { label: "Chiến dịch đang chạy", value: activeCampaigns.length, meta: `${campaigns.length} tổng chiến dịch`, icon: Tag },
-    { label: "Hiện trên menu khách", value: publicCampaigns.length, meta: "Khách thấy ngay khi gọi món", icon: Ticket },
+    { label: "Khách đang thấy", value: customerVisibleCampaigns.length, meta: `${qrVisibleCampaigns.length} QR · ${websiteVisibleCampaigns.length} Website`, icon: Ticket },
     { label: "Sắp diễn ra", value: campaigns.filter((campaign) => campaign.computedStatus === "scheduled").length, meta: "Theo ngày bắt đầu", icon: TrendingUp },
     { label: "Đã áp mã", value: usedOrders, meta: `Giảm ${formatVnd(discountTotal)}`, icon: BarChart3 }
   ];
@@ -285,8 +339,42 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   <QrCode size={16} className="text-[var(--primary)]" />
                   Mã hiện trên header
                 </div>
-                <p className="mt-2 text-2xl font-semibold text-[var(--foreground)]">{publicCampaigns.length}</p>
-                <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Khách thấy ngay khi mở menu QR.</p>
+                <p className="mt-2 text-2xl font-semibold text-[var(--foreground)]">{qrVisibleCampaigns.length}</p>
+                <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{websiteVisibleCampaigns.length} mã đang hiện ở đặt món online.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                  <CheckCircle2 size={16} className="text-[var(--primary)]" />
+                  Mã sẵn sàng
+                </div>
+                <p className="mt-2 text-2xl font-semibold text-[var(--foreground)]">{customerVisibleCampaigns.length}</p>
+                <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Đang chạy, hiện với khách và có kênh phù hợp.</p>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+                  <AlertTriangle size={16} className="text-[var(--accent)]" />
+                  Cần rà lại
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {attentionCampaigns.length === 0 ? (
+                    <p className="text-sm font-medium text-[var(--muted-foreground)]">Không có cảnh báo cấu hình.</p>
+                  ) : (
+                    attentionCampaigns.map((campaign) => {
+                      const readiness = campaignReadiness(campaign);
+                      return (
+                        <button
+                          key={campaign.id}
+                          type="button"
+                          onClick={() => openDetailDrawer(campaign.id)}
+                          className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left"
+                        >
+                          <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{campaign.code}</span>
+                          <span className="mt-0.5 block text-xs font-medium text-[var(--muted-foreground)]">{readiness.detail}</span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                 <p className="text-sm font-semibold text-[var(--foreground)]">Gợi ý cấu hình tốt</p>
@@ -354,6 +442,16 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     Hóa đơn tối thiểu
                     <Input name="minOrderAmount" type="number" min={0} step={1000} defaultValue={0} />
                   </label>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Tổng lượt dùng
+                      <Input name="totalUsageLimit" type="number" min={1} step={1} placeholder="Không giới hạn" />
+                    </label>
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Lượt mỗi khách
+                      <Input name="perCustomerUsageLimit" type="number" min={1} step={1} placeholder="Không giới hạn" />
+                    </label>
+                  </div>
                   <label className="grid gap-2 text-sm font-semibold">
                     Thời gian áp dụng
                     <div className="grid grid-cols-2 gap-2">
@@ -379,6 +477,30 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
 
               {panelMode === "detail" && selectedCampaign && (
                 <div className="grid gap-4">
+                  {(() => {
+                    const readiness = campaignReadiness(selectedCampaign);
+                    return (
+                      <div className={`rounded-xl border p-4 ${readiness.tone === "green" ? "border-[var(--primary)]/20 bg-[var(--primary-soft)]" : readiness.tone === "red" ? "border-[var(--accent)]/25 bg-[var(--accent-soft)]" : "border-[var(--warning)]/25 bg-[var(--warning-soft)]"}`}>
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 text-[var(--foreground)]">
+                            {readiness.tone === "green" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-[var(--foreground)]">{readiness.title}</p>
+                            <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{readiness.detail}</p>
+                            {readiness.issues.length > 1 ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {readiness.issues.slice(1).map((issue) => (
+                                  <Badge key={issue} tone="yellow">{issue}</Badge>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -399,6 +521,18 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                       <div>
                         <p className="text-[var(--muted-foreground)]">Tối thiểu</p>
                         <p className="mt-1 font-semibold text-[var(--foreground)]">{selectedCampaign.min_order_amount > 0 ? formatVnd(selectedCampaign.min_order_amount) : "Không yêu cầu"}</p>
+                      </div>
+                      <div>
+                        <p className="text-[var(--muted-foreground)]">Giới hạn dùng</p>
+                        <p className="mt-1 font-semibold text-[var(--foreground)]">
+                          {selectedCampaign.total_usage_limit ? `${usageById.get(selectedCampaign.id)?.orders ?? 0}/${selectedCampaign.total_usage_limit} lượt` : "Không giới hạn"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[var(--muted-foreground)]">Mỗi khách</p>
+                        <p className="mt-1 font-semibold text-[var(--foreground)]">
+                          {selectedCampaign.per_customer_usage_limit ? `${selectedCampaign.per_customer_usage_limit} lượt` : "Không giới hạn"}
+                        </p>
                       </div>
                       <div>
                         <p className="text-[var(--muted-foreground)]">Bắt đầu</p>
@@ -429,6 +563,78 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                       ))}
                     </div>
                   </div>
+
+                  <form action={updatePromotionAction} className="grid gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+                    <input type="hidden" name="promotionId" value={selectedCampaign.id} />
+                    <div>
+                      <h4 className="text-sm font-semibold text-[var(--foreground)]">Cấu hình chiến dịch</h4>
+                      <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Sửa trực tiếp điều kiện áp dụng, mã và kênh hiển thị.</p>
+                    </div>
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Tên chiến dịch
+                      <Input name="name" defaultValue={selectedCampaign.name} required />
+                    </label>
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Mã khuyến mãi
+                      <Input name="code" className="font-mono uppercase" defaultValue={selectedCampaign.code} required />
+                    </label>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Phạm vi ưu đãi
+                        <select name="discountScope" defaultValue={selectedCampaign.discount_scope ?? "ORDER"} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-semibold outline-none">
+                          <option value="ORDER">Giảm giá đơn hàng</option>
+                          <option value="DELIVERY_FEE">Giảm / miễn phí giao hàng</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Loại ưu đãi
+                        <select name="discountType" defaultValue={selectedCampaign.discount_type} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-semibold outline-none">
+                          <option value="PERCENT">Giảm theo phần trăm</option>
+                          <option value="FIXED">Giảm tiền trực tiếp</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Mức giảm
+                        <Input name="discountValue" type="number" min={1} defaultValue={selectedCampaign.discount_value} required />
+                      </label>
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Hóa đơn tối thiểu
+                        <Input name="minOrderAmount" type="number" min={0} step={1000} defaultValue={selectedCampaign.min_order_amount} />
+                      </label>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Tổng lượt dùng
+                        <Input name="totalUsageLimit" type="number" min={1} step={1} defaultValue={selectedCampaign.total_usage_limit ?? ""} placeholder="Không giới hạn" />
+                      </label>
+                      <label className="grid gap-2 text-sm font-semibold">
+                        Lượt mỗi khách
+                        <Input name="perCustomerUsageLimit" type="number" min={1} step={1} defaultValue={selectedCampaign.per_customer_usage_limit ?? ""} placeholder="Không giới hạn" />
+                      </label>
+                    </div>
+                    <label className="grid gap-2 text-sm font-semibold">
+                      Thời gian áp dụng
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input name="startsAt" type="datetime-local" defaultValue={formatDateTimeLocal(selectedCampaign.starts_at)} />
+                        <Input name="endsAt" type="datetime-local" defaultValue={formatDateTimeLocal(selectedCampaign.ends_at)} />
+                      </div>
+                    </label>
+                    <div className="grid gap-2 text-sm font-semibold">
+                      Kênh áp dụng
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="IN_STORE" defaultChecked={hasChannel(selectedCampaign, "IN_STORE")} /> <Store size={14} /> Tại quán</label>
+                        <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="QR_MENU" defaultChecked={hasChannel(selectedCampaign, "QR_MENU")} /> <QrCode size={14} /> QR Menu</label>
+                        <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="WEBSITE" defaultChecked={hasChannel(selectedCampaign, "WEBSITE")} /> <Send size={14} /> Website</label>
+                        <label className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-medium"><input name="channels" type="checkbox" value="EMAIL" defaultChecked={hasChannel(selectedCampaign, "EMAIL")} /> Email</label>
+                      </div>
+                    </div>
+                    <Button className="shadow-none hover:shadow-none">
+                      <Ticket size={16} />
+                      Lưu cấu hình
+                    </Button>
+                  </form>
 
                   <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                     <h4 className="text-sm font-semibold text-[var(--foreground)]">Thao tác nhanh</h4>

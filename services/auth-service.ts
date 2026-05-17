@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/response";
+import { assertAuthEmailDeliveryConfigured } from "@/lib/auth-email-delivery";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
@@ -72,11 +73,7 @@ async function sendAuthOtpEmail({
   token: string;
   purpose: AuthOtpPurpose;
 }): Promise<SignupOtpDelivery> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new AppError("Hệ thống email OTP chưa được cấu hình. Vui lòng liên hệ LogiVN để kiểm tra kênh gửi email.", 500);
-  }
-
+  const apiKey = assertAuthEmailDeliveryConfigured();
   const email = buildAuthOtpEmail({ token, purpose });
   let response: Response;
 
@@ -119,6 +116,7 @@ async function generateSignupOtpEmail({
   emailRedirectTo: string;
   metadata?: Record<string, unknown>;
 }) {
+  assertAuthEmailDeliveryConfigured();
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase.auth.admin.generateLink({
     type: "signup",
@@ -150,6 +148,7 @@ async function generateMagiclinkOtpEmail({
   email: string;
   emailRedirectTo: string;
 }) {
+  assertAuthEmailDeliveryConfigured();
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase.auth.admin.generateLink({
     type: "magiclink",
@@ -177,6 +176,7 @@ async function generateRecoveryOtpEmail({
   email: string;
   emailRedirectTo: string;
 }) {
+  assertAuthEmailDeliveryConfigured();
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase.auth.admin.generateLink({
     type: "recovery",

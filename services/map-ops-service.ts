@@ -2,6 +2,9 @@ import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { getProviderPolicySnapshot } from "@/services/maps/provider-policy-service";
+import { getProviderCircuitSnapshot } from "@/services/maps/provider-runtime";
+import { getMapDeliveryReadiness } from "@/services/maps/map-delivery-readiness-service";
 
 type ProviderLogRow = {
   provider: string;
@@ -25,6 +28,13 @@ type QuoteLogRow = {
   latency_ms: number;
 };
 
+type MapOpsWarning = {
+  code: "provider_failures" | "low_cache_hit" | "estimated_quotes" | "slow_quotes" | "open_circuit" | "cost_guard";
+  severity: "warning" | "critical";
+  title: string;
+  detail: string;
+};
+
 function average(values: number[]) {
   const safeValues = values.filter((value) => Number.isFinite(value));
   if (safeValues.length === 0) return 0;
@@ -34,6 +44,74 @@ function average(values: number[]) {
 function percentage(part: number, total: number) {
   if (total <= 0) return 0;
   return Math.round((part / total) * 10000) / 100;
+}
+
+function buildWarnings(metrics: {
+  provider: { requests: number; failureRate: number; avgLatencyMs: number };
+  cache: { events: number; hitRate: number };
+  quotes: { requests: number; estimatedRate: number; avgLatencyMs: number };
+  policy: ReturnType<typeof getProviderPolicySnapshot>;
+  circuits: ReturnType<typeof getProviderCircuitSnapshot>;
+}): MapOpsWarning[] {
+  const warnings: MapOpsWarning[] = [];
+
+  if (metrics.provider.requests >= 10 && metrics.provider.failureRate >= 8) {
+    warnings.push({
+      code: "provider_failures",
+      severity: metrics.provider.failureRate >= 20 ? "critical" : "warning",
+      title: "Provider fallback đang tăng",
+      detail: `Failure rate ${metrics.provider.failureRate.toFixed(1)}%. Kiểm tra API key, quota và timeout Goong/Mapbox.`
+    });
+  }
+
+  if (metrics.cache.events >= 30 && metrics.cache.hitRate < 35) {
+    warnings.push({
+      code: "low_cache_hit",
+      severity: "warning",
+      title: "Cache hit thấp",
+      detail: `Cache hit ${metrics.cache.hitRate.toFixed(1)}%. Nên rà key chuẩn hóa địa chỉ và TTL route/geocode.`
+    });
+  }
+
+  if (metrics.quotes.requests >= 10 && metrics.quotes.estimatedRate >= 25) {
+    warnings.push({
+      code: "estimated_quotes",
+      severity: metrics.quotes.estimatedRate >= 45 ? "critical" : "warning",
+      title: "Quote dùng Haversine nhiều",
+      detail: `Estimated quote ${metrics.quotes.estimatedRate.toFixed(1)}%. Độ chính xác hẻm/đường nhỏ có thể giảm.`
+    });
+  }
+
+  if (metrics.quotes.requests >= 10 && metrics.quotes.avgLatencyMs >= 1800) {
+    warnings.push({
+      code: "slow_quotes",
+      severity: metrics.quotes.avgLatencyMs >= 3000 ? "critical" : "warning",
+      title: "Quote giao hàng chậm",
+      detail: `Latency trung bình ${metrics.quotes.avgLatencyMs}ms. Cần giảm routed top-N hoặc tăng cache.`
+    });
+  }
+
+  const openCircuits = metrics.circuits.filter((circuit) => circuit.open);
+  if (openCircuits.length > 0) {
+    warnings.push({
+      code: "open_circuit",
+      severity: "warning",
+      title: "Circuit breaker đang mở",
+      detail: `${openCircuits.map((circuit) => `${circuit.provider}/${circuit.operation}`).join(", ")} đang được bỏ qua tạm thời.`
+    });
+  }
+
+  const costGuardUsage = metrics.policy.usage.reduce((sum, item) => sum + item.estimatedCostVnd, 0);
+  if (metrics.policy.maxDailyCostVnd && costGuardUsage >= metrics.policy.maxDailyCostVnd * 0.8) {
+    warnings.push({
+      code: "cost_guard",
+      severity: costGuardUsage >= metrics.policy.maxDailyCostVnd ? "critical" : "warning",
+      title: "Map cost guard gần ngưỡng",
+      detail: `Ước tính hôm nay ${costGuardUsage.toLocaleString("vi-VN")}đ / ${metrics.policy.maxDailyCostVnd.toLocaleString("vi-VN")}đ.`
+    });
+  }
+
+  return warnings;
 }
 
 export async function getMapOperationalMetrics(restaurantId: string, windowHours = 24) {
@@ -102,33 +180,53 @@ export async function getMapOperationalMetrics(restaurantId: string, windowHours
   const acceptedQuotes = quoteLogs.filter((log) => log.accepted).length;
   const estimatedQuotes = quoteLogs.filter((log) => log.is_estimated).length;
 
+  const providerFailures = providerLogs.filter((log) => log.outcome !== "success").length;
+  const providerMetrics = {
+    requests: providerLogs.length,
+    failures: providerFailures,
+    failureRate: percentage(providerFailures, providerLogs.length),
+    avgLatencyMs: average(providerLogs.map((log) => Number(log.latency_ms) || 0)),
+    estimatedCostVnd: Math.round(providerLogs.reduce((sum, log) => sum + (Number(log.estimated_cost_vnd) || 0), 0)),
+    breakdown: providerBreakdown
+  };
+  const cacheMetrics = {
+    events: cacheLogs.length,
+    hits: cacheHits,
+    misses: cacheLogs.length - cacheHits,
+    hitRate: percentage(cacheHits, cacheLogs.length)
+  };
+  const quoteMetrics = {
+    requests: quoteLogs.length,
+    accepted: acceptedQuotes,
+    rejected: quoteLogs.length - acceptedQuotes,
+    acceptanceRate: percentage(acceptedQuotes, quoteLogs.length),
+    estimated: estimatedQuotes,
+    estimatedRate: percentage(estimatedQuotes, quoteLogs.length),
+    avgDistanceKm: average(quoteLogs.map((log) => Number(log.distance_km) || 0)),
+    avgFee: Math.round(average(quoteLogs.map((log) => Number(log.fee) || 0))),
+    avgLatencyMs: average(quoteLogs.map((log) => Number(log.latency_ms) || 0))
+  };
+  const policy = getProviderPolicySnapshot();
+  const circuits = getProviderCircuitSnapshot();
+  const readiness = getMapDeliveryReadiness();
+  const warnings = buildWarnings({ provider: providerMetrics, cache: cacheMetrics, quotes: quoteMetrics, policy, circuits });
+
   return {
     windowHours,
     since,
-    provider: {
-      requests: providerLogs.length,
-      failures: providerLogs.filter((log) => log.outcome !== "success").length,
-      failureRate: percentage(providerLogs.filter((log) => log.outcome !== "success").length, providerLogs.length),
-      avgLatencyMs: average(providerLogs.map((log) => Number(log.latency_ms) || 0)),
-      estimatedCostVnd: Math.round(providerLogs.reduce((sum, log) => sum + (Number(log.estimated_cost_vnd) || 0), 0)),
-      breakdown: providerBreakdown
-    },
-    cache: {
-      events: cacheLogs.length,
-      hits: cacheHits,
-      misses: cacheLogs.length - cacheHits,
-      hitRate: percentage(cacheHits, cacheLogs.length)
-    },
-    quotes: {
-      requests: quoteLogs.length,
-      accepted: acceptedQuotes,
-      rejected: quoteLogs.length - acceptedQuotes,
-      acceptanceRate: percentage(acceptedQuotes, quoteLogs.length),
-      estimated: estimatedQuotes,
-      estimatedRate: percentage(estimatedQuotes, quoteLogs.length),
-      avgDistanceKm: average(quoteLogs.map((log) => Number(log.distance_km) || 0)),
-      avgFee: Math.round(average(quoteLogs.map((log) => Number(log.fee) || 0))),
-      avgLatencyMs: average(quoteLogs.map((log) => Number(log.latency_ms) || 0))
+    provider: providerMetrics,
+    cache: cacheMetrics,
+    quotes: quoteMetrics,
+    policy,
+    circuits,
+    readiness,
+    health: {
+      status: warnings.some((warning) => warning.severity === "critical")
+        ? "critical"
+        : warnings.length > 0
+          ? "warning"
+          : "healthy",
+      warnings
     }
   };
 }

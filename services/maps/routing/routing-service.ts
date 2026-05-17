@@ -2,6 +2,7 @@ import { readSharedCache, writeSharedCache } from "@/services/maps/cache-service
 import { calculateDistance, estimateTravelTime } from "@/services/maps/distance-service";
 import { recordMapCacheEvent } from "@/services/maps/observability-service";
 import { getRoutingFallbackChain, getRoutingProviders } from "@/services/maps/provider-factory";
+import { shouldUseProvider } from "@/services/maps/provider-policy-service";
 import { isCircuitOpen, recordProviderResult, withRequestDedupe } from "@/services/maps/provider-runtime";
 import { getRouteGeometryCacheScope, simplifyRouteGeometry } from "@/services/maps/route-geometry-service";
 import type {
@@ -28,6 +29,7 @@ export async function getRoute(
     const attempted: RoutingProvider[] = [];
 
     for (const provider of providers) {
+      if (!shouldUseProvider(provider.id, "route")) continue;
       if (isCircuitOpen(provider.id, "route")) continue;
       attempted.push(provider.id);
       const providerRoute = await provider.route(origin, destination, options.context);

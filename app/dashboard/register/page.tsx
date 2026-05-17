@@ -1,11 +1,7 @@
 import { redirect } from "next/navigation";
 import { RegisterAccountForm } from "@/components/dashboard/register-account-form";
+import { buildOnboardingIntentPath, normalizeOnboardingPlan } from "@/lib/auth-onboarding-intent";
 import { getAuthUser, getSessionProfile } from "@/lib/session";
-
-function normalizePlan(value: string | string[] | undefined) {
-  const plan = Array.isArray(value) ? value[0] : value;
-  return plan === "premium" || plan === "pro" ? plan : "pro";
-}
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -25,7 +21,7 @@ export default async function RegisterPage({
   }>;
 }) {
   const params = await searchParams;
-  const planCode = normalizePlan(params?.plan);
+  const planCode = normalizeOnboardingPlan(params?.plan);
   const source = firstParam(params?.source);
   const variant = firstParam(params?.variant);
   const contact = firstParam(params?.contact);
@@ -37,11 +33,7 @@ export default async function RegisterPage({
 
   const user = await getAuthUser();
   if (user) {
-    const onboardingParams = new URLSearchParams({ plan: planCode });
-    if (source) onboardingParams.set("source", source);
-    if (variant) onboardingParams.set("variant", variant);
-    if (pilotGoal) onboardingParams.set("pilotGoal", pilotGoal);
-    redirect(`/dashboard/onboarding?${onboardingParams.toString()}`);
+    redirect(buildOnboardingIntentPath({ plan: planCode, source, variant, pilotGoal }));
   }
 
   return (

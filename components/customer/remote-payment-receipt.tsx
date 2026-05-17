@@ -131,7 +131,11 @@ export function RemotePaymentReceipt({
                 <div className="divide-y divide-[rgba(169,197,161,0.45)] bg-white/58">
                   {order.items.map((item, index) => (
                     <div key={`${item.menuItem?.id ?? item.menuItem?.name ?? "item"}-${index}`} className="grid grid-cols-[minmax(0,1fr)_38px_84px] items-start gap-2 px-3 py-3 text-xs sm:text-sm">
-                      <span className="min-w-0 break-words font-semibold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                      <span className="min-w-0">
+                        <span className="block break-words font-semibold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                        {item.modifierSummary ? <span className="mt-1 block break-words text-[11px] font-bold text-[var(--muted-foreground)]">{item.modifierSummary}</span> : null}
+                        {item.note ? <span className="mt-1 block break-words text-[11px] font-semibold text-[var(--accent)]">{item.note}</span> : null}
+                      </span>
                       <span className="text-center font-bold tabular-nums">{item.quantity}</span>
                       <span className="text-right font-bold tabular-nums">{formatVnd(item.quantity * item.price)}</span>
                     </div>

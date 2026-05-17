@@ -29,14 +29,14 @@ export function BillingWorkspace({
 
   return (
     <EntitlementProvider snapshot={snapshot}>
-      <div className="grid gap-4">
+      <div className="dashboard-billing-workspace grid gap-4">
         <UpgradeBanner
           title={snapshot.planCode === "premium" ? "Bạn đang ở gói cao nhất hiện tại" : "Mở khóa báo cáo thông minh, marketing thông minh và tự động hóa nâng cao"}
           bullets={snapshot.planCode === "premium" ? plan.highlights : planCatalog.premium.highlights}
           onUpgrade={snapshot.planCode === "premium" ? undefined : () => open({ source: "billing_banner" })}
         />
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+        <div className="dashboard-billing-summary-grid grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
           <AIQuotaWidget quotas={quotas} />
           <BillingCard className="bg-[linear-gradient(180deg,rgba(15,77,58,0.06),rgba(255,252,246,0.94))]">
             <PremiumBadge kind={snapshot.planCode === "premium" ? "PREMIUM" : "PRO"} />
@@ -53,7 +53,7 @@ export function BillingWorkspace({
           </BillingCard>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="dashboard-billing-gating-grid grid gap-4 lg:grid-cols-3">
           <FeatureGate featureKey="ai_analytics" previewTitle="Báo cáo thông minh giúp chủ quán nhìn ra xu hướng doanh thu và hành vi khách ngay trong bảng quản lý.">
             <BillingCard>
               <div className="flex items-center gap-3">

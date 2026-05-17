@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { authEmailDeliveryUnavailableMessage, getAuthEmailDeliveryStatus } from "@/lib/auth-email-delivery";
 import { checkPersistentAuthRateLimit } from "@/lib/auth-rate-limit";
 import { authEmailStatusSchema } from "@/lib/validators";
 import { getAuthEmailRegistrationStatus } from "@/services/auth-service";
@@ -66,10 +67,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const status = await getAuthEmailRegistrationStatus(parsed.data.email);
+    const registrationStatus = await getAuthEmailRegistrationStatus(parsed.data.email);
+    const emailDeliveryStatus = getAuthEmailDeliveryStatus();
+    const status =
+      registrationStatus === "available" && emailDeliveryStatus === "delivery_unavailable"
+        ? "delivery_unavailable"
+        : registrationStatus;
+
     return jsonResponse({
       email: parsed.data.email,
-      status
+      status,
+      registrationStatus,
+      emailDeliveryStatus,
+      ...(status === "delivery_unavailable" ? { message: authEmailDeliveryUnavailableMessage } : {})
     });
   } catch (error) {
     console.error("[auth/email-status] Failed to check email status", {

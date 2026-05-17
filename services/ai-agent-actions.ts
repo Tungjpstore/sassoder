@@ -211,6 +211,19 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
       wasteSignalCount?: number;
       highFoodCostItemCount?: number;
     };
+    staff?: {
+      activeCount?: number;
+      memberCount?: number;
+      currentlyClockedIn?: number;
+      lateCount24h?: number;
+      unassignedActiveCount?: number;
+      averageReviewScore?: number;
+      lowReviewCount?: number;
+      draftReviewCount?: number;
+      pendingApprovalCount?: number;
+      pendingApprovalByType?: Record<string, number>;
+      upcomingShiftCount?: number;
+    };
   };
   const actions: AiAgentAction[] = [];
   const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
@@ -357,6 +370,79 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
           href: "/dashboard/inventory",
           intent: "inventory",
           priority: intent === "inventory" ? "primary" : "secondary"
+        })
+      );
+    }
+  }
+
+  if (intent === "staff") {
+    const pendingApprovals = Number(data.staff?.pendingApprovalCount ?? 0);
+    const lateCount = Number(data.staff?.lateCount24h ?? 0);
+    const upcomingShiftCount = Number(data.staff?.upcomingShiftCount ?? 0);
+    const unassignedActiveCount = Number(data.staff?.unassignedActiveCount ?? 0);
+    const lowReviewCount = Number(data.staff?.lowReviewCount ?? 0);
+    const draftReviewCount = Number(data.staff?.draftReviewCount ?? 0);
+    const averageReviewScore = Number(data.staff?.averageReviewScore ?? 0);
+
+    if (pendingApprovals > 0) {
+      actions.push(
+        action({
+          id: "open-staff-approvals",
+          type: "link",
+          label: `Duyệt ${pendingApprovals} yêu cầu`,
+          description: "Mở Nhân sự để xử lý nghỉ phép, đổi ca, tăng ca hoặc chỉnh công đang chờ.",
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: "primary",
+          safety: "confirm"
+        })
+      );
+    }
+
+    if (unassignedActiveCount > 0) {
+      actions.push(
+        action({
+          id: "open-staff-branch-setup",
+          type: "link",
+          label: `Gán chi nhánh cho ${unassignedActiveCount} nhân sự`,
+          description: "Mở HR để chốt branch assignment trước khi xếp ca và tính công.",
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 ? "secondary" : "primary"
+        })
+      );
+    }
+
+    if (lowReviewCount > 0 || draftReviewCount > 0 || (averageReviewScore > 0 && averageReviewScore < 4)) {
+      actions.push(
+        action({
+          id: "open-staff-performance-coaching",
+          type: "link",
+          label: lowReviewCount > 0 ? `Coaching ${lowReviewCount} nhân sự` : "Chốt đánh giá hiệu suất",
+          description:
+            lowReviewCount > 0
+              ? `Review thấp cần kèm cặp · điểm TB ${averageReviewScore ? averageReviewScore.toFixed(1) : "--"}/5.`
+              : `${draftReviewCount} đánh giá nháp cần hoàn tất để xếp ca công bằng.`,
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 || unassignedActiveCount > 0 ? "secondary" : "primary"
+        })
+      );
+    }
+
+    if (lateCount > 0 || upcomingShiftCount > 0) {
+      actions.push(
+        action({
+          id: "open-staff-attendance",
+          type: "link",
+          label: lateCount > 0 ? `Xem ${lateCount} lượt muộn` : "Xem ca sắp tới",
+          description:
+            lateCount > 0
+              ? "Kiểm tra chấm công, lượt muộn và ca cần cân lại."
+              : `Có ${upcomingShiftCount} ca sắp tới cần theo dõi coverage.`,
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 ? "secondary" : "primary"
         })
       );
     }
@@ -514,6 +600,17 @@ function buildOwnerInsightAction(intent: OwnerAiIntent, snapshot?: unknown) {
 
 export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: string[] = [], snapshot?: unknown, toolRuns: ToolRunRecord[] = []) {
   const route = ownerAgentMeta[intent].route;
+  const data = (snapshot ?? {}) as {
+    staff?: {
+      lateCount24h?: number;
+      pendingApprovalCount?: number;
+      unassignedActiveCount?: number;
+      lowReviewCount?: number;
+      draftReviewCount?: number;
+      averageReviewScore?: number;
+      upcomingShiftCount?: number;
+    };
+  };
   const dataActions = buildOwnerDataActions(intent, snapshot);
   const toolActions = buildOwnerToolActions(intent, snapshot, toolRuns);
   const insightAction = buildOwnerInsightAction(intent, snapshot);
@@ -690,19 +787,6 @@ export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: strin
         label: "Lịch gửi báo cáo",
         href: "/dashboard/settings?section=notifications",
         intent: "reports"
-      })
-    );
-  }
-
-  if (intent === "staff") {
-    actions.push(
-      action({
-        id: "open-staff-management",
-        type: "link",
-        label: "Quản lý nhân viên",
-        description: "Mời nhân viên và phân quyền theo least privilege.",
-        href: "/dashboard/staff",
-        intent: "staff"
       })
     );
   }

@@ -1,6 +1,7 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { AppError } from "@/lib/response";
 import {
+  resolveOrderPaymentStatus,
   resolveDeliveryStatusTransition,
   resolveMerchantAcceptTransition,
   type DeliveryActionStatus
@@ -9,6 +10,15 @@ import { resolveOrderBranchAssignment } from "@/lib/orders/branch-attribution";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { buildDeliveryQuoteSnapshot, calculateServiceFee, getPublicOrderingSettingsBySlug, quoteDeliveryForRestaurant } from "@/services/delivery-service";
+import { buildDeliveryTrackingSnapshot } from "@/services/delivery/tracking-snapshot-service";
+import { pickSeatedReservationBillIdFromLocks, type ReservationBillLockCandidate } from "@/lib/orders/reservation-bill-routing";
+import {
+  normalizeModifierSelections,
+  resolveModifierSelections,
+  type CustomerModifierSelection,
+  type PublicModifierGroup,
+  type ResolvedModifierSelection
+} from "@/lib/customer/modifier-pricing";
 import { recordDeliveryStatusTrackingEvent } from "@/services/delivery-tracking-service";
 import { ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
 import { deductInventoryForOrder, rollbackInventoryForOrder } from "@/services/inventory-service";
@@ -41,6 +51,7 @@ export type CreateOrderInput = {
     menuItemId: string;
     quantity: number;
     note?: string;
+    modifiers?: CustomerModifierSelection[];
   }>;
 };
 
@@ -80,6 +91,7 @@ export type OrderCleanupInput = {
 
 type OrderSupabaseClient = ReturnType<typeof createAdminSupabaseClient>;
 type OrderInsertRow = Database["public"]["Tables"]["orders"]["Insert"];
+type OrderItemInsertRow = Database["public"]["Tables"]["order_items"]["Insert"];
 type RemoteDeliveryQuote = Awaited<ReturnType<typeof quoteDeliveryForRestaurant>> | null;
 
 type RawOrder = {
@@ -110,6 +122,7 @@ type RawOrder = {
   delivery_status?: DeliveryStatus | null;
   delivery_route_geometry?: Json | null;
   delivery_route_duration_minutes?: number | null;
+  delivery_quote_snapshot?: Json | null;
   delivery_tracking_updated_at?: string | null;
   delivery_courier_id?: string | null;
   delivery_assigned_at?: string | null;
@@ -148,6 +161,7 @@ type RawOrder = {
     | Array<{
         quantity: number;
         price: number;
+        modifier_snapshot?: Json | null;
         note: string | null;
         menuItem: { id?: string; name: string } | { id?: string; name: string }[] | null;
       }>
@@ -217,13 +231,17 @@ type MutableOrderRow = {
 };
 
 const orderSelect =
-  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
+  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const kitchenOrderSelect =
-  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
+  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const legacyOrderSelect = orderSelect.replace("branch_id,branch_assignment_source,", "");
 const legacyKitchenOrderSelect = kitchenOrderSelect.replace("branch_id,branch_assignment_source,", "");
+const orderSelectWithoutModifiers = removeOrderItemModifierColumns(orderSelect);
+const legacyOrderSelectWithoutModifiers = removeOrderItemModifierColumns(legacyOrderSelect);
+const kitchenOrderSelectWithoutModifiers = removeOrderItemModifierColumns(kitchenOrderSelect);
+const legacyKitchenOrderSelectWithoutModifiers = removeOrderItemModifierColumns(legacyKitchenOrderSelect);
 
 const activePublicStatuses: OrderDto["status"][] = ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"];
 const defaultCleanupStatuses: OrderDto["status"][] = ["pending", "ordering", "completed", "waiting_payment", "cancelled"];
@@ -248,7 +266,11 @@ function writeKitchenOrdersCache(restaurantId: string, data: OrderDto[]) {
   });
 }
 
-function invalidateRestaurantOrderCache(restaurantId: string) {
+function removeOrderItemModifierColumns(select: string) {
+  return select.replace("quantity,price,note,modifier_snapshot,", "quantity,price,note,");
+}
+
+export function invalidateRestaurantOrderCache(restaurantId: string) {
   kitchenOrdersCache.delete(restaurantId);
 }
 
@@ -266,16 +288,30 @@ async function runOrderSelectWithBranchFallback<TData>(
   fallbackSelect = legacyOrderSelect
 ) {
   const result = await buildQuery(orderSelect);
+  if (isMissingOrderItemModifierSchema(result.error)) {
+    const modifierFallback = await buildQuery(orderSelectWithoutModifiers);
+    if (isMissingOrderBranchSchema(modifierFallback.error)) return buildQuery(legacyOrderSelectWithoutModifiers);
+    return modifierFallback;
+  }
   if (!isMissingOrderBranchSchema(result.error)) return result;
-  return buildQuery(fallbackSelect);
+  const branchFallback = await buildQuery(fallbackSelect);
+  if (isMissingOrderItemModifierSchema(branchFallback.error)) return buildQuery(legacyOrderSelectWithoutModifiers);
+  return branchFallback;
 }
 
 async function runKitchenSelectWithBranchFallback<TData>(
   buildQuery: (select: string) => PromiseLike<{ data: TData | null; error: PostgrestError | null }>
 ) {
   const result = await buildQuery(kitchenOrderSelect);
+  if (isMissingOrderItemModifierSchema(result.error)) {
+    const modifierFallback = await buildQuery(kitchenOrderSelectWithoutModifiers);
+    if (isMissingOrderBranchSchema(modifierFallback.error)) return buildQuery(legacyKitchenOrderSelectWithoutModifiers);
+    return modifierFallback;
+  }
   if (!isMissingOrderBranchSchema(result.error)) return result;
-  return buildQuery(legacyKitchenOrderSelect);
+  const branchFallback = await buildQuery(legacyKitchenOrderSelect);
+  if (isMissingOrderItemModifierSchema(branchFallback.error)) return buildQuery(legacyKitchenOrderSelectWithoutModifiers);
+  return branchFallback;
 }
 
 async function insertOrderWithBranchFallback(supabase: OrderSupabaseClient, payload: OrderInsertRow) {
@@ -288,13 +324,34 @@ async function insertOrderWithBranchFallback(supabase: OrderSupabaseClient, payl
   return supabase.from("orders").insert(legacyPayload).select("id").single();
 }
 
+async function insertOrderItemsWithModifierFallback(supabase: OrderSupabaseClient, rows: OrderItemInsertRow[]) {
+  const result = await supabase.from("order_items").insert(rows);
+  if (!isMissingOrderItemModifierSchema(result.error)) return result;
+
+  return supabase.from("order_items").insert(
+    rows.map(({ base_price: _basePrice, modifier_total: _modifierTotal, modifier_snapshot: _modifierSnapshot, ...legacyRow }) => {
+      void _basePrice;
+      void _modifierTotal;
+      void _modifierSnapshot;
+      return legacyRow;
+    })
+  );
+}
+
 function normalizeOrderItems(items: CreateOrderInput["items"]) {
   const byMenuItem = new Map<string, CreateOrderInput["items"][number]>();
 
   for (const item of items) {
-    const existing = byMenuItem.get(item.menuItemId);
+    const modifiers = normalizeModifierSelections(item.modifiers);
+    const modifierKey = modifiers.map((modifier) => `${modifier.groupId}:${modifier.optionId}:${modifier.quantity ?? 1}`).join("|");
+    const lineKey = modifierKey ? `${item.menuItemId}::${modifierKey}` : item.menuItemId;
+    const existing = byMenuItem.get(lineKey);
     if (!existing) {
-      byMenuItem.set(item.menuItemId, { ...item, note: item.note?.trim() || undefined });
+      byMenuItem.set(lineKey, {
+        ...item,
+        note: item.note?.trim() || undefined,
+        ...(modifiers.length > 0 ? { modifiers } : {})
+      });
       continue;
     }
 
@@ -304,14 +361,175 @@ function normalizeOrderItems(items: CreateOrderInput["items"]) {
     }
 
     const notes = [existing.note, item.note].map((note) => note?.trim()).filter(Boolean);
-    byMenuItem.set(item.menuItemId, {
+    byMenuItem.set(lineKey, {
       menuItemId: item.menuItemId,
       quantity,
-      note: notes.length ? [...new Set(notes)].join("; ").slice(0, 200) : undefined
+      note: notes.length ? [...new Set(notes)].join("; ").slice(0, 200) : undefined,
+      ...(modifiers.length > 0 ? { modifiers } : {})
     });
   }
 
   return [...byMenuItem.values()];
+}
+
+function isMissingOrderItemModifierSchema(error: PostgrestError | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return (
+    (error.code === "42703" || error.code === "PGRST204") &&
+    /base_price|modifier_total|modifier_snapshot/i.test(message)
+  );
+}
+
+function isMissingMenuModifierSchema(error: PostgrestError | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return (
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST205" ||
+    /menu_modifier_groups|menu_modifier_options|modifier/i.test(message)
+  );
+}
+
+type MenuModifierGroupRow = {
+  id: string;
+  menu_item_id: string;
+  name: string;
+  is_required: boolean;
+  min_select: number;
+  max_select: number | null;
+  sort_order: number;
+};
+
+type MenuModifierOptionRow = {
+  id: string;
+  group_id: string;
+  name: string;
+  price_delta: number;
+  is_available: boolean;
+  sort_order: number;
+};
+
+async function listOrderModifierGroups(
+  supabase: OrderSupabaseClient,
+  restaurantId: string,
+  menuItemIds: string[],
+  requireSchema: boolean
+) {
+  if (menuItemIds.length === 0) return new Map<string, PublicModifierGroup[]>();
+
+  const [groupsResult, optionsResult] = await Promise.all([
+    supabase
+      .from("menu_modifier_groups")
+      .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_active", true)
+      .in("menu_item_id", menuItemIds)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("menu_modifier_options")
+      .select("id,group_id,name,price_delta,is_available,sort_order")
+      .eq("restaurant_id", restaurantId)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true })
+  ]);
+
+  if (isMissingMenuModifierSchema(groupsResult.error) || isMissingMenuModifierSchema(optionsResult.error)) {
+    if (requireSchema) throw new AppError("Tùy chọn món chưa sẵn sàng. Vui lòng tải lại menu hoặc báo quán kiểm tra cấu hình.", 400);
+    return new Map();
+  }
+
+  throwIfSupabaseError(groupsResult.error);
+  throwIfSupabaseError(optionsResult.error);
+
+  const groupIds = new Set(((groupsResult.data ?? []) as MenuModifierGroupRow[]).map((group) => group.id));
+  const optionsByGroupId = new Map<string, PublicModifierGroup["options"]>();
+  for (const option of (optionsResult.data ?? []) as MenuModifierOptionRow[]) {
+    if (!groupIds.has(option.group_id)) continue;
+    const groupOptions = optionsByGroupId.get(option.group_id) ?? [];
+    groupOptions.push({
+      id: option.id,
+      name: option.name,
+      priceDelta: option.price_delta,
+      isAvailable: option.is_available
+    });
+    optionsByGroupId.set(option.group_id, groupOptions);
+  }
+
+  const groupsByItemId = new Map<string, PublicModifierGroup[]>();
+  for (const group of (groupsResult.data ?? []) as MenuModifierGroupRow[]) {
+    const itemGroups = groupsByItemId.get(group.menu_item_id) ?? [];
+    itemGroups.push({
+      id: group.id,
+      name: group.name,
+      required: group.is_required,
+      minSelect: group.min_select,
+      maxSelect: group.max_select,
+      options: optionsByGroupId.get(group.id) ?? []
+    });
+    groupsByItemId.set(group.menu_item_id, itemGroups);
+  }
+
+  return groupsByItemId;
+}
+
+function modifierNote(selections: ResolvedModifierSelection[]) {
+  return selections
+    .map((selection) => {
+      const quantity = selection.quantity > 1 ? ` x${selection.quantity}` : "";
+      return `${selection.groupName}: ${selection.optionName}${quantity}`;
+    })
+    .join("; ");
+}
+
+function mergeOrderItemNote(note?: string, modifiers?: string) {
+  const parts = [modifiers, note?.trim() ? `Ghi chú: ${note.trim()}` : null].filter(Boolean);
+  return parts.length ? parts.join(" | ").slice(0, 240) : null;
+}
+
+async function priceOrderItems(input: {
+  supabase: OrderSupabaseClient;
+  restaurantId: string;
+  normalizedItems: ReturnType<typeof normalizeOrderItems>;
+  menuItems: Array<{ id: string; price: number }>;
+  enforceRequiredModifiers?: boolean;
+}) {
+  const byId = new Map(input.menuItems.map((item) => [item.id, item]));
+  const hasModifierSelections = input.normalizedItems.some((item) => (item.modifiers?.length ?? 0) > 0);
+  const groupsByItemId = await listOrderModifierGroups(
+    input.supabase,
+    input.restaurantId,
+    input.normalizedItems.map((item) => item.menuItemId),
+    hasModifierSelections
+  );
+
+  return input.normalizedItems.map((item) => {
+    const menuItem = byId.get(item.menuItemId);
+    if (!menuItem) throw new AppError("Không tìm thấy món", 400);
+
+    const shouldValidateConfiguredGroups = input.enforceRequiredModifiers === true || (item.modifiers?.length ?? 0) > 0;
+    const modifierResolution = resolveModifierSelections(
+      shouldValidateConfiguredGroups ? groupsByItemId.get(item.menuItemId) ?? [] : [],
+      item.modifiers ?? []
+    );
+    if (!modifierResolution.ok) {
+      throw new AppError(modifierResolution.errors[0] ?? "Tùy chọn món không hợp lệ", 400);
+    }
+
+    const unitPrice = menuItem.price + modifierResolution.totalDelta;
+    if (unitPrice <= 0) throw new AppError("Giá món sau tùy chọn phải lớn hơn 0", 400);
+
+    return {
+      ...item,
+      basePrice: menuItem.price,
+      modifierTotal: modifierResolution.totalDelta,
+      modifierSnapshot: modifierResolution.selections,
+      modifierNote: modifierNote(modifierResolution.selections),
+      unitPrice
+    };
+  });
 }
 
 function firstOrNull<T>(value: T | T[] | null | undefined) {
@@ -323,6 +541,64 @@ function numericOrNull(value: number | string | null | undefined) {
   if (value === null || value === undefined) return null;
   const next = Number(value);
   return Number.isFinite(next) ? next : null;
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberOrZero(value: unknown) {
+  const next = Number(value);
+  return Number.isFinite(next) ? Math.round(next) : 0;
+}
+
+function positiveQuantity(value: unknown) {
+  const next = Math.floor(Number(value ?? 1));
+  return Number.isFinite(next) && next > 0 ? next : 1;
+}
+
+function parseOrderItemModifierSnapshot(value: Json | null | undefined): ResolvedModifierSelection[] {
+  if (!Array.isArray(value)) return [];
+
+  const selections: ResolvedModifierSelection[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const groupId = stringOrNull(record.groupId);
+    const optionId = stringOrNull(record.optionId);
+    const groupName = stringOrNull(record.groupName);
+    const optionName = stringOrNull(record.optionName);
+    if (!groupId || !optionId || !groupName || !optionName) continue;
+
+    const quantity = positiveQuantity(record.quantity);
+    const priceDelta = numberOrZero(record.priceDelta);
+    const lineTotal = numberOrZero(record.lineTotal) || priceDelta * quantity;
+    selections.push({
+      groupId,
+      groupName,
+      optionId,
+      optionName,
+      priceDelta,
+      quantity,
+      lineTotal
+    });
+  }
+
+  return selections;
+}
+
+function customerOrderItemNote(note: string | null, modifierLabel: string) {
+  if (!note?.trim()) return null;
+  if (!modifierLabel) return note.trim();
+
+  const marker = "Ghi chú:";
+  const markerIndex = note.indexOf(marker);
+  if (markerIndex >= 0) {
+    const customerNote = note.slice(markerIndex + marker.length).trim();
+    return customerNote || null;
+  }
+
+  return note.trim() === modifierLabel ? null : note.trim();
 }
 
 function routeGeometryOrNull(value: Json | null | undefined): OrderDto["deliveryRouteGeometry"] {
@@ -356,7 +632,12 @@ function mapOrder(order: RawOrder): OrderDto {
     promotionCode: order.promotion_code ?? null,
     total: order.total,
     paymentMethod: order.payment_method,
-    paymentStatus: order.payment_status ?? (order.status === "paid" ? "paid" : order.status === "waiting_payment" || order.status === "waiting_confirm" ? order.status : "unpaid"),
+    paymentStatus: resolveOrderPaymentStatus({
+      status: order.status,
+      paymentStatus: order.payment_status,
+      paidAt: order.paid_at,
+      bill: bill ? { status: bill.status, paidAt: bill.paid_at ?? null } : null
+    }),
     paidAt: order.paid_at ?? null,
     fulfillmentType: order.fulfillment_type ?? "DINE_IN",
     customerName: order.customer_name ?? null,
@@ -370,6 +651,7 @@ function mapOrder(order: RawOrder): OrderDto {
     deliveryStatus: order.delivery_status ?? "none",
     deliveryRouteGeometry: routeGeometryOrNull(order.delivery_route_geometry),
     deliveryRouteDurationMinutes: order.delivery_route_duration_minutes ?? null,
+    deliveryQuoteSnapshot: order.delivery_quote_snapshot ?? null,
     deliveryTrackingUpdatedAt: order.delivery_tracking_updated_at ?? null,
     deliveryCourierId: order.delivery_courier_id ?? null,
     deliveryAssignedAt: order.delivery_assigned_at ?? null,
@@ -382,6 +664,12 @@ function mapOrder(order: RawOrder): OrderDto {
         }
       : null,
     deliveryCourierLocation: null,
+    deliveryTrackingSnapshot: order.fulfillment_type === "DELIVERY"
+      ? buildDeliveryTrackingSnapshot({
+          deliveryStatus: order.delivery_status ?? "none",
+          destination: { lat: numericOrNull(order.delivery_lat) ?? undefined, lng: numericOrNull(order.delivery_lng) ?? undefined }
+        })
+      : null,
     bill: bill
       ? {
           id: bill.id,
@@ -415,12 +703,18 @@ function mapOrder(order: RawOrder): OrderDto {
         }
       : undefined,
     table: firstOrNull(order.table),
-    items: (order.items ?? []).map((item) => ({
-      quantity: item.quantity,
-      price: item.price,
-      note: item.note,
-      menuItem: firstOrNull(item.menuItem)
-    }))
+    items: (order.items ?? []).map((item) => {
+      const modifiers = parseOrderItemModifierSnapshot(item.modifier_snapshot);
+      const summary = modifierNote(modifiers);
+      return {
+        quantity: item.quantity,
+        price: item.price,
+        modifiers,
+        modifierSummary: summary || null,
+        note: customerOrderItemNote(item.note, summary),
+        menuItem: firstOrNull(item.menuItem)
+      };
+    })
   };
 }
 
@@ -486,7 +780,13 @@ async function attachLatestDeliveryLocations(
         headingDegrees: location.heading_degrees,
         speedMps: location.speed_mps,
         capturedAt: location.captured_at
-      }
+      },
+      deliveryTrackingSnapshot: buildDeliveryTrackingSnapshot({
+        deliveryStatus: order.deliveryStatus ?? "none",
+        destination: { lat: order.deliveryLat ?? undefined, lng: order.deliveryLng ?? undefined },
+        courierLocation: { lat: Number(location.latitude), lng: Number(location.longitude) },
+        capturedAt: location.captured_at
+      })
     };
   });
 }
@@ -567,6 +867,43 @@ async function closeBillIfNoActiveOrders(supabase: OrderSupabaseClient, restaura
   return Boolean(data);
 }
 
+async function getOpenReservationBillForTable({
+  restaurantId,
+  tableId,
+  supabase
+}: {
+  restaurantId: string;
+  tableId: string;
+  supabase: OrderSupabaseClient;
+}) {
+  const { data: locks, error: lockError } = await (supabase as any)
+    .from("reservation_table_locks")
+    .select("reservation:reservations(id,status,seated_table_bill_id)")
+    .eq("restaurant_id", restaurantId)
+    .eq("table_id", tableId)
+    .eq("status", "active")
+    .limit(12);
+
+  throwIfSupabaseError(lockError);
+  const reservationBillId = pickSeatedReservationBillIdFromLocks((locks ?? []) as ReservationBillLockCandidate[]);
+  if (!reservationBillId) return null;
+
+  const { data: bill, error: billError } = await supabase
+    .from("table_bills")
+    .select("id,status,total,customer_session_id")
+    .eq("restaurant_id", restaurantId)
+    .eq("id", reservationBillId)
+    .in("status", ["open", "waiting_payment", "waiting_confirm"])
+    .maybeSingle();
+
+  throwIfSupabaseError(billError);
+  if (!bill) return null;
+  if (bill.status === "waiting_payment" || bill.status === "waiting_confirm") {
+    throw new AppError("Nhóm bàn đang chờ thanh toán. Vui lòng hoàn tất hoặc huỷ thanh toán trước khi gọi thêm món.", 409);
+  }
+  return bill;
+}
+
 async function getOrCreateOpenTableBill({
   restaurantId,
   tableId,
@@ -601,6 +938,9 @@ async function getOrCreateOpenTableBill({
 
   throwIfSupabaseError(existingBillError);
   if (existingBill) return existingBill;
+
+  const reservationBill = await getOpenReservationBillForTable({ restaurantId, tableId, supabase });
+  if (reservationBill) return reservationBill;
 
   const { data: insertedBill, error: insertBillError } = await supabase
     .from("table_bills")
@@ -785,7 +1125,7 @@ export async function createOrder(input: CreateOrderInput) {
     }
   }
 
-  const requestedIds = normalizedItems.map((item) => item.menuItemId);
+  const requestedIds = [...new Set(normalizedItems.map((item) => item.menuItemId))];
   const { data: menuItems, error: itemError } = await supabase
     .from("menu_items")
     .select("id,price")
@@ -798,18 +1138,22 @@ export async function createOrder(input: CreateOrderInput) {
     throw new AppError("Một hoặc nhiều món hiện không khả dụng", 400);
   }
 
-  const byId = new Map((menuItems ?? []).map((item) => [item.id, item]));
-  const subtotal = normalizedItems.reduce((sum, item) => {
-    const menuItem = byId.get(item.menuItemId);
-    return sum + (menuItem?.price ?? 0) * item.quantity;
-  }, 0);
+  const pricedItems = await priceOrderItems({
+    supabase,
+    restaurantId: restaurant.id,
+    normalizedItems,
+    menuItems: menuItems ?? [],
+    enforceRequiredModifiers: true
+  });
+  const subtotal = pricedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   if (subtotal <= 0) throw new AppError("Tổng tiền đơn hàng phải lớn hơn 0", 400);
   const { promotion, discountAmount } = await resolvePromotionForOrder({
     restaurantId: restaurant.id,
     code: input.promotionCode,
     subtotal,
-    channel: "QR_MENU"
+    channel: "QR_MENU",
+    customerSessionId: input.customerSessionId
   });
   const total = subtotal - discountAmount;
   const bill = await getOrCreateOpenTableBill({
@@ -865,20 +1209,20 @@ export async function createOrder(input: CreateOrderInput) {
     throw new AppError(orderError?.message ?? "Không tạo được đơn hàng", 400);
   }
 
-  const orderItems = normalizedItems.map((item) => {
-    const menuItem = byId.get(item.menuItemId);
-    if (!menuItem) throw new AppError("Không tìm thấy món", 400);
-
+  const orderItems = pricedItems.map((item): OrderItemInsertRow => {
     return {
       order_id: insertedOrder.id,
       menu_item_id: item.menuItemId,
       quantity: item.quantity,
-      price: menuItem.price,
-      note: item.note || null
+      price: item.unitPrice,
+      base_price: item.basePrice,
+      modifier_total: item.modifierTotal,
+      modifier_snapshot: item.modifierSnapshot as Json,
+      note: mergeOrderItemNote(item.note, item.modifierNote)
     };
   });
 
-  const { error: orderItemError } = await supabase.from("order_items").insert(orderItems);
+  const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
 
   if (orderItemError) {
     await supabase.from("orders").delete().eq("id", insertedOrder.id);
@@ -932,7 +1276,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     }
   }
 
-  const requestedIds = normalizedItems.map((item) => item.menuItemId);
+  const requestedIds = [...new Set(normalizedItems.map((item) => item.menuItemId))];
   const { data: menuItems, error: itemError } = await supabase
     .from("menu_items")
     .select("id,price")
@@ -945,11 +1289,14 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     throw new AppError("Một hoặc nhiều món hiện không khả dụng", 400);
   }
 
-  const byId = new Map((menuItems ?? []).map((item) => [item.id, item]));
-  const itemSubtotal = normalizedItems.reduce((sum, item) => {
-    const menuItem = byId.get(item.menuItemId);
-    return sum + (menuItem?.price ?? 0) * item.quantity;
-  }, 0);
+  const pricedItems = await priceOrderItems({
+    supabase,
+    restaurantId: settings.id,
+    normalizedItems,
+    menuItems: menuItems ?? [],
+    enforceRequiredModifiers: true
+  });
+  const itemSubtotal = pricedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   if (itemSubtotal <= 0) throw new AppError("Tổng tiền đơn hàng phải lớn hơn 0", 400);
 
@@ -975,7 +1322,8 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     code: input.promotionCode,
     subtotal: itemSubtotal,
     deliveryFee,
-    channel: "WEBSITE"
+    channel: "WEBSITE",
+    customerSessionId: input.customerSessionId
   });
   const total = subtotal - discountAmount;
   const initialStatus: OrderDto["status"] = requiresPrepaidQr ? "waiting_payment" : "pending";
@@ -1045,20 +1393,20 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     throw new AppError(orderError?.message ?? "Không tạo được đơn hàng online", 400);
   }
 
-  const orderItems = normalizedItems.map((item) => {
-    const menuItem = byId.get(item.menuItemId);
-    if (!menuItem) throw new AppError("Không tìm thấy món", 400);
-
+  const orderItems = pricedItems.map((item): OrderItemInsertRow => {
     return {
       order_id: insertedOrder.id,
       menu_item_id: item.menuItemId,
       quantity: item.quantity,
-      price: menuItem.price,
-      note: item.note || null
+      price: item.unitPrice,
+      base_price: item.basePrice,
+      modifier_total: item.modifierTotal,
+      modifier_snapshot: item.modifierSnapshot as Json,
+      note: mergeOrderItemNote(item.note, item.modifierNote)
     };
   });
 
-  const { error: orderItemError } = await supabase.from("order_items").insert(orderItems);
+  const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
 
   if (orderItemError) {
     await supabase.from("orders").delete().eq("id", insertedOrder.id);

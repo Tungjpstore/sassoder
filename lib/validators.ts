@@ -15,6 +15,11 @@ const promotionCodeSchema = z.preprocess(
   },
   z.string().regex(/^[A-Z0-9_-]{3,32}$/).optional()
 );
+const modifierSelectionSchema = z.object({
+  groupId: z.string().uuid(),
+  optionId: z.string().uuid(),
+  quantity: z.coerce.number().int().min(1).max(50).optional()
+});
 const optionalCoordinateInput = (min: number, max: number) =>
   z.preprocess(
     (value) => (value === "" || value === null ? undefined : value),
@@ -84,7 +89,8 @@ export const createOrderSchema = z.object({
       z.object({
         menuItemId: z.string().min(1),
         quantity: z.coerce.number().int().min(1).max(50),
-        note: z.string().max(200).optional()
+        note: z.string().max(200).optional(),
+        modifiers: z.array(modifierSelectionSchema).max(30).optional()
       })
     )
     .min(1)
@@ -254,6 +260,8 @@ export const reservationSetTablesSchema = z.object({
     message: "Không chọn trùng bàn"
   })
 });
+
+export const reservationTablePreflightSchema = reservationSetTablesSchema;
 
 export const reservationRescheduleSchema = z.object({
   startsAt: z.string().datetime(),
@@ -502,6 +510,65 @@ export const updateMenuItemSchema = menuItemSchema.extend({
   isAvailable: z.coerce.boolean().optional()
 });
 
+const optionalModifierMaxSelectSchema = z.preprocess(
+  (value) => (value === "" || value === null ? null : value),
+  z.coerce.number().int().min(0).max(20).nullable()
+);
+
+const menuModifierGroupBaseSchema = z.object({
+  itemId: z.string().uuid(),
+  name: z.string().trim().min(1).max(80),
+  isRequired: z.coerce.boolean().optional(),
+  minSelect: z.coerce.number().int().min(0).max(20),
+  maxSelect: optionalModifierMaxSelectSchema
+});
+
+function normalizeMenuModifierGroupSelection<T extends z.infer<typeof menuModifierGroupBaseSchema>>(value: T): T {
+  return {
+    ...value,
+    minSelect: value.isRequired && value.minSelect === 0 ? 1 : value.minSelect
+  };
+}
+
+function validateMenuModifierGroupSelection<T extends z.infer<typeof menuModifierGroupBaseSchema>>(schema: z.ZodType<T, z.ZodTypeDef, unknown>) {
+  return schema
+    .transform(normalizeMenuModifierGroupSelection)
+    .refine((value) => value.maxSelect === null || value.maxSelect >= value.minSelect, {
+      message: "Số lượng chọn tối đa không được nhỏ hơn tối thiểu",
+      path: ["maxSelect"]
+    });
+}
+
+export const menuModifierGroupSchema = validateMenuModifierGroupSelection(menuModifierGroupBaseSchema);
+
+export const updateMenuModifierGroupSchema = validateMenuModifierGroupSelection(menuModifierGroupBaseSchema.extend({
+  groupId: z.string().uuid()
+}));
+
+export const menuModifierGroupIdSchema = z.object({
+  groupId: z.string().uuid()
+});
+
+export const menuModifierOptionSchema = z.object({
+  groupId: z.string().uuid(),
+  name: z.string().trim().min(1).max(80),
+  priceDelta: z.coerce.number().int().min(0).max(10000000),
+  isAvailable: z.coerce.boolean().optional()
+});
+
+export const updateMenuModifierOptionSchema = menuModifierOptionSchema.extend({
+  optionId: z.string().uuid()
+});
+
+export const menuModifierOptionStatusSchema = z.object({
+  optionId: z.string().uuid(),
+  isAvailable: z.coerce.boolean()
+});
+
+export const menuModifierOptionIdSchema = z.object({
+  optionId: z.string().uuid()
+});
+
 export const tableSchema = z.object({
   name: z.string().min(1).max(80),
   branchId: z.string().uuid().optional().or(z.literal("")),
@@ -528,20 +595,44 @@ export const tableQrStatusSchema = tableIdSchema.extend({
   qrEnabled: z.coerce.boolean()
 });
 
-export const promotionSchema = z.object({
+const promotionBaseSchema = z.object({
   name: z.string().trim().min(2).max(140),
   code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,32}$/),
   discountScope: z.enum(["ORDER", "DELIVERY_FEE"]).default("ORDER"),
   discountType: z.enum(["PERCENT", "FIXED"]),
   discountValue: z.coerce.number().int().min(1).max(100000000),
   minOrderAmount: z.coerce.number().int().min(0).max(100000000).optional(),
+  totalUsageLimit: z.preprocess((value) => (value === "" || value === null ? undefined : value), z.coerce.number().int().min(1).max(100000000).optional()),
+  perCustomerUsageLimit: z.preprocess((value) => (value === "" || value === null ? undefined : value), z.coerce.number().int().min(1).max(1000000).optional()),
   startsAt: z.string().optional().or(z.literal("")),
   endsAt: z.string().optional().or(z.literal("")),
   channels: z.array(z.enum(["IN_STORE", "QR_MENU", "WEBSITE", "EMAIL"])).min(1)
-}).refine((value) => value.discountType !== "PERCENT" || value.discountValue <= 100, {
-  message: "Giảm theo phần trăm không được vượt quá 100%",
-  path: ["discountValue"]
 });
+
+function validatePromotionSchema<T extends z.infer<typeof promotionBaseSchema>>(schema: z.ZodType<T, z.ZodTypeDef, unknown>) {
+  return schema
+    .refine((value) => value.discountType !== "PERCENT" || value.discountValue <= 100, {
+      message: "Giảm theo phần trăm không được vượt quá 100%",
+      path: ["discountValue"]
+    })
+    .refine((value) => !value.totalUsageLimit || !value.perCustomerUsageLimit || value.perCustomerUsageLimit <= value.totalUsageLimit, {
+      message: "Lượt mỗi khách không được lớn hơn tổng lượt dùng",
+      path: ["perCustomerUsageLimit"]
+    })
+    .refine((value) => {
+      if (!value.startsAt || !value.endsAt) return true;
+      return new Date(value.startsAt).getTime() <= new Date(value.endsAt).getTime();
+    }, {
+      message: "Thời gian kết thúc không được sớm hơn thời gian bắt đầu",
+      path: ["endsAt"]
+    });
+}
+
+export const promotionSchema = validatePromotionSchema(promotionBaseSchema);
+
+export const updatePromotionSchema = validatePromotionSchema(promotionBaseSchema.extend({
+  promotionId: z.string().uuid()
+}));
 
 export const promotionIdSchema = z.object({
   promotionId: z.string().uuid()
@@ -695,6 +786,12 @@ const inventoryTransferLineSchema = z.object({
 
 export const inventoryTransferRowsSchema = z.object({
   rows: jsonArrayInput(inventoryTransferLineSchema, 100)
+});
+
+export const inventoryTransferWorkflowSchema = z.object({
+  transferId: z.string().uuid(),
+  action: z.enum(["approve", "dispatch", "receive", "cancel"]),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
 });
 
 export const inventoryAlertStatusSchema = z.object({
@@ -871,14 +968,37 @@ export const staffOperationalRequestSchema = z
           path: ["toDate"]
         });
       }
+
+      if (value.fromDate && value.toDate && value.toDate >= value.fromDate) {
+        const from = new Date(`${value.fromDate}T00:00:00.000Z`).getTime();
+        const to = new Date(`${value.toDate}T00:00:00.000Z`).getTime();
+        const days = Math.floor((to - from) / 86_400_000) + 1;
+        if (days > 31) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Một yêu cầu nghỉ phép chỉ được tối đa 31 ngày.",
+            path: ["toDate"]
+          });
+        }
+      }
     }
 
-    if (value.requestType === "shift_swap" && !value.shiftAssignmentId) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Cần chọn ca muốn đổi.",
-        path: ["shiftAssignmentId"]
-      });
+    if (value.requestType === "shift_swap") {
+      if (!value.shiftAssignmentId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cần chọn ca muốn đổi.",
+          path: ["shiftAssignmentId"]
+        });
+      }
+
+      if (value.staffMemberId && value.targetStaffMemberId && value.staffMemberId === value.targetStaffMemberId) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Người nhận đổi ca phải khác nhân viên tạo yêu cầu.",
+          path: ["targetStaffMemberId"]
+        });
+      }
     }
 
     if (value.requestType === "overtime") {
@@ -1022,7 +1142,17 @@ export const attendanceClockOutSchema = attendanceCaptureBaseSchema
     }
   });
 
-export const attendanceApprovalReviewSchema = z.object({
-  decision: z.enum(["approved", "rejected"]),
-  note: z.string().trim().max(240).optional().or(z.literal(""))
-});
+export const attendanceApprovalReviewSchema = z
+  .object({
+    decision: z.enum(["approved", "rejected"]),
+    note: z.string().trim().max(240).optional().or(z.literal(""))
+  })
+  .superRefine((value, context) => {
+    if (value.decision === "rejected" && !value.note?.trim()) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Từ chối yêu cầu cần ghi lý do để đối soát công/lương.",
+        path: ["note"]
+      });
+    }
+  });

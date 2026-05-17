@@ -24,6 +24,7 @@ import {
   Table2,
   Trash2,
   Users,
+  WalletCards,
   Wrench,
   X
 } from "lucide-react";
@@ -203,6 +204,139 @@ function TablesMetric({
       <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{value}</p>
       <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
     </article>
+  );
+}
+
+function FloorIntakeCommandCenter({
+  counts,
+  total,
+  occupancyRate,
+  qrEnabled,
+  qrDisabled,
+  qrIssueTables,
+  actionQueue,
+  nowMs,
+  onFilterStatus,
+  onShowQrIssues,
+  onOpenTable
+}: {
+  counts: Record<TableOperationalStatus, number>;
+  total: number;
+  occupancyRate: number;
+  qrEnabled: number;
+  qrDisabled: number;
+  qrIssueTables: RestaurantTableWithStatus[];
+  actionQueue: RestaurantTableWithStatus[];
+  nowMs: number;
+  onFilterStatus: (status: StatusFilter) => void;
+  onShowQrIssues: () => void;
+  onOpenTable: (tableId: string) => void;
+}) {
+  const firstAction = actionQueue[0] ?? null;
+  const intakeScore = Math.max(0, 100 - counts.overdue * 16 - counts.needs_confirm * 12 - counts.awaiting_payment * 8 - qrIssueTables.length * 6);
+  const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
+  const checks = [
+    {
+      id: "orders",
+      label: "Đơn QR mới đã nhận",
+      value: counts.needs_confirm.toLocaleString("vi-VN"),
+      done: counts.needs_confirm === 0,
+      action: () => onFilterStatus("needs_confirm")
+    },
+    {
+      id: "late",
+      label: "Không có bàn quá giờ",
+      value: counts.overdue.toLocaleString("vi-VN"),
+      done: counts.overdue === 0,
+      action: () => onFilterStatus("overdue")
+    },
+    {
+      id: "payment",
+      label: "Bàn chờ thu được gom",
+      value: counts.awaiting_payment.toLocaleString("vi-VN"),
+      done: counts.awaiting_payment === 0,
+      action: () => onFilterStatus("awaiting_payment")
+    },
+    {
+      id: "qr",
+      label: "QR/token sẵn sàng",
+      value: qrIssueTables.length.toLocaleString("vi-VN"),
+      done: qrIssueTables.length === 0,
+      action: onShowQrIssues
+    }
+  ];
+
+  return (
+    <section className="dashboard-panel p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Intake command</p>
+              <h2 className="dashboard-section-title mt-1">Đầu vào QR tại bàn</h2>
+            </div>
+            <Badge tone={intakeTone}>Ready {intakeScore}/100</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Công suất bàn</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{occupancyRate}%</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">QR bật</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{qrEnabled}/{total}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">QR tắt</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{qrDisabled}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Cần xử lý</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{actionQueue.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist mở ca mặt sàn</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <button key={item.id} type="button" onClick={item.action} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Bàn cần chạm trước</p>
+              <Badge tone={firstAction ? statusMeta(firstAction.status).tone : "green"}>{firstAction ? "Có việc" : "Sạch"}</Badge>
+            </div>
+            {firstAction ? (
+              <button type="button" onClick={() => onOpenTable(firstAction.id)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{firstAction.name}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">{tableAreaLabel(firstAction)} · {tableActionCopy(firstAction, nowMs)}</span>
+                  </span>
+                  <Badge tone={statusMeta(firstAction.status).tone}>{statusMeta(firstAction.status).label}</Badge>
+                </div>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có bàn cần xử lý ngay.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -502,7 +636,16 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
       const area = tableAreaLabel(table);
       const matchesArea = areaFilter === "all" || area === areaFilter;
       const matchesStatus = statusFilter === "all" || table.status === statusFilter;
-      const metadata = `${tableKindLabel(table.table_kind)} ${seatingZoneLabel(table.seating_zone)} ${branchLabel(branchesById, table)}`.toLowerCase();
+      const metadata = [
+        tableKindLabel(table.table_kind),
+        seatingZoneLabel(table.seating_zone),
+        branchLabel(branchesById, table),
+        statusMeta(table.status).label,
+        table.qr_enabled ? "qr bật qr active" : "qr tắt qr off qr lỗi",
+        table.is_hidden ? "ẩn hidden" : "",
+        table.is_under_maintenance ? "bảo trì maintenance" : "",
+        table.is_bookable === false ? "không đặt trước" : "đặt trước"
+      ].join(" ").toLowerCase();
       const matchesKeyword = !keyword || table.name.toLowerCase().includes(keyword) || area.toLowerCase().includes(keyword) || metadata.includes(keyword);
       return matchesArea && matchesStatus && matchesKeyword;
     });
@@ -525,6 +668,11 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
   const occupancyRate = Math.round((activeTables / Math.max(total, 1)) * 100);
   const qrEnabled = tables.filter((table) => table.qr_enabled).length;
   const qrDisabled = Math.max(0, total - qrEnabled);
+  const floorBlockedTables = tables.filter((table) => table.is_hidden || table.is_under_maintenance || table.is_bookable === false);
+  const qrIssueTables = useMemo(
+    () => tables.filter((table) => !table.qr_enabled || !table.qr_token_enforced || table.qr_token_version === 1).slice(0, 5),
+    [tables]
+  );
   const areaStats = useMemo(() => {
     return areas
       .filter((area) => area !== "all")
@@ -561,6 +709,57 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
       : counts.awaiting_payment
         ? `${counts.awaiting_payment} bàn chờ thu`
         : "Mặt sàn ổn";
+
+  const floorControlCards = [
+    {
+      label: "Order mới",
+      value: counts.needs_confirm,
+      helper: "Bàn cần nhận đơn ngay",
+      icon: AlertTriangle,
+      tone: counts.needs_confirm > 0 ? "yellow" : "green",
+      action: () => {
+        setStatusFilter("needs_confirm");
+        setAreaFilter("all");
+        setQuery("");
+      }
+    },
+    {
+      label: "Quá giờ",
+      value: counts.overdue,
+      helper: "Cần đẩy bếp/phục vụ",
+      icon: Wrench,
+      tone: counts.overdue > 0 ? "red" : "green",
+      action: () => {
+        setStatusFilter("overdue");
+        setAreaFilter("all");
+        setQuery("");
+      }
+    },
+    {
+      label: "Chờ thu",
+      value: counts.awaiting_payment,
+      helper: `${formatVnd(tables.reduce((sum, table) => sum + table.unpaidTotal, 0))} chưa thu`,
+      icon: WalletCards,
+      tone: counts.awaiting_payment > 0 ? "blue" : "green",
+      action: () => {
+        setStatusFilter("awaiting_payment");
+        setAreaFilter("all");
+        setQuery("");
+      }
+    },
+    {
+      label: "QR cần xử lý",
+      value: qrIssueTables.length,
+      helper: qrDisabled > 0 ? `${qrDisabled} QR đang tắt` : "Kiểm tra token/in lại",
+      icon: QrCode,
+      tone: qrIssueTables.length > 0 ? "yellow" : "green",
+      action: () => {
+        setStatusFilter("all");
+        setAreaFilter("all");
+        setQuery("qr");
+      }
+    }
+  ] as const;
 
   async function copySelectedUrl() {
     if (!selectedUrl) return;
@@ -637,7 +836,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack grid gap-3">
       <section className="admin-hero-panel rounded-[14px] p-4">
         <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -672,11 +871,115 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-ops-metrics-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <TablesMetric icon={Table2} label="Tổng bàn" value={total} meta={`${areaStats.length || 1} khu vực đang quản lý`} tone="blue" />
         <TablesMetric icon={CheckCircle2} label="Bàn trống" value={counts.available} meta={`${Math.round((counts.available / Math.max(total, 1)) * 100)}% sẵn sàng nhận khách`} tone="green" />
         <TablesMetric icon={Users} label="Đang phục vụ" value={serving} meta={counts.overdue ? `${counts.overdue} bàn quá giờ` : `${counts.awaiting_payment} bàn chờ thu`} tone={counts.overdue > 0 ? "red" : counts.needs_confirm > 0 ? "yellow" : "green"} />
         <TablesMetric icon={QrCode} label="QR active" value={qrEnabled} meta={qrDisabled ? `${qrDisabled} bàn cần bật/in lại QR` : "Tất cả QR đang bật"} tone={qrDisabled ? "yellow" : "green"} />
+      </section>
+
+      <FloorIntakeCommandCenter
+        counts={counts}
+        total={total}
+        occupancyRate={occupancyRate}
+        qrEnabled={qrEnabled}
+        qrDisabled={qrDisabled}
+        qrIssueTables={qrIssueTables}
+        actionQueue={actionQueue}
+        nowMs={nowMs}
+        onFilterStatus={(status) => {
+          setStatusFilter(status);
+          setAreaFilter("all");
+          setQuery("");
+        }}
+        onShowQrIssues={() => {
+          setStatusFilter("all");
+          setAreaFilter("all");
+          setQuery("qr");
+        }}
+        onOpenTable={openTableDrawer}
+      />
+
+      <section className="dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+        <div className="dashboard-panel p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="dashboard-eyebrow">Floor control</p>
+              <h2 className="dashboard-section-title mt-1">Điều phối mặt sàn</h2>
+              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Các trạng thái cần chạm nhanh trong ca: nhận đơn, đẩy bếp, thu tiền và xử lý QR.</p>
+            </div>
+            <Badge tone={floorBlockedTables.length > 0 ? "yellow" : "green"}>
+              {floorBlockedTables.length > 0 ? `${floorBlockedTables.length} bàn bị giới hạn` : "Sẵn sàng mở ca"}
+            </Badge>
+          </div>
+          <div className="dashboard-floor-card-grid mt-4">
+            {floorControlCards.map((card) => {
+              const Icon = card.icon;
+              return (
+                <button
+                  key={card.label}
+                  type="button"
+                  onClick={card.action}
+                  className="dashboard-table-card rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-left hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className={cn(
+                      "grid h-10 w-10 place-items-center rounded-xl border",
+                      card.tone === "red"
+                        ? "border-[var(--accent)]/30 bg-[var(--danger-soft)] text-[var(--tertiary)]"
+                        : card.tone === "yellow"
+                          ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                          : card.tone === "blue"
+                            ? "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]"
+                            : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]"
+                    )}>
+                      <Icon size={18} />
+                    </span>
+                    <Badge tone={card.tone}>{card.label}</Badge>
+                  </div>
+                  <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{card.value}</p>
+                  <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">{card.helper}</p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="dashboard-panel p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">QR readiness</p>
+              <h2 className="dashboard-section-title mt-1">QR cần kiểm tra</h2>
+            </div>
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <QrCode size={18} />
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {qrIssueTables.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                QR bàn đang ổn. Không có bàn cần bật lại hoặc in token mới.
+              </div>
+            ) : (
+              qrIssueTables.map((table) => (
+                <button
+                  key={table.id}
+                  type="button"
+                  onClick={() => openTableDrawer(table.id)}
+                  className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{table.name}</span>
+                    <span className="block text-xs font-medium text-[var(--muted-foreground)]">
+                      {!table.qr_enabled ? "QR đang tắt" : !table.qr_token_enforced ? "QR chưa ép token" : "Token đời cũ, nên in lại"}
+                    </span>
+                  </span>
+                  <Badge tone={!table.qr_enabled ? "red" : "yellow"}>{tableAreaLabel(table)}</Badge>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-3">
@@ -705,7 +1008,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               </div>
             </div>
 
-            <div className="mb-4 grid gap-3 md:grid-cols-[180px_190px_minmax(0,1fr)_120px]">
+            <div className="dashboard-ops-toolbar mb-4 grid gap-3 md:grid-cols-[180px_190px_minmax(0,1fr)_120px]">
               <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                 Khu vực
                 <select
@@ -749,7 +1052,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               </Button>
             </div>
 
-            <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="dashboard-ops-split mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -763,7 +1066,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                     Chưa có khu vực. Tạo bàn đầu tiên để bắt đầu sơ đồ quán.
                   </div>
                 ) : (
-                  <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                  <div className="dashboard-floor-card-grid">
                     {areaStats.map((area) => (
                       <button
                         key={area.area}
@@ -831,7 +1134,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               </div>
             </div>
 
-            <div className="rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="dashboard-data-surface rounded-[12px] border border-[var(--border)] bg-[var(--surface)] p-4">
               {tables.length === 0 ? (
                 <div className="grid min-h-56 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-5 text-center">
                   <div>
@@ -852,7 +1155,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                         <Grid3X3 size={16} />
                         {group.title}
                       </h2>
-                      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+                      <div className="dashboard-floor-card-grid">
                         {group.items.map((table) => {
                           const meta = statusMeta(table.status);
                           const isSelected = selected?.id === table.id;
@@ -863,7 +1166,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                               type="button"
                               onClick={() => openTableDrawer(table.id)}
                               className={cn(
-                                "min-h-[112px] rounded-xl border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]",
+                                "dashboard-table-card min-h-[112px] rounded-xl border px-3 py-3 text-left hover:border-[var(--primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]",
                                 meta.className,
                                 isSelected ? "ring-2 ring-[var(--primary)]/24 ring-offset-2 ring-offset-[var(--surface)]" : ""
                               )}

@@ -23,6 +23,7 @@ export default async function AdminInventoryPage() {
       hideHeading
     >
       <InventoryWorkspaceV2
+        restaurantId={session.restaurantId}
         snapshot={inventory.snapshot}
         categories={inventory.categories}
         ingredients={inventory.ingredients}

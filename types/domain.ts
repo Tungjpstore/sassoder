@@ -18,7 +18,7 @@ export type FulfillmentType = "DINE_IN" | "PICKUP" | "DELIVERY";
 export type DeliveryStatus = "none" | "requested" | "accepted" | "out_for_delivery" | "delivered" | "rejected";
 export type TableBillStatus = "open" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled";
 
-export type PaymentLogStatus = "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled";
+export type PaymentLogStatus = "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
 export type ServiceRequestStatus = "open" | "acknowledged" | "resolved" | "cancelled";
 export type ReservationStatus =
   | "draft"
@@ -102,6 +102,7 @@ export type OrderDto = {
     coordinates: number[][];
   } | null;
   deliveryRouteDurationMinutes?: number | null;
+  deliveryQuoteSnapshot?: import("@/types/supabase").Json | null;
   deliveryTrackingUpdatedAt?: string | null;
   deliveryCourierId?: string | null;
   deliveryAssignedAt?: string | null;
@@ -119,6 +120,7 @@ export type OrderDto = {
     speedMps?: number | null;
     capturedAt?: string | null;
   } | null;
+  deliveryTrackingSnapshot?: import("@/services/delivery/tracking-snapshot-service").DeliveryTrackingSnapshot | null;
   bill: {
     id: string;
     status: TableBillStatus;
@@ -149,6 +151,16 @@ export type OrderDto = {
   items: Array<{
     quantity: number;
     price: number;
+    modifiers?: Array<{
+      groupId: string;
+      groupName: string;
+      optionId: string;
+      optionName: string;
+      priceDelta: number;
+      quantity: number;
+      lineTotal: number;
+    }>;
+    modifierSummary?: string | null;
     note: string | null;
     menuItem: { id?: string; name: string } | null;
   }>;

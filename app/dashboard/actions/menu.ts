@@ -2,14 +2,32 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { categorySchema, menuItemSchema, updateMenuItemSchema } from "@/lib/validators";
+import {
+  categorySchema,
+  menuItemSchema,
+  menuModifierGroupIdSchema,
+  menuModifierGroupSchema,
+  menuModifierOptionIdSchema,
+  menuModifierOptionSchema,
+  menuModifierOptionStatusSchema,
+  updateMenuItemSchema,
+  updateMenuModifierGroupSchema,
+  updateMenuModifierOptionSchema
+} from "@/lib/validators";
 import { persistMenuImageUrl, uploadMenuImageFile } from "@/services/menu-image-service";
 import {
+  createMenuModifierGroup,
+  createMenuModifierOption,
   createCategory,
   createMenuItem,
+  deleteMenuModifierGroup,
+  deleteMenuModifierOption,
   deleteMenuItem,
   importMenuItemsFromDraft,
   invalidateMenuCache,
+  updateMenuModifierGroup,
+  updateMenuModifierOption,
+  updateMenuModifierOptionAvailability,
   updateMenuItem,
   updateMenuItemAvailability
 } from "@/services/menu-service";
@@ -23,14 +41,19 @@ const menuOcrImportItemSchema = z.object({
   price: z.coerce.number().int().min(1000).max(100000000)
 });
 
+function revalidateMenuWorkspace(slug: string) {
+  invalidateMenuCache();
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard");
+  revalidatePath(`/r/${slug}`);
+}
+
 export async function createCategoryAction(formData: FormData) {
   const session = await requireOperationalAdminSession("menu_management");
   const parsed = categorySchema.parse({ name: formData.get("name") });
   await createCategory(session.restaurantId, parsed.name);
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidateMenuWorkspace(session.restaurant.slug);
 }
 
 export async function createMenuItemAction(formData: FormData) {
@@ -64,8 +87,7 @@ export async function createMenuItemAction(formData: FormData) {
     image: persistedImage ?? (parsed.image || undefined)
   });
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
+  revalidateMenuWorkspace(session.restaurant.slug);
 }
 
 export async function importMenuOcrItemsAction(
@@ -101,9 +123,7 @@ export async function importMenuOcrItemsAction(
     }
   });
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidateMenuWorkspace(session.restaurant.slug);
 
   if (result.inserted === 0) {
     return {
@@ -123,8 +143,7 @@ export async function deleteMenuItemAction(formData: FormData) {
   const itemId = String(formData.get("itemId") ?? "");
   await deleteMenuItem(session.restaurantId, itemId);
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
+  revalidateMenuWorkspace(session.restaurant.slug);
 }
 
 export async function toggleMenuItemAvailabilityAction(formData: FormData) {
@@ -133,8 +152,7 @@ export async function toggleMenuItemAvailabilityAction(formData: FormData) {
   const isAvailable = String(formData.get("isAvailable") ?? "") === "true";
   await updateMenuItemAvailability(session.restaurantId, itemId, isAvailable);
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
+  revalidateMenuWorkspace(session.restaurant.slug);
 }
 
 export async function updateMenuItemAction(formData: FormData) {
@@ -168,7 +186,104 @@ export async function updateMenuItemAction(formData: FormData) {
     isAvailable: parsed.isAvailable
   });
   invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/menu");
-  revalidatePath("/dashboard");
-  revalidatePath(`/r/${session.restaurant.slug}`);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function createMenuModifierGroupAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierGroupSchema.parse({
+    itemId: formData.get("itemId"),
+    name: formData.get("name"),
+    isRequired: formData.get("isRequired") === "true",
+    minSelect: formData.get("minSelect"),
+    maxSelect: formData.get("maxSelect")
+  });
+
+  await createMenuModifierGroup({
+    restaurantId: session.restaurantId,
+    ...parsed
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function updateMenuModifierGroupAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = updateMenuModifierGroupSchema.parse({
+    itemId: formData.get("itemId"),
+    groupId: formData.get("groupId"),
+    name: formData.get("name"),
+    isRequired: formData.get("isRequired") === "true",
+    minSelect: formData.get("minSelect"),
+    maxSelect: formData.get("maxSelect")
+  });
+
+  await updateMenuModifierGroup({
+    restaurantId: session.restaurantId,
+    ...parsed
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function deleteMenuModifierGroupAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierGroupIdSchema.parse({ groupId: formData.get("groupId") });
+  await deleteMenuModifierGroup(session.restaurantId, parsed.groupId);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function createMenuModifierOptionAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierOptionSchema.parse({
+    groupId: formData.get("groupId"),
+    name: formData.get("name"),
+    priceDelta: formData.get("priceDelta"),
+    isAvailable: formData.get("isAvailable") !== "false"
+  });
+
+  await createMenuModifierOption({
+    restaurantId: session.restaurantId,
+    ...parsed
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function updateMenuModifierOptionAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = updateMenuModifierOptionSchema.parse({
+    groupId: formData.get("groupId"),
+    optionId: formData.get("optionId"),
+    name: formData.get("name"),
+    priceDelta: formData.get("priceDelta"),
+    isAvailable: formData.get("isAvailable") === "true"
+  });
+
+  await updateMenuModifierOption({
+    restaurantId: session.restaurantId,
+    ...parsed
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function toggleMenuModifierOptionAvailabilityAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierOptionStatusSchema.parse({
+    optionId: formData.get("optionId"),
+    isAvailable: formData.get("isAvailable")
+  });
+  await updateMenuModifierOptionAvailability(session.restaurantId, parsed.optionId, parsed.isAvailable);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
+}
+
+export async function deleteMenuModifierOptionAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierOptionIdSchema.parse({ optionId: formData.get("optionId") });
+  await deleteMenuModifierOption(session.restaurantId, parsed.optionId);
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidateMenuWorkspace(session.restaurant.slug);
 }

@@ -93,12 +93,12 @@ export function useRemoteCart<TItem extends { id: string }>(items: TItem[], opti
   }, [normalizedCart, options.storageKey]);
 
   const cartLines = useMemo(() => {
-    return Object.values(normalizedCart)
-      .map((line) => {
+    return Object.entries(normalizedCart)
+      .map(([lineId, line]) => {
         const item = items.find((menuItem) => menuItem.id === line.itemId);
-        return item ? { ...line, item } : null;
+        return item ? { ...line, lineId, item } : null;
       })
-      .filter(Boolean) as Array<RemoteCartLine & { item: TItem }>;
+      .filter(Boolean) as Array<RemoteCartLine & { lineId: string; item: TItem }>;
   }, [items, normalizedCart]);
 
   return {

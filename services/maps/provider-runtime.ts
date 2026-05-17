@@ -1,4 +1,5 @@
 import { MapApiError } from "@/services/maps/errors";
+import { recordProviderPolicyUsage } from "@/services/maps/provider-policy-service";
 import { checkMapRateLimit } from "@/services/maps/rate-limit-service";
 import { recordMapProviderEvent } from "@/services/maps/observability-service";
 import type { Coordinate, GeocodingProvider, MapRequestContext, RoutingProvider } from "@/services/maps/types";
@@ -96,6 +97,20 @@ export function recordProviderResult(provider: string, operation: ProviderOperat
   });
 }
 
+export function getProviderCircuitSnapshot() {
+  const now = Date.now();
+  return [...providerCircuit.entries()].map(([key, state]) => {
+    const [operation, provider] = key.split(":");
+    return {
+      provider,
+      operation,
+      failures: state.failures,
+      open: state.openUntil > now,
+      openUntil: state.openUntil > now ? new Date(state.openUntil).toISOString() : null
+    };
+  });
+}
+
 export async function fetchJson<T>(
   url: URL | string,
   init?: RequestInit & {
@@ -112,6 +127,10 @@ export async function fetchJson<T>(
   const startedAt = Date.now();
 
   try {
+    if (init?.telemetry) {
+      recordProviderPolicyUsage(init.telemetry.provider, init.telemetry.operation);
+    }
+
     const response = await fetch(url, {
       ...init,
       signal: controller.signal,

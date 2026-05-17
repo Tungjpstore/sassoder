@@ -36,8 +36,8 @@ async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { resta
   const initialRequests = JSON.parse(JSON.stringify(serviceRequests));
 
   return (
-    <div className="grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <div className="xl:sticky xl:top-[92px] xl:h-[calc(100vh-112px)]">
+    <div className="dashboard-order-service-shell grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="dashboard-order-live-panel xl:sticky xl:top-[92px] xl:h-[calc(100vh-112px)]">
         <AdminLiveActionCenter
           initialOrders={initialOrders}
           initialRequests={initialRequests}

@@ -8,11 +8,17 @@ import {
   registerOnboardingAction as runRegisterOnboardingAction,
   requestPasswordResetAction as runRequestPasswordResetAction,
   resendEmailOtpAction as runResendEmailOtpAction,
+  resendPasswordResetOtpAction as runResendPasswordResetOtpAction,
   updateRecoveredPasswordAction as runUpdateRecoveredPasswordAction,
   verifyEmailOtpAction as runVerifyEmailOtpAction
 } from "./actions/auth";
 import { requestSubscriptionPaymentAction as runRequestSubscriptionPaymentAction } from "./actions/billing";
-import { updateAiOperationInsightStatusAction as runUpdateAiOperationInsightStatusAction } from "./actions/ai-insights";
+import {
+  updateAiAutomationRunStatusAction as runUpdateAiAutomationRunStatusAction,
+  updateAiOperationInsightStatusAction as runUpdateAiOperationInsightStatusAction,
+  updateAiRecommendationStatusAction as runUpdateAiRecommendationStatusAction,
+  updateRestaurantAiMemoryStatusAction as runUpdateRestaurantAiMemoryStatusAction
+} from "./actions/ai-insights";
 import {
   retryAiMorningBriefEmailAction as runRetryAiMorningBriefEmailAction,
   updateAiMorningBriefPreferencesAction as runUpdateAiMorningBriefPreferencesAction
@@ -27,6 +33,7 @@ import {
   deactivateInventoryIngredientAction as runDeactivateInventoryIngredientAction,
   deleteInventoryRecipeLineAction as runDeleteInventoryRecipeLineAction,
   importInventoryIntakeAction as runImportInventoryIntakeAction,
+  processInventoryTransferAction as runProcessInventoryTransferAction,
   receiveInventoryPurchaseOrderAction as runReceiveInventoryPurchaseOrderAction,
   recordInventoryMovementAction as runRecordInventoryMovementAction,
   refreshInventoryAlertsAction as runRefreshInventoryAlertsAction,
@@ -36,10 +43,17 @@ import {
 } from "./actions/inventory";
 import {
   createCategoryAction as runCreateCategoryAction,
+  createMenuModifierGroupAction as runCreateMenuModifierGroupAction,
+  createMenuModifierOptionAction as runCreateMenuModifierOptionAction,
   createMenuItemAction as runCreateMenuItemAction,
+  deleteMenuModifierGroupAction as runDeleteMenuModifierGroupAction,
+  deleteMenuModifierOptionAction as runDeleteMenuModifierOptionAction,
   deleteMenuItemAction as runDeleteMenuItemAction,
   importMenuOcrItemsAction as runImportMenuOcrItemsAction,
+  toggleMenuModifierOptionAvailabilityAction as runToggleMenuModifierOptionAvailabilityAction,
   toggleMenuItemAvailabilityAction as runToggleMenuItemAvailabilityAction,
+  updateMenuModifierGroupAction as runUpdateMenuModifierGroupAction,
+  updateMenuModifierOptionAction as runUpdateMenuModifierOptionAction,
   updateMenuItemAction as runUpdateMenuItemAction
 } from "./actions/menu";
 import { onboardingAction as runOnboardingAction } from "./actions/onboarding";
@@ -47,7 +61,8 @@ import {
   createPromotionAction as runCreatePromotionAction,
   deletePromotionAction as runDeletePromotionAction,
   togglePromotionAction as runTogglePromotionAction,
-  togglePromotionDisplayAction as runTogglePromotionDisplayAction
+  togglePromotionDisplayAction as runTogglePromotionDisplayAction,
+  updatePromotionAction as runUpdatePromotionAction
 } from "./actions/promotions";
 import {
   createStaffAction as runCreateStaffAction,
@@ -70,6 +85,7 @@ import {
 } from "./actions/tables";
 import {
   applyAiSetupBrandAction as runApplyAiSetupBrandAction,
+  updateBranchDeliveryAvailabilityAction as runUpdateBranchDeliveryAvailabilityAction,
   updateOrderingSettingsAction as runUpdateOrderingSettingsAction,
   updatePaymentSettingsAction as runUpdatePaymentSettingsAction,
   updateReportScheduleAction as runUpdateReportScheduleAction,
@@ -105,6 +121,13 @@ export async function resendEmailOtpAction(
   formData: FormData
 ) {
   return runResendEmailOtpAction(_prevState, formData);
+}
+
+export async function resendPasswordResetOtpAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  return runResendPasswordResetOtpAction(_prevState, formData);
 }
 
 export async function requestPasswordResetAction(
@@ -155,6 +178,13 @@ export async function updateOrderingSettingsAction(
   return runUpdateOrderingSettingsAction(_prevState, formData);
 }
 
+export async function updateBranchDeliveryAvailabilityAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  return runUpdateBranchDeliveryAvailabilityAction(_prevState, formData);
+}
+
 export async function updateReservationSettingsAction(
   _prevState: { error?: string; success?: string } | undefined,
   formData: FormData
@@ -168,6 +198,18 @@ export async function requestSubscriptionPaymentAction(formData: FormData) {
 
 export async function updateAiOperationInsightStatusAction(formData: FormData) {
   return runUpdateAiOperationInsightStatusAction(formData);
+}
+
+export async function updateAiRecommendationStatusAction(formData: FormData) {
+  return runUpdateAiRecommendationStatusAction(formData);
+}
+
+export async function updateAiAutomationRunStatusAction(formData: FormData) {
+  return runUpdateAiAutomationRunStatusAction(formData);
+}
+
+export async function updateRestaurantAiMemoryStatusAction(formData: FormData) {
+  return runUpdateRestaurantAiMemoryStatusAction(formData);
 }
 
 export async function updateAiMorningBriefPreferencesAction(formData: FormData) {
@@ -204,6 +246,10 @@ export async function applyInventoryCountAction(formData: FormData) {
 
 export async function createInventoryTransferAction(formData: FormData) {
   return runCreateInventoryTransferAction(formData);
+}
+
+export async function processInventoryTransferAction(formData: FormData) {
+  return runProcessInventoryTransferAction(formData);
 }
 
 export async function updateInventoryAlertStatusAction(formData: FormData) {
@@ -268,6 +314,34 @@ export async function updateMenuItemAction(formData: FormData) {
   return runUpdateMenuItemAction(formData);
 }
 
+export async function createMenuModifierGroupAction(formData: FormData) {
+  return runCreateMenuModifierGroupAction(formData);
+}
+
+export async function updateMenuModifierGroupAction(formData: FormData) {
+  return runUpdateMenuModifierGroupAction(formData);
+}
+
+export async function deleteMenuModifierGroupAction(formData: FormData) {
+  return runDeleteMenuModifierGroupAction(formData);
+}
+
+export async function createMenuModifierOptionAction(formData: FormData) {
+  return runCreateMenuModifierOptionAction(formData);
+}
+
+export async function updateMenuModifierOptionAction(formData: FormData) {
+  return runUpdateMenuModifierOptionAction(formData);
+}
+
+export async function toggleMenuModifierOptionAvailabilityAction(formData: FormData) {
+  return runToggleMenuModifierOptionAvailabilityAction(formData);
+}
+
+export async function deleteMenuModifierOptionAction(formData: FormData) {
+  return runDeleteMenuModifierOptionAction(formData);
+}
+
 export async function createTableAction(formData: FormData) {
   return runCreateTableAction(formData);
 }
@@ -290,6 +364,10 @@ export async function deleteTableAction(formData: FormData) {
 
 export async function createPromotionAction(formData: FormData) {
   return runCreatePromotionAction(formData);
+}
+
+export async function updatePromotionAction(formData: FormData) {
+  return runUpdatePromotionAction(formData);
 }
 
 export async function togglePromotionAction(formData: FormData) {

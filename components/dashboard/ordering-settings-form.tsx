@@ -152,7 +152,7 @@ function Card({
   className?: string;
 }) {
   return (
-    <section id={id} className={cn("rounded-[14px] border border-[#e7e2d8] bg-white p-4 shadow-[0_1px_2px_rgba(29,39,32,0.04)]", className)}>
+    <section id={id} className={cn("dashboard-delivery-card rounded-[14px] border border-[#e7e2d8] bg-white p-4 shadow-[0_1px_2px_rgba(29,39,32,0.04)]", className)}>
       <div>
         <h3 className="text-[15px] font-extrabold text-[#101813]">{title}</h3>
         {description ? <p className="mt-1 text-xs font-medium text-[#667166]">{description}</p> : null}
@@ -314,7 +314,7 @@ export function OrderingSettingsForm({
       id="online-ordering"
       action={formAction}
       className={cn(
-        "min-h-full bg-[#fbfaf7] text-[#101813]",
+        "dashboard-delivery-settings min-h-full bg-[#fbfaf7] text-[#101813]",
         compact ? "-mx-3 -mb-3 px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-1 sm:-mx-4 sm:px-4" : "rounded-2xl border border-[#e7e2d8] p-5"
       )}
     >
@@ -359,7 +359,7 @@ export function OrderingSettingsForm({
         </div>
       </div>
 
-      <div className="mt-4 flex gap-3 overflow-x-auto overscroll-x-contain border-b border-[#e5e0d6] pb-1 text-xs font-semibold text-[#3b463d] sm:text-sm">
+      <div className="dashboard-delivery-tabs mt-4 flex gap-3 overflow-x-auto overscroll-x-contain border-b border-[#e5e0d6] pb-1 text-xs font-semibold text-[#3b463d] sm:text-sm">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -460,7 +460,7 @@ export function OrderingSettingsForm({
         <MiniMetric icon={<Store size={17} aria-hidden="true" />} label="Khuyến nghị" value="Lưu ngay, chỉnh nâng cao sau" />
       </div>
 
-      <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.45fr)]">
+      <div className="dashboard-delivery-layout mt-5 grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.45fr)]">
         <div className="grid content-start gap-4">
           <Card id="map-location-card" title="Vị trí quán trên bản đồ" description="Kéo thả marker để cập nhật vị trí chính xác của quán">
             <StoreLocationPicker
@@ -472,7 +472,7 @@ export function OrderingSettingsForm({
               onLongitudeChange={setStoreLng}
               onResolvedAddress={setResolvedAddress}
             />
-            <div className="rounded-b-xl border-x border-b border-[#e7e2d8] bg-white">
+            <div className="dashboard-map-detail-panel rounded-b-xl border-x border-b border-[#e7e2d8] bg-white">
 	              <div className="flex items-center justify-between gap-3 border-b border-[#eee9df] px-4 py-3">
 	                <div className="min-w-0">
 	                  <p className="text-[11px] font-semibold text-[#667166]">Địa chỉ</p>
@@ -837,7 +837,7 @@ export function OrderingSettingsForm({
       {state?.error ? <p role="alert" className="mt-4 rounded-xl bg-[#fff1ed] px-4 py-3 text-sm font-extrabold text-[#c23b2a]">{state.error}</p> : null}
       {state?.success ? <p aria-live="polite" className="mt-4 rounded-xl bg-[#edf7ef] px-4 py-3 text-sm font-extrabold text-[#0f6944]">{state.success}</p> : null}
 
-      <div id="save-settings-bar" className="sticky bottom-0 z-10 mt-4 grid grid-cols-1 gap-2 border-t border-[#e5e0d6] bg-[#fbfaf7]/95 px-0 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:flex sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
+      <div id="save-settings-bar" className="dashboard-delivery-save-bar sticky bottom-0 z-10 mt-4 grid grid-cols-1 gap-2 border-t border-[#e5e0d6] bg-[#fbfaf7]/95 px-0 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur sm:flex sm:flex-wrap sm:items-center sm:justify-end sm:gap-3">
         <button
           type="button"
           onClick={() => {

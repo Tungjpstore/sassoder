@@ -8,6 +8,22 @@ export type PromotionDiscountRule = {
   minOrderAmount: number;
 };
 
+export type PromotionDiscountEvaluation =
+  | {
+      eligible: true;
+      discountAmount: number;
+      eligibleAmount: number;
+      missingAmount: 0;
+      reason: null;
+    }
+  | {
+      eligible: false;
+      discountAmount: 0;
+      eligibleAmount: number;
+      missingAmount: number;
+      reason: "no_rule" | "minimum_not_met" | "no_eligible_amount" | "zero_discount";
+    };
+
 function eligiblePromotionAmount(input: {
   itemSubtotal: number;
   deliveryFee?: number;
@@ -22,15 +38,74 @@ export function calculatePromotionDiscountAmount(input: {
   deliveryFee?: number;
   rule: PromotionDiscountRule | null;
 }) {
-  if (!input.rule || input.itemSubtotal < input.rule.minOrderAmount) return 0;
+  return evaluatePromotionDiscount(input).discountAmount;
+}
+
+export function evaluatePromotionDiscount(input: {
+  itemSubtotal: number;
+  deliveryFee?: number;
+  rule: PromotionDiscountRule | null;
+}): PromotionDiscountEvaluation {
+  if (!input.rule) {
+    return {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount: 0,
+      missingAmount: 0,
+      reason: "no_rule"
+    };
+  }
+
+  const missingAmount = Math.max(0, Math.round(input.rule.minOrderAmount - input.itemSubtotal));
+  if (missingAmount > 0) {
+    return {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount: eligiblePromotionAmount({
+        itemSubtotal: input.itemSubtotal,
+        deliveryFee: input.deliveryFee,
+        rule: input.rule
+      }),
+      missingAmount,
+      reason: "minimum_not_met"
+    };
+  }
+
   const eligibleAmount = eligiblePromotionAmount({
     itemSubtotal: input.itemSubtotal,
     deliveryFee: input.deliveryFee,
     rule: input.rule
   });
-  if (eligibleAmount <= 0) return 0;
-  if (input.rule.discountType === "PERCENT") {
-    return Math.min(eligibleAmount, Math.round((eligibleAmount * input.rule.discountValue) / 100));
+  if (eligibleAmount <= 0) {
+    return {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount,
+      missingAmount: 0,
+      reason: "no_eligible_amount"
+    };
   }
-  return Math.min(eligibleAmount, input.rule.discountValue);
+
+  const discountAmount =
+    input.rule.discountType === "PERCENT"
+      ? Math.min(eligibleAmount, Math.round((eligibleAmount * input.rule.discountValue) / 100))
+      : Math.min(eligibleAmount, input.rule.discountValue);
+
+  if (discountAmount <= 0) {
+    return {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount,
+      missingAmount: 0,
+      reason: "zero_discount"
+    };
+  }
+
+  return {
+    eligible: true,
+    discountAmount,
+    eligibleAmount,
+    missingAmount: 0,
+    reason: null
+  };
 }

@@ -2,30 +2,23 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { createStableAiCacheKey, getAiCache, setAiCache } from "@/lib/ai/services/cache";
-import { availableAiProviders, getAiProviderConfig } from "@/lib/ai/providers/registry";
+import { availableAiProviders, estimateAiCostVnd, getAiProviderConfig } from "@/lib/ai/providers/registry";
+import { runAnthropicMessagesChat } from "@/lib/ai/providers/anthropic-messages";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
+import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
 
-const reasoningTasks = new Set<AiTaskType>(["analytics_reasoning", "business_insight"]);
-const qwenFirstTasks = new Set<AiTaskType>(["customer_ordering", "menu_generation", "upsell", "dashboard_operation", "setup", "branding", "ocr", "image", "tool"]);
-
-function chooseProviderOrder(taskType: AiTaskType, preferredProvider?: AiProvider) {
+export function chooseAiProviderOrder(request: Pick<AiCompletionRequest, "taskType" | "preferredProvider" | "options">) {
   const available = availableAiProviders();
-  if (available.length === 0) throw new AppError("Chưa cấu hình QWEN_API_KEY/DASHSCOPE_API_KEY hoặc XAI_API_KEY cho AI.", 500);
-  if (taskType === "ocr") {
-    if (!available.includes("qwen")) throw new AppError("AI OCR menu yêu cầu QWEN_API_KEY hoặc DASHSCOPE_API_KEY. xAI không được dùng cho OCR menu.", 500);
-    return ["qwen" as AiProvider];
-  }
+  if (available.length === 0) throw new AppError("Chưa cấu hình provider AI server-side.", 500);
 
-  const preferred = preferredProvider && available.includes(preferredProvider) ? preferredProvider : null;
-  const primary: AiProvider = preferred ?? (reasoningTasks.has(taskType) && available.includes("xai") ? "xai" : "qwen");
-  const ordered: AiProvider[] = [];
-
-  if (available.includes(primary)) ordered.push(primary);
-  if (qwenFirstTasks.has(taskType) && available.includes("qwen") && !ordered.includes("qwen")) ordered.push("qwen");
-  if (available.includes("xai") && !ordered.includes("xai")) ordered.push("xai");
-  if (available.includes("qwen") && !ordered.includes("qwen")) ordered.push("qwen");
-
+  const ordered = buildAiProviderOrder({
+    taskType: request.taskType,
+    preferredProvider: request.preferredProvider,
+    options: request.options,
+    candidates: available.map((provider) => getAiProviderConfig(provider))
+  });
+  if (ordered.length === 0) throw new AppError(`Chưa có provider AI phù hợp cho task ${request.taskType}.`, 500);
   return ordered;
 }
 
@@ -36,6 +29,11 @@ function pickModel(provider: AiProvider, taskType: AiTaskType, modelOverride?: s
   if (taskType === "ocr") return config.ocrModel;
   if (taskType === "image") return config.imageModel;
   return config.chatModel;
+}
+
+function runProviderChat(input: Parameters<typeof runOpenAiCompatibleChat>[0]) {
+  if (input.config.protocol === "anthropic-messages") return runAnthropicMessagesChat(input);
+  return runOpenAiCompatibleChat(input);
 }
 
 export async function runAiCompletion(request: AiCompletionRequest): Promise<AiCompletionResult> {
@@ -54,20 +52,25 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
   const attempts: AiCompletionResult["attempts"] = [];
   let lastError: unknown = null;
 
-  for (const provider of chooseProviderOrder(request.taskType, request.preferredProvider)) {
+  for (const provider of chooseAiProviderOrder(request)) {
     const config = getAiProviderConfig(provider);
     const model = pickModel(provider, request.taskType, request.modelOverride);
     const startedAt = Date.now();
     try {
-      const result = await runOpenAiCompatibleChat({
+      const result = await runProviderChat({
         config,
         model,
         messages: request.messages,
         options: request.options
       });
+      const estimatedCostVnd = estimateAiCostVnd(config, result.inputTokens, result.outputTokens);
       const completed: AiCompletionResult = {
         ...result,
-        attempts: [...attempts, { provider, model, status: "success", latencyMs: result.latencyMs ?? Date.now() - startedAt }]
+        estimatedCostVnd,
+        attempts: [
+          ...attempts,
+          { provider, model, status: "success", latencyMs: result.latencyMs ?? Date.now() - startedAt, estimatedCostVnd }
+        ]
       };
       if (cacheKey && cacheTtl > 0) setAiCache(cacheKey, completed, cacheTtl);
       return completed;
@@ -78,6 +81,7 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
         model,
         status: "failed",
         latencyMs: Date.now() - startedAt,
+        estimatedCostVnd: null,
         errorMessage: error instanceof Error ? error.message : "AI provider failed"
       });
     }

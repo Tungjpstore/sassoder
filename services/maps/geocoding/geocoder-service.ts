@@ -1,6 +1,7 @@
 import { readSharedCache, writeSharedCache } from "@/services/maps/cache-service";
 import { recordMapCacheEvent } from "@/services/maps/observability-service";
 import { getGeocoderProviders } from "@/services/maps/provider-factory";
+import { shouldUseProvider } from "@/services/maps/provider-policy-service";
 import {
   getGeocodingScopeKey,
   getNumberEnv,
@@ -72,6 +73,7 @@ export async function searchAddressPredictions(
 
   const result = await withRequestDedupe(cacheKey, async () => {
     for (const provider of providers) {
+      if (!shouldUseProvider(provider.id, "geocode")) continue;
       if (isCircuitOpen(provider.id, "geocode")) continue;
       const providerResult = await searchPredictionsWithProvider(provider, normalizedQuery, {
         limit,
@@ -109,6 +111,7 @@ export async function getPlaceDetail(
 
   const result = await withRequestDedupe(cacheKey, async () => {
     for (const provider of getGeocoderProviders("goong")) {
+      if (!shouldUseProvider(provider.id, "geocode")) continue;
       if (!provider.placeDetail || isCircuitOpen(provider.id, "geocode")) continue;
       const detail = await provider.placeDetail(normalizedPlaceId, options);
       recordProviderResult(provider.id, "geocode", Boolean(detail));
@@ -138,6 +141,7 @@ export async function searchAddress(
 
   const result = await withRequestDedupe(cacheKey, async () => {
     for (const provider of providers) {
+      if (!shouldUseProvider(provider.id, "geocode")) continue;
       if (isCircuitOpen(provider.id, "geocode")) continue;
       const providerResult = await provider.search(normalizedQuery, limit, options.context);
       if (providerResult.length > 0) {
@@ -165,6 +169,7 @@ export async function reverseGeocode(
 
   const result = await withRequestDedupe(cacheKey, async () => {
     for (const provider of providers) {
+      if (!shouldUseProvider(provider.id, "reverse")) continue;
       if (isCircuitOpen(provider.id, "reverse")) continue;
       const providerResult = await provider.reverse(point, options.context);
       if (providerResult) {

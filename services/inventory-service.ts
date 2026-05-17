@@ -1,5 +1,11 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildInventoryAlertCandidates, INVENTORY_ALERT_TYPES, type InventoryAlertCandidate, type InventoryAlertType } from "@/lib/inventory-alert-engine";
+import { calculateRecipeCost, type InventoryCostStatus } from "@/lib/inventory-costing-engine";
+import {
+  buildInventoryFefoAllocationPlan,
+  buildInventoryRollbackAllocations,
+  type InventoryFefoStockInput
+} from "@/lib/inventory-fefo-allocation-engine";
 import { AppError } from "@/lib/response";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { InventoryMovementType } from "@/types/domain";
@@ -53,6 +59,10 @@ export type InventoryRecipeMenuItem = {
   recipeLines: InventoryRecipeLine[];
   totalRecipeCost: number;
   recipeCostPercent: number;
+  grossProfit: number;
+  grossMarginPercent: number;
+  costStatus: InventoryCostStatus;
+  marginWarning: string | null;
 };
 
 export type InventorySnapshot = {
@@ -347,7 +357,37 @@ type RecipeInventoryRow = {
 
 type ExistingOrderMovementRow = {
   ingredient_id: string;
+  branch_id: string | null;
+  location_id: string | null;
+  batch_id: string | null;
   quantity_delta: number | string;
+  unit_cost: number | string | null;
+  created_at: string;
+};
+
+type OrderStockBalanceRow = {
+  ingredient_id: string;
+  branch_id: string | null;
+  location_id: string | null;
+  batch_id: string | null;
+  on_hand_quantity: number | string;
+  reserved_quantity: number | string | null;
+  batch:
+    | {
+        status: string | null;
+        expiration_date: string | null;
+        unit_cost: number | string | null;
+        received_at?: string | null;
+        created_at?: string | null;
+      }
+    | {
+        status: string | null;
+        expiration_date: string | null;
+        unit_cost: number | string | null;
+        received_at?: string | null;
+        created_at?: string | null;
+      }[]
+    | null;
 };
 
 type RecipeMenuCategoryRow = {
@@ -537,6 +577,9 @@ type BranchTransferRow = {
 export type InventoryOrderSyncResult = {
   schemaReady: boolean;
   movementCount: number;
+  allocatedQuantity?: number;
+  shortageCount?: number;
+  allocationMode?: "legacy" | "fefo";
   skippedReason?: "schema_missing" | "no_items" | "no_recipes" | "already_synced";
 };
 
@@ -651,9 +694,14 @@ export type InventoryTransferInput = {
 export type InventoryTransferResult = {
   transferId: string;
   transferNumber: string;
+  status?: InventoryTransfer["status"];
   lineCount: number;
   totalQuantity: number;
+  movementCount?: number;
+  skippedReason?: string;
 };
+
+export type InventoryTransferWorkflowAction = "approve" | "dispatch" | "receive" | "cancel";
 
 const emptyInventorySnapshot: InventorySnapshot = {
   schemaReady: false,
@@ -913,8 +961,13 @@ async function applyOrderInventoryMovement(
     ingredientId: string;
     movementType: "deduct_sale" | "rollback";
     quantityDelta: number;
+    unitCost?: number | null;
+    branchId?: string | null;
+    locationId?: string | null;
+    batchId?: string | null;
     orderId: string;
     reason: string;
+    metadata?: Record<string, unknown>;
     actorUserId?: string | null;
   }
 ) {
@@ -923,20 +976,49 @@ async function applyOrderInventoryMovement(
     target_ingredient_id: input.ingredientId,
     target_movement_type: input.movementType,
     target_quantity_delta: input.quantityDelta,
-    target_unit_cost: null,
+    target_unit_cost: input.unitCost ?? null,
     target_source_type: "order",
     target_source_id: input.orderId,
     target_reason: input.reason,
     target_actor_user_id: input.actorUserId ?? null,
-    target_metadata: { orderId: input.orderId }
+    target_metadata: { orderId: input.orderId, ...(input.metadata ?? {}) },
+    target_branch_id: input.branchId ?? null,
+    target_location_id: input.locationId ?? null,
+    target_batch_id: input.batchId ?? null,
+    target_purchase_order_id: null,
+    target_transfer_id: null
   });
 
   if (isDuplicateInventoryMovementError(error)) return null;
-  if (error?.message?.includes("stock negative")) {
+  if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
     throw new AppError("Ton kho khong du de xac nhan don. Hay nhap them hang hoac dieu chinh cong thuc.", 400);
   }
   throwIfSupabaseError(error);
   return data;
+}
+
+function mapOrderStockBalance(row: OrderStockBalanceRow): InventoryFefoStockInput {
+  const batch = firstOrNull(row.batch);
+  return {
+    ingredientId: row.ingredient_id,
+    batchId: row.batch_id ?? null,
+    locationId: row.location_id ?? null,
+    branchId: row.branch_id ?? null,
+    availableQuantity: Math.max(0, numberValue(row.on_hand_quantity) - numberValue(row.reserved_quantity ?? 0)),
+    expirationDate: batch?.expiration_date ?? null,
+    batchStatus: batch?.status ?? null,
+    unitCost: batch?.unit_cost == null ? null : numberValue(batch.unit_cost),
+    receivedAt: batch?.received_at ?? null,
+    createdAt: batch?.created_at ?? null
+  };
+}
+
+function formatInventoryShortageMessage(shortages: Array<{ ingredientId: string; shortageQuantity: number }>) {
+  const preview = shortages
+    .slice(0, 3)
+    .map((shortage) => `${shortage.ingredientId}: thiếu ${shortage.shortageQuantity}`)
+    .join("; ");
+  return `Ton kho khong du de xac nhan don theo FEFO.${preview ? ` ${preview}.` : ""}`;
 }
 
 export async function getInventorySnapshot(restaurantId: string): Promise<InventorySnapshot> {
@@ -1162,7 +1244,14 @@ export async function listInventoryRecipeMenuItems(restaurantId: string): Promis
   return ((menuResult.data ?? []) as RecipeMenuCategoryRow[]).flatMap((category) =>
     (category.items ?? []).map((item) => {
       const recipeLines = linesByMenuItem.get(item.id) ?? [];
-      const totalRecipeCost = recipeLines.reduce((sum, line) => sum + line.costPerItem, 0);
+      const costSummary = calculateRecipeCost({
+        price: item.price,
+        lines: recipeLines.map((line) => ({
+          quantityPerItem: line.quantityPerItem,
+          wastePercent: line.wastePercent,
+          referenceUnitCost: line.referenceUnitCost
+        }))
+      });
       return {
         id: item.id,
         name: item.name,
@@ -1170,8 +1259,12 @@ export async function listInventoryRecipeMenuItems(restaurantId: string): Promis
         isAvailable: item.is_available,
         categoryName: category.name,
         recipeLines,
-        totalRecipeCost,
-        recipeCostPercent: item.price > 0 ? Math.round((totalRecipeCost / item.price) * 10000) / 100 : 0
+        totalRecipeCost: costSummary.totalRecipeCost,
+        recipeCostPercent: costSummary.recipeCostPercent,
+        grossProfit: costSummary.grossProfit,
+        grossMarginPercent: costSummary.grossMarginPercent,
+        costStatus: costSummary.costStatus,
+        marginWarning: costSummary.marginWarning
       };
     })
   );
@@ -1941,8 +2034,54 @@ export async function createInventoryTransfer(restaurantId: string, input: Inven
   return {
     transferId: String(payload.transferId ?? ""),
     transferNumber: String(payload.transferNumber ?? ""),
+    status: payload.status,
     lineCount: numberValue(payload.lineCount),
-    totalQuantity: numberValue(payload.totalQuantity)
+    totalQuantity: numberValue(payload.totalQuantity),
+    movementCount: numberValue(payload.movementCount)
+  };
+}
+
+export async function processInventoryTransfer(
+  restaurantId: string,
+  input: {
+    transferId: string;
+    action: InventoryTransferWorkflowAction;
+    actorUserId: string;
+    note?: string;
+  }
+): Promise<InventoryTransferResult> {
+  const supabase = await createServerSupabaseClient();
+  const db = supabase as unknown as UntypedSupabase;
+  const { data, error } = await db.rpc("process_branch_transfer", {
+    target_restaurant_id: restaurantId,
+    target_transfer_id: input.transferId,
+    target_action: input.action,
+    target_actor_user_id: input.actorUserId,
+    target_note: input.note?.trim() || null
+  });
+
+  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration workflow dieu chuyen kho truoc.", 400);
+  if (error?.message?.includes("Only approved transfers can be dispatched")) {
+    throw new AppError("Chi phieu da duyet moi duoc xuat kho.", 400);
+  }
+  if (error?.message?.includes("Only dispatched transfers can be received")) {
+    throw new AppError("Chi phieu da xuat kho moi duoc nhan hang.", 400);
+  }
+  if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
+    throw new AppError("Kho xuat khong du hang de xuat dieu chuyen.", 400);
+  }
+  throwIfSupabaseError(error);
+  if (!data || typeof data !== "object") throw new AppError(inventoryMutationError, 500);
+
+  const payload = data as Partial<InventoryTransferResult>;
+  return {
+    transferId: String(payload.transferId ?? input.transferId),
+    transferNumber: String(payload.transferNumber ?? ""),
+    status: payload.status,
+    lineCount: numberValue(payload.lineCount),
+    totalQuantity: numberValue(payload.totalQuantity),
+    movementCount: numberValue(payload.movementCount),
+    skippedReason: payload.skippedReason
   };
 }
 
@@ -2587,20 +2726,63 @@ export async function deductInventoryForOrder(
   const demandByIngredient = aggregateRecipeDemand(items, (recipesResult.data ?? []) as RecipeInventoryRow[]);
   if (demandByIngredient.size === 0) return { schemaReady: true, movementCount: 0, skippedReason: "no_recipes" };
 
-  let movementCount = 0;
-  for (const [ingredientId, demandQuantity] of demandByIngredient) {
-    const movement = await applyOrderInventoryMovement(db, restaurantId, {
+  const ingredientIds = [...demandByIngredient.keys()];
+  const stockResult = await db
+    .from("stock_balances")
+    .select(
+      "ingredient_id,branch_id,location_id,batch_id,on_hand_quantity,reserved_quantity,batch:inventory_batches(status,expiration_date,unit_cost,received_at,created_at)"
+    )
+    .eq("restaurant_id", restaurantId)
+    .in("ingredient_id", ingredientIds)
+    .gt("on_hand_quantity", 0);
+
+  if (isMissingInventorySchemaError(stockResult.error)) {
+    return { schemaReady: false, movementCount: 0, skippedReason: "schema_missing" };
+  }
+  throwIfSupabaseError(stockResult.error);
+
+  const allocationPlan = buildInventoryFefoAllocationPlan({
+    demands: ingredientIds.map((ingredientId) => ({
       ingredientId,
+      quantity: demandByIngredient.get(ingredientId) ?? 0
+    })),
+    stock: ((stockResult.data ?? []) as OrderStockBalanceRow[]).map(mapOrderStockBalance)
+  });
+
+  if (allocationPlan.shortages.length > 0) {
+    throw new AppError(formatInventoryShortageMessage(allocationPlan.shortages), 400);
+  }
+
+  let movementCount = 0;
+  for (const allocation of allocationPlan.allocations) {
+    const movement = await applyOrderInventoryMovement(db, restaurantId, {
+      ingredientId: allocation.ingredientId,
       movementType: "deduct_sale",
-      quantityDelta: -Math.abs(demandQuantity),
+      quantityDelta: -Math.abs(allocation.quantity),
+      unitCost: allocation.unitCost,
+      branchId: allocation.branchId,
+      locationId: allocation.locationId,
+      batchId: allocation.batchId,
       orderId,
       reason: "Tru kho theo don hang",
+      metadata: {
+        allocationMode: "fefo",
+        allocationIndex: allocation.allocationIndex,
+        demandQuantity: demandByIngredient.get(allocation.ingredientId) ?? allocation.quantity,
+        expirationDate: allocation.expirationDate
+      },
       actorUserId
     });
     if (movement) movementCount += 1;
   }
 
-  return { schemaReady: true, movementCount };
+  return {
+    schemaReady: true,
+    movementCount,
+    allocatedQuantity: allocationPlan.allocatedQuantity,
+    shortageCount: 0,
+    allocationMode: "fefo"
+  };
 }
 
 export async function rollbackInventoryForOrder(
@@ -2630,40 +2812,61 @@ export async function rollbackInventoryForOrder(
 
   const deductionsResult = await db
     .from("inventory_movements")
-    .select("ingredient_id,quantity_delta")
+    .select("ingredient_id,branch_id,location_id,batch_id,quantity_delta,unit_cost,created_at")
     .eq("restaurant_id", restaurantId)
     .eq("source_type", "order")
     .eq("source_id", orderId)
-    .eq("movement_type", "deduct_sale");
+    .eq("movement_type", "deduct_sale")
+    .order("created_at", { ascending: true });
 
   if (isMissingInventorySchemaError(deductionsResult.error)) {
     return { schemaReady: false, movementCount: 0, skippedReason: "schema_missing" };
   }
   throwIfSupabaseError(deductionsResult.error);
 
-  const deductedByIngredient = new Map<string, number>();
-  for (const movement of (deductionsResult.data ?? []) as ExistingOrderMovementRow[]) {
-    deductedByIngredient.set(
-      movement.ingredient_id,
-      (deductedByIngredient.get(movement.ingredient_id) ?? 0) + Math.abs(numberValue(movement.quantity_delta))
-    );
-  }
-  if (deductedByIngredient.size === 0) return { schemaReady: true, movementCount: 0, skippedReason: "no_recipes" };
+  const rollbackAllocations = buildInventoryRollbackAllocations(
+    ((deductionsResult.data ?? []) as ExistingOrderMovementRow[]).map((movement) => ({
+      ingredientId: movement.ingredient_id,
+      batchId: movement.batch_id ?? null,
+      locationId: movement.location_id ?? null,
+      branchId: movement.branch_id ?? null,
+      quantityDelta: numberValue(movement.quantity_delta),
+      unitCost: movement.unit_cost == null ? null : numberValue(movement.unit_cost),
+      createdAt: movement.created_at
+    }))
+  );
+  if (rollbackAllocations.length === 0) return { schemaReady: true, movementCount: 0, skippedReason: "no_recipes" };
 
   let movementCount = 0;
-  for (const [ingredientId, rollbackQuantity] of deductedByIngredient) {
+  for (const allocation of rollbackAllocations) {
     const movement = await applyOrderInventoryMovement(db, restaurantId, {
-      ingredientId,
+      ingredientId: allocation.ingredientId,
       movementType: "rollback",
-      quantityDelta: Math.abs(rollbackQuantity),
+      quantityDelta: Math.abs(allocation.quantity),
+      unitCost: allocation.unitCost,
+      branchId: allocation.branchId,
+      locationId: allocation.locationId,
+      batchId: allocation.batchId,
       orderId,
       reason: "Hoan kho do huy don hang",
+      metadata: {
+        allocationMode: "fefo",
+        allocationIndex: allocation.allocationIndex,
+        restoredBatchId: allocation.batchId,
+        restoredLocationId: allocation.locationId
+      },
       actorUserId
     });
     if (movement) movementCount += 1;
   }
 
-  return { schemaReady: true, movementCount };
+  return {
+    schemaReady: true,
+    movementCount,
+    allocatedQuantity: rollbackAllocations.reduce((total, allocation) => total + allocation.quantity, 0),
+    shortageCount: 0,
+    allocationMode: "fefo"
+  };
 }
 
 export async function recordInventoryMovement(

@@ -1,6 +1,15 @@
-import type { DeliveryStatus, FulfillmentType, OrderDto, OrderStatus, PaymentStatus } from "@/types/domain";
+import type { DeliveryStatus, FulfillmentType, OrderDto, OrderStatus, PaymentStatus, TableBillStatus } from "@/types/domain";
 
 export type DeliveryActionStatus = Exclude<DeliveryStatus, "none" | "requested">;
+export type OrderProgressState =
+  | "awaiting_payment"
+  | "awaiting_payment_confirmation"
+  | "awaiting_confirmation"
+  | "preparing"
+  | "delivering"
+  | "completed"
+  | "cancelled"
+  | "refunded";
 
 export type OrderStateInput = {
   status: OrderStatus;
@@ -9,6 +18,10 @@ export type OrderStateInput = {
   paymentStatus?: PaymentStatus | null;
   paidAt?: string | null;
   billId?: string | null;
+  bill?: {
+    status?: TableBillStatus | null;
+    paidAt?: string | null;
+  } | null;
 };
 
 export type OrderActionCopy = {
@@ -32,7 +45,7 @@ const deliveryTransitionLabels: Record<DeliveryActionStatus, string> = {
   rejected: "từ chối giao"
 };
 
-function isOnlineOrder(order: Pick<OrderStateInput, "fulfillmentType">) {
+export function isOnlineFulfillment(order: Pick<OrderStateInput, "fulfillmentType">) {
   return order.fulfillmentType === "DELIVERY" || order.fulfillmentType === "PICKUP";
 }
 
@@ -40,8 +53,44 @@ function normalizeDeliveryStatus(status?: DeliveryStatus | null): DeliveryStatus
   return status ?? "none";
 }
 
+export function resolveOrderPaymentStatus(order: Pick<OrderStateInput, "status" | "paymentStatus" | "paidAt" | "bill">): PaymentStatus {
+  const billStatus = order.bill?.status;
+  if (order.paymentStatus === "refunded" || order.paymentStatus === "failed") return order.paymentStatus;
+  if (order.paymentStatus === "paid" || order.status === "paid" || order.paidAt || billStatus === "paid" || order.bill?.paidAt) return "paid";
+  if (order.paymentStatus === "waiting_confirm" || order.status === "waiting_confirm" || billStatus === "waiting_confirm") {
+    return "waiting_confirm";
+  }
+  if (order.paymentStatus === "waiting_payment" || order.status === "waiting_payment" || billStatus === "waiting_payment") {
+    return "waiting_payment";
+  }
+  return order.paymentStatus ?? "unpaid";
+}
+
+export function resolveOrderProgressState(order: OrderStateInput): OrderProgressState {
+  const paymentStatus = resolveOrderPaymentStatus(order);
+  const deliveryStatus = normalizeDeliveryStatus(order.deliveryStatus);
+
+  if (paymentStatus === "refunded") return "refunded";
+  if (order.status === "cancelled" || deliveryStatus === "rejected") return "cancelled";
+  if (paymentStatus === "waiting_payment") return "awaiting_payment";
+  if (paymentStatus === "waiting_confirm") return "awaiting_payment_confirmation";
+  if (deliveryStatus === "delivered" || order.status === "paid" || order.status === "completed") return "completed";
+  if (order.fulfillmentType === "DELIVERY" && deliveryStatus === "out_for_delivery") return "delivering";
+  if (order.status === "ordering") return "preparing";
+  return "awaiting_confirmation";
+}
+
+export function isClosedOrderProgress(state: OrderProgressState) {
+  return state === "completed" || state === "cancelled" || state === "refunded";
+}
+
+export function orderNeedsPaymentAttention(order: Pick<OrderStateInput, "status" | "paymentStatus" | "paidAt" | "bill">) {
+  const paymentStatus = resolveOrderPaymentStatus(order);
+  return paymentStatus === "waiting_payment" || paymentStatus === "waiting_confirm";
+}
+
 export function getRestaurantOrderActionCopy(order: Pick<OrderDto, "fulfillmentType">): OrderActionCopy {
-  if (isOnlineOrder(order)) {
+  if (isOnlineFulfillment(order)) {
     return {
       acceptLabel: "Xác nhận đơn",
       acceptTitle: "Xác nhận đơn online",
@@ -125,7 +174,7 @@ export function shouldReturnOnlineOrderToKitchenAfterPayment(
   order: Pick<OrderStateInput, "billId" | "fulfillmentType" | "paymentStatus" | "status">
 ) {
   if (order.billId) return false;
-  if (!isOnlineOrder(order)) return false;
+  if (!isOnlineFulfillment(order)) return false;
   return (
     order.status === "waiting_confirm" ||
     order.status === "waiting_payment" ||

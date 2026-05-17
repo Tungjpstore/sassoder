@@ -80,6 +80,21 @@ export type DistanceEstimate = {
   durationMinutes: number;
 };
 
+export type DistanceMatrixPoint = Coordinate & {
+  id: string;
+  label?: string | null;
+};
+
+export type DistanceMatrixCell = {
+  originId: string;
+  destinationId: string;
+  distanceKm: number;
+  durationMinutes: number;
+  provider: RoutingProvider | "haversine";
+  confidence: RouteConfidence;
+  isEstimated: boolean;
+};
+
 export type NearbyStoreCandidate<TMeta = Record<string, unknown>> = Coordinate & {
   id: string;
   name: string;

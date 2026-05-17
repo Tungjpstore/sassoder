@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { getOAuthCallbackOrigin } from "@/lib/auth-redirect-origin";
+import { dashboardLoginPathForNext, safeDashboardNextPath } from "@/lib/auth-flow-routes";
 import {
   cookieNamesFromHeader,
   getHostname,
@@ -10,12 +11,6 @@ import {
 import { createSupabaseOAuthCookieName } from "@/lib/supabase/oauth";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
-
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
-  if (!value.startsWith("/dashboard")) return "/dashboard";
-  return value;
-}
 
 function isPrefetchRequest(request: Request) {
   const purpose = request.headers.get("purpose") || request.headers.get("sec-purpose") || "";
@@ -78,7 +73,8 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
-  const next = safeNextPath(url.searchParams.get("next"));
+  const next = safeDashboardNextPath(url.searchParams.get("next"), "/dashboard");
+  const googleInitErrorPath = dashboardLoginPathForNext(next, { authError: "google_init" });
   const hasCleanOAuthCookies = url.searchParams.get("_oauth_clean") === "1";
   const oauthKey = safeOAuthKey(url.searchParams.get("oauthKey"));
 
@@ -116,7 +112,7 @@ export async function GET(request: Request) {
       message: error instanceof Error ? error.message : String(error),
       callbackOrigin: callbackUrl.origin
     });
-    return noStoreRedirect(new URL("/dashboard/login?authError=google_init", request.url));
+    return noStoreRedirect(new URL(googleInitErrorPath, request.url));
   }
 
   const { data, error } = oauthResult;
@@ -126,7 +122,7 @@ export async function GET(request: Request) {
       message: error?.message,
       callbackOrigin: callbackUrl.origin
     });
-    return noStoreRedirect(new URL("/dashboard/login?authError=google_init", request.url));
+    return noStoreRedirect(new URL(googleInitErrorPath, request.url));
   }
 
   return noStoreRedirect(new URL(data.url));

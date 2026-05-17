@@ -1359,9 +1359,9 @@ function DashboardCopilotExperience({
       available: "before-first-message",
       suggestions: [
         { title: "01 Ca bán", message: "Tóm tắt ca bán hiện tại, chọn 1 việc ưu tiên nhất và đưa nút thao tác ngay." },
-        { title: "02 Đơn gấp", message: "Đơn nào cần xử lý hoặc thu tiền ngay? Mở đúng màn và đưa action an toàn." },
-        { title: "03 Bàn & QR", message: "Kiểm tra bàn/QR nào cần chú ý và mở đúng khu vực nếu có vấn đề." },
-        { title: "04 Setup quán", message: "Tạo kế hoạch setup quán 30 phút, chỉ giữ các bước có thể áp dụng ngay." },
+        { title: "02 Đơn gấp", message: "Nếu doanh thu hôm nay hoặc kỳ này giảm, chỉ ra 3 nguyên nhân có khả năng nhất từ dữ liệu thật." },
+        { title: "03 Món nên upsell", message: "Món nào nên upsell trong ca này và nên gợi ý theo kênh nào?" },
+        { title: "04 Báo cáo nhanh", message: "Đọc báo cáo doanh thu, giờ cao điểm, món bán chạy và đưa kế hoạch hành động 3 bước." },
         { title: "05 Thanh toán", message: "Kiểm tra giao dịch cần đối soát và đưa nút xử lý thanh toán an toàn." }
       ]
     },

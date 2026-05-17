@@ -13,8 +13,10 @@ import { StoreDeliveryMapPreview } from "@/components/maps/store-delivery-map-pr
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentStatusLabel } from "@/lib/labels";
+import { resolveDeliveryQuoteSnapshotInsight } from "@/lib/delivery/quote-snapshot-insight";
 import { formatVnd } from "@/lib/money";
 import type { OrderingSettings } from "@/services/delivery-service";
+import type { Json } from "@/types/supabase";
 
 type OnlineWorkspaceProps = {
   restaurant: OrderingSettings;
@@ -42,6 +44,7 @@ type OnlineWorkspaceProps = {
     deliveryFee: number;
     deliveryStatus: string | null;
     deliveryRouteDurationMinutes: number | null;
+    deliveryQuoteSnapshot: Json | null;
     paymentStatus: string | null;
     createdAt: string;
     acceptedAt: string | null;
@@ -69,6 +72,38 @@ function statusTone(status: string) {
   if (status === "waiting_payment" || status === "waiting_confirm") return "yellow";
   if (status === "cancelled") return "red";
   return "blue";
+}
+
+function DeliveryQuoteSummary({
+  address,
+  distanceKm,
+  durationMinutes,
+  snapshot
+}: {
+  address: string | null;
+  distanceKm: number | null;
+  durationMinutes: number | null;
+  snapshot: Json | null;
+}) {
+  const insight = resolveDeliveryQuoteSnapshotInsight(snapshot);
+
+  return (
+    <div className="mt-3 grid gap-2 text-xs font-medium text-[var(--muted-foreground)]">
+      <p>
+        {distanceKm ? `${distanceKm} km` : "Chưa có khoảng cách"} · {durationMinutes ? `${durationMinutes} phút` : "Chưa có ETA"} · {address || "Chưa có địa chỉ"}
+      </p>
+      {insight ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={insight.tone}>{insight.label}</Badge>
+          {insight.badges.slice(0, 4).map((badge) => (
+            <span key={badge} className="rounded-full border border-[var(--border)] bg-[var(--soft-surface)] px-2 py-1 text-[11px] font-semibold">
+              {badge}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function readinessItems({
@@ -104,6 +139,161 @@ function readDrawerMode(value: string | null): DrawerMode {
   return value === "settings" || value === "qr" || value === "orders" ? value : "closed";
 }
 
+function onlineOrderAgeMinutes(value: string, nowMs: number) {
+  return Math.max(0, Math.floor((nowMs - new Date(value).getTime()) / 60_000));
+}
+
+function OnlineIntakeCommandCenter({
+  restaurant,
+  stats,
+  recentOrders,
+  readiness,
+  mapboxReady,
+  menuItems,
+  categories,
+  nowMs,
+  onOpenSettings,
+  onOpenQr,
+  onOpenOrders
+}: {
+  restaurant: OrderingSettings;
+  stats: OnlineWorkspaceProps["stats"];
+  recentOrders: OnlineWorkspaceProps["recentOrders"];
+  readiness: ReturnType<typeof readinessItems>;
+  mapboxReady: boolean;
+  menuItems: number;
+  categories: number;
+  nowMs: number;
+  onOpenSettings: () => void;
+  onOpenQr: () => void;
+  onOpenOrders: () => void;
+}) {
+  const oldestOpenAge = recentOrders
+    .filter((order) => !["paid", "completed", "cancelled"].includes(order.status))
+    .reduce((max, order) => Math.max(max, onlineOrderAgeMinutes(order.createdAt, nowMs)), 0);
+  const readinessGaps = readiness.filter((item) => item.value.includes("Chưa") || item.value.includes("Thiếu")).length;
+  const intakeScore = Math.max(
+    0,
+    100 -
+      stats.pending * 12 -
+      stats.waitingPayment * 8 -
+      stats.prepaidWaitingConfirm * 12 -
+      readinessGaps * 10 -
+      Math.max(0, oldestOpenAge - 20)
+  );
+  const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
+  const firstOrder = recentOrders
+    .filter((order) => !["paid", "completed", "cancelled"].includes(order.status))
+    .sort((left, right) => onlineOrderAgeMinutes(right.createdAt, nowMs) - onlineOrderAgeMinutes(left.createdAt, nowMs))[0] ?? null;
+  const checks = [
+    {
+      id: "enabled",
+      label: "Online đang nhận đơn",
+      value: restaurant.online_ordering_enabled ? "Bật" : "Tắt",
+      done: restaurant.online_ordering_enabled && (restaurant.pickup_enabled || restaurant.delivery_enabled),
+      action: onOpenSettings
+    },
+    {
+      id: "menu",
+      label: "Menu online có món",
+      value: menuItems.toLocaleString("vi-VN"),
+      done: menuItems > 0 && categories > 0,
+      action: onOpenSettings
+    },
+    {
+      id: "map",
+      label: "Giao hàng đủ định vị",
+      value: mapboxReady ? "OK" : "Thiếu",
+      done: !restaurant.delivery_enabled || mapboxReady,
+      action: onOpenSettings
+    },
+    {
+      id: "payment",
+      label: "Thanh toán treo được gom",
+      value: (stats.waitingPayment + stats.prepaidWaitingConfirm).toLocaleString("vi-VN"),
+      done: stats.waitingPayment + stats.prepaidWaitingConfirm === 0,
+      action: onOpenOrders
+    }
+  ];
+
+  return (
+    <section className="dashboard-panel p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Online intake</p>
+              <h2 className="dashboard-section-title mt-1">Đầu vào pickup/delivery</h2>
+            </div>
+            <Badge tone={intakeTone}>Ready {intakeScore}/100</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đơn active</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stats.activeOnline}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đơn lâu nhất</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{oldestOpenAge}p</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Pickup/Delivery</p>
+              <p className="metric-number mt-1 text-lg font-semibold text-[var(--foreground)]">{stats.pickupOpen}/{stats.deliveryOpen}</p>
+            </div>
+            <button type="button" onClick={onOpenQr} className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">QR/link bán online</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--primary)]">Mở để chia sẻ</p>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist nhận đơn online</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <button key={item.id} type="button" onClick={item.action} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Đơn cần nhìn trước</p>
+              <Badge tone={firstOrder ? statusTone(firstOrder.status) : "green"}>{firstOrder ? "Có đơn" : "Sạch"}</Badge>
+            </div>
+            {firstOrder ? (
+              <button type="button" onClick={onOpenOrders} className="w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{firstOrder.customerName || "Khách online"}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">
+                      {firstOrder.fulfillmentType === "DELIVERY" ? "Giao hàng" : "Đến lấy"} · {onlineOrderAgeMinutes(firstOrder.createdAt, nowMs)} phút
+                    </span>
+                  </span>
+                  <Badge tone={statusTone(firstOrder.status)}>{orderStatusLabel(firstOrder.status)}</Badge>
+                </div>
+                <p className="metric-number mt-2 text-lg font-semibold text-[var(--accent)]">{formatVnd(firstOrder.total)}</p>
+                <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{firstOrder.itemSummary}</p>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có đơn online cần xử lý ngay.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function OnlineWorkspace({
   restaurant,
   stats,
@@ -119,6 +309,7 @@ export function OnlineWorkspace({
   const searchParams = useSearchParams();
   const [drawer, setDrawerState] = useState<DrawerMode>(() => readDrawerMode(searchParams.get("panel")));
   const settingsPanelRef = useRef<HTMLDivElement | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const readiness = useMemo(() => readinessItems({ restaurant, mapboxReady, menuItems, categories }), [restaurant, mapboxReady, menuItems, categories]);
   const topOrders = recentOrders.slice(0, 4);
 
@@ -127,6 +318,11 @@ export function OnlineWorkspace({
     onClose: () => setDrawer("closed"),
     open: drawer === "settings"
   });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const syncDrawerFromHistory = () => {
@@ -188,6 +384,20 @@ export function OnlineWorkspace({
               })}
             </div>
           </section>
+
+          <OnlineIntakeCommandCenter
+            restaurant={restaurant}
+            stats={stats}
+            recentOrders={recentOrders}
+            readiness={readiness}
+            mapboxReady={mapboxReady}
+            menuItems={menuItems}
+            categories={categories}
+            nowMs={nowMs}
+            onOpenSettings={() => setDrawer("settings")}
+            onOpenQr={() => setDrawer("qr")}
+            onOpenOrders={() => setDrawer("orders")}
+          />
 
           <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
             <div className="dashboard-panel p-4">
@@ -430,9 +640,12 @@ export function OnlineWorkspace({
                       ) : null}
                     </div>
                     {order.fulfillmentType === "DELIVERY" ? (
-                      <p className="mt-3 text-xs font-medium text-[var(--muted-foreground)]">
-                        {order.deliveryDistanceKm ? `${order.deliveryDistanceKm} km` : "Chưa có khoảng cách"} · {order.deliveryRouteDurationMinutes ? `${order.deliveryRouteDurationMinutes} phút` : "Chưa có ETA"} · {order.deliveryAddress || "Chưa có địa chỉ"}
-                      </p>
+                      <DeliveryQuoteSummary
+                        address={order.deliveryAddress}
+                        distanceKm={order.deliveryDistanceKm}
+                        durationMinutes={order.deliveryRouteDurationMinutes}
+                        snapshot={order.deliveryQuoteSnapshot}
+                      />
                     ) : null}
                   </div>
                 ))

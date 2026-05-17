@@ -1,14 +1,11 @@
 import type { FulfillmentType, OrderDto, OrderStatus, PaymentStatus } from "@/types/domain";
+import {
+  resolveOrderPaymentStatus,
+  resolveOrderProgressState,
+  type OrderProgressState
+} from "@/lib/orders/order-state-machine";
 
-export type CustomerOrderLifecycleState =
-  | "awaiting_payment"
-  | "awaiting_payment_confirmation"
-  | "awaiting_confirmation"
-  | "preparing"
-  | "delivering"
-  | "completed"
-  | "cancelled"
-  | "refunded";
+export type CustomerOrderLifecycleState = OrderProgressState;
 
 export type CustomerOrderLifecycle = {
   state: CustomerOrderLifecycleState;
@@ -42,32 +39,12 @@ type TimelineTemplate = Pick<CustomerOrderTimelineItem, "key" | "label" | "descr
 type LifecycleOrder = Pick<OrderDto, "status" | "paymentStatus" | "fulfillmentType" | "deliveryStatus"> &
   Partial<Pick<OrderDto, "paymentMethod">>;
 
-function isPaid(status?: PaymentStatus | null) {
-  return status === "paid";
-}
-
-function isWaitingForPayment(status?: OrderStatus | null, paymentStatus?: PaymentStatus | null) {
-  return status === "waiting_payment" || paymentStatus === "waiting_payment";
-}
-
-function isWaitingForPaymentConfirmation(status?: OrderStatus | null, paymentStatus?: PaymentStatus | null) {
-  return status === "waiting_confirm" || paymentStatus === "waiting_confirm";
-}
-
 function lifecycleState(order: LifecycleOrder): CustomerOrderLifecycleState {
-  if (order.paymentStatus === "refunded") return "refunded";
-  if (order.status === "cancelled" || order.deliveryStatus === "rejected") return "cancelled";
-  if (isWaitingForPayment(order.status, order.paymentStatus)) return "awaiting_payment";
-  if (isWaitingForPaymentConfirmation(order.status, order.paymentStatus)) return "awaiting_payment_confirmation";
-  if (order.deliveryStatus === "delivered" || order.status === "paid") return "completed";
-  if (order.fulfillmentType === "DELIVERY" && order.deliveryStatus === "out_for_delivery") return "delivering";
-  if (order.status === "completed") return "completed";
-  if (order.status === "ordering") return "preparing";
-  return "awaiting_confirmation";
+  return resolveOrderProgressState(order);
 }
 
 function lifecycleLabel(order: LifecycleOrder, state: CustomerOrderLifecycleState) {
-  if (state === "awaiting_confirmation" && isPaid(order.paymentStatus)) {
+  if (state === "awaiting_confirmation" && resolveOrderPaymentStatus(order) === "paid") {
     return "Đã thanh toán, chờ quán xác nhận";
   }
 
@@ -94,9 +71,10 @@ function lifecycleStepIndex(state: CustomerOrderLifecycleState) {
 }
 
 function shouldShowPaymentTimeline(order: LifecycleOrder) {
+  const paymentStatus = resolveOrderPaymentStatus(order);
   if (order.paymentMethod) return true;
-  if (order.status === "waiting_payment" || order.status === "waiting_confirm" || order.status === "paid") return true;
-  return order.paymentStatus !== "unpaid";
+  if (paymentStatus === "waiting_payment" || paymentStatus === "waiting_confirm" || paymentStatus === "paid") return true;
+  return paymentStatus !== "unpaid";
 }
 
 function paymentLabel(order: LifecycleOrder) {
@@ -105,13 +83,13 @@ function paymentLabel(order: LifecycleOrder) {
 }
 
 function paymentDescription(order: LifecycleOrder) {
-  if (order.paymentStatus === "paid") return "Quán đã ghi nhận thanh toán cho đơn này.";
+  if (resolveOrderPaymentStatus(order) === "paid") return "Quán đã ghi nhận thanh toán cho đơn này.";
   if (order.paymentMethod === "CASH") return "Thanh toán trực tiếp khi nhận món hoặc theo hướng dẫn của quán.";
   return "Chuyển khoản đúng số tiền và nội dung để quán xử lý nhanh.";
 }
 
 function paymentConfirmationDescription(order: LifecycleOrder) {
-  if (order.paymentStatus === "paid") return "Thanh toán đã được xác nhận.";
+  if (resolveOrderPaymentStatus(order) === "paid") return "Thanh toán đã được xác nhận.";
   return "Quán kiểm tra giao dịch trước khi nhận chế biến.";
 }
 
@@ -153,7 +131,7 @@ function timelineTemplates(order: LifecycleOrder): TimelineTemplate[] {
     {
       key: "restaurant_confirmation",
       label: "Quán xác nhận đơn",
-      description: isPaid(order.paymentStatus)
+      description: resolveOrderPaymentStatus(order) === "paid"
         ? "Thanh toán đã xong, quán chỉ cần xác nhận món còn phục vụ."
         : "Quán kiểm tra món, địa chỉ và thời gian phục vụ."
     },

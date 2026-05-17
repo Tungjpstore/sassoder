@@ -1,14 +1,19 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
-import type { OrderStatus } from "@/types/domain";
-import type { Database } from "@/types/supabase";
+import {
+  isClosedOrderProgress,
+  resolveOrderPaymentStatus,
+  resolveOrderProgressState
+} from "@/lib/orders/order-state-machine";
+import type { DeliveryStatus, OrderStatus, PaymentStatus } from "@/types/domain";
+import type { Database, Json } from "@/types/supabase";
 
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 
 type OnlineOrderRow = {
   id: string;
   status: OrderStatus;
-  payment_status: string | null;
+  payment_status: PaymentStatus | null;
   total: number;
   fulfillment_type: "PICKUP" | "DELIVERY";
   customer_name: string | null;
@@ -16,8 +21,9 @@ type OnlineOrderRow = {
   delivery_address: string | null;
   delivery_distance_km: number | string | null;
   delivery_fee: number | null;
-  delivery_status: string | null;
+  delivery_status: DeliveryStatus | null;
   delivery_route_duration_minutes: number | null;
+  delivery_quote_snapshot: Json | null;
   created_at: string;
   accepted_at: string | null;
   service_due_at: string | null;
@@ -57,6 +63,7 @@ export type OnlineOrderingDashboard = {
     deliveryFee: number;
     deliveryStatus: string | null;
     deliveryRouteDurationMinutes: number | null;
+    deliveryQuoteSnapshot: Json | null;
     paymentStatus: string | null;
     createdAt: string;
     acceptedAt: string | null;
@@ -65,11 +72,25 @@ export type OnlineOrderingDashboard = {
   }>;
 };
 
-const activeStatuses: OrderStatus[] = ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"];
-
 function firstOrNull<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function orderProgress(row: OnlineOrderRow) {
+  return resolveOrderProgressState({
+    status: row.status,
+    fulfillmentType: row.fulfillment_type,
+    deliveryStatus: row.delivery_status,
+    paymentStatus: row.payment_status
+  });
+}
+
+function orderPayment(row: OnlineOrderRow) {
+  return resolveOrderPaymentStatus({
+    status: row.status,
+    paymentStatus: row.payment_status
+  });
 }
 
 function summarizeItems(items: OnlineOrderRow["items"]) {
@@ -103,7 +124,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
     supabase
       .from("orders")
       .select(
-        "id,status,payment_status,total,fulfillment_type,customer_name,customer_phone,delivery_address,delivery_distance_km,delivery_fee,delivery_status,delivery_route_duration_minutes,created_at,accepted_at,service_due_at,items:order_items(quantity,menuItem:menu_items(name))"
+        "id,status,payment_status,total,fulfillment_type,customer_name,customer_phone,delivery_address,delivery_distance_km,delivery_fee,delivery_status,delivery_route_duration_minutes,delivery_quote_snapshot,created_at,accepted_at,service_due_at,items:order_items(quantity,menuItem:menu_items(name))"
       )
       .eq("restaurant_id", restaurantId)
       .in("fulfillment_type", ["PICKUP", "DELIVERY"])
@@ -119,9 +140,12 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
   const restaurant = restaurantResult.data as RestaurantRow;
   const rows = (ordersResult.data ?? []) as unknown as OnlineOrderRow[];
   const todayRows = rows.filter((order) => new Date(order.created_at) >= startOfDay);
-  const paidToday = todayRows.filter((order) => order.status === "paid" || order.payment_status === "paid");
-  const activeRows = rows.filter((order) => activeStatuses.includes(order.status));
-  const waitingPaymentRows = activeRows.filter((order) => order.status === "waiting_payment" || order.status === "waiting_confirm");
+  const paidToday = todayRows.filter((order) => orderPayment(order) === "paid");
+  const activeRows = rows.filter((order) => !isClosedOrderProgress(orderProgress(order)));
+  const waitingPaymentRows = activeRows.filter((order) => {
+    const paymentStatus = orderPayment(order);
+    return paymentStatus === "waiting_payment" || paymentStatus === "waiting_confirm";
+  });
   const todayRevenue = paidToday.reduce((sum, order) => sum + order.total, 0);
 
   return {
@@ -131,10 +155,10 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
     stats: {
       todayOrders: todayRows.length,
       todayRevenue,
-      pending: activeRows.filter((order) => order.status === "pending").length,
-      preparing: activeRows.filter((order) => order.status === "ordering" || order.status === "completed").length,
+      pending: activeRows.filter((order) => orderProgress(order) === "awaiting_confirmation").length,
+      preparing: activeRows.filter((order) => ["preparing", "delivering"].includes(orderProgress(order))).length,
       waitingPayment: waitingPaymentRows.length,
-      prepaidWaitingConfirm: activeRows.filter((order) => order.payment_status === "waiting_confirm").length,
+      prepaidWaitingConfirm: activeRows.filter((order) => orderPayment(order) === "waiting_confirm").length,
       pickupOpen: activeRows.filter((order) => order.fulfillment_type === "PICKUP").length,
       deliveryOpen: activeRows.filter((order) => order.fulfillment_type === "DELIVERY").length,
       activeOnline: activeRows.length,
@@ -152,6 +176,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
       deliveryFee: order.delivery_fee ?? 0,
       deliveryStatus: order.delivery_status,
       deliveryRouteDurationMinutes: order.delivery_route_duration_minutes ?? null,
+      deliveryQuoteSnapshot: order.delivery_quote_snapshot ?? null,
       paymentStatus: order.payment_status,
       createdAt: order.created_at,
       acceptedAt: order.accepted_at,

@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import {
   CheckCircle2,
   Coffee,
+  RotateCcw,
   Loader2,
   LocateFixed,
   MapPin,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 import { onboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { buildOnboardingRunway, formatDraftSavedLabel } from "@/lib/onboarding-runway";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
 import type { AddressAutocompletePrediction } from "@/services/maps/types";
 
@@ -58,7 +60,8 @@ type AdminWard = {
   provinceCode: string;
 };
 type OnboardingDraft = {
-  version: 1;
+  version: 2;
+  updatedAt: number;
   name: string;
   businessPresetId: string;
   customBusinessType: string;
@@ -78,6 +81,10 @@ type OnboardingDraft = {
   itemName: string;
   itemPrice: string;
   itemCategory: string;
+  confirmedMenuItems: OcrMenuItem[];
+};
+type StoredOnboardingDraft = Partial<Omit<OnboardingDraft, "version">> & {
+  version?: 1 | 2;
 };
 type OcrDraft = {
   categories: Array<{
@@ -114,6 +121,13 @@ const businessPresets: BusinessPreset[] = [
 ];
 
 const steps = ["Thông tin quán", "Chọn gói", "Thiết lập", "Bàn & QR", "Menu"];
+const launchMessages = [
+  "Đang chuẩn bị quán của bạn...",
+  "Khởi tạo dashboard vận hành...",
+  "Tạo bàn và QR ordering system...",
+  "Lưu menu đầu tiên...",
+  "Bật checklist sẵn sàng bán thật..."
+];
 const onboardingVisuals: OnboardingVisual[] = [
   {
     src: "/onboarding/flow/store-profile.png",
@@ -194,8 +208,14 @@ function readOnboardingDraft(draftKey: string) {
   try {
     const rawDraft = window.localStorage.getItem(draftKey);
     if (!rawDraft) return null;
-    const draft = JSON.parse(rawDraft) as Partial<OnboardingDraft>;
-    return draft.version === 1 ? draft : null;
+    const draft = JSON.parse(rawDraft) as StoredOnboardingDraft;
+    if (draft.version !== 1 && draft.version !== 2) return null;
+    return {
+      ...draft,
+      version: 2,
+      updatedAt: typeof draft.updatedAt === "number" ? draft.updatedAt : 0,
+      confirmedMenuItems: Array.isArray(draft.confirmedMenuItems) ? draft.confirmedMenuItems : []
+    } as Partial<OnboardingDraft>;
   } catch {
     return null;
   }
@@ -244,7 +264,7 @@ function StepSupportPanel({ step, children }: { step: number; children: ReactNod
   const visual = onboardingVisuals[step] ?? onboardingVisuals[0];
 
   return (
-    <aside className={`order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start`}>
+    <aside className={`dashboard-onboarding-support order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start`}>
       <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 sm:grid-cols-[124px_minmax(0,1fr)] lg:block">
         <div className="relative aspect-square overflow-hidden rounded-md border border-[#d8dee9] bg-white">
           <Image
@@ -303,7 +323,7 @@ function StepNavigator({
   onSelect: (nextStep: number) => void;
 }) {
   return (
-    <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <nav className="dashboard-onboarding-stepper -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {steps.map((label, index) => {
         const active = step === index;
         const disabled = index > furthestStep;
@@ -383,6 +403,11 @@ export function RestaurantOnboardingFlow({
   const [menuOcrLoading, setMenuOcrLoading] = useState(false);
   const [menuOcrError, setMenuOcrError] = useState("");
   const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(0);
+  const [draftStatusTick, setDraftStatusTick] = useState(0);
+  const [submitStarted, setSubmitStarted] = useState(false);
+  const [launchMessageIndex, setLaunchMessageIndex] = useState(0);
   const selectedPreset = businessPresets.find((item) => item.id === businessPresetId) ?? businessPresets[0];
   const selectedPlan = plans.find((plan) => plan.code === planCode) ?? plans[0] ?? null;
   const slug = createSlug(name) || "quan-moi";
@@ -405,40 +430,25 @@ export function RestaurantOnboardingFlow({
   const dashboardPlanCode = selectedPlan?.code ?? planCode;
   const ocrDraftItems = useMemo(() => flattenOcrDraft(menuOcrDraft), [menuOcrDraft]);
   const confirmedMenuItemsJson = useMemo(() => JSON.stringify(confirmedMenuItems), [confirmedMenuItems]);
-  const setupTasks = useMemo(() => {
-    const menuApplied = confirmedMenuItems.length > 0;
-    return [
-      {
-        id: "location",
-        label: "Thông tin quán",
-        done: canContinueInfo,
-        targetStep: 0
-      },
-      {
-        id: "tables",
-        label: "Bàn & QR",
-        done: tableCount > 0,
-        targetStep: 3
-      },
-      {
-        id: "menu",
-        label: "Menu khởi tạo",
-        done: menuApplied || Boolean(itemName.trim()),
-        targetStep: 4
-      },
-      {
-        id: "launch",
-        label: "Sẵn sàng",
-        done: canContinueInfo && tableCount > 0 && (menuApplied || Boolean(itemName.trim())),
-        targetStep: 4
-      }
-    ];
-  }, [canContinueInfo, confirmedMenuItems.length, itemName, tableCount]);
-  const setupDoneCount = setupTasks.filter((item) => item.done).length;
-  const setupProgress = Math.round((setupDoneCount / setupTasks.length) * 100);
+  const setupRunway = useMemo(
+    () =>
+      buildOnboardingRunway({
+        hasRestaurantInfo: canContinueInfo,
+        hasPlan: Boolean(selectedPlan),
+        tableCount,
+        initialMenuItemName: itemName,
+        confirmedMenuItemCount: confirmedMenuItems.length
+      }),
+    [canContinueInfo, confirmedMenuItems.length, itemName, selectedPlan, tableCount]
+  );
+  const setupTasks = setupRunway.tasks;
+  const setupDoneCount = setupRunway.doneCount;
+  const setupProgress = setupRunway.progress;
   const nextStepLabel = step === 4 ? "Hoàn tất" : "Tiếp tục";
   const nextStepDisabled = (step === 0 && !canContinueInfo) || (step === 1 && !selectedPlan);
-  const canSubmitOnboarding = canContinueInfo && (Boolean(itemName.trim()) || confirmedMenuItems.length > 0);
+  const canSubmitOnboarding = setupRunway.canLaunch;
+  const launching = pending || submitStarted;
+  const draftStatusLabel = formatDraftSavedLabel(draftSavedAt, draftStatusTick || draftSavedAt);
 
   useEffect(() => {
     const draft = readOnboardingDraft(draftKey);
@@ -466,6 +476,9 @@ export function RestaurantOnboardingFlow({
         setItemName(draft.itemName ?? "Cà phê sữa đá");
         setItemPrice(draft.itemPrice ?? "28000");
         setItemCategory(draft.itemCategory ?? "Cà phê");
+        setConfirmedMenuItems(draft.confirmedMenuItems ?? []);
+        setDraftRestored(true);
+        setDraftSavedAt(draft.updatedAt ?? 0);
       }
 
       setDraftHydrated(true);
@@ -537,8 +550,10 @@ export function RestaurantOnboardingFlow({
 
   useEffect(() => {
     if (!draftHydrated) return;
+    const updatedAt = Date.now();
     const draft: OnboardingDraft = {
-      version: 1,
+      version: 2,
+      updatedAt,
       name,
       businessPresetId,
       customBusinessType,
@@ -557,11 +572,16 @@ export function RestaurantOnboardingFlow({
       tableCount,
       itemName,
       itemPrice,
-      itemCategory
+      itemCategory,
+      confirmedMenuItems
     };
 
     try {
       window.localStorage.setItem(draftKey, JSON.stringify(draft));
+      const timeout = window.setTimeout(() => {
+        setDraftSavedAt(updatedAt);
+      }, 0);
+      return () => window.clearTimeout(timeout);
     } catch {
       // Ignore storage quota/private mode issues; the server flow remains authoritative.
     }
@@ -575,6 +595,7 @@ export function RestaurantOnboardingFlow({
     itemCategory,
     itemName,
     itemPrice,
+    confirmedMenuItems,
     locationAccuracy,
     name,
     planCode,
@@ -589,6 +610,32 @@ export function RestaurantOnboardingFlow({
     wardCode
   ]);
 
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const interval = window.setInterval(() => {
+      setDraftStatusTick(Date.now());
+    }, 15_000);
+
+    return () => window.clearInterval(interval);
+  }, [draftHydrated]);
+
+  useEffect(() => {
+    if (!state?.error) return;
+    queueMicrotask(() => {
+      setSubmitStarted(false);
+      setLaunchMessageIndex(0);
+    });
+  }, [state?.error]);
+
+  useEffect(() => {
+    if (!launching) return;
+    const interval = window.setInterval(() => {
+      setLaunchMessageIndex((current) => (current + 1) % launchMessages.length);
+    }, 1400);
+
+    return () => window.clearInterval(interval);
+  }, [launching]);
+
   function advanceTo(nextStep: number) {
     setFurthestStep((current) => Math.max(current, nextStep));
     setStep(nextStep);
@@ -598,6 +645,16 @@ export function RestaurantOnboardingFlow({
     if (nextStep <= furthestStep) {
       setStep(nextStep);
     }
+  }
+
+  function clearDraft() {
+    try {
+      window.localStorage.removeItem(draftKey);
+    } catch {
+      // Best effort only.
+    }
+    setDraftRestored(false);
+    setDraftSavedAt(0);
   }
 
   function clearSelectedAddress() {
@@ -747,8 +804,20 @@ export function RestaurantOnboardingFlow({
   }
 
   return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <form action={action} encType="multipart/form-data" className="mx-auto flex h-svh w-full max-w-6xl flex-col gap-3 overflow-hidden px-3 py-3 sm:px-4">
+    <main className="dashboard-onboarding-shell min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <form
+        action={action}
+        encType="multipart/form-data"
+        onSubmit={(event) => {
+          if (!canSubmitOnboarding || launching) {
+            event.preventDefault();
+            return;
+          }
+          setSubmitStarted(true);
+          setLaunchMessageIndex(0);
+        }}
+        className="dashboard-onboarding-form mx-auto flex h-svh w-full max-w-6xl flex-col gap-3 overflow-hidden px-3 py-3 sm:px-4"
+      >
         <input type="hidden" name="name" value={name} />
         <input type="hidden" name="slug" value={slug} />
         <input type="hidden" name="businessType" value={selectedPreset.value} />
@@ -770,7 +839,7 @@ export function RestaurantOnboardingFlow({
         <input type="hidden" name="brandDescription" value="" />
         <input type="hidden" name="generatedLogoUrl" value="" />
 
-        <header className={`shrink-0 rounded-lg border ${sectionLine} bg-white p-3`}>
+        <header className={`dashboard-onboarding-header shrink-0 rounded-lg border ${sectionLine} bg-white p-3`}>
           <div className="grid gap-3">
             <div className="min-w-0">
               <div className="flex items-center gap-3">
@@ -782,8 +851,28 @@ export function RestaurantOnboardingFlow({
                   <h1 className="truncate text-base font-black tracking-[-0.02em]">Tạo quán mới</h1>
                 </div>
                 <span className="ml-auto shrink-0 rounded-full bg-[#eef7f2] px-3 py-1.5 text-xs font-black text-[#0F4D3A]">
-                  {step + 1}/{steps.length}
+                  {launching ? "Đang tạo" : `${step + 1}/${steps.length}`}
                 </span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-[#d8dee9] bg-[#f8fafc] px-3 py-1 text-xs font-black text-[#667085]">
+                  {draftStatusLabel}
+                </span>
+                {draftRestored ? (
+                  <span className="rounded-full border border-[#0F4D3A]/20 bg-[#eef7f2] px-3 py-1 text-xs font-black text-[#0F4D3A]">
+                    Đã khôi phục bản nháp
+                  </span>
+                ) : null}
+                {draftSavedAt > 0 ? (
+                  <button
+                    type="button"
+                    onClick={clearDraft}
+                    className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-xs font-black text-[#667085] transition hover:bg-[#f8fafc] hover:text-[#111827]"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Xoá nháp
+                  </button>
+                ) : null}
               </div>
               <div className="mt-3 flex items-center gap-3">
                 <div className="h-1.5 flex-1 rounded-full bg-[#eef7f2]">
@@ -798,12 +887,12 @@ export function RestaurantOnboardingFlow({
           </div>
         </header>
 
-        <section className="min-h-0 flex-1">
-          <div className={`flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${sectionLine} bg-white`}>
+        <section className="dashboard-onboarding-main min-h-0 flex-1">
+          <div className={`dashboard-onboarding-frame flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${sectionLine} bg-white`}>
             {step === 0 ? (
               <>
                 <StepHeader eyebrow="Bước 1" title="Thông tin quán" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <StepSupportPanel step={0}>
                     <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
                     <SupportLine label="Loại hình" value={selectedPreset.label} active />
@@ -964,7 +1053,7 @@ export function RestaurantOnboardingFlow({
             {step === 1 ? (
               <>
                 <StepHeader eyebrow="Bước 2" title="Chọn gói" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <StepSupportPanel step={1}>
                     <SupportLine label="Đang chọn" value={selectedPlan?.name ?? "Chưa chọn"} active={Boolean(selectedPlan)} />
                     <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
@@ -1017,7 +1106,7 @@ export function RestaurantOnboardingFlow({
             {step === 2 ? (
               <>
                 <StepHeader eyebrow="Bước 3" title="Kiểm tra" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <StepSupportPanel step={2}>
                     <div className="col-span-2 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
                       <div className="flex items-center justify-between text-xs font-black">
@@ -1067,7 +1156,7 @@ export function RestaurantOnboardingFlow({
             {step === 3 ? (
               <>
                 <StepHeader eyebrow="Bước 4" title="Bàn & QR" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
@@ -1107,7 +1196,7 @@ export function RestaurantOnboardingFlow({
             {step === 4 ? (
               <>
                 <StepHeader eyebrow="Bước 5" title="Menu" />
-                <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
+                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
                   <StepSupportPanel step={4}>
                     <SupportLine label="Món đầu" value={shortText(itemName)} active={Boolean(itemName.trim())} />
                     <SupportLine label="Menu quét" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : "Tuỳ chọn"} active={confirmedMenuItems.length > 0} />
@@ -1235,29 +1324,55 @@ export function RestaurantOnboardingFlow({
                 </div>
               </>
             ) : null}
-            <footer className={`shrink-0 border-t ${sectionLine} bg-white p-3`}>
+            <footer className={`dashboard-onboarding-action-bar shrink-0 border-t ${sectionLine} bg-white p-3`}>
               <div className="flex items-center justify-between gap-2">
                 <button
                   type="button"
                   onClick={() => setStep((current) => Math.max(0, current - 1))}
-                  disabled={step === 0 || pending}
+                  disabled={step === 0 || launching}
                   className={`inline-flex min-h-11 items-center justify-center rounded-md border ${sectionLine} bg-white px-4 text-sm font-black text-[#475467] transition disabled:pointer-events-none disabled:opacity-40`}
                 >
                   Quay lại
                 </button>
                 {step < 4 ? (
-                  <OnboardingButton onClick={() => advanceTo(step + 1)} disabled={nextStepDisabled} className="min-w-0 flex-1 sm:flex-none">
+                  <OnboardingButton onClick={() => advanceTo(step + 1)} disabled={nextStepDisabled || launching} className="min-w-0 flex-1 sm:flex-none">
                     {nextStepLabel}
                   </OnboardingButton>
                 ) : (
-                  <OnboardingButton type="submit" disabled={pending || !canSubmitOnboarding} className="min-w-0 flex-1 sm:flex-none">
-                    {pending ? "Đang tạo..." : nextStepLabel}
+                  <OnboardingButton type="submit" disabled={launching || !canSubmitOnboarding} className="min-w-0 flex-1 sm:flex-none">
+                    {launching ? "Đang tạo..." : nextStepLabel}
                   </OnboardingButton>
                 )}
               </div>
             </footer>
           </div>
         </section>
+        {launching ? (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-[#0B2F24]/88 px-4 text-white backdrop-blur-sm">
+            <section className="w-full max-w-[420px] rounded-lg border border-white/15 bg-white/10 p-5 shadow-[0_24px_90px_rgba(0,0,0,0.28)]">
+              <div className="flex items-center gap-3">
+                <span className="grid h-12 w-12 place-items-center rounded-md bg-white text-[#0F4D3A]">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/70">Launch</p>
+                  <h2 className="truncate text-xl font-black tracking-[-0.03em]">{launchMessages[launchMessageIndex]}</h2>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-2">
+                {launchMessages.map((message, index) => (
+                  <div key={message} className="flex items-center gap-2 text-sm font-bold text-white/80">
+                    <span className={`h-2 w-2 rounded-full ${index <= launchMessageIndex ? "bg-[#F28C28]" : "bg-white/25"}`} />
+                    <span>{message}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-5 text-sm font-semibold leading-6 text-white/72">
+                LogiVN đang tạo dữ liệu thật cho quán. Giữ màn hình này mở trong vài giây.
+              </p>
+            </section>
+          </div>
+        ) : null}
       </form>
     </main>
   );

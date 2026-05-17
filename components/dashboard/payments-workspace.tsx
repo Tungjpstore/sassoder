@@ -4,15 +4,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Banknote, CheckCircle2, ClipboardCopy, Clock3, CreditCard, Filter, Loader2, Printer, QrCode, RadioTower, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
+import { AlertTriangle, ArrowRight, Banknote, CheckCircle2, ClipboardCopy, Clock3, CreditCard, Filter, ListChecks, Loader2, Printer, QrCode, RadioTower, ReceiptText, RefreshCw, Search, ShieldCheck, TimerReset, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { AdminPaymentTransaction } from "@/services/dashboard-report-service";
-import type { OrderStatus, PaymentMethod } from "@/types/domain";
+import type { PaymentMethod, PaymentStatus } from "@/types/domain";
 
 type PaymentStat = {
   label: string;
@@ -101,15 +102,32 @@ function realtimeLabel(status: RealtimeState) {
   return "Đang kết nối realtime";
 }
 
-function effectivePaymentStatus(order: Pick<AdminPaymentTransaction, "status" | "paymentStatus">): OrderStatus | "unpaid" | "failed" | "refunded" {
-  const paymentStatus = order.paymentStatus;
-  if (paymentStatus === "paid" || paymentStatus === "waiting_confirm" || paymentStatus === "waiting_payment") {
-    return paymentStatus;
+function effectivePaymentStatus(order: Pick<AdminPaymentTransaction, "status" | "paymentStatus">): PaymentStatus | "cancelled" {
+  if (order.status === "cancelled") return "cancelled";
+  return resolveOrderPaymentStatus({
+    status: order.status,
+    paymentStatus: order.paymentStatus as PaymentStatus | null
+  });
+}
+
+function readConfirmedPaymentPayload(value: unknown): Partial<AdminPaymentTransaction> {
+  if (!value || typeof value !== "object") {
+    return { status: "paid", paymentStatus: "paid" };
   }
-  if (paymentStatus === "failed" || paymentStatus === "refunded") {
-    return paymentStatus;
-  }
-  return order.status;
+
+  const payload = value as {
+    status?: AdminPaymentTransaction["status"];
+    payment_status?: PaymentStatus | null;
+    payment_method?: PaymentMethod | null;
+    total?: number;
+  };
+
+  return {
+    status: payload.status ?? "paid",
+    paymentStatus: payload.payment_status ?? "paid",
+    method: payload.payment_method ?? undefined,
+    amount: typeof payload.total === "number" ? payload.total : undefined
+  };
 }
 
 function minutesSince(value: string) {
@@ -135,6 +153,22 @@ function paymentPriorityScore(order: AdminPaymentTransaction) {
   return age;
 }
 
+function paymentAgeLabel(order: AdminPaymentTransaction) {
+  const age = minutesSince(order.createdAt);
+  if (age >= 60) return `${Math.floor(age / 60)} giờ ${age % 60} phút`;
+  return `${age} phút`;
+}
+
+function ageTone(order: AdminPaymentTransaction): "green" | "yellow" | "red" | "blue" | "neutral" {
+  const state = effectivePaymentStatus(order);
+  const age = minutesSince(order.createdAt);
+  if (state === "waiting_confirm" && age >= 10) return "red";
+  if (state === "waiting_payment" && age >= 20) return "red";
+  if (paymentNeedsAction(order)) return age >= 8 ? "yellow" : "blue";
+  if (paymentNeedsReview(order)) return "red";
+  return "green";
+}
+
 function firstActionablePaymentId(transactions: AdminPaymentTransaction[]) {
   return transactions.find((order) => {
     const paymentState = effectivePaymentStatus(order);
@@ -157,6 +191,158 @@ function matchesPaymentFilter(order: AdminPaymentTransaction, filter: PaymentFil
     paymentMethodLabel(order.method).toLowerCase().includes(keyword);
 
   return matchesStatus && matchesMethod && matchesKeyword;
+}
+
+function TreasuryCommandCenter({
+  bankReady,
+  paymentHealthScore,
+  waitingConfirmCount,
+  unpaidCount,
+  reviewCount,
+  pendingAmount,
+  staleWaitingTransactions,
+  urgentTransactions,
+  cashRevenue,
+  qrRevenue,
+  totalPaid,
+  waitingAmount,
+  onFilter,
+  onSelect
+}: {
+  bankReady: boolean;
+  paymentHealthScore: number;
+  waitingConfirmCount: number;
+  unpaidCount: number;
+  reviewCount: number;
+  pendingAmount: number;
+  staleWaitingTransactions: AdminPaymentTransaction[];
+  urgentTransactions: AdminPaymentTransaction[];
+  cashRevenue: number;
+  qrRevenue: number;
+  totalPaid: number;
+  waitingAmount: number;
+  onFilter: (filter: PaymentFilter, method: MethodFilter) => void;
+  onSelect: (id: string) => void;
+}) {
+  const staleAmount = staleWaitingTransactions.reduce((sum, order) => sum + order.amount, 0);
+  const treasuryTone = paymentHealthScore >= 85 ? "green" : paymentHealthScore >= 65 ? "yellow" : "red";
+  const firstUrgent = urgentTransactions[0] ?? staleWaitingTransactions[0] ?? null;
+  const checks = [
+    {
+      id: "confirm",
+      label: "Chuyển khoản đã xác nhận",
+      value: waitingConfirmCount.toLocaleString("vi-VN"),
+      done: waitingConfirmCount === 0,
+      action: () => onFilter("waiting_confirm", "all")
+    },
+    {
+      id: "unpaid",
+      label: "Bill chưa thu được gom",
+      value: unpaidCount.toLocaleString("vi-VN"),
+      done: unpaidCount === 0,
+      action: () => onFilter("waiting_payment", "all")
+    },
+    {
+      id: "issues",
+      label: "Giao dịch lỗi đã rà",
+      value: reviewCount.toLocaleString("vi-VN"),
+      done: reviewCount === 0,
+      action: () => onFilter("issues", "all")
+    },
+    {
+      id: "qr",
+      label: "VietQR đủ cấu hình",
+      value: bankReady ? "OK" : "Thiếu",
+      done: bankReady,
+      action: () => onFilter("all", "QR")
+    }
+  ];
+
+  return (
+    <section className="dashboard-panel p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Treasury command</p>
+              <h2 className="dashboard-section-title mt-1">Điều phối tiền trong ca</h2>
+            </div>
+            <Badge tone={treasuryTone}>Health {paymentHealthScore}%</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tiền chờ xử lý</p>
+              <p className="metric-number mt-1 text-lg font-semibold text-[var(--foreground)]">{formatVnd(pendingAmount)}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Quá ngưỡng</p>
+              <p className="metric-number mt-1 text-lg font-semibold text-[var(--foreground)]">{formatVnd(staleAmount)}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tỷ trọng VietQR</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{percent(qrRevenue, totalPaid)}%</p>
+            </div>
+            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tiền mặt</p>
+              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{percent(cashRevenue, totalPaid + waitingAmount)}%</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist chốt quỹ</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={item.action}
+                  className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
+                >
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Bill cần thu trước</p>
+              <Badge tone={firstUrgent ? ageTone(firstUrgent) : "green"}>{firstUrgent ? "Có bill" : "Sạch"}</Badge>
+            </div>
+            {firstUrgent ? (
+              <button
+                type="button"
+                onClick={() => onSelect(firstUrgent.id)}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{firstUrgent.tableName}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">
+                      #{firstUrgent.id.slice(0, 8).toUpperCase()} · {paymentAgeLabel(firstUrgent)}
+                    </span>
+                  </span>
+                  <Badge tone={ageTone(firstUrgent)}>{paymentStatusLabel(effectivePaymentStatus(firstUrgent))}</Badge>
+                </div>
+                <p className="metric-number mt-2 text-xl font-semibold text-[var(--accent)]">{formatVnd(firstUrgent.amount)}</p>
+                <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{firstUrgent.itemSummary}</p>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không còn bill cần thu hoặc đối soát ngay.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 export function PaymentsWorkspace({
@@ -184,6 +370,8 @@ export function PaymentsWorkspace({
   const [copiedTransferId, setCopiedTransferId] = useState<string | null>(null);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [networkOnline, setNetworkOnline] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
   const refreshTimerRef = useRef<number | null>(null);
   const localTransactions = useMemo(
     () =>
@@ -222,18 +410,84 @@ export function PaymentsWorkspace({
   const pendingAmount = localTransactions
     .filter(paymentNeedsAction)
     .reduce((sum, order) => sum + order.amount, 0);
+  const staleWaitingTransactions = localTransactions.filter((order) => {
+    const state = effectivePaymentStatus(order);
+    const age = minutesSince(order.createdAt);
+    return (state === "waiting_confirm" && age >= 10) || (state === "waiting_payment" && age >= 20);
+  });
+  const staleWaitingAmount = staleWaitingTransactions.reduce((sum, order) => sum + order.amount, 0);
   const urgentTransactions = localTransactions
     .filter(paymentNeedsAction)
     .sort((a, b) => paymentPriorityScore(b) - paymentPriorityScore(a))
     .slice(0, 3);
+  const hasPaymentWork = waitingConfirmCount > 0 || unpaidCount > 0 || reviewCount > 0;
+  const fallbackRefreshMs = realtimeState === "connected" ? 30_000 : 10_000;
   const pendingTone = waitingConfirmCount > 0 ? "yellow" : unpaidCount > 0 ? "blue" : reviewCount > 0 ? "red" : "green";
   const pendingLabel = waitingConfirmCount > 0 ? `${waitingConfirmCount} chờ xác nhận` : unpaidCount > 0 ? `${unpaidCount} chưa thu` : reviewCount > 0 ? `${reviewCount} cần rà soát` : "Dòng tiền ổn";
+  const paymentHealthScore = Math.max(0, 100 - waitingConfirmCount * 12 - unpaidCount * 7 - reviewCount * 10 - staleWaitingTransactions.length * 8);
+  const closeChecklist = [
+    {
+      label: "Xác nhận chuyển khoản",
+      helper: waitingConfirmCount > 0 ? `${waitingConfirmCount} bill cần đối chiếu ngân hàng` : "Không còn bill báo chuyển khoản",
+      done: waitingConfirmCount === 0,
+      href: "/dashboard/orders?status=waiting_confirm"
+    },
+    {
+      label: "Thu các bill còn mở",
+      helper: unpaidCount > 0 ? `${unpaidCount} bill chưa thu · ${formatVnd(pendingAmount)}` : "Không có bill chưa thu trong danh sách",
+      done: unpaidCount === 0,
+      href: "/dashboard/orders?status=waiting_payment"
+    },
+    {
+      label: "Rà soát giao dịch lỗi",
+      helper: reviewCount > 0 ? `${reviewCount} giao dịch cần kiểm tra thủ công` : "Không có giao dịch lỗi/hoàn tiền",
+      done: reviewCount === 0,
+      href: "/dashboard/payments"
+    },
+    {
+      label: "Cấu hình VietQR",
+      helper: bankCode && bankAccount ? `${bankCode} · ${bankAccount}` : "Thiếu ngân hàng hoặc số tài khoản nhận tiền",
+      done: Boolean(bankCode && bankAccount),
+      href: "/dashboard/settings?section=payments"
+    }
+  ];
   const statIcons = {
     credit: CreditCard,
     cash: Banknote,
     qr: QrCode,
     clock: Clock3
   };
+
+  useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!networkOnline || !pageVisible || !hasPaymentWork) return;
+    const timer = window.setInterval(() => {
+      setLastSyncedAt(new Date());
+      router.refresh();
+    }, fallbackRefreshMs);
+    return () => window.clearInterval(timer);
+  }, [fallbackRefreshMs, hasPaymentWork, networkOnline, pageVisible, router]);
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
@@ -278,19 +532,33 @@ export function PaymentsWorkspace({
       ...current,
       [orderId]: {
         ...current[orderId],
-        status: "paid" as const,
         paymentStatus: "paid",
         method: target?.method ?? "QR"
       }
     }));
 
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, { method: "POST" });
+      const response = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin"
+      });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không xác nhận được thanh toán");
+      const confirmedPayload = readConfirmedPaymentPayload(json.data);
+      setTransactionOverrides((current) => ({
+        ...current,
+        [orderId]: {
+          ...current[orderId],
+          ...confirmedPayload,
+          paymentStatus: "paid",
+          method: confirmedPayload.method ?? current[orderId]?.method ?? target?.method ?? "QR"
+        }
+      }));
       setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
       setLastSyncedAt(new Date());
-      window.setTimeout(() => router.refresh(), 120);
+      router.refresh();
+      window.setTimeout(() => router.refresh(), 900);
     } catch (err) {
       setTransactionOverrides((current) => {
         const next = { ...current };
@@ -319,7 +587,7 @@ export function PaymentsWorkspace({
   }
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack grid gap-3">
       <section className="admin-hero-panel rounded-[14px] p-4">
         <div className="relative z-[1] grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-center">
           <div className="min-w-0">
@@ -386,6 +654,109 @@ export function PaymentsWorkspace({
         })}
       </section>
 
+      <TreasuryCommandCenter
+        bankReady={Boolean(bankCode && bankAccount)}
+        paymentHealthScore={paymentHealthScore}
+        waitingConfirmCount={waitingConfirmCount}
+        unpaidCount={unpaidCount}
+        reviewCount={reviewCount}
+        pendingAmount={pendingAmount}
+        staleWaitingTransactions={staleWaitingTransactions}
+        urgentTransactions={urgentTransactions}
+        cashRevenue={cashRevenue}
+        qrRevenue={qrRevenue}
+        totalPaid={totalPaid}
+        waitingAmount={waitingAmount}
+        onFilter={(nextFilter, nextMethod) => {
+          setFilter(nextFilter);
+          setMethodFilter(nextMethod);
+        }}
+        onSelect={setSelectedId}
+      />
+
+      <section className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+        <div className="dashboard-panel p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="dashboard-eyebrow">Cash close</p>
+              <h2 className="dashboard-section-title mt-1">Checklist chốt tiền trong ca</h2>
+              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Những điểm cần sạch trước khi chủ quán đóng quỹ hoặc bàn giao ca.</p>
+            </div>
+            <span className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
+              <ListChecks size={16} />
+              Sức khoẻ tiền {paymentHealthScore}%
+            </span>
+          </div>
+          <div className="mt-4 grid gap-2 md:grid-cols-2">
+            {closeChecklist.map((item) => (
+              <Link
+                key={item.label}
+                href={item.href}
+                className={`group flex min-h-[92px] items-start gap-3 rounded-xl border p-3 transition hover:border-[var(--primary)] ${
+                  item.done
+                    ? "border-[var(--primary)]/15 bg-[var(--primary-soft)]"
+                    : "border-[var(--border)] bg-[var(--surface)]"
+                }`}
+              >
+                <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${
+                  item.done
+                    ? "border-[var(--primary)]/20 bg-[var(--surface)] text-[var(--primary)]"
+                    : "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                }`}>
+                  {item.done ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <span className="mt-1 block text-xs font-medium leading-5 text-[var(--muted-foreground)]">{item.helper}</span>
+                </span>
+                <ArrowRight size={15} className="ml-auto mt-1 shrink-0 text-[var(--muted-foreground)] transition group-hover:text-[var(--primary)]" />
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        <div className="dashboard-panel p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="dashboard-eyebrow">Aging risk</p>
+              <h2 className="dashboard-section-title mt-1">Bill chậm xử lý</h2>
+            </div>
+            <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]">
+              <TimerReset size={18} />
+            </span>
+          </div>
+          <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-[var(--foreground)]">Quá ngưỡng</span>
+              <span className="metric-number text-lg font-semibold text-[var(--accent)]">{staleWaitingTransactions.length}</span>
+            </div>
+            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{formatVnd(staleWaitingAmount)} đang cần đối soát nhanh.</p>
+          </div>
+          <div className="mt-3 grid gap-2">
+            {staleWaitingTransactions.slice(0, 3).length === 0 ? (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có bill quá ngưỡng xử lý.
+              </div>
+            ) : (
+              staleWaitingTransactions.slice(0, 3).map((order) => (
+                <button
+                  key={order.id}
+                  type="button"
+                  onClick={() => setSelectedId(order.id)}
+                  className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{order.tableName}</span>
+                    <span className="block text-xs font-medium text-[var(--muted-foreground)]">{paymentAgeLabel(order)} · {paymentStatusLabel(effectivePaymentStatus(order))}</span>
+                  </span>
+                  <span className="metric-number shrink-0 text-sm font-semibold text-[var(--accent)]">{formatVnd(order.amount)}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -420,9 +791,9 @@ export function PaymentsWorkspace({
                     <div className="flex items-start justify-between gap-2">
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{order.tableName}</span>
-                        <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">#{order.id.slice(0, 8).toUpperCase()} · {minutesSince(order.createdAt)} phút</span>
+                        <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">#{order.id.slice(0, 8).toUpperCase()} · {paymentAgeLabel(order)}</span>
                       </span>
-                      <Badge tone={statusTone(paymentState)}>{paymentStatusLabel(paymentState)}</Badge>
+                      <Badge tone={ageTone(order)}>{paymentStatusLabel(paymentState)}</Badge>
                     </div>
                     <p className="metric-number mt-2 text-lg font-semibold text-[var(--accent)]">{formatVnd(order.amount)}</p>
                     <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{order.itemSummary}</p>
@@ -471,7 +842,7 @@ export function PaymentsWorkspace({
             </div>
           </div>
 
-          <div className="mb-3 grid gap-2 xl:grid-cols-[180px_160px_minmax(0,1fr)_110px]">
+          <div className="dashboard-ops-toolbar mb-3 grid gap-2 xl:grid-cols-[180px_160px_minmax(0,1fr)_110px]">
             <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Trạng thái
               <select
@@ -519,7 +890,7 @@ export function PaymentsWorkspace({
             </button>
           </div>
 
-          <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+          <div className="dashboard-data-surface overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
             <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
               <span>Mã thanh toán</span>
               <span>Bàn/Đơn</span>
@@ -528,7 +899,7 @@ export function PaymentsWorkspace({
               <span>Trạng thái</span>
               <span>Số tiền</span>
             </div>
-            <div className="divide-y divide-[var(--border)]">
+            <div className="dashboard-data-list divide-y divide-[var(--border)]">
               {visibleTransactions.length === 0 && (
                 <div className="grid min-h-48 place-items-center px-5 py-8 text-center text-sm font-semibold text-[var(--muted-foreground)]">
                   <div className="max-w-md">
@@ -548,7 +919,7 @@ export function PaymentsWorkspace({
                     key={order.id}
                     type="button"
                     onClick={() => setSelectedId(order.id)}
-                    className={`dashboard-selectable-row grid w-full gap-3 border-l-4 px-4 py-3 text-left lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
+                    className={`dashboard-data-row dashboard-selectable-row grid w-full gap-3 border-l-4 px-4 py-3 text-left lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
                       paymentState === "waiting_confirm"
                         ? "border-l-[var(--accent)]"
                         : paymentState === "waiting_payment"
@@ -558,12 +929,12 @@ export function PaymentsWorkspace({
                             : "border-l-transparent"
                     } ${isSelected ? "dashboard-selected-row" : ""}`}
                   >
-                    <span className="font-mono text-sm font-semibold">#PAY{order.id.slice(0, 8).toUpperCase()}</span>
-                    <span className="text-sm font-semibold">{order.tableName}</span>
-                    <span className="truncate text-sm font-medium text-[var(--muted-foreground)]">{order.itemSummary}</span>
-                    <span><Badge tone={order.method === "QR" ? "green" : "neutral"}>{paymentMethodLabel(order.method as PaymentMethod | null)}</Badge></span>
-                    <span><Badge tone={statusTone(paymentState)}>{paymentStatusLabel(paymentState)}</Badge></span>
-                    <span className="flex items-center justify-between gap-3 lg:justify-end">
+                    <span className="dashboard-data-field font-mono text-sm font-semibold" data-label="Mã thanh toán">#PAY{order.id.slice(0, 8).toUpperCase()}</span>
+                    <span className="dashboard-data-field text-sm font-semibold" data-label="Bàn/Đơn">{order.tableName}</span>
+                    <span className="dashboard-data-field truncate text-sm font-medium text-[var(--muted-foreground)]" data-label="Hóa đơn gồm">{order.itemSummary}</span>
+                    <span className="dashboard-data-field" data-label="Phương thức"><Badge tone={order.method === "QR" ? "green" : "neutral"}>{paymentMethodLabel(order.method as PaymentMethod | null)}</Badge></span>
+                    <span className="dashboard-data-field" data-label="Trạng thái"><Badge tone={statusTone(paymentState)}>{paymentStatusLabel(paymentState)}</Badge></span>
+                    <span className="dashboard-data-field flex items-center justify-between gap-3 lg:justify-end" data-label="Số tiền">
                       <span className="metric-number font-semibold">{formatVnd(order.amount)}</span>
                       <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] lg:hidden">
                         <ArrowRight size={15} />

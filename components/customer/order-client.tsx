@@ -44,8 +44,21 @@ import {
   type DineInCheckoutAction,
   type DineInCheckoutScreen
 } from "@/lib/customer/checkout-flow";
+import {
+  resolveModifierSelections,
+  type CustomerModifierSelection,
+  type PublicModifierGroup
+} from "@/lib/customer/modifier-pricing";
+import {
+  evaluatePublicPromotion,
+  findPublicPromotionByCode,
+  normalizePromotionCode,
+  promotionDescription,
+  promotionEligibilityMessage
+} from "@/lib/customer/promotion-preview";
+import { getCustomerOrderPollingInterval } from "@/lib/customer/order-sync";
 import type { AiAgentAction } from "@/types/ai-agent";
-import type { PaymentMethod, TableBillStatus } from "@/types/domain";
+import type { OrderDto, PaymentMethod, TableBillStatus } from "@/types/domain";
 import type { PublicMenuCategory, PublicPromotion } from "@/types";
 
 type PaymentInfo =
@@ -91,6 +104,7 @@ type CreatedOrder = {
       quantity: number;
       price: number;
       note: string | null;
+      modifierSummary?: string | null;
       menuItem: { id?: string; name: string } | null;
     }>;
   };
@@ -149,6 +163,17 @@ function isOpenOrder(status: string) {
   return ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"].includes(status);
 }
 
+function toPollingOrder(order: CreatedOrder["order"] | null): Pick<OrderDto, "status" | "paymentStatus" | "paymentMethod" | "fulfillmentType" | "deliveryStatus"> | null {
+  if (!order) return null;
+  return {
+    status: order.status as OrderDto["status"],
+    paymentStatus: order.paymentStatus ?? "unpaid",
+    paymentMethod: order.paymentMethod,
+    fulfillmentType: "DINE_IN",
+    deliveryStatus: "none"
+  };
+}
+
 function payableTotal(entry: CreatedOrder) {
   return entry.order.bill?.total ?? entry.order.total;
 }
@@ -174,20 +199,34 @@ function customerInvoiceCode(id: string) {
   return `#${id.slice(0, 12).toUpperCase()}`;
 }
 
-function calculatePublicPromotionDiscount(subtotal: number, promotion: PublicPromotion | null) {
-  if (!promotion || subtotal < promotion.minOrderAmount) return 0;
-  if (promotion.discountScope === "DELIVERY_FEE") return 0;
-  if (promotion.discountType === "PERCENT") {
-    return Math.min(subtotal, Math.round((subtotal * promotion.discountValue) / 100));
-  }
-  return Math.min(subtotal, promotion.discountValue);
+function hasMenuModifiers(item: Pick<PublicMenuCategory["items"][number], "modifierGroups">) {
+  return item.modifierGroups?.some((group) => group.options.length > 0) ?? false;
 }
 
-function promotionDescription(promotion: PublicPromotion) {
-  const value = promotion.discountType === "PERCENT" ? `${promotion.discountValue}%` : formatVnd(promotion.discountValue);
-  if (promotion.discountScope === "DELIVERY_FEE") return "Áp dụng cho đơn giao hàng";
-  if (promotion.minOrderAmount > 0) return `Giảm ${value} cho hóa đơn từ ${formatVnd(promotion.minOrderAmount)}`;
-  return `Giảm ${value} cho đơn hiện tại`;
+function modifierMinSelect(group: PublicModifierGroup) {
+  return typeof group.minSelect === "number" ? group.minSelect : group.required ? 1 : 0;
+}
+
+function modifierMaxSelect(group: PublicModifierGroup) {
+  return group.maxSelect ?? Number.POSITIVE_INFINITY;
+}
+
+function defaultModifierSelections(groups: readonly PublicModifierGroup[] = []): CustomerModifierSelection[] {
+  return groups.flatMap((group) => {
+    const minSelect = modifierMinSelect(group);
+    if (minSelect <= 0) return [];
+    return group.options
+      .filter((option) => option.isAvailable !== false)
+      .slice(0, minSelect)
+      .map((option) => ({ groupId: group.id, optionId: option.id, quantity: 1 }));
+  });
+}
+
+function modifierSummary(selections: ReturnType<typeof resolveModifierSelections>) {
+  if (!selections.ok || selections.selections.length === 0) return "";
+  return selections.selections
+    .map((selection) => `${selection.optionName}${selection.quantity > 1 ? ` x${selection.quantity}` : ""}`)
+    .join(", ");
 }
 
 function formatCountdown(seconds: number) {
@@ -320,10 +359,10 @@ function PhoneFrame({
   className?: string;
 }) {
   return (
-    <main className="min-h-dvh bg-[#f5f2ea] text-[#101713] md:grid md:place-items-start md:py-5">
+    <main className="stitch-customer min-h-dvh bg-[var(--customer-page-bg)] text-[var(--customer-text)] md:grid md:place-items-start md:py-5">
       <div
         className={cx(
-          "relative mx-auto min-h-dvh w-full max-w-none overflow-hidden bg-[#fffefa] shadow-[0_24px_70px_rgba(7,45,31,0.14)] sm:max-w-[390px] md:min-h-[844px] md:rounded-[30px] md:border md:border-[#e9e5db]",
+          "relative mx-auto min-h-dvh w-full max-w-none overflow-hidden bg-[var(--customer-surface)] shadow-[0_24px_70px_rgba(7,45,31,0.14)] sm:max-w-[390px] md:min-h-[844px] md:rounded-[30px] md:border md:border-[#e9e5db]",
           className
         )}
       >
@@ -723,7 +762,11 @@ function ReceiptInvoice({
         {rows.length > 0 ? (
           rows.map((item, index) => (
             <div key={`${item.menuItem?.id ?? item.menuItem?.name ?? "item"}-${index}`} className="grid grid-cols-[1fr_28px_80px] gap-2 py-2.5 text-[12px]">
-              <span className="font-semibold text-[#101713]">{item.menuItem?.name ?? "Món đã gọi"}</span>
+              <span className="min-w-0">
+                <span className="block break-words font-semibold text-[#101713]">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                {item.modifierSummary ? <span className="mt-0.5 block break-words text-[10px] font-bold text-[#69746e]">{item.modifierSummary}</span> : null}
+                {item.note ? <span className="mt-0.5 block break-words text-[10px] font-semibold text-[#8a6a42]">{item.note}</span> : null}
+              </span>
               <span className="text-center font-bold">x{item.quantity}</span>
               <span className="text-right font-bold tabular-nums">{formatVnd(item.quantity * item.price)}</span>
             </div>
@@ -769,7 +812,7 @@ export function CustomerOrderClient({
   categories: PublicMenuCategory[];
 }) {
   const { items, add, decrement, remove, setNote, clear } = useDineInCartStore();
-  const cart = Object.values(items);
+  const cart = useMemo(() => Object.entries(items).map(([lineId, item]) => ({ ...item, lineId })), [items]);
   const [screen, setScreen] = useState<CustomerScreen>("menu");
   const { categoryId, searchQuery, setCategoryId, setSearchQuery, visibleCategories } = useDineInMenuBrowser(categories);
   const visibleMenuItems = useMemo(
@@ -791,14 +834,22 @@ export function CustomerOrderClient({
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
-  const [selectedPromotionCode, setSelectedPromotionCode] = useState(restaurant.promotions[0]?.code ?? "");
+  const [selectedPromotionCode, setSelectedPromotionCode] = useState("");
   const [staffCallLoading, setStaffCallLoading] = useState(false);
   const [staffCallSent, setStaffCallSent] = useState(false);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("idle");
+  const [networkOnline, setNetworkOnline] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
   const [qrSeconds, setQrSeconds] = useState(5 * 60);
   const [error, setError] = useState<string | null>(null);
   const [customerToast, setCustomerToast] = useState<string | null>(null);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [customizingItem, setCustomizingItem] = useState<{
+    item: PublicMenuCategory["items"][number];
+    selections: CustomerModifierSelection[];
+    quantity: number;
+    note: string;
+  } | null>(null);
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const createRequestInFlightRef = useRef(false);
   const paymentRequestInFlightRef = useRef(false);
@@ -806,10 +857,25 @@ export function CustomerOrderClient({
 
   const total = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
   const selectedPromotion = useMemo(
-    () => restaurant.promotions.find((promotion) => promotion.code === selectedPromotionCode) ?? null,
+    () => findPublicPromotionByCode(restaurant.promotions, selectedPromotionCode),
     [restaurant.promotions, selectedPromotionCode]
   );
-  const previewDiscount = useMemo(() => calculatePublicPromotionDiscount(total, selectedPromotion), [selectedPromotion, total]);
+  const promotionEvaluation = useMemo(
+    () =>
+      evaluatePublicPromotion({
+        itemSubtotal: total,
+        deliveryFee: 0,
+        promotion: selectedPromotion
+      }),
+    [selectedPromotion, total]
+  );
+  const previewDiscount = promotionEvaluation.discountAmount;
+  const normalizedSelectedPromotionCode = normalizePromotionCode(selectedPromotionCode);
+  const effectivePromotionCode = selectedPromotion
+    ? promotionEvaluation.eligible
+      ? selectedPromotion.code
+      : ""
+    : normalizedSelectedPromotionCode;
   const previewTotal = Math.max(0, total - previewDiscount);
   const cartCount = useMemo(() => cart.reduce((sum, item) => sum + item.quantity, 0), [cart]);
   const menuItemCount = useMemo(
@@ -820,9 +886,11 @@ export function CustomerOrderClient({
     () =>
       JSON.stringify(
         cart.map((item) => ({
+          lineId: item.lineId,
           id: item.menuItemId,
           quantity: item.quantity,
-          note: item.note ?? ""
+          note: item.note ?? "",
+          modifiers: item.modifiers ?? []
         }))
       ),
     [cart]
@@ -830,6 +898,11 @@ export function CustomerOrderClient({
   const createdOrderId = created?.order.id;
   const customerSessionKey = useMemo(() => customerSessionStorageKey(restaurant.id, table.id), [restaurant.id, table.id]);
   const openHistory = useMemo(() => history.filter((entry) => isOpenOrder(entry.order.status)), [history]);
+  const pollingOrder = useMemo(() => toPollingOrder(created?.order ?? openHistory[0]?.order ?? null), [created?.order, openHistory]);
+  const orderPollingInterval = useMemo(
+    () => getCustomerOrderPollingInterval(pollingOrder, { networkOnline, pageVisible }),
+    [networkOnline, pageVisible, pollingOrder]
+  );
   const openHistoryTotal = useMemo(() => openHistory.reduce((sum, entry) => sum + payableTotal(entry), 0), [openHistory]);
   const canStartPayment = Boolean(created && (["ordering", "completed"].includes(created.order.status) || created.order.bill));
   const currentPayableTotal = created ? payableTotal(created) : 0;
@@ -875,6 +948,86 @@ export function CustomerOrderClient({
       setCustomerToast(null);
       customerToastTimerRef.current = null;
     }, 2800);
+  }
+
+  function addMenuItem(item: PublicMenuCategory["items"][number]) {
+    if (hasMenuModifiers(item)) {
+      setCustomizingItem({
+        item,
+        selections: defaultModifierSelections(item.modifierGroups ?? []),
+        quantity: 1,
+        note: ""
+      });
+      setError(null);
+      return;
+    }
+
+    add({
+      menuItemId: item.id,
+      name: item.name,
+      price: item.price,
+      image: item.image
+    });
+    notifyCustomer(`Đã thêm ${item.name} vào giỏ hàng.`);
+  }
+
+  function toggleModifierOption(group: PublicModifierGroup, optionId: string) {
+    setCustomizingItem((current) => {
+      if (!current) return current;
+      const option = group.options.find((candidate) => candidate.id === optionId);
+      if (!option || option.isAvailable === false) return current;
+
+      const selectionsOutsideGroup = current.selections.filter((selection) => selection.groupId !== group.id);
+      const groupSelections = current.selections.filter((selection) => selection.groupId === group.id);
+      const selected = groupSelections.some((selection) => selection.optionId === optionId);
+      const maxSelect = modifierMaxSelect(group);
+
+      if (selected) {
+        return {
+          ...current,
+          selections: [...selectionsOutsideGroup, ...groupSelections.filter((selection) => selection.optionId !== optionId)]
+        };
+      }
+
+      if (maxSelect <= 1) {
+        return {
+          ...current,
+          selections: [...selectionsOutsideGroup, { groupId: group.id, optionId, quantity: 1 }]
+        };
+      }
+
+      if (groupSelections.length >= maxSelect) return current;
+      return {
+        ...current,
+        selections: [...current.selections, { groupId: group.id, optionId, quantity: 1 }]
+      };
+    });
+  }
+
+  function confirmCustomItem() {
+    if (!customizingItem) return;
+    const resolution = resolveModifierSelections(customizingItem.item.modifierGroups ?? [], customizingItem.selections);
+    if (!resolution.ok) {
+      setError(resolution.errors[0] ?? "Vui lòng chọn đủ tùy chọn cho món.");
+      return;
+    }
+
+    const unitPrice = customizingItem.item.price + resolution.totalDelta;
+    const summary = modifierSummary(resolution);
+    for (let index = 0; index < customizingItem.quantity; index += 1) {
+      add({
+        menuItemId: customizingItem.item.id,
+        name: customizingItem.item.name,
+        price: unitPrice,
+        image: customizingItem.item.image,
+        note: customizingItem.note,
+        modifiers: customizingItem.selections,
+        modifierSummary: summary
+      });
+    }
+    notifyCustomer(`Đã thêm ${customizingItem.item.name} vào giỏ hàng.`);
+    setCustomizingItem(null);
+    setError(null);
   }
 
   const applyCheckoutTransition = useCallback((action: DineInCheckoutAction) => {
@@ -929,10 +1082,12 @@ export function CustomerOrderClient({
   }
 
   const loadOrderHistory = useCallback(
-    async ({ openLatest = false }: { openLatest?: boolean } = {}) => {
+    async ({ openLatest = false, silent = false }: { openLatest?: boolean; silent?: boolean } = {}) => {
       if (!customerSessionId) return [];
-      setHistoryLoading(true);
-      setError(null);
+      if (!silent) {
+        setHistoryLoading(true);
+        setError(null);
+      }
       try {
         const params = new URLSearchParams({
           restaurantSlug: restaurant.slug,
@@ -953,10 +1108,10 @@ export function CustomerOrderClient({
         if (openLatest && orders[0]) openEntry(orders[0]);
         return orders;
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Không tải được lịch sử gọi món");
+        if (!silent) setError(err instanceof Error ? err.message : "Không tải được lịch sử gọi món");
         return [];
       } finally {
-        setHistoryLoading(false);
+        if (!silent) setHistoryLoading(false);
       }
     },
     [customerSessionId, openEntry, restaurant.slug, table.id, tableAccessToken]
@@ -999,6 +1154,44 @@ export function CustomerOrderClient({
   }, [customerSessionId, loadOrderHistory]);
 
   useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!customerSessionId || !orderPollingInterval) return;
+    let cancelled = false;
+    const poll = () => {
+      if (!cancelled) void loadOrderHistory({ silent: true });
+    };
+
+    const warmupTimer = window.setTimeout(poll, 1500);
+    const intervalTimer = window.setInterval(poll, orderPollingInterval);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(warmupTimer);
+      window.clearInterval(intervalTimer);
+    };
+  }, [customerSessionId, loadOrderHistory, orderPollingInterval]);
+
+  useEffect(() => {
     window.scrollTo(0, 0);
   }, [screen]);
 
@@ -1018,11 +1211,21 @@ export function CustomerOrderClient({
 
   async function submitOrder() {
     if (cart.length === 0 || loading || createRequestInFlightRef.current) return;
+    if (selectedPromotion && !promotionEvaluation.eligible) {
+      setError(promotionEligibilityMessage({
+        promotion: selectedPromotion,
+        itemSubtotal: total,
+        deliveryFee: 0,
+        isDeliveryMode: false
+      }));
+      setScreen("cart");
+      return;
+    }
     const sessionId = ensureCustomerSessionId();
     const orderFingerprint = JSON.stringify({
       cartSignature,
       customerNote: customerNote.trim(),
-      selectedPromotionCode
+      selectedPromotionCode: effectivePromotionCode
     });
     const existingPending = pendingCreateRequestRef.current;
     const idempotencyKey =
@@ -1041,12 +1244,13 @@ export function CustomerOrderClient({
           tableAccessToken: tableAccessToken ?? undefined,
           customerSessionId: sessionId,
           customerNote: [customerNote.trim(), driverNote.trim()].filter(Boolean).join("\n"),
-          promotionCode: selectedPromotionCode || undefined,
+          promotionCode: effectivePromotionCode || undefined,
           idempotencyKey,
           items: cart.map((item) => ({
             menuItemId: item.menuItemId,
             quantity: item.quantity,
-            note: item.note
+            note: item.note,
+            modifiers: item.modifiers
           }))
         })
       });
@@ -1142,7 +1346,7 @@ export function CustomerOrderClient({
 
   function handleCustomerAgentAction(action: AiAgentAction) {
     if (action.type === "link" && action.href) {
-      window.location.href = action.href;
+      window.location.assign(action.href);
       return;
     }
 
@@ -1150,14 +1354,18 @@ export function CustomerOrderClient({
       const body = action.body as { menuItemId?: string; categoryId?: string; name?: string; price?: number; image?: string | null } | undefined;
       const menuItem = categories.flatMap((category) => category.items).find((item) => item.id === body?.menuItemId);
       if (!menuItem && (!body?.menuItemId || !body.name || typeof body.price !== "number")) return;
-      add({
-        menuItemId: menuItem?.id ?? body!.menuItemId!,
-        name: menuItem?.name ?? body!.name!,
-        price: menuItem?.price ?? body!.price!,
-        image: menuItem?.image ?? body?.image ?? null
-      });
+      if (menuItem) {
+        addMenuItem(menuItem);
+      } else {
+        add({
+          menuItemId: body!.menuItemId!,
+          name: body!.name!,
+          price: body!.price!,
+          image: body?.image ?? null
+        });
+      }
       if (body?.categoryId) setCategoryId(body.categoryId);
-      notifyCustomer(`Đã thêm ${menuItem?.name ?? body!.name!} vào giỏ hàng.`);
+      if (!menuItem) notifyCustomer(`Đã thêm ${body!.name!} vào giỏ hàng.`);
       setScreen((current) =>
         current === "payment-choice" || current === "cash-payment" || current === "vietqr-payment" || current === "payment-pending"
           ? "menu"
@@ -1222,52 +1430,150 @@ export function CustomerOrderClient({
     categoryIndex: number;
     itemIndex: number;
   }) {
-    const quantity = items[item.id]?.quantity ?? 0;
+    const quantity = cart.reduce((sum, line) => sum + (line.menuItemId === item.id ? line.quantity : 0), 0);
+    const hasModifiers = hasMenuModifiers(item);
 
     return (
-      <article key={item.id} className="flex min-h-[236px] min-w-0 flex-col overflow-hidden rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
-        <div className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
+      <article key={item.id} className="customer-menu-card">
+        <div className="customer-menu-thumb">
           <ProductThumb src={item.image} alt={item.name} seed={categoryIndex + itemIndex} />
         </div>
-        <div className="flex min-h-[64px] min-w-0 flex-1 flex-col pt-2">
-          <h3 className="line-clamp-2 break-words text-[13px] font-black leading-4">{item.name}</h3>
-          <p className="mt-1 truncate text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
+        <div className="customer-menu-card-body">
+          <h3 className="customer-menu-title">{item.name}</h3>
+          <p className="customer-menu-price tabular-nums">{formatVnd(item.price)}</p>
         </div>
         <div className="mt-auto shrink-0 pt-2">
-          {quantity > 0 ? (
+          {quantity > 0 && !hasModifiers ? (
             <QuantityControl
               quantity={quantity}
               onMinus={() => decrement(item.id)}
-              onPlus={() =>
-                add({
-                  menuItemId: item.id,
-                  name: item.name,
-                  price: item.price,
-                  image: item.image
-                })
-              }
+              onPlus={() => addMenuItem(item)}
               compact
             />
           ) : (
             <button
               type="button"
-              onClick={() =>
-                add({
-                  menuItemId: item.id,
-                  name: item.name,
-                  price: item.price,
-                  image: item.image
-                })
-              }
+              onClick={() => addMenuItem(item)}
               aria-label={`Thêm ${item.name}`}
-              className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#006b3c] px-2 text-[12px] font-black text-white active:scale-95"
+              className="customer-menu-action customer-menu-action--primary"
             >
               <Plus size={15} />
-              Thêm
+              {hasModifiers ? (quantity > 0 ? `Tùy chọn (${quantity})` : "Tùy chọn") : "Thêm"}
             </button>
           )}
         </div>
       </article>
+    );
+  }
+
+  function renderModifierCustomizer() {
+    if (!customizingItem) return null;
+
+    const item = customizingItem.item;
+    const groups = item.modifierGroups ?? [];
+    const resolution = resolveModifierSelections(groups, customizingItem.selections);
+    const unitPrice = item.price + (resolution.ok ? resolution.totalDelta : 0);
+    const totalPrice = unitPrice * customizingItem.quantity;
+
+    return (
+      <div className="fixed inset-0 z-[1400] grid place-items-end bg-black/32 px-3 pb-3 pt-12 sm:place-items-center">
+        <section className="flex max-h-[88dvh] w-full max-w-[430px] flex-col overflow-hidden rounded-[28px] bg-[#fffefa] shadow-[0_28px_90px_rgba(0,0,0,0.24)]">
+          <div className="flex items-start justify-between gap-3 border-b border-[#ecefe6] p-4">
+            <div className="min-w-0">
+              <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#006b3c]">Tùy chọn món</p>
+              <h2 className="mt-1 truncate text-[19px] font-black text-[#111713]">{item.name}</h2>
+              <p className="mt-1 text-[13px] font-bold text-[#68746b]">{formatVnd(unitPrice)} / phần</p>
+            </div>
+            <button type="button" onClick={() => setCustomizingItem(null)} className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-[#f5f2ea] text-[#111713]" aria-label="Đóng tùy chọn món">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
+            {groups.map((group) => {
+              const groupSelections = customizingItem.selections.filter((selection) => selection.groupId === group.id);
+              const minSelect = modifierMinSelect(group);
+              const maxSelect = modifierMaxSelect(group);
+
+              return (
+                <section key={group.id} className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-[14px] font-black text-[#111713]">{group.name}</h3>
+                      <p className="mt-0.5 text-[11px] font-bold text-[#748076]">
+                        {minSelect > 0 ? `Bắt buộc chọn ${minSelect}` : "Không bắt buộc"}
+                        {Number.isFinite(maxSelect) ? ` · tối đa ${maxSelect}` : ""}
+                      </p>
+                    </div>
+                    {minSelect > 0 ? <span className="rounded-full bg-[#edf7ef] px-2.5 py-1 text-[10px] font-black text-[#006b3c]">Bắt buộc</span> : null}
+                  </div>
+
+                  <div className="grid gap-2">
+                    {group.options.map((option) => {
+                      const selected = groupSelections.some((selection) => selection.optionId === option.id);
+                      const disabled = option.isAvailable === false;
+
+                      return (
+                        <button
+                          key={option.id}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => toggleModifierOption(group, option.id)}
+                          className={cx(
+                            "flex min-h-12 items-center justify-between gap-3 rounded-2xl border px-3 text-left transition",
+                            selected && "border-[#0f7b4b] bg-[#edf7ef]",
+                            disabled && "border-[#ecefe6] bg-[#f5f2ea] opacity-60",
+                            !selected && !disabled && "border-[#ecefe6] bg-white"
+                          )}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-black text-[#111713]">{option.name}</span>
+                            <span className="mt-0.5 block text-[11px] font-bold text-[#748076]">
+                              {disabled ? "Tạm hết" : option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "Không thêm phí"}
+                            </span>
+                          </span>
+                          <span className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-full border", selected ? "border-[#0f7b4b] bg-[#0f7b4b] text-white" : "border-[#dce2d8] bg-white text-transparent")}>
+                            <Check size={14} />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+
+            <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
+              Ghi chú riêng cho món
+              <input
+                value={customizingItem.note}
+                onChange={(event) => setCustomizingItem((current) => current ? { ...current, note: event.target.value } : current)}
+                maxLength={200}
+                placeholder="Ví dụ: ít đá, bỏ hành..."
+                className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]"
+              />
+            </label>
+
+            {!resolution.ok ? (
+              <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[12px] font-bold text-[#be5d00]">{resolution.errors[0]}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 border-t border-[#ecefe6] p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            <div className="flex items-center justify-between gap-3">
+              <QuantityControl
+                quantity={customizingItem.quantity}
+                onMinus={() => setCustomizingItem((current) => current ? { ...current, quantity: Math.max(1, current.quantity - 1) } : current)}
+                onPlus={() => setCustomizingItem((current) => current ? { ...current, quantity: Math.min(50, current.quantity + 1) } : current)}
+              />
+              <span className="text-[17px] font-black text-[#111713]">{formatVnd(totalPrice)}</span>
+            </div>
+            <PrimaryButton onClick={confirmCustomItem} disabled={!resolution.ok}>
+              Thêm vào giỏ
+            </PrimaryButton>
+          </div>
+        </section>
+      </div>
     );
   }
 
@@ -1281,6 +1587,7 @@ export function CustomerOrderClient({
           orderStatus={created?.order ?? openHistory[0]?.order ?? null}
           onAgentAction={handleCustomerAgentAction}
         />
+        {renderModifierCustomizer()}
         {node}
         <FloatingCustomerActions
           cartCount={cartCount}
@@ -1374,8 +1681,9 @@ export function CustomerOrderClient({
           }
         />
 
-        <div className="px-4 pb-28">
-          <div className="grid grid-cols-[minmax(0,1fr)_44px] gap-2">
+        <div className="customer-bottom-buffer px-4">
+          <div className="customer-menu-controls">
+          <div className="customer-search-row">
             <label className="relative">
               <span className="sr-only">Tìm món trong menu</span>
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-[#8a918b]" size={16} aria-hidden="true" />
@@ -1400,11 +1708,11 @@ export function CustomerOrderClient({
             </button>
           </div>
 
-          <div className="hide-scrollbar -mx-4 mt-3 flex gap-2 overflow-x-auto px-4 pb-1">
+          <div className="customer-category-rail">
             <button
               type="button"
               onClick={() => setCategoryId("all")}
-              className={cx("min-h-11 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === "all" ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
+              className={cx("customer-category-pill", categoryId === "all" ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
             >
               Tất cả
             </button>
@@ -1413,11 +1721,12 @@ export function CustomerOrderClient({
                 key={category.id}
                 type="button"
                 onClick={() => setCategoryId(category.id)}
-                className={cx("min-h-11 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === category.id ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
+                className={cx("customer-category-pill", categoryId === category.id ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
               >
                 {category.name}
               </button>
             ))}
+          </div>
           </div>
 
           {categoryMenuOpen ? (
@@ -1449,7 +1758,7 @@ export function CustomerOrderClient({
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="customer-category-grid">
                     {[{ id: "all", name: "Tất cả", count: menuItemCount }, ...categories.map((category) => ({ id: category.id, name: category.name, count: category.items.length }))].map((category) => {
                       const selected = categoryId === category.id;
 
@@ -1501,7 +1810,7 @@ export function CustomerOrderClient({
               <span>
                 <span className="block text-[12px] font-black">Ưu đãi hôm nay</span>
                 <span className="mt-1 block text-[11px] font-semibold text-white/82">
-                  {selectedPromotion ? promotionDescription(selectedPromotion) : "Chọn mã trước khi gọi món"}
+                  {restaurant.promotions[0] ? promotionDescription(restaurant.promotions[0]) : "Chọn mã trước khi gọi món"}
                 </span>
               </span>
               <ChevronRight size={18} />
@@ -1521,7 +1830,7 @@ export function CustomerOrderClient({
                   <h2 className="text-[15px] font-black">Tất cả món</h2>
                   <span className="text-[11px] font-black text-[#69746e]">{visibleMenuItems.length} món</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="customer-menu-grid">
                   {visibleMenuItems.map(renderMenuCard)}
                 </div>
               </section>
@@ -1531,7 +1840,7 @@ export function CustomerOrderClient({
                   <div className="mb-3 flex items-center justify-between">
                     <h2 className="text-[15px] font-black">{category.name}</h2>
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5">
+                  <div className="customer-menu-grid">
                     {category.items.length === 0 ? (
                       <div className="col-span-2 rounded-2xl bg-[#f6f4ef] p-4 text-[12px] font-semibold text-[#69746e]">Danh mục này chưa có món khả dụng.</div>
                     ) : (
@@ -1577,21 +1886,68 @@ export function CustomerOrderClient({
       <PhoneFrame>
         <ScreenHeader title="Giỏ hàng của bạn" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => setScreen("menu")} className="inline-flex min-h-11 items-center px-2 text-[11px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
         <div className="px-4 pb-28">
-          {selectedPromotion ? (
-            <button
-              type="button"
-              onClick={() => setSelectedPromotionCode(selectedPromotionCode ? "" : restaurant.promotions[0]?.code ?? "")}
-              className="mb-4 flex w-full items-center justify-between rounded-2xl border border-[#f4e2bd] bg-[#fff9ef] p-4 text-left"
-            >
-              <span>
-                <span className="block text-[12px] font-black text-[#101713]">Bạn sẽ tích lũy 15 điểm</span>
-                <span className="mt-1 block text-[11px] font-semibold text-[#69746e]">{promotionDescription(selectedPromotion)}</span>
-              </span>
-              <ChevronRight size={16} className="text-[#f28c28]" />
-            </button>
+          {restaurant.promotions.length > 0 ? (
+            <section className="mb-4 grid gap-3 rounded-2xl border border-[#f4e2bd] bg-[#fff9ef] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-[13px] font-black text-[#101713]">Mã ưu đãi</h2>
+                  <p className="mt-1 text-[11px] font-semibold text-[#69746e]">Chọn mã trước khi gửi món.</p>
+                </div>
+                {previewDiscount > 0 ? <span className="rounded-lg bg-[#e7f4eb] px-2.5 py-1 text-[11px] font-black text-[#006b3c]">-{formatVnd(previewDiscount)}</span> : null}
+              </div>
+              <div className="grid gap-2">
+                {restaurant.promotions.slice(0, 4).map((promotion) => {
+                  const selected = selectedPromotion?.id === promotion.id;
+                  const evaluation = evaluatePublicPromotion({ itemSubtotal: total, deliveryFee: 0, promotion });
+                  return (
+                    <button
+                      key={promotion.id}
+                      type="button"
+                      onClick={() => setSelectedPromotionCode(selected ? "" : promotion.code)}
+                      className={cx(
+                        "rounded-2xl border px-3 py-2.5 text-left",
+                        selected ? "border-[#0f7b4b] bg-[#edf7ef]" : "border-[#efe1c7] bg-white"
+                      )}
+                    >
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[12px] font-black text-[#101713]">{promotion.code}</span>
+                        <span className={cx("text-[11px] font-black", selected ? "text-[#006b3c]" : "text-[#7a857b]")}>
+                          {selected ? "Đã chọn" : evaluation.eligible ? `-${formatVnd(evaluation.discountAmount)}` : "Chọn"}
+                        </span>
+                      </span>
+                      <span className="mt-1 block text-[11px] font-semibold text-[#69746e]">{promotionDescription(promotion)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="grid gap-1.5 text-[12px] font-black text-[#101713]">
+                Nhập mã khác
+                <input
+                  value={selectedPromotionCode}
+                  onChange={(event) => setSelectedPromotionCode(normalizePromotionCode(event.target.value))}
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  placeholder="SALE20"
+                  className="h-11 rounded-2xl border border-[#efe1c7] bg-white px-3 font-mono text-[13px] font-black uppercase outline-none focus:border-[#0f7b4b]"
+                />
+              </label>
+              {selectedPromotionCode ? (
+                <p className={cx("text-[11px] font-bold", previewDiscount > 0 ? "text-[#006b3c]" : "text-[#be5d00]")}>
+                  {selectedPromotion
+                    ? promotionEligibilityMessage({
+                        promotion: selectedPromotion,
+                        itemSubtotal: total,
+                        deliveryFee: 0,
+                        isDeliveryMode: false
+                      })
+                    : "Mã chưa nằm trong danh sách công khai, hệ thống sẽ kiểm tra khi gửi đơn."}
+                </p>
+              ) : null}
+            </section>
           ) : null}
 
-          <div className="grid gap-3">
+          <div className="customer-cart-list">
             {cart.length === 0 ? (
               <div className="rounded-2xl bg-[#f6f4ef] p-6 text-center">
                 <IconCircle tone="green"><ShoppingCart size={18} /></IconCircle>
@@ -1600,30 +1956,43 @@ export function CustomerOrderClient({
               </div>
             ) : (
               cart.map((item, index) => (
-                <article key={item.menuItemId} className="flex items-start gap-3 rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
-                  <div className="h-[64px] w-[64px] shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
+                <article key={item.lineId} className="customer-cart-card">
+                  <div className="customer-cart-card-media">
                     <ProductThumb src={item.image} alt={item.name} seed={index} />
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
+                  <div className="customer-cart-card-main">
+                    <div className="customer-cart-card-top">
                       <div className="min-w-0">
                         <h3 className="truncate text-[13px] font-black">{item.name}</h3>
+                        {item.modifierSummary ? <p className="mt-1 line-clamp-2 text-[11px] font-bold text-[#69746e]">{item.modifierSummary}</p> : null}
                         <p className="mt-1 text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
                       </div>
-                      <button type="button" onClick={() => remove(item.menuItemId)} aria-label={`Xóa ${item.name}`} className="grid h-11 w-11 place-items-center rounded-full text-[#69746e]">
+                      <button type="button" onClick={() => remove(item.lineId)} aria-label={`Xóa ${item.name}`} className="grid h-11 w-11 place-items-center rounded-full text-[#69746e]">
                         <Trash2 size={15} />
                       </button>
                     </div>
-                    <div className="mt-2 flex justify-end">
+                    <label className="mt-2 block">
+                      <span className="sr-only">Ghi chú cho {item.name}</span>
+                      <input
+                        value={item.note ?? ""}
+                        onChange={(event) => setNote(item.lineId, event.target.value)}
+                        maxLength={200}
+                        placeholder="Ghi chú món"
+                        className="h-10 w-full rounded-xl border border-[#ece8dd] bg-[#fffefa] px-3 text-[12px] font-semibold outline-none focus:border-[#0f7b4b]"
+                      />
+                    </label>
+                    <div className="customer-cart-card-actions">
                       <QuantityControl
                         quantity={item.quantity}
-                        onMinus={() => decrement(item.menuItemId)}
+                        onMinus={() => decrement(item.lineId)}
                         onPlus={() =>
                           add({
                             menuItemId: item.menuItemId,
                             name: item.name,
                             price: item.price,
-                            image: item.image
+                            image: item.image,
+                            modifiers: item.modifiers,
+                            modifierSummary: item.modifierSummary
                           })
                         }
                         compact
@@ -1725,7 +2094,10 @@ export function CustomerOrderClient({
                 rows.map((item, index) => (
                   <div key={`${item.menuItem?.id ?? item.menuItem?.name ?? "item"}-${index}`} className="grid grid-cols-[42px_1fr_24px_72px] items-center gap-2 py-3 text-[12px]">
                     <div className="h-9 w-9 overflow-hidden rounded-lg bg-[#f4f1ea]"><ProductThumb alt={item.menuItem?.name ?? "Món"} seed={index} /></div>
-                    <span className="truncate font-bold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-bold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                      {item.modifierSummary ? <span className="mt-0.5 block truncate text-[10px] font-bold text-[#69746e]">{item.modifierSummary}</span> : null}
+                    </span>
                     <span className="text-center font-bold">x{item.quantity}</span>
                     <span className="text-right font-bold tabular-nums">{formatVnd(item.quantity * item.price)}</span>
                   </div>

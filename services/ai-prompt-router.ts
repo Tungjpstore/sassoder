@@ -1,5 +1,6 @@
 import "server-only";
 
+import { buildOwnerStaffContextLine } from "@/lib/ai/owner-staff-context";
 import { passportDigest, sanitizeOperationalPassport } from "@/lib/ai/operational-passport";
 
 export type AiPromptMessage = {
@@ -277,13 +278,13 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
   staff: {
     intent: "staff",
     label: "Nhân viên",
-    description: "Gợi ý phân công, quyền nhân viên, ca làm và xử lý yêu cầu gọi nhân viên.",
-    dataScope: "Role hiện có nếu snapshot cung cấp, yêu cầu gọi nhân viên, đơn/bàn cần người xử lý.",
-    guardrails: ["Ưu tiên least privilege.", "Không đề xuất chia sẻ tài khoản ADMIN."],
+    description: "Gợi ý phân công, quyền nhân viên, ca làm, chấm công, performance coaching và payroll-ready workflow.",
+    dataScope: "Staff snapshot thật: số nhân viên active/suspended, role, chi nhánh, người đang check-in, lượt muộn/tăng ca, yêu cầu chờ duyệt, review hiệu suất và ca sắp tới nếu schema HR đã migrate.",
+    guardrails: ["Ưu tiên least privilege.", "Không đề xuất chia sẻ tài khoản ADMIN.", "Không bịa tên nhân viên nếu snapshot không có danh sách.", "Tách rõ chấm công/payroll cần duyệt với dữ liệu đã chốt."],
     systemAddendum:
-      "Đóng vai quản lý ca. Tập trung phân quyền tối thiểu, trách nhiệm rõ, phản hồi nhanh yêu cầu gọi nhân viên.",
-    responseContract: "Nêu việc cần giao, người/role nên nhận và thời hạn xử lý.",
-    suggestions: ["Phân công nhân viên trong ca đông", "Quyền STAFF nên giới hạn gì?", "Xử lý yêu cầu gọi nhân viên nhanh hơn"]
+      "Đóng vai Head of Workforce Systems cho quán F&B Việt Nam. Khi có staff snapshot, phải trả lời bằng số liệu thật: active/online/check-in, muộn/tăng ca, request chờ, chi nhánh chưa gán, review thấp và ca sắp tới. Nếu thiếu dữ liệu, nói rõ schema/snapshot chưa có thay vì nói chung chung.",
+    responseContract: "Trả lời theo: Tình hình nhân sự, Rủi ro cần xử lý, Việc làm ngay trong HR, Theo dõi payroll/ca tiếp theo.",
+    suggestions: ["Tổng quan nhân sự hôm nay", "Ai đang đi muộn hoặc cần duyệt công?", "Chi nhánh nào thiếu người?", "Ai cần coaching hiệu suất?"]
   },
   online: {
     intent: "online",
@@ -447,7 +448,34 @@ const ownerKeywordMap: Record<OwnerAiIntent, string[]> = {
   tables: ["ban", "qr", "trong", "dang phuc vu", "so do ban", "ma qr", "in qr"],
   payments: ["thanh toan", "vietqr", "tien mat", "chuyen khoan", "hoa don", "doi soat", "xac nhan tien"],
   promotions: ["khuyen mai", "ma giam", "voucher", "campaign", "uu dai", "giam gia"],
-  staff: ["nhan vien", "phan quyen", "ca lam", "goi nhan vien", "tai khoan staff"],
+  staff: [
+    "nhan su",
+    "nhan vien",
+    "staff",
+    "phan quyen",
+    "ca lam",
+    "lich lam",
+    "cham cong",
+    "check in",
+    "check-in",
+    "di tre",
+    "di muon",
+    "nghi phep",
+    "doi ca",
+    "tang ca",
+    "duyet cong",
+    "bang cong",
+    "luong",
+    "payroll",
+    "hieu suat",
+    "danh gia",
+    "coaching",
+    "chi nhanh",
+    "thieu nguoi",
+    "coverage",
+    "goi nhan vien",
+    "tai khoan staff"
+  ],
   online: ["online", "ship", "giao hang", "pickup", "den lay", "ban kinh", "phi ship", "dat online"],
   reservations: ["dat ban", "coc", "giu ban", "lich", "booking", "reservation", "giu cho"],
   reports: ["bao cao", "doanh thu", "analytics", "bieu do", "excel", "pdf", "email", "xuat bao cao"],
@@ -665,6 +693,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const tables = recordFromUnknown(snapshot?.tables);
   const menu = recordFromUnknown(snapshot?.menu);
   const inventory = recordFromUnknown(snapshot?.inventory);
+  const staff = recordFromUnknown(snapshot?.staff);
   const payments = recordFromUnknown(snapshot?.payments);
   const operationInsights = recordFromUnknown(snapshot?.operationInsights);
   const insightRows = recordArray(operationInsights?.insights);
@@ -696,6 +725,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
     inventory
       ? `Kho: ${numberValue(inventory.lowStockCount)} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(numberValue(inventory.recipeCoveragePercent))}%, ${numberValue(inventory.openAlertCount)} alert mở, dự kiến nhập ${formatVnd(inventory.projectedPurchaseValue)}, ${numberValue(inventory.wasteSignalCount)} tín hiệu hao hụt, ${numberValue(inventory.highFoodCostItemCount)} món food cost cao.`
       : "",
+    buildOwnerStaffContextLine(staff),
     payments ? `Thanh toán: ${waitingConfirmPayments} giao dịch chờ xác nhận trong snapshot.` : "",
     readiness ? `Setup: điểm ${numberValue(readiness.score)}, blocker ${setupBlockers.slice(0, 3).join(" | ") || "không có blocker rõ"}.` : "",
     operationInsights ? `AI Ops: ${textValue(operationInsights.summary) || `health ${numberValue(operationInsights.healthScore)}/100`}.` : "",
@@ -827,6 +857,7 @@ export function buildOwnerAssistantMessages(input: {
   message: string;
   context?: Record<string, unknown>;
   snapshot?: unknown;
+  memoryContext?: string | null;
 }): AiPromptMessage[] {
   const config = ownerAiIntentConfig[input.intent];
   const contextDigest = buildOwnerContextDigest(input);
@@ -840,6 +871,7 @@ export function buildOwnerAssistantMessages(input: {
       content: [
         `Yêu cầu của chủ quán:\n${input.message.trim()}`,
         contextDigest ? `\n\n${contextDigest}` : "",
+        input.memoryContext ? `\n\nRestaurant memory được lưu cho đúng quán:\n${input.memoryContext.slice(0, 1800)}` : "",
         input.snapshot ? `\nSnapshot vận hành đúng restaurant_id:\n${jsonBlock(input.snapshot, 9000)}` : "",
         input.context ? `\nNgữ cảnh UI từ dashboard:\n${jsonBlock(input.context, 5000)}` : "",
         "\nHãy trả lời plain text cực gọn theo 3 dòng: Tình huống, Bước tiếp, Nút/màn nên bấm. Không markdown. Không liệt kê dài vì UI đã có nút action riêng."

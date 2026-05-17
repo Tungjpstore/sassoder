@@ -31,6 +31,7 @@ type AutomationSnapshot = {
     reorderSuggestionCount?: number;
     highReorderCount?: number;
     wasteSignalCount?: number;
+    expiringBatchCount?: number;
     highFoodCostItemCount?: number;
     recipeCoveragePercent?: number;
   } | null;
@@ -137,8 +138,40 @@ export function buildAiAutomationWorkflows(input: { snapshot?: unknown; limit?: 
   }
 
   const wasteSignalCount = asNumber(inventory?.wasteSignalCount);
+  const expiringBatchCount = asNumber(inventory?.expiringBatchCount);
   const highFoodCostItemCount = asNumber(inventory?.highFoodCostItemCount);
   const recipeCoveragePercent = asNumber(inventory?.recipeCoveragePercent);
+
+  if (expiringBatchCount > 0 || openAlertCount >= 3) {
+    workflows.push({
+      id: "workflow-inventory-expiry-alert-sweep",
+      domain: "inventory",
+      title: "Dọn cảnh báo kho và hạn dùng",
+      trigger: `${expiringBatchCount} lô gần hết hạn · ${openAlertCount} cảnh báo kho đang mở.`,
+      outcome: "Có checklist xử lý lô gần hết hạn, hàng cần xả trước và cảnh báo cần xác nhận trong ngày.",
+      priority: expiringBatchCount >= 3 || openAlertCount >= 5 ? "high" : "medium",
+      confidence: expiringBatchCount > 0 ? "high" : "medium",
+      estimatedMinutes: 6,
+      executionMode: "manual_only",
+      evidence: [`expiringBatches=${expiringBatchCount}`, `openInventoryAlerts=${openAlertCount}`],
+      steps: [
+        workflowStep("review-expiry", "Rà lô gần hết hạn", "Ưu tiên lô FEFO trong kho/bếp/bar.", "ready"),
+        workflowStep("assign-action", "Chọn hành động", "Xả hàng, chuyển chi nhánh, tạo món đẩy bán hoặc ghi waste.", "queued"),
+        workflowStep("close-alerts", "Đóng cảnh báo", "Xác nhận cảnh báo đã xử lý để dashboard sạch trước ca.", "manual")
+      ],
+      actions: [
+        workflowAction({
+          id: "open-inventory-alerts",
+          type: "link",
+          label: "Mở cảnh báo kho",
+          href: "/dashboard/inventory",
+          intent: "inventory_alerts",
+          safety: "safe",
+          priority: "primary"
+        })
+      ]
+    });
+  }
 
   if (wasteSignalCount > 0 || highFoodCostItemCount > 0 || (recipeCoveragePercent > 0 && recipeCoveragePercent < 70)) {
     workflows.push({

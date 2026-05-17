@@ -3,6 +3,13 @@ import "server-only";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { sanitizeAgentMission } from "@/lib/ai/agent-mission";
 import { sanitizeCommandDeck } from "@/lib/ai/command-deck";
+import {
+  formatRestaurantMemoryContext,
+  rankRestaurantMemories,
+  type RestaurantMemoryCategory,
+  type RestaurantMemoryItem,
+  type RestaurantMemorySensitivity
+} from "@/lib/ai/memory/retrieval";
 import { sanitizeOperationalPassport } from "@/lib/ai/operational-passport";
 import type { AiConversationReplayPayload, AiConversationWorkflowSnapshot, AiWorkflowCheckpoint, AiWorkflowCheckpointStatus } from "@/types/ai-history";
 import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
@@ -199,6 +206,46 @@ function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
 }
 
+function sanitizeMemoryTags(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => (typeof item === "string" ? item.trim().slice(0, 40) : ""))
+        .filter(Boolean)
+        .slice(0, 12)
+    : [];
+}
+
+function normalizeMemoryCategory(value: unknown): RestaurantMemoryCategory {
+  return value === "brand" ||
+    value === "menu" ||
+    value === "customer" ||
+    value === "operations" ||
+    value === "staff" ||
+    value === "inventory" ||
+    value === "marketing" ||
+    value === "policy" ||
+    value === "branch"
+    ? value
+    : "operations";
+}
+
+function normalizeMemorySensitivity(value: unknown): RestaurantMemorySensitivity {
+  return value === "public" || value === "sensitive" || value === "internal" ? value : "internal";
+}
+
+function memoryItemFromRow(row: any): RestaurantMemoryItem {
+  return {
+    id: String(row.id),
+    category: normalizeMemoryCategory(row.category),
+    title: String(row.title ?? ""),
+    content: String(row.content ?? ""),
+    summary: typeof row.summary === "string" ? row.summary : null,
+    tags: sanitizeMemoryTags(row.tags),
+    sensitivity: normalizeMemorySensitivity(row.sensitivity),
+    updatedAt: typeof row.updated_at === "string" ? row.updated_at : null
+  };
+}
+
 function removeString(values: string[], value: string | null | undefined) {
   if (!value) return values;
   return values.filter((item) => item !== value);
@@ -368,6 +415,160 @@ export async function getRestaurantAiMemory(restaurantId: string) {
     })),
     promotions: promotionsResult.data ?? [],
     aiUsageRecent: usageResult.data ?? []
+  };
+}
+
+export async function upsertRestaurantAiMemory(input: {
+  restaurantId: string;
+  branchId?: string | null;
+  category: RestaurantMemoryCategory;
+  title: string;
+  content: string;
+  summary?: string | null;
+  tags?: string[];
+  source?: "manual" | "chatbot" | "ai_ops" | "import" | "system";
+  sourceRefId?: string | null;
+  sensitivity?: RestaurantMemorySensitivity;
+  actorUserId?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const payload = {
+    restaurant_id: input.restaurantId,
+    branch_id: input.branchId ?? null,
+    category: input.category,
+    title: input.title.trim().slice(0, 180),
+    content: input.content.trim().slice(0, 4000),
+    summary: input.summary?.trim().slice(0, 700) || null,
+    tags: sanitizeMemoryTags(input.tags),
+    source: input.source ?? "manual",
+    source_ref_id: input.sourceRefId ?? null,
+    sensitivity: input.sensitivity ?? "internal",
+    updated_by: input.actorUserId ?? null,
+    created_by: input.actorUserId ?? null,
+    metadata: input.metadata ?? {}
+  };
+
+  const result = await supabase
+    .from("ai_restaurant_memories")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (result.error) {
+    if (isMissingAiSchema(result.error)) return { memoryId: null, schemaReady: false };
+    throw result.error;
+  }
+
+  return { memoryId: result.data?.id ?? null, schemaReady: true };
+}
+
+export async function listRestaurantAiMemories(input: {
+  restaurantId: string;
+  category?: RestaurantMemoryCategory | null;
+  includeSensitive?: boolean;
+  limit?: number;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const limit = Math.max(1, Math.min(50, Math.floor(input.limit ?? 20)));
+  let query = supabase
+    .from("ai_restaurant_memories")
+    .select("id,category,title,content,summary,tags,sensitivity,source,source_ref_id,status,updated_at,last_used_at")
+    .eq("restaurant_id", input.restaurantId)
+    .neq("status", "deleted")
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+
+  if (input.category) query = query.eq("category", input.category);
+  if (!input.includeSensitive) query = query.neq("sensitivity", "sensitive");
+
+  const result = await query;
+  if (result.error) {
+    if (isMissingAiSchema(result.error)) return { memories: [], schemaReady: false };
+    throw result.error;
+  }
+
+  return {
+    memories: ((result.data ?? []) as any[]).map((row) => ({
+      ...memoryItemFromRow(row),
+      source: typeof row.source === "string" ? row.source : "manual",
+      sourceRefId: typeof row.source_ref_id === "string" ? row.source_ref_id : null,
+      status: typeof row.status === "string" ? row.status : "active",
+      lastUsedAt: typeof row.last_used_at === "string" ? row.last_used_at : null
+    })),
+    schemaReady: true
+  };
+}
+
+export async function updateRestaurantAiMemoryStatus(input: {
+  restaurantId: string;
+  memoryId: string;
+  status: "active" | "archived" | "deleted";
+  actorUserId?: string | null;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const result = await supabase
+    .from("ai_restaurant_memories")
+    .update({
+      status: input.status,
+      updated_by: input.actorUserId ?? null
+    })
+    .eq("restaurant_id", input.restaurantId)
+    .eq("id", input.memoryId)
+    .select("id")
+    .maybeSingle();
+
+  if (result.error) {
+    if (isMissingAiSchema(result.error)) return { updated: false, schemaReady: false };
+    throw result.error;
+  }
+
+  return { updated: Boolean(result.data?.id), schemaReady: true };
+}
+
+export async function getScopedRestaurantMemoryContext(input: {
+  restaurantId: string;
+  branchId?: string | null;
+  query: string;
+  categories?: RestaurantMemoryCategory[];
+  includeSensitive?: boolean;
+  limit?: number;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const limit = Math.max(1, Math.min(12, input.limit ?? 6));
+  let query = supabase
+    .from("ai_restaurant_memories")
+    .select("id,category,title,content,summary,tags,sensitivity,updated_at")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("status", "active")
+    .order("updated_at", { ascending: false })
+    .limit(60);
+
+  if (input.branchId) query = query.or(`branch_id.is.null,branch_id.eq.${input.branchId}`);
+  if (input.categories?.length) query = query.in("category", input.categories);
+  if (!input.includeSensitive) query = query.neq("sensitivity", "sensitive");
+
+  const result = await query;
+  if (result.error) {
+    if (isMissingAiSchema(result.error)) {
+      return { items: [], context: "", schemaReady: false };
+    }
+    throw result.error;
+  }
+
+  const items = rankRestaurantMemories(((result.data ?? []) as any[]).map(memoryItemFromRow), input.query, limit);
+
+  if (items.length > 0) {
+    await supabase
+      .from("ai_restaurant_memories")
+      .update({ last_used_at: new Date().toISOString() })
+      .in("id", items.map((item) => item.id));
+  }
+
+  return {
+    items,
+    context: formatRestaurantMemoryContext(items),
+    schemaReady: true
   };
 }
 

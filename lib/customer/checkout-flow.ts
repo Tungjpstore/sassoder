@@ -151,6 +151,105 @@ export function resolveDeliveryQuoteCheckoutState(input: {
   };
 }
 
+export type DeliveryQuoteCustomerInsight = {
+  tone: "green" | "yellow" | "red" | "neutral";
+  title: string;
+  detail: string;
+  badges: string[];
+};
+
+type DeliveryQuoteLike = {
+  accepted?: boolean;
+  distanceKm?: number | null;
+  etaMinutes?: number | null;
+  provider?: string | null;
+  routeProvider?: string | null;
+  confidence?: "high" | "medium" | "low" | null;
+  isEstimated?: boolean | null;
+  addressQualitySnapshot?: {
+    level: "high" | "medium" | "low";
+    score: number;
+    warnings?: string[];
+  } | null;
+  deliveryAreaSnapshot?: {
+    status?: string;
+    outsideCustomArea?: boolean;
+    matchedExclusionName?: string | null;
+  } | null;
+};
+
+function quoteDistanceLabel(distanceKm?: number | null) {
+  return typeof distanceKm === "number" && Number.isFinite(distanceKm) ? `${distanceKm.toFixed(1)} km` : null;
+}
+
+function quoteEtaLabel(etaMinutes?: number | null) {
+  return typeof etaMinutes === "number" && Number.isFinite(etaMinutes) ? `${Math.round(etaMinutes)} phút` : null;
+}
+
+function zoneStatusLabel(status?: string) {
+  if (status === "inside_custom_area") return "Trong vùng giao";
+  if (status === "outside_allowed") return "Ngoài vùng chính";
+  if (status === "outside_requires_confirmation") return "Cần quán xác nhận";
+  if (status === "outside_blocked") return "Ngoài vùng giao";
+  if (status === "excluded") return "Vùng loại trừ";
+  return "Bán kính giao";
+}
+
+export function resolveDeliveryQuoteCustomerInsight(quote: DeliveryQuoteLike | null | undefined): DeliveryQuoteCustomerInsight {
+  if (!quote) {
+    return {
+      tone: "neutral",
+      title: "Chưa có kết quả giao hàng",
+      detail: "Chọn địa chỉ hoặc ghim vị trí để hệ thống tính phí và ETA.",
+      badges: []
+    };
+  }
+
+  const quality = quote.addressQualitySnapshot;
+  const zone = quote.deliveryAreaSnapshot;
+  const badges = [
+    quoteDistanceLabel(quote.distanceKm),
+    quoteEtaLabel(quote.etaMinutes),
+    quote.routeProvider ?? quote.provider ?? null,
+    zoneStatusLabel(zone?.status)
+  ].filter((item): item is string => Boolean(item));
+
+  if (!quote.accepted) {
+    return {
+      tone: zone?.status === "outside_requires_confirmation" ? "yellow" : "red",
+      title: zone?.status === "excluded" ? "Khu vực không nhận giao" : "Chưa thể nhận giao",
+      detail: quality?.warnings?.[0] ?? "Địa chỉ này chưa đủ điều kiện giao hàng tự động.",
+      badges
+    };
+  }
+
+  if (quality?.level === "low" || quote.confidence === "low" || quote.isEstimated) {
+    return {
+      tone: "yellow",
+      title: "Địa chỉ cần kiểm tra thêm",
+      detail: quality?.warnings?.[0] ?? "Tuyến giao đang dùng ước tính, tài xế có thể cần gọi xác nhận.",
+      badges
+    };
+  }
+
+  return {
+    tone: quality?.level === "medium" ? "yellow" : "green",
+    title: quality?.level === "medium" ? "Địa chỉ đủ giao, nên kiểm tra hẻm" : "Địa chỉ nằm trong vùng giao",
+    detail: quality?.level === "medium"
+      ? quality.warnings?.[0] ?? "Thông tin giao hàng đã đủ để quán xử lý."
+      : "Hệ thống đã xác nhận vùng giao, khoảng cách và ETA.",
+    badges
+  };
+}
+
+export function formatDeliveryQuoteUpdatedAt(value: number | null, now = Date.now()) {
+  if (!value) return null;
+  const seconds = Math.max(0, Math.floor((now - value) / 1000));
+  if (seconds < 10) return "vừa cập nhật";
+  if (seconds < 60) return `${seconds}s trước`;
+  return `${Math.floor(seconds / 60)} phút trước`;
+}
+
 export function remoteCheckoutReducer(
   _state: CheckoutState<RemoteCheckoutScreen>,
   action: RemoteCheckoutAction

@@ -1,58 +1,83 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculatePromotionDiscountAmount } from "./promotion-discount";
+import { calculatePromotionDiscountAmount, evaluatePromotionDiscount } from "./promotion-discount";
 
-const orderPromotion = {
-  discountScope: "ORDER" as const,
-  discountType: "FIXED" as const,
-  discountValue: 20000,
-  minOrderAmount: 80000
-};
-
-const freeDeliveryPromotion = {
-  discountScope: "DELIVERY_FEE" as const,
-  discountType: "PERCENT" as const,
-  discountValue: 100,
-  minOrderAmount: 100000
-};
-
-test("promotion discount applies normal coupons to item subtotal", () => {
-  assert.equal(
-    calculatePromotionDiscountAmount({
-      itemSubtotal: 120000,
-      deliveryFee: 18000,
-      rule: orderPromotion
+test("promotion evaluator explains missing minimum order amount", () => {
+  assert.deepEqual(
+    evaluatePromotionDiscount({
+      itemSubtotal: 79000,
+      rule: {
+        discountScope: "ORDER",
+        discountType: "FIXED",
+        discountValue: 20000,
+        minOrderAmount: 100000
+      }
     }),
-    20000
+    {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount: 79000,
+      missingAmount: 21000,
+      reason: "minimum_not_met"
+    }
   );
 });
 
-test("promotion discount applies delivery campaigns to delivery fee only", () => {
+test("promotion evaluator caps fixed order discount to eligible amount", () => {
   assert.equal(
     calculatePromotionDiscountAmount({
-      itemSubtotal: 120000,
-      deliveryFee: 18000,
-      rule: freeDeliveryPromotion
+      itemSubtotal: 12000,
+      rule: {
+        discountScope: "ORDER",
+        discountType: "FIXED",
+        discountValue: 20000,
+        minOrderAmount: 0
+      }
     }),
-    18000
+    12000
   );
-  assert.equal(
-    calculatePromotionDiscountAmount({
-      itemSubtotal: 120000,
+});
+
+test("promotion evaluator applies delivery campaigns to delivery fee only", () => {
+  assert.deepEqual(
+    evaluatePromotionDiscount({
+      itemSubtotal: 150000,
+      deliveryFee: 18000,
+      rule: {
+        discountScope: "DELIVERY_FEE",
+        discountType: "PERCENT",
+        discountValue: 100,
+        minOrderAmount: 100000
+      }
+    }),
+    {
+      eligible: true,
+      discountAmount: 18000,
+      eligibleAmount: 18000,
+      missingAmount: 0,
+      reason: null
+    }
+  );
+});
+
+test("promotion evaluator rejects delivery campaigns without delivery fee", () => {
+  assert.deepEqual(
+    evaluatePromotionDiscount({
+      itemSubtotal: 150000,
       deliveryFee: 0,
-      rule: freeDeliveryPromotion
+      rule: {
+        discountScope: "DELIVERY_FEE",
+        discountType: "PERCENT",
+        discountValue: 100,
+        minOrderAmount: 100000
+      }
     }),
-    0
-  );
-});
-
-test("promotion discount uses item subtotal for minimum order checks", () => {
-  assert.equal(
-    calculatePromotionDiscountAmount({
-      itemSubtotal: 90000,
-      deliveryFee: 18000,
-      rule: freeDeliveryPromotion
-    }),
-    0
+    {
+      eligible: false,
+      discountAmount: 0,
+      eligibleAmount: 0,
+      missingAmount: 0,
+      reason: "no_eligible_amount"
+    }
   );
 });

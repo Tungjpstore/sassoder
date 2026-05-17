@@ -3,8 +3,11 @@ import test from "node:test";
 import {
   getAllowedDeliveryStatusTransitions,
   getRestaurantOrderActionCopy,
+  orderNeedsPaymentAttention,
   resolveDeliveryStatusTransition,
   resolveMerchantAcceptTransition,
+  resolveOrderPaymentStatus,
+  resolveOrderProgressState,
   shouldReturnOnlineOrderToKitchenAfterPayment
 } from "./order-state-machine";
 
@@ -52,6 +55,28 @@ test("delivery transitions enforce restaurant handoff order", () => {
   assert.equal(resolveDeliveryStatusTransition("accepted", "out_for_delivery").allowed, true);
   assert.equal(resolveDeliveryStatusTransition("out_for_delivery", "delivered").allowed, true);
   assert.equal(resolveDeliveryStatusTransition("delivered", "accepted").allowed, false);
+});
+
+test("canonical payment status prefers bill and paid markers over legacy order status", () => {
+  assert.equal(resolveOrderPaymentStatus({ status: "pending", paymentStatus: "unpaid", bill: { status: "waiting_confirm" } }), "waiting_confirm");
+  assert.equal(resolveOrderPaymentStatus({ status: "waiting_payment", paymentStatus: null }), "waiting_payment");
+  assert.equal(resolveOrderPaymentStatus({ status: "pending", paymentStatus: "unpaid", paidAt: "2026-05-17T00:00:00.000Z" }), "paid");
+  assert.equal(resolveOrderPaymentStatus({ status: "pending", paymentStatus: "refunded", bill: { status: "paid" } }), "refunded");
+});
+
+test("canonical progress state separates payment, confirmation, kitchen, delivery and terminal states", () => {
+  assert.equal(resolveOrderProgressState({ status: "waiting_payment", paymentStatus: "waiting_payment" }), "awaiting_payment");
+  assert.equal(resolveOrderProgressState({ status: "pending", paymentStatus: "waiting_confirm" }), "awaiting_payment_confirmation");
+  assert.equal(resolveOrderProgressState({ status: "pending", paymentStatus: "paid" }), "awaiting_confirmation");
+  assert.equal(resolveOrderProgressState({ status: "ordering", fulfillmentType: "PICKUP" }), "preparing");
+  assert.equal(resolveOrderProgressState({ status: "ordering", fulfillmentType: "DELIVERY", deliveryStatus: "out_for_delivery" }), "delivering");
+  assert.equal(resolveOrderProgressState({ status: "ordering", deliveryStatus: "rejected" }), "cancelled");
+});
+
+test("payment attention helper recognizes legacy and normalized waiting payment states", () => {
+  assert.equal(orderNeedsPaymentAttention({ status: "pending", paymentStatus: "waiting_confirm" }), true);
+  assert.equal(orderNeedsPaymentAttention({ status: "waiting_payment", paymentStatus: "unpaid" }), true);
+  assert.equal(orderNeedsPaymentAttention({ status: "pending", paymentStatus: "paid" }), false);
 });
 
 test("payment confirmation returns only bill-less online orders to kitchen queue", () => {

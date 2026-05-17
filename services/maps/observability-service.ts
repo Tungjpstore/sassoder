@@ -1,3 +1,4 @@
+import { getEstimatedMapProviderCostVnd } from "@/services/maps/provider-policy-service";
 import type { GeocodingProvider, MapRequestContext, RouteConfidence, RoutingProvider } from "@/services/maps/types";
 import type { Database } from "@/types/supabase";
 
@@ -70,15 +71,6 @@ function shouldPersist(event: MapProviderTelemetryEvent | MapCacheTelemetryEvent
   return Math.random() <= durableSampleRate();
 }
 
-function costEnvName(provider: string, operation: string) {
-  return `MAPS_COST_VND_${provider.toUpperCase()}_${operation.toUpperCase()}`;
-}
-
-function estimatedCostVnd(provider: string, operation: ProviderOperation) {
-  const value = Number(process.env[costEnvName(provider, operation)] ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
 function emitTelemetry(event: MapProviderTelemetryEvent | MapCacheTelemetryEvent | DeliveryQuoteTelemetryEvent) {
   if (!shouldEmit(event)) return;
   console.info(
@@ -103,7 +95,7 @@ async function persistMapProviderEvent(event: MapProviderTelemetryEvent) {
       outcome: event.outcome,
       status_code: event.status ?? null,
       latency_ms: event.latencyMs,
-      estimated_cost_vnd: estimatedCostVnd(event.provider, event.operation)
+      estimated_cost_vnd: getEstimatedMapProviderCostVnd(event.provider, event.operation)
     };
     await createAdminSupabaseClient().from("map_provider_request_logs").insert(payload);
   } catch {
