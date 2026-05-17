@@ -101,11 +101,13 @@ export default function ComparisonIndexPage() {
             <Link href="/so-sanh" className="is-active">
               So sánh
             </Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
-          <Link className="comparison-nav-cta" href="/pricing">
-            Xem giá
+          <Link className="comparison-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -126,8 +128,8 @@ export default function ComparisonIndexPage() {
                 So sánh gói LogiVN
                 <ArrowRight size={16} />
               </Link>
-              <Link href="/so-sanh/logivn-vs-kiotviet" className="comparison-button comparison-button-soft">
-                Xem so sánh đầu tiên
+              <Link href="/demo" className="comparison-button comparison-button-soft">
+                Xem demo trước
               </Link>
             </div>
           </div>
@@ -260,6 +262,9 @@ export default function ComparisonIndexPage() {
           <div className="comparison-actions">
             <Link href="/pricing" className="comparison-button comparison-button-light">
               Xem Pro và Premium
+            </Link>
+            <Link href="/demo" className="comparison-button comparison-button-light">
+              Xem demo
             </Link>
             <Link href="/dashboard/register?plan=pro" className="comparison-button comparison-button-orange">
               Tạo quán dùng thử

@@ -35,6 +35,49 @@ type PersistedOperationInsightsResult = {
   schemaReady: boolean;
 };
 
+type BranchOperationInsightRow = {
+  id: string;
+  branch_id: string | null;
+  kind: AiOperationInsight["kind"];
+  severity: AiOperationInsight["severity"];
+  status: AiOperationInsightLifecycleStatus;
+  title: string;
+  detail: string;
+  action: string;
+  action_intent: string | null;
+  action_href: string | null;
+  confidence: AiOperationInsight["confidence"];
+  metric_label: string | null;
+  metric_value: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  deck_generated_at: string | null;
+};
+
+type BranchNameRow = {
+  id: string;
+  name: string;
+};
+
+export type RecentAiBranchOperationInsight = {
+  id: string;
+  branchId: string;
+  branchName: string;
+  kind: AiOperationInsight["kind"];
+  severity: AiOperationInsight["severity"];
+  status: AiOperationInsightLifecycleStatus;
+  title: string;
+  detail: string;
+  action: string;
+  actionIntent: string | null;
+  actionHref: string | null;
+  confidence: AiOperationInsight["confidence"];
+  metric: AiOperationInsight["metric"] | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  deckGeneratedAt: string | null;
+};
+
 const aiOpsInsightSource = "ai_ops";
 const visibleStatuses = new Set<AiOperationInsightLifecycleStatus>(["active", "seen"]);
 const freshInsightWindowMs = 5 * 60 * 1000;
@@ -54,6 +97,11 @@ function isMissingAiInsightsSchema(error: { code?: string; message?: string } | 
 
 function scopeKey(branchId?: string | null) {
   return branchId ? `branch:${branchId}` : "restaurant";
+}
+
+function normalizeListLimit(value: number | undefined, fallback = 12, max = 50) {
+  if (!value || !Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(value)));
 }
 
 function hashInsight(insight: AiOperationInsight) {
@@ -317,4 +365,74 @@ export async function updateAiOperationInsightStatus(input: {
   });
 
   return { updated: Boolean(result.data), schemaReady: true };
+}
+
+export async function listRecentAiBranchOperationInsights(restaurantId: string, limit = 12) {
+  const supabase = createAdminSupabaseClient() as any;
+  const rowLimit = normalizeListLimit(limit);
+
+  const insightsResult = await supabase
+    .from("ai_operation_insights")
+    .select(
+      "id,branch_id,kind,severity,status,title,detail,action,action_intent,action_href,confidence,metric_label,metric_value,first_seen_at,last_seen_at,deck_generated_at"
+    )
+    .eq("restaurant_id", restaurantId)
+    .eq("source", aiOpsInsightSource)
+    .not("branch_id", "is", null)
+    .in("status", ["active", "seen"])
+    .order("last_seen_at", { ascending: false })
+    .limit(rowLimit);
+
+  if (insightsResult.error) {
+    if (isMissingAiInsightsSchema(insightsResult.error)) return { schemaReady: false, insights: [] };
+    throw insightsResult.error;
+  }
+
+  const rows = ((insightsResult.data ?? []) as BranchOperationInsightRow[]).filter((row) => row.branch_id);
+  const branchIds = [...new Set(rows.map((row) => row.branch_id).filter((branchId): branchId is string => Boolean(branchId)))];
+  const branchNames = new Map<string, string>();
+
+  if (branchIds.length > 0) {
+    const branchesResult = await supabase
+      .from("store_branches")
+      .select("id,name")
+      .eq("restaurant_id", restaurantId)
+      .in("id", branchIds);
+
+    if (branchesResult.error && !isMissingAiInsightsSchema(branchesResult.error)) {
+      throw branchesResult.error;
+    }
+
+    ((branchesResult.data ?? []) as BranchNameRow[]).forEach((branch) => {
+      branchNames.set(branch.id, branch.name);
+    });
+  }
+
+  return {
+    schemaReady: true,
+    insights: rows.map((row) => ({
+      id: row.id,
+      branchId: row.branch_id as string,
+      branchName: branchNames.get(row.branch_id as string) ?? "Chi nhánh",
+      kind: row.kind,
+      severity: row.severity,
+      status: row.status,
+      title: row.title,
+      detail: row.detail,
+      action: row.action,
+      actionIntent: row.action_intent,
+      actionHref: row.action_href,
+      confidence: row.confidence,
+      metric:
+        row.metric_label || row.metric_value
+          ? {
+              label: row.metric_label ?? "Metric",
+              value: row.metric_value ?? "--"
+            }
+          : null,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      deckGeneratedAt: row.deck_generated_at
+    }))
+  };
 }

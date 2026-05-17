@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, MailCheck, RefreshCw, ShieldCheck } from "lucide-react";
 import { resendEmailOtpAction, verifyEmailOtpAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
 const resendCooldownSeconds = 60;
 
-function OtpInput({
+export function OtpInput({
   value,
   disabled = false,
   onChange
@@ -82,7 +81,7 @@ function OtpInput({
   );
 
   return (
-    <div className="flex justify-center gap-1 sm:gap-3" onPaste={handlePaste}>
+    <div className="flex justify-center gap-1 sm:gap-2" onPaste={handlePaste}>
       {Array.from({ length: 6 }).map((_, i) => (
         <input
           key={i}
@@ -95,7 +94,7 @@ function OtpInput({
           onKeyDown={(e) => handleKeyDown(i, e)}
           aria-label={`Số OTP thứ ${i + 1}`}
           disabled={disabled}
-          className="h-12 w-11 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] text-center text-xl font-black text-[var(--foreground)] outline-none transition focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:h-14 sm:w-12 sm:text-2xl"
+          className="h-12 w-11 rounded-md border border-[#d8dee9] bg-[#f8fafc] text-center text-xl font-black text-[#111827] outline-none transition focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:w-12"
           autoComplete={i === 0 ? "one-time-code" : "off"}
         />
       ))}
@@ -139,33 +138,18 @@ export function VerifyEmailForm({ email }: { email: string }) {
   }, [cooldown]);
 
   return (
-    <main className="stitch-onboarding min-h-screen bg-[#fbf7ef] text-[var(--foreground)]">
-      <div className="relative flex min-h-screen flex-col overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(15,77,58,0.08),transparent_30%),radial-gradient(circle_at_88%_10%,rgba(242,140,40,0.09),transparent_22%),linear-gradient(180deg,#fffcf6,#f7efe4)]" />
+    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
+        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
+          <div className="mb-4 flex flex-col items-center text-center">
+            <LogiVNLogo href="/" className="h-10" priority />
+            <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Xác thực email</h1>
+            {effectiveEmail ? <p className="mt-2 text-xs font-bold text-[#667085]">{effectiveEmail}</p> : null}
+          </div>
 
-        <header className="relative z-10 flex min-h-14 items-center justify-center border-b border-[#123b2b]/10 bg-[#fffdf8]/76 px-5 py-3 backdrop-blur">
-          <LogiVNLogo href="/" className="h-11" priority />
-        </header>
-
-        <section className="auth-fade-in relative z-10 mx-auto flex w-full max-w-[430px] flex-1 flex-col items-center justify-center gap-5 px-5 py-8">
-          <div className="w-full rounded-[24px] border border-[#123b2b]/10 bg-[#fffdf8]/95 p-4 shadow-[0_20px_60px_rgba(15,77,58,0.07)] sm:p-6">
-            {/* Icon + heading */}
-            <div className="mb-5 border-b border-[#123b2b]/10 pb-5 text-center">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#0f4d3a]">
-                <MailCheck className="h-6 w-6 text-white" />
-              </div>
-              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--primary)]">Xác thực email</p>
-              <h1 className="mt-2 text-2xl font-black tracking-tight">Kiểm tra email của bạn</h1>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                LogiVN đã gửi mã OTP 6 số đến <strong className="text-[var(--foreground)]">{effectiveEmail || "email của bạn"}</strong>.
-                Nhập mã bên dưới hoặc bấm nút xác thực trong email. Nếu chưa thấy, hãy kiểm tra Spam/Promotions rồi gửi lại mã.
-              </p>
-            </div>
-
-            {/* OTP form */}
-            <form ref={formRef} action={verifyAction} className="grid gap-5">
+            <form ref={formRef} action={verifyAction} className="grid gap-4">
               {!normalizedEmail ? (
-                <label className="grid gap-2 text-sm font-semibold">
+                <label className="grid gap-2 text-sm font-semibold text-[#344054]">
                   Email đăng ký
                   <input
                     value={manualEmail}
@@ -173,7 +157,7 @@ export function VerifyEmailForm({ email }: { email: string }) {
                     name="visibleEmail"
                     type="email"
                     inputMode="email"
-                    className="h-12 rounded-xl border border-[#123b2b]/12 bg-[#fffdf8] px-4 text-sm font-semibold text-[var(--foreground)] outline-none transition placeholder:text-[var(--muted-foreground)]/50 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                    className="h-12 rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
                     placeholder="admin@example.com"
                     autoComplete="email"
                   />
@@ -185,47 +169,37 @@ export function VerifyEmailForm({ email }: { email: string }) {
               <OtpInput value={otp} disabled={verifyPending} onChange={setOtp} />
 
               {verifyState?.error && (
-                <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-center text-sm text-[var(--accent-strong)]">
+                <p className="rounded-md border border-[#F28C28]/35 bg-[#fff7ed] p-3 text-center text-sm font-semibold text-[#9a4a17]">
                   {verifyState.error}
                 </p>
               )}
 
               <button
-                className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#0f4d3a] px-5 text-sm font-black uppercase tracking-[0.1em] text-[#FFF7EB] shadow-[0_12px_28px_rgba(15,77,58,0.16)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                className="flex h-12 w-full items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
                 disabled={verifyPending || !canVerify}
               >
                 {verifyPending ? "Đang xác thực..." : "Xác nhận mã"}
-                <ArrowRight className="h-5 w-5" />
               </button>
             </form>
 
-            {/* Resend */}
             <form action={resendAction} onSubmit={handleResendSubmit} className="mt-4">
               <input type="hidden" name="email" value={effectiveEmail} />
               <button
                 type="submit"
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#123b2b]/10 bg-white/55 px-4 text-sm font-bold text-[#0f4d3a] transition hover:border-[#0f4d3a]/35 disabled:opacity-50"
+                className="flex h-11 w-full items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-bold text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 disabled:opacity-50"
                 disabled={!canResend}
               >
-                <RefreshCw className={resendPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                {cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã OTP"}
+                {resendPending ? "Đang gửi..." : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
               </button>
-              {resendState?.success && <p className="mt-3 text-center text-sm font-semibold text-[var(--primary)]">{resendState.success}</p>}
-              {resendState?.error && <p className="mt-3 text-center text-sm text-[var(--accent-strong)]">{resendState.error}</p>}
+              {resendState?.success && <p className="mt-3 text-center text-sm font-semibold text-[#0F4D3A]">{resendState.success}</p>}
+              {resendState?.error && <p className="mt-3 text-center text-sm font-semibold text-[#9a4a17]">{resendState.error}</p>}
             </form>
 
-            {/* Security note */}
-            <div className="mt-5 flex items-start gap-3 border-t border-[#123b2b]/10 pt-4 text-sm leading-6 text-[var(--text-secondary)]">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--primary)]" />
-              <span>Email phải được xác thực trước khi LogiVN mở onboarding tạo quán và cấp quyền quản trị dashboard.</span>
-            </div>
-
-            <Link className="mt-5 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[var(--muted-foreground)] transition hover:text-[var(--primary)]" href="/dashboard/login">
+            <Link className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[#0F4D3A] transition hover:text-[#0b3d2e]" href="/dashboard/login">
               Quay lại đăng nhập
             </Link>
-          </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }

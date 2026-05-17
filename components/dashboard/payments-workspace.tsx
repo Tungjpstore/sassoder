@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Banknote, CheckCircle2, ClipboardCopy, Clock3, CreditCard, Filter, Loader2, Printer, QrCode, RadioTower, ReceiptText, RefreshCw, Search, ShieldCheck, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -177,6 +177,7 @@ export function PaymentsWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(firstActionablePaymentId(transactions));
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState<PaymentFilter>("all");
   const [methodFilter, setMethodFilter] = useState<MethodFilter>("all");
   const [query, setQuery] = useState("");
@@ -210,7 +211,7 @@ export function PaymentsWorkspace({
     () => [
       { label: "Tiền mặt", value: cashRevenue, color: "bg-[var(--primary)]", icon: Banknote },
       { label: "VietQR", value: qrRevenue, color: "bg-[var(--accent)]", icon: QrCode },
-      { label: "Chưa thanh toán", value: waitingAmount, color: "bg-[#A9C5A1]", icon: Clock3 }
+      { label: "Chưa thanh toán", value: waitingAmount, color: "bg-[var(--secondary)]", icon: Clock3 }
     ],
     [cashRevenue, qrRevenue, waitingAmount]
   );
@@ -267,9 +268,10 @@ export function PaymentsWorkspace({
     };
   }, [restaurantId, router]);
 
-  async function confirmPayment(orderId: string) {
+  const confirmPayment = useCallback(async (orderId: string) => {
     setMutatingId(orderId);
     setError(null);
+    setNotice(null);
     const previousOverride = transactionOverrides[orderId];
     const target = localTransactions.find((transaction) => transaction.id === orderId);
     setTransactionOverrides((current) => ({
@@ -286,6 +288,9 @@ export function PaymentsWorkspace({
       const response = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, { method: "POST" });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không xác nhận được thanh toán");
+      setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
+      setLastSyncedAt(new Date());
+      window.setTimeout(() => router.refresh(), 120);
     } catch (err) {
       setTransactionOverrides((current) => {
         const next = { ...current };
@@ -300,7 +305,7 @@ export function PaymentsWorkspace({
     } finally {
       setMutatingId(null);
     }
-  }
+  }, [localTransactions, router, transactionOverrides]);
 
   async function copyTransferContent(order: AdminPaymentTransaction) {
     const content = `ORDER-${order.id}`;
@@ -328,8 +333,8 @@ export function PaymentsWorkspace({
               <Badge tone={pendingTone}>{pendingLabel}</Badge>
               <Badge tone={bankCode && bankAccount ? "green" : "yellow"}>{bankCode && bankAccount ? "VietQR sẵn sàng" : "Thiếu cấu hình QR"}</Badge>
             </div>
-            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Trung tâm thanh toán & VietQR</h2>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+            <h2 className="dashboard-page-title mt-3">Trung tâm thanh toán & VietQR</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
               Gom toàn bộ tiền mặt, VietQR, bill chờ xác nhận và giao dịch cần rà soát vào một màn để thu tiền nhanh, rõ, ít nhầm lúc đông khách.
             </p>
           </div>
@@ -345,7 +350,7 @@ export function PaymentsWorkspace({
                   setFilter(waitingConfirmCount > 0 ? "waiting_confirm" : unpaidCount > 0 ? "waiting_payment" : "all");
                   setMethodFilter("all");
                 }}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-black text-[var(--background)]"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-semibold text-[var(--background)]"
               >
                 <ShieldCheck size={15} />
                 Ưu tiên
@@ -353,7 +358,7 @@ export function PaymentsWorkspace({
               <button
                 type="button"
                 onClick={() => router.refresh()}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black text-[var(--primary)]"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]"
               >
                 <RefreshCw size={15} />
                 Làm mới
@@ -369,7 +374,7 @@ export function PaymentsWorkspace({
           return (
             <div key={stat.label} className="admin-stat-tile rounded-[14px] p-4">
               <div className="flex items-start justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">{stat.label}</p>
                 <span className="dashboard-stat-icon">
                   <Icon size={18} />
                 </span>
@@ -389,11 +394,11 @@ export function PaymentsWorkspace({
                 <ReceiptText size={16} />
               </span>
               <div>
-                <p className="text-sm font-black text-[var(--foreground)]">Hàng chờ thu tiền</p>
-                <p className="text-xs font-semibold text-[var(--muted-foreground)]">Ưu tiên bill khách đã báo chuyển khoản hoặc chưa hoàn tất thanh toán.</p>
+                <p className="text-sm font-semibold text-[var(--foreground)]">Hàng chờ thu tiền</p>
+                <p className="text-xs font-medium text-[var(--muted-foreground)]">Ưu tiên bill khách đã báo chuyển khoản hoặc chưa hoàn tất thanh toán.</p>
               </div>
             </div>
-            <span className="metric-number rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-black text-[var(--foreground)]">
+            <span className="metric-number rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-semibold text-[var(--foreground)]">
               {formatVnd(pendingAmount)}
             </span>
           </div>
@@ -414,12 +419,12 @@ export function PaymentsWorkspace({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span className="min-w-0">
-                        <span className="block truncate text-sm font-black text-[var(--foreground)]">{order.tableName}</span>
+                        <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{order.tableName}</span>
                         <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">#{order.id.slice(0, 8).toUpperCase()} · {minutesSince(order.createdAt)} phút</span>
                       </span>
                       <Badge tone={statusTone(paymentState)}>{paymentStatusLabel(paymentState)}</Badge>
                     </div>
-                    <p className="metric-number mt-2 text-lg font-black text-[var(--accent)]">{formatVnd(order.amount)}</p>
+                    <p className="metric-number mt-2 text-lg font-semibold text-[var(--accent)]">{formatVnd(order.amount)}</p>
                     <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{order.itemSummary}</p>
                   </button>
                 );
@@ -434,8 +439,8 @@ export function PaymentsWorkspace({
               <WalletCards size={16} />
             </span>
             <div>
-              <p className="text-sm font-black text-[var(--foreground)]">Đối soát nhanh</p>
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tỷ trọng tiền đã thu hôm nay.</p>
+              <p className="text-sm font-semibold text-[var(--foreground)]">Đối soát nhanh</p>
+              <p className="text-xs font-medium text-[var(--muted-foreground)]">Tỷ trọng tiền đã thu hôm nay.</p>
             </div>
           </div>
           <div className="mt-3 grid gap-2 text-sm font-semibold">
@@ -447,6 +452,7 @@ export function PaymentsWorkspace({
       </section>
 
       {error ? <div className="rounded-xl border border-[var(--tertiary)]/12 bg-[var(--danger-soft)] p-3 text-sm font-semibold text-[var(--tertiary)]">{error}</div> : null}
+      {notice ? <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">{notice}</div> : null}
 
       <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="dashboard-panel p-4">
@@ -466,7 +472,7 @@ export function PaymentsWorkspace({
           </div>
 
           <div className="mb-3 grid gap-2 xl:grid-cols-[180px_160px_minmax(0,1fr)_110px]">
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Trạng thái
               <select
                 value={filter}
@@ -478,7 +484,7 @@ export function PaymentsWorkspace({
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Phương thức
               <select
                 value={methodFilter}
@@ -514,7 +520,7 @@ export function PaymentsWorkspace({
           </div>
 
           <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-            <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+            <div className="dashboard-muted-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
               <span>Mã thanh toán</span>
               <span>Bàn/Đơn</span>
               <span>Hóa đơn gồm</span>
@@ -529,7 +535,7 @@ export function PaymentsWorkspace({
                     <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--primary)]">
                       <Search size={18} />
                     </span>
-                    <h3 className="mt-3 text-base font-black text-[var(--foreground)]">Không có giao dịch trong bộ lọc này</h3>
+                    <h3 className="mt-3 text-base font-semibold text-[var(--foreground)]">Không có giao dịch trong bộ lọc này</h3>
                     <p className="mt-1 leading-6">Đổi trạng thái, phương thức hoặc xoá lọc để xem lại toàn bộ thanh toán.</p>
                   </div>
                 </div>
@@ -579,17 +585,17 @@ export function PaymentsWorkspace({
             <h2 className="text-lg font-semibold text-[var(--foreground)]">Ưu tiên xử lý</h2>
             <div className="mt-4 grid gap-3">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">Chờ xác nhận tiền</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Chờ xác nhận tiền</p>
                 <p className="metric-number mt-2 text-2xl font-semibold text-[var(--foreground)]">{waitingConfirmCount}</p>
                 <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Các bill khách đã báo chuyển khoản.</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">Chưa thu tiền</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Chưa thu tiền</p>
                 <p className="metric-number mt-2 text-2xl font-semibold text-[var(--foreground)]">{unpaidCount}</p>
                 <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Theo dõi các bill còn mở hoặc chờ khách thanh toán.</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">Đã thu hôm nay</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Đã thu hôm nay</p>
                 <p className="metric-number mt-2 text-2xl font-semibold text-[var(--foreground)]">{paidTodayCount}</p>
                 <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Tổng số giao dịch đã hoàn tất trong danh sách hiện tại.</p>
               </div>
@@ -683,28 +689,40 @@ export function PaymentsWorkspace({
             (() => {
               const paymentState = effectivePaymentStatus(selected);
               return (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Button
-                    type="button"
-                    disabled={mutatingId === selected.id || paymentState === "paid"}
-                    onClick={() => confirmPayment(selected.id)}
-                    className="shadow-none hover:shadow-none sm:col-span-2"
-                  >
-                    {mutatingId === selected.id ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-                    {paymentState === "paid" ? "Đã thanh toán" : "Xác nhận thanh toán"}
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => window.print()} className="shadow-none hover:shadow-none">
-                    <Printer size={16} />
-                    In hóa đơn
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={() => copyTransferContent(selected)} className="shadow-none hover:shadow-none">
-                    <ClipboardCopy size={16} />
-                    {copiedTransferId === selected.id ? "Đã copy" : "Copy nội dung"}
-                  </Button>
-                  <Link href="/dashboard/settings?section=payments" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--primary)] bg-[var(--primary-soft)] px-4 text-sm font-bold text-[var(--primary-strong)] sm:col-span-2">
-                    <RefreshCw size={16} />
-                    Cấu hình QR
-                  </Link>
+                <div className="grid gap-2">
+                  {error ? (
+                    <div role="alert" className="rounded-xl border border-[var(--tertiary)]/12 bg-[var(--danger-soft)] p-3 text-sm font-semibold text-[var(--tertiary)]">
+                      {error}
+                    </div>
+                  ) : null}
+                  {notice ? (
+                    <div role="status" className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">
+                      {notice}
+                    </div>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      disabled={mutatingId === selected.id || paymentState === "paid"}
+                      onClick={() => confirmPayment(selected.id)}
+                      className="shadow-none hover:shadow-none sm:col-span-2"
+                    >
+                      {mutatingId === selected.id ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
+                      {paymentState === "paid" ? "Đã thanh toán" : "Xác nhận thanh toán"}
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => window.print()} className="shadow-none hover:shadow-none">
+                      <Printer size={16} />
+                      In hóa đơn
+                    </Button>
+                    <Button type="button" variant="secondary" onClick={() => copyTransferContent(selected)} className="shadow-none hover:shadow-none">
+                      <ClipboardCopy size={16} />
+                      {copiedTransferId === selected.id ? "Đã copy" : "Copy nội dung"}
+                    </Button>
+                    <Link href="/dashboard/settings?section=payments" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--primary)] bg-[var(--primary-soft)] px-4 text-sm font-semibold text-[var(--primary-strong)] sm:col-span-2">
+                      <RefreshCw size={16} />
+                      Cấu hình QR
+                    </Link>
+                  </div>
                 </div>
               );
             })()
@@ -721,7 +739,7 @@ export function PaymentsWorkspace({
                 <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tổng quan bill</p>
+                      <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Tổng quan bill</p>
                       <p className="metric-number mt-2 text-3xl font-semibold text-[var(--accent)]">{formatVnd(selected.amount)}</p>
                     </div>
                     <Badge tone={selected.method === "QR" ? "green" : "neutral"}>{paymentMethodLabel(selected.method as PaymentMethod | null)}</Badge>
@@ -765,7 +783,7 @@ export function PaymentsWorkspace({
                       <button
                         type="button"
                         onClick={() => copyTransferContent(selected)}
-                        className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 text-xs font-black text-[var(--primary)]"
+                        className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 text-xs font-semibold text-[var(--primary)]"
                       >
                         <ClipboardCopy size={13} />
                         {copiedTransferId === selected.id ? "Đã copy" : `ORDER-${selected.id}`}

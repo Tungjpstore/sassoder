@@ -22,6 +22,7 @@ import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
 import { buildTenantUrl } from "@/lib/tenant-domain";
+import { getLatestAiMorningBriefRun } from "@/services/ai-morning-brief-service";
 import { persistAiOperationInsightsDeck } from "@/services/ai-operation-insights-service";
 import { getAdminDashboardOverview } from "@/services/dashboard-overview-service";
 import { getInventorySnapshot } from "@/services/inventory-service";
@@ -63,7 +64,7 @@ function tableStatusLabel(status: TableOperationalStatus) {
 }
 
 function priorityTone(tone: "green" | "orange" | "red") {
-  if (tone === "red") return "border-[#E11D48]/20 bg-[rgba(225,29,72,0.08)] text-[#FB7185]";
+  if (tone === "red") return "border-[var(--accent)]/25 bg-[var(--danger-soft)] text-[var(--accent-strong)]";
   if (tone === "orange") return "border-[var(--accent)]/20 bg-[rgba(245,158,11,0.08)] text-[var(--accent)]";
   return "border-[var(--primary)]/15 bg-[var(--primary-soft)] text-[var(--primary)]";
 }
@@ -108,9 +109,10 @@ function AdminDashboardSkeleton() {
 }
 
 async function AdminDashboardContent({ restaurantId }: { restaurantId: string }) {
-  const [{ dashboard, operations, tables, recentOrders, topItems, monthRevenue }, inventory] = await Promise.all([
+  const [{ dashboard, operations, tables, recentOrders, topItems, monthRevenue }, inventory, latestMorningBrief] = await Promise.all([
     getAdminDashboardOverview(restaurantId),
-    getInventorySnapshot(restaurantId)
+    getInventorySnapshot(restaurantId),
+    getLatestAiMorningBriefRun(restaurantId)
   ]);
   const tenantUrl = buildTenantUrl(dashboard.restaurant.slug, "/");
   const totalTables = Math.max(tables.length, dashboard.tables);
@@ -253,11 +255,11 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       <section className="admin-hero-panel relative overflow-hidden px-4 py-3.5">
         <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--primary)]">Live operations</p>
-            <h1 className="mt-1 text-2xl font-bold tracking-tight text-[var(--foreground)] md:text-3xl">
+            <p className="dashboard-eyebrow">Live operations</p>
+            <h1 className="dashboard-page-title mt-1">
               Tổng quan ca bán
             </h1>
-            <p className="mt-1 max-w-lg truncate text-sm text-[var(--muted-foreground)]">
+            <p className="dashboard-body-copy mt-1 max-w-lg md:truncate">
               Ưu tiên đơn mới, thanh toán và bàn cần chú ý.
             </p>
           </div>
@@ -286,7 +288,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
         </div>
       </section>
 
-      <AiOpsInsightCards deck={operationInsights} />
+      <AiOpsInsightCards deck={operationInsights} morningBrief={latestMorningBrief} />
 
       {/* ── Bento grid: Priority + Revenue ── */}
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
@@ -312,8 +314,8 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
                 )}
               </div>
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">{card.title}</p>
-                <p className="metric-number mt-0.5 text-3xl font-bold tabular-nums tracking-tight">{card.value}</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">{card.title}</p>
+                <p className="metric-number mt-0.5 text-2xl font-semibold tabular-nums">{card.value}</p>
                 <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{card.helper}</p>
               </div>
             </Link>
@@ -326,8 +328,8 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
             <TrendingUp size={19} />
           </span>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Món nổi bật</p>
-            <p className="mt-1 truncate text-lg font-bold text-[var(--foreground)]">
+            <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Món nổi bật</p>
+            <p className="mt-1 truncate text-lg font-semibold text-[var(--foreground)]">
               {bestSeller ? bestSeller.name : "Chưa có dữ liệu"}
             </p>
             <p className="text-xs font-medium text-[var(--muted-foreground)]">{bestSeller ? `${bestSeller.quantity} lượt gọi` : "--"}</p>
@@ -345,8 +347,8 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
                 <Icon size={18} />
               </span>
               <div className="min-w-0">
-                <p className="truncate text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{metric.label}</p>
-                <p className="metric-number mt-0.5 text-xl font-bold tabular-nums tracking-tight">{metric.value}</p>
+                <p className="truncate text-xs font-semibold uppercase text-[var(--muted-foreground)]">{metric.label}</p>
+                <p className="metric-number mt-0.5 text-xl font-semibold tabular-nums">{metric.value}</p>
                 <p className="mt-0.5 truncate text-[11px] font-medium text-[var(--muted-foreground)]">{metric.meta}</p>
               </div>
             </div>
@@ -366,10 +368,10 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
           <div className="dashboard-panel overflow-hidden p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Tables</p>
-                <h2 className="mt-1 text-lg font-bold text-[var(--foreground)]">Bàn cần chú ý</h2>
+                <p className="dashboard-eyebrow">Tables</p>
+                <h2 className="dashboard-section-title mt-1">Bàn cần chú ý</h2>
               </div>
-              <Link href="/dashboard/tables" className="text-xs font-bold text-[var(--primary)] transition hover:underline">Sơ đồ bàn</Link>
+              <Link href="/dashboard/tables" className="inline-flex min-h-11 items-center text-xs font-semibold text-[var(--primary)] transition hover:underline">Sơ đồ bàn</Link>
             </div>
             <div className="mt-3 grid gap-2">
               {focusedTables.length === 0 ? (
@@ -380,7 +382,7 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
                 focusedTables.map((table) => (
                   <Link key={table.id} href="/dashboard/tables" className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5 transition hover:border-[var(--primary)]">
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-bold">{table.name}</span>
+                      <span className="block truncate text-sm font-semibold">{table.name}</span>
                       <span className="block text-[11px] text-[var(--muted-foreground)]">{tableStatusLabel(table.status)}</span>
                     </span>
                     <Badge tone={table.status === "overdue" ? "red" : table.status === "awaiting_payment" ? "yellow" : "blue"}>
@@ -398,10 +400,10 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
       <section className="dashboard-panel overflow-hidden p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Orders</p>
-            <h2 className="mt-1 text-lg font-bold text-[var(--foreground)]">Đơn chưa đóng</h2>
+            <p className="dashboard-eyebrow">Orders</p>
+            <h2 className="dashboard-section-title mt-1">Đơn chưa đóng</h2>
           </div>
-          <Link href="/dashboard/orders" className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--primary)] transition hover:underline">
+          <Link href="/dashboard/orders" className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--primary)] transition hover:underline">
             Tất cả <ArrowRight size={14} />
           </Link>
         </div>
@@ -414,12 +416,12 @@ async function AdminDashboardContent({ restaurantId }: { restaurantId: string })
             recentActionOrders.map((order) => (
               <Link key={order.id} href="/dashboard/orders" className="group rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5 transition hover:border-[var(--primary)]">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-mono text-[11px] font-bold text-[var(--primary)]">DH{order.id.slice(0, 5).toUpperCase()}</span>
+                  <span className="font-mono text-xs font-semibold text-[var(--primary)]">DH{order.id.slice(0, 5).toUpperCase()}</span>
                   <span className="text-[11px] text-[var(--muted-foreground)]">{formatOrderTime(order.createdAt)}</span>
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold text-[var(--foreground)]">{order.tableName}</span>
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{order.tableName}</span>
                     <span className="mt-0.5 block truncate text-xs text-[var(--muted-foreground)]">{order.itemSummary}</span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1.5">

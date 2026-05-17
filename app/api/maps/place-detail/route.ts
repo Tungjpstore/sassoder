@@ -2,6 +2,7 @@ import { fail, ok } from "@/lib/response";
 import { getRequestIpKey } from "@/lib/security/request-ip";
 import { MapApiError } from "@/services/maps/errors";
 import { assertMapRateLimit, buildRateLimitHeaders, getPlaceDetail } from "@/services/maps/provider-service";
+import { mapRequestContext } from "@/services/maps/request-params";
 
 export const preferredRegion = "sin1";
 
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
 
     const result = await getPlaceDetail(placeId, {
       sessionToken,
-      context: { source: "public_map_api" }
+      context: mapRequestContext(searchParams, "public_map_api")
     });
 
     if (!result) throw new MapApiError("Không lấy được chi tiết địa chỉ. Vui lòng thử tìm lại hoặc ghim trên bản đồ.", 404, "MAP_NO_RESULT");

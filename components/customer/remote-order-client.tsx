@@ -35,6 +35,12 @@ import {
 } from "lucide-react";
 import { CustomerDeliveryLocationPicker } from "@/components/location/customer-delivery-location-picker";
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
+import {
+  CustomerFlowPreview,
+  FlowImage,
+  FlowVisualCard,
+  orderFlowImageSources
+} from "@/components/customer/order-flow-visuals";
 import { RouteMiniMap } from "@/components/customer/route-mini-map";
 import { Button } from "@/components/ui/button";
 import { useRemoteCart, useRemoteMenuBrowser } from "@/hooks/customer/use-customer-menu-browser";
@@ -42,33 +48,52 @@ import { deliveryStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import {
   buildRemoteCartFromOrderItems,
+  setRemoteCartItemNote,
   updateRemoteCartQuantity,
   type RemoteCartLine
 } from "@/lib/customer/cart-state";
 import {
   buildDeliveryQuoteFingerprint,
   remoteCheckoutReducer,
+  resolveDeliveryQuoteCheckoutState,
   validateRemoteCheckoutBasics,
   type RemoteCheckoutAction,
   type RemoteCheckoutScreen,
   type RemoteFulfillmentMode
 } from "@/lib/customer/checkout-flow";
-import { getCustomerOrderLifecycle, getOrderProgressLabels } from "@/lib/customer/order-lifecycle";
+import {
+  getCustomerOrderLifecycle,
+  getCustomerOrderTimeline,
+  getOrderProgressLabels,
+  type CustomerOrderTimelineItem,
+  type CustomerOrderTimelineItemKey
+} from "@/lib/customer/order-lifecycle";
+import {
+  getCustomerOrderPollingInterval,
+  hasCustomerOrderSnapshotChanged
+} from "@/lib/customer/order-sync";
 import {
   calculatePublicPromotionDiscount,
   findPublicPromotionByCode,
   normalizePromotionCode,
   promotionDescription
 } from "@/lib/customer/promotion-preview";
+import {
+  hasRemoteCustomerProfileValue,
+  restoreRemoteCustomerProfileSnapshot,
+  serializeRemoteCustomerProfile,
+  type RemoteCustomerProfile
+} from "@/lib/customer/remote-customer-profile";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { AiAgentAction } from "@/types/ai-agent";
 import type { DeliveryQuote } from "@/services/delivery-service";
 import type { OrderDto } from "@/types/domain";
-import type { PublicMenuCategory, PublicMenuItem, PublicPromotion } from "@/types";
+import type { PublicMenuCategory, PublicMenuItem, PublicPromotion, PublicStoreBranch } from "@/types";
 
 type FulfillmentMode = RemoteFulfillmentMode;
 type RemoteScreen = RemoteCheckoutScreen;
 type PaymentChoice = "vietqr" | "wallet" | "card" | "cash";
+type OrderNotificationPermission = NotificationPermission | "unsupported";
 
 type RemoteRestaurant = {
   id: string;
@@ -97,6 +122,7 @@ type RemoteRestaurant = {
   serviceFeePercent: number;
   serviceFeeMin: number;
   serviceFeeMax: number | null;
+  branches: PublicStoreBranch[];
   promotions: PublicPromotion[];
 };
 
@@ -138,6 +164,22 @@ function makeSessionId(restaurantId: string) {
   return next;
 }
 
+function remoteCustomerProfileStorageKey(restaurantId: string) {
+  return `logivn-remote-customer:${restaurantId}`;
+}
+
+function readStoredCustomerProfile(restaurantId: string): RemoteCustomerProfile {
+  if (typeof window === "undefined") {
+    return {
+      customerName: "",
+      customerPhone: "",
+      deliveryAddress: ""
+    };
+  }
+
+  return restoreRemoteCustomerProfileSnapshot(window.localStorage.getItem(remoteCustomerProfileStorageKey(restaurantId)));
+}
+
 function calculateClientServiceFee(restaurant: RemoteRestaurant, subtotal: number) {
   if (!restaurant.serviceFeeEnabled || restaurant.serviceFeePercent <= 0) return 0;
   const rawFee = Math.round((subtotal * restaurant.serviceFeePercent) / 100);
@@ -147,7 +189,7 @@ function calculateClientServiceFee(restaurant: RemoteRestaurant, subtotal: numbe
 
 function orderStatusText(order: OrderDto) {
   const lifecycle = getCustomerOrderLifecycle(order);
-  if (order.fulfillmentType === "DELIVERY" && order.deliveryStatus && order.deliveryStatus !== "none" && lifecycle.state !== "cancelled") {
+  if (order.fulfillmentType === "DELIVERY" && order.deliveryStatus && order.deliveryStatus !== "none" && !lifecycle.isClosed) {
     return `${lifecycle.label} · ${deliveryStatusLabel(order.deliveryStatus)}`;
   }
   return lifecycle.label;
@@ -170,6 +212,21 @@ function formatCountdown(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const rest = safeSeconds % 60;
   return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
+}
+
+function getInitialNotificationPermission(): OrderNotificationPermission {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  return window.Notification.permission;
+}
+
+function getInitialNetworkStatus() {
+  if (typeof navigator === "undefined") return true;
+  return navigator.onLine;
+}
+
+function getInitialPageVisibility() {
+  if (typeof document === "undefined") return true;
+  return document.visibilityState !== "hidden";
 }
 
 function getOrderStepIndex(order?: OrderDto | null) {
@@ -240,7 +297,7 @@ function ScreenHeader({
           <ArrowLeft size={20} />
         </IconButton>
         <h1 className="min-w-0 flex-1 text-center text-[16px] font-black text-[#111713]">{title}</h1>
-        <div className="flex h-11 w-11 items-center justify-end">{right}</div>
+        <div className="flex h-11 min-w-11 items-center justify-end">{right}</div>
       </header>
     </>
   );
@@ -368,6 +425,137 @@ function OrderProgress({ order }: { order?: OrderDto | null }) {
   );
 }
 
+function orderTimelineMarkerClass(item: CustomerOrderTimelineItem) {
+  if (item.blocked) return "border-[#f2c5bc] bg-[#fff2ee] text-[#b94724]";
+  if (item.done) return "border-[#006b3c] bg-[#006b3c] text-white";
+  if (item.current) return "border-[#006b3c] bg-[#edf7ef] text-[#006b3c]";
+  return "border-[#e0e5dc] bg-white text-[#96a099]";
+}
+
+function orderTimelineConnectorClass(item: CustomerOrderTimelineItem) {
+  if (item.blocked) return "bg-[#f2c5bc]";
+  if (item.done) return "bg-[#006b3c]";
+  return "bg-[#e4e8df]";
+}
+
+function orderTimelineTitleClass(item: CustomerOrderTimelineItem) {
+  if (item.blocked) return "text-[#a33a23]";
+  if (item.done || item.current) return "text-[#121813]";
+  return "text-[#858f86]";
+}
+
+function orderTimelineIcon(item: CustomerOrderTimelineItem, fulfillmentType?: OrderDto["fulfillmentType"] | null) {
+  if (item.blocked) return <X size={15} />;
+  if (item.done) return <Check size={15} />;
+  if (item.key === "payment") return <WalletCards size={15} />;
+  if (item.key === "payment_confirmation") return <ShieldCheck size={15} />;
+  if (item.key === "restaurant_confirmation") return <Store size={15} />;
+  if (item.key === "preparing") return <Coffee size={15} />;
+  if (item.key === "handoff") return fulfillmentType === "DELIVERY" ? <Truck size={15} /> : <ShoppingBag size={15} />;
+  return <PackageCheck size={15} />;
+}
+
+const timelineIllustrations: Record<CustomerOrderTimelineItemKey, Record<"DELIVERY" | "DINE_IN" | "PICKUP" | "default", string>> = {
+  payment: {
+    default: orderFlowImageSources.paymentVietqr,
+    DELIVERY: orderFlowImageSources.paymentVietqr,
+    DINE_IN: orderFlowImageSources.paymentVietqr,
+    PICKUP: orderFlowImageSources.paymentVietqr
+  },
+  payment_confirmation: {
+    default: orderFlowImageSources.paymentConfirmation,
+    DELIVERY: orderFlowImageSources.paymentConfirmation,
+    DINE_IN: orderFlowImageSources.paymentConfirmation,
+    PICKUP: orderFlowImageSources.paymentConfirmation
+  },
+  restaurant_confirmation: {
+    default: orderFlowImageSources.restaurantConfirmation,
+    DELIVERY: orderFlowImageSources.restaurantConfirmation,
+    DINE_IN: orderFlowImageSources.restaurantConfirmation,
+    PICKUP: orderFlowImageSources.restaurantConfirmation
+  },
+  preparing: {
+    default: orderFlowImageSources.preparing,
+    DELIVERY: orderFlowImageSources.preparing,
+    DINE_IN: orderFlowImageSources.preparing,
+    PICKUP: orderFlowImageSources.preparing
+  },
+  handoff: {
+    default: orderFlowImageSources.deliveryHandoff,
+    DELIVERY: orderFlowImageSources.deliveryHandoff,
+    DINE_IN: orderFlowImageSources.completed,
+    PICKUP: orderFlowImageSources.pickupHandoff
+  },
+  completed: {
+    default: orderFlowImageSources.completed,
+    DELIVERY: orderFlowImageSources.completed,
+    DINE_IN: orderFlowImageSources.completed,
+    PICKUP: orderFlowImageSources.completed
+  },
+  closed: {
+    default: orderFlowImageSources.cancelled,
+    DELIVERY: orderFlowImageSources.cancelled,
+    DINE_IN: orderFlowImageSources.cancelled,
+    PICKUP: orderFlowImageSources.cancelled
+  }
+};
+
+function timelineIllustrationSrc(item: CustomerOrderTimelineItem, fulfillmentType?: OrderDto["fulfillmentType"] | null) {
+  const byType = timelineIllustrations[item.key];
+  return byType[fulfillmentType ?? "default"] ?? byType.default;
+}
+
+function TimelineIllustration({
+  item,
+  fulfillmentType
+}: {
+  item: CustomerOrderTimelineItem;
+  fulfillmentType?: OrderDto["fulfillmentType"] | null;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+
+  return (
+    <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-[#ebe9dd] bg-[#fbfaf5] shadow-[0_10px_22px_rgba(23,34,27,0.06)] sm:h-16 sm:w-16">
+      <Image
+        src={timelineIllustrationSrc(item, fulfillmentType)}
+        alt=""
+        fill
+        sizes="64px"
+        className="object-cover"
+        onError={() => setFailed(true)}
+      />
+    </span>
+  );
+}
+
+function OrderTimeline({ order }: { order?: OrderDto | null }) {
+  if (!order) return null;
+  const timeline = getCustomerOrderTimeline(order);
+
+  return (
+    <div className="space-y-0 text-left">
+      {timeline.map((item, index) => (
+        <div key={item.key} className="relative flex gap-3 pb-4 last:pb-0">
+          {index < timeline.length - 1 ? <span className={`absolute bottom-0 left-4 top-9 w-0.5 rounded-full ${orderTimelineConnectorClass(item)}`} /> : null}
+          <span className={`relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border-2 ${orderTimelineMarkerClass(item)}`}>
+            {orderTimelineIcon(item, order.fulfillmentType)}
+          </span>
+          <span className="flex min-w-0 flex-1 items-start gap-3 pt-0.5">
+            <span className="min-w-0 flex-1">
+              <span className={`block text-[13px] font-black leading-4 ${orderTimelineTitleClass(item)}`}>{item.label}</span>
+              <span className={`mt-1 block text-[12px] font-semibold leading-5 ${item.blocked ? "text-[#a75a49]" : "text-[#6e7a70]"}`}>
+                {item.description}
+              </span>
+            </span>
+            <TimelineIllustration item={item} fulfillmentType={order.fulfillmentType} />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PaymentMethodCard({
   icon,
   title,
@@ -480,14 +668,16 @@ export function RemoteOrderClient({
   const [screen, setScreen] = useState<RemoteScreen>("menu");
   const { activeCategory, searchQuery, setActiveCategory, setSearchQuery, visibleItems } = useRemoteMenuBrowser(allItems);
   const [mode, setMode] = useState<FulfillmentMode>(restaurant.deliveryEnabled ? "DELIVERY" : "PICKUP");
+  const defaultPickupBranchId = useMemo(
+    () => restaurant.branches.find((branch) => branch.isPrimary)?.id ?? restaurant.branches[0]?.id ?? "",
+    [restaurant.branches]
+  );
+  const [selectedPickupBranchId, setSelectedPickupBranchId] = useState(defaultPickupBranchId);
   const [paymentChoice, setPaymentChoice] = useState<PaymentChoice>(restaurant.onlinePaymentMode === "QR_PREPAID" ? "vietqr" : "cash");
   const remoteCartStorageKey = useMemo(() => `logivn-remote-cart:${restaurant.id}`, [restaurant.id]);
+  const customerProfileStorageKey = useMemo(() => remoteCustomerProfileStorageKey(restaurant.id), [restaurant.id]);
   const { cart, cartLines, setCart } = useRemoteCart(allItems, { storageKey: remoteCartStorageKey });
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [deliveryAddress, setDeliveryAddress] = useState("");
-  const [deliveryLat, setDeliveryLat] = useState<number | undefined>();
-  const [deliveryLng, setDeliveryLng] = useState<number | undefined>();
+  const [customerProfile, setCustomerProfile] = useState<RemoteCustomerProfile>(() => readStoredCustomerProfile(restaurant.id));
   const [customerNote, setCustomerNote] = useState("");
   const [promotionCode, setPromotionCode] = useState(() => restaurant.promotions[0]?.code ?? "");
   const [sessionId] = useState(() => (typeof window === "undefined" ? "" : makeSessionId(restaurant.id)));
@@ -503,6 +693,11 @@ export function RemoteOrderClient({
   const [error, setError] = useState<string | null>(null);
   const [customerToast, setCustomerToast] = useState<string | null>(null);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<OrderNotificationPermission>(() => getInitialNotificationPermission());
+  const [networkOnline, setNetworkOnline] = useState(() => getInitialNetworkStatus());
+  const [pageVisible, setPageVisible] = useState(() => getInitialPageVisibility());
+  const [trackingPollError, setTrackingPollError] = useState(false);
+  const [lastOrderSyncAt, setLastOrderSyncAt] = useState<number | null>(null);
   const [rating, setRating] = useState(5);
   const [qrSecondsLeft, setQrSecondsLeft] = useState(10 * 60);
   const quoteTimerRef = useRef<number | null>(null);
@@ -511,7 +706,10 @@ export function RemoteOrderClient({
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const actionInFlightRef = useRef<"submit" | "mark_paid" | null>(null);
   const customerToastTimerRef = useRef<number | null>(null);
+  const trackedOrderRef = useRef<OrderDto | null>(null);
+  const notifyOrderUpdateRef = useRef<(order: OrderDto) => void>(() => undefined);
 
+  const { customerName, customerPhone, deliveryAddress, deliveryLat, deliveryLng } = customerProfile;
   const cartItemCount = cartLines.reduce((sum, line) => sum + line.quantity, 0);
   const subtotal = cartLines.reduce((sum, line) => sum + line.item.price * line.quantity, 0);
   const deliveryQuoteFingerprint = useMemo(
@@ -520,16 +718,37 @@ export function RemoteOrderClient({
   );
   const currentQuote = quoteFingerprint === deliveryQuoteFingerprint ? quote : null;
   const currentQuoteError = quoteFingerprint === deliveryQuoteFingerprint ? quoteError : null;
+  const deliveryQuoteState = useMemo(
+    () =>
+      resolveDeliveryQuoteCheckoutState({
+        mode,
+        expectedFingerprint: deliveryQuoteFingerprint,
+        quoteFingerprint,
+        quoteAccepted: quote?.accepted,
+        quoteError,
+        loadingQuote
+      }),
+    [deliveryQuoteFingerprint, loadingQuote, mode, quote?.accepted, quoteError, quoteFingerprint]
+  );
   const selectedPromotion = useMemo(
     () => findPublicPromotionByCode(restaurant.promotions, promotionCode),
     [promotionCode, restaurant.promotions]
   );
-  const previewDiscount = useMemo(
-    () => calculatePublicPromotionDiscount(subtotal, selectedPromotion),
-    [selectedPromotion, subtotal]
-  );
   const deliveryFee = mode === "DELIVERY" ? currentQuote?.fee ?? 0 : 0;
   const serviceFee = mode === "DELIVERY" ? currentQuote?.serviceFee ?? calculateClientServiceFee(restaurant, subtotal) : calculateClientServiceFee(restaurant, subtotal);
+  const selectedPickupBranch = useMemo(
+    () => restaurant.branches.find((branch) => branch.id === selectedPickupBranchId) ?? restaurant.branches.find((branch) => branch.isPrimary) ?? restaurant.branches[0] ?? null,
+    [restaurant.branches, selectedPickupBranchId]
+  );
+  const previewDiscount = useMemo(
+    () =>
+      calculatePublicPromotionDiscount({
+        itemSubtotal: subtotal,
+        deliveryFee,
+        promotion: selectedPromotion
+      }),
+    [deliveryFee, selectedPromotion, subtotal]
+  );
   const total = Math.max(0, subtotal + deliveryFee + serviceFee - previewDiscount);
   const requiresPrepaidQr = restaurant.onlinePaymentMode === "QR_PREPAID";
   const activeHistory = useMemo(() => history.filter((entry) => !isRemoteOrderClosed(entry.order)), [history]);
@@ -537,13 +756,17 @@ export function RemoteOrderClient({
   const trackedOrder = activeEntry?.order ?? null;
   const featuredItems = allItems.slice(0, 3);
   const loyaltyPoints = Math.max(1, Math.floor(subtotal / 12000));
-  const etaMinutes = mode === "DELIVERY" ? currentQuote?.etaMinutes ?? restaurant.deliveryEtaMinutes : restaurant.pickupEtaMinutes;
+  const etaMinutes = mode === "DELIVERY" ? currentQuote?.etaMinutes ?? restaurant.deliveryEtaMinutes : selectedPickupBranch?.pickupEtaMinutes ?? restaurant.pickupEtaMinutes;
   const canReorder = Boolean(trackedOrder?.items?.some((item) => item.menuItem?.id));
   const restaurantPoint = useMemo(() => {
     if (typeof restaurant.storeLat !== "number" || typeof restaurant.storeLng !== "number") return null;
     if (!Number.isFinite(restaurant.storeLat) || !Number.isFinite(restaurant.storeLng)) return null;
     return { lat: restaurant.storeLat, lng: restaurant.storeLng };
   }, [restaurant.storeLat, restaurant.storeLng]);
+  const trackingPollingInterval = useMemo(
+    () => getCustomerOrderPollingInterval(trackedOrder, { networkOnline, pageVisible }),
+    [networkOnline, pageVisible, trackedOrder]
+  );
 
   function notifyCustomer(message: string) {
     if (customerToastTimerRef.current) window.clearTimeout(customerToastTimerRef.current);
@@ -553,6 +776,81 @@ export function RemoteOrderClient({
       customerToastTimerRef.current = null;
     }, 2800);
   }
+
+  function notifyOrderUpdate(order: OrderDto) {
+    const message = orderStatusText(order);
+    notifyCustomer(message);
+    if (typeof window === "undefined" || !("Notification" in window) || window.Notification.permission !== "granted") return;
+
+    try {
+      new window.Notification(`${restaurant.name} · ${orderShortId(order.id)}`, {
+        body: message,
+        tag: `logivn-order-${order.id}`,
+        icon: restaurant.logoUrl ?? undefined
+      });
+    } catch {
+      // Toast already covered the status update when the browser refuses a notification.
+    }
+  }
+
+  async function requestOrderNotifications() {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      notifyCustomer("Trình duyệt này chưa hỗ trợ thông báo đơn hàng.");
+      return;
+    }
+
+    const permission = await window.Notification.requestPermission();
+    setNotificationPermission(permission);
+    notifyCustomer(permission === "granted" ? "Đã bật thông báo đơn hàng." : "Bạn vẫn có thể theo dõi đơn ngay trong trang này.");
+  }
+
+  function updateCustomerProfile(patch: Partial<RemoteCustomerProfile>) {
+    setCustomerProfile((current) => ({
+      ...current,
+      ...patch
+    }));
+  }
+
+  const mergeRemoteOrderEntry = useCallback((next: CreatedRemoteOrder, options?: { notify?: boolean }) => {
+    const previousOrder = trackedOrderRef.current?.id === next.order.id ? trackedOrderRef.current : null;
+    const changed = hasCustomerOrderSnapshotChanged(previousOrder, next.order);
+
+    setCreated((current) => (current && current.order.id === next.order.id ? next : current));
+    setHistory((current) => {
+      const exists = current.some((entry) => entry.order.id === next.order.id);
+      const merged = exists ? current.map((entry) => (entry.order.id === next.order.id ? next : entry)) : [next, ...current];
+      return merged.slice(0, 20);
+    });
+    if (next.order.deliveryCourierLocation) {
+      setCourierLocations((current) => ({
+        ...current,
+        [next.order.id]: next.order.deliveryCourierLocation!
+      }));
+    }
+    if (changed) {
+      trackedOrderRef.current = next.order;
+      if (options?.notify && previousOrder) notifyOrderUpdateRef.current(next.order);
+    }
+    setLastOrderSyncAt(Date.now());
+    setTrackingPollError(false);
+  }, []);
+
+  const fetchTrackedOrderSnapshot = useCallback(
+    async (orderId: string) => {
+      if (!sessionId || !networkOnline) return;
+
+      const params = new URLSearchParams({
+        restaurantSlug: restaurant.slug,
+        customerSessionId: sessionId
+      });
+      const response = await fetch(`/api/remote-orders/${orderId}?${params.toString()}`, { cache: "no-store" });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tải được trạng thái đơn");
+      mergeRemoteOrderEntry(json.data as CreatedRemoteOrder, { notify: true });
+    },
+    [mergeRemoteOrderEntry, networkOnline, restaurant.slug, sessionId]
+  );
 
   const loadQuote = useCallback(async () => {
     if (mode !== "DELIVERY" || subtotal <= 0) {
@@ -566,6 +864,17 @@ export function RemoteOrderClient({
       return;
     }
 
+    if (!networkOnline) {
+      quoteRequestSequenceRef.current += 1;
+      quoteAbortRef.current?.abort();
+      quoteAbortRef.current = null;
+      setQuote(null);
+      setQuoteFingerprint(deliveryQuoteFingerprint);
+      setQuoteError("Mạng đang mất kết nối. Bạn kiểm tra lại 4G/Wi-Fi rồi tính phí giao hàng.");
+      setLoadingQuote(false);
+      return;
+    }
+
     const requestSequence = quoteRequestSequenceRef.current + 1;
     const requestFingerprint = deliveryQuoteFingerprint;
     quoteRequestSequenceRef.current = requestSequence;
@@ -573,7 +882,6 @@ export function RemoteOrderClient({
     const controller = new AbortController();
     quoteAbortRef.current = controller;
     setLoadingQuote(true);
-    setQuoteFingerprint(null);
     setQuoteError(null);
     try {
       const response = await fetch(`/api/restaurants/${restaurant.slug}/delivery-quote`, {
@@ -604,7 +912,7 @@ export function RemoteOrderClient({
       if (quoteAbortRef.current === controller) quoteAbortRef.current = null;
       setLoadingQuote(false);
     }
-  }, [deliveryAddress, deliveryLat, deliveryLng, deliveryQuoteFingerprint, mode, restaurant.slug, subtotal]);
+  }, [deliveryAddress, deliveryLat, deliveryLng, deliveryQuoteFingerprint, mode, networkOnline, restaurant.slug, subtotal]);
 
   const loadHistory = useCallback(async () => {
     if (!sessionId) return;
@@ -620,12 +928,14 @@ export function RemoteOrderClient({
       if (!json.ok) throw new Error(json.error ?? "Không tải được lịch sử đơn online");
       const orders = json.data.orders as CreatedRemoteOrder[];
       setHistory(orders);
+      setLastOrderSyncAt(Date.now());
+      setTrackingPollError(false);
       setCreated((current) => {
         if (!current) return current;
         return orders.find((entry) => entry.order.id === current.order.id) ?? current;
       });
     } catch {
-      setHistory([]);
+      setTrackingPollError(Boolean(trackedOrderRef.current));
     } finally {
       setHistoryLoading(false);
     }
@@ -650,9 +960,72 @@ export function RemoteOrderClient({
   }, []);
 
   useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    const snapshot = serializeRemoteCustomerProfile(customerProfile);
+    if (!hasRemoteCustomerProfileValue(snapshot)) {
+      window.localStorage.removeItem(customerProfileStorageKey);
+      return;
+    }
+
+    window.localStorage.setItem(customerProfileStorageKey, JSON.stringify(snapshot));
+  }, [customerProfile, customerProfileStorageKey]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => void loadHistory(), 0);
     return () => window.clearTimeout(timer);
   }, [loadHistory]);
+
+  useEffect(() => {
+    trackedOrderRef.current = trackedOrder;
+  }, [trackedOrder]);
+
+  useEffect(() => {
+    notifyOrderUpdateRef.current = notifyOrderUpdate;
+  });
+
+  useEffect(() => {
+    const orderId = trackedOrder?.id;
+    if (!orderId || !trackingPollingInterval) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        await fetchTrackedOrderSnapshot(orderId);
+      } catch {
+        if (!cancelled) setTrackingPollError(true);
+      }
+    };
+
+    const warmupTimer = window.setTimeout(() => void poll(), 1200);
+    const intervalTimer = window.setInterval(() => void poll(), trackingPollingInterval);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(warmupTimer);
+      window.clearInterval(intervalTimer);
+    };
+  }, [fetchTrackedOrderSnapshot, trackedOrder?.id, trackingPollingInterval]);
 
   useEffect(() => {
     if (screen !== "vietqr") return;
@@ -700,9 +1073,23 @@ export function RemoteOrderClient({
           deliveryRouteDurationMinutes: nextPayload.delivery_route_duration_minutes ?? order.deliveryRouteDurationMinutes,
           deliveryTrackingUpdatedAt: nextPayload.delivery_tracking_updated_at ?? order.deliveryTrackingUpdatedAt
         });
+        const previousOrder = trackedOrderRef.current;
+        const patchedOrder = previousOrder?.id === orderId ? patchOrder(previousOrder) : null;
 
         setCreated((current) => (current && current.order.id === orderId ? { ...current, order: patchOrder(current.order) } : current));
         setHistory((current) => current.map((entry) => (entry.order.id === orderId ? { ...entry, order: patchOrder(entry.order) } : entry)));
+        setLastOrderSyncAt(Date.now());
+        setTrackingPollError(false);
+        if (
+          previousOrder &&
+          patchedOrder &&
+          (previousOrder.status !== patchedOrder.status ||
+            previousOrder.paymentStatus !== patchedOrder.paymentStatus ||
+            previousOrder.deliveryStatus !== patchedOrder.deliveryStatus)
+        ) {
+          trackedOrderRef.current = patchedOrder;
+          notifyOrderUpdateRef.current(patchedOrder);
+        }
       })
       .on("broadcast", { event: "delivery_tracking" }, (payload) => {
         const nextPayload = payload.payload as {
@@ -737,8 +1124,16 @@ export function RemoteOrderClient({
             deliveryStatus: nextPayload.delivery_status ?? order.deliveryStatus,
             deliveryTrackingUpdatedAt: nextPayload.created_at ?? order.deliveryTrackingUpdatedAt
           });
+          const previousOrder = trackedOrderRef.current;
+          const patchedOrder = previousOrder?.id === orderId ? patchDelivery(previousOrder) : null;
           setCreated((current) => (current && current.order.id === orderId ? { ...current, order: patchDelivery(current.order) } : current));
           setHistory((current) => current.map((entry) => (entry.order.id === orderId ? { ...entry, order: patchDelivery(entry.order) } : entry)));
+          setLastOrderSyncAt(Date.now());
+          setTrackingPollError(false);
+          if (previousOrder && patchedOrder && previousOrder.deliveryStatus !== patchedOrder.deliveryStatus) {
+            trackedOrderRef.current = patchedOrder;
+            notifyOrderUpdateRef.current(patchedOrder);
+          }
         }
       })
       .subscribe();
@@ -750,6 +1145,10 @@ export function RemoteOrderClient({
 
   function updateQuantity(itemId: string, delta: number) {
     setCart((current) => updateRemoteCartQuantity(current, itemId, delta));
+  }
+
+  function updateItemNote(itemId: string, note: string) {
+    setCart((current) => setRemoteCartItemNote(current, itemId, note));
   }
 
   function applyCheckoutTransition(action: RemoteCheckoutAction) {
@@ -778,8 +1177,8 @@ export function RemoteOrderClient({
     applyCheckoutTransition({
       type: "CONTINUE_FROM_DELIVERY",
       mode,
-      quoteAccepted: currentQuote?.accepted === true,
-      quoteError: currentQuoteError
+      quoteAccepted: deliveryQuoteState.accepted,
+      quoteError: deliveryQuoteState.message
     });
   }
 
@@ -795,6 +1194,10 @@ export function RemoteOrderClient({
   async function submitOrder() {
     if (submitting || actionInFlightRef.current) return;
     setError(null);
+    if (!networkOnline) {
+      setError("Mạng đang mất kết nối. Bạn kiểm tra lại 4G/Wi-Fi rồi gửi đơn.");
+      return;
+    }
     if (!validateCartBasics()) {
       setScreen("cart");
       return;
@@ -804,8 +1207,8 @@ export function RemoteOrderClient({
       {
         type: "REQUIRE_DELIVERY_QUOTE",
         mode,
-        quoteAccepted: currentQuote?.accepted === true,
-        quoteError: currentQuoteError
+        quoteAccepted: deliveryQuoteState.accepted,
+        quoteError: deliveryQuoteState.message
       }
     );
     if (quoteGate.error) {
@@ -816,6 +1219,7 @@ export function RemoteOrderClient({
 
     const orderFingerprint = JSON.stringify({
       mode,
+      branchId: mode === "PICKUP" ? selectedPickupBranch?.id ?? selectedPickupBranchId : "",
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
       deliveryAddress: mode === "DELIVERY" ? deliveryAddress.trim() : "",
@@ -825,7 +1229,8 @@ export function RemoteOrderClient({
       promotionCode: normalizePromotionCode(promotionCode),
       items: cartLines.map((line) => ({
         id: line.itemId,
-        quantity: line.quantity
+        quantity: line.quantity,
+        note: line.note?.trim() ?? ""
       }))
     });
     const existingPending = pendingCreateRequestRef.current;
@@ -840,6 +1245,7 @@ export function RemoteOrderClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           restaurantSlug: restaurant.slug,
+          branchId: mode === "PICKUP" ? selectedPickupBranch?.id ?? selectedPickupBranchId : undefined,
           fulfillmentType: mode,
           customerSessionId: sessionId,
           customerName: customerName.trim(),
@@ -852,7 +1258,8 @@ export function RemoteOrderClient({
           idempotencyKey,
           items: cartLines.map((line) => ({
             menuItemId: line.itemId,
-            quantity: line.quantity
+            quantity: line.quantity,
+            note: line.note
           }))
         })
       });
@@ -886,6 +1293,10 @@ export function RemoteOrderClient({
   async function markRemotePaid() {
     const orderId = activeEntry?.order.id;
     if (!orderId || submitting || actionInFlightRef.current) return;
+    if (!networkOnline) {
+      setError("Mạng đang mất kết nối. Bạn kiểm tra lại 4G/Wi-Fi rồi báo quán xác nhận thanh toán.");
+      return;
+    }
 
     actionInFlightRef.current = "mark_paid";
     setSubmitting(true);
@@ -911,6 +1322,63 @@ export function RemoteOrderClient({
       actionInFlightRef.current = null;
       setSubmitting(false);
     }
+  }
+
+  function openRestaurantSupport() {
+    if (restaurant.hotline) {
+      window.location.href = `tel:${restaurant.hotline}`;
+      return;
+    }
+    notifyCustomer("Quán chưa có hotline hỗ trợ.");
+    setError("Quán chưa cấu hình hotline. Bạn vui lòng ghi chú trong đơn để quán hỗ trợ.");
+  }
+
+  function renderClosedOrderActions(order: OrderDto) {
+    const lifecycle = getCustomerOrderLifecycle(order);
+    if (lifecycle.state !== "cancelled" && lifecycle.state !== "refunded") return null;
+
+    return (
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={openRestaurantSupport}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-[#eadbd5] bg-white px-3 text-[12px] font-black text-[#a33a23]"
+        >
+          <Headphones size={15} />
+          Gọi quán
+        </button>
+        <button
+          type="button"
+          onClick={reorderLastOrder}
+          disabled={!canReorder}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-[#0f6b43] px-3 text-[12px] font-black text-white disabled:opacity-50"
+        >
+          <RefreshCcw size={15} />
+          Đặt lại
+        </button>
+      </div>
+    );
+  }
+
+  function renderTrackingSyncHint(order: OrderDto) {
+    const lifecycle = getCustomerOrderLifecycle(order);
+    const lastSyncText = lastOrderSyncAt ? "đã đồng bộ gần đây" : "đang bật";
+    const text = lifecycle.isClosed
+      ? "Đơn đã kết thúc, hệ thống ngừng cập nhật tự động."
+      : !networkOnline
+        ? "Mất kết nối, sẽ tự cập nhật lại khi có mạng."
+        : trackingPollError
+          ? "Cập nhật tự động tạm gián đoạn, hệ thống sẽ thử lại."
+          : pageVisible && trackingPollingInterval
+            ? `Cập nhật tự động · ${lastSyncText}`
+            : "Tạm dừng cập nhật khi bạn rời trang.";
+
+    return (
+      <div role="status" className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#f7f5ee] px-3 py-2 text-left text-[11px] font-black text-[#667269]">
+        <RefreshCcw size={13} className={trackingPollError ? "text-[#b94724]" : "text-[#0f6b43]"} />
+        <span>{text}</span>
+      </div>
+    );
   }
 
   function handleCustomerAgentAction(action: AiAgentAction) {
@@ -973,25 +1441,11 @@ export function RemoteOrderClient({
     }
 
     if (action.uiTarget === "staff_call") {
-      if (restaurant.hotline) {
-        window.location.href = `tel:${restaurant.hotline}`;
-        return;
-      }
-      notifyCustomer("Quán chưa có hotline hỗ trợ.");
-      setError("Quán chưa cấu hình hotline. Bạn vui lòng ghi chú trong đơn để quán hỗ trợ.");
+      openRestaurantSupport();
     }
   }
 
   function withLogibot(node: React.ReactNode) {
-    const openSupport = () => {
-      if (restaurant.hotline) {
-        window.location.href = `tel:${restaurant.hotline}`;
-        return;
-      }
-      notifyCustomer("Quán chưa có hotline hỗ trợ.");
-      setError("Quán chưa cấu hình hotline. Bạn vui lòng ghi chú trong đơn để quán hỗ trợ.");
-    };
-
     return (
       <>
         <CustomerAiAssistant
@@ -1001,7 +1455,8 @@ export function RemoteOrderClient({
             menuItemId: line.itemId,
             name: line.item.name,
             price: line.item.price,
-            quantity: line.quantity
+            quantity: line.quantity,
+            note: line.note
           }))}
           orderStatus={trackedOrder}
           onAgentAction={handleCustomerAgentAction}
@@ -1012,7 +1467,7 @@ export function RemoteOrderClient({
           cartTotal={total}
           notice={customerToast}
           onCart={() => setScreen("cart")}
-          onSupport={openSupport}
+          onSupport={openRestaurantSupport}
         />
       </>
     );
@@ -1025,7 +1480,7 @@ export function RemoteOrderClient({
           type="button"
           disabled={!restaurant.deliveryEnabled}
           onClick={() => restaurant.deliveryEnabled && setMode("DELIVERY")}
-          className={`h-10 rounded-xl text-[13px] font-black ${mode === "DELIVERY" ? "bg-white text-[#006b3c] shadow-sm" : "text-[#6d766d] disabled:opacity-40"}`}
+          className={`min-h-11 rounded-xl text-[13px] font-black ${mode === "DELIVERY" ? "bg-white text-[#006b3c] shadow-sm" : "text-[#6d766d] disabled:opacity-40"}`}
         >
           Giao hàng
         </button>
@@ -1033,11 +1488,69 @@ export function RemoteOrderClient({
           type="button"
           disabled={!restaurant.pickupEnabled}
           onClick={() => restaurant.pickupEnabled && setMode("PICKUP")}
-          className={`h-10 rounded-xl text-[13px] font-black ${mode === "PICKUP" ? "bg-white text-[#006b3c] shadow-sm" : "text-[#6d766d] disabled:opacity-40"}`}
+          className={`min-h-11 rounded-xl text-[13px] font-black ${mode === "PICKUP" ? "bg-white text-[#006b3c] shadow-sm" : "text-[#6d766d] disabled:opacity-40"}`}
         >
           Đến lấy
         </button>
       </div>
+    );
+  }
+
+  function renderPickupBranchSelector() {
+    if (mode !== "PICKUP" || restaurant.branches.length === 0) return null;
+
+    if (restaurant.branches.length === 1) {
+      const branch = selectedPickupBranch ?? restaurant.branches[0];
+      return (
+        <SoftCard className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[#e7eadf] bg-[#fbfaf5] text-[#006b3c]">
+            <Store size={18} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-black text-[#121813]">Nhận tại {branch?.name ?? restaurant.name}</span>
+            <span className="mt-1 block truncate text-[12px] font-semibold text-[#6d756d]">{branch?.address ?? restaurant.address ?? "Tại cửa hàng"}</span>
+          </span>
+        </SoftCard>
+      );
+    }
+
+    return (
+      <SoftCard className="grid gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-[14px] font-black text-[#121813]">Chi nhánh nhận món</h2>
+            <p className="mt-1 text-[12px] font-semibold text-[#6d756d]">Dự kiến {etaMinutes} phút</p>
+          </div>
+          <Store size={18} className="text-[#006b3c]" />
+        </div>
+        <div className="grid gap-2">
+          {restaurant.branches.map((branch) => {
+            const selected = branch.id === (selectedPickupBranch?.id ?? selectedPickupBranchId);
+            return (
+              <button
+                key={branch.id}
+                type="button"
+                onClick={() => setSelectedPickupBranchId(branch.id)}
+                className={`flex min-h-[68px] items-start gap-3 rounded-2xl border px-3 py-2.5 text-left transition ${selected ? "border-[#0f7b4b] bg-[#edf7ef]" : "border-[#ecefe6] bg-[#fffefa]"}`}
+              >
+                <span className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl ${selected ? "bg-[#006b3c] text-white" : "bg-[#f4f1e8] text-[#006b3c]"}`}>
+                  <MapPin size={15} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-[13px] font-black text-[#121813]">{branch.name}</span>
+                    {branch.isPrimary ? <span className="shrink-0 rounded-full bg-[#fff3df] px-2 py-0.5 text-[10px] font-black text-[#a8560b]">Chính</span> : null}
+                  </span>
+                  <span className="mt-1 block truncate text-[11px] font-semibold text-[#6d756d]">{branch.address ?? "Tại cửa hàng"}</span>
+                </span>
+                <span className={`mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full border ${selected ? "border-[#006b3c] bg-[#006b3c] text-white" : "border-[#d8ddd2] text-transparent"}`}>
+                  <Check size={14} />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </SoftCard>
     );
   }
 
@@ -1053,7 +1566,7 @@ export function RemoteOrderClient({
               <h2 className="text-[16px] font-black text-[#121813]">{activeEntry ? `Đơn hàng ${orderShortId(activeEntry.order.id)}` : "Đơn hàng của bạn"}</h2>
               <p className="mt-1 text-[12px] font-semibold text-[#748076]">{cartLines.length || activeEntry?.order.items.length || 0} món</p>
             </div>
-            <button type="button" onClick={() => setScreen("cart")} className="inline-flex items-center gap-1 text-[12px] font-black text-[#006b3c]">
+            <button type="button" onClick={() => setScreen("cart")} className="inline-flex min-h-11 items-center gap-1 px-2 text-[12px] font-black text-[#006b3c]">
               Xem chi tiết <ChevronRight size={14} />
             </button>
           </div>
@@ -1072,6 +1585,32 @@ export function RemoteOrderClient({
     return error ? <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[13px] font-bold text-[#be5d00]">{error}</p> : null;
   }
 
+  function renderNetworkNotice() {
+    if (networkOnline) return null;
+    return <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[13px] font-bold text-[#be5d00]">Mạng đang mất kết nối. Giỏ hàng vẫn được giữ trên máy này.</p>;
+  }
+
+  function renderNotificationPrompt() {
+    if (notificationPermission === "unsupported") return null;
+    if (notificationPermission === "granted") {
+      return (
+        <p className="mt-3 inline-flex items-center justify-center gap-2 rounded-2xl bg-[#edf7ef] px-3 py-2 text-[12px] font-black text-[#006b3c]">
+          <Bell size={15} />
+          Thông báo đơn hàng đã bật
+        </p>
+      );
+    }
+    if (notificationPermission === "denied") {
+      return <p className="mt-3 text-[12px] font-semibold leading-5 text-[#7c867e]">Trình duyệt đang chặn thông báo. Bạn vẫn có thể theo dõi realtime trong trang này.</p>;
+    }
+    return (
+      <button type="button" onClick={requestOrderNotifications} className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-[#f8f6ef] px-4 text-[12px] font-black text-[#006b3c]">
+        <Bell size={15} />
+        Bật thông báo đơn hàng
+      </button>
+    );
+  }
+
   function renderMenuScreen() {
     return (
       <PhoneFrame>
@@ -1082,7 +1621,7 @@ export function RemoteOrderClient({
               <Menu size={19} />
             </IconButton>
             <BrandMark restaurant={restaurant} />
-            <button type="button" onClick={() => activeEntry && setScreen("tracking")} className="relative grid h-10 w-10 place-items-center rounded-2xl bg-white text-[#0e2117] shadow-[0_8px_20px_rgba(16,32,23,0.05)]">
+            <button type="button" onClick={() => activeEntry && setScreen("tracking")} className="relative grid h-11 w-11 place-items-center rounded-2xl bg-white text-[#0e2117] shadow-[0_8px_20px_rgba(16,32,23,0.05)]">
               <Bell size={18} />
               {activeEntry ? <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-[#ef3b2d] text-[10px] font-black text-white">1</span> : null}
             </button>
@@ -1114,6 +1653,8 @@ export function RemoteOrderClient({
               </span>
               <ChevronRight size={18} className="transition group-hover:translate-x-0.5" />
             </button>
+
+            <CustomerFlowPreview mode={mode} prepaid={requiresPrepaidQr} />
 
             <div className="grid grid-cols-[1fr_44px] gap-2">
               <label className="relative">
@@ -1215,19 +1756,19 @@ export function RemoteOrderClient({
               <section>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="text-[17px] font-black text-[#111713]">Đề xuất cho bạn</h2>
-                  <button type="button" onClick={() => setActiveCategory("all")} className="text-[12px] font-black text-[#006b3c]">
+                  <button type="button" onClick={() => setActiveCategory("all")} className="inline-flex min-h-11 items-center px-2 text-[12px] font-black text-[#006b3c]">
                     Xem tất cả
                   </button>
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                   {featuredItems.map((item) => (
-                    <article key={item.id} className="flex min-h-[226px] min-w-0 flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
+                    <article key={item.id} className="flex min-h-[226px] min-w-0 overflow-hidden flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
                       <ProductThumb item={item} className="aspect-square w-full" />
                       <div className="flex min-h-[62px] min-w-0 flex-1 flex-col pt-2">
-                        <p className="line-clamp-2 text-[13px] font-black leading-4 text-[#141b16]">{item.name}</p>
-                        <span className="mt-1 text-[12px] font-black text-[#141b16]">{formatVnd(item.price)}</span>
+                        <p className="line-clamp-2 break-words text-[13px] font-black leading-4 text-[#141b16]">{item.name}</p>
+                        <span className="mt-1 truncate text-[12px] font-black text-[#141b16]">{formatVnd(item.price)}</span>
                       </div>
-                      <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl bg-[#006b3c] px-2 text-[12px] font-black text-white">
+                      <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[#006b3c] px-2 text-[12px] font-black text-white">
                         <Plus size={15} />
                         Thêm
                       </button>
@@ -1240,7 +1781,7 @@ export function RemoteOrderClient({
             <section>
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-[17px] font-black text-[#111713]">{activeCategory === "all" ? "Tất cả món" : categories.find((category) => category.id === activeCategory)?.name ?? "Menu"}</h2>
-                <button type="button" onClick={() => setActiveCategory("all")} className="text-[12px] font-black text-[#006b3c]">
+                <button type="button" onClick={() => setActiveCategory("all")} className="inline-flex min-h-11 items-center px-2 text-[12px] font-black text-[#006b3c]">
                   Xem tất cả
                 </button>
               </div>
@@ -1251,14 +1792,14 @@ export function RemoteOrderClient({
                   </div>
                 ) : null}
                 {visibleItems.map((item) => (
-                  <article key={item.id} className="flex min-h-[252px] min-w-0 flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
+                  <article key={item.id} className="flex min-h-[252px] min-w-0 overflow-hidden flex-col rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
                     <ProductThumb item={item} className="aspect-square w-full" />
                     <div className="flex min-h-[78px] min-w-0 flex-1 flex-col pt-2.5">
-                      <h3 className="line-clamp-2 text-[14px] font-black leading-4 text-[#111713]">{item.name}</h3>
+                      <h3 className="line-clamp-2 break-words text-[14px] font-black leading-4 text-[#111713]">{item.name}</h3>
                       <p className="mt-1 line-clamp-1 text-[11px] font-semibold text-[#7c867e]">{item.categoryName}</p>
-                      <p className="mt-1.5 text-[13px] font-black text-[#111713]">{formatVnd(item.price)}</p>
+                      <p className="mt-1.5 truncate text-[13px] font-black text-[#111713]">{formatVnd(item.price)}</p>
                     </div>
-                    <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full items-center justify-center gap-1.5 rounded-2xl bg-[#f6f4ee] px-2 text-[12px] font-black text-[#006b3c]">
+                    <button type="button" onClick={() => updateQuantity(item.id, 1)} className="mt-auto flex min-h-11 w-full shrink-0 items-center justify-center gap-1.5 rounded-2xl bg-[#f6f4ee] px-2 text-[12px] font-black text-[#006b3c]">
                       <Plus size={16} />
                       Thêm
                     </button>
@@ -1298,7 +1839,7 @@ export function RemoteOrderClient({
     return (
       <PhoneFrame>
         <div className="flex min-h-dvh flex-col">
-          <ScreenHeader title="Giỏ hàng của bạn" onBack={() => setScreen("menu")} right={<button type="button" className="text-[12px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
+          <ScreenHeader title="Giỏ hàng của bạn" onBack={() => setScreen("menu")} right={<button type="button" className="inline-flex min-h-11 items-center px-2 text-[12px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
           <div className="flex-1 space-y-4 px-5 pb-5">
             <button type="button" className="flex min-h-[64px] w-full items-center justify-between rounded-2xl border border-[#f3e4ca] bg-[#fff8ed] px-4 text-left">
               <span className="flex items-center gap-3">
@@ -1314,6 +1855,7 @@ export function RemoteOrderClient({
             </button>
 
             {renderModeToggle()}
+            {renderPickupBranchSelector()}
 
             {restaurant.promotions.length > 0 ? (
               <SoftCard className="grid gap-3">
@@ -1358,11 +1900,23 @@ export function RemoteOrderClient({
                 </SoftCard>
               ) : (
                 cartLines.map((line) => (
-                  <article key={line.itemId} className="flex items-center gap-3 rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
+                  <article key={line.itemId} className="flex items-start gap-3 rounded-3xl bg-white p-2.5 shadow-[0_10px_24px_rgba(23,34,27,0.04)]">
                     <ProductThumb item={line.item} className="h-[64px] w-[64px]" />
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate text-[14px] font-black text-[#111713]">{line.item.name}</h3>
                       <p className="mt-2 text-[13px] font-black text-[#111713]">{formatVnd(line.item.price)}</p>
+                      <label className="mt-2 block">
+                        <span className="sr-only">Ghi chú cho {line.item.name}</span>
+                        <input
+                          name={`itemNote-${line.itemId}`}
+                          autoComplete="off"
+                          value={line.note ?? ""}
+                          onChange={(event) => updateItemNote(line.itemId, event.target.value)}
+                          maxLength={200}
+                          placeholder="Ghi chú món"
+                          className="h-10 w-full rounded-xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[12px] font-semibold text-[#121813] outline-none focus:border-[#0f7b4b]"
+                        />
+                      </label>
                     </div>
                     <div className="grid justify-items-end gap-2">
                       <QuantityStepper value={line.quantity} onMinus={() => updateQuantity(line.itemId, -1)} onPlus={() => updateQuantity(line.itemId, 1)} />
@@ -1379,17 +1933,17 @@ export function RemoteOrderClient({
               <div className="grid grid-cols-2 gap-2">
                 <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
                   Tên khách
-                  <input name="customerName" autoComplete="name" value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Tên của bạn" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
+                  <input name="customerName" autoComplete="name" maxLength={120} value={customerName} onChange={(event) => updateCustomerProfile({ customerName: event.target.value })} placeholder="Tên của bạn" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
                 </label>
                 <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
                   Số điện thoại
-                  <input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" value={customerPhone} onChange={(event) => setCustomerPhone(event.target.value)} placeholder="09xx xxx xxx" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
+                  <input name="customerPhone" type="tel" inputMode="tel" autoComplete="tel" maxLength={24} value={customerPhone} onChange={(event) => updateCustomerProfile({ customerPhone: event.target.value })} placeholder="09xx xxx xxx" className="h-11 rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
                 </label>
               </div>
               <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
                 Ghi chú cho quán
                 <div className="relative">
-                  <textarea name="customerNote" autoComplete="off" value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} placeholder="Ví dụ: ít đá, không đường..." className="min-h-20 w-full rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 py-3 pr-10 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
+                  <textarea name="customerNote" autoComplete="off" maxLength={300} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} placeholder="Ví dụ: ít đá, không đường..." className="min-h-20 w-full rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 py-3 pr-10 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
                   <Pencil className="absolute bottom-3 right-3 text-[#69766d]" size={16} aria-hidden="true" />
                 </div>
               </label>
@@ -1400,6 +1954,10 @@ export function RemoteOrderClient({
                   <span className={`text-[11px] font-bold ${selectedPromotion && previewDiscount > 0 ? "text-[#006b3c]" : "text-[#7c867e]"}`}>
                     {selectedPromotion && previewDiscount > 0
                       ? `Đã tạm giảm ${formatVnd(previewDiscount)}.`
+                      : selectedPromotion?.discountScope === "DELIVERY_FEE" && mode !== "DELIVERY"
+                        ? "Mã này áp dụng cho đơn giao hàng."
+                        : selectedPromotion?.discountScope === "DELIVERY_FEE" && !deliveryQuoteState.accepted
+                          ? "Mã sẽ áp dụng sau khi phí giao hàng hợp lệ."
                       : selectedPromotion
                         ? "Mã hợp lệ nhưng chưa đủ điều kiện tối thiểu."
                         : "Mã sẽ được kiểm tra khi gửi đơn."}
@@ -1409,6 +1967,7 @@ export function RemoteOrderClient({
             </SoftCard>
 
             {renderSummaryCard(false)}
+            {renderNetworkNotice()}
             {renderError()}
           </div>
           <BottomAction>
@@ -1422,6 +1981,14 @@ export function RemoteOrderClient({
   }
 
   function renderDeliveryScreen() {
+    const deliveryFeeText = deliveryQuoteState.pending
+      ? "Đang tính..."
+      : deliveryQuoteState.stale
+        ? "Cần tính lại"
+        : currentQuoteError
+          ? "Chưa có phí"
+          : formatVnd(deliveryFee);
+
     return (
       <PhoneFrame>
         <div className="flex min-h-dvh flex-col">
@@ -1433,10 +2000,16 @@ export function RemoteOrderClient({
               longitude={deliveryLng}
               restaurantPoint={restaurantPoint}
               route={currentQuote?.routeGeometry?.coordinates ?? null}
-              onAddressChange={setDeliveryAddress}
+              onAddressChange={(address) => updateCustomerProfile({ deliveryAddress: address })}
+              onManualAddressChange={(address) =>
+                updateCustomerProfile({
+                  deliveryAddress: address,
+                  deliveryLat: undefined,
+                  deliveryLng: undefined
+                })
+              }
               onCoordinateChange={(point) => {
-                setDeliveryLat(point.lat);
-                setDeliveryLng(point.lng);
+                updateCustomerProfile({ deliveryLat: point.lat, deliveryLng: point.lng });
               }}
             />
 
@@ -1447,7 +2020,7 @@ export function RemoteOrderClient({
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-black text-[#121813]">{deliveryAddress || "Chưa chọn địa chỉ giao"}</p>
-                  <button type="button" className="mt-1 text-[12px] font-black text-[#006b3c]">Thay đổi</button>
+                  <button type="button" className="mt-1 inline-flex min-h-11 items-center text-[12px] font-black text-[#006b3c]">Thay đổi</button>
                 </div>
               </div>
             </SoftCard>
@@ -1467,29 +2040,30 @@ export function RemoteOrderClient({
 
             <div className="flex items-center justify-between px-1 text-[13px] font-semibold text-[#536158]">
               <span>Phí giao hàng</span>
-              <span className="font-black text-[#111713]">{loadingQuote ? "Đang tính..." : formatVnd(deliveryFee)}</span>
+              <span className="font-black text-[#111713]">{deliveryFeeText}</span>
             </div>
 
             <SoftCard>
               <label className="grid gap-1.5 text-[12px] font-black text-[#111713]">
                 Ghi chú cho tài xế
                 <div className="relative">
-                  <textarea name="deliveryNote" autoComplete="off" value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} placeholder="Ví dụ: Gọi trước khi đến..." className="min-h-20 w-full rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 py-3 pr-10 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
+                  <textarea name="deliveryNote" autoComplete="off" maxLength={300} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} placeholder="Ví dụ: Gọi trước khi đến..." className="min-h-20 w-full rounded-2xl border border-[#e6eadf] bg-[#fffefa] px-3 py-3 pr-10 text-[13px] font-semibold outline-none focus:border-[#0f7b4b]" />
                   <Pencil className="absolute bottom-3 right-3 text-[#69766d]" size={16} aria-hidden="true" />
                 </div>
               </label>
             </SoftCard>
 
-            {currentQuote?.accepted ? (
+            {deliveryQuoteState.accepted && currentQuote ? (
               <p className="rounded-2xl bg-[#edf7ef] px-4 py-3 text-[13px] font-bold text-[#006b3c]">
                 Địa chỉ nằm trong vùng giao. {currentQuote.distanceKm ? `Khoảng cách ${currentQuote.distanceKm} km.` : ""}
               </p>
             ) : null}
-            {currentQuoteError ? <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[13px] font-bold text-[#be5d00]">{currentQuoteError}</p> : null}
+            {deliveryQuoteState.message ? <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[13px] font-bold text-[#be5d00]">{deliveryQuoteState.message}</p> : null}
+            {renderNetworkNotice()}
             {renderError()}
           </div>
           <BottomAction>
-            <PrimaryButton onClick={continueFromDelivery} disabled={mode === "DELIVERY" && (!currentQuote?.accepted || loadingQuote)}>
+            <PrimaryButton onClick={continueFromDelivery} disabled={mode === "DELIVERY" && !deliveryQuoteState.accepted}>
               Xác nhận
             </PrimaryButton>
           </BottomAction>
@@ -1501,12 +2075,18 @@ export function RemoteOrderClient({
   function renderPaymentScreen() {
     const qrAvailable = requiresPrepaidQr;
     const cashAvailable = !requiresPrepaidQr;
+    const deliveryQuoteBlocked = mode === "DELIVERY" && !deliveryQuoteState.accepted;
     return (
       <PhoneFrame>
         <div className="flex min-h-dvh flex-col">
           <ScreenHeader title="Thanh toán" onBack={() => setScreen(mode === "DELIVERY" ? "delivery" : "cart")} />
           <div className="flex-1 space-y-4 px-5 pb-5">
             {renderSummaryCard()}
+            <FlowVisualCard
+              src={paymentChoice === "vietqr" ? orderFlowImageSources.paymentVietqr : orderFlowImageSources.restaurantConfirmation}
+              title={paymentChoice === "vietqr" ? "Thanh toán VietQR" : "Thanh toán khi nhận món"}
+              caption={paymentChoice === "vietqr" ? "Quét mã, báo đã chuyển khoản, rồi theo dõi xác nhận từ quán." : "Gửi đơn trước, quán xác nhận món và thu tiền khi giao hoặc khi bạn đến lấy."}
+            />
 
             <section>
               <h2 className="mb-3 text-[15px] font-black text-[#121813]">Phương thức thanh toán</h2>
@@ -1542,11 +2122,21 @@ export function RemoteOrderClient({
               </div>
             </section>
 
+            {deliveryQuoteBlocked && deliveryQuoteState.message ? (
+              <p className="rounded-2xl bg-[#fff3e3] px-4 py-3 text-[13px] font-bold text-[#be5d00]">{deliveryQuoteState.message}</p>
+            ) : null}
+            {renderNetworkNotice()}
             {renderError()}
           </div>
           <BottomAction>
-            <PrimaryButton onClick={submitOrder} disabled={submitting || cartLines.length === 0}>
-              {submitting ? "Đang tạo đơn..." : requiresPrepaidQr ? `Thanh toán ${formatVnd(total)}` : `Đặt hàng ${formatVnd(total)}`}
+            <PrimaryButton onClick={submitOrder} disabled={submitting || cartLines.length === 0 || !networkOnline || deliveryQuoteBlocked}>
+              {submitting
+                ? "Đang tạo đơn..."
+                : deliveryQuoteBlocked
+                  ? "Cần cập nhật phí giao hàng"
+                  : requiresPrepaidQr
+                    ? `Thanh toán ${formatVnd(total)}`
+                    : `Đặt hàng ${formatVnd(total)}`}
             </PrimaryButton>
             <p className="mt-4 flex items-center justify-center gap-2 text-center text-[11px] font-semibold text-[#7c867e]">
               <ShieldCheck size={15} className="text-[#006b3c]" />
@@ -1565,6 +2155,7 @@ export function RemoteOrderClient({
         <div className="flex min-h-dvh flex-col">
           <ScreenHeader title="Thanh toán qua VietQR" onBack={() => setScreen("payment")} />
           <div className="flex-1 space-y-5 px-5 pb-5 text-center">
+            <FlowImage src={orderFlowImageSources.paymentVietqr} alt="Thanh toán VietQR" className="h-[154px]" sizes="390px" />
             <div>
               <p className="text-[13px] font-black text-[#121813]">Quét mã để thanh toán</p>
               <p className="mt-4 text-[28px] font-black text-[#121813]">{formatVnd(payment?.amount ?? total)}</p>
@@ -1615,10 +2206,11 @@ export function RemoteOrderClient({
             {payment?.transferContent ? (
               <p className="rounded-2xl bg-[#fbfaf5] px-4 py-3 text-[12px] font-semibold text-[#6f7a70]">Nội dung chuyển khoản: <span className="font-black text-[#111713]">{payment.transferContent}</span></p>
             ) : null}
+            {renderNetworkNotice()}
             {renderError()}
           </div>
           <BottomAction>
-            <PrimaryButton onClick={markRemotePaid} disabled={submitting || activeEntry?.order.paymentStatus === "waiting_confirm"}>
+            <PrimaryButton onClick={markRemotePaid} disabled={submitting || !networkOnline || activeEntry?.order.paymentStatus === "waiting_confirm"}>
               {activeEntry?.order.paymentStatus === "waiting_confirm" ? "Đang chờ quán xác nhận" : submitting ? "Đang cập nhật..." : "Tôi đã thanh toán"}
             </PrimaryButton>
           </BottomAction>
@@ -1638,8 +2230,11 @@ export function RemoteOrderClient({
               <ArrowLeft size={20} />
             </button>
             <div className="mt-8 grid justify-items-center text-center">
-              <div className="grid h-24 w-24 place-items-center rounded-full bg-white text-[#006b3c] shadow-[0_18px_50px_rgba(0,0,0,0.16)]">
-                <Check size={52} strokeWidth={3} />
+              <div className="relative h-32 w-32 overflow-hidden rounded-[30px] border border-white/30 bg-white shadow-[0_18px_50px_rgba(0,0,0,0.16)]">
+                <Image src={orderFlowImageSources.restaurantConfirmation} alt="Quán xác nhận đơn hàng" fill sizes="128px" className="object-cover" />
+                <span className="absolute bottom-2 right-2 grid h-10 w-10 place-items-center rounded-full bg-[#006b3c] text-white shadow-[0_10px_24px_rgba(0,0,0,0.18)]">
+                  <Check size={23} strokeWidth={3} />
+                </span>
               </div>
               <h1 className="mt-7 text-[24px] font-black">Đặt hàng thành công!</h1>
               <p className="mt-4 max-w-[260px] text-[15px] font-semibold leading-6 text-white/84">
@@ -1654,9 +2249,15 @@ export function RemoteOrderClient({
               <div className="mt-6">
                 <OrderProgress order={order} />
               </div>
+              {order ? (
+                <div className="mt-5 border-t border-[#edf0e7] pt-5">
+                  <OrderTimeline order={order} />
+                </div>
+              ) : null}
             </SoftCard>
             <SoftCard className="mt-4 text-center">
               <p className="text-[13px] font-semibold leading-5 text-[#667269]">Bạn sẽ nhận thông báo khi đơn hàng đang được giao</p>
+              {renderNotificationPrompt()}
             </SoftCard>
             <button type="button" onClick={() => setScreen("tracking")} className="mt-4 h-14 w-full rounded-2xl bg-[#f8f6ef] text-[14px] font-black text-[#006b3c]">
               Xem chi tiết đơn hàng
@@ -1670,6 +2271,9 @@ export function RemoteOrderClient({
   function renderTrackingScreen() {
     const order = trackedOrder;
     if (!order) return renderMenuScreen();
+    const lifecycle = getCustomerOrderLifecycle(order);
+    const orderInterrupted = lifecycle.state === "cancelled" || lifecycle.state === "refunded";
+    const statusPillClass = orderInterrupted ? "bg-[#fff1ed] text-[#a33a23]" : "bg-[#edf7ef] text-[#006b3c]";
     const courierLocation = courierLocations[order.id] ?? order.deliveryCourierLocation ?? null;
     return (
       <PhoneFrame>
@@ -1678,7 +2282,7 @@ export function RemoteOrderClient({
             title="Theo dõi đơn hàng"
             onBack={() => setScreen("menu")}
             right={
-              <button type="button" onClick={() => restaurant.hotline && (window.location.href = `tel:${restaurant.hotline}`)} className="grid h-11 w-11 place-items-center rounded-2xl text-[#102017]">
+              <button type="button" onClick={openRestaurantSupport} className="grid h-11 w-11 place-items-center rounded-2xl text-[#102017]">
                 <Headphones size={19} />
               </button>
             }
@@ -1686,14 +2290,34 @@ export function RemoteOrderClient({
           <div className="flex-1 space-y-4 px-5 pb-5">
             <SoftCard>
               <h2 className="text-[17px] font-black text-[#121813]">Đơn hàng {orderShortId(order.id)}</h2>
-              <span className="mt-3 inline-flex rounded-lg bg-[#edf7ef] px-2.5 py-1 text-[11px] font-black text-[#006b3c]">{orderStatusText(order)}</span>
-              <p className="mt-3 text-[12px] font-semibold text-[#6e7a70]">Thời gian dự kiến: {etaMinutes - 5 > 0 ? `${etaMinutes - 5} - ${etaMinutes}` : etaMinutes} phút</p>
-              <div className="mt-5">
-                <OrderProgress order={order} />
+              <span className={`mt-3 inline-flex rounded-lg px-2.5 py-1 text-[11px] font-black ${statusPillClass}`}>{orderStatusText(order)}</span>
+              {renderTrackingSyncHint(order)}
+              {orderInterrupted ? null : (
+                <p className="mt-3 text-[12px] font-semibold text-[#6e7a70]">Thời gian dự kiến: {etaMinutes - 5 > 0 ? `${etaMinutes - 5} - ${etaMinutes}` : etaMinutes} phút</p>
+              )}
+              {orderInterrupted ? null : (
+                <div className="mt-5">
+                  <OrderProgress order={order} />
+                </div>
+              )}
+              <div className="mt-5 border-t border-[#edf0e7] pt-5">
+                <OrderTimeline order={order} />
               </div>
+              {renderClosedOrderActions(order)}
+              {renderNotificationPrompt()}
             </SoftCard>
 
-            {order.fulfillmentType === "DELIVERY" && restaurant.deliveryTrackingEnabled ? (
+            {orderInterrupted ? (
+              <SoftCard>
+                <FlowImage src={orderFlowImageSources.cancelled} alt="Đơn dừng xử lý" className="mb-4 h-[150px]" sizes="390px" />
+                <h3 className="text-[15px] font-black text-[#121813]">Đơn không tiếp tục xử lý</h3>
+                <p className="mt-2 text-[12px] font-semibold leading-5 text-[#6e7a70]">
+                  {lifecycle.state === "refunded"
+                    ? "Quán đã ghi nhận hoàn tiền cho đơn này. Nếu chưa thấy tiền về tài khoản, bạn có thể liên hệ quán để đối soát."
+                    : "Quán chưa thể tiếp tục đơn này. Bạn có thể gọi quán để đổi phương án hoặc đặt lại đơn mới."}
+                </p>
+              </SoftCard>
+            ) : order.fulfillmentType === "DELIVERY" && restaurant.deliveryTrackingEnabled ? (
               <RouteMiniMap
                 origin={{
                   lat: order.restaurant?.storeLat,
@@ -1717,7 +2341,7 @@ export function RemoteOrderClient({
               <SoftCard>
                 <h3 className="text-[15px] font-black text-[#121813]">Đang chuẩn bị món</h3>
                 <p className="mt-2 text-[12px] font-semibold leading-5 text-[#6e7a70]">Quán đang chuẩn bị những món của bạn.</p>
-                <div className="mt-4 h-40 rounded-3xl bg-[radial-gradient(circle_at_25%_30%,#f8d7a1,transparent_24%),radial-gradient(circle_at_76%_35%,#d7ead9,transparent_27%),linear-gradient(135deg,#f8f5ed,#ffffff)]" />
+                <FlowImage src={orderFlowImageSources.preparing} alt="Quán đang chuẩn bị món" className="mt-4 h-40" sizes="390px" />
               </SoftCard>
             )}
 
@@ -1729,7 +2353,10 @@ export function RemoteOrderClient({
                   return (
                     <div key={`${item.menuItem?.name ?? "item"}-${index}`} className="flex items-center gap-3">
                       {matched ? <ProductThumb item={matched} className="h-10 w-10 rounded-xl" /> : <span className="grid h-10 w-10 place-items-center rounded-xl bg-[#f4efe6] text-[#006b3c]"><Coffee size={17} /></span>}
-                      <span className="min-w-0 flex-1 truncate text-[13px] font-black text-[#121813]">{item.menuItem?.name ?? "Món đã đặt"}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-black text-[#121813]">{item.menuItem?.name ?? "Món đã đặt"}</span>
+                        {item.note ? <span className="mt-1 block truncate text-[11px] font-semibold text-[#68746b]">Ghi chú: {item.note}</span> : null}
+                      </span>
                       <span className="text-[12px] font-black text-[#111713]">x{item.quantity}</span>
                       <span className="min-w-[72px] text-right text-[12px] font-black text-[#111713]">{formatVnd(item.price)}</span>
                     </div>
@@ -1739,8 +2366,8 @@ export function RemoteOrderClient({
             </section>
           </div>
           <BottomAction>
-            <PrimaryButton onClick={() => setScreen(getOrderStepIndex(order) >= 3 ? "complete" : "menu")}>
-              {getOrderStepIndex(order) >= 3 ? "Hoàn thành" : "Về trang chủ"}
+            <PrimaryButton onClick={() => setScreen(lifecycle.state === "completed" ? "complete" : "menu")}>
+              {lifecycle.state === "completed" ? "Hoàn thành" : "Về trang chủ"}
             </PrimaryButton>
           </BottomAction>
         </div>
@@ -1763,16 +2390,7 @@ export function RemoteOrderClient({
             }
           />
           <div className="flex-1 space-y-4 px-5 pb-5 text-center">
-            <div className="mx-auto grid h-[210px] w-full place-items-center rounded-[32px] bg-[radial-gradient(circle_at_28%_32%,#e6f1e6_0_26%,transparent_27%),radial-gradient(circle_at_68%_32%,#fff1d8_0_23%,transparent_24%),linear-gradient(180deg,#fbfaf5,#ffffff)]">
-              <div className="flex items-end justify-center gap-5">
-                <span className="grid h-28 w-20 place-items-center rounded-t-full bg-[#006b3c] text-white">
-                  <Truck size={32} />
-                </span>
-                <span className="grid h-24 w-20 place-items-center rounded-t-full bg-[#f7c474] text-[#006b3c]">
-                  <ShoppingBag size={30} />
-                </span>
-              </div>
-            </div>
+            <FlowImage src={orderFlowImageSources.completed} alt="Đơn hàng hoàn tất" className="mx-auto h-[210px] w-full" sizes="390px" />
 
             <SoftCard>
               <h2 className="text-[16px] font-black text-[#121813]">{order ? `Đơn hàng ${orderShortId(order.id)}` : "Đơn hàng của bạn"}</h2>
@@ -1784,7 +2402,7 @@ export function RemoteOrderClient({
               <p className="text-[13px] font-semibold text-[#667269]">Bạn đánh giá thế nào về đơn hàng?</p>
               <div className="mt-4 flex justify-center gap-2">
                 {[1, 2, 3, 4, 5].map((star) => (
-                  <button key={star} type="button" onClick={() => setRating(star)} className="text-[#f59f00]">
+                  <button key={star} type="button" onClick={() => setRating(star)} className="grid h-11 w-11 place-items-center rounded-full text-[#f59f00]">
                     <Star size={26} fill={star <= rating ? "currentColor" : "none"} />
                   </button>
                 ))}

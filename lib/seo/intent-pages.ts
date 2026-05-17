@@ -1,4 +1,5 @@
 import { SEO_INTENT_PAGE_EXPANSIONS } from "@/lib/seo/intent-page-expansions";
+import { sanitizePublicMarketingCopy } from "@/lib/seo/public-copy";
 
 export type SeoIntentFaqItem = {
   question: string;
@@ -794,20 +795,42 @@ export const SEO_INTENT_PAGES: SeoIntentPage[] = [
 function cloneIntentPage(page: SeoIntentPage): SeoIntentPage {
   return {
     ...page,
-    keywords: [...page.keywords],
-    targetQueries: [...page.targetQueries],
-    takeaways: [...page.takeaways],
-    proofPoints: page.proofPoints.map((item) => ({ ...item })),
-    sketch: { ...page.sketch, labels: [...page.sketch.labels] as [string, string, string, string] },
-    sections: page.sections.map((section) => ({
-      ...section,
-      body: [...section.body],
-      bullets: [...section.bullets]
+    title: sanitizePublicMarketingCopy(page.title),
+    description: sanitizePublicMarketingCopy(page.description),
+    eyebrow: sanitizePublicMarketingCopy(page.eyebrow),
+    h1: sanitizePublicMarketingCopy(page.h1),
+    summary: sanitizePublicMarketingCopy(page.summary),
+    keywords: page.keywords.map(sanitizePublicMarketingCopy),
+    targetQueries: page.targetQueries.map(sanitizePublicMarketingCopy),
+    takeaways: page.takeaways.map(sanitizePublicMarketingCopy),
+    proofPoints: page.proofPoints.map((item) => ({
+      label: sanitizePublicMarketingCopy(item.label),
+      value: sanitizePublicMarketingCopy(item.value)
     })),
-    faq: page.faq.map((item) => ({ ...item })),
+    sketch: {
+      title: sanitizePublicMarketingCopy(page.sketch.title),
+      alt: sanitizePublicMarketingCopy(page.sketch.alt),
+      caption: sanitizePublicMarketingCopy(page.sketch.caption),
+      labels: page.sketch.labels.map(sanitizePublicMarketingCopy) as [string, string, string, string]
+    },
+    sections: page.sections.map((section) => ({
+      eyebrow: sanitizePublicMarketingCopy(section.eyebrow),
+      heading: sanitizePublicMarketingCopy(section.heading),
+      body: section.body.map(sanitizePublicMarketingCopy),
+      bullets: section.bullets.map(sanitizePublicMarketingCopy)
+    })),
+    faq: page.faq.map((item) => ({
+      question: sanitizePublicMarketingCopy(item.question),
+      answer: sanitizePublicMarketingCopy(item.answer)
+    })),
     relatedBlogSlugs: [...page.relatedBlogSlugs],
     relatedHubSlugs: [...page.relatedHubSlugs],
-    cta: { ...page.cta }
+    cta: {
+      primaryLabel: sanitizePublicMarketingCopy(page.cta.primaryLabel),
+      primaryPath: page.cta.primaryPath,
+      secondaryLabel: sanitizePublicMarketingCopy(page.cta.secondaryLabel),
+      secondaryPath: page.cta.secondaryPath
+    }
   };
 }
 

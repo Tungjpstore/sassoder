@@ -183,6 +183,7 @@ create table public.table_areas (
 create table public.tables (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
+  branch_id uuid,
   name text not null,
   area text not null default 'Khu chính',
   capacity integer not null default 4 check (capacity >= 1 and capacity <= 50),
@@ -227,6 +228,12 @@ create table public.store_branches (
   delivery_fee_per_km integer not null default 5000,
   pickup_eta_minutes integer not null default 15,
   delivery_eta_minutes integer not null default 45,
+  accepting_delivery boolean not null default true,
+  delivery_paused boolean not null default false,
+  temporarily_closed boolean not null default false,
+  delivery_opening_time time,
+  delivery_closing_time time,
+  delivery_availability_note text,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -242,6 +249,9 @@ create table public.store_branches (
   ),
   unique (restaurant_id, name)
 );
+
+alter table public.tables
+  add constraint tables_branch_id_fkey foreign key (branch_id) references public.store_branches(id) on delete set null;
 
 create table public.delivery_couriers (
   id uuid primary key default gen_random_uuid(),
@@ -281,6 +291,8 @@ create table public.orders (
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
   table_id uuid references public.tables(id) on delete restrict,
   bill_id uuid,
+  branch_id uuid references public.store_branches(id) on delete set null,
+  branch_assignment_source text,
   fulfillment_type text not null default 'DINE_IN',
   status public.order_status not null default 'pending',
   subtotal integer not null check (subtotal >= 0),
@@ -353,6 +365,10 @@ create table public.orders (
   constraint orders_delivery_address_required check (fulfillment_type <> 'DELIVERY' or delivery_address is not null),
   constraint orders_discount_amount_range check (discount_amount >= 0 and discount_amount <= subtotal),
   constraint orders_total_matches_discount check (total = subtotal - discount_amount),
+  constraint orders_branch_assignment_source_check check (
+    branch_assignment_source is null
+    or branch_assignment_source in ('delivery_quote', 'single_branch', 'primary_branch', 'manual', 'legacy_backfill')
+  ),
   constraint orders_promotion_code_format check (promotion_code is null or promotion_code ~ '^[A-Z0-9_-]{3,32}$')
 );
 
@@ -404,6 +420,7 @@ create table public.promotions (
   restaurant_id uuid not null references public.restaurants(id) on delete cascade,
   name text not null,
   code text not null,
+  discount_scope text not null default 'ORDER',
   discount_type text not null default 'PERCENT',
   discount_value integer not null check (discount_value > 0),
   min_order_amount integer not null default 0 check (min_order_amount >= 0),
@@ -413,6 +430,7 @@ create table public.promotions (
   show_on_customer_menu boolean not null default true,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
+  constraint promotions_discount_scope_check check (discount_scope in ('ORDER', 'DELIVERY_FEE')),
   constraint promotions_discount_type_check check (discount_type in ('PERCENT', 'FIXED')),
   constraint promotions_percent_range check (discount_type <> 'PERCENT' or discount_value between 1 and 100),
   constraint promotions_code_format check (code ~ '^[A-Z0-9_-]{3,32}$'),
@@ -556,6 +574,9 @@ create table public.reservations (
   payment_method public.payment_method,
   customer_note text,
   internal_note text,
+  preferred_table_area_id uuid references public.table_areas(id) on delete set null,
+  preferred_seating_zone text,
+  preferred_table_kind text,
   source text not null default 'PUBLIC',
   access_token_hash text not null,
   idempotency_key text,
@@ -575,7 +596,9 @@ create table public.reservations (
   constraint reservations_deposit_status_check check (deposit_status in ('none','required','waiting_payment','waiting_confirm','paid','refundable','forfeited','refunded')),
   constraint reservations_deposit_amount_range check (deposit_required_amount >= 0 and deposit_paid_amount >= 0 and deposit_paid_amount <= deposit_required_amount),
   constraint reservations_customer_phone_format check (customer_phone ~ '^[0-9+() .-]{6,24}$'),
-  constraint reservations_customer_email_format check (customer_email is null or customer_email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$')
+  constraint reservations_customer_email_format check (customer_email is null or customer_email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
+  constraint reservations_preferred_seating_zone_check check (preferred_seating_zone is null or preferred_seating_zone in ('indoor','outdoor','mixed')),
+  constraint reservations_preferred_table_kind_check check (preferred_table_kind is null or preferred_table_kind in ('standard','vip','bar','community'))
 );
 
 create table public.reservation_table_locks (
@@ -838,6 +861,9 @@ create index users_restaurant_id_idx on public.users (restaurant_id);
 create index users_permission_profile_idx on public.users (restaurant_id, permission_profile);
 create index table_areas_restaurant_sort_idx on public.table_areas (restaurant_id, is_active, sort_order, name);
 create index tables_restaurant_id_idx on public.tables (restaurant_id);
+create index tables_restaurant_branch_idx
+  on public.tables (restaurant_id, branch_id, name)
+  where branch_id is not null;
 create index tables_restaurant_qr_enforced_idx on public.tables (restaurant_id, qr_token_enforced, qr_enabled);
 create index tables_restaurant_bookable_idx
   on public.tables (restaurant_id, is_bookable, is_hidden, is_under_maintenance, capacity, reservation_priority, name);
@@ -861,6 +887,12 @@ create index orders_bill_id_idx on public.orders (bill_id);
 create index orders_restaurant_table_created_idx on public.orders (restaurant_id, table_id, created_at desc);
 create index orders_restaurant_table_status_due_idx on public.orders (restaurant_id, table_id, status, service_due_at);
 create index orders_restaurant_fulfillment_created_idx on public.orders (restaurant_id, fulfillment_type, created_at desc);
+create index orders_restaurant_branch_created_idx
+  on public.orders (restaurant_id, branch_id, created_at desc)
+  where branch_id is not null;
+create index orders_restaurant_branch_status_created_idx
+  on public.orders (restaurant_id, branch_id, status, created_at desc)
+  where branch_id is not null;
 create index orders_restaurant_delivery_status_created_idx
   on public.orders (restaurant_id, delivery_status, created_at desc)
   where fulfillment_type = 'DELIVERY';
@@ -959,6 +991,8 @@ create index reservations_restaurant_phone_created_idx
 create index reservations_restaurant_checked_in_idx
   on public.reservations (restaurant_id, status, checked_in_at desc)
   where checked_in_at is not null;
+create index reservations_restaurant_preference_idx
+  on public.reservations (restaurant_id, preferred_table_area_id, preferred_seating_zone, preferred_table_kind, starts_at desc);
 create unique index reservations_restaurant_idempotency_idx
   on public.reservations (restaurant_id, idempotency_key)
   where idempotency_key is not null;

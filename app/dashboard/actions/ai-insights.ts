@@ -25,4 +25,5 @@ export async function updateAiOperationInsightStatusAction(formData: FormData) {
   });
 
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/ai-ops");
 }

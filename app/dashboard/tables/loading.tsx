@@ -1,6 +1,6 @@
 export default function AdminTablesLoading() {
   return (
-    <main className="stitch-admin admin-shell-bg dashboard-density min-h-screen px-3 py-4 text-[var(--foreground)] md:px-6 lg:pl-80">
+    <main className="stitch-admin admin-shell-bg dashboard-density dashboard-route-fallback">
       <section className="mx-auto grid w-full max-w-[1500px] gap-3">
         <div className="admin-hero-panel rounded-[14px] p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">

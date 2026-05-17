@@ -134,11 +134,13 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
             <Link href="/">Trang chủ</Link>
             <Link href="/giai-phap">Giải pháp</Link>
             <Link href="/so-sanh">So sánh</Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
-          <Link className="intent-nav-cta" href="/pricing">
-            Xem gói
+          <Link className="intent-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -159,8 +161,8 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
                 {page.cta.primaryLabel}
                 <ArrowRight size={16} />
               </Link>
-              <Link href="/pricing" className="intent-button intent-button-soft">
-                Xem bảng giá
+              <Link href="/demo" className="intent-button intent-button-soft">
+                Xem demo
               </Link>
             </div>
           </div>
@@ -176,7 +178,7 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
         <div className="intent-container intent-answer-grid">
           <article>
             <Search size={20} />
-            <span>Answer-first summary</span>
+            <span>Tóm tắt nhanh</span>
             <h2 id="intent-answer-heading">{page.title}</h2>
             <p>{page.description}</p>
           </article>
@@ -268,9 +270,9 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
 
             <div className="intent-side-card">
               <ShieldCheck size={20} />
-              <span>GEO readiness</span>
-              <h2>Dễ trích dẫn trong AI search</h2>
-              <p>Có tóm tắt đầu trang, FAQ schema, Service schema, truy vấn mục tiêu và liên kết nội bộ theo cụm chủ đề.</p>
+              <span>Nội dung dễ tham khảo</span>
+              <h2>Đọc nhanh nhưng vẫn đủ ngữ cảnh triển khai</h2>
+              <p>Có tóm tắt đầu trang, câu hỏi thường gặp, mô tả dịch vụ rõ và liên kết liên quan theo từng cụm nhu cầu.</p>
             </div>
           </aside>
         </div>
@@ -279,11 +281,11 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
       <section className="intent-related">
         <div className="intent-container">
           <div className="intent-related-head">
-            <span>Internal links</span>
-            <h2>Đọc tiếp theo cụm chủ đề để Google và AI hiểu LogiVN sâu hơn</h2>
+            <span>Đọc tiếp</span>
+            <h2>Đọc tiếp theo cụm chủ đề để hiểu LogiVN sâu hơn</h2>
             <p>
-              Những liên kết này nối trang giải pháp với feature pages, blog, topic hub và pricing để giảm crawl depth và
-              tăng khả năng chuyển đổi.
+              Những liên kết này nối trang giải pháp với tính năng, blog, nhóm bài viết và bảng giá để chủ quán đi tiếp
+              theo đúng nhu cầu đang cân nhắc.
             </p>
           </div>
           <div className="intent-related-grid">
@@ -316,6 +318,9 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
             <Link href="/pricing" className="intent-button intent-button-light">
               So sánh gói
             </Link>
+            <Link href="/waitlist" className="intent-button intent-button-light">
+              Pilot có hướng dẫn
+            </Link>
             <Link href="/pricing" className="intent-button intent-button-orange">
               Chọn gói phù hợp
               <ArrowRight size={16} />
@@ -326,8 +331,8 @@ export default async function SeoIntentLandingPage({ params }: { params: Promise
 
       <footer className="intent-footer">
         <div className="intent-container">
-          Trang giải pháp LogiVN, cập nhật {page.updatedAt}. Nội dung phục vụ SEO, GEO và quyết định triển khai thực tế
-          cho quán cafe, trà sữa, quán ăn và nhà hàng Việt.
+          Trang giải pháp LogiVN, cập nhật {page.updatedAt}. Nội dung phục vụ quyết định triển khai thực tế cho quán cafe,
+          trà sữa, quán ăn và nhà hàng Việt.
         </div>
       </footer>
     </main>

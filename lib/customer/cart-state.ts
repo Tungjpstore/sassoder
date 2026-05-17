@@ -12,6 +12,7 @@ export type DineInCartItems = Record<string, DineInCartItem>;
 export type RemoteCartLine = {
   itemId: string;
   quantity: number;
+  note?: string;
 };
 
 export type RemoteCart = Record<string, RemoteCartLine>;
@@ -23,15 +24,28 @@ export type RemoteCartSnapshot = {
 
 type ReorderableOrderItem = {
   quantity: number;
+  note?: string | null;
   menuItem: { id?: string | null } | null;
 };
 
 const REMOTE_CART_MAX_QUANTITY_PER_ITEM = 50;
+const REMOTE_CART_MAX_NOTE_LENGTH = 200;
 
 function normalizeRemoteQuantity(value: unknown) {
   const quantity = Math.floor(Number(value));
   if (!Number.isFinite(quantity) || quantity <= 0) return 0;
   return Math.min(quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM);
+}
+
+function normalizeRemoteNote(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const note = value.trim().slice(0, REMOTE_CART_MAX_NOTE_LENGTH);
+  return note || undefined;
+}
+
+function mergeRemoteNotes(first?: string, second?: string) {
+  const notes = [first, second].map((note) => normalizeRemoteNote(note)).filter(Boolean) as string[];
+  return notes.length ? [...new Set(notes)].join("; ").slice(0, REMOTE_CART_MAX_NOTE_LENGTH) : undefined;
 }
 
 function remoteCartFromLines(lines: unknown[]) {
@@ -42,9 +56,11 @@ function remoteCartFromLines(lines: unknown[]) {
     if (typeof record.itemId !== "string") continue;
     const quantity = normalizeRemoteQuantity(record.quantity);
     if (quantity <= 0) continue;
+    const note = mergeRemoteNotes(cart[record.itemId]?.note, record.note);
     cart[record.itemId] = {
       itemId: record.itemId,
-      quantity: Math.min((cart[record.itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM)
+      quantity: Math.min((cart[record.itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM),
+      ...(note ? { note } : {})
     };
   }
   return cart;
@@ -108,7 +124,23 @@ export function updateRemoteCartQuantity(cart: RemoteCart, itemId: string, delta
 
   return {
     ...cart,
-    [itemId]: { itemId, quantity: nextQuantity }
+    [itemId]: { itemId, quantity: nextQuantity, ...(currentLine?.note ? { note: currentLine.note } : {}) }
+  };
+}
+
+export function setRemoteCartItemNote(cart: RemoteCart, itemId: string, note: string): RemoteCart {
+  const currentLine = cart[itemId];
+  if (!currentLine) return cart;
+
+  const normalizedNote = normalizeRemoteNote(note);
+  if ((currentLine.note ?? "") === (normalizedNote ?? "")) return cart;
+
+  return {
+    ...cart,
+    [itemId]: {
+      ...currentLine,
+      ...(normalizedNote ? { note: normalizedNote } : { note: undefined })
+    }
   };
 }
 
@@ -123,10 +155,12 @@ export function normalizeRemoteCart(cart: RemoteCart, availableItemIds?: Iterabl
 
     const quantity = normalizeRemoteQuantity(line.quantity);
     if (quantity <= 0) continue;
+    const note = mergeRemoteNotes(nextCart[itemId]?.note, line.note);
 
     nextCart[itemId] = {
       itemId,
-      quantity: Math.min((nextCart[itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM)
+      quantity: Math.min((nextCart[itemId]?.quantity ?? 0) + quantity, REMOTE_CART_MAX_QUANTITY_PER_ITEM),
+      ...(note ? { note } : {})
     };
   }
 
@@ -171,7 +205,8 @@ export function buildRemoteCartFromOrderItems(items?: readonly ReorderableOrderI
 
     nextCart[itemId] = {
       itemId,
-      quantity: (nextCart[itemId]?.quantity ?? 0) + item.quantity
+      quantity: (nextCart[itemId]?.quantity ?? 0) + item.quantity,
+      note: mergeRemoteNotes(nextCart[itemId]?.note, item.note ?? undefined)
     };
   }
 

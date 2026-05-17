@@ -2,7 +2,7 @@ import { AdminShell } from "@/components/dashboard/app-shell";
 import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { buildTenantUrl } from "@/lib/tenant-domain";
-import { getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
+import { getReservationAnalytics, getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
 import { listTablesWithStatus } from "@/services/table-service";
 
 export const dynamic = "force-dynamic";
@@ -15,10 +15,11 @@ function todayInputValue() {
 
 export default async function ReservationsPage() {
   const { session, entitlement } = await requireDashboardAccess("reservations");
-  const [settings, reservations, tables] = await Promise.all([
+  const [settings, reservations, tables, analytics] = await Promise.all([
     getReservationSettings(session.restaurantId),
     listReservationsForRestaurant(session.restaurantId, todayInputValue()),
-    listTablesWithStatus(session.restaurantId)
+    listTablesWithStatus(session.restaurantId),
+    getReservationAnalytics(session.restaurantId)
   ]);
 
   return (
@@ -38,14 +39,23 @@ export default async function ReservationsPage() {
           name: table.name,
           area: table.area,
           capacity: table.capacity,
+          tableAreaId: table.table_area_id ?? null,
           floorLabel: table.floor_label ?? null,
           seatingZone: table.seating_zone ?? null,
           tableKind: table.table_kind ?? null,
           isBookable: table.is_bookable !== false,
           isHidden: Boolean(table.is_hidden),
-          isUnderMaintenance: Boolean(table.is_under_maintenance)
+          isUnderMaintenance: Boolean(table.is_under_maintenance),
+          qrEnabled: table.qr_enabled,
+          qrToken: table.qr_token ?? null,
+          operationalStatus: table.status,
+          activeOrderCount: table.activeOrderCount,
+          activeBillCount: table.activeBillCount,
+          activeReservationCount: table.activeReservationCount,
+          unpaidTotal: table.unpaidTotal
         }))}
         publicUrl={buildTenantUrl(settings.slug, "/reserve")}
+        analytics={analytics}
       />
     </AdminShell>
   );

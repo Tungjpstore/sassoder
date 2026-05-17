@@ -85,6 +85,10 @@ function extractIntentPages(source) {
   });
 }
 
+function extractRegistryRoutes(source) {
+  return [...source.matchAll(/path:\s*"([^"]+)"/g)].map((match) => match[1]);
+}
+
 function createCheck({ id, area, status, evidence, action }) {
   return { id, area, status, evidence, action };
 }
@@ -138,6 +142,8 @@ async function main() {
   const intentSource = await readText("lib/seo/intent-pages.ts");
   const intentExpansionSource = await readText("lib/seo/intent-page-expansions.ts");
   const intentExpansionBatch2Source = await readText("lib/seo/intent-page-expansion-batch-2.ts");
+  const comparisonSource = await readText("lib/seo/comparison-pages.ts");
+  const localSource = await readText("lib/seo/local-pages.ts");
   const combinedIntentSource = `${intentSource}\n${intentExpansionSource}\n${intentExpansionBatch2Source}`;
   const solutionIndex = await readText("app/giai-phap/page.tsx");
   const intentRoute = await readText("app/giai-phap/[slug]/page.tsx");
@@ -154,8 +160,10 @@ async function main() {
 
   const configRoutes = extractConfigRoutes(config);
   const pages = extractIntentPages(combinedIntentSource);
+  const comparisonRoutes = extractRegistryRoutes(comparisonSource);
+  const localRoutes = extractRegistryRoutes(localSource);
   const blogRoutes = extractBlogRoutes(blog);
-  const expectedPublicRoutes = Array.from(new Set([...configRoutes, ...pages.map((page) => page.path), ...blogRoutes])).sort();
+  const expectedPublicRoutes = Array.from(new Set([...configRoutes, ...pages.map((page) => page.path), ...comparisonRoutes, ...localRoutes, ...blogRoutes])).sort();
   const week5Pages = pages.filter((page) => page.updatedAt >= "2026-05-16");
   const duplicateTitles = !unique(pages.map((page) => page.title));
   const duplicateDescriptions = !unique(pages.map((page) => page.description));
@@ -209,8 +217,12 @@ async function main() {
       status:
         sitemap.includes("SEO_PUBLIC_ROUTES") &&
         sitemap.includes("getAllSeoIntentPages") &&
+        sitemap.includes("getAllComparisonPages") &&
+        sitemap.includes("getAllLocalSeoPages") &&
         llms.includes("Giải pháp LogiVN") &&
-        llms.includes("Trang giải pháp theo nhu cầu")
+        llms.includes("Trang giải pháp theo nhu cầu") &&
+        llms.includes("Trang so sánh phần mềm") &&
+        llms.includes("Trang địa phương")
           ? "pass"
           : "fail",
       evidence: `${expectedPublicRoutes.length} expected public routes are represented by shared registries`,
@@ -219,9 +231,20 @@ async function main() {
     createCheck({
       id: "internal-linking",
       area: "internal-linking",
-      status: landing.includes('href="/giai-phap"') && blogIndex.includes('href="/giai-phap"') && intentRoute.includes('href="/giai-phap"') ? "pass" : "fail",
-      evidence: "landing, blog and intent detail navigation link to /giai-phap",
-      action: "Keep the solution hub linked from high-authority public pages to reduce crawl depth."
+      status:
+        landing.includes('href="/giai-phap"') &&
+        landing.includes('href="/so-sanh"') &&
+        landing.includes('href="/dia-phuong"') &&
+        blogIndex.includes('href="/giai-phap"') &&
+        blogIndex.includes('href="/so-sanh"') &&
+        blogIndex.includes('href="/dia-phuong"') &&
+        intentRoute.includes('href="/giai-phap"') &&
+        intentRoute.includes('href="/so-sanh"') &&
+        intentRoute.includes('href="/dia-phuong"')
+          ? "pass"
+          : "fail",
+      evidence: "landing, blog and intent detail navigation link to /giai-phap, /so-sanh and /dia-phuong",
+      action: "Keep solution, comparison and local hubs linked from high-authority public pages to reduce crawl depth."
     }),
     createCheck({
       id: "geo-extractability",
@@ -276,6 +299,8 @@ async function main() {
       intentPages: pages.length,
       week5IntentPages: week5Pages.length,
       blogUrls: blogRoutes.length,
+      comparisonUrls: comparisonRoutes.length,
+      localUrls: localRoutes.length,
       solutionIndexWired: solutionIndex.includes("getAllSeoIntentPages") && configRoutes.includes("/giai-phap"),
       gscLoggedUrls: loggedInspectionUrls.length,
       gscMissingLogUrls: missingGscLogUrls.length

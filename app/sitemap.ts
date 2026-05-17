@@ -3,6 +3,7 @@ import { getAllBlogPosts, getAllBlogTopicHubs, getBlogPath, getBlogTopicHubPath 
 import { getAllComparisonPages } from "@/lib/seo/comparison-pages";
 import { SEO_PUBLIC_ROUTES, absoluteSeoUrl } from "@/lib/seo/config";
 import { getAllSeoIntentPages } from "@/lib/seo/intent-pages";
+import { getAllLocalSeoPages } from "@/lib/seo/local-pages";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const lastModified = new Date();
@@ -33,6 +34,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: page.priority
     })),
     ...getAllComparisonPages().map((page) => ({
+      url: absoluteSeoUrl(page.path),
+      lastModified: new Date(page.updatedAt),
+      changeFrequency: page.changeFrequency,
+      priority: page.priority
+    })),
+    ...getAllLocalSeoPages().map((page) => ({
       url: absoluteSeoUrl(page.path),
       lastModified: new Date(page.updatedAt),
       changeFrequency: page.changeFrequency,

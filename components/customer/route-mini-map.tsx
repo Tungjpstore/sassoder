@@ -6,10 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigation, Route, Store, Truck } from "lucide-react";
 import { MapLayerControl } from "@/components/maps/map-layer-control";
 import { MapLegend, MapMetricStrip, MapScaleBar, MapStatusPill } from "@/components/maps/map-ui-kit";
+import { createLogiVNMarkerElement } from "@/components/maps/logivn-marker";
+import { fitMapToPoints, normalizeRoutePoints, syncRoutePreviewLayer, toLngLat, type MapPoint } from "@/components/maps/route-preview-layer";
 import { buildDirectionsHref } from "@/lib/geolocation/directions";
 import { applyClientMapLayer, getDefaultClientMapStyle, resolveClientMapStyle, type ClientMapLayerMode } from "@/lib/geolocation/map-style";
 import { deliveryStatusLabel } from "@/lib/labels";
-import type { GeoJSONSource, Map, Marker } from "maplibre-gl";
+import type { Map, Marker } from "maplibre-gl";
 
 type Coordinate = { lat: number | null | undefined; lng: number | null | undefined };
 type MapLibreModule = typeof import("maplibre-gl");
@@ -23,94 +25,6 @@ function isValidCoordinate(point: Coordinate) {
     typeof point.lng === "number" &&
     Number.isFinite(point.lng)
   );
-}
-
-function normalizeCoordinates({
-  origin,
-  destination,
-  route
-}: {
-  origin: Coordinate;
-  destination: Coordinate;
-  route?: number[][] | null;
-}) {
-  const coordinates =
-    route && route.length >= 2
-      ? route
-          .map((point) => ({ lng: Number(point[0]), lat: Number(point[1]) }))
-          .filter(isValidCoordinate)
-      : [];
-
-  if (coordinates.length >= 2) return coordinates;
-  if (isValidCoordinate(origin) && isValidCoordinate(destination)) {
-    return [
-      { lat: Number(origin.lat), lng: Number(origin.lng) },
-      { lat: Number(destination.lat), lng: Number(destination.lng) }
-    ];
-  }
-  return [];
-}
-
-function toLngLat(point: { lat: number; lng: number }): [number, number] {
-  return [point.lng, point.lat];
-}
-
-function buildRouteFeature(points: Array<{ lat: number; lng: number }>) {
-  return {
-    type: "Feature" as const,
-    properties: {},
-    geometry: {
-      type: "LineString" as const,
-      coordinates: points.map(toLngLat)
-    }
-  };
-}
-
-function syncRouteLayer(map: Map, points: Array<{ lat: number; lng: number }>) {
-  const source = map.getSource("logivn-route-mini-line") as GeoJSONSource | undefined;
-  const data = buildRouteFeature(points);
-  if (source) {
-    source.setData(data);
-    return;
-  }
-
-  map.addSource("logivn-route-mini-line", {
-    type: "geojson",
-    data
-  });
-  map.addLayer({
-    id: "logivn-route-mini-line-shadow",
-    type: "line",
-    source: "logivn-route-mini-line",
-    paint: {
-      "line-color": "#ffffff",
-      "line-opacity": 0.9,
-      "line-width": 7
-    }
-  });
-  map.addLayer({
-    id: "logivn-route-mini-line-main",
-    type: "line",
-    source: "logivn-route-mini-line",
-    paint: {
-      "line-color": "#0F4D3A",
-      "line-opacity": 0.95,
-      "line-width": 3.4
-    }
-  });
-}
-
-function createMarkerElement(label: string, tone: "store" | "customer" | "courier") {
-  const element = document.createElement("div");
-  const palette = {
-    store: "background:#0F4D3A;color:white;",
-    customer: "background:#F28C28;color:white;",
-    courier: "background:#12251C;color:white;"
-  }[tone];
-  element.className = "grid h-9 w-9 place-items-center rounded-2xl border border-white/80 shadow-[0_14px_30px_rgba(15,77,58,0.24)]";
-  element.setAttribute("style", palette);
-  element.innerHTML = `<span style="font-size:11px;font-weight:900;">${label}</span>`;
-  return element;
 }
 
 function clearMarkers(markers: Marker[]) {
@@ -161,7 +75,7 @@ export function RouteMiniMap({
   const destinationLng = destination.lng;
   const points = useMemo(
     () =>
-      normalizeCoordinates({
+      normalizeRoutePoints({
         origin: { lat: originLat, lng: originLng },
         destination: { lat: destinationLat, lng: destinationLng },
         route
@@ -233,29 +147,26 @@ export function RouteMiniMap({
     const maplibre = maplibreRef.current;
     if (!map || !maplibre || !mapReady || points.length < 2 || !map.isStyleLoaded()) return;
 
-    syncRouteLayer(map, points);
+    syncRoutePreviewLayer(map, points, { sourceId: "logivn-route-mini-line" });
     clearMarkers(markerRefs.current);
 
     const nextMarkers = [
-      new maplibre.Marker({ element: createMarkerElement("Q", "store") }).setLngLat(toLngLat(points[0])).addTo(map),
-      new maplibre.Marker({ element: createMarkerElement("K", "customer") }).setLngLat(toLngLat(points[points.length - 1])).addTo(map)
+      new maplibre.Marker({ element: createLogiVNMarkerElement({ label: "Q", tone: "store", title: originLabel }) }).setLngLat(toLngLat(points[0])).addTo(map),
+      new maplibre.Marker({ element: createLogiVNMarkerElement({ label: "K", tone: "customer", title: destinationLabel }) }).setLngLat(toLngLat(points[points.length - 1])).addTo(map)
     ];
 
     if (hasCourierLocation) {
       nextMarkers.push(
-        new maplibre.Marker({ element: createMarkerElement("T", "courier") })
+        new maplibre.Marker({ element: createLogiVNMarkerElement({ label: "T", tone: "courier", title: "Tài xế" }) })
           .setLngLat([Number(courierLocation.lng), Number(courierLocation.lat)])
           .addTo(map)
       );
     }
 
     markerRefs.current = nextMarkers;
-    const first = toLngLat(points[0]);
-    const bounds = points
-      .concat(hasCourierLocation ? [{ lat: Number(courierLocation.lat), lng: Number(courierLocation.lng) }] : [])
-      .reduce((nextBounds, point) => nextBounds.extend(toLngLat(point)), new maplibre.LngLatBounds(first, first));
-    map.fitBounds(bounds, { duration: 420, maxZoom: 15, padding: 42 });
-  }, [courierKey, hasCourierLocation, mapReady, points, routePointsKey, styleRevision, courierLocation]);
+    const fitPoints: MapPoint[] = points.concat(hasCourierLocation ? [{ lat: Number(courierLocation.lat), lng: Number(courierLocation.lng) }] : []);
+    fitMapToPoints(maplibre, map, fitPoints, { duration: 420, maxZoom: 15, padding: 42 });
+  }, [courierKey, destinationLabel, hasCourierLocation, mapReady, originLabel, points, routePointsKey, styleRevision, courierLocation]);
 
   if (points.length < 2) {
     return (

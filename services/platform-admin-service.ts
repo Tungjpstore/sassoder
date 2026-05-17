@@ -182,6 +182,42 @@ type AiUsageSnapshotRow = {
   created_at: string;
 };
 
+type AiMorningBriefSnapshotRow = {
+  restaurant_id: string;
+  restaurant_name: string;
+  brief_date: string;
+  channel: "dashboard" | "email";
+  status: "generated" | "sent" | "skipped" | "failed";
+  health_score: number;
+  summary: string;
+  insight_count: number;
+  critical_count: number;
+  warning_count: number;
+  opportunity_count: number;
+  recipient_emails: string[];
+  action_items: unknown;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+};
+
+type AiBranchInsightSnapshotRow = {
+  id: string;
+  restaurant_id: string;
+  branch_id: string | null;
+  kind: string;
+  severity: "critical" | "warning" | "opportunity" | "info";
+  status: "active" | "seen" | "dismissed" | "resolved" | "expired";
+  title: string;
+  action: string;
+  metric_label: string | null;
+  metric_value: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+  restaurant?: { name: string; slug: string } | { name: string; slug: string }[] | null;
+  branch?: { name: string } | { name: string }[] | null;
+};
+
 type MapProviderSnapshotRow = {
   provider: string;
   operation: string;
@@ -405,13 +441,13 @@ const missionControlCronJobs: CronJobHealth[] = [
   },
   {
     key: "reservations-expire",
-    name: "Expire reservation holds",
+    name: "Reservation lifecycle cleanup",
     path: "/api/cron/reservations/expire",
-    schedule: "0 2 * * *",
+    schedule: "*/15 * * * *",
     status: "needs_config",
     guard: "CRON_SECRET",
     owner: "Ops",
-    note: "Dọn giữ bàn hết hạn để giảm overbooking."
+    note: "Dọn giữ bàn hết hạn và tự đánh dấu no-show sau thời gian trễ hẹn."
   },
   {
     key: "subscriptions",
@@ -605,6 +641,18 @@ function isMissingSchemaError(error: { code?: string; message?: string } | null 
   );
 }
 
+function safeMorningBriefActionItems(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+    .map((item) => ({
+      title: typeof item.title === "string" ? item.title : "Action item",
+      severity: typeof item.severity === "string" ? item.severity : "info",
+      action: typeof item.action === "string" ? item.action : ""
+    }))
+    .slice(0, 3);
+}
+
 async function countRows(supabase: any, table: string, warnings: string[], build?: (query: any) => any) {
   let query = supabase.from(table).select("id", { count: "exact", head: true });
   if (build) query = build(query);
@@ -731,7 +779,11 @@ function buildContentSurfaces({
   ];
 }
 
-function summarizeAiControl(rows: AiUsageSnapshotRow[]) {
+function summarizeAiControl(
+  rows: AiUsageSnapshotRow[],
+  morningBriefRows: AiMorningBriefSnapshotRow[] = [],
+  branchInsightRows: AiBranchInsightSnapshotRow[] = []
+) {
   const successes = rows.filter((row) => row.status === "success").length;
   const failures = rows.filter((row) => row.status === "failed").length;
   const blocked = rows.filter((row) => row.status === "blocked").length;
@@ -776,6 +828,63 @@ function summarizeAiControl(rows: AiUsageSnapshotRow[]) {
       tokens: group.tokens,
       models: [...group.models].slice(0, 4)
     })),
+    morningBriefs: {
+      windowDays: 7,
+      runs: morningBriefRows.length,
+      generated: morningBriefRows.filter((row) => row.channel === "dashboard" && row.status === "generated").length,
+      sent: morningBriefRows.filter((row) => row.status === "sent").length,
+      skipped: morningBriefRows.filter((row) => row.status === "skipped").length,
+      failed: morningBriefRows.filter((row) => row.status === "failed").length,
+      averageHealth: average(morningBriefRows.map((row) => row.health_score)),
+      latestAt: morningBriefRows[0]?.created_at ?? null,
+      recent: morningBriefRows.slice(0, 8).map((row) => ({
+        restaurantId: row.restaurant_id,
+        restaurantName: row.restaurant_name,
+        briefDate: row.brief_date,
+        channel: row.channel,
+        status: row.status,
+        healthScore: row.health_score,
+        summary: row.summary,
+        insights: row.insight_count,
+        critical: row.critical_count,
+        warning: row.warning_count,
+        opportunity: row.opportunity_count,
+        recipients: row.recipient_emails ?? [],
+        actions: safeMorningBriefActionItems(row.action_items),
+        error: row.error_message,
+        createdAt: row.created_at,
+        sentAt: row.sent_at
+      }))
+    },
+    branchInsights: {
+      windowDays: 7,
+      insights: branchInsightRows.length,
+      active: branchInsightRows.filter((row) => row.status === "active" || row.status === "seen").length,
+      critical: branchInsightRows.filter((row) => row.severity === "critical").length,
+      warning: branchInsightRows.filter((row) => row.severity === "warning").length,
+      restaurants: new Set(branchInsightRows.map((row) => row.restaurant_id)).size,
+      branches: new Set(branchInsightRows.map((row) => row.branch_id).filter(Boolean)).size,
+      latestAt: branchInsightRows[0]?.last_seen_at ?? branchInsightRows[0]?.created_at ?? null,
+      recent: branchInsightRows.slice(0, 8).map((row) => {
+        const restaurant = firstOrNull(row.restaurant);
+        const branch = firstOrNull(row.branch);
+        return {
+          id: row.id,
+          restaurantId: row.restaurant_id,
+          restaurantName: restaurant?.name ?? "Unknown restaurant",
+          restaurantSlug: restaurant?.slug ?? "",
+          branchId: row.branch_id,
+          branchName: branch?.name ?? "Chi nhánh",
+          kind: row.kind,
+          severity: row.severity,
+          status: row.status,
+          title: row.title,
+          action: row.action,
+          metric: row.metric_label || row.metric_value ? `${row.metric_label ?? "Metric"}: ${row.metric_value ?? "--"}` : null,
+          lastSeenAt: row.last_seen_at ?? row.created_at
+        };
+      })
+    },
     routing: {
       ownerProvider: process.env.AI_OWNER_PROVIDER || process.env.COPILOTKIT_PROVIDER || "qwen",
       customerProvider: process.env.AI_CUSTOMER_PROVIDER || "qwen",
@@ -2067,6 +2176,7 @@ async function readPlatformAdminSnapshot() {
   const { url: supabaseUrl } = getSupabaseBrowserEnv();
   const warnings: string[] = [];
   const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const [
     restaurants,
@@ -2194,7 +2304,7 @@ async function readPlatformAdminSnapshot() {
     countRows(supabase, "upgrade_events", warnings)
   ]);
 
-  const [aiUsageRows, mapProviderLogs, mapCacheLogs, deliveryQuoteLogs, cronRunRows] = await Promise.all([
+  const [aiUsageRows, morningBriefRows, branchInsightRows, mapProviderLogs, mapCacheLogs, deliveryQuoteLogs, cronRunRows] = await Promise.all([
     safeData<AiUsageSnapshotRow[]>(
       "ai_usage_logs_recent",
       supabase
@@ -2203,6 +2313,30 @@ async function readPlatformAdminSnapshot() {
         .gte("created_at", since24h)
         .order("created_at", { ascending: false })
         .limit(2000),
+      [],
+      warnings
+    ),
+    safeData<AiMorningBriefSnapshotRow[]>(
+      "ai_morning_brief_runs_recent",
+      supabase
+        .from("ai_morning_brief_runs")
+        .select("restaurant_id,restaurant_name,brief_date,channel,status,health_score,summary,insight_count,critical_count,warning_count,opportunity_count,recipient_emails,action_items,error_message,sent_at,created_at")
+        .gte("created_at", since7d)
+        .order("created_at", { ascending: false })
+        .limit(500),
+      [],
+      warnings
+    ),
+    safeData<AiBranchInsightSnapshotRow[]>(
+      "ai_operation_insights_branch_recent",
+      supabase
+        .from("ai_operation_insights")
+        .select("id,restaurant_id,branch_id,kind,severity,status,title,action,metric_label,metric_value,last_seen_at,created_at,restaurant:restaurants(name,slug),branch:store_branches(name)")
+        .eq("source", "ai_ops")
+        .not("branch_id", "is", null)
+        .gte("last_seen_at", since7d)
+        .order("last_seen_at", { ascending: false })
+        .limit(500),
       [],
       warnings
     ),
@@ -2305,7 +2439,7 @@ async function readPlatformAdminSnapshot() {
 
   const settings = normalizeSettingRows(settingRows);
   const contentSurfaces = buildContentSurfaces({ settings, effectivePlans, billingV2Available, appUrl });
-  const aiControl = summarizeAiControl(aiUsageRows);
+  const aiControl = summarizeAiControl(aiUsageRows, morningBriefRows, branchInsightRows);
   const mapControl = summarizeMapControl({ providerLogs: mapProviderLogs, cacheLogs: mapCacheLogs, quoteLogs: deliveryQuoteLogs });
   const integrations = buildIntegrationHealthList(platformAuthStatus.configured);
   const latestCronRuns = latestCronRunMap(cronRunRows);
@@ -2745,7 +2879,7 @@ async function readPlatformAdminSnapshot() {
         name: "AI control center",
         status: integrations.some((item) => item.category === "ai" && item.status === "configured") ? "live" : "needs_config",
         owner: "AI Ops",
-        note: `${aiControl.requests} AI requests trong 24h, routing owner=${aiControl.routing.ownerProvider}, image=${aiControl.routing.imageProvider}.`
+        note: `${aiControl.requests} AI requests trong 24h, ${aiControl.branchInsights.active} branch insights đang mở, routing owner=${aiControl.routing.ownerProvider}, image=${aiControl.routing.imageProvider}.`
       },
       {
         key: "maps",

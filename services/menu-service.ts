@@ -4,6 +4,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { listPublicPromotions, type PublicPromotion } from "@/services/promotion-service";
+import type { PublicStoreBranch } from "@/types";
 
 export type AdminMenuItem = {
   id: string;
@@ -55,6 +56,7 @@ export type PublicMenuRestaurant = {
   service_fee_percent: number;
   service_fee_min: number;
   service_fee_max: number | null;
+  branches: PublicStoreBranch[];
   promotions: PublicPromotion[];
   onlinePromotions: PublicPromotion[];
   categories: AdminMenuCategory[];
@@ -83,10 +85,10 @@ export const getCachedPublicMenu = unstable_cache(
       .maybeSingle();
 
     throwIfSupabaseError(restaurantError);
-    const restaurant = restaurantData as Omit<PublicMenuRestaurant, "categories" | "promotions" | "onlinePromotions"> | null;
+    const restaurant = restaurantData as Omit<PublicMenuRestaurant, "branches" | "categories" | "promotions" | "onlinePromotions"> | null;
     if (!restaurant) return null;
 
-    const [categoriesResult, promotions, onlinePromotions] = await Promise.all([
+    const [categoriesResult, branchesResult, promotions, onlinePromotions] = await Promise.all([
       supabase
         .from("menu_categories")
         .select("id,restaurant_id,name,items:menu_items(id,restaurant_id,category_id,name,price,image_url,is_available)")
@@ -94,14 +96,30 @@ export const getCachedPublicMenu = unstable_cache(
         .eq("items.is_available", true)
         .order("name", { ascending: true })
         .order("name", { referencedTable: "menu_items", ascending: true }),
+      supabase
+        .from("store_branches")
+        .select("id,name,address,is_primary,pickup_eta_minutes,delivery_eta_minutes")
+        .eq("restaurant_id", restaurant.id)
+        .eq("is_active", true)
+        .order("is_primary", { ascending: false })
+        .order("name", { ascending: true }),
       restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "QR_MENU") : Promise.resolve([]),
       restaurant.show_promotions_on_menu ? listPublicPromotions(restaurant.id, "WEBSITE") : Promise.resolve([])
     ]);
 
     throwIfSupabaseError(categoriesResult.error);
+    throwIfSupabaseError(branchesResult.error);
 
     return {
       ...restaurant,
+      branches: (branchesResult.data ?? []).map((branch) => ({
+        id: branch.id,
+        name: branch.name,
+        address: branch.address,
+        isPrimary: Boolean(branch.is_primary),
+        pickupEtaMinutes: Number(branch.pickup_eta_minutes ?? restaurant.pickup_eta_minutes),
+        deliveryEtaMinutes: Number(branch.delivery_eta_minutes ?? restaurant.delivery_eta_minutes)
+      })),
       promotions,
       onlinePromotions,
       categories: (categoriesResult.data ?? []) as unknown as AdminMenuCategory[]

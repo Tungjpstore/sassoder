@@ -56,7 +56,7 @@ export default async function AdminAnalyticsPage() {
                   <Icon size={18} />
                 </span>
                 <span>
-                  <span className="block text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</span>
+                  <span className="block text-xs font-semibold uppercase text-[var(--muted-foreground)]">{stat.label}</span>
                   <span className="metric-number mt-1 block text-2xl font-semibold text-[var(--foreground)]">{stat.value}</span>
                   <span className={`mt-1 block text-sm font-medium ${stat.meta.startsWith("↓") ? "text-[var(--accent-strong)]" : "text-[var(--primary)]"}`}>{stat.meta}</span>
                 </span>
@@ -78,7 +78,7 @@ export default async function AdminAnalyticsPage() {
                 {report.dailyRevenue.map((point, index) => (
                   <div key={point.date} className="flex flex-1 flex-col items-center justify-end gap-2">
                     <span className="w-full rounded-t-md bg-[var(--primary)]" style={{ height: `${Math.max(percent(point.revenue, maxDailyRevenue), point.revenue > 0 ? 6 : 1)}%` }} />
-                    {index % 2 === 0 && <span className="text-[10px] font-bold text-[var(--muted-foreground)]">{point.label}</span>}
+                    {index % 2 === 0 && <span className="text-[10px] font-medium text-[var(--muted-foreground)]">{point.label}</span>}
                   </div>
                 ))}
               </div>
@@ -96,11 +96,11 @@ export default async function AdminAnalyticsPage() {
             )}
             {report.topItems.slice(0, 5).map((item) => (
               <div key={item.id} className="grid grid-cols-[140px_minmax(0,1fr)_42px] items-center gap-3">
-                <span className="truncate text-sm font-bold">{item.name}</span>
+                <span className="truncate text-sm font-semibold">{item.name}</span>
                 <span className="h-3 overflow-hidden rounded-full bg-[var(--tertiary-soft)]">
                   <span className="block h-full rounded-full bg-[var(--accent)]" style={{ width: `${percent(item.quantity, maxTopQuantity)}%` }} />
                 </span>
-                <span className="metric-number text-right text-sm font-black">{item.quantity}</span>
+                <span className="metric-number text-right text-sm font-semibold">{item.quantity}</span>
               </div>
             ))}
           </div>
@@ -127,8 +127,8 @@ export default async function AdminAnalyticsPage() {
               {report.paymentRows.map((row) => (
                 <div key={row.label} className="grid grid-cols-[12px_1fr_auto] items-center gap-3 text-sm">
                   <span className="h-3 w-3 rounded-full" style={{ background: row.color }} />
-                  <span className="font-bold">{row.label}</span>
-                  <span className="metric-number font-black">{percent(row.value, paymentBase)}% ({formatVnd(row.value)})</span>
+                  <span className="font-semibold">{row.label}</span>
+                  <span className="metric-number font-semibold">{percent(row.value, paymentBase)}% ({formatVnd(row.value)})</span>
                 </div>
               ))}
             </div>
@@ -141,7 +141,7 @@ export default async function AdminAnalyticsPage() {
             {report.peakHours.map((point, index) => (
               <div key={point.label} className="flex h-full flex-col justify-end gap-2">
                 <span className="rounded-t-md bg-[var(--accent)]" style={{ height: `${Math.max(percent(point.count, maxPeak), point.count > 0 ? 6 : 1)}%` }} />
-                {index % 3 === 0 && <span className="text-center text-[10px] font-bold text-[var(--muted-foreground)]">{point.label}</span>}
+                {index % 3 === 0 && <span className="text-center text-[10px] font-medium text-[var(--muted-foreground)]">{point.label}</span>}
               </div>
             ))}
           </div>
@@ -151,7 +151,7 @@ export default async function AdminAnalyticsPage() {
       <section className="dashboard-panel mt-4 p-4">
         <h2 className="text-lg font-semibold text-[var(--foreground)]">Doanh thu theo danh mục</h2>
         <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-white">
-          <div className="dashboard-muted-header grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+          <div className="dashboard-muted-header grid grid-cols-[1.2fr_1fr_0.8fr_0.8fr_1fr] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
             <span>Danh mục</span>
             <span>Doanh thu</span>
             <span>Số đơn</span>
@@ -163,8 +163,8 @@ export default async function AdminAnalyticsPage() {
           )}
           {report.categoryRows.map((row) => (
             <div key={row.name} className="grid gap-3 border-t border-[var(--border)] px-4 py-3 text-sm lg:grid-cols-[1.2fr_1fr_0.8fr_0.8fr_1fr]">
-              <span className="font-black">{row.name}</span>
-              <span className="metric-number font-black">{formatVnd(row.revenue)}</span>
+              <span className="font-semibold">{row.name}</span>
+              <span className="metric-number font-semibold">{formatVnd(row.revenue)}</span>
               <span>{row.orderCount}</span>
               <span>{row.quantity}</span>
               <span className="metric-number">{formatVnd(row.averageTicket)}</span>

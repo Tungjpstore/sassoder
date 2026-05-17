@@ -11,7 +11,7 @@ export default function AdminTablesError({
   reset: () => void;
 }) {
   return (
-    <main className="stitch-admin admin-shell-bg dashboard-density min-h-screen px-3 py-4 text-[var(--foreground)] md:px-6 lg:pl-80">
+    <main className="stitch-admin admin-shell-bg dashboard-density dashboard-route-fallback">
       <section className="mx-auto grid min-h-[72vh] w-full max-w-[900px] place-items-center">
         <div className="dashboard-panel w-full p-5 text-center">
           <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]">

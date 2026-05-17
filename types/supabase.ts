@@ -3,6 +3,135 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      marketing_waitlist_leads: {
+        Row: {
+          id: string;
+          lead_identity_hash: string;
+          restaurant_name: string | null;
+          contact: string;
+          contact_email: string | null;
+          contact_phone: string | null;
+          business_type: "cafe" | "milk-tea" | "restaurant" | "small-eatery" | "chain";
+          pilot_goal: "qr-ordering" | "ai-operations" | "staff-inventory";
+          selected_plan: "pro" | "premium";
+          source: string;
+          variant: string;
+          page_path: string | null;
+          utm_source: string | null;
+          utm_medium: string | null;
+          utm_campaign: string | null;
+          utm_content: string | null;
+          status: "captured" | "qualified" | "contacted" | "signed_up" | "archived";
+          nurture_stage: string;
+          submission_count: number;
+          metadata: Json;
+          created_at: string;
+          updated_at: string;
+          last_submitted_at: string;
+        };
+        Insert: {
+          id?: string;
+          lead_identity_hash: string;
+          restaurant_name?: string | null;
+          contact: string;
+          contact_email?: string | null;
+          contact_phone?: string | null;
+          business_type?: "cafe" | "milk-tea" | "restaurant" | "small-eatery" | "chain";
+          pilot_goal?: "qr-ordering" | "ai-operations" | "staff-inventory";
+          selected_plan?: "pro" | "premium";
+          source?: string;
+          variant?: string;
+          page_path?: string | null;
+          utm_source?: string | null;
+          utm_medium?: string | null;
+          utm_campaign?: string | null;
+          utm_content?: string | null;
+          status?: "captured" | "qualified" | "contacted" | "signed_up" | "archived";
+          nurture_stage?: string;
+          submission_count?: number;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+          last_submitted_at?: string;
+        };
+        Update: {
+          id?: string;
+          lead_identity_hash?: string;
+          restaurant_name?: string | null;
+          contact?: string;
+          contact_email?: string | null;
+          contact_phone?: string | null;
+          business_type?: "cafe" | "milk-tea" | "restaurant" | "small-eatery" | "chain";
+          pilot_goal?: "qr-ordering" | "ai-operations" | "staff-inventory";
+          selected_plan?: "pro" | "premium";
+          source?: string;
+          variant?: string;
+          page_path?: string | null;
+          utm_source?: string | null;
+          utm_medium?: string | null;
+          utm_campaign?: string | null;
+          utm_content?: string | null;
+          status?: "captured" | "qualified" | "contacted" | "signed_up" | "archived";
+          nurture_stage?: string;
+          submission_count?: number;
+          metadata?: Json;
+          created_at?: string;
+          updated_at?: string;
+          last_submitted_at?: string;
+        };
+        Relationships: [];
+      };
+      marketing_funnel_events: {
+        Row: {
+          id: string;
+          session_id: string;
+          event_name: string;
+          page_path: string | null;
+          source: string | null;
+          variant: string | null;
+          target_href: string | null;
+          target_text: string | null;
+          plan_code: string | null;
+          lead_id: string | null;
+          metadata: Json;
+          user_agent: string | null;
+          ip_hash: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          event_name: string;
+          page_path?: string | null;
+          source?: string | null;
+          variant?: string | null;
+          target_href?: string | null;
+          target_text?: string | null;
+          plan_code?: string | null;
+          lead_id?: string | null;
+          metadata?: Json;
+          user_agent?: string | null;
+          ip_hash?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          event_name?: string;
+          page_path?: string | null;
+          source?: string | null;
+          variant?: string | null;
+          target_href?: string | null;
+          target_text?: string | null;
+          plan_code?: string | null;
+          lead_id?: string | null;
+          metadata?: Json;
+          user_agent?: string | null;
+          ip_hash?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       restaurants: {
         Row: {
           id: string;
@@ -285,6 +414,7 @@ export type Database = {
         Row: {
           id: string;
           restaurant_id: string;
+          branch_id: string | null;
           name: string;
           floor_label: string;
           seating_zone: "indoor" | "outdoor" | "mixed";
@@ -297,6 +427,7 @@ export type Database = {
         Insert: {
           id?: string;
           restaurant_id: string;
+          branch_id?: string | null;
           name: string;
           floor_label?: string;
           seating_zone?: "indoor" | "outdoor" | "mixed";
@@ -308,6 +439,7 @@ export type Database = {
         };
         Update: {
           restaurant_id?: string;
+          branch_id?: string | null;
           name?: string;
           floor_label?: string;
           seating_zone?: "indoor" | "outdoor" | "mixed";
@@ -397,6 +529,12 @@ export type Database = {
           delivery_fee_per_km: number;
           pickup_eta_minutes: number;
           delivery_eta_minutes: number;
+          accepting_delivery: boolean;
+          delivery_paused: boolean;
+          temporarily_closed: boolean;
+          delivery_opening_time: string | null;
+          delivery_closing_time: string | null;
+          delivery_availability_note: string | null;
           metadata: Json;
           created_at: string;
           updated_at: string;
@@ -417,6 +555,12 @@ export type Database = {
           delivery_fee_per_km?: number;
           pickup_eta_minutes?: number;
           delivery_eta_minutes?: number;
+          accepting_delivery?: boolean;
+          delivery_paused?: boolean;
+          temporarily_closed?: boolean;
+          delivery_opening_time?: string | null;
+          delivery_closing_time?: string | null;
+          delivery_availability_note?: string | null;
           metadata?: Json;
           created_at?: string;
           updated_at?: string;
@@ -437,6 +581,12 @@ export type Database = {
           delivery_fee_per_km?: number;
           pickup_eta_minutes?: number;
           delivery_eta_minutes?: number;
+          accepting_delivery?: boolean;
+          delivery_paused?: boolean;
+          temporarily_closed?: boolean;
+          delivery_opening_time?: string | null;
+          delivery_closing_time?: string | null;
+          delivery_availability_note?: string | null;
           metadata?: Json;
           created_at?: string;
           updated_at?: string;
@@ -528,6 +678,8 @@ export type Database = {
           restaurant_id: string;
           table_id: string | null;
           bill_id: string | null;
+          branch_id: string | null;
+          branch_assignment_source: "delivery_quote" | "single_branch" | "primary_branch" | "manual" | "legacy_backfill" | null;
           fulfillment_type: "DINE_IN" | "PICKUP" | "DELIVERY";
           status: "pending" | "ordering" | "waiting_payment" | "waiting_confirm" | "paid" | "completed" | "cancelled";
           subtotal: number;
@@ -570,6 +722,8 @@ export type Database = {
           restaurant_id: string;
           table_id?: string | null;
           bill_id?: string | null;
+          branch_id?: string | null;
+          branch_assignment_source?: "delivery_quote" | "single_branch" | "primary_branch" | "manual" | "legacy_backfill" | null;
           fulfillment_type?: "DINE_IN" | "PICKUP" | "DELIVERY";
           status?: "pending" | "ordering" | "waiting_payment" | "waiting_confirm" | "paid" | "completed" | "cancelled";
           subtotal: number;
@@ -611,6 +765,8 @@ export type Database = {
           status?: "pending" | "ordering" | "waiting_payment" | "waiting_confirm" | "paid" | "completed" | "cancelled";
           table_id?: string | null;
           bill_id?: string | null;
+          branch_id?: string | null;
+          branch_assignment_source?: "delivery_quote" | "single_branch" | "primary_branch" | "manual" | "legacy_backfill" | null;
           fulfillment_type?: "DINE_IN" | "PICKUP" | "DELIVERY";
           subtotal?: number;
           discount_amount?: number;
@@ -948,6 +1104,7 @@ export type Database = {
           restaurant_id: string;
           name: string;
           code: string;
+          discount_scope: "ORDER" | "DELIVERY_FEE";
           discount_type: "PERCENT" | "FIXED";
           discount_value: number;
           min_order_amount: number;
@@ -963,6 +1120,7 @@ export type Database = {
           restaurant_id: string;
           name: string;
           code: string;
+          discount_scope?: "ORDER" | "DELIVERY_FEE";
           discount_type?: "PERCENT" | "FIXED";
           discount_value: number;
           min_order_amount?: number;
@@ -976,6 +1134,7 @@ export type Database = {
         Update: {
           name?: string;
           code?: string;
+          discount_scope?: "ORDER" | "DELIVERY_FEE";
           discount_type?: "PERCENT" | "FIXED";
           discount_value?: number;
           min_order_amount?: number;
@@ -1053,6 +1212,9 @@ export type Database = {
           payment_method: "QR" | "CASH" | null;
           customer_note: string | null;
           internal_note: string | null;
+          preferred_table_area_id: string | null;
+          preferred_seating_zone: "indoor" | "outdoor" | "mixed" | null;
+          preferred_table_kind: "standard" | "vip" | "bar" | "community" | null;
           source: string;
           access_token_hash: string;
           idempotency_key: string | null;
@@ -1097,6 +1259,9 @@ export type Database = {
           payment_method?: "QR" | "CASH" | null;
           customer_note?: string | null;
           internal_note?: string | null;
+          preferred_table_area_id?: string | null;
+          preferred_seating_zone?: "indoor" | "outdoor" | "mixed" | null;
+          preferred_table_kind?: "standard" | "vip" | "bar" | "community" | null;
           source?: string;
           access_token_hash: string;
           idempotency_key?: string | null;
@@ -1139,6 +1304,9 @@ export type Database = {
           payment_method?: "QR" | "CASH" | null;
           customer_note?: string | null;
           internal_note?: string | null;
+          preferred_table_area_id?: string | null;
+          preferred_seating_zone?: "indoor" | "outdoor" | "mixed" | null;
+          preferred_table_kind?: "standard" | "vip" | "bar" | "community" | null;
           source?: string;
           access_token_hash?: string;
           idempotency_key?: string | null;

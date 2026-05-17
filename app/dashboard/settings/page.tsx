@@ -147,7 +147,7 @@ function FieldGroup({
 }) {
   return (
     <section className="dashboard-panel p-4">
-      <h2 className="text-lg font-semibold text-[var(--foreground)]">{title}</h2>
+      <h2 className="dashboard-section-title">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
   );
@@ -693,8 +693,8 @@ function periodProgress(start: string | null | undefined, end: string | null | u
 function BillingStepHeader({ index, title, subtitle }: { index: number; title: string; subtitle: string }) {
   return (
     <div className="mb-4">
-      <p className="text-[13px] font-black tracking-[-0.01em] text-[#171B18]">{index}. {title}</p>
-      <p className="mt-1 text-xs font-medium text-[#667069]">{subtitle}</p>
+      <p className="text-sm font-semibold text-[var(--foreground)]">{index}. {title}</p>
+      <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{subtitle}</p>
     </div>
   );
 }
@@ -709,7 +709,7 @@ function BillingSurface({ children, className }: { children: ReactNode; classNam
 
 function SoftPill({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex min-h-7 items-center rounded-full border px-3 text-[11px] font-black", className)}>
+    <span className={cn("inline-flex min-h-7 items-center rounded-full border px-3 text-xs font-semibold", className)}>
       {children}
     </span>
   );
@@ -1348,9 +1348,9 @@ function SettingsHomeGrid({
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="admin-hero-panel relative overflow-hidden px-4 py-4">
           <div className="relative z-[1]">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Settings cockpit</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--foreground)]">Cài đặt vận hành</h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
+            <p className="dashboard-eyebrow">Settings cockpit</p>
+            <h1 className="dashboard-page-title mt-1">Cài đặt vận hành</h1>
+            <p className="dashboard-body-copy mt-1 max-w-2xl">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
 
             <div className="mt-3 flex flex-wrap gap-2">
               {[
@@ -1367,17 +1367,17 @@ function SettingsHomeGrid({
 
             <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Mức sẵn sàng</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Mức sẵn sàng</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{readiness.score}%</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{readiness.completedCount}/{readiness.totalCount} mục xong</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Việc chặn vận hành</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Việc chặn vận hành</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{readiness.criticalMissing.length}</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Cần xử lý trước</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tài sản vận hành</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Tài sản vận hành</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{tableCount} bàn</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{menuItemCount} món</p>
               </div>
@@ -1386,8 +1386,8 @@ function SettingsHomeGrid({
         </div>
 
         <aside className="dashboard-panel p-4">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Next actions</p>
-          <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Việc nên làm tiếp</h2>
+          <p className="dashboard-eyebrow">Next actions</p>
+          <h2 className="dashboard-section-title mt-1">Việc nên làm tiếp</h2>
 
           <div className="mt-3 grid gap-2">
             {readiness.nextActions.slice(0, 3).map((action) => (
@@ -1418,7 +1418,7 @@ function SettingsHomeGrid({
         {settingsSectionGroups.map((group) => (
           <section key={group.title} className="dashboard-panel p-3">
             <div className="px-2 pb-2 pt-1">
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">{group.title}</p>
+              <p className="dashboard-eyebrow">{group.title}</p>
             </div>
             <div className="grid gap-2">
               {group.keys.map((key) => {
@@ -1696,17 +1696,17 @@ export default async function AdminSettingsPage({
               <div className="flex min-w-0 items-center gap-3">
                 <Link
                   href="/dashboard/settings"
-                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
                   Quay lại
                 </Link>
-                <span className="dashboard-stat-icon h-9 w-9 shrink-0">
+                <span className="dashboard-stat-icon h-11 w-11 shrink-0">
                   <ActiveIcon size={18} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Màn hình cài đặt</p>
-                  <h1 id="settings-fullscreen-title" className="truncate text-lg font-semibold text-[var(--foreground)]">{activeMeta.label}</h1>
+                  <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Màn hình cài đặt</p>
+                  <h1 id="settings-fullscreen-title" className="dashboard-section-title truncate">{activeMeta.label}</h1>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1718,7 +1718,7 @@ export default async function AdminSettingsPage({
                 <Link
                   href="/dashboard/settings"
                   aria-label="Thu nhỏ màn hình cài đặt"
-                  className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
+                  className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
                 >
                   <X size={18} aria-hidden="true" />
                 </Link>

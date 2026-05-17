@@ -1,4 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { buildInventoryAlertCandidates, INVENTORY_ALERT_TYPES, type InventoryAlertCandidate, type InventoryAlertType } from "@/lib/inventory-alert-engine";
 import { AppError } from "@/lib/response";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import type { InventoryMovementType } from "@/types/domain";
@@ -63,6 +64,12 @@ export type InventorySnapshot = {
   menuItemCount: number;
   recipeCoveragePercent: number;
   openCountSessions: number;
+  openAlertCount: number;
+  wasteSpikeAlertCount: number;
+  priceSpikeAlertCount: number;
+  supplierDelayAlertCount: number;
+  expiringBatchCount: number;
+  openPurchaseOrderCount: number;
   totalReferenceValue: number;
   lowStockIngredients: Array<{
     id: string;
@@ -83,6 +90,27 @@ export type InventorySnapshot = {
     ingredientName: string;
     ingredientUnit: string;
   }>;
+};
+
+export type InventoryAiEconomicsSignal = {
+  schemaReady: boolean;
+  projectedPurchaseValue: number;
+  weeklyUsageValue: number;
+  reorderSuggestionCount: number;
+  highReorderCount: number;
+  topReorderSuggestion: InventoryReorderSuggestion | null;
+  wasteSignalCount: number;
+  topWasteSignal: InventoryWasteSignal | null;
+  priceSignalCount: number;
+  topPriceSignal: InventoryPriceSignal | null;
+  highFoodCostItemCount: number;
+  topHighFoodCostItem: {
+    id: string;
+    name: string;
+    price: number;
+    totalRecipeCost: number;
+    recipeCostPercent: number;
+  } | null;
 };
 
 export type InventoryActionPriority = "high" | "medium" | "low";
@@ -167,6 +195,23 @@ export type InventoryPurchaseOrder = {
   expectedDeliveryAt: string | null;
   createdAt: string;
   lineCount: number;
+  lines: InventoryPurchaseOrderLine[];
+};
+
+export type InventoryPurchaseOrderLine = {
+  id: string;
+  ingredientId: string;
+  ingredientName: string;
+  ingredientUnit: string;
+  orderQuantity: number;
+  receivedQuantity: number;
+  remainingQuantity: number;
+  orderUnit: string;
+  unitCost: number;
+  lineTotal: number;
+  expirationDate: string | null;
+  batchCode: string | null;
+  note: string | null;
 };
 
 export type InventoryStockBalanceStatus = "available" | "low" | "out_of_stock" | "expired" | "pending_import";
@@ -177,6 +222,7 @@ export type InventoryStockBalance = {
   ingredientName: string;
   ingredientUnit: string;
   locationId: string | null;
+  batchId: string | null;
   branchName: string | null;
   locationName: string | null;
   batchCode: string | null;
@@ -186,6 +232,7 @@ export type InventoryStockBalance = {
   incomingQuantity: number;
   availableQuantity: number;
   minimumQuantity: number;
+  referenceUnitCost: number;
   status: InventoryStockBalanceStatus;
 };
 
@@ -349,20 +396,39 @@ type PurchaseOrderRow = {
   expected_delivery_at: string | null;
   created_at: string;
   supplier: { name: string } | { name: string }[] | null;
-  lines?: Array<{ id: string }> | null;
+  lines?: Array<{
+    id: string;
+    ingredient_id: string;
+    order_unit: string;
+    order_quantity: number | string;
+    received_quantity: number | string;
+    unit_cost: number | string;
+    line_total: number | string;
+    expiration_date: string | null;
+    batch_code: string | null;
+    note: string | null;
+    ingredient: { name: string; unit: string } | { name: string; unit: string }[] | null;
+  }> | null;
 };
 
 type StockBalanceRow = {
   id: string;
   ingredient_id: string;
   location_id: string | null;
+  batch_id: string | null;
   on_hand_quantity: number | string;
   reserved_quantity: number | string;
   incoming_quantity: number | string;
-  ingredient: { name: string; unit: string; minimum_quantity: number | string } | { name: string; unit: string; minimum_quantity: number | string }[] | null;
+  ingredient:
+    | { name: string; unit: string; minimum_quantity: number | string; reference_unit_cost: number | string | null }
+    | { name: string; unit: string; minimum_quantity: number | string; reference_unit_cost: number | string | null }[]
+    | null;
   location: { name: string } | { name: string }[] | null;
   branch: { name: string } | { name: string }[] | null;
-  batch: { batch_code: string | null; expiration_date: string | null; status: string } | { batch_code: string | null; expiration_date: string | null; status: string }[] | null;
+  batch:
+    | { batch_code: string | null; expiration_date: string | null; status: string; unit_cost: number | string | null }
+    | { batch_code: string | null; expiration_date: string | null; status: string; unit_cost: number | string | null }[]
+    | null;
 };
 
 type InventoryAlertRow = {
@@ -375,6 +441,70 @@ type InventoryAlertRow = {
   detected_at: string;
   ingredient: { name: string } | { name: string }[] | null;
   branch: { name: string } | { name: string }[] | null;
+};
+
+type ExistingInventoryAlertRow = {
+  id: string;
+  alert_type: string;
+  source_id: string | null;
+  status: "open" | "acknowledged";
+};
+
+type AlertBatchRow = {
+  id: string;
+  ingredient_id: string;
+  batch_code: string | null;
+  expiration_date: string | null;
+  remaining_quantity: number | string;
+  unit_cost: number | string | null;
+  status: string | null;
+  ingredient: { name: string; unit: string } | { name: string; unit: string }[] | null;
+};
+
+type AlertMovementRow = {
+  id: string;
+  ingredient_id: string;
+  branch_id: string | null;
+  movement_type: string;
+  quantity_delta: number | string;
+  unit_cost: number | string | null;
+  created_at: string;
+  ingredient:
+    | { name: string; unit: string; reference_unit_cost: number | string | null }
+    | { name: string; unit: string; reference_unit_cost: number | string | null }[]
+    | null;
+};
+
+type AlertPurchaseOrderRow = {
+  id: string;
+  branch_id: string | null;
+  po_number: string;
+  status: string;
+  expected_delivery_at: string | null;
+  total_amount: number | string | null;
+  supplier: { name: string } | { name: string }[] | null;
+  lines?: Array<{
+    ingredient_id: string;
+    ingredient: { name: string } | { name: string }[] | null;
+  }> | null;
+};
+
+type AlertIngredientRow = {
+  id: string;
+  name: string;
+  unit: string;
+  on_hand_quantity: number | string;
+  minimum_quantity: number | string;
+};
+
+type AlertMenuItemRow = {
+  id: string;
+  name: string;
+  is_available: boolean;
+};
+
+type AlertRecipeRow = {
+  menu_item_id: string;
 };
 
 type InventoryCountRow = {
@@ -456,13 +586,24 @@ export type InventoryPurchaseOrderInput = {
 export type InventoryPurchaseOrderReceiptResult = {
   purchaseOrderId: string;
   poNumber: string;
+  status: string;
   receivedLines: number;
   receivedQuantity: number;
   receivedValue: number;
 };
 
+export type InventoryPurchaseOrderReceiptLineInput = {
+  purchaseOrderLineId: string;
+  receivedQuantity: number;
+  unitCost?: number;
+  expirationDate?: string;
+  batchCode?: string;
+  note?: string;
+};
+
 export type InventoryAlertRefreshResult = {
   created: number;
+  updated: number;
   resolved: number;
   scanned: number;
 };
@@ -523,9 +664,30 @@ const emptyInventorySnapshot: InventorySnapshot = {
   menuItemCount: 0,
   recipeCoveragePercent: 0,
   openCountSessions: 0,
+  openAlertCount: 0,
+  wasteSpikeAlertCount: 0,
+  priceSpikeAlertCount: 0,
+  supplierDelayAlertCount: 0,
+  expiringBatchCount: 0,
+  openPurchaseOrderCount: 0,
   totalReferenceValue: 0,
   lowStockIngredients: [],
   recentMovements: []
+};
+
+const emptyInventoryAiEconomicsSignal: InventoryAiEconomicsSignal = {
+  schemaReady: false,
+  projectedPurchaseValue: 0,
+  weeklyUsageValue: 0,
+  reorderSuggestionCount: 0,
+  highReorderCount: 0,
+  topReorderSuggestion: null,
+  wasteSignalCount: 0,
+  topWasteSignal: null,
+  priceSignalCount: 0,
+  topPriceSignal: null,
+  highFoodCostItemCount: 0,
+  topHighFoodCostItem: null
 };
 
 const emptyWarehouseCommandCenter: InventoryWarehouseCommandCenter = {
@@ -633,8 +795,22 @@ function mapIngredient(row: IngredientRow): InventoryIngredient {
 }
 
 function signedMovementQuantity(type: InventoryMovementType, quantity: number) {
-  if (type === "adjust_decrease" || type === "waste" || type === "deduct_sale") return -Math.abs(quantity);
+  if (
+    type === "adjust_decrease" ||
+    type === "waste" ||
+    type === "deduct_sale" ||
+    type === "expired" ||
+    type === "internal_use" ||
+    type === "supplier_return" ||
+    type === "transfer_out"
+  ) {
+    return -Math.abs(quantity);
+  }
   return Math.abs(quantity);
+}
+
+function isWasteSignalMovement(type: InventoryMovementType) {
+  return type === "waste" || type === "expired";
 }
 
 function isDuplicateInventoryMovementError(error: { code?: string; message?: string } | null | undefined) {
@@ -726,6 +902,10 @@ function buildInventoryBrief(input: {
   return parts.join(" ");
 }
 
+function countInventoryAlertsByType(rows: Array<{ alert_type?: string | null }>, type: InventoryAlertType) {
+  return rows.filter((row) => row.alert_type === type).length;
+}
+
 async function applyOrderInventoryMovement(
   db: UntypedSupabase,
   restaurantId: string,
@@ -762,6 +942,7 @@ async function applyOrderInventoryMovement(
 export async function getInventorySnapshot(restaurantId: string): Promise<InventorySnapshot> {
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
+  const expiryCutoff = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   const [
     ingredientCountResult,
@@ -771,7 +952,10 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     recipeRowsResult,
     menuItemCountResult,
     openCountSessionsResult,
-    recentMovementsResult
+    recentMovementsResult,
+    openAlertsResult,
+    expiringBatchCountResult,
+    openPurchaseOrderCountResult
   ] = await Promise.all([
     db.from("ingredients").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId),
     db.from("ingredients").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).eq("is_active", true),
@@ -801,7 +985,25 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
       .select("id,movement_type,quantity_delta,unit_cost,source_type,reason,created_at,ingredient:ingredients(name,unit)")
       .eq("restaurant_id", restaurantId)
       .order("created_at", { ascending: false })
-      .limit(8)
+      .limit(8),
+    db
+      .from("inventory_alerts")
+      .select("alert_type,severity,status")
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["open", "acknowledged"])
+      .limit(1000),
+    db
+      .from("inventory_batches")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId)
+      .gt("remaining_quantity", 0)
+      .lte("expiration_date", expiryCutoff)
+      .in("status", ["active", "quarantined", "expired"]),
+    db
+      .from("purchase_orders")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["draft", "pending", "approved", "ordered", "partially_delivered"])
   ]);
 
   const results = [
@@ -812,7 +1014,10 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     recipeRowsResult,
     menuItemCountResult,
     openCountSessionsResult,
-    recentMovementsResult
+    recentMovementsResult,
+    openAlertsResult,
+    expiringBatchCountResult,
+    openPurchaseOrderCountResult
   ];
   const missingSchema = results.some((result) => isMissingInventorySchemaError(result.error));
   if (missingSchema) return emptyInventorySnapshot;
@@ -855,6 +1060,7 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     (sum, ingredient) => sum + numberValue(ingredient.on_hand_quantity) * Number(ingredient.reference_unit_cost ?? 0),
     0
   );
+  const openAlerts = (openAlertsResult.data ?? []) as Array<{ alert_type?: string | null }>;
 
   return {
     schemaReady: true,
@@ -865,6 +1071,12 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     menuItemCount,
     recipeCoveragePercent: menuItemCount > 0 ? Math.round((recipeReadyItemIds.size / menuItemCount) * 100) : 0,
     openCountSessions: openCountSessionsResult.count ?? 0,
+    openAlertCount: openAlerts.length,
+    wasteSpikeAlertCount: countInventoryAlertsByType(openAlerts, "waste_spike"),
+    priceSpikeAlertCount: countInventoryAlertsByType(openAlerts, "price_spike"),
+    supplierDelayAlertCount: countInventoryAlertsByType(openAlerts, "supplier_delay"),
+    expiringBatchCount: expiringBatchCountResult.count ?? 0,
+    openPurchaseOrderCount: openPurchaseOrderCountResult.count ?? 0,
     totalReferenceValue: Math.round(totalReferenceValue),
     lowStockIngredients,
     recentMovements
@@ -1026,7 +1238,7 @@ export async function getInventoryIntelligence(
       weeklyUsageValue += (absQuantity * unitCost) / Math.max(1, 30 / 7);
     }
 
-    if (movement.movement_type === "waste") {
+    if (isWasteSignalMovement(movement.movement_type)) {
       const current = wasteByIngredient.get(movement.ingredient_id) ?? {
         quantity: 0,
         cost: 0,
@@ -1209,6 +1421,47 @@ export async function getInventoryIntelligence(
   };
 }
 
+export async function getInventoryAiEconomicsSignal(
+  restaurantId: string,
+  snapshot?: InventorySnapshot
+): Promise<InventoryAiEconomicsSignal> {
+  const baseSnapshot = snapshot ?? (await getInventorySnapshot(restaurantId));
+  if (!baseSnapshot.schemaReady) return emptyInventoryAiEconomicsSignal;
+
+  const [intelligence, recipeMenuItems] = await Promise.all([
+    getInventoryIntelligence(restaurantId, baseSnapshot),
+    listInventoryRecipeMenuItems(restaurantId)
+  ]);
+  const highFoodCostItems = recipeMenuItems
+    .filter((item) => item.isAvailable && item.price > 0 && item.recipeLines.length > 0 && item.recipeCostPercent >= 45)
+    .sort((left, right) => right.recipeCostPercent - left.recipeCostPercent || right.totalRecipeCost - left.totalRecipeCost)
+    .slice(0, 5);
+  const topHighFoodCostItem = highFoodCostItems[0] ?? null;
+
+  return {
+    schemaReady: true,
+    projectedPurchaseValue: intelligence.projectedPurchaseValue,
+    weeklyUsageValue: intelligence.weeklyUsageValue,
+    reorderSuggestionCount: intelligence.reorderSuggestions.length,
+    highReorderCount: intelligence.reorderSuggestions.filter((item) => item.urgency === "high").length,
+    topReorderSuggestion: intelligence.reorderSuggestions[0] ?? null,
+    wasteSignalCount: intelligence.wasteSignals.length,
+    topWasteSignal: intelligence.wasteSignals[0] ?? null,
+    priceSignalCount: intelligence.priceSignals.length,
+    topPriceSignal: intelligence.priceSignals[0] ?? null,
+    highFoodCostItemCount: highFoodCostItems.length,
+    topHighFoodCostItem: topHighFoodCostItem
+      ? {
+          id: topHighFoodCostItem.id,
+          name: topHighFoodCostItem.name,
+          price: topHighFoodCostItem.price,
+          totalRecipeCost: Math.round(topHighFoodCostItem.totalRecipeCost),
+          recipeCostPercent: topHighFoodCostItem.recipeCostPercent
+        }
+      : null
+  };
+}
+
 export async function getInventoryWarehouseCommandCenter(restaurantId: string): Promise<InventoryWarehouseCommandCenter> {
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
@@ -1224,6 +1477,7 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
     transferCountResult,
     transferResult,
     countSessionResult,
+    openAlertCountResult,
     alertResult
   ] = await Promise.all([
     db
@@ -1245,14 +1499,14 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
       .limit(50),
     db
       .from("purchase_orders")
-      .select("id,po_number,status,total_amount,expected_delivery_at,created_at,supplier:suppliers(name),lines:purchase_order_lines(id)")
+      .select("id,po_number,status,total_amount,expected_delivery_at,created_at,supplier:suppliers(name),lines:purchase_order_lines(id,ingredient_id,order_unit,order_quantity,received_quantity,unit_cost,line_total,expiration_date,batch_code,note,ingredient:ingredients(name,unit))")
       .eq("restaurant_id", restaurantId)
       .order("created_at", { ascending: false })
       .limit(12),
     db
       .from("stock_balances")
       .select(
-        "id,ingredient_id,location_id,on_hand_quantity,reserved_quantity,incoming_quantity,ingredient:ingredients(name,unit,minimum_quantity),location:inventory_locations(name),branch:store_branches(name),batch:inventory_batches(batch_code,expiration_date,status)"
+        "id,ingredient_id,location_id,batch_id,on_hand_quantity,reserved_quantity,incoming_quantity,ingredient:ingredients(name,unit,minimum_quantity,reference_unit_cost),location:inventory_locations(name),branch:store_branches(name),batch:inventory_batches(batch_code,expiration_date,status,unit_cost)"
       )
       .eq("restaurant_id", restaurantId)
       .order("on_hand_quantity", { ascending: true })
@@ -1283,11 +1537,16 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
       .limit(8),
     db
       .from("inventory_alerts")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId)
+      .eq("status", "open"),
+    db
+      .from("inventory_alerts")
       .select("id,alert_type,severity,status,title,detail,detected_at,ingredient:ingredients(name),branch:store_branches(name)")
       .eq("restaurant_id", restaurantId)
       .in("status", ["open", "acknowledged"])
       .order("detected_at", { ascending: false })
-      .limit(12)
+      .limit(24)
   ]);
 
   const results = [
@@ -1300,6 +1559,7 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
     transferCountResult,
     transferResult,
     countSessionResult,
+    openAlertCountResult,
     alertResult
   ];
   if (results.some((result) => isMissingInventorySchemaError(result.error))) return emptyWarehouseCommandCenter;
@@ -1332,6 +1592,28 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
 
   const purchaseOrders = ((purchaseOrderResult.data ?? []) as PurchaseOrderRow[]).map((order) => {
     const supplier = firstOrNull(order.supplier);
+    const lines = (order.lines ?? []).map((line) => {
+      const ingredient = firstOrNull(line.ingredient);
+      const orderQuantity = numberValue(line.order_quantity);
+      const receivedQuantity = numberValue(line.received_quantity);
+
+      return {
+        id: line.id,
+        ingredientId: line.ingredient_id,
+        ingredientName: ingredient?.name ?? "Nguyen lieu",
+        ingredientUnit: ingredient?.unit ?? line.order_unit,
+        orderQuantity,
+        receivedQuantity,
+        remainingQuantity: Math.max(0, orderQuantity - receivedQuantity),
+        orderUnit: line.order_unit,
+        unitCost: numberValue(line.unit_cost),
+        lineTotal: numberValue(line.line_total),
+        expirationDate: line.expiration_date,
+        batchCode: line.batch_code,
+        note: line.note
+      };
+    });
+
     return {
       id: order.id,
       poNumber: order.po_number,
@@ -1340,7 +1622,8 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
       totalAmount: Number(order.total_amount ?? 0),
       expectedDeliveryAt: order.expected_delivery_at,
       createdAt: order.created_at,
-      lineCount: order.lines?.length ?? 0
+      lineCount: lines.length,
+      lines
     };
   });
 
@@ -1361,6 +1644,7 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
       ingredientName: ingredient?.name ?? "Nguyen lieu",
       ingredientUnit: ingredient?.unit ?? "unit",
       locationId: balance.location_id,
+      batchId: balance.batch_id,
       branchName: branch?.name ?? null,
       locationName: location?.name ?? null,
       batchCode: batch?.batch_code ?? null,
@@ -1370,6 +1654,7 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
       incomingQuantity,
       availableQuantity,
       minimumQuantity,
+      referenceUnitCost: numberValue(batch?.unit_cost ?? ingredient?.reference_unit_cost),
       status: stockBalanceStatus({
         availableQuantity,
         minimumQuantity,
@@ -1447,7 +1732,7 @@ export async function getInventoryWarehouseCommandCenter(restaurantId: string): 
     expiringBatchCount: expiringBatchResult.count ?? 0,
     transferCount: transferCountResult.count ?? 0,
     countSessionCount: countSessions.length,
-    openAlertCount: alerts.filter((alert) => alert.status === "open").length,
+    openAlertCount: openAlertCountResult.count ?? alerts.filter((alert) => alert.status === "open").length,
     locations,
     suppliers,
     purchaseOrders,
@@ -1544,7 +1829,7 @@ export async function createInventoryPurchaseOrder(restaurantId: string, input: 
 
 export async function receiveInventoryPurchaseOrder(
   restaurantId: string,
-  input: { purchaseOrderId: string; actorUserId: string }
+  input: { purchaseOrderId: string; actorUserId: string; lines?: InventoryPurchaseOrderReceiptLineInput[] }
 ): Promise<InventoryPurchaseOrderReceiptResult> {
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
@@ -1552,7 +1837,15 @@ export async function receiveInventoryPurchaseOrder(
     target_restaurant_id: restaurantId,
     target_purchase_order_id: input.purchaseOrderId,
     target_actor_user_id: input.actorUserId,
-    target_received_at: new Date().toISOString()
+    target_received_at: new Date().toISOString(),
+    target_lines: input.lines?.map((line) => ({
+      purchaseOrderLineId: line.purchaseOrderLineId,
+      receivedQuantity: line.receivedQuantity,
+      unitCost: line.unitCost,
+      expirationDate: line.expirationDate?.trim() || undefined,
+      batchCode: line.batchCode?.trim() || undefined,
+      note: line.note?.trim() || undefined
+    })) ?? undefined
   });
 
   if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration warehouse truoc khi nhan hang PO.", 400);
@@ -1569,6 +1862,7 @@ export async function receiveInventoryPurchaseOrder(
   return {
     purchaseOrderId: String(payload.purchaseOrderId ?? input.purchaseOrderId),
     poNumber: String(payload.poNumber ?? ""),
+    status: String(payload.status ?? ""),
     receivedLines: numberValue(payload.receivedLines),
     receivedQuantity: numberValue(payload.receivedQuantity),
     receivedValue: numberValue(payload.receivedValue)
@@ -1683,114 +1977,203 @@ export async function updateInventoryAlertStatus(
 export async function refreshInventoryAlerts(restaurantId: string): Promise<InventoryAlertRefreshResult> {
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
-  const today = new Date().toISOString().slice(0, 10);
-  const expiryCutoff = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const now = new Date();
+  const movementStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [stockResult, batchResult, existingAlertResult] = await Promise.all([
+  const [
+    stockResult,
+    batchResult,
+    movementResult,
+    purchaseOrderResult,
+    ingredientResult,
+    menuItemResult,
+    recipeResult,
+    existingAlertResult
+  ] = await Promise.all([
     db
       .from("stock_balances")
-      .select("id,branch_id,ingredient_id,on_hand_quantity,reserved_quantity,incoming_quantity,ingredient:ingredients(name,unit,minimum_quantity)")
+      .select("id,branch_id,location_id,batch_id,ingredient_id,on_hand_quantity,reserved_quantity,incoming_quantity,ingredient:ingredients(name,unit,minimum_quantity,reference_unit_cost)")
       .eq("restaurant_id", restaurantId)
       .limit(1000),
     db
       .from("inventory_batches")
-      .select("id,ingredient_id,batch_code,expiration_date,remaining_quantity,ingredient:ingredients(name,unit)")
+      .select("id,ingredient_id,batch_code,expiration_date,remaining_quantity,unit_cost,status,ingredient:ingredients(name,unit)")
       .eq("restaurant_id", restaurantId)
-      .eq("status", "active")
       .gt("remaining_quantity", 0)
-      .gte("expiration_date", today)
-      .lte("expiration_date", expiryCutoff)
+      .in("status", ["active", "expired", "quarantined"])
       .limit(1000),
+    db
+      .from("inventory_movements")
+      .select("id,ingredient_id,branch_id,movement_type,quantity_delta,unit_cost,created_at,ingredient:ingredients(name,unit,reference_unit_cost)")
+      .eq("restaurant_id", restaurantId)
+      .gte("created_at", movementStart)
+      .in("movement_type", ["deduct_sale", "adjust_decrease", "internal_use", "waste", "expired", "receive"])
+      .order("created_at", { ascending: false })
+      .limit(2500),
+    db
+      .from("purchase_orders")
+      .select("id,branch_id,po_number,status,expected_delivery_at,total_amount,supplier:suppliers(name),lines:purchase_order_lines(ingredient_id,ingredient:ingredients(name))")
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["pending", "approved", "ordered", "partially_delivered"])
+      .limit(300),
+    db
+      .from("ingredients")
+      .select("id,name,unit,on_hand_quantity,minimum_quantity")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_active", true)
+      .limit(1000),
+    db
+      .from("menu_items")
+      .select("id,name,is_available")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_available", true)
+      .limit(1000),
+    db
+      .from("menu_item_recipes")
+      .select("menu_item_id")
+      .eq("restaurant_id", restaurantId)
+      .limit(3000),
     db
       .from("inventory_alerts")
       .select("id,alert_type,source_id,status")
       .eq("restaurant_id", restaurantId)
       .in("status", ["open", "acknowledged"])
-      .in("alert_type", ["low_stock", "out_of_stock", "expiring_soon"])
+      .in("alert_type", [...INVENTORY_ALERT_TYPES])
       .limit(1000)
   ]);
 
-  if ([stockResult, batchResult, existingAlertResult].some((result) => isMissingInventorySchemaError(result.error))) {
+  const results = [
+    stockResult,
+    batchResult,
+    movementResult,
+    purchaseOrderResult,
+    ingredientResult,
+    menuItemResult,
+    recipeResult,
+    existingAlertResult
+  ];
+
+  if (results.some((result) => isMissingInventorySchemaError(result.error))) {
     throw new AppError("Can chay migration warehouse truoc khi quet canh bao kho.", 400);
   }
-  throwIfSupabaseError(stockResult.error);
-  throwIfSupabaseError(batchResult.error);
-  throwIfSupabaseError(existingAlertResult.error);
 
-  const candidates: Array<{
-    alert_type: "low_stock" | "out_of_stock" | "expiring_soon";
-    severity: "medium" | "high" | "critical";
-    source_id: string;
-    branch_id: string | null;
-    ingredient_id: string;
-    title: string;
-    detail: string;
-    metadata: Record<string, unknown>;
-  }> = [];
+  for (const result of results) {
+    throwIfSupabaseError(result.error);
+  }
 
-  for (const balance of (stockResult.data ?? []) as Array<StockBalanceRow & { branch_id?: string | null }>) {
+  const stockBalances = ((stockResult.data ?? []) as Array<StockBalanceRow & { branch_id?: string | null }>).map((balance) => {
     const ingredient = firstOrNull(balance.ingredient);
-    const availableQuantity = Math.max(0, numberValue(balance.on_hand_quantity) - numberValue(balance.reserved_quantity));
-    const minimumQuantity = numberValue(ingredient?.minimum_quantity);
-    if (minimumQuantity <= 0 || availableQuantity > minimumQuantity) continue;
+    return {
+      id: balance.id,
+      branchId: balance.branch_id ?? null,
+      locationId: balance.location_id,
+      batchId: balance.batch_id,
+      ingredientId: balance.ingredient_id,
+      ingredientName: ingredient?.name ?? "Nguyên liệu",
+      ingredientUnit: ingredient?.unit ?? "unit",
+      onHandQuantity: numberValue(balance.on_hand_quantity),
+      reservedQuantity: numberValue(balance.reserved_quantity),
+      incomingQuantity: numberValue(balance.incoming_quantity),
+      minimumQuantity: numberValue(ingredient?.minimum_quantity),
+      referenceUnitCost: numberValue(ingredient?.reference_unit_cost)
+    };
+  });
 
-    const outOfStock = availableQuantity <= 0;
-    candidates.push({
-      alert_type: outOfStock ? "out_of_stock" : "low_stock",
-      severity: outOfStock ? "critical" : "high",
-      source_id: balance.id,
-      branch_id: balance.branch_id ?? null,
-      ingredient_id: balance.ingredient_id,
-      title: outOfStock ? `${ingredient?.name ?? "Nguyên liệu"} đã hết hàng` : `${ingredient?.name ?? "Nguyên liệu"} sắp hết`,
-      detail: `Khả dụng ${formatCompactQuantity(availableQuantity, ingredient?.unit ?? "unit")}, ngưỡng tối thiểu ${formatCompactQuantity(minimumQuantity, ingredient?.unit ?? "unit")}.`,
-      metadata: {
-        availableQuantity,
-        minimumQuantity,
-        incomingQuantity: numberValue(balance.incoming_quantity)
-      }
-    });
-  }
-
-  for (const batch of (batchResult.data ?? []) as Array<{
-    id: string;
-    ingredient_id: string;
-    batch_code: string | null;
-    expiration_date: string | null;
-    remaining_quantity: number | string;
-    ingredient: { name: string; unit: string } | { name: string; unit: string }[] | null;
-  }>) {
+  const batches = ((batchResult.data ?? []) as AlertBatchRow[]).map((batch) => {
     const ingredient = firstOrNull(batch.ingredient);
-    candidates.push({
-      alert_type: "expiring_soon",
-      severity: "medium",
-      source_id: batch.id,
-      branch_id: null,
-      ingredient_id: batch.ingredient_id,
-      title: `${ingredient?.name ?? "Nguyên liệu"} sắp hết hạn`,
-      detail: `Lô ${batch.batch_code || "không mã"} hết hạn ngày ${batch.expiration_date ?? "-"}, còn ${formatCompactQuantity(numberValue(batch.remaining_quantity), ingredient?.unit ?? "unit")}.`,
-      metadata: {
-        batchCode: batch.batch_code,
-        expirationDate: batch.expiration_date,
-        remainingQuantity: numberValue(batch.remaining_quantity)
-      }
-    });
-  }
+    return {
+      id: batch.id,
+      ingredientId: batch.ingredient_id,
+      ingredientName: ingredient?.name ?? "Nguyên liệu",
+      ingredientUnit: ingredient?.unit ?? "unit",
+      batchCode: batch.batch_code,
+      expirationDate: batch.expiration_date,
+      remainingQuantity: numberValue(batch.remaining_quantity),
+      unitCost: numberValue(batch.unit_cost),
+      status: batch.status
+    };
+  });
 
-  const candidateKeys = new Set(candidates.map((candidate) => inventoryAlertKey({ alertType: candidate.alert_type, sourceId: candidate.source_id })));
-  const existingAlerts = (existingAlertResult.data ?? []) as Array<{ id: string; alert_type: string; source_id: string | null }>;
+  const movements = ((movementResult.data ?? []) as AlertMovementRow[]).map((movement) => {
+    const ingredient = firstOrNull(movement.ingredient);
+    return {
+      id: movement.id,
+      ingredientId: movement.ingredient_id,
+      branchId: movement.branch_id,
+      ingredientName: ingredient?.name ?? "Nguyên liệu",
+      ingredientUnit: ingredient?.unit ?? "unit",
+      movementType: movement.movement_type,
+      quantityDelta: numberValue(movement.quantity_delta),
+      unitCost: movement.unit_cost === null ? null : numberValue(movement.unit_cost),
+      referenceUnitCost: numberValue(ingredient?.reference_unit_cost),
+      createdAt: movement.created_at
+    };
+  });
+
+  const purchaseOrders = ((purchaseOrderResult.data ?? []) as AlertPurchaseOrderRow[]).map((order) => {
+    const supplier = firstOrNull(order.supplier);
+    const lines = order.lines ?? [];
+    const firstLine = lines[0] ?? null;
+    const firstIngredient = firstLine ? firstOrNull(firstLine.ingredient) : null;
+    return {
+      id: order.id,
+      branchId: order.branch_id,
+      supplierName: supplier?.name ?? null,
+      poNumber: order.po_number,
+      status: order.status,
+      expectedDeliveryAt: order.expected_delivery_at,
+      totalAmount: numberValue(order.total_amount),
+      firstIngredientId: firstLine?.ingredient_id ?? null,
+      firstIngredientName: firstIngredient?.name ?? null,
+      lineCount: lines.length
+    };
+  });
+
+  const ingredients = ((ingredientResult.data ?? []) as AlertIngredientRow[]).map((ingredient) => ({
+    id: ingredient.id,
+    name: ingredient.name,
+    unit: ingredient.unit,
+    onHandQuantity: numberValue(ingredient.on_hand_quantity),
+    minimumQuantity: numberValue(ingredient.minimum_quantity)
+  }));
+
+  const recipeLineCountByMenuItem = new Map<string, number>();
+  for (const recipe of (recipeResult.data ?? []) as AlertRecipeRow[]) {
+    recipeLineCountByMenuItem.set(recipe.menu_item_id, (recipeLineCountByMenuItem.get(recipe.menu_item_id) ?? 0) + 1);
+  }
+  const recipeGaps = ((menuItemResult.data ?? []) as AlertMenuItemRow[]).map((item) => ({
+    menuItemId: item.id,
+    name: item.name,
+    isAvailable: item.is_available,
+    recipeLineCount: recipeLineCountByMenuItem.get(item.id) ?? 0
+  }));
+
+  const candidates = buildInventoryAlertCandidates({
+    now,
+    stockBalances,
+    batches,
+    movements,
+    purchaseOrders,
+    ingredients,
+    recipeGaps
+  });
+
+  const candidateKeys = new Set(candidates.map((candidate) => inventoryAlertKey({ alertType: candidate.alertType, sourceId: candidate.sourceId })));
+  const existingAlerts = (existingAlertResult.data ?? []) as ExistingInventoryAlertRow[];
   const existingKeys = new Set(existingAlerts.map((alert) => inventoryAlertKey({ alertType: alert.alert_type, sourceId: alert.source_id })));
+  const existingByKey = new Map(existingAlerts.map((alert) => [inventoryAlertKey({ alertType: alert.alert_type, sourceId: alert.source_id }), alert]));
   const newAlerts = candidates
-    .filter((candidate) => !existingKeys.has(inventoryAlertKey({ alertType: candidate.alert_type, sourceId: candidate.source_id })))
+    .filter((candidate) => !existingKeys.has(inventoryAlertKey({ alertType: candidate.alertType, sourceId: candidate.sourceId })))
     .map((candidate) => ({
       restaurant_id: restaurantId,
-      branch_id: candidate.branch_id,
-      ingredient_id: candidate.ingredient_id,
-      alert_type: candidate.alert_type,
+      branch_id: candidate.branchId,
+      ingredient_id: candidate.ingredientId,
+      alert_type: candidate.alertType,
       severity: candidate.severity,
       title: candidate.title,
       detail: candidate.detail,
-      source_type: "system",
-      source_id: candidate.source_id,
+      source_type: candidate.sourceType,
+      source_id: candidate.sourceId,
       metadata: candidate.metadata
     }));
 
@@ -1798,6 +2181,35 @@ export async function refreshInventoryAlerts(restaurantId: string): Promise<Inve
     const { error } = await db.from("inventory_alerts").insert(newAlerts);
     throwIfSupabaseError(error);
   }
+
+  let updated = 0;
+  const updates = candidates
+    .map((candidate) => ({
+      candidate,
+      existing: existingByKey.get(inventoryAlertKey({ alertType: candidate.alertType, sourceId: candidate.sourceId }))
+    }))
+    .filter((item): item is { candidate: InventoryAlertCandidate; existing: ExistingInventoryAlertRow } => Boolean(item.existing));
+
+  await Promise.all(
+    updates.map(async ({ candidate, existing }) => {
+      const { error } = await db
+        .from("inventory_alerts")
+        .update({
+          branch_id: candidate.branchId,
+          ingredient_id: candidate.ingredientId,
+          severity: candidate.severity,
+          title: candidate.title,
+          detail: candidate.detail,
+          source_type: candidate.sourceType,
+          metadata: candidate.metadata,
+          resolved_at: null
+        })
+        .eq("restaurant_id", restaurantId)
+        .eq("id", existing.id);
+      throwIfSupabaseError(error);
+      updated += 1;
+    })
+  );
 
   const resolvedAlertIds = existingAlerts
     .filter((alert) => !candidateKeys.has(inventoryAlertKey({ alertType: alert.alert_type, sourceId: alert.source_id })))
@@ -1817,8 +2229,15 @@ export async function refreshInventoryAlerts(restaurantId: string): Promise<Inve
 
   return {
     created: newAlerts.length,
+    updated,
     resolved: resolvedAlertIds.length,
-    scanned: (stockResult.data ?? []).length + (batchResult.data ?? []).length
+    scanned:
+      (stockResult.data ?? []).length +
+      (batchResult.data ?? []).length +
+      (movementResult.data ?? []).length +
+      (purchaseOrderResult.data ?? []).length +
+      (ingredientResult.data ?? []).length +
+      (menuItemResult.data ?? []).length
   };
 }
 
@@ -2255,6 +2674,10 @@ export async function recordInventoryMovement(
     quantity: number;
     unitCost?: number;
     reason?: string;
+    locationId?: string | null;
+    batchId?: string | null;
+    sourceType?: "manual" | "order" | "count" | "recipe" | "system" | "purchase_order" | "transfer" | "supplier" | "expiry" | "ai_draft";
+    metadata?: Record<string, unknown>;
     actorUserId: string;
   }
 ) {
@@ -2266,15 +2689,20 @@ export async function recordInventoryMovement(
     target_movement_type: input.movementType,
     target_quantity_delta: signedMovementQuantity(input.movementType, input.quantity),
     target_unit_cost: input.unitCost ?? null,
-    target_source_type: "manual",
+    target_source_type: input.sourceType ?? "manual",
     target_source_id: null,
     target_reason: input.reason || null,
     target_actor_user_id: input.actorUserId,
-    target_metadata: {}
+    target_metadata: input.metadata ?? {},
+    target_branch_id: null,
+    target_location_id: input.locationId || null,
+    target_batch_id: input.batchId || null,
+    target_purchase_order_id: null,
+    target_transfer_id: null
   });
 
   if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi ghi ledger kho.", 400);
-  if (error?.message?.includes("stock negative")) {
+  if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
     throw new AppError("Ton kho khong du de ghi phieu giam hoac hao hut.", 400);
   }
   throwIfSupabaseError(error);

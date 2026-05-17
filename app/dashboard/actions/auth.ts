@@ -22,13 +22,14 @@ import {
   resendSignupEmailOtp,
   signUpWithEmailOtp,
   updateRecoveredPassword,
+  verifyRecoveryOtpAndUpdatePassword,
   verifySignupEmailOtp
 } from "@/services/auth-service";
 import { loginWithStaffPin } from "@/features/staff/services/staff-pin-service";
 import { consumeRegistrationIntentForUser, createRegistrationIntent } from "@/services/restaurant-service";
 import { checkActionRateLimit, getDashboardDestination } from "./shared";
 
-export async function loginAction(_prevState: { error?: string } | undefined, formData: FormData) {
+export async function loginAction(_prevState: { error?: string; redirectTo?: string } | undefined, formData: FormData) {
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password")
@@ -45,6 +46,14 @@ export async function loginAction(_prevState: { error?: string } | undefined, fo
   try {
     await loginWithPassword(parsed.data.email, parsed.data.password);
   } catch {
+    const status = await getAuthEmailRegistrationStatus(parsed.data.email).catch(() => null);
+    if (status === "pending_verification") {
+      return {
+        error: "Email này chưa xác thực. LogiVN sẽ mở màn hình nhập mã OTP.",
+        redirectTo: `/dashboard/verify-email?email=${encodeURIComponent(parsed.data.email.toLowerCase())}`
+      };
+    }
+
     return { error: "Email hoặc mật khẩu không đúng." };
   }
 
@@ -100,7 +109,16 @@ export async function registerAccountAction(
 
   const email = parsed.data.email.toLowerCase();
   const planCode = String(formData.get("planCode") ?? "").trim().toLowerCase();
-  const onboardingPath = planCode === "premium" ? "/dashboard/onboarding?plan=premium" : "/dashboard/onboarding?plan=pro";
+  const source = String(formData.get("source") ?? "").trim().slice(0, 80);
+  const variant = String(formData.get("variant") ?? "").trim().slice(0, 40);
+  const pilotGoal = String(formData.get("pilotGoal") ?? "").trim().slice(0, 80);
+  const restaurantName = String(formData.get("restaurantName") ?? "").trim().slice(0, 140);
+  const businessType = String(formData.get("businessType") ?? "").trim().slice(0, 80);
+  const onboardingParams = new URLSearchParams({ plan: planCode === "premium" ? "premium" : "pro" });
+  if (source) onboardingParams.set("source", source);
+  if (variant) onboardingParams.set("variant", variant);
+  if (pilotGoal) onboardingParams.set("pilotGoal", pilotGoal);
+  const onboardingPath = `/dashboard/onboarding?${onboardingParams.toString()}`;
 
   if (!(await checkActionRateLimit(`register:${email}`, 5, 10 * 60_000))) {
     return { error: "Bạn tạo tài khoản quá nhanh. Vui lòng thử lại sau vài phút." };
@@ -114,26 +132,34 @@ export async function registerAccountAction(
     if (emailStatus === "pending_verification") {
       return {
         success: "Email này đang chờ xác minh. LogiVN sẽ mở lại trang xác thực.",
-        redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+        redirectTo: `/dashboard/verify-email?email=${encodeURIComponent(email)}`
       };
     }
 
     await signUpWithEmailOtp({
       email,
       password: parsed.data.password,
-      emailRedirectTo: buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`)
+      emailRedirectTo: buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`),
+      metadata: {
+        planCode: onboardingParams.get("plan"),
+        source: source || undefined,
+        variant: variant || undefined,
+        pilotGoal: pilotGoal || undefined,
+        restaurantName: restaurantName || undefined,
+        businessType: businessType || undefined
+      }
     });
 
     return {
       success: "Đã gửi email xác thực. Vui lòng kiểm tra hộp thư để tiếp tục.",
-      redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+      redirectTo: `/dashboard/verify-email?email=${encodeURIComponent(email)}`
     };
   } catch (error) {
     try {
       await resendSignupEmailOtp(email, buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`));
       return {
         success: "Email này đang chờ xác thực. LogiVN đã gửi lại email xác thực.",
-        redirectTo: `/verify-email?email=${encodeURIComponent(email)}`
+        redirectTo: `/dashboard/verify-email?email=${encodeURIComponent(email)}`
       };
     } catch {
       // Keep the public error intentionally generic so we do not leak account state.
@@ -308,7 +334,7 @@ export async function resendEmailOtpAction(
 }
 
 export async function requestPasswordResetAction(
-  _prevState: { error?: string; success?: string } | undefined,
+  _prevState: { error?: string; success?: string; redirectTo?: string } | undefined,
   formData: FormData
 ) {
   const parsed = forgotPasswordSchema.safeParse({
@@ -323,22 +349,28 @@ export async function requestPasswordResetAction(
     return { error: "Bạn yêu cầu đặt lại mật khẩu quá nhanh. Vui lòng chờ thêm trước khi thử lại." };
   }
 
-  const genericSuccess = "Nếu email này tồn tại, LogiVN đã gửi hướng dẫn đặt lại mật khẩu.";
+  const normalizedEmail = parsed.data.email.toLowerCase();
+  const genericSuccess = "Nếu email này tồn tại, LogiVN đã gửi mã OTP đặt lại mật khẩu.";
 
   try {
-    await requestPasswordReset(parsed.data.email, buildAppUrl("/auth/confirm?next=/dashboard/reset-password"));
+    await requestPasswordReset(parsed.data.email, buildAppUrl("/dashboard/reset-password"));
   } catch (error) {
     console.error("[dashboard/forgot-password] Password reset request failed", {
-      email: parsed.data.email.toLowerCase(),
+      email: normalizedEmail,
       message: error instanceof Error ? error.message : String(error)
     });
   }
 
-  return { success: genericSuccess };
+  return {
+    success: genericSuccess,
+    redirectTo: `/dashboard/reset-password?email=${encodeURIComponent(normalizedEmail)}&otp=1`
+  };
 }
 
 export async function updateRecoveredPasswordAction(_prevState: { error?: string } | undefined, formData: FormData) {
   const parsed = resetPasswordSchema.safeParse({
+    email: formData.get("email"),
+    token: formData.get("token"),
     password: formData.get("password"),
     confirmPassword: formData.get("confirmPassword")
   });
@@ -352,15 +384,25 @@ export async function updateRecoveredPasswordAction(_prevState: { error?: string
   }
 
   try {
-    await updateRecoveredPassword(parsed.data.password);
+    if (parsed.data.email && parsed.data.token) {
+      await verifyRecoveryOtpAndUpdatePassword({
+        email: parsed.data.email,
+        token: parsed.data.token,
+        password: parsed.data.password
+      });
+    } else {
+      await updateRecoveredPassword(parsed.data.password);
+    }
   } catch (error) {
     console.error("[dashboard/reset-password] Password update failed", {
       message: error instanceof Error ? error.message : String(error)
     });
-    return { error: "Liên kết đặt lại mật khẩu đã hết hạn hoặc không hợp lệ. Vui lòng yêu cầu liên kết mới." };
+    return { error: "Mã OTP hoặc phiên đặt lại mật khẩu đã hết hạn. Vui lòng yêu cầu mã mới." };
   }
 
-  redirect("/dashboard/login?reset=success");
+  const session = await getSessionProfile();
+  if (!session) redirect("/dashboard/onboarding");
+  redirect(await getDashboardDestination(session.restaurant.slug));
 }
 
 export async function logoutAction() {

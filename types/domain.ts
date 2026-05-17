@@ -12,6 +12,7 @@ export type OrderStatus =
 
 export type PaymentMethod = "QR" | "CASH";
 export type PaymentStatus = "unpaid" | "waiting_payment" | "waiting_confirm" | "paid" | "failed" | "refunded";
+export type OrderBranchAssignmentSource = "delivery_quote" | "single_branch" | "primary_branch" | "manual" | "legacy_backfill";
 export type OnlinePaymentMode = "PAY_AFTER" | "QR_PREPAID";
 export type FulfillmentType = "DINE_IN" | "PICKUP" | "DELIVERY";
 export type DeliveryStatus = "none" | "requested" | "accepted" | "out_for_delivery" | "delivered" | "rejected";
@@ -75,6 +76,8 @@ export type SessionProfile = {
 
 export type OrderDto = {
   id: string;
+  branchId?: string | null;
+  branchAssignmentSource?: OrderBranchAssignmentSource | null;
   status: OrderStatus;
   subtotal: number;
   discountAmount: number;
@@ -181,6 +184,9 @@ export type ReservationDto = {
   paymentMethod: PaymentMethod | null;
   customerNote: string | null;
   internalNote: string | null;
+  preferredTableAreaId: string | null;
+  preferredSeatingZone: "indoor" | "outdoor" | "mixed" | string | null;
+  preferredTableKind: "standard" | "vip" | "bar" | "community" | string | null;
   source: string;
   createdAt: string;
   updatedAt: string | null;
@@ -198,6 +204,7 @@ export type ReservationDto = {
     name: string;
     area: string;
     capacity: number;
+    tableAreaId?: string | null;
     floorLabel?: string | null;
     seatingZone?: "indoor" | "outdoor" | "mixed" | string | null;
     tableKind?: "standard" | "vip" | "bar" | "community" | string | null;

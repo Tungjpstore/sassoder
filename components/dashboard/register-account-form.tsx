@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useEffect, useMemo, useState } from "react";
-import { ArrowRight, Check, CheckCircle2, Eye, EyeOff, LockKeyhole, Mail, ShieldCheck, Sparkles } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { registerAccountAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { PasswordPolicyList } from "@/components/dashboard/password-policy-list";
@@ -27,32 +27,50 @@ function emailStatusCopy(status: EmailStatus) {
 function getSignupPlanContext(planCode: "pro" | "premium") {
   if (planCode === "premium") {
     return {
-      code: "premium",
       name: "LogiVN Premium",
-      price: "199K",
-      badge: "AI + vận hành sâu",
-      headline: "Bắt đầu Premium để mở nhiều đòn bẩy vận hành hơn ngay từ onboarding.",
-      description:
-        "Phù hợp với quán muốn dùng AI assistant, đặt bàn, báo cáo sâu, nhân sự và tồn kho sau khi đưa QR ordering vào thực tế.",
-      benefits: ["AI insight cho doanh thu và giờ cao điểm", "Đặt bàn, nhận cọc và báo cáo nâng cao", "Sẵn sàng mở rộng quy trình nhân sự, tồn kho"]
+      headline: "Tạo tài khoản"
     };
   }
 
   return {
-    code: "pro",
     name: "LogiVN Pro",
-    price: "99K",
-    badge: "Khởi động nhanh",
-    headline: "Bắt đầu Pro để đưa QR ordering vào quán trong vài bước.",
-    description:
-      "Phù hợp với quán cafe, trà sữa, nhà hàng nhỏ muốn thay menu giấy, nhận order tại bàn và theo dõi đơn trên dashboard.",
-    benefits: ["QR ordering và order tại bàn", "Dashboard quản lý đơn theo thời gian thực", "Dùng thử trước, nâng cấp khi quán cần thêm"]
+    headline: "Tạo tài khoản"
   };
 }
 
-export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCode?: "pro" | "premium" }) {
+type RegisterAccountFormProps = {
+  initialPlanCode?: "pro" | "premium";
+  initialSource?: string;
+  initialVariant?: string;
+  initialContact?: string;
+  initialRestaurantName?: string;
+  initialBusinessType?: string;
+  initialPilotGoal?: string;
+};
+
+function isEmailLike(value: string | undefined) {
+  return Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()));
+}
+
+function buildNextPath(planCode: "pro" | "premium", source?: string, variant?: string, pilotGoal?: string) {
+  const params = new URLSearchParams({ plan: planCode });
+  if (source) params.set("source", source);
+  if (variant) params.set("variant", variant);
+  if (pilotGoal) params.set("pilotGoal", pilotGoal);
+  return `/dashboard/onboarding?${params.toString()}`;
+}
+
+export function RegisterAccountForm({
+  initialPlanCode = "pro",
+  initialSource,
+  initialVariant,
+  initialContact,
+  initialRestaurantName,
+  initialBusinessType,
+  initialPilotGoal
+}: RegisterAccountFormProps) {
   const [state, action, pending] = useActionState(registerAccountAction, undefined);
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(isEmailLike(initialContact) ? initialContact!.trim().toLowerCase() : "");
   const [emailStatus, setEmailStatus] = useState<EmailStatus>("idle");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -61,15 +79,16 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
   const normalizedEmail = email.trim().toLowerCase();
   const passwordReady = isAuthPasswordPolicySatisfied(password) && password === confirmPassword;
   const canSubmit = isValidEmail(email) && passwordReady && emailStatus !== "registered" && emailStatus !== "pending_verification";
-  const googleNext = `/auth/google?next=${encodeURIComponent(initialPlanCode === "premium" ? "/dashboard/onboarding?plan=premium" : "/dashboard/onboarding?plan=pro")}`;
+  const onboardingNext = buildNextPath(initialPlanCode, initialSource, initialVariant, initialPilotGoal);
+  const googleNext = `/auth/google?next=${encodeURIComponent(onboardingNext)}`;
   const planContext = getSignupPlanContext(initialPlanCode);
 
   const statusTone = useMemo(() => {
-    if (emailStatus === "available") return "border-[#b9d7bd] bg-[#edf7eb] text-[#0b5f3d]";
+    if (emailStatus === "available") return "border-[#0F4D3A]/20 bg-[#eef7f2] text-[#0F4D3A]";
     if (emailStatus === "registered" || emailStatus === "pending_verification" || emailStatus === "rate_limited") {
-      return "border-[#ffd3ad] bg-[#fff1e8] text-[#9a4a17]";
+      return "border-[#F28C28]/35 bg-[#fff7ed] text-[#9a4a17]";
     }
-    return "border-[#e5d8c4] bg-white/70 text-[#68766b]";
+    return "border-[#d8dee9] bg-[#f8fafc] text-[#667085]";
   }, [emailStatus]);
 
   useEffect(() => {
@@ -108,117 +127,67 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
   }, [email, normalizedEmail]);
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#fff8ec] text-[#102a1f]">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_12%_0%,rgba(15,77,58,0.12),transparent_30%),radial-gradient(circle_at_92%_12%,rgba(242,140,40,0.1),transparent_24%)]" />
-      <section className="relative mx-auto grid min-h-screen w-full max-w-[1040px] items-center gap-6 px-5 py-8 lg:grid-cols-[0.92fr_1.08fr]">
-        <div className="order-2 lg:order-1">
-          <div className="hidden lg:block">
-            <LogiVNLogo href="/" className="h-11" priority />
-          </div>
-          <div className="mt-8 inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0f4d3a]/10 bg-white/70 px-4 text-xs font-black uppercase tracking-normal text-[#c36513]">
-            <Sparkles className="h-4 w-4" />
-            {planContext.badge}
-          </div>
-          <h1 className="mt-5 max-w-[560px] text-[36px] font-black leading-[1.02] tracking-normal text-[#102a1f] sm:text-[48px]">
-            {planContext.headline}
-          </h1>
-          <p className="mt-4 max-w-[520px] text-[15px] font-semibold leading-7 text-[#647267]">{planContext.description}</p>
-
-          <div className="mt-6 rounded-[30px] border border-[#123b2b]/10 bg-[#fffdf8]/80 p-5 shadow-[0_20px_60px_rgba(15,77,58,0.08)] backdrop-blur">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-black uppercase tracking-normal text-[#c36513]">Gói đang chọn</p>
-                <h2 className="mt-2 text-2xl font-black text-[#102a1f]">{planContext.name}</h2>
-              </div>
-              <strong className="rounded-2xl bg-[#0f4d3a] px-4 py-3 text-xl font-black text-[#fff8ec]">
-                {planContext.price}
-                <span className="text-xs font-bold opacity-80">/ tháng</span>
-              </strong>
-            </div>
-
-            <div className="mt-5 grid gap-3">
-              {planContext.benefits.map((benefit) => (
-                <div className="flex items-start gap-3 text-sm font-bold leading-6 text-[#214032]" key={benefit}>
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#0f4d3a]" />
-                  <span>{benefit}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-5 flex flex-wrap gap-3 border-t border-[#123b2b]/10 pt-4 text-sm font-bold text-[#68766b]">
-              <span className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[#0f4d3a]/[0.07] px-3">
-                <ShieldCheck className="h-4 w-4 text-[#0f4d3a]" />
-                Dùng thử trước
-              </span>
-              <span className="inline-flex min-h-9 items-center rounded-full bg-[#f28c28]/10 px-3 text-[#9a4a17]">
-                Không cần thẻ tín dụng
-              </span>
-              <Link href="/pricing" className="inline-flex min-h-11 items-center px-3 font-black text-[#c36513] underline">
-                Đổi gói
-              </Link>
-            </div>
-          </div>
+    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <section className="relative mx-auto flex min-h-svh w-full max-w-[420px] flex-col justify-center px-4 py-6 sm:px-5">
+        <div className="mb-4 flex flex-col items-center text-center">
+          <LogiVNLogo href="/" className="h-10" priority />
+          <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">{planContext.headline}</h1>
         </div>
 
-        <div className="order-1 w-full lg:order-2">
-          <div className="mb-5 text-center lg:hidden">
-            <LogiVNLogo href="/" className="mx-auto h-11" priority />
+        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between gap-3 text-sm">
+            <p className="truncate text-sm font-black text-[#111827]">{planContext.name}</p>
+            <Link href="/pricing" className="inline-flex min-h-11 shrink-0 items-center text-xs font-black text-[#0F4D3A]">
+              Đổi
+            </Link>
           </div>
 
-          <div className="w-full rounded-[32px] border border-[#123b2b]/10 bg-[#fffdf8]/92 p-4 shadow-[0_24px_80px_rgba(15,77,58,0.1)] backdrop-blur sm:p-5">
-            <div className="mb-5 rounded-[24px] bg-[#0f4d3a] p-5 text-[#fff8ec]">
-              <div className="flex items-center justify-between gap-3">
-                <div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/12">
-                  <Sparkles className="h-5 w-5" />
-                </div>
-                <span className="rounded-full bg-white/12 px-3 py-2 text-xs font-black uppercase tracking-normal">
-                  {planContext.code.toUpperCase()}
-                </span>
-              </div>
-              <h2 className="mt-4 text-[28px] font-black leading-tight tracking-normal">Tạo tài khoản LogiVN</h2>
-              <p className="mt-2 text-sm font-semibold leading-6 text-[#fff8ec]/75">
-                Đăng ký xong, bạn xác thực email rồi vào onboarding tạo quán, menu và bàn đầu tiên.
-              </p>
-            </div>
+          <a
+            href={googleNext}
+            className="flex h-12 items-center justify-center gap-3 rounded-md border border-[#d8dee9] bg-white px-5 text-sm font-black text-[#1f2937] transition hover:border-[#0F4D3A]/45 hover:bg-[#f8fbff]"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4" />
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+            </svg>
+            Tiếp tục với Google
+          </a>
 
-            <a
-              href={googleNext}
-              className="flex h-12 items-center justify-center gap-3 rounded-2xl border border-[#123b2b]/10 bg-white px-5 text-sm font-black text-[#21352a] transition hover:border-[#0f4d3a]/35 hover:bg-white"
-            >
-              <span className="grid h-7 w-7 place-items-center rounded-full bg-white shadow-sm">G</span>
-              Tiếp tục với Google
-            </a>
+          <div className="my-4 flex items-center gap-3 text-[11px] font-bold uppercase tracking-[0.16em] text-[#98a2b3]">
+            <span className="h-px flex-1 bg-[#d8dee9]" />
+            hoặc
+            <span className="h-px flex-1 bg-[#d8dee9]" />
+          </div>
 
-            <div className="my-4 flex items-center gap-3 text-[11px] font-bold uppercase tracking-normal text-[#9b8d78]">
-              <span className="h-px flex-1 bg-[#dfd2bd]" />
-              hoặc đăng ký email
-              <span className="h-px flex-1 bg-[#dfd2bd]" />
-            </div>
+          <form action={action} className="grid gap-3">
+            <input type="hidden" name="planCode" value={initialPlanCode} />
+            <input type="hidden" name="source" value={initialSource || ""} />
+            <input type="hidden" name="variant" value={initialVariant || ""} />
+            <input type="hidden" name="restaurantName" value={initialRestaurantName || ""} />
+            <input type="hidden" name="businessType" value={initialBusinessType || ""} />
+            <input type="hidden" name="pilotGoal" value={initialPilotGoal || ""} />
 
-            <form action={action} className="grid gap-3">
-              <input type="hidden" name="planCode" value={initialPlanCode} />
-              <label className="grid gap-2 text-sm font-bold text-[#21352a]">
+              <label className="grid gap-2 text-sm font-semibold text-[#344054]">
                 Email
-                <span className="relative">
-                  <Mail className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a877b]" />
-                  <input
-                    name="email"
-                    value={email}
-                    onChange={(event) => {
-                      setEmail(event.target.value);
-                      setEmailStatus("idle");
-                    }}
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    placeholder="email của bạn"
-                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-4 text-sm font-semibold outline-none transition placeholder:text-[#7c877b]/55 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
-                  />
-                </span>
+                <input
+                  name="email"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setEmailStatus("idle");
+                  }}
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  placeholder="email của bạn"
+                  className="h-12 w-full rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold leading-6 text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
+                />
               </label>
 
               {emailStatus !== "idle" && emailStatus !== "invalid" ? (
-                <div className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${statusTone}`}>
+                <div className={`rounded-md border px-4 py-3 text-sm font-semibold ${statusTone}`}>
                   <div className="flex items-start gap-2">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                     <span>{emailStatusCopy(emailStatus)}</span>
@@ -234,17 +203,16 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
                     </div>
                   ) : null}
                   {emailStatus === "pending_verification" ? (
-                    <Link href={`/verify-email?email=${encodeURIComponent(normalizedEmail)}`} className="mt-2 inline-flex min-h-11 items-center text-xs font-black underline">
+                    <Link href={`/dashboard/verify-email?email=${encodeURIComponent(normalizedEmail)}`} className="mt-2 inline-flex min-h-11 items-center text-xs font-black underline">
                       Mở trang xác thực
                     </Link>
                   ) : null}
                 </div>
               ) : null}
 
-              <label className="grid gap-2 text-sm font-bold text-[#21352a]">
+              <label className="grid gap-2 text-sm font-semibold text-[#344054]">
                 Mật khẩu
                 <span className="relative">
-                  <LockKeyhole className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a877b]" />
                   <input
                     name="password"
                     value={password}
@@ -252,12 +220,12 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
                     type={showPassword ? "text" : "password"}
                     autoComplete="new-password"
                     placeholder="Mật khẩu"
-                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-14 text-sm font-semibold outline-none transition placeholder:text-[#7c877b]/55 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                    className="h-12 w-full rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 pr-14 text-sm font-semibold leading-6 text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword((value) => !value)}
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-xl text-[#7a877b] transition hover:bg-[#0f4d3a]/5 hover:text-[#102a1f]"
+                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
                     aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
                     {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -265,10 +233,9 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
                 </span>
               </label>
 
-              <label className="grid gap-2 text-sm font-bold text-[#21352a]">
+              <label className="grid gap-2 text-sm font-semibold text-[#344054]">
                 Nhập lại mật khẩu
                 <span className="relative">
-                  <LockKeyhole className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a877b]" />
                   <input
                     name="confirmPassword"
                     value={confirmPassword}
@@ -276,12 +243,12 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
                     type={showConfirmPassword ? "text" : "password"}
                     autoComplete="new-password"
                     placeholder="Nhập lại mật khẩu"
-                    className="h-12 w-full rounded-2xl border border-[#123b2b]/12 bg-[#fffdf8] pl-11 pr-14 text-sm font-semibold outline-none transition placeholder:text-[#7c877b]/55 focus:border-[#0f4d3a]/70 focus:ring-2 focus:ring-[#0f4d3a]/10"
+                    className="h-12 w-full rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 pr-14 text-sm font-semibold leading-6 text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword((value) => !value)}
-                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-xl text-[#7a877b] transition hover:bg-[#0f4d3a]/5 hover:text-[#102a1f]"
+                    className="absolute right-1 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-md text-[#667085] transition hover:bg-[#eef3f9] hover:text-[#111827]"
                     aria-label={showConfirmPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                   >
                     {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
@@ -292,25 +259,23 @@ export function RegisterAccountForm({ initialPlanCode = "pro" }: { initialPlanCo
               {password ? <PasswordPolicyList password={password} confirmPassword={confirmPassword} /> : null}
 
               {state?.error ? (
-                <p className="rounded-2xl border border-[#e59665]/30 bg-[#fff1e8] px-4 py-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p>
+                <p className="rounded-md border border-[#F28C28]/35 bg-[#fff7ed] px-4 py-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p>
               ) : null}
 
               <button
-                className="mt-1 flex h-12 items-center justify-center gap-2 rounded-2xl bg-[#0f4d3a] px-5 text-sm font-black text-[#fffaf1] shadow-[0_16px_36px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 disabled:pointer-events-none disabled:opacity-50"
+                className="mt-1 flex h-12 items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
                 disabled={pending || !canSubmit}
               >
-                {pending ? "Đang tạo..." : "Tạo tài khoản và vào onboarding"}
-                <ArrowRight className="h-4 w-4" />
+                {pending ? "Đang tạo..." : "Tạo tài khoản"}
               </button>
             </form>
 
-            <p className="mt-5 border-t border-[#123b2b]/10 pt-4 text-center text-sm text-[#68766b]">
+            <p className="mt-5 border-t border-[#e5e7eb] pt-4 text-center text-sm text-[#667085]">
               Đã có tài khoản?{" "}
-              <Link href="/dashboard/login" className="inline-flex min-h-11 items-center font-black text-[#c36513]">
+              <Link href="/dashboard/login" className="inline-flex min-h-11 items-center font-black text-[#0F4D3A]">
                 Đăng nhập
               </Link>
             </p>
-          </div>
         </div>
       </section>
     </main>

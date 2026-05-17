@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { DASHBOARD_SMOKE_SESSION_COOKIE, dashboardSmokeAuthEnabled, parseDashboardSmokeCookie } from "@/lib/dashboard-smoke-auth";
 import {
   cookieNamesFromHeader,
   getHostname,
@@ -27,6 +28,15 @@ function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
     .getAll()
     .some((cookie) => isSupabaseAuthSessionCookieName(cookie.name));
+}
+
+function hasDashboardSmokeAuthCookie(request: NextRequest) {
+  if (!dashboardSmokeAuthEnabled()) return false;
+  const secret = process.env.DASHBOARD_SMOKE_AUTH_SECRET;
+  if (!secret) return false;
+
+  const parsed = parseDashboardSmokeCookie(request.cookies.get(DASHBOARD_SMOKE_SESSION_COOKIE)?.value);
+  return parsed?.secret === secret;
 }
 
 function isServerActionRequest(request: NextRequest) {
@@ -194,6 +204,7 @@ export async function proxy(request: NextRequest) {
     !publicDashboardPaths.has(pathname) &&
     shouldApplyDashboardPageGate(request) &&
     !hasSupabaseAuthCookie(request) &&
+    !hasDashboardSmokeAuthCookie(request) &&
     !isServerActionRequest(request)
   ) {
     const url = request.nextUrl.clone();

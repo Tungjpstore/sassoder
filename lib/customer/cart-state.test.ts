@@ -9,6 +9,7 @@ import {
   restoreRemoteCartSnapshot,
   serializeRemoteCartSnapshot,
   setDineInCartItemNote,
+  setRemoteCartItemNote,
   updateRemoteCartQuantity,
   type DineInCartItems,
   type RemoteCart
@@ -69,13 +70,14 @@ test("dine-in cart updates notes without mutating existing state", () => {
 
 test("remote cart quantity updates are immutable and remove zero quantities", () => {
   const initial: RemoteCart = {
-    pho: { itemId: "pho", quantity: 1 }
+    pho: { itemId: "pho", quantity: 1, note: "ít hành" }
   };
 
   const incremented = updateRemoteCartQuantity(initial, "pho", 2);
   const removed = updateRemoteCartQuantity(incremented, "pho", -3);
 
   assert.equal(incremented.pho.quantity, 3);
+  assert.equal(incremented.pho.note, "ít hành");
   assert.deepEqual(removed, {});
   assert.equal(initial.pho.quantity, 1);
 });
@@ -90,17 +92,31 @@ test("remote cart snapshots restore only available menu items", () => {
   const snapshot = JSON.stringify({
     version: 1,
     lines: [
-      { itemId: "coffee", quantity: 2 },
-      { itemId: "coffee", quantity: 3 },
+      { itemId: "coffee", quantity: 2, note: "ít đá" },
+      { itemId: "coffee", quantity: 3, note: "không đường" },
       { itemId: "sold-out", quantity: 1 },
       { itemId: "tea", quantity: 99 }
     ]
   });
 
   assert.deepEqual(restoreRemoteCartSnapshot(snapshot, ["coffee", "tea"]), {
-    coffee: { itemId: "coffee", quantity: 5 },
+    coffee: { itemId: "coffee", quantity: 5, note: "ít đá; không đường" },
     tea: { itemId: "tea", quantity: 50 }
   });
+});
+
+test("remote cart item notes are normalized and cleared immutably", () => {
+  const initial: RemoteCart = {
+    pho: { itemId: "pho", quantity: 1 }
+  };
+
+  const noted = setRemoteCartItemNote(initial, "pho", "  không hành  ");
+  const cleared = setRemoteCartItemNote(noted, "pho", "");
+
+  assert.equal(noted.pho.note, "không hành");
+  assert.equal(cleared.pho.note, undefined);
+  assert.equal(initial.pho.note, undefined);
+  assert.equal(setRemoteCartItemNote(initial, "missing", "note"), initial);
 });
 
 test("remote cart normalization drops broken persisted rows", () => {
@@ -117,25 +133,25 @@ test("remote cart normalization drops broken persisted rows", () => {
 
 test("remote cart snapshots serialize normalized lines", () => {
   const snapshot = serializeRemoteCartSnapshot({
-    coffee: { itemId: "coffee", quantity: 2 },
+    coffee: { itemId: "coffee", quantity: 2, note: "ít đá" },
     tea: { itemId: "tea", quantity: 0 }
   });
 
   assert.deepEqual(snapshot, {
     version: 1,
-    lines: [{ itemId: "coffee", quantity: 2 }]
+    lines: [{ itemId: "coffee", quantity: 2, note: "ít đá" }]
   });
 });
 
 test("remote reorder cart merges duplicate order items and skips invalid rows", () => {
   const cart = buildRemoteCartFromOrderItems([
     { quantity: 1, menuItem: { id: "combo" } },
-    { quantity: 2, menuItem: { id: "combo" } },
+    { quantity: 2, note: "ít đá", menuItem: { id: "combo" } },
     { quantity: 3, menuItem: null },
     { quantity: 0, menuItem: { id: "tea" } }
   ]);
 
   assert.deepEqual(cart, {
-    combo: { itemId: "combo", quantity: 3 }
+    combo: { itemId: "combo", quantity: 3, note: "ít đá" }
   });
 });

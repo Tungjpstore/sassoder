@@ -25,7 +25,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ rest
     const input = reservationAvailabilitySchema.parse({
       restaurantSlug,
       date: url.searchParams.get("date"),
-      partySize: url.searchParams.get("partySize")
+      partySize: url.searchParams.get("partySize"),
+      preferredTableAreaId: url.searchParams.get("preferredTableAreaId"),
+      preferredSeatingZone: url.searchParams.get("preferredSeatingZone"),
+      preferredTableKind: url.searchParams.get("preferredTableKind")
     });
 
     const result = await getReservationAvailability(input);

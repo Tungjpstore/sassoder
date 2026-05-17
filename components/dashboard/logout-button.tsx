@@ -4,14 +4,15 @@ import { Button } from "@/components/ui/button";
 
 export function LogoutButton({ compact = false }: { compact?: boolean }) {
   return (
-    <form action={logoutAction}>
+    <form action={logoutAction} className={compact ? "h-11 w-11" : undefined}>
       <Button
         variant="secondary"
         size={compact ? "icon" : "md"}
         type="submit"
+        aria-label={compact ? "Đăng xuất" : undefined}
         className={
           compact
-            ? "w-full"
+            ? "h-11 w-11"
             : "w-full border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] shadow-none hover:bg-[var(--soft-surface)] hover:text-[var(--foreground)]"
         }
       >

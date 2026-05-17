@@ -76,12 +76,31 @@ Implemented first slice:
 - Platform Admin cron visibility for AI Ops readiness and guard checks
 - Shared `cron_run_logs` observability for reports, AI Ops, reservations and subscription lifecycle jobs
 - Platform Admin cron operations show next-run ETA, last-run age, failure streak and recent execution history
+- AI Ops Morning Brief ledger: daily dashboard brief, optional email delivery, delivery status, action items and Platform Admin visibility
+- Owner Morning Brief inbox at `/dashboard/ai-ops`: latest brief, recent history, action item preview, preference form and email retry
+- Per-restaurant `ai_morning_brief_preferences` with RLS, recipient list, send hour, timezone and admin-only owner dashboard mutation
+- Platform Admin `/admin/ai` drill-down for Morning Brief summary, recipients, severity counts and top action items
+- Branch-scoped AI Ops insights using existing `ai_operation_insights.branch_id` and `scope_key=branch:<branch_id>`
+- Deterministic branch signals for delivery pause, payment queue, local low stock, inventory alerts, staff coverage, long-distance delivery and branch promotion opportunities
+- `/api/cron/ai-ops` branch insight refresh with `branches=false` opt-out and `branchLimit` / `maxBranches` slicing per restaurant
+- Owner `/dashboard/ai-ops` branch panel with per-branch actions, resolve and dismiss controls
+- Platform Admin `/admin/ai` branch insight overview across restaurants, branches, severity and recent action items
+- Durable order branch attribution: `orders.branch_id` plus `branch_assignment_source` for delivery quote, single branch and primary branch fallbacks
+- Branch AI now prefers `orders.branch_id` before falling back to legacy `delivery_quote_snapshot.nearestStore.id`
+- Branch picker for pickup orders: public ordering now lets guests choose the active pickup branch and stores explicit attribution as `manual`
+- Branch-aware table setup: dashboard table management can assign each QR table to a branch so dine-in orders inherit the table branch
+- AI Ops inventory economics signals: projected purchase value, reorder urgency, waste/hao hụt, price spike, supplier delay and high food-cost menu items
+- Owner assistant inventory context now includes food cost, waste and purchase-order signals for short actionable answers
+- Branch AI inventory drill-down now separates waste spike, supplier delay and price spike alerts per branch
+- Branch attribution quality drill-down for pickup, dine-in and delivery: 7-day comparison, fallback/unassigned risk, delivery quote coverage and per-branch action guidance
+- Confirm-first AI automation workflow layer for inventory purchase planning, food-cost/waste review, quiet-hour marketing and staffing coverage follow-ups
+- Owner `/dashboard/ai-ops` now shows automation workflows as actionable checklists with ETA, trigger, outcome, safety mode and deep links to the right module
+- Owner-facing branch performance comparison: revenue, service time, stock risk, staff coverage, strongest/weakest branch and per-branch recommended actions
 
 Next implementation steps:
 
-- Add owner notification delivery for daily morning summary
-- Add branch-scoped insights using `branch_id` and `scope_key`
-- Add food cost, waste and purchase order automation signals
+- Persist AI automation workflow runs with audit trail, owner confirmation and rollback notes
+- Add cross-branch forecasting for staffing, stock transfer and promotion timing
 
 ## P1: Provider Gateway
 

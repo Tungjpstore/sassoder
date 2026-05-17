@@ -502,8 +502,8 @@ export function AdminLiveActionCenter({
         <section className="dashboard-minimal-card flex min-h-0 flex-col p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Realtime queue</p>
-              <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Việc cần xử lý</h2>
+              <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Realtime queue</p>
+              <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
             </div>
             <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
               <RadioTower size={13} />
@@ -554,10 +554,10 @@ export function AdminLiveActionCenter({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
             <p className="text-xs text-[var(--muted-foreground)]">{summary.total} việc đang chờ</p>
             <div className="flex flex-wrap gap-2">
-              <Link href="/dashboard/orders" className="inline-flex h-9 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
+              <Link href="/dashboard/orders" className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
                 Mở đơn hàng
               </Link>
-              <Link href="/dashboard/kitchen" className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
+              <Link href="/dashboard/kitchen" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
                 Mở bếp
               </Link>
             </div>
@@ -591,7 +591,7 @@ export function AdminLiveActionCenter({
           <Bell size={18} />
           <span className="hidden xl:inline">{summary.total > 0 ? "Cần xử lý" : "Thông báo"}</span>
           {summary.total > 0 && (
-            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-black text-white">
+            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-white">
               {summary.total}
             </span>
           )}
@@ -629,7 +629,7 @@ export function AdminLiveActionCenter({
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted-foreground)]">
               <span className="inline-flex items-center gap-1.5"><RadioTower size={14} />{realtimeLabel(realtimeState)}</span>
-              <Link href="/dashboard/orders" className="font-black text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
+              <Link href="/dashboard/orders" className="font-semibold text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
             </div>
           </div>
         )}
@@ -692,11 +692,11 @@ function FloatingActionNotice({
           <Icon size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Yêu cầu mới</p>
+          <p className="dashboard-eyebrow text-[var(--accent)]">Yêu cầu mới</p>
           <h3 className="mt-1 whitespace-normal break-words text-base font-semibold leading-snug text-[var(--foreground)]">{action.title}</h3>
           <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-[var(--muted-foreground)]">{action.subtitle}</p>
           {action.kind !== "resolve-request" ? (
-            <p className="metric-number mt-1 text-sm font-black text-[var(--accent)]">{formatVnd(action.amount)}</p>
+            <p className="metric-number mt-1 text-sm font-semibold text-[var(--accent)]">{formatVnd(action.amount)}</p>
           ) : null}
         </div>
         <button type="button" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]" aria-label="Đóng thông báo">
@@ -704,11 +704,11 @@ function FloatingActionNotice({
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 p-3">
-        <Link href={action.href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
           <ReceiptText size={15} />
           Xem chi tiết
         </Link>
-        <Button type="button" onClick={onRun} disabled={pending} className="min-h-10 shadow-none hover:shadow-none">
+        <Button type="button" onClick={onRun} disabled={pending} className="min-h-11 shadow-none hover:shadow-none">
           {pending ? <Loader2 className="animate-spin" size={15} /> : action.kind === "complete" ? <CheckCircle2 size={15} /> : action.kind === "accept" ? <ChefHat size={15} /> : action.kind === "timer" ? <Clock3 size={15} /> : action.kind === "resolve-request" ? <Bell size={15} /> : <CreditCard size={15} />}
           {action.label}
         </Button>
@@ -753,7 +753,7 @@ function QuickActionRow({
         </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Link href={action.href} className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
           <ReceiptText size={14} />
           Chi tiết
         </Link>

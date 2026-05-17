@@ -1,0 +1,47 @@
+{
+  "assetSet": "logivn-customer-order-flow",
+  "size": "1024x1024",
+  "updatedAt": "2026-05-16",
+  "assets": [
+    {
+      "id": "payment-vietqr",
+      "title": "Thanh toán VietQR",
+      "src": "/customer/order-flow/payment-vietqr.png"
+    },
+    {
+      "id": "payment-confirmation",
+      "title": "Quán xác nhận thanh toán",
+      "src": "/customer/order-flow/payment-confirmation.png"
+    },
+    {
+      "id": "restaurant-confirmation",
+      "title": "Quán xác nhận đơn",
+      "src": "/customer/order-flow/restaurant-confirmation.png"
+    },
+    {
+      "id": "preparing",
+      "title": "Chuẩn bị món",
+      "src": "/customer/order-flow/preparing.png"
+    },
+    {
+      "id": "delivery-handoff",
+      "title": "Giao hàng tận nơi",
+      "src": "/customer/order-flow/delivery-handoff.png"
+    },
+    {
+      "id": "pickup-handoff",
+      "title": "Khách đến lấy",
+      "src": "/customer/order-flow/pickup-handoff.png"
+    },
+    {
+      "id": "completed",
+      "title": "Hoàn tất",
+      "src": "/customer/order-flow/completed.png"
+    },
+    {
+      "id": "cancelled",
+      "title": "Đơn dừng xử lý",
+      "src": "/customer/order-flow/cancelled.png"
+    }
+  ]
+}

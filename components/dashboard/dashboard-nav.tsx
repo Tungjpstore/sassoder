@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  BrainCircuit,
   CalendarCheck,
   ChefHat,
   CreditCard,
@@ -29,18 +30,22 @@ type NavLink = {
 };
 
 type NavGroup = {
+  id: string;
   title: string;
   links: NavLink[];
 };
 
 const navGroups: NavGroup[] = [
   {
+    id: "dashboard-mobile-group-today",
     title: "Hôm nay",
     links: [
       { href: "/dashboard", label: "Ca bán hôm nay", icon: LayoutDashboard },
+      { href: "/dashboard/ai-ops", label: "AI Ops", icon: BrainCircuit },
     ],
   },
   {
+    id: "dashboard-mobile-group-operations",
     title: "Vận hành",
     links: [
       { href: "/dashboard/orders", label: "Đơn hàng", icon: ListOrdered },
@@ -50,6 +55,7 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    id: "dashboard-mobile-group-sales",
     title: "Bán hàng",
     links: [
       { href: "/dashboard/online", label: "Đặt online", icon: ShoppingBag },
@@ -58,6 +64,7 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    id: "dashboard-mobile-group-management",
     title: "Quản lý",
     links: [
       { href: "/dashboard/menu", label: "Menu món", icon: Menu },
@@ -66,6 +73,7 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
+    id: "dashboard-mobile-group-system",
     title: "Hệ thống",
     links: [
       { href: "/dashboard/analytics", label: "Báo cáo", icon: BarChart3 },
@@ -100,10 +108,10 @@ export function AdminDesktopNav() {
   }, [pathname]);
 
   return (
-    <nav className="relative z-[1] mx-2.5 mt-3 grid gap-1">
+    <nav className="relative z-[1] mx-3 mt-4 grid gap-1">
       {navGroups.map((group) => (
         <div key={group.title} className="mt-2 first:mt-0">
-          <p className="mb-1 px-2 text-[10px] font-black uppercase tracking-[0.16em] text-[var(--primary)]/55">
+          <p className="mb-1 px-2 text-xs font-semibold uppercase text-[var(--primary)]/60">
             {group.title}
           </p>
           {group.links.map((link) => {
@@ -123,7 +131,7 @@ export function AdminDesktopNav() {
                     : undefined
                 }
                 className={cn(
-                  "admin-nav-link group relative flex h-9 items-center gap-2.5 rounded-xl px-2.5 text-[13px] font-semibold transition duration-150",
+                  "admin-nav-link group relative flex min-h-11 items-center gap-2.5 rounded-xl px-3 text-sm font-semibold transition duration-150",
                   active
                     ? "bg-[var(--primary)] text-white shadow-[0_14px_28px_rgba(15,77,58,0.18)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
@@ -131,13 +139,13 @@ export function AdminDesktopNav() {
               >
                 <span
                   className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-lg transition",
+                    "flex h-7 w-7 items-center justify-center rounded-lg transition",
                     active
                       ? "bg-white/15 text-white"
                       : "text-[var(--muted-foreground)] group-hover:text-[var(--foreground)]"
                   )}
                 >
-                  <link.icon size={15} />
+                  <link.icon size={16} />
                 </span>
                 {link.label}
               </Link>
@@ -198,7 +206,7 @@ export function AdminMobileNav() {
                     : undefined
                 }
                 className={cn(
-                  "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-black transition",
+                  "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold transition",
                   active
                     ? "bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.2)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
@@ -213,7 +221,7 @@ export function AdminMobileNav() {
             type="button"
             onClick={() => setOpen((value) => !value)}
             className={cn(
-              "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-black transition",
+              "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold transition",
               open || moreActive
                 ? "bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.2)]"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
@@ -240,19 +248,19 @@ export function AdminMobileNav() {
             id="dashboard-mobile-more"
             role="dialog"
             aria-modal="true"
-            className="absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] top-[calc(0.75rem+env(safe-area-inset-top))] mx-auto flex max-w-md flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+            className="dashboard-mobile-menu-container absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] top-[calc(0.75rem+env(safe-area-inset-top))] mx-auto flex max-w-md flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
             aria-label="Tất cả chức năng dashboard"
           >
             <div className="shrink-0 border-b border-[var(--border)] px-3 py-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--primary)]">LogiVN</p>
-                  <h2 className="text-base font-black text-[var(--foreground)]">Menu vận hành</h2>
+                  <p className="dashboard-eyebrow">LogiVN</p>
+                  <h2 className="dashboard-section-title">Menu vận hành</h2>
                 </div>
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]"
+                  className="grid h-11 w-11 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]"
                   aria-label="Đóng menu"
                 >
                   <X size={18} />
@@ -268,7 +276,7 @@ export function AdminMobileNav() {
                       href={link.href}
                       onClick={() => setOpen(false)}
                       className={cn(
-                        "flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center text-[10px] font-black transition",
+                        "flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center text-[10px] font-semibold transition",
                         active
                           ? "border-[var(--primary)] bg-[var(--primary)] text-white"
                           : "border-[var(--border)] bg-[var(--soft-surface)] text-[var(--foreground)]"
@@ -281,13 +289,36 @@ export function AdminMobileNav() {
                 })}
               </div>
             </div>
+            <div className="hide-scrollbar flex shrink-0 gap-1.5 overflow-x-auto border-b border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
+              {navGroups.map((group) => {
+                const active = group.links.some((link) => isActive(pathname, link.href));
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    onClick={() => document.getElementById(group.id)?.scrollIntoView({ block: "start" })}
+                    className={cn(
+                      "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold transition",
+                      active
+                        ? "border-[var(--primary)] bg-[var(--primary)] text-white"
+                        : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+                    )}
+                  >
+                    {group.title}
+                    <span className={cn("metric-number rounded-full px-1.5 py-0.5 text-[10px]", active ? "bg-white/15 text-white" : "bg-[var(--primary-soft)] text-[var(--primary)]")}>
+                      {group.links.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 pb-[calc(1rem+env(safe-area-inset-bottom))]">
               {navGroups.map((group) => (
-                <div key={group.title} className="py-1">
-                  <p className="px-2 pb-1 pt-2 text-[10px] font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                <div key={group.title} id={group.id} className="scroll-mt-2 py-1">
+                  <p className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase text-[var(--muted-foreground)]">
                     {group.title}
                   </p>
-                  <div className="grid grid-cols-1 gap-1.5 min-[380px]:grid-cols-2">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {group.links.map((link) => {
                       const active = isActive(pathname, link.href);
 
@@ -297,7 +328,7 @@ export function AdminMobileNav() {
                           href={link.href}
                           onClick={() => setOpen(false)}
                           className={cn(
-                            "flex min-h-12 items-center gap-2 rounded-xl border px-3 text-sm font-black transition",
+                            "flex min-h-12 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition",
                             active
                               ? "border-[var(--primary)] bg-[var(--primary)] text-white"
                               : "border-[var(--border)] bg-[var(--soft-surface)] text-[var(--foreground)] hover:border-[var(--primary)]/35"

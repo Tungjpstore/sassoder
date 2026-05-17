@@ -97,6 +97,7 @@ export default async function BlogArticlePage({ params }: { params: Promise<{ sl
           <LogiVNLogo href="/" className="h-10" priority />
           <nav aria-label="Điều hướng bài viết" className="article-nav-links">
             <Link href="/">Trang chủ</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
@@ -399,9 +400,9 @@ function BlogTopicHubPage({ hub }: { hub: BlogTopicHub }) {
               <div className="article-side-card">
                 <span>Bước tiếp theo</span>
                 <h2>Muốn thử trên quán thật?</h2>
-                <p>Đi từ nhóm bài viết sang nền tảng hoặc bảng giá để chọn gói phù hợp với mô hình vận hành của quán.</p>
-                <Link href="/pricing">
-                  Xem bảng giá
+                <p>Đi từ nhóm bài viết sang demo hoặc bảng giá để chọn gói phù hợp với mô hình vận hành của quán.</p>
+                <Link href="/demo">
+                  Xem demo
                   <ArrowRight size={16} />
                 </Link>
               </div>

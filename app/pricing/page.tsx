@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Check, ShieldCheck, Sparkles, WalletCards } from "lucide-react";
+import { ArrowRight, Check, MonitorPlay, Route, ShieldCheck, Sparkles, TrendingUp, WalletCards } from "lucide-react";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { MarketingFunnelTracker } from "@/components/marketing/funnel-tracker";
 import { PricingPageJsonLd, pricingFaqItems } from "@/components/seo/pricing-page-json-ld";
 import { formatVnd } from "@/lib/money";
 import { createSeoMetadata } from "@/lib/seo/metadata";
@@ -52,6 +53,48 @@ const comparisonRows = [
   { feature: "AI assistant vận hành", pro: "Cơ bản", premium: "Nâng cao" },
   { feature: "Đặt bàn, nhận cọc", pro: "Giới hạn", premium: "Đầy đủ" },
   { feature: "Báo cáo, tồn kho, nhân sự", pro: "Cốt lõi", premium: "Mở rộng" }
+];
+
+const roiScenarios = [
+  {
+    value: "1 order/ngày",
+    title: "Pro đã dễ hoàn vốn",
+    text: "Chỉ cần giảm một order bị ghi sai hoặc thêm một món gọi lại mỗi ngày, chi phí 99K trở nên rất nhẹ so với doanh thu giữ được."
+  },
+  {
+    value: "1 ca đông",
+    title: "Premium tạo đòn bẩy rõ hơn",
+    text: "AI, báo cáo và nhân sự giúp chủ quán xử lý giờ cao điểm bằng tín hiệu vận hành thay vì cảm giác sau khi ca đã qua."
+  },
+  {
+    value: "0 POS",
+    title: "Bắt đầu không cần dự án phần cứng",
+    text: "LogiVN ưu tiên web, QR và VietQR để quán thử flow thật trước khi quyết định đầu tư thiết bị hoặc rollout rộng hơn."
+  }
+];
+
+const funnelPaths = [
+  {
+    icon: MonitorPlay,
+    title: "Xem demo trước",
+    text: "Dành cho chủ quán muốn hiểu flow scan QR, order, VietQR, dashboard và AI trước khi chọn gói.",
+    href: "/demo",
+    cta: "Mở demo"
+  },
+  {
+    icon: Route,
+    title: "Pilot có hướng dẫn",
+    text: "Dành cho quán cần LogiVN gợi ý phạm vi triển khai nhỏ nhất theo mô hình quán, nhân sự và giờ cao điểm.",
+    href: "/waitlist",
+    cta: "Vào waitlist"
+  },
+  {
+    icon: TrendingUp,
+    title: "Signup dùng thử ngay",
+    text: "Dành cho quán đã sẵn sàng lên menu, in QR và đo bằng order thật trong 30 ngày.",
+    href: "/dashboard/register?plan=pro&source=pricing_path",
+    cta: "Tạo quán thử"
+  }
 ];
 
 function getPlanHref(planCode: string | null | undefined, email: string) {
@@ -166,6 +209,7 @@ export default async function PricingPage() {
 
   return (
     <>
+      <MarketingFunnelTracker page="/pricing" source="pricing" />
       <PricingPageJsonLd />
       <main className="logivn-pricing-page">
       <style>{styles}</style>
@@ -178,7 +222,12 @@ export default async function PricingPage() {
             <Link href="/pricing" className="is-active">
               Bảng giá
             </Link>
-            <a href="#compare">So sánh</a>
+            <Link href="/giai-phap">Giải pháp</Link>
+            <Link href="/so-sanh">So sánh</Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
+            <Link href="/waitlist">Waitlist</Link>
+            <a href="#compare">So sánh gói</a>
             <a href="#pricing-faq-title">FAQ</a>
             <Link href="/dashboard/login">Đăng nhập</Link>
           </nav>
@@ -212,8 +261,11 @@ export default async function PricingPage() {
                 Tạo quán dùng thử
                 <ArrowRight size={16} />
               </Link>
-              <Link className="lp-btn lp-btn-secondary" href="/dashboard/login">
-                Đã có tài khoản
+              <Link className="lp-btn lp-btn-secondary" href="/demo">
+                Xem demo trước
+              </Link>
+              <Link className="lp-btn lp-btn-tertiary" href="/waitlist">
+                Pilot có hướng dẫn
               </Link>
             </div>
 
@@ -317,9 +369,15 @@ export default async function PricingPage() {
                       {isContact ? "Liên hệ tư vấn" : "Chọn gói này"}
                     </a>
                   ) : (
-                    <Link className={`lp-btn ${featured ? "lp-btn-primary" : "lp-btn-tertiary"}`} href={href}>
-                      {isContact ? "Liên hệ tư vấn" : "Dùng thử gói này"}
-                    </Link>
+                    <>
+                      <Link className={`lp-btn ${featured ? "lp-btn-primary" : "lp-btn-tertiary"}`} href={href}>
+                        {isContact ? "Liên hệ tư vấn" : "Dùng thử gói này"}
+                      </Link>
+                      <Link className="lp-plan-secondary-link" href={featured ? "/demo" : "/waitlist"}>
+                        {featured ? "Xem demo Premium trước" : "Chưa chắc? vào waitlist"}
+                        <ArrowRight size={14} />
+                      </Link>
+                    </>
                   )}
                 </article>
               );
@@ -365,6 +423,46 @@ export default async function PricingPage() {
               <strong>Muốn tăng trưởng?</strong>
               <span>Chọn Premium để mở AI, báo cáo sâu và các workflow giảm thao tác thủ công.</span>
             </article>
+          </div>
+        </div>
+      </section>
+
+      <section className="lp-section lp-roi" id="roi" aria-labelledby="pricing-roi-title">
+        <div className="lp-container lp-roi-shell">
+          <div className="lp-section-head">
+            <span className="lp-kicker">ROI & đường đi dùng thử</span>
+            <h2 id="pricing-roi-title">Giá không chỉ để rẻ, mà để chủ quán dám thử trong một ca bán thật</h2>
+            <p>
+              Bảng giá được thiết kế để chủ quán chọn bước tiếp theo theo mức sẵn sàng: xem demo, pilot có hướng dẫn
+              hoặc tạo tài khoản ngay, thay vì bị ép vào một nút mua duy nhất.
+            </p>
+          </div>
+
+          <div className="lp-roi-grid">
+            {roiScenarios.map((scenario) => (
+              <article className="lp-roi-card" key={scenario.title}>
+                <span>{scenario.value}</span>
+                <h3>{scenario.title}</h3>
+                <p>{scenario.text}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="lp-funnel-grid" aria-label="Đường chuyển đổi từ pricing">
+            {funnelPaths.map((path) => {
+              const Icon = path.icon;
+              return (
+                <article className="lp-funnel-card" key={path.title}>
+                  <Icon size={21} />
+                  <h3>{path.title}</h3>
+                  <p>{path.text}</p>
+                  <Link href={path.href}>
+                    {path.cta}
+                    <ArrowRight size={15} />
+                  </Link>
+                </article>
+              );
+            })}
           </div>
         </div>
       </section>
@@ -439,13 +537,22 @@ export default async function PricingPage() {
                 ít thủ công hơn trong những khung giờ quan trọng nhất.
               </p>
             </div>
-            <Link className="lp-btn lp-btn-primary" href="/dashboard/register?plan=premium">
-              Kích hoạt dùng thử Premium
-              <ArrowRight size={16} />
-            </Link>
+            <div className="lp-final-actions">
+              <Link className="lp-btn lp-btn-secondary" href="/demo">
+                Xem demo
+              </Link>
+              <Link className="lp-btn lp-btn-primary" href="/dashboard/register?plan=premium">
+                Kích hoạt dùng thử Premium
+                <ArrowRight size={16} />
+              </Link>
+            </div>
           </div>
         </section>
       ) : null}
+      <div className="lp-mobile-sticky" aria-label="Hành động nhanh trên mobile">
+        <Link href="/dashboard/register?plan=pro&source=pricing_mobile">Dùng thử</Link>
+        <Link href="/demo">Demo</Link>
+      </div>
       </main>
     </>
   );
@@ -515,9 +622,9 @@ const styles = `
 .lp-nav-links {
   display: flex;
   align-items: center;
-  gap: 30px;
+  gap: 14px;
   color: rgba(32, 51, 41, 0.84);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -953,6 +1060,19 @@ const styles = `
   margin-top: 18px;
 }
 
+.lp-plan-secondary-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--lp-green);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
 .lp-roi-note {
   margin-top: auto;
   padding-top: 18px;
@@ -1055,6 +1175,96 @@ const styles = `
   font-size: 13px;
   line-height: 1.55;
   font-weight: 700;
+}
+
+.lp-roi-shell {
+  padding: 30px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.56);
+  box-shadow: var(--lp-shadow-soft);
+}
+
+.lp-roi-grid,
+.lp-funnel-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.lp-roi-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 28px;
+}
+
+.lp-roi-card,
+.lp-funnel-card {
+  border: 1px solid var(--lp-line);
+  border-radius: 8px;
+  background: rgba(255, 252, 246, 0.76);
+  box-shadow: 0 16px 36px rgba(26, 34, 31, 0.05);
+}
+
+.lp-roi-card {
+  min-height: 190px;
+  padding: 20px;
+}
+
+.lp-roi-card span {
+  color: var(--lp-orange);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.lp-roi-card h3,
+.lp-funnel-card h3 {
+  margin-top: 16px;
+  color: var(--lp-green-strong);
+  font-size: 24px;
+  line-height: 1.06;
+  letter-spacing: 0;
+}
+
+.lp-roi-card p,
+.lp-funnel-card p {
+  margin-top: 11px;
+  color: var(--lp-muted);
+  font-size: 14px;
+  line-height: 1.72;
+  font-weight: 650;
+}
+
+.lp-funnel-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.lp-funnel-card {
+  display: flex;
+  min-height: 244px;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.lp-funnel-card svg {
+  color: var(--lp-orange);
+}
+
+.lp-funnel-card a {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 0 14px;
+  border-radius: 8px;
+  color: var(--lp-green);
+  background: rgba(15, 77, 58, 0.08);
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .lp-activation-grid {
@@ -1160,17 +1370,39 @@ const styles = `
   color: rgba(255, 248, 239, 0.76);
 }
 
+.lp-final-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.lp-mobile-sticky {
+  display: none;
+}
+
 .lp-nav-links a:focus-visible,
 .lp-link:focus-visible,
-.lp-btn:focus-visible {
+.lp-btn:focus-visible,
+.lp-plan-secondary-link:focus-visible,
+.lp-funnel-card a:focus-visible,
+.lp-mobile-sticky a:focus-visible {
   outline: 2px solid rgba(242, 140, 40, 0.54);
   outline-offset: 4px;
+}
+
+@media (max-width: 1180px) {
+  .lp-nav-links {
+    display: none;
+  }
 }
 
 @media (max-width: 1100px) {
   .lp-hero-grid,
   .lp-proof-grid,
   .lp-plan-grid,
+  .lp-roi-grid,
+  .lp-funnel-grid,
   .lp-decision-band,
   .lp-activation-grid,
   .lp-faq-grid {
@@ -1184,6 +1416,11 @@ const styles = `
   .lp-final-shell {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .lp-final-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .lp-compare-row {
@@ -1233,15 +1470,56 @@ const styles = `
     border-radius: 24px;
   }
 
+  .lp-roi-shell {
+    padding: 18px;
+  }
+
   .lp-decision-band article {
     grid-template-columns: 32px 1fr;
+  }
+
+  .lp-mobile-sticky {
+    position: sticky;
+    bottom: 0;
+    z-index: 42;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px 14px;
+    border-top: 1px solid rgba(15, 77, 58, 0.14);
+    background: rgba(255, 248, 239, 0.94);
+    backdrop-filter: blur(16px);
+  }
+
+  .lp-mobile-sticky a {
+    display: inline-flex;
+    min-height: 48px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 900;
+  }
+
+  .lp-mobile-sticky a:first-child {
+    color: var(--lp-ivory);
+    background: var(--lp-orange);
+  }
+
+  .lp-mobile-sticky a:last-child {
+    border: 1px solid var(--lp-line);
+    color: var(--lp-green);
+    background: rgba(255, 255, 255, 0.72);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .lp-link,
   .lp-nav-links a,
-  .lp-btn {
+  .lp-btn,
+  .lp-plan-secondary-link,
+  .lp-funnel-card a,
+  .lp-mobile-sticky a {
     transition: none;
   }
 }

@@ -34,6 +34,22 @@ export const SEO_PUBLIC_ROUTES = [
     description: "So sánh gói LogiVN Pro, Premium và gói tư vấn cho gọi món QR, đặt món online, đặt bàn, thanh toán VietQR và báo cáo."
   },
   {
+    path: "/demo",
+    priority: 0.84,
+    changeFrequency: "weekly" as const,
+    title: "Demo LogiVN - Xem flow QR ordering, VietQR và AI vận hành",
+    description:
+      "Xem demo LogiVN cho quán cafe, trà sữa và nhà hàng: khách scan QR, gọi món tại bàn, nhân viên xác nhận, VietQR, dashboard và AI insight."
+  },
+  {
+    path: "/waitlist",
+    priority: 0.72,
+    changeFrequency: "weekly" as const,
+    title: "Waitlist LogiVN - Pilot QR ordering và AI cho quán Việt",
+    description:
+      "Tham gia waitlist LogiVN để pilot QR ordering, VietQR, AI assistant, quản lý bàn, nhân viên, tồn kho và báo cáo cho quán cafe, trà sữa, nhà hàng."
+  },
+  {
     path: "/blog",
     priority: 0.7,
     changeFrequency: "weekly" as const,
@@ -55,6 +71,14 @@ export const SEO_PUBLIC_ROUTES = [
     title: "So sánh LogiVN với KiotViet, CukCuk, Sapo, iPOS và PosApp",
     description:
       "Cụm trang so sánh LogiVN với các phần mềm POS phổ biến theo QR ordering, AI vận hành, VietQR, nhân viên, tồn kho, báo cáo và chi phí triển khai."
+  },
+  {
+    path: "/dia-phuong",
+    priority: 0.76,
+    changeFrequency: "weekly" as const,
+    title: "LogiVN theo địa phương - TP.HCM, Hà Nội, Đà Nẵng, Cần Thơ, Hải Phòng",
+    description:
+      "Cụm trang địa phương của LogiVN cho phần mềm quản lý quán cafe, trà sữa, quán ăn và nhà hàng theo bối cảnh vận hành từng thành phố Việt Nam."
   }
 ];
 

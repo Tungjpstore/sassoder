@@ -35,7 +35,7 @@ import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildOperationalPassport } from "@/lib/ai/operational-passport";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
 import { looksLikeRawAiPayload, normalizeAiReply, sanitizeAiDisplayText } from "@/lib/ai/response-contract";
-import { getInventorySnapshot } from "@/services/inventory-service";
+import { getInventoryAiEconomicsSignal, getInventorySnapshot } from "@/services/inventory-service";
 import {
   assertFeatureEntitlement,
   assertRestaurantEntitlement,
@@ -875,7 +875,14 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
     };
     payments?: { waitingConfirm?: number };
     menu?: { unavailableCount?: number; itemCount?: number };
-    inventory?: { lowStockCount?: number; recipeCoveragePercent?: number; openAlertCount?: number };
+    inventory?: {
+      lowStockCount?: number;
+      recipeCoveragePercent?: number;
+      openAlertCount?: number;
+      projectedPurchaseValue?: number;
+      wasteSignalCount?: number;
+      highFoodCostItemCount?: number;
+    };
     operationInsights?: {
       primaryInsightId?: string | null;
       summary?: string;
@@ -928,7 +935,7 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
         : "";
     case "inventory":
       return data.inventory
-        ? `Kho hiện có ${data.inventory.lowStockCount ?? 0} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(Number(data.inventory.recipeCoveragePercent ?? 0))}% và ${data.inventory.openAlertCount ?? 0} alert mở.`
+        ? `Kho hiện có ${data.inventory.lowStockCount ?? 0} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(Number(data.inventory.recipeCoveragePercent ?? 0))}%, ${data.inventory.openAlertCount ?? 0} alert mở, dự kiến nhập ${formatCurrency(Number(data.inventory.projectedPurchaseValue ?? 0))}, ${data.inventory.wasteSignalCount ?? 0} tín hiệu hao hụt.`
         : "";
     case "reports":
       return data.summary24h
@@ -1090,6 +1097,8 @@ function compactOrder(row: any) {
     id: orderId,
     shortId: orderId.slice(0, 8).toUpperCase(),
     status: row.status ?? null,
+    branchId: row.branch_id ?? null,
+    branchAssignmentSource: row.branch_assignment_source ?? null,
     total: Number(row.total ?? 0),
     paymentStatus: row.payment_status ?? null,
     paymentMethod: row.payment_method ?? null,
@@ -1159,7 +1168,7 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
     supabase
       .from("orders")
       .select(
-        "id,status,total,payment_method,payment_status,fulfillment_type,customer_name,delivery_address,delivery_distance_km,created_at,accepted_at,served_at,service_due_at,table:tables(name),items:order_items(quantity,price,note,menuItem:menu_items(name))"
+        "id,branch_id,branch_assignment_source,status,total,payment_method,payment_status,fulfillment_type,customer_name,delivery_address,delivery_distance_km,created_at,accepted_at,served_at,service_due_at,table:tables(name),items:order_items(quantity,price,note,menuItem:menu_items(name))"
       )
       .eq("restaurant_id", restaurantId)
       .order("created_at", { ascending: false })
@@ -1169,7 +1178,7 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
   const todayOrdersPromise = safeSupabaseQuery<any[]>(
     supabase
       .from("orders")
-      .select("id,status,total,payment_status,payment_method,fulfillment_type,created_at")
+      .select("id,branch_id,branch_assignment_source,status,total,payment_status,payment_method,fulfillment_type,created_at")
       .eq("restaurant_id", restaurantId)
       .gte("created_at", since)
       .order("created_at", { ascending: false })
@@ -1220,8 +1229,16 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
       )
     : Promise.resolve(null);
 
-  const inventoryPromise = intentNeeds(intent, ["inventory", "overview", "reports"])
-    ? getInventorySnapshot(restaurantId).catch(() => null)
+  const inventoryPromise: Promise<{
+    snapshot: Awaited<ReturnType<typeof getInventorySnapshot>>;
+    economics: Awaited<ReturnType<typeof getInventoryAiEconomicsSignal>> | null;
+  } | null> = intentNeeds(intent, ["inventory", "overview", "reports"])
+    ? getInventorySnapshot(restaurantId)
+        .then(async (snapshot) => ({
+          snapshot,
+          economics: snapshot.schemaReady ? await getInventoryAiEconomicsSignal(restaurantId, snapshot).catch(() => null) : null
+        }))
+        .catch(() => null)
     : Promise.resolve(null);
 
   const reservationsPromise = intentNeeds(intent, ["reservations", "reports"])
@@ -1245,6 +1262,8 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
     inventoryPromise,
     reservationsPromise
   ]);
+  const inventorySnapshotRaw = inventoryRaw?.snapshot ?? null;
+  const inventoryEconomicsRaw = inventoryRaw?.economics ?? null;
 
   const todayOrders = todayOrdersRaw ?? [];
   const paidRevenue = todayOrders
@@ -1359,16 +1378,42 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
           endsAt: promotion.ends_at
         }))
       : null,
-    inventory: inventoryRaw
+    inventory: inventorySnapshotRaw
       ? {
-          schemaReady: inventoryRaw.schemaReady,
-          activeIngredientCount: inventoryRaw.activeIngredientCount,
-          lowStockCount: inventoryRaw.lowStockCount,
-          recipeCoveragePercent: inventoryRaw.recipeCoveragePercent,
-          recipeReadyItemCount: inventoryRaw.recipeReadyItemCount,
-          menuItemCount: inventoryRaw.menuItemCount,
-          totalReferenceValue: inventoryRaw.totalReferenceValue,
-          lowStockIngredients: inventoryRaw.lowStockIngredients.slice(0, 5).map((ingredient) => ({
+          schemaReady: inventorySnapshotRaw.schemaReady,
+          activeIngredientCount: inventorySnapshotRaw.activeIngredientCount,
+          lowStockCount: inventorySnapshotRaw.lowStockCount,
+          recipeCoveragePercent: inventorySnapshotRaw.recipeCoveragePercent,
+          recipeReadyItemCount: inventorySnapshotRaw.recipeReadyItemCount,
+          menuItemCount: inventorySnapshotRaw.menuItemCount,
+          totalReferenceValue: inventorySnapshotRaw.totalReferenceValue,
+          expiringBatchCount: inventorySnapshotRaw.expiringBatchCount,
+          openAlertCount: inventorySnapshotRaw.openAlertCount,
+          wasteSpikeAlertCount: inventorySnapshotRaw.wasteSpikeAlertCount,
+          priceSpikeAlertCount: inventorySnapshotRaw.priceSpikeAlertCount,
+          supplierDelayAlertCount: inventorySnapshotRaw.supplierDelayAlertCount,
+          openPurchaseOrderCount: inventorySnapshotRaw.openPurchaseOrderCount,
+          projectedPurchaseValue: inventoryEconomicsRaw?.projectedPurchaseValue ?? 0,
+          weeklyUsageValue: inventoryEconomicsRaw?.weeklyUsageValue ?? 0,
+          reorderSuggestionCount: inventoryEconomicsRaw?.reorderSuggestionCount ?? 0,
+          highReorderCount: inventoryEconomicsRaw?.highReorderCount ?? 0,
+          topReorderSuggestion: inventoryEconomicsRaw?.topReorderSuggestion
+            ? {
+                name: inventoryEconomicsRaw.topReorderSuggestion.name,
+                unit: inventoryEconomicsRaw.topReorderSuggestion.unit,
+                daysLeft: inventoryEconomicsRaw.topReorderSuggestion.daysLeft,
+                reorderQuantity: inventoryEconomicsRaw.topReorderSuggestion.reorderQuantity,
+                estimatedCost: inventoryEconomicsRaw.topReorderSuggestion.estimatedCost,
+                urgency: inventoryEconomicsRaw.topReorderSuggestion.urgency
+              }
+            : null,
+          wasteSignalCount: inventoryEconomicsRaw?.wasteSignalCount ?? 0,
+          topWasteSignal: inventoryEconomicsRaw?.topWasteSignal,
+          priceSignalCount: inventoryEconomicsRaw?.priceSignalCount ?? 0,
+          topPriceSignal: inventoryEconomicsRaw?.topPriceSignal,
+          highFoodCostItemCount: inventoryEconomicsRaw?.highFoodCostItemCount ?? 0,
+          topHighFoodCostItem: inventoryEconomicsRaw?.topHighFoodCostItem,
+          lowStockIngredients: inventorySnapshotRaw.lowStockIngredients.slice(0, 5).map((ingredient) => ({
             name: ingredient.name,
             unit: ingredient.unit,
             onHandQuantity: ingredient.onHandQuantity,

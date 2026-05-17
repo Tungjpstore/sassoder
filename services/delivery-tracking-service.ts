@@ -262,7 +262,7 @@ export async function recordDeliveryStatusTrackingEvent({
   actorUserId?: string | null;
 }) {
   const order = await getDeliveryOrder(restaurantId, orderId);
-  if (order.delivery_status === "delivered" || order.delivery_status === "rejected") {
+  if ((order.delivery_status === "delivered" || order.delivery_status === "rejected") && order.delivery_status !== deliveryStatus) {
     throw new AppError("Đơn giao đã kết thúc, không thể gửi thêm vị trí.", 400);
   }
 

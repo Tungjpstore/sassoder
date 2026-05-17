@@ -4,6 +4,8 @@ module.exports = {
       url: [
         "http://127.0.0.1:3000/",
         "http://127.0.0.1:3000/pricing",
+        "http://127.0.0.1:3000/demo",
+        "http://127.0.0.1:3000/waitlist",
         "http://127.0.0.1:3000/blog",
         "http://127.0.0.1:3000/giai-phap",
         "http://127.0.0.1:3000/giai-phap/goi-mon-qr-cho-quan-cafe",

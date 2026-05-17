@@ -1,3 +1,5 @@
+import { sanitizePublicMarketingCopy } from "@/lib/seo/public-copy";
+
 export type ComparisonMatrixRow = {
   criterion: string;
   logivn: string;
@@ -567,19 +569,47 @@ export const COMPARISON_PAGES: ComparisonPage[] = [
 function cloneComparisonPage(page: ComparisonPage): ComparisonPage {
   return {
     ...page,
-    keywords: [...page.keywords],
-    targetQueries: [...page.targetQueries],
-    verdict: { ...page.verdict },
-    proofPoints: page.proofPoints.map((item) => ({ ...item })),
-    matrix: page.matrix.map((item) => ({ ...item })),
-    sections: page.sections.map((section) => ({
-      ...section,
-      body: [...section.body],
-      bullets: [...section.bullets]
+    title: sanitizePublicMarketingCopy(page.title),
+    description: sanitizePublicMarketingCopy(page.description),
+    eyebrow: sanitizePublicMarketingCopy(page.eyebrow),
+    h1: sanitizePublicMarketingCopy(page.h1),
+    summary: sanitizePublicMarketingCopy(page.summary),
+    competitorName: sanitizePublicMarketingCopy(page.competitorName),
+    competitorShort: sanitizePublicMarketingCopy(page.competitorShort),
+    keywords: page.keywords.map(sanitizePublicMarketingCopy),
+    targetQueries: page.targetQueries.map(sanitizePublicMarketingCopy),
+    verdict: {
+      bestForLogivn: sanitizePublicMarketingCopy(page.verdict.bestForLogivn),
+      bestForCompetitor: sanitizePublicMarketingCopy(page.verdict.bestForCompetitor),
+      decisionRule: sanitizePublicMarketingCopy(page.verdict.decisionRule)
+    },
+    proofPoints: page.proofPoints.map((item) => ({
+      label: sanitizePublicMarketingCopy(item.label),
+      value: sanitizePublicMarketingCopy(item.value)
     })),
-    faq: page.faq.map((item) => ({ ...item })),
+    matrix: page.matrix.map((item) => ({
+      criterion: sanitizePublicMarketingCopy(item.criterion),
+      logivn: sanitizePublicMarketingCopy(item.logivn),
+      competitor: sanitizePublicMarketingCopy(item.competitor),
+      note: sanitizePublicMarketingCopy(item.note)
+    })),
+    sections: page.sections.map((section) => ({
+      eyebrow: sanitizePublicMarketingCopy(section.eyebrow),
+      heading: sanitizePublicMarketingCopy(section.heading),
+      body: section.body.map(sanitizePublicMarketingCopy),
+      bullets: section.bullets.map(sanitizePublicMarketingCopy)
+    })),
+    faq: page.faq.map((item) => ({
+      question: sanitizePublicMarketingCopy(item.question),
+      answer: sanitizePublicMarketingCopy(item.answer)
+    })),
     relatedIntentSlugs: [...page.relatedIntentSlugs],
-    cta: { ...page.cta }
+    cta: {
+      primaryLabel: sanitizePublicMarketingCopy(page.cta.primaryLabel),
+      primaryPath: page.cta.primaryPath,
+      secondaryLabel: sanitizePublicMarketingCopy(page.cta.secondaryLabel),
+      secondaryPath: page.cta.secondaryPath
+    }
   };
 }
 

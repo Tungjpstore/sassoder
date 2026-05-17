@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Banknote, Bike, Clock3, Compass, ExternalLink, MapPin, PackageCheck, QrCode, Settings2, ShoppingBag, Truck, X } from "lucide-react";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { DashboardMetricCard } from "@/components/dashboard/primitives";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
 import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
@@ -157,8 +158,8 @@ export function OnlineWorkspace({
                 <Badge tone={restaurant.online_ordering_enabled ? "green" : "yellow"}>
                   {restaurant.online_ordering_enabled ? "Đang nhận khách online" : "Đang tắt bán online"}
                 </Badge>
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight text-[var(--foreground)]">Bán online gọn nhẹ</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">
+                <h1 className="dashboard-page-title mt-3">Bán online gọn nhẹ</h1>
+                <p className="dashboard-body-copy mt-2 max-w-2xl">
                   Một nơi để bật link đặt món, cấu hình giao hàng, chia sẻ QR và theo dõi đơn khách đến lấy hoặc giao tận nơi.
                 </p>
               </div>
@@ -181,16 +182,8 @@ export function OnlineWorkspace({
                 { label: "Chờ xác nhận CK", value: stats.prepaidWaitingConfirm, helper: restaurant.online_payment_mode === "QR_PREPAID" ? "Luồng trả trước" : "Không bắt buộc", icon: Banknote },
                 { label: "Vé trung bình", value: formatVnd(stats.averageTicket), helper: `${stats.deliveryOpen} giao · ${stats.pickupOpen} lấy`, icon: Clock3 }
               ].map((card) => {
-                const Icon = card.icon;
                 return (
-                  <article key={card.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                    <span className="dashboard-stat-icon">
-                      <Icon size={17} />
-                    </span>
-                    <p className="mt-3 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">{card.label}</p>
-                    <p className="metric-number mt-1 truncate text-2xl font-semibold text-[var(--foreground)]">{card.value}</p>
-                    <p className="mt-1 truncate text-xs font-medium text-[var(--muted-foreground)]">{card.helper}</p>
-                  </article>
+                  <DashboardMetricCard key={card.label} icon={card.icon} label={card.label} value={card.value} meta={card.helper} tone="blue" />
                 );
               })}
             </div>
@@ -275,8 +268,8 @@ export function OnlineWorkspace({
           <section className="dashboard-panel p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Link public</p>
-                <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Kênh chia sẻ cho khách</h2>
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Link public</p>
+                <h2 className="dashboard-section-title mt-1">Kênh chia sẻ cho khách</h2>
               </div>
               <a href={onlineUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)]">
                 <ExternalLink size={15} />
@@ -362,8 +355,8 @@ export function OnlineWorkspace({
                 <Settings2 size={18} aria-hidden="true" />
               </span>
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Online workspace</p>
-                <h2 id="online-workspace-settings-title" className="truncate text-xl font-semibold text-[var(--foreground)]">Cấu hình bán online</h2>
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Online workspace</p>
+                <h2 id="online-workspace-settings-title" className="dashboard-section-title truncate">Cấu hình bán online</h2>
                 <p id="online-workspace-settings-description" className="mt-0.5 truncate text-sm font-medium text-[var(--muted-foreground)]">Màn hình đầy đủ cho map, vùng giao và phí ship</p>
               </div>
             </div>

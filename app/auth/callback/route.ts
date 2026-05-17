@@ -13,6 +13,8 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 import { consumeRegistrationIntentForUser, getRestaurantForUser } from "@/services/restaurant-service";
 
+export const dynamic = "force-dynamic";
+
 function safeNextPath(value: string | null) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
   if (!value.startsWith("/dashboard")) return "/dashboard";
@@ -127,9 +129,25 @@ export async function GET(request: Request) {
   }
 
   const session = exchangeResult.data.session;
-  if (oauthKey && session?.access_token && session.refresh_token) {
+  let user = session?.user ?? exchangeResult.data.user ?? null;
+
+  if (oauthKey) {
+    if (!session?.access_token || !session.refresh_token) {
+      console.error("[auth/callback] Missing exchanged OAuth session", {
+        hasSession: Boolean(session),
+        hasAccessToken: Boolean(session?.access_token),
+        hasRefreshToken: Boolean(session?.refresh_token),
+        hasUser: Boolean(user?.id),
+        hasEmail: Boolean(user?.email)
+      });
+      return redirectAuthError(request, "session", cleanupCookieNames);
+    }
+
     const defaultSupabase = await createServerSupabaseClient({ ignoreAuthSession: true });
-    const { error: sessionCopyError } = await defaultSupabase.auth.setSession({
+    const {
+      data: { user: copiedUser },
+      error: sessionCopyError
+    } = await defaultSupabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token
     });
@@ -142,26 +160,12 @@ export async function GET(request: Request) {
       });
       return redirectAuthError(request, "session", cleanupCookieNames);
     }
+
+    user = copiedUser ?? user;
   }
 
-  let userResult: Awaited<ReturnType<typeof supabase.auth.getUser>>;
-
-  try {
-    userResult = await supabase.auth.getUser();
-  } catch (error) {
-    const message = errorMessage(error);
-    console.error("[auth/callback] User read exception", { message });
-    return redirectAuthError(request, "session", cleanupCookieNames);
-  }
-
-  const {
-    data: { user },
-    error: userError
-  } = userResult;
-
-  if (userError || !user?.id || !user.email) {
+  if (!user?.id || !user.email) {
     console.error("[auth/callback] Missing session user", {
-      message: userError?.message,
       hasUser: Boolean(user?.id),
       hasEmail: Boolean(user?.email)
     });

@@ -598,7 +598,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-black text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 lg:bottom-5 lg:right-5"
+        className="fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-semibold text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 lg:bottom-5 lg:right-5"
       >
         <span className="grid h-12 w-12 overflow-hidden rounded-full">
           <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full object-cover" priority />
@@ -615,17 +615,17 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="truncate text-sm font-black">LogiBot vận hành</p>
+                  <p className="truncate text-sm font-semibold">LogiBot vận hành</p>
                   <span className="rounded-full bg-[var(--surface)]/12 px-2 py-0.5 text-[10px] font-bold text-white/80">Tác vụ tức thời</span>
                 </div>
                 <p className="truncate text-xs text-white/72">{restaurantName} · {activeIntent?.label}</p>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <Link href={activeIntent?.routeHint ?? "/dashboard"} className="rounded-full p-2 text-white/78 hover:bg-[var(--surface)]/10" title="Mở màn hiện tại">
+              <Link href={activeIntent?.routeHint ?? "/dashboard"} className="inline-grid h-11 w-11 place-items-center rounded-full text-white/78 hover:bg-[var(--surface)]/10" title="Mở màn hiện tại">
                 <Maximize2 size={17} />
               </Link>
-              <button type="button" onClick={() => setOpen(false)} className="rounded-full p-2 text-white/78 hover:bg-[var(--surface)]/10">
+              <button type="button" onClick={() => setOpen(false)} className="grid h-11 w-11 place-items-center rounded-full text-white/78 hover:bg-[var(--surface)]/10">
                 <X size={17} />
               </button>
             </div>
@@ -634,19 +634,19 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
           <div className="border-b border-[var(--border)] bg-[linear-gradient(90deg,rgba(15,77,58,0.06),rgba(242,140,40,0.06),rgba(255,247,235,0.72))] px-4 py-3">
             <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
               <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
-                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Ngữ cảnh</p>
+                <p className="font-semibold uppercase text-[var(--muted-foreground)]">Ngữ cảnh</p>
                 <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{activeIntent?.label ?? "Tổng quan"}</p>
               </div>
               <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
-                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Trạng thái</p>
+                <p className="font-semibold uppercase text-[var(--muted-foreground)]">Trạng thái</p>
                 <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{contextStatus}</p>
               </div>
               <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
-                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bước tiếp</p>
+                <p className="font-semibold uppercase text-[var(--muted-foreground)]">Bước tiếp</p>
                 <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{nextAction?.label ?? "Hỏi hoặc chọn gợi ý"}</p>
               </div>
               <div className="min-w-0 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/70 px-3 py-2">
-                <p className="font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Độ chắc</p>
+                <p className="font-semibold uppercase text-[var(--muted-foreground)]">Độ chắc</p>
                 <p className="mt-1 truncate font-semibold text-[var(--foreground)]">{planConfidenceLabel(agentPlan)}</p>
               </div>
             </div>
@@ -694,7 +694,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
               <div className="border-t border-[var(--border)] bg-[var(--surface)] p-3">
                 {actions.length ? (
                   <div className="mb-3 grid gap-2 lg:hidden">
-                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Việc cần làm</p>
+                    <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Việc cần làm</p>
                     <div className="grid gap-2">
                       {actions.slice(0, 3).map((item) => (
                         <ActionCard key={item.id} action={item} running={runningActionId === item.id} disabled={loading || Boolean(runningActionId)} onRun={runAgentAction} />
@@ -729,7 +729,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
                     type="button"
                     onClick={() => void submitAssistant()}
                     disabled={loading || !message.trim()}
-                    className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
+                    className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-50"
                   >
                     <Send size={16} />
                   </button>
@@ -739,7 +739,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
 
             <aside className="hidden min-h-0 overflow-y-auto bg-[var(--surface)] p-4 lg:block">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Kế hoạch xử lý</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Kế hoạch xử lý</p>
                 <h3 className="mt-2 text-lg font-semibold text-[var(--foreground)]">{agentPlan?.title ?? "Chưa có kế hoạch"}</h3>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
                   {agentPlan?.summary ?? "Hỏi LogiBot hoặc chọn gợi ý nhanh để tạo kế hoạch hành động theo dữ liệu thật của quán."}
@@ -758,7 +758,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
 
               <div className="mt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">Việc cần làm</p>
+                  <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Việc cần làm</p>
                   {actions.length ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-[var(--primary-soft)] px-2 py-1 text-[10px] font-bold text-[var(--primary)]">
                       <CheckCircle2 size={12} />

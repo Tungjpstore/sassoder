@@ -11,6 +11,7 @@ export async function createTableAction(formData: FormData) {
   const session = await requireOperationalAdminSession("table_qr");
   const parsed = tableSchema.parse({
     name: formData.get("name"),
+    branchId: formData.get("branchId"),
     area: formData.get("area"),
     capacity: formData.get("capacity"),
     floorLabel: formData.get("floorLabel"),
@@ -38,6 +39,7 @@ export async function updateTableAction(formData: FormData) {
   const parsed = updateTableSchema.parse({
     tableId: formData.get("tableId"),
     name: formData.get("name"),
+    branchId: formData.get("branchId"),
     area: formData.get("area"),
     capacity: formData.get("capacity"),
     floorLabel: formData.get("floorLabel"),

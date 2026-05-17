@@ -1,0 +1,40 @@
+name: SEO CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  seo-checks:
+    name: SEO, typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit --pretty false
+
+      - name: SEO Week 5 audit
+        run: npm run seo:week5
+
+      - name: Agentic SEO audit
+        run: npm run seo:agentic
+
+      - name: Build
+        run: npm run build

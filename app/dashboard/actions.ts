@@ -14,6 +14,10 @@ import {
 import { requestSubscriptionPaymentAction as runRequestSubscriptionPaymentAction } from "./actions/billing";
 import { updateAiOperationInsightStatusAction as runUpdateAiOperationInsightStatusAction } from "./actions/ai-insights";
 import {
+  retryAiMorningBriefEmailAction as runRetryAiMorningBriefEmailAction,
+  updateAiMorningBriefPreferencesAction as runUpdateAiMorningBriefPreferencesAction
+} from "./actions/ai-morning-brief";
+import {
   applyInventoryCountAction as runApplyInventoryCountAction,
   createInventoryCategoryAction as runCreateInventoryCategoryAction,
   createInventoryIngredientAction as runCreateInventoryIngredientAction,
@@ -73,7 +77,7 @@ import {
   updateRestaurantSettingsAction as runUpdateRestaurantSettingsAction
 } from "./actions/settings";
 
-export async function loginAction(_prevState: { error?: string } | undefined, formData: FormData) {
+export async function loginAction(_prevState: { error?: string; redirectTo?: string } | undefined, formData: FormData) {
   return runLoginAction(_prevState, formData);
 }
 
@@ -104,7 +108,7 @@ export async function resendEmailOtpAction(
 }
 
 export async function requestPasswordResetAction(
-  _prevState: { error?: string; success?: string } | undefined,
+  _prevState: { error?: string; success?: string; redirectTo?: string } | undefined,
   formData: FormData
 ) {
   return runRequestPasswordResetAction(_prevState, formData);
@@ -164,6 +168,14 @@ export async function requestSubscriptionPaymentAction(formData: FormData) {
 
 export async function updateAiOperationInsightStatusAction(formData: FormData) {
   return runUpdateAiOperationInsightStatusAction(formData);
+}
+
+export async function updateAiMorningBriefPreferencesAction(formData: FormData) {
+  return runUpdateAiMorningBriefPreferencesAction(formData);
+}
+
+export async function retryAiMorningBriefEmailAction(formData: FormData) {
+  return runRetryAiMorningBriefEmailAction(formData);
 }
 
 export async function createInventoryCategoryAction(formData: FormData) {

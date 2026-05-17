@@ -10,6 +10,7 @@ import type { OrderStatus } from "@/types/domain";
 export type RestaurantTable = {
   id: string;
   restaurant_id: string;
+  branch_id?: string | null;
   name: string;
   area: string;
   capacity: number;
@@ -33,11 +34,51 @@ export type TableOperationalStatus = "available" | "needs_confirm" | "serving" |
 export type RestaurantTableWithStatus = RestaurantTable & {
   status: TableOperationalStatus;
   activeOrderCount: number;
+  activeBillCount: number;
+  activeReservationCount: number;
   unpaidTotal: number;
   overdueCount: number;
   oldestOrderAt: string | null;
   nextServiceDueAt: string | null;
 };
+
+export type TableBranchOption = {
+  id: string;
+  name: string;
+  address: string | null;
+  is_primary: boolean;
+};
+
+function normalizeBranchId(value?: string | null) {
+  const normalized = value?.trim();
+  return normalized ? normalized : null;
+}
+
+function isMissingTableBranchColumn(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return (
+    error.code === "PGRST204" ||
+    error.code === "42703" ||
+    /Could not find.*branch_id|column .*branch_id.*does not exist|schema cache.*branch_id/i.test(error.message ?? "")
+  );
+}
+
+async function resolveTableBranchId(supabase: any, restaurantId: string, branchId?: string | null) {
+  const normalized = normalizeBranchId(branchId);
+  if (!normalized) return null;
+
+  const { data, error } = await supabase
+    .from("store_branches")
+    .select("id")
+    .eq("id", normalized)
+    .eq("restaurant_id", restaurantId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  if (!data) throw new AppError("Chi nhánh của bàn không khả dụng.", 400);
+  return normalized;
+}
 
 export async function listTables(restaurantId: string) {
   const supabase = (await createServerSupabaseClient()) as any;
@@ -51,6 +92,20 @@ export async function listTables(restaurantId: string) {
   return (data ?? []) as RestaurantTable[];
 }
 
+export async function listActiveTableBranches(restaurantId: string): Promise<TableBranchOption[]> {
+  const supabase = (await createServerSupabaseClient()) as any;
+  const { data, error } = await supabase
+    .from("store_branches")
+    .select("id,name,address,is_primary")
+    .eq("restaurant_id", restaurantId)
+    .eq("is_active", true)
+    .order("is_primary", { ascending: false })
+    .order("name", { ascending: true });
+
+  throwIfSupabaseError(error);
+  return (data ?? []) as TableBranchOption[];
+}
+
 type TableOrderRow = {
   id: string;
   table_id: string | null;
@@ -60,7 +115,36 @@ type TableOrderRow = {
   service_due_at: string | null;
 };
 
+type TableBillRow = {
+  id: string;
+  table_id: string | null;
+  status: "open" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled";
+  total: number;
+  reservation_id: string | null;
+  created_at: string;
+};
+
+type ReservationLockOccupancyRow = {
+  id: string;
+  table_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  reservation?:
+    | {
+        id: string;
+        status: string;
+        seated_table_bill_id: string | null;
+      }
+    | Array<{
+        id: string;
+        status: string;
+        seated_table_bill_id: string | null;
+      }>
+    | null;
+};
+
 const activeTableStatuses: OrderStatus[] = ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"];
+const activeTableBillStatuses: TableBillRow["status"][] = ["open", "waiting_payment", "waiting_confirm"];
 
 function tableQrSecret() {
   return (
@@ -107,31 +191,51 @@ export function assertTableQrAccess(table: RestaurantTable, token?: string | nul
   }
 }
 
-function getTableStatus(orders: TableOrderRow[]): TableOperationalStatus {
+function getTableStatus(orders: TableOrderRow[], bills: TableBillRow[] = [], hasSeatedReservation = false): TableOperationalStatus {
   const now = Date.now();
   if (orders.some((order) => ["pending", "ordering"].includes(order.status) && order.service_due_at && new Date(order.service_due_at).getTime() < now)) {
     return "overdue";
   }
   if (orders.some((order) => order.status === "pending")) return "needs_confirm";
+  if (bills.some((bill) => bill.status === "waiting_payment" || bill.status === "waiting_confirm")) return "awaiting_payment";
   if (orders.some((order) => order.status === "ordering")) return "serving";
   if (orders.some((order) => ["completed", "waiting_payment", "waiting_confirm"].includes(order.status))) return "awaiting_payment";
+  if (bills.some((bill) => bill.status === "open")) return "serving";
+  if (hasSeatedReservation) return "serving";
   return "available";
+}
+
+function firstReservationLockReservation(lock: ReservationLockOccupancyRow) {
+  return Array.isArray(lock.reservation) ? lock.reservation[0] ?? null : lock.reservation ?? null;
 }
 
 export async function listTablesWithStatus(restaurantId: string): Promise<RestaurantTableWithStatus[]> {
   const supabase = (await createServerSupabaseClient()) as any;
-  const [tablesResult, ordersResult] = await Promise.all([
+  const [tablesResult, ordersResult, billsResult, reservationLocksResult] = await Promise.all([
     supabase.from("tables").select("*").eq("restaurant_id", restaurantId).order("name", { ascending: true }),
     supabase
       .from("orders")
       .select("id,table_id,status,total,created_at,service_due_at")
       .eq("restaurant_id", restaurantId)
       .in("status", activeTableStatuses)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("table_bills")
+      .select("id,table_id,status,total,reservation_id,created_at")
+      .eq("restaurant_id", restaurantId)
+      .in("status", activeTableBillStatuses)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("reservation_table_locks")
+      .select("id,table_id,starts_at,ends_at,reservation:reservations(id,status,seated_table_bill_id)")
+      .eq("restaurant_id", restaurantId)
+      .eq("status", "active")
   ]);
 
   throwIfSupabaseError(tablesResult.error);
   throwIfSupabaseError(ordersResult.error);
+  throwIfSupabaseError(billsResult.error);
+  throwIfSupabaseError(reservationLocksResult.error);
 
   const ordersByTable = new Map<string, TableOrderRow[]>();
   for (const order of (ordersResult.data ?? []) as TableOrderRow[]) {
@@ -141,23 +245,47 @@ export async function listTablesWithStatus(restaurantId: string): Promise<Restau
     ordersByTable.set(order.table_id, list);
   }
 
+  const billsByTable = new Map<string, TableBillRow[]>();
+  for (const bill of (billsResult.data ?? []) as TableBillRow[]) {
+    if (!bill.table_id) continue;
+    const list = billsByTable.get(bill.table_id) ?? [];
+    list.push(bill);
+    billsByTable.set(bill.table_id, list);
+  }
+
+  const seatedReservationsByTable = new Map<string, ReservationLockOccupancyRow[]>();
+  for (const lock of (reservationLocksResult.data ?? []) as ReservationLockOccupancyRow[]) {
+    if (!lock.table_id) continue;
+    const reservation = firstReservationLockReservation(lock);
+    if (reservation?.status !== "seated") continue;
+    const list = seatedReservationsByTable.get(lock.table_id) ?? [];
+    list.push(lock);
+    seatedReservationsByTable.set(lock.table_id, list);
+  }
+
   const now = Date.now();
   return ((tablesResult.data ?? []) as RestaurantTable[]).map((table) => {
     const tableOrders = ordersByTable.get(table.id) ?? [];
+    const tableBills = billsByTable.get(table.id) ?? [];
+    const tableReservationLocks = seatedReservationsByTable.get(table.id) ?? [];
     const dueDates = tableOrders
       .map((order) => order.service_due_at)
       .filter((value): value is string => Boolean(value))
       .sort();
+    const billTotal = tableBills.reduce((sum, bill) => sum + bill.total, 0);
+    const orderTotal = tableOrders.reduce((sum, order) => sum + order.total, 0);
 
     return {
       ...withQrToken(table),
-      status: getTableStatus(tableOrders),
+      status: getTableStatus(tableOrders, tableBills, tableReservationLocks.length > 0),
       activeOrderCount: tableOrders.length,
-      unpaidTotal: tableOrders.reduce((sum, order) => sum + order.total, 0),
+      activeBillCount: tableBills.length,
+      activeReservationCount: tableReservationLocks.length,
+      unpaidTotal: tableBills.length > 0 ? billTotal : orderTotal,
       overdueCount: tableOrders.filter(
         (order) => ["pending", "ordering"].includes(order.status) && order.service_due_at && new Date(order.service_due_at).getTime() < now
       ).length,
-      oldestOrderAt: tableOrders[0]?.created_at ?? null,
+      oldestOrderAt: tableOrders[0]?.created_at ?? tableBills[0]?.created_at ?? null,
       nextServiceDueAt: dueDates[0] ?? null
     };
   });
@@ -188,6 +316,7 @@ export async function createTable(
   _restaurantSlug: string,
   input: {
     name: string;
+    branchId?: string;
     area?: string;
     capacity?: number;
     floorLabel?: string;
@@ -200,23 +329,34 @@ export async function createTable(
   }
 ) {
   const supabase = (await createServerSupabaseClient()) as any;
+  const branchId = await resolveTableBranchId(supabase, restaurantId, input.branchId);
+  const payload = {
+    restaurant_id: restaurantId,
+    branch_id: branchId,
+    name: input.name,
+    area: input.area || "Khu chính",
+    capacity: input.capacity ?? 4,
+    floor_label: input.floorLabel || "Tầng trệt",
+    seating_zone: input.seatingZone ?? "indoor",
+    table_kind: input.tableKind ?? "standard",
+    reservation_priority: input.reservationPriority ?? 100,
+    is_bookable: input.isBookable ?? true,
+    is_hidden: input.isHidden ?? false,
+    is_under_maintenance: input.isUnderMaintenance ?? false
+  };
   const { data, error } = await supabase
     .from("tables")
-    .insert({
-      restaurant_id: restaurantId,
-      name: input.name,
-      area: input.area || "Khu chính",
-      capacity: input.capacity ?? 4,
-      floor_label: input.floorLabel || "Tầng trệt",
-      seating_zone: input.seatingZone ?? "indoor",
-      table_kind: input.tableKind ?? "standard",
-      reservation_priority: input.reservationPriority ?? 100,
-      is_bookable: input.isBookable ?? true,
-      is_hidden: input.isHidden ?? false,
-      is_under_maintenance: input.isUnderMaintenance ?? false
-    })
+    .insert(payload)
     .select()
     .single();
+
+  if (error && isMissingTableBranchColumn(error)) {
+    const { branch_id: _branchId, ...legacyPayload } = payload;
+    void _branchId;
+    const fallback = await supabase.from("tables").insert(legacyPayload).select().single();
+    throwIfSupabaseError(fallback.error);
+    return fallback.data as RestaurantTable;
+  }
 
   throwIfSupabaseError(error);
   return data as RestaurantTable;
@@ -255,6 +395,7 @@ export async function updateTable(
   input: {
     tableId: string;
     name: string;
+    branchId?: string;
     area?: string;
     capacity?: number;
     floorLabel?: string;
@@ -267,24 +408,41 @@ export async function updateTable(
   }
 ) {
   const supabase = (await createServerSupabaseClient()) as any;
+  const branchId = await resolveTableBranchId(supabase, restaurantId, input.branchId);
+  const payload = {
+    name: input.name,
+    branch_id: branchId,
+    area: input.area || "Khu chính",
+    capacity: input.capacity ?? 4,
+    floor_label: input.floorLabel || "Tầng trệt",
+    seating_zone: input.seatingZone ?? "indoor",
+    table_kind: input.tableKind ?? "standard",
+    reservation_priority: input.reservationPriority ?? 100,
+    is_bookable: input.isBookable ?? true,
+    is_hidden: input.isHidden ?? false,
+    is_under_maintenance: input.isUnderMaintenance ?? false
+  };
   const { data, error } = await supabase
     .from("tables")
-    .update({
-      name: input.name,
-      area: input.area || "Khu chính",
-      capacity: input.capacity ?? 4,
-      floor_label: input.floorLabel || "Tầng trệt",
-      seating_zone: input.seatingZone ?? "indoor",
-      table_kind: input.tableKind ?? "standard",
-      reservation_priority: input.reservationPriority ?? 100,
-      is_bookable: input.isBookable ?? true,
-      is_hidden: input.isHidden ?? false,
-      is_under_maintenance: input.isUnderMaintenance ?? false
-    })
+    .update(payload)
     .eq("id", input.tableId)
     .eq("restaurant_id", restaurantId)
     .select()
     .single();
+
+  if (error && isMissingTableBranchColumn(error)) {
+    const { branch_id: _branchId, ...legacyPayload } = payload;
+    void _branchId;
+    const fallback = await supabase
+      .from("tables")
+      .update(legacyPayload)
+      .eq("id", input.tableId)
+      .eq("restaurant_id", restaurantId)
+      .select()
+      .single();
+    throwIfSupabaseError(fallback.error);
+    return fallback.data as RestaurantTable;
+  }
 
   throwIfSupabaseError(error);
   return data as RestaurantTable;

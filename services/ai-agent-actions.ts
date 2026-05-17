@@ -203,7 +203,14 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
     tables?: { tables?: Array<Record<string, unknown>> };
     payments?: { waitingConfirm?: number; logs?: Array<Record<string, unknown>> };
     menu?: { unavailableCount?: number; categories?: Array<Record<string, unknown>> };
-    inventory?: { lowStockCount?: number; recipeCoveragePercent?: number; openAlertCount?: number };
+    inventory?: {
+      lowStockCount?: number;
+      recipeCoveragePercent?: number;
+      openAlertCount?: number;
+      projectedPurchaseValue?: number;
+      wasteSignalCount?: number;
+      highFoodCostItemCount?: number;
+    };
   };
   const actions: AiAgentAction[] = [];
   const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
@@ -325,16 +332,28 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
     const lowStockCount = Number(data.inventory?.lowStockCount ?? 0);
     const recipeCoveragePercent = Number(data.inventory?.recipeCoveragePercent ?? 0);
     const openAlertCount = Number(data.inventory?.openAlertCount ?? 0);
-    if (lowStockCount > 0 || openAlertCount > 0 || (recipeCoveragePercent > 0 && recipeCoveragePercent < 70)) {
+    const projectedPurchaseValue = Number(data.inventory?.projectedPurchaseValue ?? 0);
+    const wasteSignalCount = Number(data.inventory?.wasteSignalCount ?? 0);
+    const highFoodCostItemCount = Number(data.inventory?.highFoodCostItemCount ?? 0);
+    if (lowStockCount > 0 || openAlertCount > 0 || projectedPurchaseValue > 0 || wasteSignalCount > 0 || highFoodCostItemCount > 0 || (recipeCoveragePercent > 0 && recipeCoveragePercent < 70)) {
       actions.push(
         action({
           id: "open-inventory-ai-risk",
           type: "link",
-          label: lowStockCount > 0 ? `Xử lý ${lowStockCount} nguyên liệu thiếu` : "Mở cảnh báo kho",
+          label:
+            lowStockCount > 0
+              ? `Xử lý ${lowStockCount} nguyên liệu thiếu`
+              : projectedPurchaseValue > 0
+                ? "Tạo kế hoạch nhập hàng"
+                : wasteSignalCount > 0
+                  ? "Rà soát hao hụt kho"
+                  : "Mở cảnh báo kho",
           description:
             lowStockCount > 0
               ? `Ưu tiên nhập hàng trước khi nhận thêm cao điểm.`
-              : `Recipe coverage ${Math.round(recipeCoveragePercent)}% · ${openAlertCount} alert mở.`,
+              : projectedPurchaseValue > 0
+                ? `Dự kiến nhập ${Math.round(projectedPurchaseValue).toLocaleString("vi-VN")}đ · ${wasteSignalCount} tín hiệu hao hụt.`
+                : `Recipe coverage ${Math.round(recipeCoveragePercent)}% · ${openAlertCount} alert mở · ${highFoodCostItemCount} món food cost cao.`,
           href: "/dashboard/inventory",
           intent: "inventory",
           priority: intent === "inventory" ? "primary" : "secondary"

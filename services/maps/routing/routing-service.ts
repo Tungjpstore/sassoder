@@ -3,6 +3,7 @@ import { calculateDistance, estimateTravelTime } from "@/services/maps/distance-
 import { recordMapCacheEvent } from "@/services/maps/observability-service";
 import { getRoutingFallbackChain, getRoutingProviders } from "@/services/maps/provider-factory";
 import { isCircuitOpen, recordProviderResult, withRequestDedupe } from "@/services/maps/provider-runtime";
+import { getRouteGeometryCacheScope, simplifyRouteGeometry } from "@/services/maps/route-geometry-service";
 import type {
   Coordinate,
   MapRequestContext,
@@ -18,7 +19,7 @@ export async function getRoute(
 ) {
   const providers = getRoutingProviders(options.provider);
   const providerIds = providers.map((provider) => provider.id);
-  const cacheKey = `route:${providerIds.join(">")}:${origin.lat.toFixed(5)}:${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)}:${destination.lng.toFixed(5)}`;
+  const cacheKey = `route:${getRouteGeometryCacheScope()}:${providerIds.join(">")}:${origin.lat.toFixed(5)}:${origin.lng.toFixed(5)}:${destination.lat.toFixed(5)}:${destination.lng.toFixed(5)}`;
   const cached = await readSharedCache<RouteResult | null>("route", cacheKey);
   recordMapCacheEvent({ type: "map_cache", operation: "route", namespace: "route", hit: cached.hit, context: options.context });
   if (cached.hit) return cached.value;
@@ -34,6 +35,7 @@ export async function getRoute(
         recordProviderResult(provider.id, "route", true);
         return {
           ...providerRoute,
+          geometry: simplifyRouteGeometry(providerRoute.geometry),
           confidence: provider.id === "goong" ? "high" as const : "medium" as const,
           fallbackChain: attempted
         } satisfies RouteResult;

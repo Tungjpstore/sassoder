@@ -53,10 +53,10 @@ const productPillars = [
 ];
 
 const operatingSignals = [
-  ["16+", "trang giải pháp và intent page"],
-  ["SEO + GEO", "schema, FAQ, sitemap, llms.txt"],
+  ["16+", "trang giải pháp theo nhu cầu thật"],
+  ["FAQ rõ", "câu trả lời ngắn trước khi triển khai"],
   ["QR-first", "menu, order, bàn và VietQR"],
-  ["AI-era", "insight vận hành từ dữ liệu thật"]
+  ["AI vận hành", "insight từ dữ liệu bán hàng thật"]
 ];
 
 const decisionPaths = [
@@ -123,11 +123,13 @@ export default function SeoIntentIndexPage() {
               Giải pháp
             </Link>
             <Link href="/so-sanh">So sánh</Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
-          <Link className="solution-nav-cta" href="/dashboard/register?plan=premium">
-            Dùng thử
+          <Link className="solution-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -136,7 +138,7 @@ export default function SeoIntentIndexPage() {
       <section className="solution-hero">
         <div className="solution-container solution-hero-grid">
           <div className="solution-hero-copy">
-            <span className="solution-kicker">LogiVN solution hub</span>
+            <span className="solution-kicker">Trung tâm giải pháp LogiVN</span>
             <h1>Chọn đúng giải pháp để quán gọi món nhanh hơn, phục vụ rõ hơn và tăng trưởng thông minh hơn.</h1>
             <p>
               Đây là trung tâm giải pháp cho chủ quán cafe, trà sữa và nhà hàng Việt: QR ordering, AI assistant, quản lý
@@ -147,8 +149,8 @@ export default function SeoIntentIndexPage() {
                 Xem gói phù hợp
                 <ArrowRight size={16} />
               </Link>
-              <Link href="/giai-phap/goi-mon-qr-cho-quan-cafe" className="solution-button solution-button-soft">
-                Khám phá QR ordering
+              <Link href="/demo" className="solution-button solution-button-soft">
+                Xem demo vận hành
               </Link>
             </div>
           </div>
@@ -167,7 +169,7 @@ export default function SeoIntentIndexPage() {
         </div>
       </section>
 
-      <section className="solution-signals" aria-label="Tín hiệu sản phẩm và SEO">
+      <section className="solution-signals" aria-label="Tín hiệu sản phẩm và nội dung">
         <div className="solution-container solution-signal-grid">
           {operatingSignals.map(([value, label]) => (
             <article key={value}>
@@ -181,11 +183,11 @@ export default function SeoIntentIndexPage() {
       <section className="solution-section">
         <div className="solution-container">
           <div className="solution-section-head">
-            <span className="solution-kicker">Feature acquisition</span>
-            <h2>Những trụ cột sản phẩm cần được tìm thấy trước khi chủ quán so sánh phần mềm</h2>
+            <span className="solution-kicker">Trụ cột vận hành</span>
+            <h2>Những nhu cầu chủ quán thường muốn giải quyết trước khi chọn phần mềm</h2>
             <p>
-              Mỗi trụ cột dưới đây nối một nhu cầu vận hành thật với một trang giải pháp có schema, FAQ, internal link và
-              CTA rõ về pricing/signup.
+              Mỗi trụ cột nối một vấn đề vận hành thật với một trang giải pháp dễ đọc, có câu trả lời ngắn và đường đi rõ
+              sang demo, bảng giá hoặc tạo quán thử.
             </p>
           </div>
 
@@ -208,8 +210,8 @@ export default function SeoIntentIndexPage() {
       <section className="solution-section solution-section-muted">
         <div className="solution-container">
           <div className="solution-section-head">
-            <span className="solution-kicker">Ưu tiên chuyển đổi</span>
-            <h2>Các trang nên đưa vào chiến dịch SEO, AI search và ads retargeting trước</h2>
+            <span className="solution-kicker">Ưu tiên triển khai</span>
+            <h2>Các nhu cầu có ý định dùng thử cao nhất nên được đọc trước</h2>
             <p>
               Đây là nhóm có ý định triển khai cao: người đọc đã có vấn đề rõ và dễ đi tiếp sang bảng giá hoặc đăng ký
               thử LogiVN.
@@ -248,7 +250,7 @@ export default function SeoIntentIndexPage() {
       <section className="solution-section">
         <div className="solution-container solution-decision-layout">
           <div className="solution-section-head">
-            <span className="solution-kicker">Decision path</span>
+            <span className="solution-kicker">Lộ trình quyết định</span>
             <h2>Đi từ bài toán vận hành đến phạm vi triển khai nhỏ nhất</h2>
             <p>
               Chủ quán không cần đọc hết mọi tính năng. Website nên giúp họ chọn hướng đi theo mô hình quán, mức độ vận
@@ -272,10 +274,10 @@ export default function SeoIntentIndexPage() {
         <div className="solution-container">
           <div className="solution-section-head">
             <span className="solution-kicker">Toàn bộ cụm giải pháp</span>
-            <h2>Tất cả trang được sitemap, llms.txt và schema phát hiện tự động</h2>
+            <h2>Tất cả giải pháp được tổ chức theo mô hình quán và điểm nghẽn vận hành</h2>
             <p>
-              Nội dung được viết theo answer-first, có truy vấn mục tiêu, FAQ, related content và CTA để phục vụ cả Google
-              lẫn AI search engines.
+              Mỗi trang trả lời thẳng vấn đề, có câu hỏi thường gặp, nội dung liên quan và CTA để chủ quán đi tiếp mà
+              không phải đọc lại từ đầu.
             </p>
           </div>
 
@@ -312,12 +314,15 @@ export default function SeoIntentIndexPage() {
             <h2>Biến traffic tìm kiếm thành tài khoản dùng thử LogiVN.</h2>
             <p>
               Mỗi trang giải pháp đưa chủ quán từ một vấn đề cụ thể đến bảng giá, signup hoặc nội dung liên quan. Đó là
-              đường đi ngắn hơn từ SEO sang doanh thu.
+              đường đi ngắn hơn từ nhu cầu tìm kiếm sang một ca thử vận hành thật.
             </p>
           </div>
           <div className="solution-actions">
             <Link href="/pricing" className="solution-button solution-button-light">
               So sánh Pro và Premium
+            </Link>
+            <Link href="/demo" className="solution-button solution-button-light">
+              Xem demo
             </Link>
             <Link href="/dashboard/register?plan=premium" className="solution-button solution-button-orange">
               Tạo quán dùng thử

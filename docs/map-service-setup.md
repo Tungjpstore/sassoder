@@ -41,6 +41,8 @@ MAPS_DB_TELEMETRY_SAMPLE_RATE="0.15"
 MAPS_CACHE_NAMESPACE="logivn:maps:v1"
 MAPS_RATE_LIMIT_REDIS_ENABLED="true"
 MAPS_RATE_LIMIT_NAMESPACE="logivn:maps:rate-limit:v1"
+MAPS_ROUTE_GEOMETRY_MAX_POINTS="140"
+MAPS_ROUTE_GEOMETRY_TOLERANCE_DEGREES="0.00005"
 MAPS_GOONG_PLACES_ENABLED="true"
 MAPS_GOONG_PLACES_AUTOCOMPLETE_TTL_MS="600000"
 MAPS_GOONG_PLACE_DETAIL_TTL_MS="2592000000"
@@ -55,6 +57,7 @@ DELIVERY_SPATIAL_PREFILTER_LIMIT="6"
 DELIVERY_SPATIAL_PREFILTER_RADIUS_KM="50"
 DELIVERY_SPATIAL_CACHE_TTL_MS="30000"
 DELIVERY_QUOTE_CACHE_TTL_MS="25000"
+DELIVERY_ENFORCE_OPERATING_HOURS="true"
 MAPBOX_ACCESS_TOKEN=
 VIETMAP_API_KEY=
 GOONG_API_KEY=
@@ -92,6 +95,10 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - Tracking map dùng MapLibre thật thay vì SVG tĩnh, có route geometry, marker quán/khách/tài xế và layer switch vệ tinh.
   - GPS accuracy guard cảnh báo/chặn vị trí browser quá rộng để desktop/IP geolocation không bị dùng như GPS thật.
   - Hệ thống ưu tiên chi nhánh gần nhất nếu `store_branches` có dữ liệu.
+- Frontend Map Kit:
+  - `components/maps/logivn-marker.ts` chuẩn hóa marker quán/khách/tài xế/GPS để không copy style marker giữa các map.
+  - `components/maps/route-preview-layer.ts` chuẩn hóa route GeoJSON layer, fit bounds và fallback polyline cho route preview/tracking.
+  - `components/maps/map-canvas.tsx` và `components/maps/address-search-box.tsx` là primitive nhẹ cho màn hình map mới, giữ backend proxy `/api/maps/*` là nguồn dữ liệu duy nhất.
 - Reservation:
   - Public reservation page dùng `RestaurantVisitMapCard` để khách xem khoảng cách/tuyến đến quán trước khi giữ bàn.
   - Dashboard reservation hiển thị cùng map preview khi chủ quán chia sẻ link/QR đặt bàn.
@@ -104,15 +111,24 @@ https://tiles.goong.io/assets/goong_map_web.json?api_key=...
   - `/api/maps/route`
   - `/api/location/nearest-store`
   - `/api/delivery/fee`
+  - Map APIs nhận optional `provider`, `restaurantId`, `restaurantSlug` để tenant-aware observability/cache mà vẫn giữ response envelope cũ.
+  - `/api/maps/route` trả route estimate bằng Haversine khi routing providers đều lỗi, thay vì để client tự xử lý null.
 - Delivery quote:
   - Backend luôn re-quote khi tạo order, không tin phí client.
+  - `/api/restaurants/[restaurantSlug]/delivery-quote` hỗ trợ cả `POST` và `GET` query params để tương thích client cũ; route slug luôn thắng payload body để tránh quote nhầm tenant.
+  - `/api/location/nearest-store` hỗ trợ cả `POST` và `GET` query params, nhưng cùng dùng rate limit, route-distance top-N và availability filter.
+  - Quote kiểm tra `opening_time/closing_time` theo múi giờ Việt Nam trước khi nhận đơn giao hàng; có thể tắt tạm bằng `DELIVERY_ENFORCE_OPERATING_HOURS=false` trong rollout.
   - Nếu quote chưa thấy `store_lat/store_lng` nhưng quán có địa chỉ, backend sẽ geocode địa chỉ quán, dùng làm origin tạm thời và backfill lại tọa độ để tránh khách gặp lỗi "quán chưa cấu hình tọa độ".
   - Nếu quote phát hiện tọa độ quán cách điểm giao bất thường, backend geocode lại địa chỉ quán, dùng origin tốt hơn cho quote hiện tại và backfill `store_lat/store_lng`.
   - Quote dùng PostGIS để lọc chi nhánh gần nhất theo geography index, sau đó mới gọi Goong cho 1-2 ứng viên tốt nhất.
+  - API `/api/location/nearest-store` cũng dùng PostGIS prefilter rồi route top-N qua routing provider của tenant, không chỉ trả chi nhánh gần nhất theo đường chim bay.
+  - Chi nhánh dùng các cột chuẩn trên `store_branches` để tạm dừng giao hàng mà không xóa khỏi hệ thống: `accepting_delivery`, `delivery_paused`, `temporarily_closed`, `delivery_opening_time`, `delivery_closing_time`, `delivery_availability_note`. Các key cũ trong `store_branches.metadata` (`deliveryPaused`, `temporarilyClosed`, `acceptingDelivery=false`, `openingTime`, `closingTime`, `availabilityNote`) vẫn được đọc như fallback/backward-compatible.
+  - Snapshot pricing trong quote lưu `pricingVersion`, free-shipping flag, tier match và multiplier để audit phí ship, debug surge/rainy-day rollout và xử lý tranh chấp.
   - Quote dùng provider theo tenant (`map_geocoding_provider`, `map_routing_provider`) và fallback chain server-side.
   - Geocoding fallback production mặc định là Goong -> Vietmap -> Mapbox -> Nominatim. Goong vẫn là primary cho Việt Nam, Mapbox là lớp cứu hộ khi địa chỉ khó hoặc provider trả kết quả kém chất lượng.
   - Country scope mặc định là Việt Nam qua `MAPS_GEOCODER_COUNTRY_CODES=vn`. Khi cần test tại Nhật có thể bật `vn,jp` để Mapbox/Nominatim fallback xử lý địa chỉ Nhật nhưng vẫn giữ Goong là primary cho Việt Nam.
   - API quote có cache/dedupe ngắn hạn theo slug, subtotal, địa chỉ đã hash và tọa độ làm tròn để giảm spam khi khách sửa form.
+  - Route geometry từ provider được simplify trước khi cache/trả về client để giảm payload và render mượt hơn trên Android yếu; chỉnh bằng `MAPS_ROUTE_GEOMETRY_MAX_POINTS`.
   - Order lưu `delivery_quote_snapshot`, `delivery_route_provider`, `delivery_route_confidence`, `delivery_quote_version` để xử lý tranh chấp, analytics và debug provider.
 - Address intelligence:
   - Frontend dùng `/api/maps/autocomplete` khi chủ quán/khách tìm địa chỉ, truyền `sessionToken` theo phiên nhập để Goong Places gom request đúng khuyến nghị.
@@ -150,6 +166,7 @@ Các migration map chính:
 - `20260509125609_delivery_realtime_tracking_foundation.sql`: courier, location ping và tracking event append-only.
 - `20260509132004_delivery_courier_assignment.sql`: gắn shipper vào order và index cho delivery dispatch.
 - `20260509162000_delivery_map_control_center.sql`: cấu hình map/delivery control center và broadcast thêm delivery/service fee.
+- `20260517113000_delivery_branch_availability.sql`: cột availability chính thức cho chi nhánh và RPC nearest-store trả metadata chuẩn.
 
 ## Future scaling notes
 

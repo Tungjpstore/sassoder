@@ -28,6 +28,12 @@ import {
   X
 } from "lucide-react";
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
+import {
+  FlowImage,
+  FlowVisualCard,
+  OrderFlowRail,
+  orderFlowImageSources
+} from "@/components/customer/order-flow-visuals";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -170,6 +176,7 @@ function customerInvoiceCode(id: string) {
 
 function calculatePublicPromotionDiscount(subtotal: number, promotion: PublicPromotion | null) {
   if (!promotion || subtotal < promotion.minOrderAmount) return 0;
+  if (promotion.discountScope === "DELIVERY_FEE") return 0;
   if (promotion.discountType === "PERCENT") {
     return Math.min(subtotal, Math.round((subtotal * promotion.discountValue) / 100));
   }
@@ -178,6 +185,7 @@ function calculatePublicPromotionDiscount(subtotal: number, promotion: PublicPro
 
 function promotionDescription(promotion: PublicPromotion) {
   const value = promotion.discountType === "PERCENT" ? `${promotion.discountValue}%` : formatVnd(promotion.discountValue);
+  if (promotion.discountScope === "DELIVERY_FEE") return "Áp dụng cho đơn giao hàng";
   if (promotion.minOrderAmount > 0) return `Giảm ${value} cho hóa đơn từ ${formatVnd(promotion.minOrderAmount)}`;
   return `Giảm ${value} cho đơn hiện tại`;
 }
@@ -217,6 +225,74 @@ function paymentSteps(entry: CreatedOrder | null) {
     { label: "Đang xác nhận", icon: Clock3, state: paid ? "done" : waiting ? "active" : "pending" },
     { label: "Hoàn thành", icon: ReceiptText, state: paid ? "done" : "pending" }
   ] satisfies Array<{ label: string; icon: LucideIcon; state: StepState }>;
+}
+
+function DineInFlowPreview() {
+  return (
+    <OrderFlowRail
+      title="Quy trình gọi món tại bàn"
+      badge="QR bàn"
+      stages={[
+        {
+          src: orderFlowImageSources.restaurantConfirmation,
+          title: "Gửi món",
+          caption: "Đơn được chuyển thẳng tới quán."
+        },
+        {
+          src: orderFlowImageSources.preparing,
+          title: "Bếp làm",
+          caption: "Theo dõi trạng thái ngay tại bàn."
+        },
+        {
+          src: orderFlowImageSources.paymentVietqr,
+          title: "Thanh toán",
+          caption: "Chọn tiền mặt hoặc quét VietQR."
+        },
+        {
+          src: orderFlowImageSources.completed,
+          title: "Hóa đơn",
+          caption: "Nhận xác nhận khi bàn đã thanh toán."
+        }
+      ]}
+      eagerFirst
+    />
+  );
+}
+
+function dineInTrackingVisual(status: string) {
+  if (status === "paid") {
+    return {
+      src: orderFlowImageSources.completed,
+      title: "Bàn đã thanh toán",
+      caption: "Hóa đơn đã hoàn tất, cảm ơn bạn đã ghé quán."
+    };
+  }
+  if (status === "waiting_payment" || status === "waiting_confirm") {
+    return {
+      src: orderFlowImageSources.paymentConfirmation,
+      title: "Đang xác nhận thanh toán",
+      caption: "Nhân viên sẽ kiểm tra giao dịch và cập nhật hóa đơn."
+    };
+  }
+  if (status === "completed") {
+    return {
+      src: orderFlowImageSources.paymentConfirmation,
+      title: "Món đã phục vụ",
+      caption: "Bạn có thể gọi thêm món hoặc thanh toán khi sẵn sàng."
+    };
+  }
+  if (status === "ordering") {
+    return {
+      src: orderFlowImageSources.preparing,
+      title: "Quán đang chuẩn bị",
+      caption: "Bếp đang xử lý món theo thứ tự gọi."
+    };
+  }
+  return {
+    src: orderFlowImageSources.restaurantConfirmation,
+    title: "Chờ quán xác nhận",
+    caption: "Đơn vừa được gửi từ mã QR của bàn."
+  };
 }
 
 function StatusBar({ dark = false }: { dark?: boolean }) {
@@ -285,7 +361,7 @@ function ScreenHeader({
         <h1 className="truncate text-[14px] font-black">{title}</h1>
         {subtitle ? <p className={cx("mt-0.5 truncate text-[10px] font-bold", dark ? "text-white/75" : "text-[#69746e]")}>{subtitle}</p> : null}
       </div>
-      <div className="grid h-11 w-11 place-items-center">{action}</div>
+      <div className="grid h-11 min-w-11 place-items-center">{action}</div>
     </header>
   );
 }
@@ -554,36 +630,6 @@ function CafeStillLife() {
   );
 }
 
-function ChefIllustration() {
-  return (
-    <div className="relative h-36 overflow-hidden rounded-2xl bg-[#f7f1e7]">
-      <span className="absolute inset-x-5 bottom-5 h-12 rounded-2xl bg-white/70" />
-      <span className="absolute bottom-8 left-14 h-16 w-16 rounded-full bg-[#f6c39f]" />
-      <span className="absolute bottom-[84px] left-12 h-8 w-20 rounded-[50%] bg-white shadow-sm" />
-      <span className="absolute bottom-5 left-11 h-16 w-[88px] rounded-t-[30px] bg-[#006b3c]" />
-      <span className="absolute bottom-16 left-[88px] h-2 w-2 rounded-full bg-[#101713]" />
-      <span className="absolute bottom-5 right-10 h-14 w-20 rounded-b-2xl rounded-t-full bg-[#f28c28]/55" />
-      <span className="absolute bottom-[52px] right-16 h-10 w-10 rounded-full bg-[#f9d7b2]" />
-      <span className="absolute bottom-7 left-28 h-2 w-16 -rotate-12 rounded-full bg-[#8c5a2d]" />
-      <span className="absolute left-8 top-5 h-12 w-14 rounded-full bg-[#cfe4c7]" />
-      <span className="absolute right-7 top-6 h-10 w-10 rounded-full bg-[#e9d7b8]" />
-    </div>
-  );
-}
-
-function CashIllustration() {
-  return (
-    <div className="relative mx-auto my-6 h-28 w-48">
-      <span className="absolute left-8 top-10 h-16 w-28 -rotate-6 rounded-xl bg-[#9bd37d] shadow-[0_12px_24px_rgba(0,91,53,0.14)]" />
-      <span className="absolute left-14 top-[60px] h-8 w-16 rounded-full border-4 border-[#5ca75a]" />
-      <span className="absolute bottom-7 right-9 h-8 w-8 rounded-full bg-[#f28c28]" />
-      <span className="absolute bottom-10 right-2 h-8 w-8 rounded-full bg-[#f7bd5f]" />
-      <span className="absolute bottom-5 right-[60px] h-6 w-6 rounded-full bg-[#f4a63a]" />
-      <span className="absolute bottom-2 left-6 h-4 w-36 rounded-full bg-black/8 blur-sm" />
-    </div>
-  );
-}
-
 function ReceiptSuccessIllustration() {
   return (
     <div className="relative mx-auto h-28 w-36">
@@ -726,6 +772,17 @@ export function CustomerOrderClient({
   const cart = Object.values(items);
   const [screen, setScreen] = useState<CustomerScreen>("menu");
   const { categoryId, searchQuery, setCategoryId, setSearchQuery, visibleCategories } = useDineInMenuBrowser(categories);
+  const visibleMenuItems = useMemo(
+    () =>
+      visibleCategories.flatMap((category, categoryIndex) =>
+        category.items.map((item, itemIndex) => ({
+          categoryIndex,
+          item,
+          itemIndex
+        }))
+      ),
+    [visibleCategories]
+  );
   const [customerSessionId, setCustomerSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<CreatedOrder[]>([]);
   const [customerNote, setCustomerNote] = useState("");
@@ -1156,6 +1213,64 @@ export function CustomerOrderClient({
     }
   }
 
+  function renderMenuCard({
+    item,
+    categoryIndex,
+    itemIndex
+  }: {
+    item: PublicMenuCategory["items"][number];
+    categoryIndex: number;
+    itemIndex: number;
+  }) {
+    const quantity = items[item.id]?.quantity ?? 0;
+
+    return (
+      <article key={item.id} className="flex min-h-[236px] min-w-0 flex-col overflow-hidden rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
+        <div className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
+          <ProductThumb src={item.image} alt={item.name} seed={categoryIndex + itemIndex} />
+        </div>
+        <div className="flex min-h-[64px] min-w-0 flex-1 flex-col pt-2">
+          <h3 className="line-clamp-2 break-words text-[13px] font-black leading-4">{item.name}</h3>
+          <p className="mt-1 truncate text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
+        </div>
+        <div className="mt-auto shrink-0 pt-2">
+          {quantity > 0 ? (
+            <QuantityControl
+              quantity={quantity}
+              onMinus={() => decrement(item.id)}
+              onPlus={() =>
+                add({
+                  menuItemId: item.id,
+                  name: item.name,
+                  price: item.price,
+                  image: item.image
+                })
+              }
+              compact
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() =>
+                add({
+                  menuItemId: item.id,
+                  name: item.name,
+                  price: item.price,
+                  image: item.image
+                })
+              }
+              aria-label={`Thêm ${item.name}`}
+              className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#006b3c] px-2 text-[12px] font-black text-white active:scale-95"
+            >
+              <Plus size={15} />
+              Thêm
+            </button>
+          )}
+        </div>
+      </article>
+    );
+  }
+
   function withLogibot(node: React.ReactNode) {
     return (
       <>
@@ -1289,7 +1404,7 @@ export function CustomerOrderClient({
             <button
               type="button"
               onClick={() => setCategoryId("all")}
-              className={cx("h-8 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === "all" ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
+              className={cx("min-h-11 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === "all" ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
             >
               Tất cả
             </button>
@@ -1298,7 +1413,7 @@ export function CustomerOrderClient({
                 key={category.id}
                 type="button"
                 onClick={() => setCategoryId(category.id)}
-                className={cx("h-8 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === category.id ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
+                className={cx("min-h-11 shrink-0 rounded-full px-4 text-[11px] font-black", categoryId === category.id ? "bg-[#006b3c] text-white" : "bg-[#f3f2ee] text-[#101713]")}
               >
                 {category.name}
               </button>
@@ -1373,6 +1488,10 @@ export function CustomerOrderClient({
             </div>
           ) : null}
 
+          <div className="mt-4">
+            <DineInFlowPreview />
+          </div>
+
           {restaurant.promotions.length > 0 ? (
             <button
               type="button"
@@ -1396,68 +1515,32 @@ export function CustomerOrderClient({
               </div>
             ) : null}
 
-            {visibleCategories.map((category, categoryIndex) => (
-              <section key={category.id}>
+            {categoryId === "all" && visibleMenuItems.length > 0 ? (
+              <section>
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-[15px] font-black">{category.name}</h2>
-                  {categoryId === "all" ? <button type="button" onClick={() => setCategoryId(category.id)} className="text-[11px] font-black text-[#006b3c]">Xem tất cả</button> : null}
+                  <h2 className="text-[15px] font-black">Tất cả món</h2>
+                  <span className="text-[11px] font-black text-[#69746e]">{visibleMenuItems.length} món</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
-                  {category.items.length === 0 ? (
-                    <div className="col-span-2 rounded-2xl bg-[#f6f4ef] p-4 text-[12px] font-semibold text-[#69746e]">Danh mục này chưa có món khả dụng.</div>
-                  ) : (
-                    category.items.map((item, index) => {
-                      const quantity = items[item.id]?.quantity ?? 0;
-                      return (
-                        <article key={item.id} className="flex min-h-[236px] min-w-0 flex-col rounded-2xl bg-white p-2 shadow-[0_10px_26px_rgba(16,23,19,0.05)]">
-                          <div className="aspect-square w-full shrink-0 overflow-hidden rounded-xl bg-[#f4f1ea]">
-                            <ProductThumb src={item.image} alt={item.name} seed={categoryIndex + index} />
-                          </div>
-                          <div className="flex min-h-[64px] min-w-0 flex-1 flex-col pt-2">
-                            <h3 className="line-clamp-2 text-[13px] font-black leading-4">{item.name}</h3>
-                            <p className="mt-1 text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
-                          </div>
-                          <div className="mt-auto pt-2">
-                            {quantity > 0 ? (
-                              <QuantityControl
-                                quantity={quantity}
-                                onMinus={() => decrement(item.id)}
-                                onPlus={() =>
-                                  add({
-                                    menuItemId: item.id,
-                                    name: item.name,
-                                    price: item.price,
-                                    image: item.image
-                                  })
-                                }
-                                compact
-                              />
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  add({
-                                    menuItemId: item.id,
-                                    name: item.name,
-                                    price: item.price,
-                                    image: item.image
-                                  })
-                                }
-                                aria-label={`Thêm ${item.name}`}
-                                className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl bg-[#006b3c] px-2 text-[12px] font-black text-white active:scale-95"
-                              >
-                                <Plus size={15} />
-                                Thêm
-                              </button>
-                            )}
-                          </div>
-                        </article>
-                      );
-                    })
-                  )}
+                  {visibleMenuItems.map(renderMenuCard)}
                 </div>
               </section>
-            ))}
+            ) : (
+              visibleCategories.map((category, categoryIndex) => (
+                <section key={category.id}>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-[15px] font-black">{category.name}</h2>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {category.items.length === 0 ? (
+                      <div className="col-span-2 rounded-2xl bg-[#f6f4ef] p-4 text-[12px] font-semibold text-[#69746e]">Danh mục này chưa có món khả dụng.</div>
+                    ) : (
+                      category.items.map((item, itemIndex) => renderMenuCard({ item, categoryIndex, itemIndex }))
+                    )}
+                  </div>
+                </section>
+              ))
+            )}
           </div>
         </div>
 
@@ -1492,7 +1575,7 @@ export function CustomerOrderClient({
   function renderCartScreen() {
     return (
       <PhoneFrame>
-        <ScreenHeader title="Giỏ hàng của bạn" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => setScreen("menu")} className="text-[11px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
+        <ScreenHeader title="Giỏ hàng của bạn" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => setScreen("menu")} className="inline-flex min-h-11 items-center px-2 text-[11px] font-black text-[#006b3c]">Chỉnh sửa</button>} />
         <div className="px-4 pb-28">
           {selectedPromotion ? (
             <button
@@ -1527,7 +1610,7 @@ export function CustomerOrderClient({
                         <h3 className="truncate text-[13px] font-black">{item.name}</h3>
                         <p className="mt-1 text-[12px] font-black tabular-nums">{formatVnd(item.price)}</p>
                       </div>
-                      <button type="button" onClick={() => remove(item.menuItemId)} aria-label={`Xóa ${item.name}`} className="grid h-8 w-8 place-items-center rounded-full text-[#69746e]">
+                      <button type="button" onClick={() => remove(item.menuItemId)} aria-label={`Xóa ${item.name}`} className="grid h-11 w-11 place-items-center rounded-full text-[#69746e]">
                         <Trash2 size={15} />
                       </button>
                     </div>
@@ -1596,6 +1679,13 @@ export function CustomerOrderClient({
           <OrderSummaryCard entry={created}>
             <Stepper steps={foodSteps(created.order.status)} />
           </OrderSummaryCard>
+          <div className="mt-4">
+            <FlowVisualCard
+              src={orderFlowImageSources.restaurantConfirmation}
+              title="Quán đã nhận đơn"
+              caption="Thông tin món và ghi chú của bàn đã được gửi về màn hình của quán."
+            />
+          </div>
           <div className="mt-6 rounded-2xl bg-[#f8f6f0] p-4 text-center text-[12px] font-semibold leading-5 text-[#69746e]">
             Bạn có thể theo dõi trạng thái đơn hàng tại đây.
           </div>
@@ -1610,6 +1700,7 @@ export function CustomerOrderClient({
   function renderTrackingScreen() {
     if (!created) return renderMenuScreen();
     const rows = created.order.items ?? [];
+    const visual = dineInTrackingVisual(created.order.status);
     return (
       <PhoneFrame>
         <ScreenHeader title="Theo dõi đơn hàng" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => void showHelp()} aria-label="Gọi nhân viên" className="grid h-11 w-11 place-items-center rounded-full"><Bell size={18} /></button>} />
@@ -1624,7 +1715,7 @@ export function CustomerOrderClient({
 
           <section className="mt-6">
             <h3 className="mb-3 text-[13px] font-black">{created.order.status === "pending" ? "Đang chờ xác nhận" : created.order.status === "ordering" ? "Đang chuẩn bị" : "Chi tiết món"}</h3>
-            <ChefIllustration />
+            <FlowVisualCard src={visual.src} title={visual.title} caption={visual.caption} imageClassName="h-28" />
           </section>
 
           <section className="mt-6">
@@ -1681,6 +1772,13 @@ export function CustomerOrderClient({
             <p className="mt-3 text-[12px] font-semibold leading-5 text-[#69746e]">Chọn phương thức thanh toán</p>
           </div>
 
+          <FlowVisualCard
+            src={orderFlowImageSources.paymentConfirmation}
+            title="Thanh toán tại bàn"
+            caption="Gửi yêu cầu thanh toán, quán xác nhận và xuất hóa đơn ngay trên cùng một flow."
+            className="mt-6"
+          />
+
           <div className="mt-8 grid gap-3">
             <button
               type="button"
@@ -1727,7 +1825,7 @@ export function CustomerOrderClient({
               <p className="mt-1 text-[11px] font-semibold text-[#69746e]">(Đã bao gồm VAT)</p>
             </div>
           </div>
-          <CashIllustration />
+          <FlowImage src={orderFlowImageSources.paymentConfirmation} alt="Nhân viên xác nhận thanh toán tiền mặt" className="my-6 h-36" sizes="358px" />
           <div className="rounded-2xl bg-[#f8f6f0] p-4 text-center">
             <p className="text-[13px] font-bold text-[#69746e]">Vui lòng thanh toán cho nhân viên</p>
             <p className="mt-2 text-[12px] font-semibold leading-5 text-[#69746e]">Nhân viên sẽ xác nhận và xuất hóa đơn</p>
@@ -1750,6 +1848,8 @@ export function CustomerOrderClient({
           <p className="text-[13px] font-black">Tổng thanh toán</p>
           <p className="mt-2 text-[18px] font-black tabular-nums">{formatVnd(currentPayableTotal)}</p>
           <p className="mt-1 text-[11px] font-semibold text-[#69746e]">(Đã bao gồm VAT)</p>
+
+          <FlowImage src={orderFlowImageSources.paymentVietqr} alt="Thanh toán bằng VietQR tại bàn" className="mx-auto mt-5 h-32" sizes="358px" />
 
           <div className="mx-auto mt-7 w-[236px] rounded-2xl bg-white p-3 shadow-[0_12px_30px_rgba(16,23,19,0.08)]">
             {qr ? (
@@ -1793,6 +1893,13 @@ export function CustomerOrderClient({
           <OrderSummaryCard entry={created}>
             <Stepper steps={paymentSteps(created)} />
           </OrderSummaryCard>
+          <div className="mt-4">
+            <FlowVisualCard
+              src={orderFlowImageSources.paymentConfirmation}
+              title="Chờ quán xác nhận"
+              caption="Nút xác nhận đã gửi, trạng thái thanh toán sẽ tự cập nhật khi quán duyệt."
+            />
+          </div>
           <div className="mt-6 rounded-2xl bg-[#f8f6f0] p-4 text-center text-[12px] font-semibold leading-5 text-[#69746e]">
             Vui lòng chờ quán xác nhận.
           </div>
@@ -1810,6 +1917,7 @@ export function CustomerOrderClient({
           <OrderSummaryCard entry={created}>
             <Stepper steps={paymentSteps(created)} />
           </OrderSummaryCard>
+          <FlowImage src={orderFlowImageSources.completed} alt="Thanh toán hoàn tất tại bàn" className="mt-4 h-40" sizes="358px" />
           <div className="mt-5 grid gap-3">
             <PrimaryButton variant="outline" onClick={() => setScreen("invoice")}>Xem chi tiết đơn hàng</PrimaryButton>
             <PrimaryButton onClick={() => {
@@ -1838,6 +1946,12 @@ export function CustomerOrderClient({
       <PhoneFrame>
         <ScreenHeader title="Hóa đơn" subtitle={table.name} onBack={() => setScreen("payment-success")} />
         <div className="px-4 pb-6 pt-4">
+          <FlowVisualCard
+            src={orderFlowImageSources.completed}
+            title="Hóa đơn đã sẵn sàng"
+            caption="Bàn đã hoàn tất thanh toán, bạn có thể xem lại chi tiết trước khi rời quán."
+            className="mb-4"
+          />
           <ReceiptInvoice
             restaurant={restaurant}
             table={table}
@@ -1858,7 +1972,7 @@ export function CustomerOrderClient({
   function renderOrdersScreen() {
     return (
       <PhoneFrame>
-        <ScreenHeader title="Theo dõi đơn hàng" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => void loadOrderHistory()} className="text-[11px] font-black text-[#006b3c]">Làm mới</button>} />
+        <ScreenHeader title="Theo dõi đơn hàng" subtitle={table.name} onBack={() => setScreen("menu")} action={<button type="button" onClick={() => void loadOrderHistory()} className="inline-flex min-h-11 items-center px-2 text-[11px] font-black text-[#006b3c]">Làm mới</button>} />
         <div className="px-4 pb-6">
           <div className="rounded-2xl bg-[#f8f6f0] p-4">
             <p className="text-[12px] font-black text-[#101713]">{openHistory.length} đơn đang mở</p>

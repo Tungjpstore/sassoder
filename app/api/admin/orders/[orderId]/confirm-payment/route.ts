@@ -12,7 +12,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
     const session = await requireOperationalDashboardApiSession({
-      feature: "vietqr_payments",
       permission: "payments.confirm"
     });
     const { orderId } = adminOrderIdSchema.parse(await params);

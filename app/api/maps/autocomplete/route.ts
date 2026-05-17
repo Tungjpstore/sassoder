@@ -2,6 +2,7 @@ import { fail, ok } from "@/lib/response";
 import { getRequestIpKey } from "@/lib/security/request-ip";
 import { MapApiError } from "@/services/maps/errors";
 import { assertMapRateLimit, buildRateLimitHeaders, getMapRuntimeConfig, searchAddressPredictions } from "@/services/maps/provider-service";
+import { mapRequestContext, parseMapLimit, parseOptionalGeocodingProvider } from "@/services/maps/request-params";
 
 export const preferredRegion = "sin1";
 
@@ -9,7 +10,7 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get("q")?.trim() ?? "";
-    const limit = Number(searchParams.get("limit") ?? 5);
+    const limit = parseMapLimit(searchParams.get("limit"), 5, 8);
     const sessionToken = searchParams.get("sessionToken");
     const lat = Number(searchParams.get("lat"));
     const lng = Number(searchParams.get("lng"));
@@ -22,9 +23,10 @@ export async function GET(request: Request) {
       config: getMapRuntimeConfig(),
       predictions: await searchAddressPredictions(query, {
         limit,
+        provider: parseOptionalGeocodingProvider(searchParams.get("provider")),
         sessionToken,
         location,
-        context: { source: "public_map_api" }
+        context: mapRequestContext(searchParams, "public_map_api")
       })
     }, { headers: buildRateLimitHeaders(rateLimit) });
   } catch (error) {

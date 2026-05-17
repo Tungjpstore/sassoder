@@ -121,3 +121,64 @@ test("buildOperationInsights detects inventory risk and recipe gaps", () => {
   assert.ok(deck.insights.some((insight) => insight.kind === "inventory" && insight.metric?.label === "Recipe coverage"));
   assert.ok(deck.insights.some((insight) => insight.actionHref === "/dashboard/inventory"));
 });
+
+test("buildOperationInsights detects inventory economics risks", () => {
+  const deck = buildOperationInsights(
+    {
+      summary24h: { orderCount: 12, paidRevenue: 1100000 },
+      recentOrders: [],
+      inventory: {
+        schemaReady: true,
+        activeIngredientCount: 20,
+        lowStockCount: 0,
+        recipeCoveragePercent: 92,
+        recipeReadyItemCount: 23,
+        menuItemCount: 25,
+        openAlertCount: 4,
+        openPurchaseOrderCount: 2,
+        supplierDelayAlertCount: 1,
+        projectedPurchaseValue: 850000,
+        reorderSuggestionCount: 3,
+        highReorderCount: 1,
+        topReorderSuggestion: {
+          name: "Sữa tươi",
+          unit: "lít",
+          reorderQuantity: 24,
+          estimatedCost: 420000,
+          urgency: "high"
+        },
+        wasteSignalCount: 2,
+        wasteSpikeAlertCount: 1,
+        topWasteSignal: {
+          name: "Trân châu",
+          unit: "kg",
+          wasteQuantity: 4,
+          wasteCost: 260000,
+          movementCount: 3
+        },
+        priceSignalCount: 1,
+        priceSpikeAlertCount: 1,
+        topPriceSignal: {
+          name: "Kem cheese",
+          latestUnitCost: 92000,
+          previousUnitCost: 76000,
+          changePercent: 21
+        },
+        highFoodCostItemCount: 1,
+        topHighFoodCostItem: {
+          name: "Matcha kem cheese",
+          price: 49000,
+          totalRecipeCost: 31000,
+          recipeCostPercent: 63
+        }
+      }
+    },
+    now
+  );
+
+  assert.ok(deck.insights.some((insight) => insight.title.includes("kế hoạch nhập hàng")));
+  assert.ok(deck.insights.some((insight) => insight.title.includes("Hao hụt")));
+  assert.ok(deck.insights.some((insight) => insight.title.includes("Giá nhập")));
+  assert.ok(deck.insights.some((insight) => insight.title.includes("food cost")));
+  assert.ok(deck.insights.some((insight) => insight.title.includes("Purchase order")));
+});

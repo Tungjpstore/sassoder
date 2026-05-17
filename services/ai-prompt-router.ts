@@ -230,7 +230,7 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
     intent: "inventory",
     label: "Kho hàng",
     description: "Theo dõi nguyên liệu thấp, định mức món, lô sắp hết hạn, cảnh báo kho và gợi ý nhập hàng.",
-    dataScope: "Inventory snapshot, nguyên liệu dưới ngưỡng, recipe coverage, giá trị tồn kho, alert và lô sắp hết hạn nếu có.",
+    dataScope: "Inventory snapshot, nguyên liệu dưới ngưỡng, recipe coverage, food cost, hao hụt, purchase order, giá trị tồn kho, alert và lô sắp hết hạn nếu có.",
     guardrails: [
       "Không bịa số lượng tồn hoặc giá vốn.",
       "Không tự tạo phiếu nhập/đơn mua nếu chưa có action xác nhận.",
@@ -694,7 +694,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
       : "",
     menu ? `Menu: ${menuItemCount} món, ${menuUnavailableCount} món tạm hết/chưa bán.` : "",
     inventory
-      ? `Kho: ${numberValue(inventory.lowStockCount)} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(numberValue(inventory.recipeCoveragePercent))}%, ${numberValue(inventory.openAlertCount)} alert mở.`
+      ? `Kho: ${numberValue(inventory.lowStockCount)} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(numberValue(inventory.recipeCoveragePercent))}%, ${numberValue(inventory.openAlertCount)} alert mở, dự kiến nhập ${formatVnd(inventory.projectedPurchaseValue)}, ${numberValue(inventory.wasteSignalCount)} tín hiệu hao hụt, ${numberValue(inventory.highFoodCostItemCount)} món food cost cao.`
       : "",
     payments ? `Thanh toán: ${waitingConfirmPayments} giao dịch chờ xác nhận trong snapshot.` : "",
     readiness ? `Setup: điểm ${numberValue(readiness.score)}, blocker ${setupBlockers.slice(0, 3).join(" | ") || "không có blocker rõ"}.` : "",

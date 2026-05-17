@@ -1,0 +1,37 @@
+{
+  "assetSet": "logivn-onboarding-flow",
+  "size": "1k",
+  "updatedAt": "2026-05-17",
+  "assets": [
+    {
+      "id": "store-profile",
+      "title": "Tạo hồ sơ quán",
+      "src": "/onboarding/flow/store-profile.png"
+    },
+    {
+      "id": "plan-selection",
+      "title": "Chọn gói vận hành",
+      "src": "/onboarding/flow/plan-selection.png"
+    },
+    {
+      "id": "setup-checklist",
+      "title": "Kiểm tra sẵn sàng",
+      "src": "/onboarding/flow/setup-checklist.png"
+    },
+    {
+      "id": "table-qr",
+      "title": "Tạo bàn và QR",
+      "src": "/onboarding/flow/table-qr.png"
+    },
+    {
+      "id": "menu-import",
+      "title": "Nhập menu đầu tiên",
+      "src": "/onboarding/flow/menu-import.png"
+    },
+    {
+      "id": "launch-dashboard",
+      "title": "Sẵn sàng vận hành",
+      "src": "/onboarding/flow/launch-dashboard.png"
+    }
+  ]
+}

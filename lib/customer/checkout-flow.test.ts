@@ -4,6 +4,7 @@ import {
   buildDeliveryQuoteFingerprint,
   dineInCheckoutReducer,
   remoteCheckoutReducer,
+  resolveDeliveryQuoteCheckoutState,
   validateRemoteCheckoutBasics,
   type DineInCheckoutScreen,
   type RemoteCheckoutScreen
@@ -89,6 +90,89 @@ test("remote checkout fingerprints delivery quotes by payable inputs", () => {
       deliveryLng: 106.765432
     })
   );
+});
+
+test("remote checkout quote state skips delivery quote for pickup", () => {
+  const state = resolveDeliveryQuoteCheckoutState({
+    mode: "PICKUP",
+    expectedFingerprint: "next"
+  });
+
+  assert.deepEqual(state, {
+    required: false,
+    fresh: true,
+    accepted: true,
+    stale: false,
+    pending: false,
+    message: null
+  });
+});
+
+test("remote checkout quote state accepts only fresh accepted delivery quotes", () => {
+  const accepted = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v2",
+    quoteAccepted: true
+  });
+  const rejected = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v2",
+    quoteAccepted: false
+  });
+
+  assert.equal(accepted.accepted, true);
+  assert.equal(accepted.fresh, true);
+  assert.equal(accepted.message, null);
+  assert.equal(rejected.accepted, false);
+  assert.equal(rejected.message, "Vui lòng tính phí giao hàng trước khi đặt.");
+});
+
+test("remote checkout quote state explains stale and pending delivery quotes", () => {
+  const stale = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v1",
+    quoteAccepted: true
+  });
+  const pending = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v1",
+    quoteAccepted: true,
+    loadingQuote: true
+  });
+  const freshPending = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v2",
+    quoteAccepted: true,
+    loadingQuote: true
+  });
+
+  assert.equal(stale.accepted, false);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.message, "Phí giao hàng đã thay đổi. Vui lòng tính lại trước khi đặt.");
+  assert.equal(pending.accepted, false);
+  assert.equal(pending.pending, true);
+  assert.equal(pending.message, "Đang tính lại phí giao hàng...");
+  assert.equal(freshPending.accepted, false);
+  assert.equal(freshPending.message, "Đang tính lại phí giao hàng...");
+});
+
+test("remote checkout quote state returns fresh delivery quote errors", () => {
+  const state = resolveDeliveryQuoteCheckoutState({
+    mode: "DELIVERY",
+    expectedFingerprint: "cart-address-v2",
+    quoteFingerprint: "cart-address-v2",
+    quoteAccepted: false,
+    quoteError: "Ngoài vùng giao hàng."
+  });
+
+  assert.equal(state.fresh, true);
+  assert.equal(state.accepted, false);
+  assert.equal(state.message, "Ngoài vùng giao hàng.");
 });
 
 test("dine-in checkout restores existing order screens from payment state", () => {

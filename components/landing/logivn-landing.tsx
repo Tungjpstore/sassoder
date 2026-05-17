@@ -17,6 +17,7 @@ import {
   WalletCards
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { MarketingFunnelTracker } from "@/components/marketing/funnel-tracker";
 import { SEO_HOME_TITLE } from "@/lib/seo/config";
 import { getFeaturedSeoIntentPages } from "@/lib/seo/intent-pages";
 import { buildFaqSchema } from "@/lib/seo/schema";
@@ -342,6 +343,7 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
 
   return (
     <>
+      <MarketingFunnelTracker page="/" source="homepage" />
       <JsonLdScript id="logivn-home-faq-jsonld" scriptKey="logivn-home-faq" data={buildFaqSchema(homepageFaqItems)} />
       <div className="logivn-brand-page">
       <style>{styles}</style>
@@ -351,7 +353,7 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
           <Logo logoUrl={siteBrand.logoUrl} label={siteBrand.companyName} priority />
           <nav className="lv-nav-links" aria-label="Điều hướng chính">
             <a href="#solution">Giải pháp</a>
-            <a href="#product-demo">Demo</a>
+            <Link href="/demo">Demo</Link>
             <a href="#ai-operations">AI</a>
             <a href="#features">Lợi ích</a>
             <a href="#journey">Câu chuyện</a>
@@ -389,7 +391,7 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   Tạo quán miễn phí
                   <ArrowRight size={18} />
                 </Link>
-                <Link className="lv-btn lv-btn-outline" href="#product-demo">
+                <Link className="lv-btn lv-btn-outline" href="/demo">
                   Xem demo vận hành
                 </Link>
               </div>
@@ -411,41 +413,15 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   fill
                   sizes="(max-width: 1100px) 100vw, 54vw"
                 />
-                <div className="lv-hero-product-panel" aria-hidden="true">
-                  <div className="lv-product-topbar">
+                <div className="lv-poster-hotspots" aria-hidden="true">
+                  <span className="lv-poster-live">
                     <span />
-                    <span />
-                    <span />
-                    <strong>LogiVN Live</strong>
-                  </div>
-                  <div className="lv-product-layout">
-                    <div className="lv-product-dashboard">
-                      <div className="lv-product-stat">
-                        <span>Doanh thu hôm nay</span>
-                        <strong>8.420.000đ</strong>
-                        <small>+18% so với hôm qua</small>
-                      </div>
-                      <div className="lv-product-orders">
-                        {["Bàn 04 - đang pha chế", "Bàn 12 - chờ xác nhận", "Online - đã thanh toán"].map((item) => (
-                          <div key={item}>
-                            <Check size={14} />
-                            <span>{item}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="lv-product-phone">
-                      <div className="lv-phone-notch" />
-                      <span>Bàn 12</span>
-                      <strong>Trà đào cam sả</strong>
-                      <p>Ít đá · thêm trân châu</p>
-                      <span className="lv-phone-button">Gửi order</span>
-                    </div>
-                  </div>
-                  <div className="lv-ai-toast">
-                    <Sparkles size={15} />
-                    AI gợi ý mở thêm 1 nhân sự khung 19h-21h.
-                  </div>
+                    LogiVN Live
+                  </span>
+                  <span className="lv-poster-pay">
+                    <WalletCards size={14} />
+                    VietQR ready
+                  </span>
                 </div>
               </div>
 
@@ -600,8 +576,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   Thử Premium AI
                   <ArrowRight size={18} />
                 </Link>
-                <Link className="lv-btn lv-btn-outline" href="#pricing">
-                  So sánh gói
+                <Link className="lv-btn lv-btn-outline" href="/demo">
+                  Xem demo AI
                 </Link>
               </div>
             </div>
@@ -750,8 +726,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   Tạo quán dùng thử
                   <ArrowRight size={18} />
                 </Link>
-                <Link className="lv-btn lv-btn-ghost" href="/pricing">
-                  Xem bảng giá
+                <Link className="lv-btn lv-btn-ghost" href="/demo">
+                  Xem demo
                 </Link>
               </div>
             </div>
@@ -857,8 +833,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
               <SectionLabel>FAQ</SectionLabel>
               <h2 id="lv-faq-title">Câu trả lời ngắn cho những điều chủ quán cần biết trước khi thử LogiVN</h2>
               <p>
-                FAQ được viết theo intent tìm kiếm thật để vừa giảm phân vân trước signup, vừa giúp Google và AI search hiểu
-                rõ LogiVN phục vụ mô hình F&amp;B nào.
+                Những câu hỏi ngắn giúp chủ quán hiểu nhanh LogiVN phù hợp mô hình nào, cần chuẩn bị gì và nên bắt đầu
+                bằng QR, VietQR hay AI vận hành.
               </p>
             </div>
 
@@ -881,12 +857,12 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
               <p>{landing.finalSubtitle}</p>
               <div className="lv-final-actions">
                 <Link className="lv-btn lv-btn-orange" href="/dashboard/register?plan=pro">
-                  Đăng ký demo ngay
+                  Tạo quán dùng thử
                   <ArrowRight size={18} />
                 </Link>
-                <a className="lv-btn lv-btn-ghost" href={`mailto:${siteBrand.email}`}>
-                  Liên hệ tư vấn
-                </a>
+                <Link className="lv-btn lv-btn-ghost" href="/waitlist">
+                  Pilot có hướng dẫn
+                </Link>
               </div>
               <div className="lv-final-contact">
                 <span>
@@ -917,7 +893,7 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
           Tạo quán miễn phí
           <ArrowRight size={16} />
         </Link>
-        <a href="#product-demo">Xem demo</a>
+        <Link href="/demo">Xem demo</Link>
       </div>
 
       <footer className="lv-footer">
@@ -933,6 +909,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
             <a href="#journey">Câu chuyện</a>
             <a href="#pricing">Bảng giá</a>
             <Link href="/giai-phap">Tất cả giải pháp</Link>
+            <Link href="/so-sanh">So sánh phần mềm</Link>
+            <Link href="/dia-phuong">Theo địa phương</Link>
             <Link href="/blog">Blog vận hành</Link>
             <Link href="/blog/goi-mon-qr">Hub gọi món QR</Link>
             <Link href="/blog/van-hanh-nha-hang">Hub nhà hàng</Link>
@@ -946,6 +924,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
           <div>
             <h3>Bắt đầu</h3>
             <Link href="/dashboard/register?plan=pro">Tạo quán dùng thử</Link>
+            <Link href="/demo">Xem demo</Link>
+            <Link href="/waitlist">Waitlist pilot</Link>
             <Link href="/dashboard/login">Đăng nhập</Link>
             <Link href="/pricing">So sánh gói</Link>
           </div>
@@ -1075,8 +1055,10 @@ const styles = `
 
 .lv-nav-links a {
   display: inline-flex;
+  min-width: 48px;
   min-height: 44px;
   align-items: center;
+  justify-content: center;
 }
 
 .lv-nav-links a:hover,
@@ -1229,8 +1211,8 @@ const styles = `
 
 .lv-hero-copy h1 {
   margin-top: 18px;
-  font-size: clamp(3.4rem, 7.2vw, 6.2rem);
-  line-height: 0.94;
+  font-size: 5.2rem;
+  line-height: 0.96;
   letter-spacing: 0;
   color: var(--lv-green-strong);
 }
@@ -1288,13 +1270,17 @@ const styles = `
 
 .lv-hero-stage {
   position: relative;
-  min-height: 40rem;
-  padding: 18px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-height: 0;
+  padding: 0;
 }
 
 .lv-stage-frame {
   position: relative;
-  min-height: 38rem;
+  grid-column: 1 / -1;
+  min-height: 34.5rem;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 34px;
@@ -1318,180 +1304,48 @@ const styles = `
 .lv-stage-frame img {
   z-index: 0;
   object-fit: cover;
-  object-position: center;
+  object-position: center 52%;
 }
 
-.lv-hero-product-panel {
+.lv-poster-hotspots {
   position: absolute;
-  inset: 30px;
   z-index: 2;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 14px;
+  inset: 22px;
+  align-items: flex-start;
+  justify-content: space-between;
   pointer-events: none;
 }
 
-.lv-product-topbar {
+.lv-poster-live,
+.lv-poster-pay {
   display: inline-flex;
-  width: fit-content;
   align-items: center;
   gap: 7px;
-  min-height: 36px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 12px;
   border: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 999px;
   color: rgba(255, 248, 239, 0.9);
-  background: rgba(10, 47, 37, 0.62);
+  background: rgba(10, 47, 37, 0.54);
   box-shadow: 0 18px 36px rgba(10, 47, 37, 0.16);
   backdrop-filter: blur(12px);
   font-size: 12px;
   font-weight: 800;
 }
 
-.lv-product-topbar span {
+.lv-poster-live span {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: rgba(255, 248, 239, 0.64);
-}
-
-.lv-product-topbar strong {
-  margin-left: 6px;
-}
-
-.lv-product-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 168px;
-  gap: 14px;
-  align-items: end;
-}
-
-.lv-product-dashboard,
-.lv-product-phone,
-.lv-ai-toast {
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  background: rgba(255, 252, 246, 0.84);
-  box-shadow: 0 24px 52px rgba(10, 47, 37, 0.14);
-  backdrop-filter: blur(16px);
-}
-
-.lv-product-dashboard {
-  display: grid;
-  gap: 12px;
-  min-height: 190px;
-  padding: 18px;
-  border-radius: 26px;
-}
-
-.lv-product-stat {
-  display: grid;
-  gap: 5px;
-}
-
-.lv-product-stat span,
-.lv-product-stat small,
-.lv-product-phone span,
-.lv-product-phone p {
-  color: rgba(32, 51, 41, 0.68);
-  font-size: 12px;
-  line-height: 1.45;
-  font-weight: 700;
-}
-
-.lv-product-stat strong {
-  color: var(--lv-green-strong);
-  font-size: 34px;
-  line-height: 1;
-  font-weight: 900;
-}
-
-.lv-product-stat small {
-  color: var(--lv-orange);
-}
-
-.lv-product-orders {
-  display: grid;
-  gap: 8px;
-}
-
-.lv-product-orders div {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: 14px;
-  color: var(--lv-green);
-  background: rgba(15, 77, 58, 0.08);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.lv-product-phone {
-  position: relative;
-  display: grid;
-  min-height: 244px;
-  align-content: start;
-  padding: 22px 16px 16px;
-  border-radius: 30px;
-}
-
-.lv-phone-notch {
-  position: absolute;
-  top: 9px;
-  left: 50%;
-  width: 52px;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(15, 77, 58, 0.18);
-  transform: translateX(-50%);
-}
-
-.lv-product-phone strong {
-  margin-top: 34px;
-  color: var(--lv-green-strong);
-  font-size: 20px;
-  line-height: 1.08;
-  font-weight: 900;
-}
-
-.lv-product-phone p {
-  margin-top: 9px;
-}
-
-.lv-phone-button {
-  display: inline-flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: center;
-  margin-top: 22px;
-  border-radius: 999px;
-  color: #FFF8EF;
-  background: var(--lv-green);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.lv-ai-toast {
-  display: inline-flex;
-  width: fit-content;
-  max-width: 25rem;
-  align-items: center;
-  gap: 9px;
-  min-height: 42px;
-  padding: 0 14px;
-  border-radius: 999px;
-  color: var(--lv-green);
-  font-size: 12px;
-  line-height: 1.4;
-  font-weight: 900;
+  background: #F28C28;
+  box-shadow: 0 0 0 4px rgba(255, 248, 239, 0.16);
 }
 
 .lv-stage-card {
-  position: absolute;
+  position: relative;
   z-index: 3;
-  width: min(19rem, 58%);
+  width: 100%;
   display: grid;
   grid-template-columns: 40px 1fr;
   gap: 14px;
@@ -1502,18 +1356,16 @@ const styles = `
   background: rgba(255, 252, 246, 0.84);
   box-shadow: var(--lv-shadow-soft);
   backdrop-filter: blur(14px);
-  animation: lvFloat 9s ease-in-out infinite;
 }
 
 .lv-stage-card-left {
-  left: -18px;
-  bottom: 104px;
+  left: auto;
+  bottom: auto;
 }
 
 .lv-stage-card-right {
-  right: -10px;
-  top: 46px;
-  animation-delay: 1.8s;
+  right: auto;
+  top: auto;
 }
 
 .lv-stage-icon {
@@ -1543,11 +1395,12 @@ const styles = `
 }
 
 .lv-stage-rail {
-  position: absolute;
+  position: relative;
+  grid-column: 1 / -1;
   z-index: 3;
-  left: 20px;
-  right: 20px;
-  bottom: 36px;
+  left: auto;
+  right: auto;
+  bottom: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -2785,16 +2638,6 @@ const styles = `
   outline-offset: 4px;
 }
 
-@keyframes lvFloat {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
 @media (max-width: 1120px) {
   .lv-hero-shell,
   .lv-ai-shell,
@@ -2803,6 +2646,10 @@ const styles = `
   .lv-faq-shell,
   .lv-pricing-header {
     grid-template-columns: 1fr;
+  }
+
+  .lv-hero-copy h1 {
+    font-size: 4.6rem;
   }
 
   .lv-proof-pills,
@@ -2877,7 +2724,7 @@ const styles = `
   }
 
   .lv-hero-copy h1 {
-    font-size: clamp(2.6rem, 8vw, 3.8rem);
+    font-size: 3.8rem;
   }
 
   .lv-section-head h2,
@@ -2914,24 +2761,8 @@ const styles = `
     min-height: 0;
   }
 
-  .lv-hero-product-panel {
+  .lv-poster-hotspots {
     inset: 16px;
-  }
-
-  .lv-product-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .lv-product-phone {
-    display: none;
-  }
-
-  .lv-product-dashboard {
-    min-height: 166px;
-  }
-
-  .lv-product-stat strong {
-    font-size: 28px;
   }
 
   .lv-stage-card {
@@ -2979,7 +2810,7 @@ const styles = `
   }
 
   .lv-container {
-    width: min(100% - 24px, 520px);
+    width: min(calc(100% - 24px), 520px);
   }
 
   .lv-header {
@@ -2992,7 +2823,7 @@ const styles = `
   }
 
   .lv-nav-actions {
-    gap: 8px;
+    display: none;
   }
 
   .lv-btn,
@@ -3009,9 +2840,11 @@ const styles = `
 
   .lv-btn-sm {
     width: auto;
+    max-width: 150px;
     min-height: 44px;
-    padding: 0 14px;
+    padding: 0 12px;
     font-size: 12px;
+    white-space: nowrap;
   }
 
   .lv-hero-actions,
@@ -3047,17 +2880,31 @@ const styles = `
     gap: 18px;
   }
 
+  .lv-hero-copy,
+  .lv-hero-actions,
+  .lv-proof-pills,
+  .lv-hero-stage {
+    width: 100%;
+    max-width: 360px;
+  }
+
   .lv-hero-copy h1 {
     margin-top: 10px;
-    font-size: clamp(2.05rem, 9.4vw, 2.55rem);
-    line-height: 1;
+    max-width: 100%;
+    font-size: clamp(1.85rem, 8vw, 2.05rem);
+    line-height: 1.04;
     letter-spacing: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .lv-hero-copy p {
+    max-width: 100%;
     margin-top: 12px;
     font-size: 13.5px;
     line-height: 1.55;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .lv-hero-actions,
@@ -3103,49 +2950,20 @@ const styles = `
     border-radius: 24px;
   }
 
-  .lv-hero-product-panel {
+  .lv-poster-hotspots {
     inset: 12px;
-    gap: 10px;
-  }
-
-  .lv-product-topbar {
-    min-height: 31px;
-    padding: 0 11px;
-    font-size: 10.5px;
-  }
-
-  .lv-product-dashboard {
     gap: 8px;
-    min-height: 142px;
-    padding: 13px;
-    border-radius: 19px;
   }
 
-  .lv-product-stat span,
-  .lv-product-stat small,
-  .lv-product-orders div,
-  .lv-ai-toast {
+  .lv-poster-live,
+  .lv-poster-pay {
+    min-height: 30px;
+    padding: 0 9px;
     font-size: 10.5px;
   }
 
-  .lv-product-stat strong {
-    font-size: 22px;
-  }
-
-  .lv-product-orders {
-    gap: 6px;
-  }
-
-  .lv-product-orders div {
-    min-height: 29px;
-    padding: 0 9px;
-    border-radius: 11px;
-  }
-
-  .lv-ai-toast {
-    max-width: 100%;
-    min-height: 34px;
-    padding: 0 11px;
+  .lv-poster-pay {
+    display: none;
   }
 
   .lv-stage-card {
@@ -3742,7 +3560,7 @@ const styles = `
   }
 
   .lv-hero-copy h1 {
-    font-size: clamp(1.95rem, 9.5vw, 2.35rem);
+    font-size: 2.22rem;
   }
 
   .lv-stage-frame {

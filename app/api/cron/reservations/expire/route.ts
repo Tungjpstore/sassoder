@@ -1,7 +1,7 @@
 import { assertCronSecret } from "@/lib/cron/auth";
 import { fail, ok } from "@/lib/response";
 import { runLoggedCron } from "@/services/cron-run-log-service";
-import { expireReservationHolds } from "@/services/reservation-service";
+import { runReservationLifecycleAutomation } from "@/services/reservation-service";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -15,11 +15,14 @@ export async function GET(request: Request) {
         request,
         jobKey: "reservations-expire",
         metadata: { maxBatches: 8 },
-        run: () => expireReservationHolds(undefined, { maxBatches: 8 }),
+        run: () => runReservationLifecycleAutomation(undefined, { maxBatches: 8 }),
         statusFromResult: (result) => (result.hasMore ? "warn" : "success"),
         summaryFromResult: (result) => ({
-          batches: result.batches,
-          expired: result.expired,
+          holdBatches: result.holds.batches,
+          expired: result.holds.expired,
+          noShowBatches: result.noShows.batches,
+          noShowScanned: result.noShows.scanned,
+          noShow: result.noShows.noShow,
           hasMore: result.hasMore
         })
       })

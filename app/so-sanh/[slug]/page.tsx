@@ -159,11 +159,13 @@ export default async function ComparisonDetailPage({ params }: { params: Promise
             <Link href="/so-sanh" className="is-active">
               So sánh
             </Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
-          <Link className="comparison-detail-nav-cta" href="/pricing">
-            Xem giá
+          <Link className="comparison-detail-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -205,7 +207,7 @@ export default async function ComparisonDetailPage({ params }: { params: Promise
         <div className="comparison-detail-container comparison-detail-answer-grid">
           <article className="comparison-detail-answer-card">
             <Search size={20} />
-            <span>Answer-first verdict</span>
+            <span>Kết luận nhanh</span>
             <h2 id="comparison-detail-answer-heading">Nên chọn LogiVN hay {page.competitorName}?</h2>
             <p>{page.verdict.decisionRule}</p>
           </article>
@@ -314,8 +316,8 @@ export default async function ComparisonDetailPage({ params }: { params: Promise
           <aside className="comparison-detail-sidebar">
             <div className="comparison-detail-side-card">
               <Bot size={20} />
-              <span>AI-era SaaS</span>
-              <h2>LogiVN nên được thử như một lớp QR-first, AI-first cho F&B Việt</h2>
+              <span>Vận hành thông minh</span>
+              <h2>LogiVN nên được thử như một lớp QR-first cho F&B Việt</h2>
               <p>Điểm mạnh nằm ở luồng order, VietQR, dashboard và insight vận hành, đặc biệt khi chủ quán muốn bắt đầu nhẹ.</p>
               <Link href="/pricing">
                 Xem bảng giá
@@ -372,6 +374,9 @@ export default async function ComparisonDetailPage({ params }: { params: Promise
           <div className="comparison-detail-actions">
             <Link href="/pricing" className="comparison-detail-button comparison-detail-button-light">
               So sánh gói
+            </Link>
+            <Link href="/demo" className="comparison-detail-button comparison-detail-button-light">
+              Xem demo
             </Link>
             <Link href="/dashboard/register?plan=pro" className="comparison-detail-button comparison-detail-button-orange">
               Tạo quán dùng thử

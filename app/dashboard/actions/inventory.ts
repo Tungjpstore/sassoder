@@ -12,6 +12,8 @@ import {
   inventoryIngredientSchema,
   inventoryMovementSchema,
   inventoryPurchaseOrderIdSchema,
+  inventoryPurchaseOrderReceiptRowsSchema,
+  inventoryPurchaseOrderRowsSchema,
   inventoryPurchaseOrderSchema,
   inventoryRecipeLineIdSchema,
   inventoryRecipeLineSchema,
@@ -34,6 +36,7 @@ import {
   recordInventoryMovement,
   refreshInventoryAlerts,
   type InventoryCountLineInput,
+  type InventoryPurchaseOrderReceiptLineInput,
   type InventoryTransferLineInput,
   updateInventoryAlertStatus,
   updateInventoryIngredient,
@@ -88,6 +91,37 @@ export async function createInventoryPurchaseOrderAction(formData: FormData) {
     batchCode: formData.get("batchCode"),
     note: formData.get("note")
   });
+  const parsedRows = inventoryPurchaseOrderRowsSchema.parse({
+    rows: formData.get("rowsJson")
+  });
+  const lines =
+    parsedRows.rows.length > 0
+      ? parsedRows.rows.map((line) => ({
+          ingredientId: line.ingredientId,
+          orderQuantity: line.orderQuantity,
+          orderUnit: line.orderUnit || undefined,
+          unitCost: line.unitCost,
+          expirationDate: line.expirationDate || undefined,
+          batchCode: line.batchCode || undefined,
+          note: line.note || undefined
+        }))
+      : parsed.ingredientId && typeof parsed.orderQuantity === "number" && typeof parsed.unitCost === "number"
+        ? [
+            {
+              ingredientId: parsed.ingredientId,
+              orderQuantity: parsed.orderQuantity,
+              orderUnit: parsed.orderUnit || undefined,
+              unitCost: parsed.unitCost,
+              expirationDate: parsed.expirationDate || undefined,
+              batchCode: parsed.batchCode || undefined,
+              note: parsed.note || undefined
+            }
+          ]
+        : [];
+
+  if (lines.length === 0) {
+    throw new AppError("Chưa có dòng đặt hàng hợp lệ.", 400);
+  }
 
   await createInventoryPurchaseOrder(session.restaurantId, {
     supplierId: parsed.supplierId || null,
@@ -95,17 +129,7 @@ export async function createInventoryPurchaseOrderAction(formData: FormData) {
     expectedDeliveryAt: parsed.expectedDeliveryAt || null,
     note: parsed.note || undefined,
     actorUserId: session.userId,
-    lines: [
-      {
-        ingredientId: parsed.ingredientId,
-        orderQuantity: parsed.orderQuantity,
-        orderUnit: parsed.orderUnit || undefined,
-        unitCost: parsed.unitCost,
-        expirationDate: parsed.expirationDate || undefined,
-        batchCode: parsed.batchCode || undefined,
-        note: parsed.note || undefined
-      }
-    ]
+    lines
   });
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
@@ -116,10 +140,25 @@ export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
   const parsed = inventoryPurchaseOrderIdSchema.parse({
     purchaseOrderId: formData.get("purchaseOrderId")
   });
+  const parsedRows = inventoryPurchaseOrderReceiptRowsSchema.parse({
+    rows: formData.get("rowsJson")
+  });
+  const lines: InventoryPurchaseOrderReceiptLineInput[] | undefined =
+    parsedRows.rows.length > 0
+      ? parsedRows.rows.map((line) => ({
+          purchaseOrderLineId: line.purchaseOrderLineId,
+          receivedQuantity: line.receivedQuantity,
+          unitCost: typeof line.unitCost === "number" ? line.unitCost : undefined,
+          expirationDate: line.expirationDate || undefined,
+          batchCode: line.batchCode || undefined,
+          note: line.note || undefined
+        }))
+      : undefined;
 
   await receiveInventoryPurchaseOrder(session.restaurantId, {
     purchaseOrderId: parsed.purchaseOrderId,
-    actorUserId: session.userId
+    actorUserId: session.userId,
+    lines
   });
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard");
@@ -335,6 +374,9 @@ export async function recordInventoryMovementAction(formData: FormData) {
     movementType: formData.get("movementType"),
     quantity: formData.get("quantity"),
     unitCost: formData.get("unitCost") || undefined,
+    locationId: formData.get("locationId") || undefined,
+    batchId: formData.get("batchId") || undefined,
+    stockBalanceId: formData.get("stockBalanceId") || undefined,
     reason: formData.get("reason")
   });
 
@@ -344,9 +386,17 @@ export async function recordInventoryMovementAction(formData: FormData) {
     quantity: parsed.quantity,
     unitCost: parsed.unitCost,
     reason: parsed.reason,
+    locationId: parsed.locationId || null,
+    batchId: parsed.batchId || null,
+    sourceType: parsed.movementType === "expired" ? "expiry" : parsed.movementType === "supplier_return" ? "supplier" : "manual",
+    metadata: {
+      recordedFrom: "inventory_dashboard",
+      stockBalanceId: parsed.stockBalanceId || null
+    },
     actorUserId: session.userId
   });
   revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard");
 }
 
 export async function importInventoryIntakeAction(

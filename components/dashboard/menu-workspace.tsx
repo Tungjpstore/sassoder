@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type ElementType, type FormEvent } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -34,8 +34,9 @@ import {
   toggleMenuItemAvailabilityAction,
   updateMenuItemAction
 } from "@/app/dashboard/actions";
-import { Badge } from "@/components/ui/badge";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
+import { DashboardMetricCard } from "@/components/dashboard/primitives";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatVnd } from "@/lib/money";
@@ -137,42 +138,6 @@ function realtimeTone(status: RealtimeState): "green" | "yellow" | "red" {
 function formatClock(value: Date | null) {
   if (!value) return "Đang đồng bộ";
   return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
-}
-
-function MenuMetric({
-  icon: Icon,
-  label,
-  value,
-  meta,
-  tone
-}: {
-  icon: ElementType;
-  label: string;
-  value: string | number;
-  meta: string;
-  tone: "green" | "yellow" | "red" | "blue";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-[var(--accent)]/30 bg-[var(--danger-soft)] text-[var(--tertiary)]"
-      : tone === "yellow"
-        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-        : tone === "blue"
-          ? "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]"
-          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
-
-  return (
-    <article className="admin-stat-tile rounded-[14px] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <span className={cn("grid h-10 w-10 place-items-center rounded-xl border", toneClass)}>
-          <Icon size={18} />
-        </span>
-        <Badge tone={tone}>{label}</Badge>
-      </div>
-      <p className="metric-number mt-3 text-2xl font-black text-[var(--foreground)]">{value}</p>
-      <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
-    </article>
-  );
 }
 
 export function MenuWorkspace({
@@ -612,11 +577,11 @@ export function MenuWorkspace({
                 </Button>
               </div>
               {isApplied ? (
-                <p className="mt-2 rounded-lg border border-[var(--primary)]/16 bg-[var(--primary-soft)] px-3 py-2 text-xs font-bold text-[var(--primary-strong)]">
+                <p className="mt-2 rounded-lg border border-[var(--primary)]/16 bg-[var(--primary-soft)] px-3 py-2 text-xs font-semibold text-[var(--primary-strong)]">
                   Đã gắn ảnh vào form. Bấm {mode === "create" ? "Thêm món" : "Lưu thay đổi"} để lưu vào database và hiển thị trên menu khách.
                 </p>
               ) : null}
-              <p className="mt-2 truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Sẵn sàng áp dụng</p>
+              <p className="mt-2 truncate text-[10px] font-semibold uppercase text-[var(--muted-foreground)]">Sẵn sàng áp dụng</p>
             </div>
           </div>
         ) : null}
@@ -642,8 +607,8 @@ export function MenuWorkspace({
               <Badge tone={menuReadiness >= 85 ? "green" : menuReadiness >= 65 ? "yellow" : "red"}>{menuReadiness}% sẵn sàng</Badge>
               <Badge tone={pausedItems ? "yellow" : "green"}>{pausedItems ? `${pausedItems} món tạm hết` : "Không thiếu món"}</Badge>
             </div>
-            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Menu vận hành & QR ordering</h2>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+            <h2 className="dashboard-page-title mt-3">Menu vận hành & QR ordering</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
               Quản lý món, ảnh, giá và tình trạng bán theo nhịp vận hành thực tế. Menu sạch giúp khách gọi món nhanh hơn, bếp ít nhầm hơn và AI có dữ liệu tốt hơn để upsell.
             </p>
           </div>
@@ -670,17 +635,17 @@ export function MenuWorkspace({
       </section>
 
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <MenuMetric icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
-        <MenuMetric icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
-        <MenuMetric icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
-        <MenuMetric icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
+        <DashboardMetricCard icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
+        <DashboardMetricCard icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
+        <DashboardMetricCard icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
+        <DashboardMetricCard icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
       </section>
 
       <section className="dashboard-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu operations</p>
-            <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">Danh sách món đang quản lý</h2>
+            <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu operations</p>
+            <h2 className="dashboard-section-title mt-1">Danh sách món đang quản lý</h2>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">
               {availableItems} món đang bán · {pausedItems} món tạm hết · {categories.length} danh mục
             </p>
@@ -706,7 +671,7 @@ export function MenuWorkspace({
         </div>
 
         <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_210px_190px]">
-            <label className="relative grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="relative grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Tìm món
               <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[var(--outline)]" />
               <input
@@ -716,7 +681,7 @@ export function MenuWorkspace({
                 className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
               />
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Danh mục
               <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả danh mục</option>
@@ -725,7 +690,7 @@ export function MenuWorkspace({
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Trạng thái
               <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
@@ -740,7 +705,7 @@ export function MenuWorkspace({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Layers3 size={16} className="text-[var(--primary)]" />
-                <h3 className="text-sm font-black text-[var(--foreground)]">Danh mục & độ phủ</h3>
+                <h3 className="text-sm font-semibold text-[var(--foreground)]">Danh mục & độ phủ</h3>
               </div>
               <Badge tone={categories.length ? "green" : "yellow"}>{categories.length || "Chưa có"}</Badge>
             </div>
@@ -763,13 +728,13 @@ export function MenuWorkspace({
                       )}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <p className="truncate text-sm font-black text-[var(--foreground)]">{category.name}</p>
-                        <span className="text-xs font-black text-[var(--primary)]">{category.active}/{category.total}</span>
+                        <p className="truncate text-sm font-semibold text-[var(--foreground)]">{category.name}</p>
+                        <span className="text-xs font-semibold text-[var(--primary)]">{category.active}/{category.total}</span>
                       </div>
                       <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
                         <div className={cn("h-full rounded-full", category.paused ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${activeRate}%` }} />
                       </div>
-                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-[var(--muted-foreground)]">
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-[var(--muted-foreground)]">
                         <span>{activeRate}% đang bán</span>
                         {category.missingImage ? <span className="text-[var(--accent-strong)]">{category.missingImage} thiếu ảnh</span> : null}
                         {category.paused ? <span>{category.paused} tạm hết</span> : null}
@@ -785,7 +750,7 @@ export function MenuWorkspace({
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <AlertTriangle size={16} className={menuActionQueue.length ? "text-[var(--accent)]" : "text-[var(--primary)]"} />
-                <h3 className="text-sm font-black text-[var(--foreground)]">Cần hoàn thiện</h3>
+                <h3 className="text-sm font-semibold text-[var(--foreground)]">Cần hoàn thiện</h3>
               </div>
               <Badge tone={menuActionQueue.length ? "yellow" : "green"}>{menuActionQueue.length || "Ổn"}</Badge>
             </div>
@@ -803,10 +768,10 @@ export function MenuWorkspace({
                     className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-black text-[var(--foreground)]">{item.label}</span>
+                      <span className="truncate text-sm font-semibold text-[var(--foreground)]">{item.label}</span>
                       <Badge tone={item.tone}>{item.tone === "yellow" ? "Tạm hết" : "Thiếu ảnh"}</Badge>
                     </div>
-                    <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{item.meta}</p>
+                    <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{item.meta}</p>
                   </button>
                 ))
               )}
@@ -835,7 +800,7 @@ export function MenuWorkspace({
         </div>
 
         <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
-          <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+          <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
             <span>Ảnh</span>
             <span>Món ăn</span>
             <span>Danh mục</span>
@@ -911,8 +876,8 @@ export function MenuWorkspace({
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu</p>
-                <h3 id="menu-workspace-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu</p>
+                <h3 id="menu-workspace-drawer-title" className="dashboard-section-title mt-1">
                   {panelMode === "stats" && "Tổng quan menu"}
                   {panelMode === "aiOcr" && "Nhập menu nhanh"}
                   {panelMode === "createCategory" && "Thêm danh mục"}
@@ -927,7 +892,7 @@ export function MenuWorkspace({
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {uploadError ? (
-                <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">
+                <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">
                   {uploadError}
                 </div>
               ) : null}
@@ -940,7 +905,7 @@ export function MenuWorkspace({
                       return (
                         <div key={stat.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                           <span className="dashboard-stat-icon bg-[var(--soft-surface)]"><Icon size={18} /></span>
-                          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
+                          <p className="mt-3 text-xs font-semibold uppercase text-[var(--muted-foreground)]">{stat.label}</p>
                           <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stat.value}</p>
                           <p className="mt-1 text-sm text-[var(--muted-foreground)]">{stat.meta}</p>
                         </div>
@@ -1007,12 +972,12 @@ export function MenuWorkspace({
                     />
                   </label>
                   {aiOcrError ? (
-                    <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">{aiOcrError}</div>
+                    <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">{aiOcrError}</div>
                   ) : null}
                   {ocrImportState?.success ? (
                     <div
                       role="status"
-                      className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+                      className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
                         (ocrImportState.inserted ?? 0) > 0
                           ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary-strong)]"
                           : "border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
@@ -1027,7 +992,7 @@ export function MenuWorkspace({
                     </div>
                   ) : null}
                   {ocrImportState?.error ? (
-                    <div role="alert" className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">
+                    <div role="alert" className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">
                       {ocrImportState.error}
                     </div>
                   ) : null}
@@ -1053,7 +1018,7 @@ export function MenuWorkspace({
                               <p className="truncate text-sm font-semibold text-[var(--foreground)]">{item.name}</p>
                               <p className="text-xs font-medium text-[var(--muted-foreground)]">
                                 {item.categoryName}
-                                {item.isDuplicate ? <span className="ml-2 font-bold text-[var(--accent)]">Đã có, sẽ bỏ qua</span> : null}
+                                {item.isDuplicate ? <span className="ml-2 font-semibold text-[var(--accent)]">Đã có, sẽ bỏ qua</span> : null}
                               </p>
                             </div>
                             <p className="metric-number text-right text-sm font-semibold">{formatVnd(item.price)}</p>

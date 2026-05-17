@@ -592,6 +592,143 @@ function branchPressure(branch: StaffOperationsBundle["branches"][number]) {
   return branch.pendingApprovals * 4 + branch.lateCount * 3 + branch.suspiciousCount * 5 + Math.max(0, 70 - branch.coverageScore);
 }
 
+type StaffAiInsight = {
+  id: string;
+  title: string;
+  detail: string;
+  nextAction: string;
+  tone: "green" | "orange" | "red";
+  screen: StaffScreenKey;
+  memberId?: string;
+};
+
+function buildStaffAiInsights({
+  bundle,
+  members,
+  approvals,
+  limit = 5
+}: {
+  bundle: StaffOperationsBundle;
+  members: StaffOpsMember[];
+  approvals: StaffOpsApprovalItem[];
+  limit?: number;
+}) {
+  const insights: StaffAiInsight[] = [];
+  const activeMembers = members.filter((member) => !member.isArchived && member.employmentStatus === "active");
+  const worstBranch = [...bundle.branches].sort((left, right) => branchPressure(right) - branchPressure(left))[0] ?? null;
+  const weakestCoverageDay = [...bundle.weeklyCoverage]
+    .filter((day) => day.assigned > 0 || day.confirmed > 0 || day.overtimeAlerts > 0)
+    .sort((left, right) => (left.confirmed - left.assigned) - (right.confirmed - right.assigned) || right.overtimeAlerts - left.overtimeAlerts)[0] ?? null;
+  const highestRiskMember = [...activeMembers].sort((left, right) => right.suspiciousScore - left.suspiciousScore)[0] ?? null;
+  const lateRiskTimesheet = [...bundle.timesheets]
+    .filter((item) => item.lateCount > 0 || item.lateMinutes > 0)
+    .sort((left, right) => (right.lateCount * 20 + right.lateMinutes) - (left.lateCount * 20 + left.lateMinutes))[0] ?? null;
+  const pendingByType = approvals.reduce<Record<string, number>>((acc, approval) => {
+    acc[approval.requestType] = (acc[approval.requestType] ?? 0) + 1;
+    return acc;
+  }, {});
+  const pendingPayrollApprovals = bundle.timesheets.reduce((sum, item) => sum + item.pendingApprovals, 0);
+  const approvedOvertimeMinutes = bundle.timesheets.reduce((sum, item) => sum + item.approvedOvertimeMinutes, 0);
+  const approvedLeaveDays = bundle.timesheets.reduce((sum, item) => sum + item.paidLeaveDays + item.unpaidLeaveDays, 0);
+  const averageAttendanceScore = bundle.timesheets.length
+    ? Math.round(bundle.timesheets.reduce((sum, item) => sum + item.attendanceScore, 0) / bundle.timesheets.length)
+    : 100;
+
+  if (approvals.length > 0) {
+    insights.push({
+      id: "pending-approval-queue",
+      title: `${approvals.length} yêu cầu đang chờ duyệt`,
+      detail: `${pendingByType.leave_request ?? 0} nghỉ phép · ${pendingByType.shift_swap ?? 0} đổi ca · ${pendingByType.overtime ?? 0} tăng ca`,
+      nextAction: "Mở hàng chờ duyệt",
+      tone: approvals.length >= 5 ? "red" : "orange",
+      screen: "requests"
+    });
+  }
+
+  if (worstBranch && branchPressure(worstBranch) > 0) {
+    insights.push({
+      id: `branch-pressure-${worstBranch.id}`,
+      title: `${worstBranch.name} đang có áp lực vận hành`,
+      detail: `${worstBranch.coverageScore}% phủ ca · ${worstBranch.lateCount} muộn · ${worstBranch.pendingApprovals} chờ duyệt`,
+      nextAction: worstBranch.pendingApprovals ? "Duyệt yêu cầu chi nhánh" : "Xem lịch ca",
+      tone: branchPressure(worstBranch) >= 24 ? "red" : "orange",
+      screen: worstBranch.pendingApprovals ? "requests" : "shifts"
+    });
+  }
+
+  if (weakestCoverageDay && (weakestCoverageDay.confirmed < weakestCoverageDay.assigned || weakestCoverageDay.overtimeAlerts > 0)) {
+    insights.push({
+      id: `coverage-${weakestCoverageDay.isoDate}`,
+      title: `${weakestCoverageDay.label} có nguy cơ thiếu người`,
+      detail: `${weakestCoverageDay.confirmed}/${weakestCoverageDay.assigned} ca đã nhận · ${weakestCoverageDay.overtimeAlerts} cảnh báo tăng ca`,
+      nextAction: "Mở lịch ca",
+      tone: weakestCoverageDay.confirmed + 1 < weakestCoverageDay.assigned ? "red" : "orange",
+      screen: "shifts"
+    });
+  }
+
+  if (highestRiskMember && highestRiskMember.suspiciousScore >= 40) {
+    insights.push({
+      id: `risk-${highestRiskMember.id}`,
+      title: `${highestRiskMember.fullName} có tín hiệu bất thường`,
+      detail: `Điểm rủi ro ${highestRiskMember.suspiciousScore} · ${highestRiskMember.roleTitle} · ${highestRiskMember.primaryBranchName ?? "Toàn quán"}`,
+      nextAction: "Mở hồ sơ kiểm tra",
+      tone: highestRiskMember.suspiciousScore >= 55 ? "red" : "orange",
+      screen: "profile",
+      memberId: highestRiskMember.id
+    });
+  }
+
+  if (lateRiskTimesheet) {
+    insights.push({
+      id: `late-risk-${lateRiskTimesheet.staffMemberId}`,
+      title: `${lateRiskTimesheet.fullName} cần rà soát giờ công`,
+      detail: `${lateRiskTimesheet.lateCount} lần muộn · ${formatHours(lateRiskTimesheet.lateMinutes)} · điểm ${formatScore(lateRiskTimesheet.attendanceScore)}/100`,
+      nextAction: "Mở chấm công",
+      tone: lateRiskTimesheet.lateCount >= 3 || lateRiskTimesheet.attendanceScore < 75 ? "red" : "orange",
+      screen: "attendance",
+      memberId: lateRiskTimesheet.staffMemberId
+    });
+  }
+
+  if (pendingPayrollApprovals || approvedOvertimeMinutes || approvedLeaveDays) {
+    insights.push({
+      id: "payroll-readiness",
+      title: "Payroll có dữ liệu cần đối soát",
+      detail: `${pendingPayrollApprovals} duyệt lương · ${formatHours(approvedOvertimeMinutes)} OT duyệt tay · ${approvedLeaveDays} ngày nghỉ`,
+      nextAction: pendingPayrollApprovals ? "Xử lý phê duyệt" : "Mở báo cáo lương",
+      tone: pendingPayrollApprovals ? "orange" : "green",
+      screen: pendingPayrollApprovals ? "requests" : "reports"
+    });
+  }
+
+  if (averageAttendanceScore < 85) {
+    insights.push({
+      id: "attendance-score-drop",
+      title: "Điểm chấm công trung bình đang giảm",
+      detail: `Điểm hiện tại ${averageAttendanceScore}/100 · nên rà soát nhóm đi muộn và chấm tay`,
+      nextAction: "Mở báo cáo nhân sự",
+      tone: averageAttendanceScore < 75 ? "red" : "orange",
+      screen: "reports"
+    });
+  }
+
+  if (!insights.length) {
+    insights.push({
+      id: "staff-ops-stable",
+      title: "Nhân sự đang vận hành ổn định",
+      detail: "Không có thiếu ca, duyệt gấp hoặc rủi ro nổi bật trong dữ liệu hiện tại.",
+      nextAction: "Xem báo cáo",
+      tone: "green",
+      screen: "reports"
+    });
+  }
+
+  return insights
+    .sort((left, right) => (left.tone === "red" ? 0 : left.tone === "orange" ? 1 : 2) - (right.tone === "red" ? 0 : right.tone === "orange" ? 1 : 2))
+    .slice(0, limit);
+}
+
 function StaffOpsMetric({
   icon: Icon,
   label,
@@ -629,6 +766,69 @@ function StaffOpsMetric({
   );
 }
 
+function StaffAiAssistantPanel({
+  insights,
+  title = "AI HR Assistant",
+  subtitle = "Ưu tiên theo ca, chấm công, payroll",
+  compact = false,
+  onOpenMember,
+  onOpenScreen
+}: {
+  insights: StaffAiInsight[];
+  title?: string;
+  subtitle?: string;
+  compact?: boolean;
+  onOpenMember?: (memberId: string, screen?: StaffScreenKey) => void;
+  onOpenScreen?: (screen: StaffScreenKey) => void;
+}) {
+  const urgentCount = insights.filter((item) => item.tone === "red").length;
+  const watchCount = insights.filter((item) => item.tone === "orange").length;
+
+  function openInsight(insight: StaffAiInsight) {
+    if (insight.memberId && onOpenMember) {
+      onOpenMember(insight.memberId, insight.screen);
+      return;
+    }
+    onOpenScreen?.(insight.screen);
+  }
+
+  return (
+    <section className="rounded-xl border border-[#E9DED0] bg-[#FFF9F0] p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#0B3F31]">
+            <Activity size={14} />
+            {title}
+          </span>
+          <p className="mt-0.5 truncate text-[10.5px] font-bold text-[#756E64]">{subtitle}</p>
+        </div>
+        <Pill tone={urgentCount ? "red" : watchCount ? "orange" : "green"}>
+          {urgentCount ? `${urgentCount} gấp` : watchCount ? `${watchCount} theo dõi` : "Ổn"}
+        </Pill>
+      </div>
+      <div className={`mt-2 grid gap-1.5 ${compact ? "" : "md:grid-cols-2"}`}>
+        {insights.map((insight) => (
+          <button
+            key={insight.id}
+            type="button"
+            onClick={() => openInsight(insight)}
+            className="rounded-lg border border-[#E9DED0] bg-white px-2.5 py-2 text-left transition hover:border-[#0F4D3A]/30"
+          >
+            <span className="flex items-start justify-between gap-2">
+              <span className="min-w-0">
+                <span className="block truncate text-[11.5px] font-black text-[#2D2924]">{insight.title}</span>
+                <span className="mt-0.5 block line-clamp-2 text-[10.5px] font-bold text-[#756E64]">{insight.detail}</span>
+              </span>
+              <Pill tone={insight.tone}>{insight.tone === "red" ? "Gấp" : insight.tone === "orange" ? "Theo dõi" : "Ổn"}</Pill>
+            </span>
+            <span className="mt-1 inline-flex text-[10.5px] font-black text-[#0F4D3A]">{insight.nextAction}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function StaffOperationsCockpit({
   bundle,
   members,
@@ -650,9 +850,6 @@ function StaffOperationsCockpit({
   const riskMembers = members.filter((member) => member.suspiciousScore >= 40);
   const waitingClockIn = Math.max(0, members.length - todayFeed.length);
   const tenseBranches = [...bundle.branches].sort((left, right) => branchPressure(right) - branchPressure(left)).slice(0, 3);
-  const weakestBranch = tenseBranches[0] ?? null;
-  const understaffedDay = [...bundle.weeklyCoverage]
-    .sort((left, right) => (left.confirmed - left.assigned) - (right.confirmed - right.assigned) || left.confirmed - right.confirmed)[0];
   const newestNotifications = bundle.notifications.filter((item) => item.status === "unread").slice(0, 3);
   const urgentItems = [
     ...approvals.slice(0, 2).map((approval) => ({
@@ -677,35 +874,7 @@ function StaffOperationsCockpit({
       onClick: () => onOpenMember(member.id, "profile")
     }))
   ].slice(0, 4);
-  const aiInsights = [
-    weakestBranch
-      ? {
-          id: "branch-pressure",
-          title: `${weakestBranch.name} cần theo dõi`,
-          detail: `${weakestBranch.coverageScore}% phủ ca · ${weakestBranch.lateCount} muộn · ${weakestBranch.pendingApprovals} chờ duyệt`,
-          tone: branchPressure(weakestBranch) >= 20 ? "red" as const : "orange" as const,
-          onClick: () => onOpenScreen(weakestBranch.pendingApprovals > 0 ? "requests" : "shifts")
-        }
-      : null,
-    understaffedDay
-      ? {
-          id: "understaffed-day",
-          title: `${understaffedDay.label} có thể thiếu người`,
-          detail: `${understaffedDay.confirmed}/${understaffedDay.assigned} ca đã nhận · ${understaffedDay.overtimeAlerts} cảnh báo tăng ca`,
-          tone: understaffedDay.confirmed < understaffedDay.assigned || understaffedDay.overtimeAlerts > 0 ? "orange" as const : "green" as const,
-          onClick: () => onOpenScreen("shifts")
-        }
-      : null,
-    riskMembers[0]
-      ? {
-          id: "risk-member",
-          title: `${riskMembers[0].fullName} có tín hiệu bất thường`,
-          detail: `Điểm rủi ro ${riskMembers[0].suspiciousScore} · ${riskMembers[0].roleTitle} · ${riskMembers[0].primaryBranchName ?? "Toàn quán"}`,
-          tone: riskMembers[0].suspiciousScore >= 55 ? "red" as const : "orange" as const,
-          onClick: () => onOpenMember(riskMembers[0].id, "profile")
-        }
-      : null
-  ].filter(Boolean).slice(0, 3);
+  const aiInsights = buildStaffAiInsights({ bundle, members, approvals, limit: 3 });
 
   return (
     <section className="grid gap-2 xl:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)]">
@@ -791,26 +960,15 @@ function StaffOperationsCockpit({
           )}
         </div>
 
-        <div className="mt-3 rounded-xl border border-[#E9DED0] bg-[#FFF9F0] p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="inline-flex items-center gap-1.5 text-xs font-black text-[#0B3F31]"><Activity size={14} />AI gợi ý</span>
-            <Pill tone={aiInsights.some((item) => item?.tone === "red") ? "red" : aiInsights.length ? "orange" : "green"}>{aiInsights.length || "Ổn"}</Pill>
-          </div>
-          <div className="mt-2 grid gap-1.5">
-            {aiInsights.length ? aiInsights.map((item) => item ? (
-              <button key={item.id} type="button" onClick={item.onClick} className="rounded-lg border border-[#E9DED0] bg-white px-2.5 py-2 text-left transition hover:border-[#0F4D3A]/30">
-                <span className="flex items-start justify-between gap-2">
-                  <span className="min-w-0">
-                    <span className="block truncate text-[11.5px] font-black text-[#2D2924]">{item.title}</span>
-                    <span className="mt-0.5 block line-clamp-2 text-[10.5px] font-bold text-[#756E64]">{item.detail}</span>
-                  </span>
-                  <Pill tone={item.tone}>{item.tone === "red" ? "Gấp" : item.tone === "orange" ? "Theo dõi" : "Ổn"}</Pill>
-                </span>
-              </button>
-            ) : null) : (
-              <p className="rounded-lg border border-dashed border-[#E9DED0] bg-white px-2.5 py-2 text-[11px] font-bold text-[#756E64]">Chưa có bất thường nổi bật từ ca/chấm công.</p>
-            )}
-          </div>
+        <div className="mt-3">
+          <StaffAiAssistantPanel
+            insights={aiInsights}
+            title="AI gợi ý"
+            subtitle="Ca, rủi ro và payroll"
+            compact
+            onOpenMember={onOpenMember}
+            onOpenScreen={onOpenScreen}
+          />
         </div>
 
         <div className="mt-3 rounded-xl border border-[#E9DED0] bg-[#FFF9F0] p-2.5">
@@ -1182,7 +1340,7 @@ export function StaffOperationsWorkspace({ bundle, restaurantId, restaurantName,
           pending={creatingDevice}
         />
       ) : null}
-      {activeScreen === "reports" ? <ReportsScreen bundle={bundle} /> : null}
+      {activeScreen === "reports" ? <ReportsScreen bundle={bundle} onOpenMember={openMember} onOpenScreen={setActiveScreen} /> : null}
     </div>
   );
 }
@@ -3101,7 +3259,15 @@ function DevicesScreen({
   );
 }
 
-function ReportsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
+function ReportsScreen({
+  bundle,
+  onOpenMember,
+  onOpenScreen
+}: {
+  bundle: StaffOperationsBundle;
+  onOpenMember: (memberId: string, screen?: StaffScreenKey) => void;
+  onOpenScreen: (screen: StaffScreenKey) => void;
+}) {
   const maxAssigned = Math.max(1, ...bundle.weeklyCoverage.map((item) => item.assigned));
   const visibleMembers = bundle.members.filter((member) => !member.isArchived);
   const resignedMembers = bundle.members.filter((member) => member.employmentStatus === "resigned");
@@ -3129,6 +3295,12 @@ function ReportsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
     .flat()
     .sort((left, right) => (right.assigned + right.attendance) - (left.assigned + left.attendance))
     .slice(0, 6);
+  const reportInsights = buildStaffAiInsights({
+    bundle,
+    members: visibleMembers,
+    approvals: bundle.approvals.filter((approval) => approval.status === "pending"),
+    limit: 6
+  });
 
   return (
     <StaffShellCard index="10" title="Báo cáo nhân sự" subtitle="Thống kê và báo cáo nhân sự" action={<a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#003F2D] px-3 text-[11px] font-black text-white"><FileDown size={12} />Xuất báo cáo</a>}>
@@ -3218,6 +3390,16 @@ function ReportsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
             </div>
           </div>
         </aside>
+      </div>
+
+      <div className="border-b border-[#EFE5D9] bg-[#FFFCF6] p-3">
+        <StaffAiAssistantPanel
+          insights={reportInsights}
+          title="AI HR Assistant"
+          subtitle="Ưu tiên trước khi chốt ca, đối soát công và xuất payroll"
+          onOpenMember={onOpenMember}
+          onOpenScreen={onOpenScreen}
+        />
       </div>
 
       <div className="grid gap-3 border-b border-[#EFE5D9] bg-[#FFF9F0] p-3 xl:grid-cols-3">

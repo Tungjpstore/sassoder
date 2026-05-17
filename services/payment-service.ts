@@ -1,7 +1,8 @@
 import { AppError } from "@/lib/response";
+import { shouldReturnOnlineOrderToKitchenAfterPayment } from "@/lib/orders/order-state-machine";
+import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitlement";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
 import { billStatusToOrderPaymentState, ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
 import { completeReservationForBill } from "@/services/reservation-service";
@@ -10,7 +11,7 @@ import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
 
 type PaymentInstructionOrder = Pick<OrderDto, "id" | "total" | "paymentMethod" | "paymentConfig" | "bill">;
-type ServiceSupabaseClient = ReturnType<typeof createAdminSupabaseClient> | Awaited<ReturnType<typeof createServerSupabaseClient>>;
+type ServiceSupabaseClient = ReturnType<typeof createAdminSupabaseClient>;
 
 type PaymentOrderRow = {
   id: string;
@@ -634,24 +635,28 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
 }
 
 export async function confirmPayment(restaurantId: string, orderId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const typedOrder = await getMerchantPaymentOrder(supabase, restaurantId, orderId);
   const bill = firstOrNull(typedOrder.bill);
 
   if (bill) {
+    const billPaymentMethod = bill.payment_method ?? typedOrder.payment_method;
     if (bill.status === "paid") {
+      if (billPaymentMethod) {
+        await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(billPaymentMethod));
+      }
       await syncOrdersToBillState(supabase, {
         restaurantId,
         billId: bill.id,
         billStatus: "paid",
-        paymentMethod: bill.payment_method ?? typedOrder.payment_method ?? "QR",
+        paymentMethod: billPaymentMethod ?? "QR",
         paidAt: bill.paid_at ?? null
       });
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         billId: bill.id,
         amount: bill.total,
-        method: bill.payment_method ?? typedOrder.payment_method ?? "QR",
+        method: billPaymentMethod ?? "QR",
         source: "merchant_bill_manual_confirm"
       });
       await completeReservationForBill(restaurantId, bill.id);
@@ -666,6 +671,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     if (!bill.payment_method) {
       throw new AppError("Hóa đơn bàn chưa chọn phương thức thanh toán", 400);
     }
+    await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(bill.payment_method));
 
     const now = new Date().toISOString();
     const { data: updatedBill, error: billError } = await supabase
@@ -724,6 +730,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
 
   if (isPaidOrder(typedOrder)) {
     if (typedOrder.payment_method) {
+      await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         amount: typedOrder.total,
@@ -746,17 +753,15 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
   if (!typedOrder.payment_method) {
     throw new AppError("Đơn hàng chưa chọn phương thức thanh toán", 400);
   }
+  await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
 
   const now = new Date().toISOString();
-  const shouldReturnToKitchen =
-    typedOrder.bill_id === null &&
-    typedOrder.fulfillment_type !== "DINE_IN" &&
-    (
-      typedOrder.status === "waiting_confirm" ||
-      typedOrder.status === "waiting_payment" ||
-      typedOrder.payment_status === "waiting_confirm" ||
-      typedOrder.payment_status === "waiting_payment"
-    );
+  const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
+    status: typedOrder.status,
+    paymentStatus: typedOrder.payment_status ?? null,
+    fulfillmentType: typedOrder.fulfillment_type,
+    billId: typedOrder.bill_id ?? null
+  });
 
   const { data: updated, error: updateError } = await supabase
     .from("orders")

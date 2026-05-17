@@ -4,7 +4,9 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { readSharedCache, writeSharedCache } from "@/services/maps/cache-service";
 import { buildDistanceEstimate, calculateDistance } from "@/services/maps/distance-service";
-import { calculateShippingFee } from "@/services/maps/delivery-fee-service";
+import { resolveRestaurantAvailability, type RestaurantAvailability } from "@/services/delivery/availability-engine";
+import { resolveDeliveryStoreAvailability, type DeliveryStoreAvailabilityMetadata } from "@/services/delivery/branch-availability-engine";
+import { quoteDeliveryPricing, type DeliveryPricingQuote } from "@/services/delivery/pricing-engine";
 import { findNearestStore } from "@/services/maps/nearby-store-service";
 import { resolveDistanceAndEta, searchAddress } from "@/services/maps/provider-service";
 import type { Coordinate, GeocodingProvider, MapRequestContext, NearbyStoreCandidate, ResolvedRouteResult, RouteConfidence, RouteGeometry, RoutingProvider } from "@/services/maps/types";
@@ -19,6 +21,8 @@ export type OrderingSettings = Pick<
   | "name"
   | "slug"
   | "address"
+  | "opening_time"
+  | "closing_time"
   | "bank_code"
   | "bank_account"
   | "bank_account_name"
@@ -96,15 +100,21 @@ export type DeliveryQuote = {
   quoteVersion?: string;
   pricingSnapshot?: DeliveryPricingSnapshot;
   deliveryAreaSnapshot?: DeliveryAreaSnapshot;
+  availabilitySnapshot?: RestaurantAvailability;
 };
 
 export type DeliveryPricingSnapshot = {
+  pricingVersion: DeliveryPricingQuote["pricingVersion"];
   deliveryFeeEnabled: boolean;
+  freeShippingApplied: boolean;
+  freeShippingThreshold: number | null;
   freeDeliveryRadiusKm: number;
   deliveryBaseFee: number;
   deliveryFeePerKm: number;
   deliveryRadiusKm: number;
   minOrderForDelivery: number;
+  matchedTierLabel?: string;
+  multipliers: DeliveryPricingQuote["multipliers"];
   serviceFeeEnabled: boolean;
   serviceFeeType: string;
   serviceFeePercent: number;
@@ -125,7 +135,7 @@ export type DeliveryAreaSnapshot = {
 export const DELIVERY_QUOTE_VERSION = "delivery-quote-v2";
 
 const orderingSelect =
-  "id,name,slug,address,bank_code,bank_account,bank_account_name,online_ordering_enabled,pickup_enabled,delivery_enabled,store_lat,store_lng,delivery_radius_km,free_delivery_radius_km,delivery_base_fee,delivery_fee_per_km,min_order_for_delivery,pickup_eta_minutes,delivery_eta_minutes,online_payment_mode,delivery_tracking_enabled,map_provider,map_geocoding_provider,map_routing_provider,map_default_zoom,map_display_style,show_store_marker_on_ordering,show_customer_distance,delivery_area_mode,delivery_area_name,delivery_area_note,delivery_area_polygon,delivery_area_ward_count,delivery_exclusion_zones,delivery_fee_enabled,delivery_fee_tiers,service_fee_enabled,service_fee_type,service_fee_percent,service_fee_min,service_fee_max,allow_outside_delivery_area,show_delivery_eta,require_outside_area_confirmation,auto_suggest_nearest_branch";
+  "id,name,slug,address,opening_time,closing_time,bank_code,bank_account,bank_account_name,online_ordering_enabled,pickup_enabled,delivery_enabled,store_lat,store_lng,delivery_radius_km,free_delivery_radius_km,delivery_base_fee,delivery_fee_per_km,min_order_for_delivery,pickup_eta_minutes,delivery_eta_minutes,online_payment_mode,delivery_tracking_enabled,map_provider,map_geocoding_provider,map_routing_provider,map_default_zoom,map_display_style,show_store_marker_on_ordering,show_customer_distance,delivery_area_mode,delivery_area_name,delivery_area_note,delivery_area_polygon,delivery_area_ward_count,delivery_exclusion_zones,delivery_fee_enabled,delivery_fee_tiers,service_fee_enabled,service_fee_type,service_fee_percent,service_fee_min,service_fee_max,allow_outside_delivery_area,show_delivery_eta,require_outside_area_confirmation,auto_suggest_nearest_branch";
 
 function hasCoordinate(lat?: number | null, lng?: number | null) {
   return typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng);
@@ -246,13 +256,6 @@ function pointInPolygon(point: DeliveryAreaPoint, polygon: DeliveryAreaPoint[]) 
   return inside;
 }
 
-function resolveTierDeliveryFee(distanceKm: number, tiers: DeliveryFeeTierSetting[]) {
-  const tier = tiers.find((candidate) => candidate.upToKm === null || distanceKm <= candidate.upToKm);
-  if (!tier) return null;
-  if (tier.contact) return { fee: 0, contact: true };
-  return { fee: tier.fee ?? 0, contact: false };
-}
-
 export function calculateServiceFee(settings: OrderingSettings, subtotal: number) {
   if (!settings.service_fee_enabled || settings.service_fee_percent <= 0) return 0;
   const rawFee = Math.round((subtotal * Number(settings.service_fee_percent)) / 100);
@@ -266,15 +269,21 @@ function buildPricingSnapshot(
   settings: OrderingSettings,
   metadata: StoreCandidate["metadata"] | undefined,
   deliveryRadiusKm: number,
-  feeTiers: DeliveryFeeTierSetting[]
+  feeTiers: DeliveryFeeTierSetting[],
+  pricing?: DeliveryPricingQuote
 ): DeliveryPricingSnapshot {
   return {
+    pricingVersion: pricing?.pricingVersion ?? "delivery-pricing-v1",
     deliveryFeeEnabled: settings.delivery_fee_enabled !== false,
+    freeShippingApplied: pricing?.freeShippingApplied ?? false,
+    freeShippingThreshold: metadata?.freeShippingThreshold ?? null,
     freeDeliveryRadiusKm: metadata?.freeDeliveryRadiusKm ?? Number(settings.free_delivery_radius_km),
     deliveryBaseFee: metadata?.deliveryBaseFee ?? Number(settings.delivery_base_fee),
     deliveryFeePerKm: metadata?.deliveryFeePerKm ?? Number(settings.delivery_fee_per_km),
     deliveryRadiusKm,
     minOrderForDelivery: Number(settings.min_order_for_delivery),
+    matchedTierLabel: pricing?.matchedTierLabel,
+    multipliers: pricing?.multipliers ?? { peakHour: 1, weather: 1, effective: 1 },
     serviceFeeEnabled: Boolean(settings.service_fee_enabled),
     serviceFeeType: settings.service_fee_type,
     serviceFeePercent: Number(settings.service_fee_percent),
@@ -329,12 +338,15 @@ type StoreCandidate = NearbyStoreCandidate<{
   freeDeliveryRadiusKm: number;
   deliveryBaseFee: number;
   deliveryFeePerKm: number;
+  freeShippingThreshold?: number | null;
+  peakHourMultiplier?: number;
+  weatherMultiplier?: number;
   pickupEtaMinutes: number;
   deliveryEtaMinutes: number;
   branchId?: string;
   source?: "primary" | "branch";
   approxDistanceKm?: number;
-}>;
+} & DeliveryStoreAvailabilityMetadata>;
 
 type SpatialStoreCandidateRow = {
   id: string;
@@ -377,7 +389,9 @@ function buildPrimaryStoreCandidate(settings: OrderingSettings, origin: Coordina
       deliveryBaseFee: Number(settings.delivery_base_fee),
       deliveryFeePerKm: Number(settings.delivery_fee_per_km),
       pickupEtaMinutes: Number(settings.pickup_eta_minutes),
-      deliveryEtaMinutes: Number(settings.delivery_eta_minutes)
+      deliveryEtaMinutes: Number(settings.delivery_eta_minutes),
+      openingTime: settings.opening_time,
+      closingTime: settings.closing_time
     }
   };
 }
@@ -461,6 +475,53 @@ function mergeFallbackOriginCandidate(candidates: StoreCandidate[], fallbackOrig
   return [fallbackOrigin, ...candidates.filter((candidate) => candidate.id !== fallbackOrigin.id)];
 }
 
+function jsonObject(value: Json | null | undefined) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, Json | undefined> : {};
+}
+
+function stringMetadata(value: Json | undefined) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function numberMetadata(value: Json | undefined) {
+  const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function availabilityMetadata(value: Json | null | undefined): DeliveryStoreAvailabilityMetadata {
+  const metadata = jsonObject(value);
+  return {
+    acceptingDelivery: typeof metadata.acceptingDelivery === "boolean" ? metadata.acceptingDelivery : undefined,
+    deliveryPaused: metadata.deliveryPaused === true,
+    temporarilyClosed: metadata.temporarilyClosed === true,
+    openingTime: stringMetadata(metadata.openingTime),
+    closingTime: stringMetadata(metadata.closingTime),
+    availabilityNote: stringMetadata(metadata.availabilityNote)
+  };
+}
+
+function branchAvailabilityMetadata(branch: StoreBranchRow): DeliveryStoreAvailabilityMetadata {
+  const metadata = availabilityMetadata(branch.metadata);
+  return {
+    ...metadata,
+    acceptingDelivery: branch.accepting_delivery,
+    deliveryPaused: branch.delivery_paused,
+    temporarilyClosed: branch.temporarily_closed,
+    openingTime: branch.delivery_opening_time ?? metadata.openingTime,
+    closingTime: branch.delivery_closing_time ?? metadata.closingTime,
+    availabilityNote: branch.delivery_availability_note ?? metadata.availabilityNote
+  };
+}
+
+function pricingMetadata(value: Json | null | undefined) {
+  const metadata = jsonObject(value);
+  return {
+    freeShippingThreshold: numberMetadata(metadata.freeShippingThreshold) ?? null,
+    peakHourMultiplier: numberMetadata(metadata.peakHourMultiplier),
+    weatherMultiplier: numberMetadata(metadata.weatherMultiplier)
+  };
+}
+
 function branchToStoreCandidate(branch: StoreBranchRow): StoreCandidate {
   return {
     id: branch.id,
@@ -476,7 +537,9 @@ function branchToStoreCandidate(branch: StoreBranchRow): StoreCandidate {
       deliveryFeePerKm: Number(branch.delivery_fee_per_km),
       pickupEtaMinutes: Number(branch.pickup_eta_minutes),
       deliveryEtaMinutes: Number(branch.delivery_eta_minutes),
-      branchId: branch.id
+      branchId: branch.id,
+      ...pricingMetadata(branch.metadata),
+      ...branchAvailabilityMetadata(branch)
     }
   };
 }
@@ -498,7 +561,9 @@ function spatialRowToStoreCandidate(row: SpatialStoreCandidateRow): StoreCandida
       deliveryEtaMinutes: Number(row.delivery_eta_minutes),
       branchId: row.source === "branch" ? row.id : undefined,
       source: row.source,
-      approxDistanceKm: Number(row.approx_distance_km)
+      approxDistanceKm: Number(row.approx_distance_km),
+      ...pricingMetadata(row.metadata),
+      ...availabilityMetadata(row.metadata)
     }
   };
 }
@@ -611,11 +676,39 @@ export function resolveNearestStoreForRestaurant(origin: Coordinate, stores: Sto
 }
 
 export async function resolveNearestStoreForRestaurantSlug(restaurantSlug: string, origin: Coordinate) {
+  const settings = await getPublicOrderingSettingsBySlug(restaurantSlug);
+  if (!settings) return null;
+
   const stores = await getPublicRestaurantStoreCandidatesNear(restaurantSlug, origin, {
-    limit: 1,
+    limit: getSpatialPrefilterLimit(),
     maxRadiusKm: getSpatialPrefilterRadiusKm()
   });
-  return resolveNearestStoreForRestaurant(origin, stores);
+  const availableStores = availableStoreCandidates(stores);
+  if (availableStores.length === 0) return null;
+
+  const ranked = rankStoresByApproxDistance(origin, availableStores);
+  const primaryOrigin = ranked[0]?.store ?? restaurantToStoreCandidate(settings);
+  if (!primaryOrigin) return null;
+
+  const routedStore = await resolveBestStoreRoute(origin, availableStores, {
+    autoSuggestNearestBranch: true,
+    primaryOrigin,
+    routingProvider: settings.map_routing_provider as RoutingProvider,
+    context: {
+      restaurantId: settings.id,
+      restaurantSlug: settings.slug,
+      source: "public_map_api"
+    }
+  });
+
+  if (!routedStore.nearestStore) return resolveNearestStoreForRestaurant(origin, stores);
+  return {
+    ...routedStore.nearestStore,
+    routeProvider: routedStore.route.provider,
+    confidence: routedStore.route.confidence,
+    isEstimated: routedStore.route.isEstimated,
+    fallbackChain: routedStore.route.fallbackChain
+  };
 }
 
 function getBranchRouteTopN() {
@@ -635,6 +728,10 @@ function rankStoresByApproxDistance(destination: Coordinate, stores: StoreCandid
       if (!a.store.isPrimary && b.store.isPrimary) return 1;
       return 0;
     });
+}
+
+function availableStoreCandidates(stores: StoreCandidate[]) {
+  return stores.filter((store) => resolveDeliveryStoreAvailability(store.name, store.metadata).isAvailable);
 }
 
 function shouldRouteOnlyClosestBranch(ranked: ReturnType<typeof rankStoresByApproxDistance>) {
@@ -834,6 +931,23 @@ export async function quoteDeliveryForRestaurant(
     };
   }
 
+  const availability = resolveRestaurantAvailability({
+    openingTime: settings.opening_time,
+    closingTime: settings.closing_time
+  });
+  if (!availability.isOpen) {
+    return {
+      accepted: false,
+      reason: availability.reason ?? "Quán đang ngoài giờ nhận đơn giao hàng.",
+      distanceKm: null,
+      fee: 0,
+      serviceFee: 0,
+      etaMinutes: Number(settings.delivery_eta_minutes),
+      provider: "manual",
+      availabilitySnapshot: availability
+    };
+  }
+
   let provider: DeliveryQuote["provider"] = "browser-location+haversine";
   let destination = hasCoordinate(input.deliveryLat, input.deliveryLng)
     ? { lat: Number(input.deliveryLat), lng: Number(input.deliveryLng) }
@@ -873,6 +987,7 @@ export async function quoteDeliveryForRestaurant(
     maxRadiusKm: getSpatialPrefilterRadiusKm()
   });
   const routingCandidates = mergeFallbackOriginCandidate(storeCandidates, fallbackOrigin);
+  const availableRoutingCandidates = availableStoreCandidates(routingCandidates);
 
   if (routingCandidates.length === 0 && !fallbackOrigin) {
     return {
@@ -886,7 +1001,19 @@ export async function quoteDeliveryForRestaurant(
     };
   }
 
-  const primaryOrigin = fallbackOrigin ?? routingCandidates[0] ?? null;
+  if (availableRoutingCandidates.length === 0) {
+    return {
+      accepted: false,
+      reason: "Hiện chưa có chi nhánh nào sẵn sàng giao hàng.",
+      distanceKm: null,
+      fee: 0,
+      serviceFee: 0,
+      etaMinutes: Number(settings.delivery_eta_minutes),
+      provider: "manual"
+    };
+  }
+
+  const primaryOrigin = availableRoutingCandidates.find((candidate) => candidate.id === fallbackOrigin?.id) ?? availableRoutingCandidates[0] ?? null;
   if (!primaryOrigin) {
     return {
       accepted: false,
@@ -899,7 +1026,7 @@ export async function quoteDeliveryForRestaurant(
     };
   }
 
-  const routedStore = await resolveBestStoreRoute(destination, routingCandidates, {
+  const routedStore = await resolveBestStoreRoute(destination, availableRoutingCandidates, {
     autoSuggestNearestBranch: Boolean(settings.auto_suggest_nearest_branch),
     primaryOrigin,
     routingProvider: settings.map_routing_provider as RoutingProvider,
@@ -918,7 +1045,7 @@ export async function quoteDeliveryForRestaurant(
   const deliveryAreaPolygon = normalizePolygon(settings.delivery_area_polygon);
   const exclusionZones = normalizeExclusionZones(settings.delivery_exclusion_zones);
   const feeTiers = normalizeFeeTiers(settings.delivery_fee_tiers);
-  const pricingSnapshot = buildPricingSnapshot(settings, activeMetadata, deliveryRadiusKm, feeTiers);
+  let pricingSnapshot = buildPricingSnapshot(settings, activeMetadata, deliveryRadiusKm, feeTiers);
   const deliveryAreaSnapshot = buildDeliveryAreaSnapshot(settings, deliveryAreaPolygon, exclusionZones);
   const routeQuoteContext = {
     routeProvider: route.provider,
@@ -1008,8 +1135,23 @@ export async function quoteDeliveryForRestaurant(
     };
   }
 
-  const tierFee = resolveTierDeliveryFee(distanceKm, feeTiers);
-  if (tierFee?.contact) {
+  const deliveryPricing = quoteDeliveryPricing({
+    distanceKm,
+    subtotal: input.subtotal,
+    deliveryFeeEnabled: settings.delivery_fee_enabled !== false,
+    freeRadiusKm: activeMetadata?.freeDeliveryRadiusKm ?? Number(settings.free_delivery_radius_km),
+    baseFee: activeMetadata?.deliveryBaseFee ?? Number(settings.delivery_base_fee),
+    feePerKm: activeMetadata?.deliveryFeePerKm ?? Number(settings.delivery_fee_per_km),
+    freeShippingThreshold: activeMetadata?.freeShippingThreshold,
+    peakHourMultiplier: activeMetadata?.peakHourMultiplier,
+    weatherMultiplier: activeMetadata?.weatherMultiplier,
+    customThresholdKm: 5,
+    tiers: feeTiers
+  });
+  pricingSnapshot = buildPricingSnapshot(settings, activeMetadata, deliveryRadiusKm, feeTiers, deliveryPricing);
+  routeQuoteContext.pricingSnapshot = pricingSnapshot;
+
+  if (deliveryPricing.requiresContact) {
     return {
       accepted: false,
       reason: "Khoảng cách này cần quán xác nhận phí giao hàng trước khi nhận đơn.",
@@ -1026,13 +1168,7 @@ export async function quoteDeliveryForRestaurant(
       provider
     };
   }
-  const fallbackFee = calculateShippingFee(distanceKm, {
-    freeRadiusKm: activeMetadata?.freeDeliveryRadiusKm ?? Number(settings.free_delivery_radius_km),
-    baseFee: activeMetadata?.deliveryBaseFee ?? Number(settings.delivery_base_fee),
-    feePerKm: activeMetadata?.deliveryFeePerKm ?? Number(settings.delivery_fee_per_km),
-    customThresholdKm: 5
-  }).fee;
-  const deliveryFee = settings.delivery_fee_enabled === false ? 0 : tierFee?.fee ?? fallbackFee;
+  const deliveryFee = deliveryPricing.fee;
 
   return {
     accepted: true,
@@ -1074,6 +1210,7 @@ export function buildDeliveryQuoteSnapshot(settings: OrderingSettings, quote: De
       snapshot: quote.pricingSnapshot ?? null
     },
     deliveryArea: quote.deliveryAreaSnapshot ?? null,
+    availability: quote.availabilitySnapshot ?? null,
     generatedAt: new Date().toISOString()
   } as Json;
 }

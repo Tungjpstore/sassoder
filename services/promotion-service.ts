@@ -1,6 +1,8 @@
+import type { PostgrestError } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { calculatePromotionDiscountAmount } from "@/lib/promotion-discount";
 import type { Database } from "@/types/supabase";
 
 export type Promotion = Database["public"]["Tables"]["promotions"]["Row"];
@@ -9,6 +11,7 @@ export type PublicPromotion = {
   id: string;
   name: string;
   code: string;
+  discountScope: "ORDER" | "DELIVERY_FEE";
   discountType: "PERCENT" | "FIXED";
   discountValue: number;
   minOrderAmount: number;
@@ -21,6 +24,40 @@ export type PromotionUsageSummary = {
   revenue: number;
   discount: number;
 };
+
+type PromotionDiscountConfig = Pick<Promotion, "discount_type" | "discount_value" | "min_order_amount"> & {
+  discount_scope?: "ORDER" | "DELIVERY_FEE" | null;
+};
+type PublicPromotionRow = {
+  id: string;
+  name: string;
+  code: string;
+  discount_scope?: "ORDER" | "DELIVERY_FEE" | null;
+  discount_type: "PERCENT" | "FIXED";
+  discount_value: number;
+  min_order_amount: number;
+  starts_at: string | null;
+  ends_at: string | null;
+};
+
+const publicPromotionSelect = "id,name,code,discount_scope,discount_type,discount_value,min_order_amount,starts_at,ends_at";
+const legacyPublicPromotionSelect = publicPromotionSelect.replace("discount_scope,", "");
+
+function isMissingPromotionDiscountScope(error: PostgrestError | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return (
+    (error.code === "42703" || error.code === "PGRST204") &&
+    /discount_scope/i.test(message)
+  );
+}
+
+function withDefaultDiscountScope<T extends { discount_scope?: "ORDER" | "DELIVERY_FEE" | null }>(promotion: T) {
+  return {
+    ...promotion,
+    discount_scope: promotion.discount_scope ?? "ORDER"
+  };
+}
 
 export function getPromotionStatus(promotion: Promotion, now = new Date()): PromotionStatus {
   if (!promotion.is_active) return "paused";
@@ -47,7 +84,7 @@ export async function listPromotions(restaurantId: string) {
     .order("created_at", { ascending: false });
 
   throwIfSupabaseError(error);
-  return (data ?? []) as Promotion[];
+  return (data ?? []).map((promotion) => withDefaultDiscountScope(promotion)) as Promotion[];
 }
 
 export async function listPromotionUsageSummary(restaurantId: string) {
@@ -78,34 +115,50 @@ export async function listPromotionUsageSummary(restaurantId: string) {
   return [...byPromotion.values()];
 }
 
-export function calculatePromotionDiscount(subtotal: number, promotion: Pick<Promotion, "discount_type" | "discount_value" | "min_order_amount">) {
-  if (subtotal < promotion.min_order_amount) return 0;
-  if (promotion.discount_type === "PERCENT") {
-    return Math.min(subtotal, Math.round((subtotal * promotion.discount_value) / 100));
-  }
-  return Math.min(subtotal, promotion.discount_value);
+export function calculatePromotionDiscount(input: {
+  itemSubtotal: number;
+  deliveryFee?: number;
+  promotion: PromotionDiscountConfig;
+}) {
+  return calculatePromotionDiscountAmount({
+    itemSubtotal: input.itemSubtotal,
+    deliveryFee: input.deliveryFee,
+    rule: {
+      discountScope: input.promotion.discount_scope ?? "ORDER",
+      discountType: input.promotion.discount_type,
+      discountValue: input.promotion.discount_value,
+      minOrderAmount: input.promotion.min_order_amount
+    }
+  });
 }
 
 export async function listPublicPromotions(restaurantId: string, channel: "QR_MENU" | "WEBSITE" = "QR_MENU") {
   const supabase = createAdminSupabaseClient();
   const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("promotions")
-    .select("id,name,code,discount_type,discount_value,min_order_amount,starts_at,ends_at")
-    .eq("restaurant_id", restaurantId)
-    .eq("is_active", true)
-    .eq("show_on_customer_menu", true)
-    .contains("channels", [channel])
-    .or(`starts_at.is.null,starts_at.lte.${now}`)
-    .or(`ends_at.is.null,ends_at.gte.${now}`)
-    .order("created_at", { ascending: false })
-    .limit(12);
+  const buildQuery = (select: string) =>
+    supabase
+      .from("promotions")
+      .select(select)
+      .eq("restaurant_id", restaurantId)
+      .eq("is_active", true)
+      .eq("show_on_customer_menu", true)
+      .contains("channels", [channel])
+      .or(`starts_at.is.null,starts_at.lte.${now}`)
+      .or(`ends_at.is.null,ends_at.gte.${now}`)
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+  let { data, error } = await buildQuery(publicPromotionSelect);
+  if (isMissingPromotionDiscountScope(error)) {
+    ({ data, error } = await buildQuery(legacyPublicPromotionSelect));
+  }
 
   throwIfSupabaseError(error);
-  return (data ?? []).map((promotion) => ({
+  return ((data ?? []) as unknown as PublicPromotionRow[]).map((promotion) => ({
     id: promotion.id,
     name: promotion.name,
     code: promotion.code,
+    discountScope: promotion.discount_scope ?? "ORDER",
     discountType: promotion.discount_type,
     discountValue: promotion.discount_value,
     minOrderAmount: promotion.min_order_amount,
@@ -118,11 +171,13 @@ export async function resolvePromotionForOrder({
   restaurantId,
   code,
   subtotal,
+  deliveryFee,
   channel
 }: {
   restaurantId: string;
   code?: string;
   subtotal: number;
+  deliveryFee?: number;
   channel: "QR_MENU" | "WEBSITE";
 }) {
   const normalizedCode = code?.trim().toUpperCase();
@@ -144,10 +199,15 @@ export async function resolvePromotionForOrder({
   throwIfSupabaseError(error);
   if (!data) return { promotion: null, discountAmount: 0 };
 
-  const discountAmount = calculatePromotionDiscount(subtotal, data);
+  const promotion = withDefaultDiscountScope(data as Promotion);
+  const discountAmount = calculatePromotionDiscount({
+    itemSubtotal: subtotal,
+    deliveryFee,
+    promotion
+  });
   if (discountAmount <= 0) return { promotion: null, discountAmount: 0 };
 
-  return { promotion: data as Promotion, discountAmount };
+  return { promotion, discountAmount };
 }
 
 export async function createPromotion(
@@ -155,6 +215,7 @@ export async function createPromotion(
   input: {
     name: string;
     code: string;
+    discountScope?: "ORDER" | "DELIVERY_FEE";
     discountType: "PERCENT" | "FIXED";
     discountValue: number;
     minOrderAmount?: number;
@@ -164,24 +225,37 @@ export async function createPromotion(
   }
 ) {
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  const payload = {
+    restaurant_id: restaurantId,
+    name: input.name,
+    code: input.code,
+    discount_scope: input.discountScope ?? "ORDER",
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_order_amount: input.minOrderAmount ?? 0,
+    starts_at: input.startsAt ? new Date(input.startsAt).toISOString() : null,
+    ends_at: input.endsAt ? new Date(input.endsAt).toISOString() : null,
+    channels: input.channels
+  } satisfies Database["public"]["Tables"]["promotions"]["Insert"];
+
+  let { data, error } = await supabase
     .from("promotions")
-    .insert({
-      restaurant_id: restaurantId,
-      name: input.name,
-      code: input.code,
-      discount_type: input.discountType,
-      discount_value: input.discountValue,
-      min_order_amount: input.minOrderAmount ?? 0,
-      starts_at: input.startsAt ? new Date(input.startsAt).toISOString() : null,
-      ends_at: input.endsAt ? new Date(input.endsAt).toISOString() : null,
-      channels: input.channels
-    })
+    .insert(payload)
     .select()
     .single();
 
+  if (isMissingPromotionDiscountScope(error)) {
+    const { discount_scope: _discountScope, ...legacyPayload } = payload;
+    void _discountScope;
+    ({ data, error } = await supabase
+      .from("promotions")
+      .insert(legacyPayload)
+      .select()
+      .single());
+  }
+
   throwIfSupabaseError(error);
-  return data as Promotion;
+  return withDefaultDiscountScope(data as Promotion);
 }
 
 export async function updatePromotionCustomerVisibility(
@@ -201,7 +275,7 @@ export async function updatePromotionCustomerVisibility(
     .single();
 
   throwIfSupabaseError(error);
-  return data as Promotion;
+  return withDefaultDiscountScope(data as Promotion);
 }
 
 export async function updatePromotionActiveStatus(
@@ -221,7 +295,7 @@ export async function updatePromotionActiveStatus(
     .single();
 
   throwIfSupabaseError(error);
-  return data as Promotion;
+  return withDefaultDiscountScope(data as Promotion);
 }
 
 export async function deletePromotion(restaurantId: string, promotionId: string) {

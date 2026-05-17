@@ -11,6 +11,7 @@ export async function createPromotionAction(formData: FormData) {
   const parsed = promotionSchema.parse({
     name: formData.get("name"),
     code: formData.get("code"),
+    discountScope: formData.get("discountScope") ?? "ORDER",
     discountType: formData.get("discountType"),
     discountValue: formData.get("discountValue"),
     minOrderAmount: formData.get("minOrderAmount"),

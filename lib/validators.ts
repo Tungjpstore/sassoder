@@ -113,9 +113,10 @@ export const remoteOrderAccessSchema = z.object({
 
 export const remoteOrderSchema = z.object({
   restaurantSlug: z.string().min(1),
-  customerSessionId: z.string().uuid().optional(),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  customerSessionId: z.string().uuid(),
   customerNote: z.string().max(300).optional(),
-  idempotencyKey: z.string().min(8).max(120).optional(),
+  idempotencyKey: z.string().uuid(),
   promotionCode: promotionCodeSchema,
   fulfillmentType: z.enum(["PICKUP", "DELIVERY"]),
   customerName: z.string().trim().min(2).max(120),
@@ -197,10 +198,28 @@ export const adminOrderCleanupSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional()
 });
 
+const reservationSeatingZoneInput = z.preprocess(
+  (value) => (value === "" || value === null ? undefined : value),
+  z.enum(["indoor", "outdoor", "mixed"]).optional()
+);
+
+const reservationTableKindInput = z.preprocess(
+  (value) => (value === "" || value === null ? undefined : value),
+  z.enum(["standard", "vip", "bar", "community"]).optional()
+);
+
+const reservationTableAreaInput = z.preprocess(
+  (value) => (value === "" || value === null ? undefined : value),
+  z.string().uuid().optional()
+);
+
 export const reservationAvailabilitySchema = z.object({
   restaurantSlug: z.string().min(1),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  partySize: z.coerce.number().int().min(1).max(100)
+  partySize: z.coerce.number().int().min(1).max(100),
+  preferredTableAreaId: reservationTableAreaInput,
+  preferredSeatingZone: reservationSeatingZoneInput,
+  preferredTableKind: reservationTableKindInput
 });
 
 export const createReservationSchema = z.object({
@@ -211,7 +230,10 @@ export const createReservationSchema = z.object({
   partySize: z.coerce.number().int().min(1).max(100),
   startsAt: z.string().datetime(),
   customerNote: z.string().trim().max(300).optional().or(z.literal("")),
-  idempotencyKey: z.string().min(8).max(120).optional()
+  idempotencyKey: z.string().min(8).max(120).optional(),
+  preferredTableAreaId: reservationTableAreaInput,
+  preferredSeatingZone: reservationSeatingZoneInput,
+  preferredTableKind: reservationTableKindInput
 });
 
 export const publicReservationAccessSchema = z.object({
@@ -225,6 +247,20 @@ export const reservationIdSchema = z.object({
 
 export const reservationMoveTableSchema = z.object({
   tableId: z.string().uuid()
+});
+
+export const reservationSetTablesSchema = z.object({
+  tableIds: z.array(z.string().uuid()).min(1).max(8).refine((tableIds) => new Set(tableIds).size === tableIds.length, {
+    message: "Không chọn trùng bàn"
+  })
+});
+
+export const reservationRescheduleSchema = z.object({
+  startsAt: z.string().datetime(),
+  tableId: z.preprocess(
+    (value) => (value === "" || value === null ? undefined : value),
+    z.string().uuid().optional()
+  )
 });
 
 export const reservationSettingsSchema = z.object({
@@ -269,12 +305,18 @@ export const forgotPasswordSchema = z.object({
 
 export const resetPasswordSchema = z
   .object({
+    email: authEmailSchema.optional().or(z.literal("")),
+    token: z.string().trim().regex(/^\d{6}$/).optional().or(z.literal("")),
     password: strongPasswordSchema,
     confirmPassword: z.string()
   })
   .refine((value) => value.password === value.confirmPassword, {
     message: "Mật khẩu xác nhận chưa khớp.",
     path: ["confirmPassword"]
+  })
+  .refine((value) => (value.email || value.token ? Boolean(value.email && value.token) : true), {
+    message: "Vui lòng nhập email và mã OTP gồm 6 chữ số.",
+    path: ["token"]
   });
 
 export const emailOtpSchema = z.object({
@@ -462,6 +504,7 @@ export const updateMenuItemSchema = menuItemSchema.extend({
 
 export const tableSchema = z.object({
   name: z.string().min(1).max(80),
+  branchId: z.string().uuid().optional().or(z.literal("")),
   area: z.string().trim().min(1).max(80).optional().or(z.literal("")),
   capacity: z.coerce.number().int().min(1).max(50).optional(),
   floorLabel: z.string().trim().min(1).max(80).optional().or(z.literal("")),
@@ -488,6 +531,7 @@ export const tableQrStatusSchema = tableIdSchema.extend({
 export const promotionSchema = z.object({
   name: z.string().trim().min(2).max(140),
   code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,32}$/),
+  discountScope: z.enum(["ORDER", "DELIVERY_FEE"]).default("ORDER"),
   discountType: z.enum(["PERCENT", "FIXED"]),
   discountValue: z.coerce.number().int().min(1).max(100000000),
   minOrderAmount: z.coerce.number().int().min(0).max(100000000).optional(),
@@ -549,9 +593,12 @@ export const inventoryRecipeLineIdSchema = z.object({
 
 export const inventoryMovementSchema = z.object({
   ingredientId: z.string().uuid(),
-  movementType: z.enum(["receive", "adjust_increase", "adjust_decrease", "waste", "rollback"]),
+  movementType: z.enum(["receive", "adjust_increase", "adjust_decrease", "waste", "expired", "internal_use", "supplier_return", "rollback"]),
   quantity: z.coerce.number().finite().gt(0).max(100000000),
   unitCost: z.coerce.number().int().min(0).max(100000000).optional(),
+  locationId: z.string().uuid().optional().or(z.literal("")),
+  batchId: z.string().uuid().optional().or(z.literal("")),
+  stockBalanceId: z.string().uuid().optional().or(z.literal("")),
   reason: z.string().trim().max(240).optional().or(z.literal(""))
 });
 
@@ -566,18 +613,45 @@ export const inventorySupplierSchema = z.object({
 export const inventoryPurchaseOrderSchema = z.object({
   supplierId: z.string().uuid().optional().or(z.literal("")),
   locationId: z.string().uuid().optional().or(z.literal("")),
-  ingredientId: z.string().uuid(),
-  orderQuantity: z.coerce.number().finite().gt(0).max(100000000),
+  ingredientId: z.string().uuid().optional().or(z.literal("")),
+  orderQuantity: optionalNumberInput(z.coerce.number().finite().gt(0).max(100000000)),
   orderUnit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/).optional().or(z.literal("")),
-  unitCost: z.coerce.number().int().min(0).max(100000000),
+  unitCost: optionalNumberInput(z.coerce.number().int().min(0).max(100000000)),
   expectedDeliveryAt: z.string().trim().max(40).optional().or(z.literal("")),
   expirationDate: z.string().trim().max(20).optional().or(z.literal("")),
   batchCode: z.string().trim().regex(/^[A-Za-z0-9_.:/ -]{1,64}$/).optional().or(z.literal("")),
   note: z.string().trim().max(240).optional().or(z.literal(""))
 });
 
+const inventoryPurchaseOrderLineSchema = z.object({
+  ingredientId: z.string().uuid(),
+  orderQuantity: z.coerce.number().finite().gt(0).max(100000000),
+  orderUnit: z.string().trim().regex(/^[a-zA-Z0-9_%/ .-]{1,24}$/).optional().or(z.literal("")),
+  unitCost: z.coerce.number().int().min(0).max(100000000),
+  expirationDate: z.string().trim().max(20).optional().or(z.literal("")),
+  batchCode: z.string().trim().regex(/^[A-Za-z0-9_.:/ -]{1,64}$/).optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventoryPurchaseOrderRowsSchema = z.object({
+  rows: jsonArrayInput(inventoryPurchaseOrderLineSchema, 200)
+});
+
 export const inventoryPurchaseOrderIdSchema = z.object({
   purchaseOrderId: z.string().uuid()
+});
+
+const inventoryPurchaseOrderReceiptLineSchema = z.object({
+  purchaseOrderLineId: z.string().uuid(),
+  receivedQuantity: z.coerce.number().finite().gt(0).max(100000000),
+  unitCost: optionalNumberInput(z.coerce.number().int().min(0).max(100000000)),
+  expirationDate: z.string().trim().max(20).optional().or(z.literal("")),
+  batchCode: z.string().trim().regex(/^[A-Za-z0-9_.:/ -]{1,64}$/).optional().or(z.literal("")),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const inventoryPurchaseOrderReceiptRowsSchema = z.object({
+  rows: jsonArrayInput(inventoryPurchaseOrderReceiptLineSchema, 200)
 });
 
 export const inventoryCountSchema = z.object({

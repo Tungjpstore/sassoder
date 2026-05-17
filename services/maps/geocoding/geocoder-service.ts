@@ -8,6 +8,7 @@ import {
   recordProviderResult,
   withRequestDedupe
 } from "@/services/maps/provider-runtime";
+import { normalizeVietnameseAddressQuery } from "@/services/maps/vietnamese-address-service";
 import type {
   AddressAutocompletePrediction,
   Coordinate,
@@ -57,7 +58,7 @@ export async function searchAddressPredictions(
     context?: MapRequestContext;
   } = {}
 ) {
-  const normalizedQuery = query.trim();
+  const normalizedQuery = normalizeVietnameseAddressQuery(query);
   if (normalizedQuery.length < 3) return [];
 
   const limit = Math.min(Math.max(options.limit ?? 5, 1), 8);
@@ -124,7 +125,7 @@ export async function searchAddress(
   query: string,
   options: { limit?: number; provider?: GeocodingProvider; context?: MapRequestContext } = {}
 ) {
-  const normalizedQuery = query.trim();
+  const normalizedQuery = normalizeVietnameseAddressQuery(query);
   if (normalizedQuery.length < 3) return [];
 
   const limit = Math.min(Math.max(options.limit ?? 5, 1), 8);

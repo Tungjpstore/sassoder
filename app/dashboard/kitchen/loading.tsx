@@ -1,7 +1,7 @@
 export default function AdminKitchenLoading() {
   return (
-    <main className="stitch-admin admin-shell-bg dashboard-density min-h-screen px-3 py-4 text-[var(--foreground)] md:px-6 lg:pl-80">
-      <section className="mx-auto grid w-full max-w-[1500px] gap-3">
+    <main className="stitch-admin admin-shell-bg dashboard-density dashboard-route-fallback">
+      <section className="mx-auto grid w-full max-w-[var(--admin-content-max)] gap-3">
         <div className="dashboard-panel p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>

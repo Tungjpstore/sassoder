@@ -32,8 +32,8 @@ export function badgeTone(kind: BadgeTone) {
 }
 
 export function statusTone(status: string): BadgeTone {
-  if (status === "active" || status === "confirmed" || status === "live" || status === "configured" || status === "pass" || status === "success") return "good";
-  if (status === "suspended" || status === "waiting_confirm" || status === "trialing" || status === "needs_review" || status === "partial" || status === "static" || status === "planned" || status === "warn") return "warning";
+  if (status === "active" || status === "confirmed" || status === "live" || status === "configured" || status === "pass" || status === "success" || status === "sent" || status === "generated") return "good";
+  if (status === "suspended" || status === "waiting_confirm" || status === "trialing" || status === "needs_review" || status === "partial" || status === "static" || status === "planned" || status === "warn" || status === "skipped") return "warning";
   if (status === "deleted" || status === "blocked" || status === "rejected" || status === "past_due") return "danger";
   if (status === "needs_config" || status === "pending_payment") return "info";
   if (status === "error" || status === "fail" || status === "failed" || status === "missing") return "danger";

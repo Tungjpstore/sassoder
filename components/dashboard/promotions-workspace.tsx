@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { BarChart3, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, X } from "lucide-react";
+import { BarChart3, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, Truck, X } from "lucide-react";
 import { createPromotionAction, deletePromotionAction, togglePromotionAction, togglePromotionDisplayAction } from "@/app/dashboard/actions";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
+import { DashboardMetricCard, DashboardSectionHeader } from "@/components/dashboard/primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,18 @@ function channelLabel(channel: string) {
   if (channel === "QR_MENU") return "QR Menu";
   if (channel === "WEBSITE") return "Website";
   return "Email";
+}
+
+function discountScopeLabel(scope: Promotion["discount_scope"]) {
+  return scope === "DELIVERY_FEE" ? "Phí giao hàng" : "Đơn hàng";
+}
+
+function campaignBenefitLabel(campaign: Promotion) {
+  if (campaign.discount_scope === "DELIVERY_FEE" && campaign.discount_type === "PERCENT" && campaign.discount_value >= 100) {
+    return "Miễn phí giao hàng";
+  }
+  const value = campaign.discount_type === "PERCENT" ? `${campaign.discount_value}%` : formatVnd(campaign.discount_value);
+  return campaign.discount_scope === "DELIVERY_FEE" ? `Giảm ${value} phí giao hàng` : `Giảm ${value}`;
 }
 
 function formatDateTime(value: string | null) {
@@ -99,37 +112,28 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
     <div className="grid gap-3">
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat) => {
-          const Icon = stat.icon;
           return (
-            <div key={stat.label} className="admin-stat-tile rounded-[14px] p-4">
-              <div className="flex items-start justify-between gap-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
-                <span className="dashboard-stat-icon">
-                  <Icon size={18} />
-                </span>
-              </div>
-              <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{stat.value}</p>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{stat.meta}</p>
-            </div>
+            <DashboardMetricCard key={stat.label} icon={stat.icon} label={stat.label} value={stat.value} meta={stat.meta} tone={stat.value ? "green" : "yellow"} />
           );
         })}
       </section>
 
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_360px]">
         <div className="dashboard-panel p-4">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-[var(--foreground)]">Danh sách khuyến mãi</h2>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Màn chính chỉ giữ danh sách và chỉ số quan trọng. Mọi cấu hình chi tiết được mở trong drawer riêng.</p>
-            </div>
-            <Button type="button" onClick={openCreateDrawer} className="shadow-none hover:shadow-none">
-              <Plus size={16} />
-              Tạo khuyến mãi
-            </Button>
-          </div>
+          <DashboardSectionHeader
+            className="mb-4"
+            title="Danh sách khuyến mãi"
+            description="Màn chính chỉ giữ danh sách và chỉ số quan trọng. Mọi cấu hình chi tiết được mở trong drawer riêng."
+            action={
+              <Button type="button" onClick={openCreateDrawer} className="shadow-none hover:shadow-none">
+                <Plus size={16} />
+                Tạo khuyến mãi
+              </Button>
+            }
+          />
 
           <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_180px_110px]">
-            <label className="relative grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="relative grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Tìm kiếm
               <Search className="pointer-events-none absolute bottom-4 left-3 h-4 w-4 text-[var(--outline)]" />
               <input
@@ -139,7 +143,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                 className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
               />
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Trạng thái
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
@@ -149,7 +153,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                 <option value="ended">Đã kết thúc</option>
               </select>
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Kênh áp dụng
               <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
@@ -174,7 +178,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
           </div>
 
           <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-            <div className="dashboard-muted-header grid grid-cols-[1.35fr_1fr_1fr_0.8fr_0.8fr_100px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+            <div className="dashboard-muted-header grid grid-cols-[1.35fr_1fr_1fr_0.8fr_0.8fr_100px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
               <span>Chiến dịch</span>
               <span>Điều kiện</span>
               <span>Kênh</span>
@@ -191,15 +195,17 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
               {filteredCampaigns.map((campaign, index) => {
                 const condition = campaign.min_order_amount > 0 ? `Hóa đơn từ ${formatVnd(campaign.min_order_amount)}` : "Không yêu cầu tối thiểu";
                 const usageRow = usageById.get(campaign.id);
+                const CampaignIcon = campaign.discount_scope === "DELIVERY_FEE" ? Truck : Percent;
                 return (
                   <div key={campaign.id} className="dashboard-selectable-row grid gap-3 px-4 py-3 lg:grid-cols-[1.35fr_1fr_1fr_0.8fr_0.8fr_100px]">
                     <div className="flex items-center gap-3">
-                      <span className={`grid h-11 w-11 place-items-center rounded-xl ${index === 0 ? "bg-[#F28C28] text-white" : "bg-[#A9C5A1]/24 text-[var(--primary)]"}`}>
-                        <Percent size={18} />
+                      <span className={`grid h-11 w-11 place-items-center rounded-xl ${index === 0 ? "bg-[var(--accent)] text-white" : "bg-[var(--primary-soft)] text-[var(--primary)]"}`}>
+                        <CampaignIcon size={18} />
                       </span>
                       <span>
                         <span className="block text-sm font-semibold">{campaign.name}</span>
                         <span className="font-mono text-xs font-semibold text-[var(--muted-foreground)]">Mã: {campaign.code}</span>
+                        <span className="mt-1 block text-xs font-semibold text-[var(--primary)]">{campaignBenefitLabel(campaign)}</span>
                       </span>
                     </div>
                     <span className="text-sm font-semibold text-[var(--muted-foreground)]">{condition}</span>
@@ -306,8 +312,8 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Khuyến mãi</p>
-                <h3 id="promotion-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Khuyến mãi</p>
+                <h3 id="promotion-drawer-title" className="dashboard-section-title mt-1">
                   {panelMode === "create" ? "Tạo chiến dịch mới" : selectedCampaign?.name ?? "Chi tiết chiến dịch"}
                 </h3>
               </div>
@@ -325,6 +331,13 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   <label className="grid gap-2 text-sm font-semibold">
                     Mã khuyến mãi
                     <Input name="code" className="font-mono uppercase" placeholder="WEEKEND20" required />
+                  </label>
+                  <label className="grid gap-2 text-sm font-semibold">
+                    Phạm vi ưu đãi
+                    <select name="discountScope" className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 font-semibold outline-none">
+                      <option value="ORDER">Giảm giá đơn hàng</option>
+                      <option value="DELIVERY_FEE">Giảm / miễn phí giao hàng</option>
+                    </select>
                   </label>
                   <label className="grid gap-2 text-sm font-semibold">
                     Loại ưu đãi
@@ -369,7 +382,7 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tổng quan</p>
+                        <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Tổng quan</p>
                         <p className="mt-1 font-mono text-sm font-semibold text-[var(--foreground)]">{selectedCampaign.code}</p>
                       </div>
                       <Badge tone={statusTone(selectedCampaign.computedStatus)}>{statusLabel(selectedCampaign.computedStatus)}</Badge>
@@ -377,7 +390,11 @@ export function PromotionsWorkspace({ campaigns, usage }: { campaigns: Promotion
                     <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                       <div>
                         <p className="text-[var(--muted-foreground)]">Loại giảm</p>
-                        <p className="mt-1 font-semibold text-[var(--foreground)]">{selectedCampaign.discount_type === "PERCENT" ? `${selectedCampaign.discount_value}%` : formatVnd(selectedCampaign.discount_value)}</p>
+                        <p className="mt-1 font-semibold text-[var(--foreground)]">{campaignBenefitLabel(selectedCampaign)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[var(--muted-foreground)]">Phạm vi</p>
+                        <p className="mt-1 font-semibold text-[var(--foreground)]">{discountScopeLabel(selectedCampaign.discount_scope)}</p>
                       </div>
                       <div>
                         <p className="text-[var(--muted-foreground)]">Tối thiểu</p>

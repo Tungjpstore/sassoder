@@ -6,8 +6,19 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
 import { ensureReservationDepositLogEvent, reservationDepositTransitionKey } from "@/services/payment-log-service";
-import { rankReservationTablesForAssignment, reservationAssignmentReason, type ReservationAssignableTable } from "@/services/reservation-assignment";
-import { roundUpToSlotBoundary } from "@/services/reservation-time";
+import {
+  rankReservationTablesForAssignment,
+  reservationAssignmentReason,
+  type ReservationAssignableTable,
+  type ReservationAssignmentPreferences,
+  type ReservationAssignmentTableSignal
+} from "@/services/reservation-assignment";
+import {
+  buildReservationAnalytics,
+  DEFAULT_RESERVATION_ANALYTICS_WINDOW_DAYS,
+  type ReservationAnalyticsRow
+} from "@/services/reservation-analytics";
+import { isReservationPastNoShowGrace, reservationNoShowAvailableAt, roundUpToSlotBoundary } from "@/services/reservation-time";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { PaymentMethod, ReservationDepositStatus, ReservationDepositType, ReservationDto, ReservationStatus } from "@/types/domain";
@@ -15,16 +26,23 @@ import type { Database } from "@/types/supabase";
 
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 type ReservationRow = Database["public"]["Tables"]["reservations"]["Row"];
+type ReservationInsert = Database["public"]["Tables"]["reservations"]["Insert"];
 type ReservationDbStatus = ReservationRow["status"];
 type ReservationSupabaseClient = SupabaseClient<Database>;
 type ReservationLockRow = Database["public"]["Tables"]["reservation_table_locks"]["Row"] & {
   table?:
-    | { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }
-    | { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }[]
+    | { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }
+    | { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }[]
     | null;
+};
+type ReservationActiveLock = Pick<Database["public"]["Tables"]["reservation_table_locks"]["Row"], "id" | "reservation_id" | "restaurant_id" | "table_id" | "starts_at" | "ends_at" | "status">;
+type ReservationNoShowCronRow = Pick<ReservationRow, "id" | "restaurant_id" | "status" | "starts_at" | "party_size"> & {
+  locks?: Array<{ table_id: string | null; status: string }> | null;
+  restaurant?: { reservation_arrival_grace_minutes: number | null } | Array<{ reservation_arrival_grace_minutes: number | null }> | null;
 };
 
 type CandidateReservationTable = ReservationAssignableTable & {
+  table_area_id: string | null;
   floor_label: string | null;
   seating_zone: "indoor" | "outdoor" | "mixed";
   table_kind: "standard" | "vip" | "bar" | "community";
@@ -64,6 +82,27 @@ export type ReservationSettings = Pick<
 
 export type ReservationPayment = ReturnType<typeof buildVietQrUrl> & { method: "QR" };
 
+export type ReservationSeatingZone = "indoor" | "outdoor" | "mixed";
+export type ReservationTableKind = "standard" | "vip" | "bar" | "community";
+type NormalizedReservationPreferences = {
+  preferredTableAreaId: string | null;
+  preferredSeatingZone: ReservationSeatingZone | null;
+  preferredTableKind: ReservationTableKind | null;
+};
+
+export type ReservationTableAreaOption = {
+  id: string;
+  name: string;
+  floorLabel: string | null;
+  seatingZone: ReservationSeatingZone;
+};
+
+export type ReservationPreferenceOptions = {
+  tableAreas: ReservationTableAreaOption[];
+  seatingZones: ReservationSeatingZone[];
+  tableKinds: ReservationTableKind[];
+};
+
 export type PublicReservationResult = {
   reservation: ReservationDto;
   token?: string;
@@ -83,14 +122,23 @@ export type ReservationAvailabilitySlot = {
 
 const VN_UTC_OFFSET_MINUTES = 7 * 60;
 const ACTIVE_BILL_AVOIDANCE_MINUTES = 120;
+const ASSIGNMENT_ROTATION_WINDOW_MINUTES = 120;
+const ASSIGNMENT_LOCK_LOOKBACK_MINUTES = 180;
+const ASSIGNMENT_LOCK_LOOKAHEAD_MINUTES = 240;
 const activeHoldStatuses = ["holding", "waiting_deposit_confirm"] satisfies ReservationDbStatus[];
 const closedReservationStatuses = ["completed", "cancelled", "rejected", "expired", "no_show"] satisfies ReservationDbStatus[];
 
 const reservationSelect =
-  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,floor_label,seating_zone,table_kind))";
+  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,preferred_table_area_id,preferred_seating_zone,preferred_table_kind,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
+
+const legacyReservationSelect =
+  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
 
 const candidateTableSelect =
-  "id,name,area,capacity,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
+  "id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
+
+const reservationAnalyticsSelect =
+  "id,status,party_size,starts_at,created_at,deposit_required_amount,deposit_paid_amount,deposit_status,locks:reservation_table_locks(table:tables(name,area,capacity,floor_label))";
 
 const reservationSettingsSelect =
   "id,name,slug,bank_code,bank_account,bank_account_name,logo_url,address,store_lat,store_lng,hotline,contact_email,opening_time,closing_time,reservations_enabled,reservation_deposit_enabled,reservation_deposit_type,reservation_deposit_value,reservation_hold_minutes,reservation_duration_minutes,reservation_buffer_minutes,reservation_min_notice_minutes,reservation_max_days_ahead,reservation_arrival_grace_minutes";
@@ -98,6 +146,15 @@ const reservationSettingsSelect =
 function firstOrNull<T>(value: T | T[] | null | undefined) {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function isMissingReservationPreferenceColumns(error: unknown) {
+  const message = String((error as { message?: unknown } | null | undefined)?.message ?? "");
+  return (
+    message.includes("reservations.preferred_table_area_id") ||
+    message.includes("reservations.preferred_seating_zone") ||
+    message.includes("reservations.preferred_table_kind")
+  );
 }
 
 function hashToken(token: string) {
@@ -150,6 +207,32 @@ function isClosedReservationStatus(status: ReservationStatus) {
   return closedReservationStatuses.some((item) => item === status);
 }
 
+function normalizeReservationSeatingZone(value?: string | null): ReservationSeatingZone | null {
+  if (value === "indoor" || value === "outdoor" || value === "mixed") return value;
+  return null;
+}
+
+function normalizeReservationTableKind(value?: string | null): ReservationTableKind | null {
+  if (value === "standard" || value === "vip" || value === "bar" || value === "community") return value;
+  return null;
+}
+
+function normalizeReservationPreferences(input: ReservationAssignmentPreferences): NormalizedReservationPreferences {
+  return {
+    preferredTableAreaId: input.preferredTableAreaId || null,
+    preferredSeatingZone: normalizeReservationSeatingZone(input.preferredSeatingZone),
+    preferredTableKind: normalizeReservationTableKind(input.preferredTableKind)
+  };
+}
+
+function reservationPreferenceMetadata(preferences: ReservationAssignmentPreferences) {
+  return {
+    preferredTableAreaId: preferences.preferredTableAreaId ?? null,
+    preferredSeatingZone: preferences.preferredSeatingZone ?? null,
+    preferredTableKind: preferences.preferredTableKind ?? null
+  };
+}
+
 function hasExpiredHold(reservation: Pick<ReservationDto, "status" | "holdExpiresAt">, now = new Date()) {
   if (!isActiveHoldStatus(reservation.status) || !reservation.holdExpiresAt) return false;
   return new Date(reservation.holdExpiresAt).getTime() <= now.getTime();
@@ -165,10 +248,6 @@ function assertReservationInsideOperatingHours(settings: ReservationSettings, st
   if (!isInsideOperatingWindow) {
     throw new AppError("Khung giờ đặt bàn nằm ngoài giờ phục vụ của quán.", 400);
   }
-}
-
-function noShowAvailableAt(reservation: Pick<ReservationDto, "startsAt">, graceMinutes: number) {
-  return addMinutes(new Date(reservation.startsAt), graceMinutes);
 }
 
 function slotAvailabilityHint(slotStart: Date, tableCount: number) {
@@ -267,6 +346,9 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
     paymentMethod: row.payment_method as PaymentMethod | null,
     customerNote: row.customer_note,
     internalNote: row.internal_note,
+    preferredTableAreaId: row.preferred_table_area_id ?? null,
+    preferredSeatingZone: row.preferred_seating_zone ?? null,
+    preferredTableKind: row.preferred_table_kind ?? null,
     source: row.source,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -283,7 +365,7 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
       .filter((lock) => lock.status === "active")
       .map((lock) => firstOrNull(lock.table))
       .filter(
-        (table): table is { id: string; name: string; area: string; capacity: number; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null } =>
+        (table): table is { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null } =>
           Boolean(table)
       )
       .map((table) => ({
@@ -291,6 +373,7 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
         name: table.name,
         area: table.area,
         capacity: table.capacity,
+        tableAreaId: table.table_area_id ?? null,
         floorLabel: table.floor_label ?? null,
         seatingZone: table.seating_zone ?? null,
         tableKind: table.table_kind ?? null
@@ -378,6 +461,59 @@ async function getSettingsBySlug(slug: string) {
 
 export const getPublicReservationSettingsBySlug = getSettingsBySlug;
 
+async function getReservationPreferenceOptions(restaurantId: string): Promise<ReservationPreferenceOptions> {
+  const supabase = createAdminSupabaseClient();
+  const [areasResult, tablesResult] = await Promise.all([
+    (supabase as any)
+      .from("table_areas")
+      .select("id,name,floor_label,seating_zone")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true }),
+    supabase
+      .from("tables")
+      .select("table_area_id,seating_zone,table_kind")
+      .eq("restaurant_id", restaurantId)
+      .eq("is_bookable", true)
+      .eq("is_hidden", false)
+      .eq("is_under_maintenance", false)
+  ]);
+
+  throwIfSupabaseError(areasResult.error);
+  throwIfSupabaseError(tablesResult.error);
+
+  const tableAreas = ((areasResult.data ?? []) as Array<{
+    id: string;
+    name: string;
+    floor_label: string | null;
+    seating_zone: ReservationSeatingZone;
+  }>);
+
+  const tables = (tablesResult.data ?? []) as Array<{
+    table_area_id: string | null;
+    seating_zone: ReservationSeatingZone | null;
+    table_kind: ReservationTableKind | null;
+  }>;
+  const bookableAreaIds = new Set(tables.map((table) => table.table_area_id).filter((value): value is string => Boolean(value)));
+  const bookableTableAreas = tableAreas.filter((area) => bookableAreaIds.has(area.id)).map((area) => ({
+    id: area.id,
+    name: area.name,
+    floorLabel: area.floor_label,
+    seatingZone: area.seating_zone
+  }));
+  const seatingZones = Array.from(new Set(tables.map((table) => table.seating_zone).filter((value): value is ReservationSeatingZone => Boolean(value))));
+  const tableKinds = Array.from(new Set(tables.map((table) => table.table_kind).filter((value): value is ReservationTableKind => Boolean(value))));
+
+  return { tableAreas: bookableTableAreas, seatingZones, tableKinds };
+}
+
+export async function getPublicReservationPreferenceOptionsBySlug(slug: string) {
+  const settings = await getSettingsBySlug(slug);
+  if (!settings) return null;
+  return getReservationPreferenceOptions(settings.id);
+}
+
 export async function getReservationSettings(restaurantId: string) {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
@@ -458,6 +594,118 @@ export async function expireReservationHolds(
   return { batches, expired, hasMore: hasMore && batches === maxBatches };
 }
 
+export async function markOverdueReservationNoShows(
+  restaurantId?: string,
+  options: {
+    limit?: number;
+    maxBatches?: number;
+  } = {}
+) {
+  const supabase = createAdminSupabaseClient();
+  const limit = options.limit ?? 250;
+  const maxBatches = options.maxBatches ?? 1;
+  let batches = 0;
+  let scanned = 0;
+  let noShow = 0;
+  let hasMore = false;
+
+  while (batches < maxBatches) {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    let query = supabase
+      .from("reservations")
+      .select("id,restaurant_id,status,starts_at,party_size,locks:reservation_table_locks(table_id,status),restaurant:restaurants(reservation_arrival_grace_minutes)")
+      .eq("status", "confirmed")
+      .lt("starts_at", nowIso)
+      .order("starts_at", { ascending: true })
+      .limit(limit);
+
+    if (restaurantId) query = query.eq("restaurant_id", restaurantId);
+    const { data, error } = await query;
+    throwIfSupabaseError(error);
+
+    const rows = (data ?? []) as unknown as ReservationNoShowCronRow[];
+    if (rows.length === 0) break;
+
+    batches += 1;
+    scanned += rows.length;
+
+    const eligibleRows = rows.filter((row) => {
+      const restaurant = firstOrNull(row.restaurant);
+      const graceMinutes = Number(restaurant?.reservation_arrival_grace_minutes ?? 0);
+      return isReservationPastNoShowGrace(row.starts_at, graceMinutes, now);
+    });
+
+    if (eligibleRows.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    const eligibleIds = eligibleRows.map((row) => row.id);
+    const { data: updated, error: updateError } = await supabase
+      .from("reservations")
+      .update({ status: "no_show", no_show_at: nowIso })
+      .in("id", eligibleIds)
+      .eq("status", "confirmed")
+      .select("id");
+    throwIfSupabaseError(updateError);
+
+    const updatedIds = new Set((updated ?? []).map((row) => row.id));
+    const updatedRows = eligibleRows.filter((row) => updatedIds.has(row.id));
+    if (updatedRows.length > 0) {
+      const { error: lockError } = await supabase
+        .from("reservation_table_locks")
+        .update({ status: "released" })
+        .in("reservation_id", Array.from(updatedIds))
+        .eq("status", "active");
+      throwIfSupabaseError(lockError);
+
+      for (const row of updatedRows) {
+        const activeLock = row.locks?.find((lock) => lock.status === "active") ?? row.locks?.[0] ?? null;
+        await recordReservationStatusChange(supabase, {
+          restaurantId: row.restaurant_id,
+          reservationId: row.id,
+          fromStatus: row.status,
+          toStatus: "no_show",
+          actorType: "system",
+          note: "reservation_auto_no_show"
+        });
+        await recordOccupancyEvent(supabase, {
+          restaurantId: row.restaurant_id,
+          tableId: activeLock?.table_id ?? null,
+          reservationId: row.id,
+          eventType: "reservation_no_show",
+          partySize: row.party_size,
+          metadata: { source: "cron" }
+        });
+        invalidateRestaurantDashboardCache(row.restaurant_id);
+      }
+    }
+
+    noShow += updatedRows.length;
+    hasMore = rows.length === limit && eligibleRows.length === rows.length;
+    if (!hasMore) break;
+  }
+
+  return { batches, scanned, noShow, hasMore: hasMore && batches === maxBatches };
+}
+
+export async function runReservationLifecycleAutomation(
+  restaurantId?: string,
+  options: {
+    limit?: number;
+    maxBatches?: number;
+  } = {}
+) {
+  const holds = await expireReservationHolds(restaurantId, options);
+  const noShows = await markOverdueReservationNoShows(restaurantId, options);
+  return {
+    holds,
+    noShows,
+    hasMore: holds.hasMore || noShows.hasMore
+  };
+}
+
 async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date, excludeReservationId?: string) {
   const supabase = createAdminSupabaseClient();
   let query = supabase
@@ -474,7 +722,34 @@ async function getActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date
   return data ?? [];
 }
 
-async function getCandidateTables(restaurantId: string, partySize: number) {
+async function getNearbyActiveLocks(restaurantId: string, startsAt: Date, endsAt: Date, excludeReservationId?: string) {
+  return getActiveLocks(
+    restaurantId,
+    addMinutes(startsAt, -ASSIGNMENT_LOCK_LOOKBACK_MINUTES),
+    addMinutes(endsAt, ASSIGNMENT_LOCK_LOOKAHEAD_MINUTES),
+    excludeReservationId
+  );
+}
+
+async function validateReservationPreferences(restaurantId: string, preferences: ReservationAssignmentPreferences) {
+  const normalized = normalizeReservationPreferences(preferences);
+  if (!normalized.preferredTableAreaId) return normalized;
+
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await (supabase as any)
+    .from("table_areas")
+    .select("id")
+    .eq("id", normalized.preferredTableAreaId)
+    .eq("restaurant_id", restaurantId)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  if (!data) throw new AppError("Khu vực bàn đã chọn không còn khả dụng.", 400);
+  return normalized;
+}
+
+async function getCandidateTables(restaurantId: string, partySize: number, preferences: ReservationAssignmentPreferences = {}) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("tables")
@@ -489,26 +764,36 @@ async function getCandidateTables(restaurantId: string, partySize: number) {
     .order("name", { ascending: true });
 
   throwIfSupabaseError(error);
-  return rankReservationTablesForAssignment((data ?? []) as CandidateReservationTable[], partySize);
+  return rankReservationTablesForAssignment((data ?? []) as CandidateReservationTable[], partySize, preferences);
 }
 
-async function getBookableTableById(restaurantId: string, tableId: string) {
+function normalizeReservationTableIds(tableIds: string[]) {
+  const uniqueTableIds = Array.from(new Set(tableIds));
+  if (uniqueTableIds.length === 0) throw new AppError("Vui lòng chọn ít nhất một bàn giữ chỗ.", 400);
+  if (uniqueTableIds.length !== tableIds.length) throw new AppError("Vui lòng không chọn trùng bàn khi ghép bàn.", 400);
+  return uniqueTableIds;
+}
+
+async function getBookableTablesByIds(restaurantId: string, tableIds: string[]) {
+  const uniqueTableIds = normalizeReservationTableIds(tableIds);
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("tables")
     .select(candidateTableSelect)
-    .eq("id", tableId)
     .eq("restaurant_id", restaurantId)
-    .eq("is_bookable", true)
-    .eq("is_hidden", false)
-    .eq("is_under_maintenance", false)
-    .maybeSingle();
+    .in("id", uniqueTableIds);
 
   throwIfSupabaseError(error);
-  return data as CandidateReservationTable | null;
+  const tableById = new Map((data ?? []).map((table) => [table.id, table as CandidateReservationTable]));
+  const orderedTables = uniqueTableIds.map((tableId) => tableById.get(tableId));
+  if (orderedTables.some((table) => !table)) throw new AppError("Một số bàn đã chọn không tồn tại trong quán.", 400);
+
+  const unavailableTable = orderedTables.find((table) => table && (!table.is_bookable || table.is_hidden || table.is_under_maintenance));
+  if (unavailableTable) throw new AppError(`Bàn ${unavailableTable.name} không khả dụng cho đặt trước.`, 400);
+  return orderedTables.filter((table): table is CandidateReservationTable => Boolean(table));
 }
 
-async function getActiveReservationLock(restaurantId: string, reservationId: string) {
+async function getActiveReservationLocks(restaurantId: string, reservationId: string): Promise<ReservationActiveLock[]> {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("reservation_table_locks")
@@ -516,28 +801,37 @@ async function getActiveReservationLock(restaurantId: string, reservationId: str
     .eq("restaurant_id", restaurantId)
     .eq("reservation_id", reservationId)
     .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: true });
 
   throwIfSupabaseError(error);
-  return data;
+  return (data ?? []) as ReservationActiveLock[];
 }
 
-async function getAvailableTables(restaurantId: string, partySize: number, startsAt: Date, endsAt: Date) {
+async function getAvailableTables(
+  restaurantId: string,
+  partySize: number,
+  startsAt: Date,
+  endsAt: Date,
+  preferences: ReservationAssignmentPreferences = {},
+  excludeReservationId?: string
+) {
   const [tables, locks, activeBillTableIds] = await Promise.all([
-    getCandidateTables(restaurantId, partySize),
-    getActiveLocks(restaurantId, startsAt, endsAt),
+    getCandidateTables(restaurantId, partySize, preferences),
+    getNearbyActiveLocks(restaurantId, startsAt, endsAt, excludeReservationId),
     getActiveBillTableIds(restaurantId)
   ]);
-  const lockedIds = new Set(locks.map((lock) => lock.table_id));
-  return tables.filter((table) => !lockedIds.has(table.id) && !hasNearTermActiveBill(table.id, startsAt, activeBillTableIds));
+  const availableTables = tables.filter(
+    (table) =>
+      !hasNearTermActiveBill(table.id, startsAt, activeBillTableIds) &&
+      !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), startsAt, endsAt))
+  );
+  return rankAvailableTablesForSlot(availableTables, locks, activeBillTableIds, partySize, startsAt, endsAt, preferences);
 }
 
-async function getAvailabilityContext(restaurantId: string, partySize: number, startsAt: Date, endsAt: Date) {
+async function getAvailabilityContext(restaurantId: string, partySize: number, startsAt: Date, endsAt: Date, preferences: ReservationAssignmentPreferences = {}) {
   const [tables, locks, activeBillTableIds] = await Promise.all([
-    getCandidateTables(restaurantId, partySize),
-    getActiveLocks(restaurantId, startsAt, endsAt),
+    getCandidateTables(restaurantId, partySize, preferences),
+    getNearbyActiveLocks(restaurantId, startsAt, endsAt),
     getActiveBillTableIds(restaurantId)
   ]);
 
@@ -556,9 +850,215 @@ async function getActiveBillTableIds(restaurantId: string) {
   return new Set((data ?? []).map((bill) => bill.table_id));
 }
 
+function minutesBetween(left: Date, right: Date) {
+  return Math.round((right.getTime() - left.getTime()) / 60_000);
+}
+
+function buildAssignmentSignals(
+  tables: Array<Pick<CandidateReservationTable, "id">>,
+  locks: Array<{ table_id: string | null; starts_at: string; ends_at: string }>,
+  startsAt: Date,
+  endsAt: Date,
+  activeBillTableIds: Set<string>
+): ReservationAssignmentTableSignal[] {
+  return tables.map((table) => {
+    const tableLocks = locks.filter((lock) => lock.table_id === table.id);
+    const previousLockEnds = tableLocks
+      .map((lock) => new Date(lock.ends_at))
+      .filter((lockEnd) => lockEnd <= startsAt)
+      .sort((left, right) => right.getTime() - left.getTime());
+    const nextLockStarts = tableLocks
+      .map((lock) => new Date(lock.starts_at))
+      .filter((lockStart) => lockStart >= endsAt)
+      .sort((left, right) => left.getTime() - right.getTime());
+
+    return {
+      tableId: table.id,
+      minutesSincePreviousReservation: previousLockEnds[0] ? minutesBetween(previousLockEnds[0], startsAt) : null,
+      minutesUntilNextReservation: nextLockStarts[0] ? minutesBetween(endsAt, nextLockStarts[0]) : null,
+      nearbyReservationCount: tableLocks.length,
+      hasActiveBill: activeBillTableIds.has(table.id)
+    };
+  });
+}
+
+function rankAvailableTablesForSlot<T extends CandidateReservationTable>(
+  tables: T[],
+  locks: Array<{ table_id: string | null; starts_at: string; ends_at: string }>,
+  activeBillTableIds: Set<string>,
+  partySize: number,
+  startsAt: Date,
+  endsAt: Date,
+  preferences: ReservationAssignmentPreferences
+) {
+  return rankReservationTablesForAssignment(tables, partySize, preferences, {
+    rotationWindowMinutes: ASSIGNMENT_ROTATION_WINDOW_MINUTES,
+    tableSignals: buildAssignmentSignals(tables, locks, startsAt, endsAt, activeBillTableIds)
+  });
+}
+
 function hasNearTermActiveBill(tableId: string, startsAt: Date, activeBillTableIds: Set<string>) {
   if (!activeBillTableIds.has(tableId)) return false;
   return startsAt.getTime() <= addMinutes(new Date(), ACTIVE_BILL_AVOIDANCE_MINUTES).getTime();
+}
+
+function tableSetCapacity(tables: Array<Pick<CandidateReservationTable, "capacity">>) {
+  return tables.reduce((total, table) => total + Number(table.capacity), 0);
+}
+
+async function assertReservationTablesAvailable(input: {
+  restaurantId: string;
+  reservationId: string;
+  partySize: number;
+  tableIds: string[];
+  startsAt: Date;
+  lockEnd: Date;
+}) {
+  const tableIds = normalizeReservationTableIds(input.tableIds);
+  const [tables, locks, activeBillTableIds] = await Promise.all([
+    getBookableTablesByIds(input.restaurantId, tableIds),
+    getActiveLocks(input.restaurantId, input.startsAt, input.lockEnd, input.reservationId),
+    getActiveBillTableIds(input.restaurantId)
+  ]);
+
+  const capacity = tableSetCapacity(tables);
+  if (capacity < input.partySize) {
+    throw new AppError(`Nhóm bàn đã chọn chỉ đủ ${capacity} khách, cần tối thiểu ${input.partySize} khách.`, 400);
+  }
+
+  const busyTableNames = tables
+    .filter((table) => locks.some((lock) => lock.table_id === table.id) || hasNearTermActiveBill(table.id, input.startsAt, activeBillTableIds))
+    .map((table) => table.name);
+  if (busyTableNames.length > 0) {
+    throw new AppError(`Một số bàn đang bận trong khung giờ này: ${busyTableNames.join(", ")}.`, 409);
+  }
+
+  return tables;
+}
+
+async function safelyRollbackReservationTableLocks(
+  supabase: ReservationSupabaseClient,
+  input: {
+    restaurantId: string;
+    insertedLockIds: string[];
+    updatedLocks: ReservationActiveLock[];
+    releasedLocks: ReservationActiveLock[];
+  }
+) {
+  try {
+    if (input.insertedLockIds.length > 0) {
+      await supabase.from("reservation_table_locks").update({ status: "released" }).eq("restaurant_id", input.restaurantId).in("id", input.insertedLockIds);
+    }
+    for (const lock of input.updatedLocks) {
+      await supabase
+        .from("reservation_table_locks")
+        .update({ starts_at: lock.starts_at, ends_at: lock.ends_at, status: "active" })
+        .eq("id", lock.id)
+        .eq("restaurant_id", input.restaurantId);
+    }
+    for (const lock of input.releasedLocks) {
+      await supabase
+        .from("reservation_table_locks")
+        .update({ starts_at: lock.starts_at, ends_at: lock.ends_at, status: "active" })
+        .eq("id", lock.id)
+        .eq("restaurant_id", input.restaurantId);
+    }
+  } catch (rollbackError) {
+    console.error("reservation_table_lock_rollback_failed", {
+      restaurantId: input.restaurantId,
+      insertedLockIds: input.insertedLockIds,
+      error: rollbackError instanceof Error ? rollbackError.message : "unknown"
+    });
+  }
+}
+
+async function replaceReservationTableLocks(input: {
+  supabase: ReservationSupabaseClient;
+  restaurantId: string;
+  reservationId: string;
+  currentLocks: ReservationActiveLock[];
+  tableIds: string[];
+  startsAt: Date;
+  lockEnd: Date;
+}) {
+  const startsAtIso = input.startsAt.toISOString();
+  const lockEndIso = input.lockEnd.toISOString();
+  const tableIds = normalizeReservationTableIds(input.tableIds);
+  const targetTableIdSet = new Set(tableIds);
+  const lockByTableId = new Map<string, ReservationActiveLock>();
+  const duplicateLocks: ReservationActiveLock[] = [];
+  const insertedLockIds: string[] = [];
+  const updatedLocks: ReservationActiveLock[] = [];
+  const releasedLocks: ReservationActiveLock[] = [];
+
+  for (const lock of input.currentLocks) {
+    if (lockByTableId.has(lock.table_id)) {
+      duplicateLocks.push(lock);
+      continue;
+    }
+    lockByTableId.set(lock.table_id, lock);
+  }
+
+  const rollback = () =>
+    safelyRollbackReservationTableLocks(input.supabase, {
+      restaurantId: input.restaurantId,
+      insertedLockIds,
+      updatedLocks,
+      releasedLocks
+    });
+
+  try {
+    for (const tableId of tableIds) {
+      const existingLock = lockByTableId.get(tableId);
+      if (existingLock) {
+        if (existingLock.starts_at === startsAtIso && existingLock.ends_at === lockEndIso) continue;
+        const { error } = await input.supabase
+          .from("reservation_table_locks")
+          .update({ starts_at: startsAtIso, ends_at: lockEndIso, status: "active" })
+          .eq("id", existingLock.id)
+          .eq("restaurant_id", input.restaurantId);
+        if ((error as { code?: string } | null)?.code === "23P01") throw new AppError("Một số bàn đang bận trong khung giờ này.", 409);
+        throwIfSupabaseError(error);
+        updatedLocks.push(existingLock);
+        continue;
+      }
+
+      const { data: insertedLock, error: insertError } = await input.supabase
+        .from("reservation_table_locks")
+        .insert({
+          reservation_id: input.reservationId,
+          restaurant_id: input.restaurantId,
+          table_id: tableId,
+          starts_at: startsAtIso,
+          ends_at: lockEndIso
+        })
+        .select("id")
+        .single();
+      if ((insertError as { code?: string } | null)?.code === "23P01") throw new AppError("Một số bàn vừa được giữ bởi lịch khác. Vui lòng chọn bàn khác.", 409);
+      throwIfSupabaseError(insertError);
+      if (insertedLock?.id) insertedLockIds.push(insertedLock.id);
+    }
+
+    const releaseLocks = Array.from(new Map([...input.currentLocks.filter((lock) => !targetTableIdSet.has(lock.table_id)), ...duplicateLocks].map((lock) => [lock.id, lock])).values());
+    for (const lock of releaseLocks) {
+      const { error } = await input.supabase
+        .from("reservation_table_locks")
+        .update({ status: "released" })
+        .eq("id", lock.id)
+        .eq("restaurant_id", input.restaurantId);
+      throwIfSupabaseError(error);
+      releasedLocks.push(lock);
+    }
+
+    return {
+      fromTableIds: input.currentLocks.map((lock) => lock.table_id),
+      toTableIds: tableIds,
+      rollback
+    };
+  } catch (error) {
+    await rollback();
+    throw error;
+  }
 }
 
 function assertBookableTime(settings: ReservationSettings, startsAt: Date) {
@@ -570,15 +1070,26 @@ function assertBookableTime(settings: ReservationSettings, startsAt: Date) {
   if (startsAt > maxStart) throw new AppError(`Quán chỉ nhận đặt bàn trong ${settings.reservation_max_days_ahead} ngày tới.`, 400);
 }
 
+function assertStaffRescheduleTime(settings: ReservationSettings, startsAt: Date) {
+  const now = new Date();
+  const maxStart = addMinutes(now, Number(settings.reservation_max_days_ahead) * 24 * 60);
+  if (startsAt < addMinutes(now, -5)) throw new AppError("Không thể đổi lịch đặt về thời điểm đã qua.", 400);
+  if (startsAt > maxStart) throw new AppError(`Quán chỉ nhận đặt bàn trong ${settings.reservation_max_days_ahead} ngày tới.`, 400);
+}
+
 export async function getReservationAvailability(input: {
   restaurantSlug: string;
   date: string;
   partySize: number;
+  preferredTableAreaId?: string;
+  preferredSeatingZone?: ReservationSeatingZone;
+  preferredTableKind?: ReservationTableKind;
 }) {
   const settings = await getSettingsBySlug(input.restaurantSlug);
   if (!settings) throw new AppError("Không tìm thấy quán", 404);
   await assertFeatureEntitlement(settings.id, "reservations");
   await expireReservationHolds(settings.id);
+  const preferences = await validateReservationPreferences(settings.id, input);
 
   if (!settings.reservations_enabled) {
     return { restaurant: settings, slots: [] as ReservationAvailabilitySlot[] };
@@ -590,17 +1101,26 @@ export async function getReservationAvailability(input: {
   const duration = Number(settings.reservation_duration_minutes);
   const buffer = Number(settings.reservation_buffer_minutes);
   const slots: ReservationAvailabilitySlot[] = [];
-  const { tables, locks, activeBillTableIds } = await getAvailabilityContext(settings.id, input.partySize, start, addMinutes(end, buffer));
+  const { tables, locks, activeBillTableIds } = await getAvailabilityContext(settings.id, input.partySize, start, addMinutes(end, buffer), preferences);
 
   for (let slotStart = roundUpToSlotBoundary(new Date(Math.max(start.getTime(), firstAllowed.getTime()))); addMinutes(slotStart, duration) <= end; slotStart = addMinutes(slotStart, 30)) {
     const slotEnd = addMinutes(slotStart, duration);
     const lockEnd = addMinutes(slotEnd, buffer);
-    const availableTables = tables.filter(
-      (table) =>
-        !hasNearTermActiveBill(table.id, slotStart, activeBillTableIds) &&
-        !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), slotStart, lockEnd))
+    const availableTables = rankAvailableTablesForSlot(
+      tables.filter(
+        (table) =>
+          !hasNearTermActiveBill(table.id, slotStart, activeBillTableIds) &&
+          !locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), slotStart, lockEnd))
+      ),
+      locks,
+      activeBillTableIds,
+      input.partySize,
+      slotStart,
+      lockEnd,
+      preferences
     );
     const hint = slotAvailabilityHint(slotStart, availableTables.length);
+    const bestTableSignal = availableTables[0] ? buildAssignmentSignals([availableTables[0]], locks, slotStart, lockEnd, activeBillTableIds)[0] : undefined;
     slots.push({
       startsAt: slotStart.toISOString(),
       endsAt: slotEnd.toISOString(),
@@ -608,7 +1128,7 @@ export async function getReservationAvailability(input: {
       tableCount: availableTables.length,
       bestTableName: availableTables[0]?.name ?? null,
       ...hint,
-      recommendationReason: availableTables[0] ? reservationAssignmentReason(availableTables[0], input.partySize) : hint.recommendationReason
+      recommendationReason: availableTables[0] ? reservationAssignmentReason(availableTables[0], input.partySize, bestTableSignal) : hint.recommendationReason
     });
   }
 
@@ -624,12 +1144,16 @@ export async function createReservation(input: {
   startsAt: string;
   customerNote?: string;
   idempotencyKey?: string;
+  preferredTableAreaId?: string;
+  preferredSeatingZone?: ReservationSeatingZone;
+  preferredTableKind?: ReservationTableKind;
 }): Promise<PublicReservationResult> {
   const supabase = createAdminSupabaseClient();
   const settings = await getSettingsBySlug(input.restaurantSlug);
   if (!settings) throw new AppError("Không tìm thấy quán", 404);
   await assertFeatureEntitlement(settings.id, "reservations");
   await expireReservationHolds(settings.id);
+  const preferences = await validateReservationPreferences(settings.id, input);
 
   const startsAt = new Date(input.startsAt);
   if (!Number.isFinite(startsAt.getTime())) throw new AppError("Khung giờ đặt bàn không hợp lệ", 400);
@@ -640,7 +1164,7 @@ export async function createReservation(input: {
   const endsAt = addMinutes(startsAt, duration);
   assertReservationInsideOperatingHours(settings, startsAt, endsAt);
   const lockEnd = addMinutes(endsAt, buffer);
-  const availableTables = await getAvailableTables(settings.id, input.partySize, startsAt, lockEnd);
+  const availableTables = await getAvailableTables(settings.id, input.partySize, startsAt, lockEnd, preferences);
   const table = availableTables[0];
   if (!table) throw new AppError("Khung giờ này vừa hết bàn phù hợp. Vui lòng chọn giờ khác.", 409);
 
@@ -656,31 +1180,52 @@ export async function createReservation(input: {
   const tokenHash = hashToken(accessToken);
   const now = new Date();
   const needsDeposit = depositAmount > 0;
+  const reservationInsert: ReservationInsert = {
+    restaurant_id: settings.id,
+    status: needsDeposit ? "holding" : "confirmed",
+    customer_name: input.customerName.trim(),
+    customer_phone: input.customerPhone.trim(),
+    customer_email: input.customerEmail?.trim() || null,
+    party_size: input.partySize,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    hold_expires_at: needsDeposit ? addMinutes(now, Number(settings.reservation_hold_minutes)).toISOString() : null,
+    deposit_required_amount: depositAmount,
+    deposit_paid_amount: 0,
+    deposit_status: needsDeposit ? "waiting_payment" : "none",
+    payment_method: needsDeposit ? "QR" : null,
+    customer_note: input.customerNote?.trim() || null,
+    preferred_table_area_id: preferences.preferredTableAreaId,
+    preferred_seating_zone: preferences.preferredSeatingZone,
+    preferred_table_kind: preferences.preferredTableKind,
+    source: "PUBLIC",
+    access_token_hash: tokenHash,
+    idempotency_key: input.idempotencyKey || null,
+    confirmed_at: needsDeposit ? null : now.toISOString()
+  };
 
-  const { data: reservation, error: reservationError } = await supabase
+  let { data: reservation, error: reservationError } = await supabase
     .from("reservations")
-    .insert({
-      restaurant_id: settings.id,
-      status: needsDeposit ? "holding" : "confirmed",
-      customer_name: input.customerName.trim(),
-      customer_phone: input.customerPhone.trim(),
-      customer_email: input.customerEmail?.trim() || null,
-      party_size: input.partySize,
-      starts_at: startsAt.toISOString(),
-      ends_at: endsAt.toISOString(),
-      hold_expires_at: needsDeposit ? addMinutes(now, Number(settings.reservation_hold_minutes)).toISOString() : null,
-      deposit_required_amount: depositAmount,
-      deposit_paid_amount: 0,
-      deposit_status: needsDeposit ? "waiting_payment" : "none",
-      payment_method: needsDeposit ? "QR" : null,
-      customer_note: input.customerNote?.trim() || null,
-      source: "PUBLIC",
-      access_token_hash: tokenHash,
-      idempotency_key: input.idempotencyKey || null,
-      confirmed_at: needsDeposit ? null : now.toISOString()
-    })
+    .insert(reservationInsert)
     .select(reservationSelect)
     .single();
+
+  if (isMissingReservationPreferenceColumns(reservationError)) {
+    const {
+      preferred_table_area_id: _preferredTableAreaId,
+      preferred_seating_zone: _preferredSeatingZone,
+      preferred_table_kind: _preferredTableKind,
+      ...legacyReservationInsert
+    } = reservationInsert;
+
+    const legacyResult = await supabase
+      .from("reservations")
+      .insert(legacyReservationInsert)
+      .select(legacyReservationSelect)
+      .single();
+    reservation = legacyResult.data as typeof reservation;
+    reservationError = legacyResult.error;
+  }
 
   if (reservationError || !reservation) {
     throw new AppError(reservationError?.message ?? "Không tạo được đặt bàn", 400);
@@ -723,7 +1268,8 @@ export async function createReservation(input: {
     note: "reservation_created",
     metadata: {
       tableId: table.id,
-      assignmentReason: reservationAssignmentReason(table, input.partySize)
+      assignmentReason: reservationAssignmentReason(table, input.partySize),
+      ...reservationPreferenceMetadata(preferences)
     }
   });
   await recordOccupancyEvent(supabase, {
@@ -731,7 +1277,8 @@ export async function createReservation(input: {
     tableId: table.id,
     reservationId: reservation.id,
     eventType: "reservation_created",
-    partySize: input.partySize
+    partySize: input.partySize,
+    metadata: reservationPreferenceMetadata(preferences)
   });
 
   const nextReservation = await getReservationById(reservation.id, settings.id);
@@ -747,7 +1294,16 @@ async function getReservationById(reservationId: string, restaurantId?: string) 
   const supabase = createAdminSupabaseClient();
   let query = supabase.from("reservations").select(reservationSelect).eq("id", reservationId);
   if (restaurantId) query = query.eq("restaurant_id", restaurantId);
-  const { data, error } = await query.single();
+  let { data, error } = await query.single();
+
+  if (isMissingReservationPreferenceColumns(error)) {
+    let legacyQuery = supabase.from("reservations").select(legacyReservationSelect).eq("id", reservationId);
+    if (restaurantId) legacyQuery = legacyQuery.eq("restaurant_id", restaurantId);
+    const legacyResult = await legacyQuery.single();
+    data = legacyResult.data as typeof data;
+    error = legacyResult.error;
+  }
+
   throwIfSupabaseError(error);
   if (!data) throw new AppError("Không tìm thấy đặt bàn", 404);
   return mapReservation(data as unknown as ReservationRow & { locks?: ReservationLockRow[] });
@@ -993,6 +1549,7 @@ export async function cancelPublicReservation(reservationId: string, token: stri
 export async function listReservationsForRestaurant(restaurantId: string, date?: string) {
   await expireReservationHolds(restaurantId);
   const supabase = await createServerSupabaseClient();
+  const settings = date ? await getReservationSettings(restaurantId) : null;
   let query = supabase
     .from("reservations")
     .select(reservationSelect)
@@ -1001,13 +1558,60 @@ export async function listReservationsForRestaurant(restaurantId: string, date?:
     .limit(200);
 
   if (date) {
-    const { start, end } = dayBounds(date, await getReservationSettings(restaurantId));
+    const { start, end } = dayBounds(date, settings as ReservationSettings);
     query = query.gte("starts_at", start.toISOString()).lt("starts_at", end.toISOString());
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  if (isMissingReservationPreferenceColumns(error)) {
+    let legacyQuery = supabase
+      .from("reservations")
+      .select(legacyReservationSelect)
+      .eq("restaurant_id", restaurantId)
+      .order("starts_at", { ascending: true })
+      .limit(200);
+
+    if (date) {
+      const { start, end } = dayBounds(date, settings as ReservationSettings);
+      legacyQuery = legacyQuery.gte("starts_at", start.toISOString()).lt("starts_at", end.toISOString());
+    }
+
+    const legacyResult = await legacyQuery;
+    data = legacyResult.data as typeof data;
+    error = legacyResult.error;
+  }
+
   throwIfSupabaseError(error);
   return ((data ?? []) as unknown as Array<ReservationRow & { locks?: ReservationLockRow[] }>).map(mapReservation);
+}
+
+export async function getReservationAnalytics(
+  restaurantId: string,
+  options: {
+    windowDays?: number;
+    now?: Date;
+  } = {}
+) {
+  const windowDays = options.windowDays ?? DEFAULT_RESERVATION_ANALYTICS_WINDOW_DAYS;
+  const windowEnd = options.now ?? new Date();
+  const windowStart = addMinutes(windowEnd, -windowDays * 24 * 60);
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await (supabase as any)
+    .from("reservations")
+    .select(reservationAnalyticsSelect)
+    .eq("restaurant_id", restaurantId)
+    .gte("starts_at", windowStart.toISOString())
+    .lt("starts_at", windowEnd.toISOString())
+    .order("starts_at", { ascending: true })
+    .limit(1000);
+
+  throwIfSupabaseError(error);
+  return buildReservationAnalytics((data ?? []) as ReservationAnalyticsRow[], {
+    windowDays,
+    windowStart,
+    windowEnd
+  });
 }
 
 export async function updateReservationSettings(
@@ -1308,7 +1912,7 @@ export async function checkInReservation(restaurantId: string, reservationId: st
   return getReservationById(reservationId, restaurantId);
 }
 
-export async function moveReservationTable(restaurantId: string, reservationId: string, nextTableId: string) {
+export async function setReservationTables(restaurantId: string, reservationId: string, tableIds: string[]) {
   const reservation = await getFreshReservationById(reservationId, restaurantId);
   if (reservation.seatedTableBillId || reservation.status === "seated") {
     throw new AppError("Lịch đã vào bàn. Hãy đổi bàn trong hóa đơn đang phục vụ.", 400);
@@ -1317,46 +1921,42 @@ export async function moveReservationTable(restaurantId: string, reservationId: 
     throw new AppError("Không thể đổi bàn cho lịch đặt đã kết thúc.", 400);
   }
 
-  const currentLock = await getActiveReservationLock(restaurantId, reservationId);
-  if (!currentLock) throw new AppError("Lịch đặt chưa có bàn đang giữ.", 400);
-  if (currentLock.table_id === nextTableId) return reservation;
+  const normalizedTableIds = normalizeReservationTableIds(tableIds);
+  const currentLocks = await getActiveReservationLocks(restaurantId, reservationId);
+  const settings = currentLocks.length === 0 ? await getReservationSettingsByAdmin(restaurantId) : null;
+  const startsAt = new Date(currentLocks[0]?.starts_at ?? reservation.startsAt);
+  const lockEnd = currentLocks[0]?.ends_at ? new Date(currentLocks[0].ends_at) : addMinutes(new Date(reservation.endsAt), Number(settings?.reservation_buffer_minutes ?? 0));
+  const currentTableIds = Array.from(new Set(currentLocks.map((lock) => lock.table_id)));
+  const hasDuplicateLocks = currentTableIds.length !== currentLocks.length;
+  const isSameTableSet = currentTableIds.length === normalizedTableIds.length && normalizedTableIds.every((tableId) => currentTableIds.includes(tableId));
+  const isSameLockWindow = currentLocks.every((lock) => lock.starts_at === startsAt.toISOString() && lock.ends_at === lockEnd.toISOString());
+  if (currentLocks.length > 0 && !hasDuplicateLocks && isSameTableSet && isSameLockWindow) return reservation;
 
-  const nextTable = await getBookableTableById(restaurantId, nextTableId);
-  if (!nextTable) throw new AppError("Bàn mới không khả dụng cho đặt trước.", 400);
-  if (nextTable.capacity < reservation.partySize) {
-    throw new AppError("Bàn mới không đủ sức chứa cho số khách của lịch đặt.", 400);
-  }
-
-  const startsAt = new Date(currentLock.starts_at);
-  const endsAt = new Date(currentLock.ends_at);
-  const [locks, activeBillTableIds] = await Promise.all([
-    getActiveLocks(restaurantId, startsAt, endsAt, reservationId),
-    getActiveBillTableIds(restaurantId)
-  ]);
-  if (locks.some((lock) => lock.table_id === nextTableId) || hasNearTermActiveBill(nextTableId, startsAt, activeBillTableIds)) {
-    throw new AppError("Bàn mới đang bận trong khung giờ này.", 409);
-  }
-
-  const supabase = createAdminSupabaseClient();
-  const { error: insertError } = await supabase.from("reservation_table_locks").insert({
-    reservation_id: reservationId,
-    restaurant_id: restaurantId,
-    table_id: nextTableId,
-    starts_at: currentLock.starts_at,
-    ends_at: currentLock.ends_at
+  const tables = await assertReservationTablesAvailable({
+    restaurantId,
+    reservationId,
+    partySize: reservation.partySize,
+    tableIds: normalizedTableIds,
+    startsAt,
+    lockEnd
   });
-
-  if ((insertError as { code?: string } | null)?.code === "23P01") {
-    throw new AppError("Bàn mới vừa được giữ bởi lịch khác. Vui lòng chọn bàn khác.", 409);
-  }
-  throwIfSupabaseError(insertError);
-
-  const { error: releaseError } = await supabase
-    .from("reservation_table_locks")
-    .update({ status: "released" })
-    .eq("id", currentLock.id)
+  const supabase = createAdminSupabaseClient();
+  const replacement = await replaceReservationTableLocks({
+    supabase,
+    restaurantId,
+    reservationId,
+    currentLocks,
+    tableIds: normalizedTableIds,
+    startsAt,
+    lockEnd
+  });
+  const { error: touchError } = await supabase
+    .from("reservations")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", reservationId)
     .eq("restaurant_id", restaurantId);
-  throwIfSupabaseError(releaseError);
+  if (touchError) await replacement.rollback();
+  throwIfSupabaseError(touchError);
 
   await recordReservationStatusChange(supabase, {
     restaurantId,
@@ -1364,10 +1964,145 @@ export async function moveReservationTable(restaurantId: string, reservationId: 
     fromStatus: reservation.status,
     toStatus: reservation.status,
     actorType: "merchant",
-    note: "reservation_table_moved",
+    note: normalizedTableIds.length > 1 ? "reservation_tables_merged" : "reservation_table_moved",
     metadata: {
-      fromTableId: currentLock.table_id,
-      toTableId: nextTableId
+      fromTableIds: replacement.fromTableIds.join(","),
+      toTableIds: replacement.toTableIds.join(","),
+      tableCount: normalizedTableIds.length,
+      totalCapacity: tableSetCapacity(tables)
+    }
+  });
+
+  invalidateRestaurantDashboardCache(restaurantId);
+  return getReservationById(reservationId, restaurantId);
+}
+
+export async function moveReservationTable(restaurantId: string, reservationId: string, nextTableId: string) {
+  return setReservationTables(restaurantId, reservationId, [nextTableId]);
+}
+
+async function getRescheduleTables(input: {
+  restaurantId: string;
+  reservation: ReservationDto;
+  currentLocks: ReservationActiveLock[];
+  startsAt: Date;
+  lockEnd: Date;
+  preferredTableId?: string;
+}) {
+  if (input.preferredTableId) {
+    return assertReservationTablesAvailable({
+      restaurantId: input.restaurantId,
+      reservationId: input.reservation.id,
+      partySize: input.reservation.partySize,
+      tableIds: [input.preferredTableId],
+      startsAt: input.startsAt,
+      lockEnd: input.lockEnd
+    });
+  }
+
+  const currentTableIds = Array.from(new Set(input.currentLocks.map((lock) => lock.table_id)));
+  if (currentTableIds.length > 0) {
+    try {
+      return await assertReservationTablesAvailable({
+        restaurantId: input.restaurantId,
+        reservationId: input.reservation.id,
+        partySize: input.reservation.partySize,
+        tableIds: currentTableIds,
+        startsAt: input.startsAt,
+        lockEnd: input.lockEnd
+      });
+    } catch {
+      if (currentTableIds.length > 1) {
+        throw new AppError("Nhóm bàn hiện tại không còn trống trong khung giờ mới. Vui lòng chọn lại bàn ghép trước khi đổi giờ.", 409);
+      }
+    }
+  }
+
+  const availableTables = await getAvailableTables(
+    input.restaurantId,
+    input.reservation.partySize,
+    input.startsAt,
+    input.lockEnd,
+    {
+      preferredTableAreaId: input.reservation.preferredTableAreaId ?? undefined,
+      preferredSeatingZone: input.reservation.preferredSeatingZone ?? undefined,
+      preferredTableKind: input.reservation.preferredTableKind ?? undefined
+    },
+    input.reservation.id
+  );
+  const table = availableTables[0];
+  if (!table) throw new AppError("Khung giờ mới không còn bàn phù hợp. Vui lòng chọn giờ khác.", 409);
+  return [table];
+}
+
+export async function rescheduleReservation(
+  restaurantId: string,
+  reservationId: string,
+  input: {
+    startsAt: string;
+    tableId?: string;
+  }
+) {
+  const reservation = await getFreshReservationById(reservationId, restaurantId);
+  if (reservation.seatedTableBillId || reservation.status === "seated") {
+    throw new AppError("Lịch đã vào bàn. Hãy đổi thời gian trong phiên bàn đang phục vụ nếu cần.", 400);
+  }
+  if (reservation.status === "checked_in") {
+    throw new AppError("Khách đã check-in. Hãy nhận khách vào bàn hoặc huỷ check-in bằng quy trình vận hành.", 400);
+  }
+  if (isClosedReservationStatus(reservation.status)) {
+    throw new AppError("Không thể đổi giờ cho lịch đặt đã kết thúc.", 400);
+  }
+
+  const settings = await getReservationSettingsByAdmin(restaurantId);
+  const startsAt = new Date(input.startsAt);
+  if (!Number.isFinite(startsAt.getTime())) throw new AppError("Khung giờ mới không hợp lệ.", 400);
+  assertStaffRescheduleTime(settings, startsAt);
+
+  const endsAt = addMinutes(startsAt, Number(settings.reservation_duration_minutes));
+  assertReservationInsideOperatingHours(settings, startsAt, endsAt);
+  const lockEnd = addMinutes(endsAt, Number(settings.reservation_buffer_minutes));
+  const currentLocks = await getActiveReservationLocks(restaurantId, reservationId);
+  const tables = await getRescheduleTables({
+    restaurantId,
+    reservation,
+    currentLocks,
+    startsAt,
+    lockEnd,
+    preferredTableId: input.tableId
+  });
+  const supabase = createAdminSupabaseClient();
+  const replacement = await replaceReservationTableLocks({
+    supabase,
+    restaurantId,
+    reservationId,
+    currentLocks,
+    tableIds: tables.map((table) => table.id),
+    startsAt,
+    lockEnd
+  });
+
+  const { error } = await supabase
+    .from("reservations")
+    .update({ starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString() })
+    .eq("id", reservationId)
+    .eq("restaurant_id", restaurantId);
+  if (error) await replacement.rollback();
+  throwIfSupabaseError(error);
+
+  await recordReservationStatusChange(supabase, {
+    restaurantId,
+    reservationId,
+    fromStatus: reservation.status,
+    toStatus: reservation.status,
+    actorType: "merchant",
+    note: "reservation_rescheduled",
+    metadata: {
+      fromStartsAt: reservation.startsAt,
+      toStartsAt: startsAt.toISOString(),
+      fromTableIds: replacement.fromTableIds.join(","),
+      toTableIds: replacement.toTableIds.join(","),
+      tableCount: tables.length
     }
   });
 
@@ -1441,7 +2176,7 @@ export async function markReservationNoShow(restaurantId: string, reservationId:
 
   const settings = await getReservationSettingsByAdmin(restaurantId);
   const arrivalGraceMinutes = Number(settings.reservation_arrival_grace_minutes);
-  const noShowAt = noShowAvailableAt(reservation, arrivalGraceMinutes);
+  const noShowAt = reservationNoShowAvailableAt(reservation.startsAt, arrivalGraceMinutes);
   if (noShowAt.getTime() > Date.now()) {
     throw new AppError(`Chỉ được đánh dấu no-show sau ${arrivalGraceMinutes} phút trễ hẹn.`, 400);
   }
@@ -1487,12 +2222,23 @@ export async function completeReservationForBill(
   billId: string
 ) {
   const supabase = createAdminSupabaseClient();
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("reservations")
     .select(reservationSelect)
     .eq("restaurant_id", restaurantId)
     .eq("seated_table_bill_id", billId)
     .maybeSingle();
+
+  if (isMissingReservationPreferenceColumns(error)) {
+    const legacyResult = await supabase
+      .from("reservations")
+      .select(legacyReservationSelect)
+      .eq("restaurant_id", restaurantId)
+      .eq("seated_table_bill_id", billId)
+      .maybeSingle();
+    data = legacyResult.data as typeof data;
+    error = legacyResult.error;
+  }
 
   throwIfSupabaseError(error);
   if (!data) return null;

@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  Store,
   Table2,
   Trash2,
   Users,
@@ -35,13 +36,14 @@ import { Input } from "@/components/ui/input";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { cn } from "@/lib/utils";
-import type { RestaurantTableWithStatus, TableOperationalStatus } from "@/services/table-service";
+import type { RestaurantTableWithStatus, TableBranchOption, TableOperationalStatus } from "@/services/table-service";
 
 type TablesWorkspaceProps = {
   restaurantId: string;
   restaurantSlug: string;
   restaurantName: string;
   dashboardTableCount: number;
+  branches: TableBranchOption[];
   tables: RestaurantTableWithStatus[];
 };
 
@@ -137,6 +139,8 @@ function tableActionCopy(table: RestaurantTableWithStatus, nowMs: number) {
   if (table.status === "awaiting_payment") return `${formatVnd(table.unpaidTotal)} đang chờ thu`;
   if (table.status === "serving") {
     const dueIn = minutesUntil(table.nextServiceDueAt, nowMs);
+    if (table.activeOrderCount === 0 && table.activeBillCount > 0) return "Phiên bàn đã mở, chờ khách gọi món";
+    if (table.activeOrderCount === 0 && table.activeReservationCount > 0) return "Lịch đặt đã vào bàn, đang giữ nhóm bàn";
     return dueIn === null ? "Đang phục vụ" : dueIn <= 5 ? `Còn ${Math.max(dueIn, 0)} phút tới hạn` : `Tới hạn sau ${dueIn} phút`;
   }
   return table.qr_enabled ? "Sẵn sàng nhận khách" : "QR đang tắt";
@@ -159,6 +163,11 @@ function tableAreaLabel(table: Pick<RestaurantTableWithStatus, "area" | "floor_l
   const area = table.area || "Khu chính";
   const floor = table.floor_label || "Tầng trệt";
   return `${floor} · ${area}`;
+}
+
+function branchLabel(branchesById: Map<string, TableBranchOption>, table?: Pick<RestaurantTableWithStatus, "branch_id"> | null) {
+  if (!table?.branch_id) return "Theo quán";
+  return branchesById.get(table.branch_id)?.name ?? "Chi nhánh đã ẩn";
 }
 
 function TablesMetric({
@@ -191,7 +200,7 @@ function TablesMetric({
         </span>
         <Badge tone={tone}>{label}</Badge>
       </div>
-      <p className="metric-number mt-3 text-2xl font-black text-[var(--foreground)]">{value}</p>
+      <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{value}</p>
       <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
     </article>
   );
@@ -415,7 +424,7 @@ function QrPrintPoster({
   );
 }
 
-export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, dashboardTableCount, tables }: TablesWorkspaceProps) {
+export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, dashboardTableCount, branches, tables }: TablesWorkspaceProps) {
   const router = useRouter();
   const refreshTimerRef = useRef<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -452,6 +461,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
       .channel(`admin-tables:${restaurantId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "tables", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "table_bills", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRefresh)
       .subscribe((status) => {
         if (status === "SUBSCRIBED") setRealtimeState("connected");
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
@@ -473,6 +483,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
   const areas = useMemo(() => {
     return ["all", ...Array.from(new Set(tables.map(tableAreaLabel)))];
   }, [tables]);
+  const branchesById = useMemo(() => new Map(branches.map((branch) => [branch.id, branch])), [branches]);
+  const defaultBranchId = useMemo(() => branches.find((branch) => branch.is_primary)?.id ?? branches[0]?.id ?? "", [branches]);
 
   const counts = useMemo(() => {
     return tables.reduce(
@@ -490,11 +502,11 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
       const area = tableAreaLabel(table);
       const matchesArea = areaFilter === "all" || area === areaFilter;
       const matchesStatus = statusFilter === "all" || table.status === statusFilter;
-      const metadata = `${tableKindLabel(table.table_kind)} ${seatingZoneLabel(table.seating_zone)}`.toLowerCase();
+      const metadata = `${tableKindLabel(table.table_kind)} ${seatingZoneLabel(table.seating_zone)} ${branchLabel(branchesById, table)}`.toLowerCase();
       const matchesKeyword = !keyword || table.name.toLowerCase().includes(keyword) || area.toLowerCase().includes(keyword) || metadata.includes(keyword);
       return matchesArea && matchesStatus && matchesKeyword;
     });
-  }, [areaFilter, query, statusFilter, tables]);
+  }, [areaFilter, branchesById, query, statusFilter, tables]);
 
   const groupedTables = useMemo(() => {
     return [...filteredTables.reduce((map, table) => {
@@ -639,8 +651,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               <Badge tone={counts.overdue ? "red" : counts.needs_confirm ? "yellow" : "green"}>{pressureLabel}</Badge>
               <Badge tone={qrDisabled ? "yellow" : "green"}>{qrDisabled ? `${qrDisabled} QR tắt` : "QR sẵn sàng"}</Badge>
             </div>
-            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Mặt sàn & QR vận hành</h2>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+            <h2 className="dashboard-page-title mt-3">Mặt sàn & QR vận hành</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
               Theo dõi trạng thái bàn theo khu vực, xử lý bàn đang chờ order/thanh toán và in QR đúng token để khách gọi món nhanh trong giờ cao điểm.
             </p>
           </div>
@@ -672,7 +684,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
           <div className="dashboard-panel p-4">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-black text-[var(--foreground)]">Sơ đồ bàn realtime</h2>
+                <h2 className="dashboard-section-title">Sơ đồ bàn realtime</h2>
                 <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[var(--muted-foreground)]">
                   Bàn được nhóm theo khu vực, màu theo trạng thái vận hành. Bấm vào từng bàn để mở QR, chỉnh thông tin, xoay token hoặc xử lý bàn đang có hóa đơn.
                 </p>
@@ -694,7 +706,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
             </div>
 
             <div className="mb-4 grid gap-3 md:grid-cols-[180px_190px_minmax(0,1fr)_120px]">
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+              <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                 Khu vực
                 <select
                   value={areaFilter}
@@ -706,7 +718,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                   ))}
                 </select>
               </label>
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+              <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                 Trạng thái
                 <select
                   value={statusFilter}
@@ -718,13 +730,13 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                   ))}
                 </select>
               </label>
-              <label className="relative grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+              <label className="relative grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                 Tìm nhanh
                 <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[var(--outline)]" />
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Tên bàn, khu vực..."
+                  placeholder="Tên bàn, khu vực, chi nhánh..."
                   className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
                 />
               </label>
@@ -742,7 +754,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Layers3 size={16} className="text-[var(--primary)]" />
-                    <h3 className="text-sm font-black text-[var(--foreground)]">Khu vực & công suất</h3>
+                    <h3 className="text-sm font-semibold text-[var(--foreground)]">Khu vực & công suất</h3>
                   </div>
                   <Badge tone={occupancyRate >= 85 ? "red" : occupancyRate >= 60 ? "yellow" : "green"}>{occupancyRate}% bận</Badge>
                 </div>
@@ -763,13 +775,13 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                         )}
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <p className="truncate text-sm font-black text-[var(--foreground)]">{area.area}</p>
-                          <span className="text-xs font-black text-[var(--primary)]">{area.active}/{area.total}</span>
+                          <p className="truncate text-sm font-semibold text-[var(--foreground)]">{area.area}</p>
+                          <span className="text-xs font-semibold text-[var(--primary)]">{area.active}/{area.total}</span>
                         </div>
                         <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
                           <div className={cn("h-full rounded-full", area.overdue ? "bg-[var(--tertiary)]" : area.occupancyRate >= 70 ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${Math.min(100, area.occupancyRate)}%` }} />
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-bold text-[var(--muted-foreground)]">
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-[var(--muted-foreground)]">
                           <span>{area.available} trống</span>
                           <span>{area.capacity} chỗ</span>
                           {area.overdue ? <span className="text-[var(--tertiary)]">{area.overdue} quá giờ</span> : null}
@@ -785,7 +797,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle size={16} className={counts.overdue ? "text-[var(--tertiary)]" : "text-[var(--accent)]"} />
-                    <h3 className="text-sm font-black text-[var(--foreground)]">Cần xử lý</h3>
+                    <h3 className="text-sm font-semibold text-[var(--foreground)]">Cần xử lý</h3>
                   </div>
                   <Badge tone={actionQueue.length ? (counts.overdue ? "red" : "yellow") : "green"}>{actionQueue.length || "Ổn"}</Badge>
                 </div>
@@ -805,10 +817,12 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                           className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
                         >
                           <div className="flex items-center justify-between gap-3">
-                            <span className="truncate text-sm font-black text-[var(--foreground)]">{table.name}</span>
+                            <span className="truncate text-sm font-semibold text-[var(--foreground)]">{table.name}</span>
                             <Badge tone={meta.tone}>{meta.label}</Badge>
                           </div>
-                          <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">{tableAreaLabel(table)} · {tableActionCopy(table, nowMs)}</p>
+                          <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+                            {branchLabel(branchesById, table)} · {tableAreaLabel(table)} · {tableActionCopy(table, nowMs)}
+                          </p>
                         </button>
                       );
                     })
@@ -856,14 +870,14 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0">
-                                  <p className="truncate text-sm font-black">{table.name}</p>
-                                  <p className="mt-1 truncate text-xs font-bold opacity-75">{table.capacity} chỗ · {tableKindLabel(table.table_kind)}</p>
+                                  <p className="truncate text-sm font-semibold">{table.name}</p>
+                                  <p className="mt-1 truncate text-xs font-medium opacity-75">{table.capacity} chỗ · {branchLabel(branchesById, table)}</p>
                                 </div>
                                 <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} />
                               </div>
-                              <p className="mt-3 text-[11px] font-black uppercase tracking-[0.06em]">{meta.label}</p>
-                              <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] font-bold opacity-80">
-                                {table.unpaidTotal > 0 ? <span>{formatVnd(table.unpaidTotal)}</span> : <span>{seatingZoneLabel(table.seating_zone)}</span>}
+                              <p className="mt-3 text-xs font-semibold uppercase">{meta.label}</p>
+                              <div className="mt-2 flex flex-wrap gap-1.5 text-xs font-medium opacity-80">
+                                {table.unpaidTotal > 0 ? <span>{formatVnd(table.unpaidTotal)}</span> : table.activeBillCount > 0 ? <span>Phiên bàn mở</span> : table.activeReservationCount > 0 ? <span>Lịch đã vào bàn</span> : <span>{seatingZoneLabel(table.seating_zone)}</span>}
                                 {!table.qr_enabled ? <span>QR tắt</span> : <span>QR bật</span>}
                                 {table.is_under_maintenance ? <span>Bảo trì</span> : null}
                                 {table.is_hidden ? <span>Ẩn</span> : null}
@@ -927,8 +941,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                 >
 	              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
 	                <div>
-	                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Bàn & QR</p>
-	                  <h3 id="table-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+	                  <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Bàn & QR</p>
+	                  <h3 id="table-drawer-title" className="dashboard-section-title mt-1">
 	                    {panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
 	                  </h3>
 	                </div>
@@ -943,6 +957,21 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
 	                      Tên bàn
 	                      <Input name="name" placeholder="Bàn 13" required />
 	                    </label>
+                      {branches.length > 0 ? (
+                        <label className="grid gap-2 text-sm font-semibold">
+                          Chi nhánh
+                          <span className="relative">
+                            <Store className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                            <select name="branchId" defaultValue={defaultBranchId} className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                              {branches.map((branch) => (
+                                <option key={branch.id} value={branch.id}>
+                                  {branch.is_primary ? `${branch.name} · Chính` : branch.name}
+                                </option>
+                              ))}
+                            </select>
+                          </span>
+                        </label>
+                      ) : null}
                     <div className="grid gap-3 sm:grid-cols-[1fr_100px]">
 	                      <label className="grid gap-2 text-sm font-semibold">
 	                        Khu vực
@@ -1017,6 +1046,21 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                             Tên bàn
                             <Input name="name" defaultValue={selected.name} required />
                           </label>
+                          {branches.length > 0 ? (
+                            <label className="grid gap-2 text-sm font-semibold">
+                              Chi nhánh
+                              <span className="relative">
+                                <Store className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+                                <select name="branchId" defaultValue={selected.branch_id ?? defaultBranchId} className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-semibold outline-none focus:border-[var(--primary)]">
+                                  {branches.map((branch) => (
+                                    <option key={branch.id} value={branch.id}>
+                                      {branch.is_primary ? `${branch.name} · Chính` : branch.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </span>
+                            </label>
+                          ) : null}
                           <div className="grid gap-3 sm:grid-cols-[1fr_110px]">
                             <label className="grid gap-2 text-sm font-semibold">
                               Khu vực
@@ -1077,6 +1121,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
 
                       <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Vị trí</span><strong>{tableAreaLabel(selected)}</strong></div>
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Chi nhánh</span><strong>{branchLabel(branchesById, selected)}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Không gian</span><strong>{seatingZoneLabel(selected.seating_zone)}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Loại bàn</span><strong>{tableKindLabel(selected.table_kind)}</strong></div>
                         <div className="flex flex-wrap gap-2">
@@ -1085,6 +1130,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                           {selected.is_under_maintenance ? <Badge tone="red"><Wrench size={13} /> Bảo trì</Badge> : null}
                         </div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn đang mở</span><strong>{selected.activeOrderCount}</strong></div>
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Phiên bàn đang mở</span><strong>{selected.activeBillCount}</strong></div>
+                        <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Lịch đang vào bàn</span><strong>{selected.activeReservationCount}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Tổng chưa thanh toán</span><strong>{formatVnd(selected.unpaidTotal)}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Đơn quá giờ</span><strong>{selected.overdueCount}</strong></div>
                         <div className="flex justify-between gap-4"><span className="text-[var(--muted-foreground)]">Cập nhật gần nhất</span><strong>{formatTime(selected.oldestOrderAt)}</strong></div>

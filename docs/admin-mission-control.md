@@ -17,6 +17,8 @@ The current Mission Control scope is:
 
 - `/admin/content` tracks landing, pricing, blog, customer QR menu, sitemap/feed/llms surfaces.
 - `/admin/ai` tracks AI routing, provider readiness, 24h usage, tokens, failures, and model names.
+- `/admin/ai` tracks AI Ops Morning Brief generation, email delivery status, health scores, recent failed/skipped deliveries, severity counts, recipients, summaries, and top action items.
+- `/admin/ai` tracks branch-scoped AI Ops insights across restaurants, including open count, critical/warning split, affected branch count, latest signal time, and recent action items without exposing private order/revenue drilldown.
 - `/admin/maps` tracks map provider calls, failures, estimated cost, cache hit rate, delivery quote acceptance, and routing fallback config.
 - `/admin/atlas` maps the full project surface across frontend, backend, data, automation, and external integrations.
 - `/admin/ops` tracks Vercel Cron jobs, next-run ETA, recent run history, failure streaks, integration readiness, cache readiness, and env/secret guardrails.

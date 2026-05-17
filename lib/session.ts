@@ -4,6 +4,7 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { getDashboardSmokeSessionProfile } from "@/lib/dashboard-smoke-session";
 import { isSupabaseAuthSessionCookieName } from "@/lib/supabase/cookie-guards";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { SessionProfile } from "@/types/domain";
@@ -113,6 +114,9 @@ async function readProfileWithAdmin(user: AuthIdentity) {
 }
 
 export const getSessionProfile = cache(async (): Promise<SessionProfile | null> => {
+  const smokeProfile = await getDashboardSmokeSessionProfile();
+  if (smokeProfile) return smokeProfile;
+
   if (!(await hasAuthSessionCookie())) return null;
   const supabase = await createServerSupabaseClient();
   const user = await readAuthIdentity(supabase);

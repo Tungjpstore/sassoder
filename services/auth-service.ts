@@ -5,26 +5,29 @@ import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/
 import type { UserRole } from "@/types/domain";
 
 export type AuthEmailRegistrationStatus = "available" | "registered" | "pending_verification";
+type AuthOtpPurpose = "signup" | "recovery";
 type SignupOtpDelivery = "resend";
-
-function appendAuthTokenParams(redirectTo: string, tokenHash: string, type: "signup" | "magiclink") {
-  const url = new URL(redirectTo);
-  url.searchParams.set("token_hash", tokenHash);
-  url.searchParams.set("type", type);
-  return url.toString();
-}
 
 function authEmailFrom() {
   return process.env.AUTH_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <no-reply@logivn.com>";
 }
 
-function buildSignupOtpEmail({
-  token,
-  actionLink
-}: {
-  token: string;
-  actionLink: string;
-}) {
+function buildAuthOtpEmail({ token, purpose }: { token: string; purpose: AuthOtpPurpose }) {
+  const content =
+    purpose === "recovery"
+      ? {
+          title: "Mã đặt lại mật khẩu",
+          description: "Nhập mã này tại màn hình đặt lại mật khẩu để tạo mật khẩu mới.",
+          subject: "Mã đặt lại mật khẩu LogiVN của bạn",
+          textTitle: "LogiVN - Mã đặt lại mật khẩu"
+        }
+      : {
+          title: "Mã xác thực tài khoản",
+          description: "Nhập mã này tại màn hình xác thực email để tiếp tục tạo quán.",
+          subject: "Mã xác thực LogiVN của bạn",
+          textTitle: "LogiVN - Mã xác thực tài khoản"
+        };
+
   const html = `<!doctype html>
 <html lang="vi">
   <body style="margin:0;background:#fff8ec;font-family:Inter,Arial,sans-serif;color:#102a1f;">
@@ -32,8 +35,8 @@ function buildSignupOtpEmail({
       <div style="border:1px solid #e5d8c4;border-radius:24px;background:#fffdf8;overflow:hidden;box-shadow:0 22px 70px rgba(15,77,58,.08);">
         <div style="padding:28px 28px 10px;text-align:center;">
           <div style="font-size:13px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;color:#0f4d3a;">LogiVN</div>
-          <h1 style="margin:14px 0 8px;font-size:28px;line-height:1.2;letter-spacing:-.04em;color:#102a1f;">Mã xác thực tài khoản</h1>
-          <p style="margin:0;color:#647267;font-size:15px;line-height:1.7;">Nhập mã này tại màn hình xác thực email để tiếp tục tạo quán.</p>
+          <h1 style="margin:14px 0 8px;font-size:28px;line-height:1.2;letter-spacing:-.04em;color:#102a1f;">${content.title}</h1>
+          <p style="margin:0;color:#647267;font-size:15px;line-height:1.7;">${content.description}</p>
         </div>
         <div style="padding:14px 28px;">
           <div style="background:#f5efe4;border:1px solid #e5d8c4;border-radius:20px;padding:22px;text-align:center;">
@@ -41,11 +44,8 @@ function buildSignupOtpEmail({
             <div style="font-size:38px;letter-spacing:.24em;font-weight:900;color:#0f4d3a;">${token}</div>
           </div>
         </div>
-        <div style="padding:10px 28px 8px;text-align:center;">
-          <a href="${actionLink}" style="display:inline-block;background:#0f4d3a;color:#fff8ec;text-decoration:none;font-weight:900;border-radius:16px;padding:14px 22px;">Xác thực bằng liên kết</a>
-        </div>
         <div style="padding:14px 28px 28px;">
-          <p style="margin:0;color:#647267;font-size:13px;line-height:1.7;">Nếu bạn không yêu cầu tạo tài khoản LogiVN, có thể bỏ qua email này. Không chia sẻ mã OTP cho người khác.</p>
+          <p style="margin:0;color:#647267;font-size:13px;line-height:1.7;">Mã có thời hạn ngắn và chỉ dùng một lần. Nếu bạn không yêu cầu thao tác này, có thể bỏ qua email. Không chia sẻ mã OTP cho người khác.</p>
         </div>
       </div>
     </div>
@@ -53,33 +53,31 @@ function buildSignupOtpEmail({
 </html>`;
 
   const text = [
-    "LogiVN - Mã xác thực tài khoản",
+    content.textTitle,
     "",
     `Mã OTP của bạn: ${token}`,
     "",
-    `Hoặc bấm liên kết xác thực: ${actionLink}`,
-    "",
-    "Nếu bạn không yêu cầu tạo tài khoản LogiVN, có thể bỏ qua email này."
+    "Mã có thời hạn ngắn và chỉ dùng một lần. Không chia sẻ mã OTP cho người khác."
   ].join("\n");
 
-  return { html, text };
+  return { html, text, subject: content.subject };
 }
 
-async function sendSignupOtpEmail({
+async function sendAuthOtpEmail({
   to,
   token,
-  actionLink
+  purpose
 }: {
   to: string;
   token: string;
-  actionLink: string;
+  purpose: AuthOtpPurpose;
 }): Promise<SignupOtpDelivery> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     throw new AppError("Hệ thống email OTP chưa được cấu hình. Vui lòng liên hệ LogiVN để kiểm tra kênh gửi email.", 500);
   }
 
-  const email = buildSignupOtpEmail({ token, actionLink });
+  const email = buildAuthOtpEmail({ token, purpose });
   let response: Response;
 
   try {
@@ -92,7 +90,7 @@ async function sendSignupOtpEmail({
       body: JSON.stringify({
         from: authEmailFrom(),
         to: [to],
-        subject: "Mã xác thực LogiVN của bạn",
+        subject: email.subject,
         html: email.html,
         text: email.text
       }),
@@ -113,11 +111,13 @@ async function sendSignupOtpEmail({
 async function generateSignupOtpEmail({
   email,
   password,
-  emailRedirectTo
+  emailRedirectTo,
+  metadata
 }: {
   email: string;
   password: string;
   emailRedirectTo: string;
+  metadata?: Record<string, unknown>;
 }) {
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase.auth.admin.generateLink({
@@ -125,19 +125,19 @@ async function generateSignupOtpEmail({
     email,
     password,
     options: {
-      redirectTo: emailRedirectTo
+      redirectTo: emailRedirectTo,
+      data: metadata
     }
   });
 
-  if (error || !data.properties?.email_otp || !data.properties.hashed_token || !data.user) {
+  if (error || !data.properties?.email_otp || !data.user) {
     throw new AppError(error?.message || "Không tạo được mã OTP đăng ký.", 400);
   }
 
-  const actionLink = appendAuthTokenParams(emailRedirectTo, data.properties.hashed_token, "signup");
-  await sendSignupOtpEmail({
+  await sendAuthOtpEmail({
     to: email,
     token: data.properties.email_otp,
-    actionLink
+    purpose: "signup"
   });
 
   return data.user;
@@ -159,15 +159,41 @@ async function generateMagiclinkOtpEmail({
     }
   });
 
-  if (error || !data.properties?.email_otp || !data.properties.hashed_token) {
+  if (error || !data.properties?.email_otp) {
     throw new AppError(error?.message || "Không tạo được mã OTP xác thực.", 400);
   }
 
-  const actionLink = appendAuthTokenParams(emailRedirectTo, data.properties.hashed_token, "magiclink");
-  await sendSignupOtpEmail({
+  await sendAuthOtpEmail({
     to: email,
     token: data.properties.email_otp,
-    actionLink
+    purpose: "signup"
+  });
+}
+
+async function generateRecoveryOtpEmail({
+  email,
+  emailRedirectTo
+}: {
+  email: string;
+  emailRedirectTo: string;
+}) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase.auth.admin.generateLink({
+    type: "recovery",
+    email,
+    options: {
+      redirectTo: emailRedirectTo
+    }
+  });
+
+  if (error || !data.properties?.email_otp) {
+    throw new AppError(error?.message || "Không tạo được mã OTP đặt lại mật khẩu.", 400);
+  }
+
+  await sendAuthOtpEmail({
+    to: email,
+    token: data.properties.email_otp,
+    purpose: "recovery"
   });
 }
 
@@ -189,18 +215,21 @@ export async function loginWithPassword(email: string, password: string) {
 export async function signUpWithEmailOtp({
   email,
   password,
-  emailRedirectTo
+  emailRedirectTo,
+  metadata
 }: {
   email: string;
   password: string;
   emailRedirectTo: string;
+  metadata?: Record<string, unknown>;
 }) {
   await expireSupabaseAuthSessionCookies();
   const normalizedEmail = email.toLowerCase();
   return generateSignupOtpEmail({
     email: normalizedEmail,
     password,
-    emailRedirectTo
+    emailRedirectTo,
+    metadata
   });
 }
 
@@ -259,14 +288,11 @@ export async function getAuthEmailRegistrationStatus(email: string): Promise<Aut
 }
 
 export async function requestPasswordReset(email: string, emailRedirectTo: string) {
-  const supabase = await createServerSupabaseClient({ ignoreAuthSession: true });
-  const { error } = await supabase.auth.resetPasswordForEmail(email.toLowerCase(), {
-    redirectTo: emailRedirectTo
+  await expireSupabaseAuthSessionCookies();
+  await generateRecoveryOtpEmail({
+    email: email.toLowerCase(),
+    emailRedirectTo
   });
-
-  if (error) {
-    throw new AppError("Không gửi được hướng dẫn đặt lại mật khẩu", 400);
-  }
 }
 
 export async function updateRecoveredPassword(password: string) {
@@ -286,8 +312,36 @@ export async function updateRecoveredPassword(password: string) {
     throw new AppError("Không cập nhật được mật khẩu", 400);
   }
 
-  await supabase.auth.signOut({ scope: "global" });
+  await supabase.auth.signOut({ scope: "others" });
+}
+
+export async function verifyRecoveryOtpAndUpdatePassword({
+  email,
+  token,
+  password
+}: {
+  email: string;
+  token: string;
+  password: string;
+}) {
   await expireSupabaseAuthSessionCookies();
+  const supabase = await createServerSupabaseClient({ ignoreAuthSession: true });
+  const { error: verifyError } = await supabase.auth.verifyOtp({
+    email: email.toLowerCase(),
+    token,
+    type: "recovery"
+  });
+
+  if (verifyError) {
+    throw new AppError("Mã đặt lại mật khẩu không đúng hoặc đã hết hạn", 400);
+  }
+
+  const { error: updateError } = await supabase.auth.updateUser({ password });
+  if (updateError) {
+    throw new AppError("Không cập nhật được mật khẩu", 400);
+  }
+
+  await supabase.auth.signOut({ scope: "others" });
 }
 
 export async function logout() {

@@ -14,6 +14,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hashStaffPin, staffPinLookupHash } from "@/features/staff/services/staff-pin-service";
+import { searchAddress } from "@/services/maps/geocoding/geocoder-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
 import { createInitialRestaurantSubscription } from "@/services/subscription-service";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
@@ -1441,6 +1442,54 @@ function menuItemSeedKey(name: string) {
   return name.trim().normalize("NFC").toLowerCase();
 }
 
+type PrimaryBranchLocation = {
+  address: string;
+  latitude: number;
+  longitude: number;
+  source: "onboarding_pin" | "geocoded_address";
+};
+
+async function resolvePrimaryBranchLocation(input: {
+  address?: string;
+  storeLat?: number;
+  storeLng?: number;
+}): Promise<PrimaryBranchLocation | null> {
+  const address = input.address?.trim();
+
+  if (address && Number.isFinite(input.storeLat) && Number.isFinite(input.storeLng)) {
+    return {
+      address,
+      latitude: input.storeLat!,
+      longitude: input.storeLng!,
+      source: "onboarding_pin"
+    };
+  }
+
+  if (!address || address.length < 6) return null;
+
+  try {
+    const [result] = await searchAddress(address, {
+      limit: 1,
+      context: {
+        source: "background"
+      }
+    });
+
+    if (!result) return null;
+    return {
+      address: result.address || address,
+      latitude: result.lat,
+      longitude: result.lng,
+      source: "geocoded_address"
+    };
+  } catch (error) {
+    console.error("[restaurant/onboarding] Primary branch geocode failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+}
+
 export async function completeRestaurantOnboarding(input: {
   userId: string;
   email: string;
@@ -1480,6 +1529,7 @@ export async function completeRestaurantOnboarding(input: {
   const customBusinessType = input.customBusinessType?.trim();
   const brandDescription = input.brandDescription?.trim();
   const brandSlogan = input.brandSlogan?.trim();
+  const primaryBranchLocation = await resolvePrimaryBranchLocation(input);
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
@@ -1523,6 +1573,34 @@ export async function completeRestaurantOnboarding(input: {
     await supabase.from("restaurants").delete().eq("id", restaurant.id);
     if (existingAfterProfileConflict) return existingAfterProfileConflict;
     throw new AppError(profileError.message, 400);
+  }
+
+  let primaryBranchId: string | null = null;
+  if (primaryBranchLocation) {
+    const { data: primaryBranch, error: primaryBranchError } = await (supabase as any)
+      .from("store_branches")
+      .insert({
+        restaurant_id: restaurant.id,
+        name: "Chi nhánh chính",
+        address: primaryBranchLocation.address,
+        latitude: primaryBranchLocation.latitude,
+        longitude: primaryBranchLocation.longitude,
+        is_primary: true,
+        is_active: true,
+        metadata: {
+          createdFrom: "onboarding",
+          locationSource: primaryBranchLocation.source
+        }
+      })
+      .select("id")
+      .single();
+
+    if (primaryBranchError || !primaryBranch?.id) {
+      await supabase.from("restaurants").delete().eq("id", restaurant.id);
+      throw new AppError(primaryBranchError?.message ?? "Không tạo được chi nhánh đầu tiên", 400);
+    }
+
+    primaryBranchId = primaryBranch.id;
   }
 
   if (input.logoFile) {
@@ -1588,11 +1666,12 @@ export async function completeRestaurantOnboarding(input: {
 
   const tables = Array.from({ length: input.tableCount }, (_, index) => ({
     restaurant_id: restaurant.id,
-    name: `Bàn ${index + 1}`
+    name: `Bàn ${index + 1}`,
+    ...(primaryBranchId ? { branch_id: primaryBranchId } : {})
   }));
 
   const [{ error: tableError }, { data: insertedCategories, error: categoryError }] = await Promise.all([
-    supabase.from("tables").insert(tables),
+    (supabase as any).from("tables").insert(tables),
     supabase.from("menu_categories").insert(categories).select("id,name")
   ]);
 

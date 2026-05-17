@@ -176,8 +176,8 @@ function KitchenOpsMetric({
         </span>
         <Badge tone={tone === "red" ? "red" : tone === "yellow" ? "yellow" : tone === "blue" ? "blue" : "green"}>{label}</Badge>
       </div>
-      <p className="metric-number mt-3 text-2xl font-black">{value}</p>
-      <p className="mt-0.5 truncate text-xs font-bold opacity-80">{meta}</p>
+      <p className="metric-number mt-3 text-2xl font-semibold">{value}</p>
+      <p className="mt-0.5 truncate text-xs font-medium opacity-80">{meta}</p>
     </article>
   );
 }
@@ -202,11 +202,11 @@ function KanbanColumn({
   };
 
   return (
-    <section className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_14px_34px_rgba(15,77,58,0.05)]">
+    <section className="flex min-h-[320px] min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_14px_34px_rgba(15,77,58,0.05)] xl:min-h-[420px]">
       <header className={`flex items-center justify-between gap-3 border-b px-3 py-3 ${toneMap[tone]}`}>
         <div className="flex min-w-0 items-center gap-2">
           <Icon size={16} />
-          <h3 className="truncate text-sm font-black">{title}</h3>
+          <h3 className="truncate text-sm font-semibold">{title}</h3>
         </div>
         <Badge tone={tone}>{count}</Badge>
       </header>
@@ -222,7 +222,7 @@ function EmptyKitchenColumn({ icon: Icon, title, detail }: { icon: ElementType; 
     <div className="grid min-h-[180px] place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 text-center">
       <div>
         <Icon size={30} className="mx-auto text-[var(--primary)]/55" />
-        <p className="mt-2 text-sm font-black text-[var(--foreground)]">{title}</p>
+        <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">{title}</p>
         <p className="mt-0.5 text-xs font-semibold text-[var(--muted-foreground)]">{detail}</p>
       </div>
     </div>
@@ -264,7 +264,7 @@ function KitchenCard({
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <p className="truncate text-base font-black text-[var(--foreground)]">{orderLocationLabel(order)}</p>
+              <p className="truncate text-base font-semibold text-[var(--foreground)]">{orderLocationLabel(order)}</p>
               <Badge tone={priorityTone(score)}>{score >= 120 ? "Gấp" : score >= 85 ? "Ưu tiên" : "Ổn"}</Badge>
             </div>
             <p className="mt-0.5 text-xs font-semibold text-[var(--muted-foreground)]">
@@ -272,13 +272,13 @@ function KitchenCard({
               {order.fulfillmentType !== "DINE_IN" && order.customerName ? ` · ${order.customerName}` : ""}
             </p>
           </div>
-          <span className="metric-number shrink-0 text-sm font-black text-[var(--foreground)]">{formatVnd(order.total)}</span>
+          <span className="metric-number shrink-0 text-sm font-semibold text-[var(--foreground)]">{formatVnd(order.total)}</span>
         </div>
 
         <div className="mt-3 grid gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2.5 text-sm">
           {order.items.map((item, index) => (
             <div key={`${order.id}-${index}`} className="min-w-0">
-              <p className="truncate font-black text-[var(--foreground)]">
+              <p className="truncate font-semibold text-[var(--foreground)]">
                 {item.quantity}x {item.menuItem?.name ?? "Không rõ món"}
               </p>
               {item.note ? <p className="mt-0.5 line-clamp-2 text-xs font-semibold text-[var(--accent-strong)]">{item.note}</p> : null}
@@ -293,22 +293,22 @@ function KitchenCard({
 
         <div className="mt-3 grid grid-cols-3 gap-1.5 text-center">
           <span className="rounded-lg bg-[var(--soft-surface)] px-2 py-1.5">
-            <strong className="block text-sm font-black text-[var(--foreground)]">{items}</strong>
-            <small className="text-[10px] font-bold text-[var(--muted-foreground)]">món</small>
+            <strong className="block text-sm font-semibold text-[var(--foreground)]">{items}</strong>
+            <small className="text-[10px] font-medium text-[var(--muted-foreground)]">món</small>
           </span>
           <span className="rounded-lg bg-[var(--soft-surface)] px-2 py-1.5">
-            <strong className="block text-sm font-black text-[var(--foreground)]">{notes}</strong>
-            <small className="text-[10px] font-bold text-[var(--muted-foreground)]">note</small>
+            <strong className="block text-sm font-semibold text-[var(--foreground)]">{notes}</strong>
+            <small className="text-[10px] font-medium text-[var(--muted-foreground)]">note</small>
           </span>
           <span className="rounded-lg bg-[var(--soft-surface)] px-2 py-1.5">
-            <strong className={cn("block text-sm font-black", overdue ? "text-[var(--accent-strong)]" : "text-[var(--foreground)]")}>
+            <strong className={cn("block text-sm font-semibold", overdue ? "text-[var(--accent-strong)]" : "text-[var(--foreground)]")}>
               {order.status === "pending" ? age : dueIn ?? "--"}
             </strong>
-            <small className="text-[10px] font-bold text-[var(--muted-foreground)]">{order.status === "pending" ? "phút chờ" : "phút còn"}</small>
+            <small className="text-[10px] font-medium text-[var(--muted-foreground)]">{order.status === "pending" ? "phút chờ" : "phút còn"}</small>
           </span>
         </div>
 
-        <div className="mt-3 flex items-center gap-2 text-xs font-bold text-[var(--muted-foreground)]">
+        <div className="mt-3 flex items-center gap-2 text-xs font-medium text-[var(--muted-foreground)]">
           {order.status === "pending" ? (
             <>
               <Flame size={14} className="text-[var(--accent)]" /> Chờ bếp nhận
@@ -529,7 +529,7 @@ export function KitchenBoard({
               </Badge>
               <Badge tone={overdueOrders.length ? "red" : dueSoonCount ? "yellow" : "green"}>{overdueOrders.length ? `${overdueOrders.length} quá giờ` : dueSoonCount ? `${dueSoonCount} sắp trễ` : "Nhịp ổn"}</Badge>
             </div>
-            <h1 className="mt-2 text-2xl font-black tracking-[-0.03em] text-[var(--foreground)]">Màn hình bếp</h1>
+            <h1 className="dashboard-page-title mt-2">Màn hình bếp</h1>
             <p className="mt-0.5 text-sm font-semibold text-[var(--muted-foreground)]">
               {orders.length} lượt gọi · {totalItems} món · lâu nhất {oldestAge} phút
             </p>
@@ -538,7 +538,7 @@ export function KitchenBoard({
             type="button"
             onClick={() => void loadOrders({ force: true })}
             disabled={loading}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-black text-[var(--primary-strong)] disabled:opacity-50"
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-semibold text-[var(--primary-strong)] disabled:opacity-50"
           >
             <RefreshCw className={loading ? "animate-spin" : ""} size={16} />
             Làm mới
@@ -557,8 +557,8 @@ export function KitchenBoard({
         <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[0_14px_34px_rgba(15,77,58,0.045)]">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[var(--primary-strong)]">Priority queue</p>
-              <h2 className="text-base font-black text-[var(--foreground)]">Việc bếp cần nhìn trước</h2>
+              <p className="dashboard-eyebrow">Priority queue</p>
+              <h2 className="dashboard-section-title">Việc bếp cần nhìn trước</h2>
             </div>
             <Badge tone={priorityTone(kitchenPriorityScore(priorityOrders[0], nowMs))}>{priorityOrders.length} việc</Badge>
           </div>
@@ -570,8 +570,8 @@ export function KitchenBoard({
                 <button key={order.id} type="button" className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]/45">
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-black text-[var(--foreground)]">{orderLocationLabel(order)}</span>
-                      <span className="mt-0.5 block truncate text-xs font-bold text-[var(--muted-foreground)]">{orderItemCount(order)} món · {order.status === "pending" ? "chờ nhận" : dueIn !== null && dueIn < 0 ? `trễ ${Math.abs(dueIn)}p` : `còn ${dueIn ?? "--"}p`}</span>
+                      <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{orderLocationLabel(order)}</span>
+                      <span className="mt-0.5 block truncate text-xs font-medium text-[var(--muted-foreground)]">{orderItemCount(order)} món · {order.status === "pending" ? "chờ nhận" : dueIn !== null && dueIn < 0 ? `trễ ${Math.abs(dueIn)}p` : `còn ${dueIn ?? "--"}p`}</span>
                     </span>
                     <Badge tone={priorityTone(score)}>{score}</Badge>
                   </div>
@@ -582,9 +582,9 @@ export function KitchenBoard({
         </section>
       ) : null}
 
-      {error ? <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">{error}</div> : null}
+      {error ? <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div> : null}
 
-      <section className="grid gap-3 xl:grid-cols-3" style={{ minHeight: "calc(100vh - 380px)" }}>
+      <section className="grid gap-3 xl:min-h-[calc(100vh-380px)] xl:grid-cols-3">
         <KanbanColumn title="Chờ nhận" count={pendingOrders.length} tone="yellow" icon={Flame}>
           {pendingOrders.length ? (
             pendingOrders.map((order) => (

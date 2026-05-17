@@ -9,6 +9,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import {
+  getAllowedDeliveryStatusTransitions,
+  getRestaurantOrderActionCopy,
+  resolveMerchantAcceptTransition,
+  shouldReturnOnlineOrderToKitchenAfterPayment,
+  type DeliveryActionStatus
+} from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { OrderDto } from "@/types/domain";
 
@@ -197,6 +204,12 @@ const channelIcons: Record<ConcreteChannelFilter, ElementType> = {
   DELIVERY: Truck
 };
 
+const deliveryQuickActions: Array<{ label: string; status: DeliveryActionStatus; icon: ElementType }> = [
+  { label: "Nhận giao", status: "accepted", icon: MapPinned },
+  { label: "Đang giao", status: "out_for_delivery", icon: Navigation },
+  { label: "Đã giao", status: "delivered", icon: CheckCircle2 }
+];
+
 function formatClock(value: Date | null) {
   if (!value) return "Đang đồng bộ";
   return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
@@ -295,8 +308,10 @@ function getBillGroupRush(group: BillGroup, nowMs = Date.now()): OrderRushMeta {
   }
 
   if (group.status === "pending") {
+    const primaryOrder = group.orders.find((order) => order.status === "pending") ?? group.orders[0];
+    const actionCopy = primaryOrder ? getRestaurantOrderActionCopy(primaryOrder) : null;
     return {
-      actionLabel: "Nhận đơn",
+      actionLabel: actionCopy?.priorityActionLabel ?? "Nhận đơn",
       label: age >= 5 ? `Đơn mới ${age} phút` : "Đơn mới",
       score: 760 + age * 8,
       tone: age >= 5 ? "red" : "green"
@@ -386,7 +401,7 @@ function channelStatTone(stat: ChannelOpsStat): OrderRushTone {
 }
 
 function rushToneClass(tone: OrderRushTone) {
-  if (tone === "red") return "border-[#E11D48]/20 bg-[rgba(225,29,72,0.08)] text-[#BE123C]";
+  if (tone === "red") return "border-[var(--accent)]/28 bg-[var(--danger-soft)] text-[var(--accent-strong)]";
   if (tone === "yellow") return "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]";
   if (tone === "blue") return "border-[var(--secondary)]/35 bg-[var(--secondary-soft)] text-[var(--primary)]";
   if (tone === "green") return "border-[var(--primary)]/18 bg-[var(--primary-soft)] text-[var(--primary)]";
@@ -414,9 +429,9 @@ function OrderOpsMetric({
         </span>
         {tone === "red" ? <AlertTriangle size={17} /> : null}
       </div>
-      <p className="mt-2 text-[11px] font-black uppercase tracking-[0.12em] opacity-80">{label}</p>
-      <p className="metric-number mt-0.5 text-2xl font-black">{value}</p>
-      <p className="mt-0.5 truncate text-xs font-semibold opacity-80">{meta}</p>
+      <p className="mt-2 text-xs font-semibold uppercase opacity-80">{label}</p>
+      <p className="metric-number mt-0.5 text-2xl font-semibold">{value}</p>
+      <p className="mt-0.5 truncate text-xs font-medium opacity-80">{meta}</p>
     </article>
   );
 }
@@ -464,7 +479,12 @@ function applyOptimisticOrderAction(
       const sameBill = Boolean(targetBillId && order.bill?.id === targetBillId);
 
       if (action === "confirm-payment" && (sameOrder || sameBill)) {
-        const shouldReturnToKitchen = order.fulfillmentType !== "DINE_IN" && (order.status === "waiting_confirm" || order.status === "waiting_payment");
+        const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          fulfillmentType: order.fulfillmentType,
+          billId: order.bill?.id ?? null
+        });
         return {
           ...order,
           status: shouldReturnToKitchen ? ("pending" as const) : ("paid" as const),
@@ -477,9 +497,19 @@ function applyOptimisticOrderAction(
       if (!sameOrder) return order;
 
       if (action === "accept") {
+        const acceptTransition = resolveMerchantAcceptTransition(order);
+        const nextDeliveryStatus = acceptTransition.next ?? order.deliveryStatus;
+        const shouldUpdateDeliveryStatus =
+          acceptTransition.allowed &&
+          order.fulfillmentType === "DELIVERY" &&
+          nextDeliveryStatus !== undefined &&
+          nextDeliveryStatus !== order.deliveryStatus;
+
         return {
           ...order,
           status: "ordering" as const,
+          deliveryStatus: shouldUpdateDeliveryStatus ? nextDeliveryStatus : order.deliveryStatus,
+          deliveryTrackingUpdatedAt: shouldUpdateDeliveryStatus ? now.toISOString() : order.deliveryTrackingUpdatedAt,
           acceptedAt: now.toISOString(),
           serviceDueAt: nextDue
         };
@@ -584,6 +614,7 @@ export function OrdersBoard({
   const [locationFilter, setLocationFilterValue] = useState(searchParams.get("source") ?? "all");
   const [channelFilter, setChannelFilterValue] = useState<ChannelFilter>(() => readChannelFilter(searchParams.get("channel")));
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [clockTick, setClockTick] = useState(() => Date.now());
 
   function replaceUrlState(updates: {
@@ -767,6 +798,7 @@ export function OrdersBoard({
     const previousOrders = orders;
     setMutatingOrderId(orderId);
     setError(null);
+    setNotice(null);
     setOrders((current) => applyOptimisticOrderAction(current, orderId, action, body));
 
     try {
@@ -781,6 +813,9 @@ export function OrdersBoard({
       });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại");
+      if (action === "confirm-payment") {
+        setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
+      }
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previousOrders);
@@ -1116,6 +1151,9 @@ export function OrdersBoard({
     selectedGroup?.orders.find((order) => order.paymentStatus === "waiting_confirm" || order.paymentStatus === "waiting_payment") ??
     (selectedGroup && (selectedGroup.status === "waiting_confirm" || selectedGroup.status === "waiting_payment") ? selectedGroup.orders[0] : null);
   const selectedDeliveryOrder = selectedGroup?.orders.find((order) => order.fulfillmentType === "DELIVERY") ?? null;
+  const selectedDeliveryTransitions = selectedDeliveryOrder
+    ? getAllowedDeliveryStatusTransitions(selectedDeliveryOrder.deliveryStatus)
+    : [];
   const selectedCourierLocation = selectedDeliveryOrder
     ? courierLocations[selectedDeliveryOrder.id] ?? selectedDeliveryOrder.deliveryCourierLocation ?? null
     : null;
@@ -1133,6 +1171,7 @@ export function OrdersBoard({
     : null;
   const shortcutPendingOrder = selectedPendingOrders[0] ?? null;
   const shortcutServingOrder = selectedServingOrders[0] ?? null;
+  const shortcutPendingActionCopy = shortcutPendingOrder ? getRestaurantOrderActionCopy(shortcutPendingOrder) : null;
   const hasSelectedGroup = Boolean(selectedGroup);
   const shortcutPendingOrderId = shortcutPendingOrder?.id ?? null;
   const shortcutServingOrderId = shortcutServingOrder?.id ?? null;
@@ -1194,6 +1233,7 @@ export function OrdersBoard({
     <div className="grid gap-3">
       {confirmDialog}
       {error && <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div>}
+      {notice && <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">{notice}</div>}
 
       <section className="admin-hero-panel rounded-[14px] p-4">
         <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -1208,9 +1248,9 @@ export function OrdersBoard({
               <Badge tone={pressureTone === "red" ? "red" : pressureTone === "yellow" ? "yellow" : pressureTone === "blue" ? "blue" : "green"}>{pressureLabel}</Badge>
               <Badge tone={operationsSnapshot.open ? "blue" : "green"}>{operationsSnapshot.open} bill đang mở</Badge>
             </div>
-            <h2 className="mt-3 text-2xl font-black tracking-normal text-[var(--foreground)] sm:text-3xl">Trung tâm xử lý đơn realtime</h2>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
-              Nhận đơn, theo dõi bếp, chốt phục vụ, xác nhận VietQR và điều phối giao hàng trong một màn đủ nhanh cho giờ cao điểm.
+            <h2 className="dashboard-page-title mt-3">Trung tâm xử lý đơn realtime</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
+              Xác nhận đơn online, theo dõi bếp, chốt phục vụ, xác nhận VietQR và điều phối giao hàng trong một màn đủ nhanh cho giờ cao điểm.
             </p>
           </div>
           <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
@@ -1229,7 +1269,7 @@ export function OrdersBoard({
                 type="button"
                 onClick={() => void loadOrders()}
                 disabled={loading}
-                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-black text-[var(--primary)] disabled:opacity-60"
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] disabled:opacity-60"
               >
                 <RefreshCw size={15} className={loading ? "animate-spin" : undefined} />
                 Làm mới
@@ -1237,7 +1277,7 @@ export function OrdersBoard({
               <button
                 type="button"
                 onClick={() => setFilter(operationsSnapshot.pending ? "pending" : operationsSnapshot.payment ? "waiting_confirm" : "all")}
-                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-black text-[var(--background)]"
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-semibold text-[var(--background)]"
               >
                 <Flame size={15} />
                 Ưu tiên
@@ -1297,13 +1337,13 @@ export function OrdersBoard({
         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
             <div>
-              <p className="text-sm font-black text-[var(--foreground)]">Điều phối theo kênh</p>
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tách QR tại bàn, khách đến lấy và giao hàng để không miss đơn lúc cao điểm.</p>
+              <p className="text-sm font-semibold text-[var(--foreground)]">Điều phối theo kênh</p>
+              <p className="text-xs font-medium text-[var(--muted-foreground)]">Tách QR tại bàn, khách đến lấy và giao hàng để không miss đơn lúc cao điểm.</p>
             </div>
             <button
               type="button"
               onClick={() => setChannelFilter("all")}
-              className={`inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-black transition ${
+              className={`inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold transition ${
                 channelFilter === "all"
                   ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]"
                   : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]"
@@ -1339,10 +1379,10 @@ export function OrdersBoard({
                   </div>
                   <div className="mt-3 flex items-end justify-between gap-3">
                     <span className="min-w-0">
-                      <span className="block text-sm font-black">{stat.label}</span>
-                      <span className="metric-number mt-0.5 block text-2xl font-black">{stat.count}</span>
+                      <span className="block text-sm font-semibold">{stat.label}</span>
+                      <span className="metric-number mt-0.5 block text-2xl font-semibold">{stat.count}</span>
                     </span>
-                    <span className="metric-number text-right text-sm font-black">{formatVnd(stat.revenue)}</span>
+                    <span className="metric-number text-right text-sm font-semibold">{formatVnd(stat.revenue)}</span>
                   </div>
                   <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
                     <div
@@ -1364,11 +1404,11 @@ export function OrdersBoard({
                   <Clock3 size={15} />
                 </span>
                 <div>
-                  <p className="text-sm font-black text-[var(--foreground)]">Ưu tiên giờ cao điểm</p>
-                  <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đơn già, quá giờ và thanh toán chờ xác nhận.</p>
+                  <p className="text-sm font-semibold text-[var(--foreground)]">Ưu tiên giờ cao điểm</p>
+                  <p className="text-xs font-medium text-[var(--muted-foreground)]">Đơn già, quá giờ và thanh toán chờ xác nhận.</p>
                 </div>
               </div>
-              <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-black text-[var(--muted-foreground)]">
+              <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
                 Top {operationsSnapshot.priorityGroups.length}
               </span>
             </div>
@@ -1382,12 +1422,12 @@ export function OrdersBoard({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0">
-                      <span className="block truncate text-sm font-black">{group.tableName}</span>
+                      <span className="block truncate text-sm font-semibold">{group.tableName}</span>
                       <span className="mt-0.5 block truncate text-xs font-semibold opacity-80">#{group.id.slice(0, 8).toUpperCase()} · {getBillGroupAge(group, clockTick)} phút</span>
                     </span>
-                    <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-[11px] font-black">{group.rush.actionLabel}</span>
+                    <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-xs font-semibold">{group.rush.actionLabel}</span>
                   </div>
-                  <p className="mt-2 text-sm font-black">{group.rush.label}</p>
+                  <p className="mt-2 text-sm font-semibold">{group.rush.label}</p>
                   <p className="metric-number mt-1 text-xs font-semibold opacity-80">{formatVnd(group.total)}</p>
                 </button>
               ))}
@@ -1396,7 +1436,7 @@ export function OrdersBoard({
         ) : null}
 
         <div className="mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Trạng thái
             <select
               value={filter}
@@ -1408,7 +1448,7 @@ export function OrdersBoard({
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Nguồn
             <select
               value={locationFilter}
@@ -1420,7 +1460,7 @@ export function OrdersBoard({
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Kênh
             <select
               value={channelFilter}
@@ -1462,7 +1502,7 @@ export function OrdersBoard({
               type="button"
               onClick={() => void cleanupVisibleTestOrders()}
               disabled={loading}
-              className="inline-flex h-11 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-700 transition hover:border-red-300 disabled:opacity-60"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--accent)]/25 bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--accent-strong)] transition hover:border-[var(--accent)]/45 disabled:opacity-60"
             >
               <Trash2 size={14} />
               Dọn đơn test
@@ -1487,7 +1527,7 @@ export function OrdersBoard({
         </div>
 
         <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-          <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em]">
+          <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase">
             <span>Mã đơn</span>
             <span>Nguồn</span>
             <span>Món / lượt gọi</span>
@@ -1502,7 +1542,7 @@ export function OrdersBoard({
                   <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--primary)]">
                     <Search size={19} />
                   </span>
-                  <h3 className="mt-3 text-base font-black text-[var(--foreground)]">Không có đơn trong bộ lọc này</h3>
+                  <h3 className="mt-3 text-base font-semibold text-[var(--foreground)]">Không có đơn trong bộ lọc này</h3>
                   <p className="mt-1 leading-6">Đổi trạng thái, kênh hoặc xoá bộ lọc để quay lại toàn bộ luồng vận hành hiện tại.</p>
                   <button
                     type="button"
@@ -1512,7 +1552,7 @@ export function OrdersBoard({
                       setChannelFilter("all");
                       setQuery("");
                     }}
-                    className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary-strong)] px-4 text-sm font-black text-[var(--background)]"
+                    className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary-strong)] px-4 text-sm font-semibold text-[var(--background)]"
                   >
                     Xoá bộ lọc
                   </button>
@@ -1543,7 +1583,7 @@ export function OrdersBoard({
                   aria-pressed={selectedGroup?.id === group.id}
                   className={`dashboard-data-row dashboard-selectable-row grid cursor-pointer gap-3 border-l-4 px-4 py-3 lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
                     rush.tone === "red"
-                      ? "border-l-[#E11D48]"
+                      ? "border-l-[var(--accent)]"
                       : rush.tone === "yellow"
                         ? "border-l-[var(--accent)]"
                         : rush.tone === "blue"
@@ -1626,8 +1666,8 @@ export function OrdersBoard({
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
-                <h2 id="order-detail-drawer-title" className="mt-1 truncate text-xl font-semibold text-[var(--foreground)]">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
+                <h2 id="order-detail-drawer-title" className="dashboard-section-title mt-1 truncate">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Badge tone={statusTone(selectedGroup.status)}>{orderStatusLabel(selectedGroup.status)}</Badge>
                   {selectedGroup.overdueCount > 0 && <Badge tone="yellow">{selectedGroup.overdueCount} đơn quá giờ</Badge>}
@@ -1642,6 +1682,20 @@ export function OrdersBoard({
                 <XCircle size={18} />
               </button>
             </div>
+            {(error || notice) && (
+              <div className="grid shrink-0 gap-2 px-4 pt-3 sm:px-5">
+                {error ? (
+                  <div role="alert" className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
+                    {error}
+                  </div>
+                ) : null}
+                {notice ? (
+                  <div role="status" className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">
+                    {notice}
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
@@ -1728,7 +1782,7 @@ export function OrdersBoard({
                       )}
                     </div>
 
-                    <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+                    <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                       Chọn shipper
                       <select
                         value={selectedDeliveryOrder.deliveryCourierId ?? ""}
@@ -1827,18 +1881,16 @@ export function OrdersBoard({
                     ) : null}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: "Nhận giao", status: "accepted", icon: MapPinned },
-                      { label: "Đang giao", status: "out_for_delivery", icon: Navigation },
-                      { label: "Đã giao", status: "delivered", icon: CheckCircle2 }
-                    ].map((item) => {
+                    {deliveryQuickActions.map((item) => {
                       const Icon = item.icon;
+                      const canUseStatus = selectedDeliveryTransitions.includes(item.status);
                       return (
                         <Button
                           key={item.status}
                           variant={selectedDeliveryOrder.deliveryStatus === item.status ? "primary" : "secondary"}
                           onClick={() => mutateOrder(selectedDeliveryOrder.id, "delivery-status", { status: item.status })}
-                          disabled={mutatingOrderId === selectedDeliveryOrder.id}
+                          disabled={mutatingOrderId === selectedDeliveryOrder.id || !canUseStatus}
+                          title={canUseStatus ? item.label : "Cần cập nhật theo đúng thứ tự giao hàng"}
                           className="min-h-11 shadow-none hover:shadow-none"
                         >
                           <Icon size={15} />
@@ -1865,33 +1917,36 @@ export function OrdersBoard({
                   </div>
                 ) : null}
 
-                {selectedPendingOrders.map((order) => (
-                  <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn mới"}</p>
-                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">{order.items.length} món · {minutesSince(order.createdAt)} phút trước</p>
+                {selectedPendingOrders.map((order) => {
+                  const actionCopy = getRestaurantOrderActionCopy(order);
+                  return (
+                    <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn mới"}</p>
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{order.items.length} món · {minutesSince(order.createdAt)} phút trước</p>
+                        </div>
+                        <Badge>{actionCopy.pendingBadge}</Badge>
                       </div>
-                      <Badge>Chờ nhận</Badge>
-                    </div>
-                    <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-3" : "grid-cols-2"}`}>
-                      <Button onClick={() => mutateOrder(order.id, "accept", { minutes: 15 })} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
-                        <Check size={16} />
-                        Nhận đơn
-                      </Button>
-                      <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
-                        <XCircle size={16} />
-                        Từ chối
-                      </Button>
-                      {canManageTestOrders && canDeleteTestOrder(order) ? (
-                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
-                          <Trash2 size={16} />
-                          Xoá test
+                      <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-3" : "grid-cols-2"}`}>
+                        <Button onClick={() => mutateOrder(order.id, "accept", { minutes: 15 })} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                          <Check size={16} />
+                          {actionCopy.acceptLabel}
                         </Button>
-                      ) : null}
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                          <XCircle size={16} />
+                          {actionCopy.rejectLabel}
+                        </Button>
+                        {canManageTestOrders && canDeleteTestOrder(order) ? (
+                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
+                            <Trash2 size={16} />
+                            Xoá test
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {selectedServingOrders.map((order) => {
                   const dueIn = minutesUntil(order.serviceDueAt);
@@ -1923,7 +1978,7 @@ export function OrdersBoard({
                           Huỷ đơn
                         </Button>
                         {canManageTestOrders && canDeleteTestOrder(order) ? (
-                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
                             <Trash2 size={16} />
                             Xoá test
                           </Button>
@@ -1948,7 +2003,7 @@ export function OrdersBoard({
                         Huỷ đơn
                       </Button>
                       {canManageTestOrders && canDeleteTestOrder(order) ? (
-                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
                           <Trash2 size={16} />
                           Xoá test
                         </Button>
@@ -1964,7 +2019,7 @@ export function OrdersBoard({
                         <p className="text-sm font-semibold text-[var(--foreground)]">Thanh toán hóa đơn</p>
                         <p className="mt-1 text-xs text-[var(--muted-foreground)]">{paymentMethodLabel(selectedGroup.paymentMethod)} · {formatVnd(selectedGroup.total)}</p>
                       </div>
-                      <Badge tone="yellow">{orderStatusLabel(selectedGroup.status)}</Badge>
+                      <Badge tone="yellow">{paymentStatusLabel(selectedPaymentOrder.paymentStatus)}</Badge>
                     </div>
                     <Button onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")} disabled={mutatingOrderId === selectedPaymentOrder.id} className="mt-3 w-full shadow-none hover:shadow-none">
                       <CheckCircle2 size={16} />
@@ -1995,11 +2050,11 @@ export function OrdersBoard({
               <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                 <div className="flex justify-between gap-4 text-sm">
                   <span className="text-[var(--muted-foreground)]">Tạm tính</span>
-                  <span className="metric-number font-black">{formatVnd(Math.max(0, selectedGroup.total - selectedDeliveryFee))}</span>
+                  <span className="metric-number font-semibold">{formatVnd(Math.max(0, selectedGroup.total - selectedDeliveryFee))}</span>
                 </div>
                 <div className="mt-3 flex justify-between gap-4 text-sm">
                   <span className="text-[var(--muted-foreground)]">Phí giao hàng</span>
-                  <span className="metric-number font-black">{formatVnd(selectedDeliveryFee)}</span>
+                  <span className="metric-number font-semibold">{formatVnd(selectedDeliveryFee)}</span>
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-4">
                   <span className="font-semibold text-[var(--foreground)]">Tổng tiền</span>
@@ -2011,10 +2066,10 @@ export function OrdersBoard({
             <div className="shrink-0 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-4 py-3 backdrop-blur-xl sm:px-5">
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0">
-                  <span className="block truncate text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+                  <span className="block truncate text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                     {selectedGroup.tableName}
                   </span>
-                  <span className="metric-number mt-0.5 block text-lg font-black text-[var(--foreground)]">
+                  <span className="metric-number mt-0.5 block text-lg font-semibold text-[var(--foreground)]">
                     {formatVnd(selectedGroup.total)}
                   </span>
                 </span>
@@ -2030,11 +2085,11 @@ export function OrdersBoard({
                     onClick={() => mutateOrder(shortcutPendingOrder.id, "accept", { minutes: 15 })}
                     disabled={mutatingOrderId === shortcutPendingOrder.id}
                     aria-keyshortcuts="A"
-                    title="Nhận đơn nhanh"
+                    title={shortcutPendingActionCopy?.acceptTitle ?? "Nhận đơn nhanh"}
                     className="min-h-12 flex-1 shadow-none hover:shadow-none"
                   >
                     <Check size={16} />
-                    Nhận đơn
+                    {shortcutPendingActionCopy?.acceptLabel ?? "Nhận đơn"}
                   </Button>
                 ) : shortcutServingOrder ? (
                   <Button
@@ -2102,7 +2157,7 @@ export function OrdersBoard({
                     className="min-h-12 shadow-none hover:shadow-none"
                   >
                     <XCircle size={16} />
-                    Từ chối
+                    {shortcutPendingActionCopy?.rejectLabel ?? "Từ chối"}
                   </Button>
                 ) : null}
               </div>

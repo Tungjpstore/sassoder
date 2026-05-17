@@ -110,6 +110,47 @@ export function buildDeliveryQuoteFingerprint(input: {
   });
 }
 
+export function resolveDeliveryQuoteCheckoutState(input: {
+  mode: RemoteFulfillmentMode;
+  expectedFingerprint: string;
+  quoteFingerprint?: string | null;
+  quoteAccepted?: boolean;
+  quoteError?: string | null;
+  loadingQuote?: boolean;
+}) {
+  if (input.mode !== "DELIVERY") {
+    return {
+      required: false,
+      fresh: true,
+      accepted: true,
+      stale: false,
+      pending: false,
+      message: null as string | null
+    };
+  }
+
+  const hasQuote = Boolean(input.quoteFingerprint);
+  const fresh = hasQuote && input.quoteFingerprint === input.expectedFingerprint;
+  const pending = Boolean(input.loadingQuote);
+  const stale = hasQuote && !fresh;
+  const accepted = fresh && input.quoteAccepted === true && !pending;
+  let message: string | null = null;
+
+  if (pending) message = "Đang tính lại phí giao hàng...";
+  else if (stale) message = "Phí giao hàng đã thay đổi. Vui lòng tính lại trước khi đặt.";
+  else if (fresh && input.quoteError) message = input.quoteError;
+  else if (!accepted) message = "Vui lòng tính phí giao hàng trước khi đặt.";
+
+  return {
+    required: true,
+    fresh,
+    accepted,
+    stale,
+    pending,
+    message
+  };
+}
+
 export function remoteCheckoutReducer(
   _state: CheckoutState<RemoteCheckoutScreen>,
   action: RemoteCheckoutAction

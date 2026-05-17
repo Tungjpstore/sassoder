@@ -1,6 +1,6 @@
 export default function AdminStaffLoading() {
   return (
-    <main className="stitch-admin admin-shell-bg dashboard-density min-h-screen px-3 py-4 text-[var(--foreground)] md:px-6 lg:pl-80">
+    <main className="stitch-admin admin-shell-bg dashboard-density dashboard-route-fallback">
       <section className="mx-auto grid w-full max-w-[1500px] gap-3">
         <div className="staff-overview-hero staff-ops-hero-grid rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[var(--shadow-soft)]">
           <div className="grid gap-3">

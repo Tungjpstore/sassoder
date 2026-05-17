@@ -60,16 +60,20 @@ import type {
   InventoryCategory,
   InventoryIngredient,
   InventoryIntelligence,
+  InventoryPurchaseOrder,
   InventoryRecipeMenuItem,
   InventorySnapshot,
+  InventoryStockBalance,
   InventoryStockBalanceStatus,
   InventoryWarehouseCommandCenter
 } from "@/services/inventory-service";
 import type { InventoryMovementType } from "@/types/domain";
 
 type IntakeMode = "text" | "file" | "voice" | "ocr";
-type WorkbenchTab = "intake" | "ingredients" | "stock" | "counting" | "transfers" | "purchasing" | "recipes" | "alerts" | "ledger";
+type WorkbenchTab = "intake" | "ingredients" | "stock" | "waste" | "counting" | "transfers" | "purchasing" | "recipes" | "alerts" | "ledger";
 type DrawerState = { mode: "create" } | { mode: "edit"; ingredient: InventoryIngredient } | null;
+type ManualMovementType = Extract<InventoryMovementType, "receive" | "adjust_increase" | "adjust_decrease" | "waste" | "expired" | "internal_use" | "supplier_return" | "rollback">;
+type LossMovementType = Extract<InventoryMovementType, "waste" | "expired" | "internal_use" | "supplier_return" | "adjust_decrease">;
 
 type IntakeDraftRow = {
   name: string;
@@ -99,6 +103,27 @@ type TransferDraftLine = {
   note?: string;
 };
 
+type PurchaseDraftLine = {
+  ingredientId: string;
+  name: string;
+  unit: string;
+  orderQuantity: number;
+  orderUnit: string;
+  unitCost: number;
+  expirationDate?: string;
+  batchCode?: string;
+  note?: string;
+};
+
+type PurchaseReceiptDraftLine = {
+  purchaseOrderLineId: string;
+  receivedQuantity: string;
+  unitCost: string;
+  expirationDate: string;
+  batchCode: string;
+  note: string;
+};
+
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
 
 type InventoryOcrResponse = {
@@ -120,12 +145,23 @@ type SpeechRecognitionLike = {
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
-const movementTypes: Array<{ value: Exclude<InventoryMovementType, "deduct_sale">; label: string }> = [
+const movementTypes: Array<{ value: ManualMovementType; label: string }> = [
   { value: "receive", label: "Nhập kho" },
   { value: "adjust_increase", label: "Điều chỉnh tăng" },
   { value: "adjust_decrease", label: "Điều chỉnh giảm" },
   { value: "waste", label: "Hao hụt" },
+  { value: "expired", label: "Hết hạn" },
+  { value: "internal_use", label: "Dùng nội bộ" },
+  { value: "supplier_return", label: "Trả NCC" },
   { value: "rollback", label: "Hoàn kho" }
+];
+
+const lossMovementTypes: Array<{ value: LossMovementType; label: string; hint: string }> = [
+  { value: "waste", label: "Hư hỏng / đổ bỏ", hint: "Ghi nhận nguyên liệu hỏng, rơi vãi hoặc pha chế lỗi." },
+  { value: "expired", label: "Hết hạn", hint: "Loại khỏi tồn kho vì quá HSD hoặc không còn an toàn." },
+  { value: "supplier_return", label: "Trả nhà cung cấp", hint: "Xuất giảm do trả lại NCC, giữ audit theo lô." },
+  { value: "internal_use", label: "Dùng nội bộ", hint: "Dùng cho training, R&D, sampling hoặc phục vụ nội bộ." },
+  { value: "adjust_decrease", label: "Mất lệch / điều chỉnh giảm", hint: "Dùng khi phát hiện lệch tồn nhưng chưa qua phiên kiểm kê." }
 ];
 
 function formatQuantity(value: number, unit: string) {
@@ -144,6 +180,31 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function daysUntilDate(value: string | null) {
+  if (!value) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(target.getTime())) return null;
+  return Math.ceil((target.getTime() - today.getTime()) / 86_400_000);
+}
+
+function expirationCopy(value: string | null) {
+  const days = daysUntilDate(value);
+  if (days === null) return "Không HSD";
+  if (days < 0) return `Quá hạn ${Math.abs(days)} ngày`;
+  if (days === 0) return "Hết hạn hôm nay";
+  return `Còn ${days} ngày`;
 }
 
 function movementLabel(type: InventoryMovementType) {
@@ -262,6 +323,59 @@ function alertTone(severity: string): "green" | "yellow" | "red" | "blue" {
   if (severity === "medium") return "yellow";
   if (severity === "low") return "blue";
   return "green";
+}
+
+function alertSeverityLabel(severity: string) {
+  const labels: Record<string, string> = {
+    critical: "Khẩn cấp",
+    high: "Cao",
+    medium: "Vừa",
+    low: "Theo dõi"
+  };
+  return labels[severity] ?? severity;
+}
+
+function alertTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    low_stock: "Sắp hết",
+    out_of_stock: "Hết hàng",
+    expiring_soon: "Sắp HSD",
+    expired: "Quá HSD",
+    abnormal_usage: "Dùng bất thường",
+    waste_spike: "Hao hụt tăng",
+    missing_inventory: "Thiếu balance",
+    supplier_delay: "NCC trễ",
+    price_spike: "Tăng giá",
+    recipe_gap: "Thiếu định mức"
+  };
+  return labels[type] ?? type;
+}
+
+function alertStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    open: "Mở",
+    acknowledged: "Đã xem",
+    resolved: "Xong",
+    dismissed: "Bỏ qua"
+  };
+  return labels[status] ?? status;
+}
+
+function alertPriorityScore(alert: { severity: string; alertType: string; detectedAt: string }) {
+  const severityScore: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+  const typeScore: Record<string, number> = {
+    out_of_stock: 9,
+    expired: 8,
+    supplier_delay: 7,
+    waste_spike: 6,
+    abnormal_usage: 5,
+    low_stock: 4,
+    expiring_soon: 3,
+    missing_inventory: 2,
+    price_spike: 1,
+    recipe_gap: 0
+  };
+  return (severityScore[alert.severity] ?? 0) * 100 + (typeScore[alert.alertType] ?? 0);
 }
 
 function locationLabel(ingredient: InventoryIngredient) {
@@ -576,8 +690,8 @@ export function InventoryWorkspaceV2({
         <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Ưu tiên hành động hôm nay</p>
-              <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Nhìn 3 giây biết cần làm gì</h2>
+              <p className="dashboard-eyebrow">Ưu tiên hành động hôm nay</p>
+              <h2 className="dashboard-section-title mt-1">Nhìn 3 giây biết cần làm gì</h2>
             </div>
             <Badge tone={urgentActions.length > 0 ? "yellow" : "green"}>{urgentActions.length} việc cần xử lý</Badge>
           </div>
@@ -597,8 +711,8 @@ export function InventoryWorkspaceV2({
       <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Gợi ý đặt hàng</p>
-            <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Bảng gợi ý đặt hàng thông minh</h2>
+            <p className="dashboard-eyebrow">Gợi ý đặt hàng</p>
+            <h2 className="dashboard-section-title mt-1">Bảng gợi ý đặt hàng thông minh</h2>
           </div>
           <Badge tone={reorderSuggestions.length > 0 ? "yellow" : "green"}>{reorderSuggestions.length} SKU</Badge>
         </div>
@@ -610,6 +724,7 @@ export function InventoryWorkspaceV2({
           <WorkbenchButton active={activeTab === "intake"} icon={Sparkles} label="AI nhập kho" onClick={() => setActiveTab("intake")} />
           <WorkbenchButton active={activeTab === "ingredients"} icon={Boxes} label="Quản lý nguyên liệu" onClick={() => setActiveTab("ingredients")} />
           <WorkbenchButton active={activeTab === "stock"} icon={Warehouse} label="Stock board" onClick={() => setActiveTab("stock")} />
+          <WorkbenchButton active={activeTab === "waste"} icon={Trash2} label="Hao hụt & HSD" onClick={() => setActiveTab("waste")} />
           <WorkbenchButton active={activeTab === "counting"} icon={ClipboardList} label="Kiểm kê" onClick={() => setActiveTab("counting")} />
           <WorkbenchButton active={activeTab === "transfers"} icon={ArrowDownUp} label="Điều chuyển" onClick={() => setActiveTab("transfers")} />
           <WorkbenchButton active={activeTab === "purchasing"} icon={Truck} label="NCC & PO" onClick={() => setActiveTab("purchasing")} />
@@ -657,6 +772,8 @@ export function InventoryWorkspaceV2({
 
           {activeTab === "stock" ? <WarehouseStockBoard warehouse={warehouse} ingredients={ingredients} /> : null}
 
+          {activeTab === "waste" ? <WasteExpirationDesk warehouse={warehouse} ingredients={ingredients} intelligence={intelligence} /> : null}
+
           {activeTab === "counting" ? <InventoryCountingDesk warehouse={warehouse} ingredients={ingredients} /> : null}
 
           {activeTab === "transfers" ? <InventoryTransferDesk warehouse={warehouse} ingredients={ingredients} /> : null}
@@ -683,9 +800,9 @@ function InventoryPageHeader({ query, onQueryChange }: { query: string; onQueryC
     <section className="rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <p className="text-xs font-bold text-[var(--muted-foreground)]">Trang chủ / Kho hàng</p>
-          <h1 className="mt-1 text-3xl font-black tracking-tight text-[var(--foreground)]">Kho hàng</h1>
-          <p className="mt-1 max-w-2xl text-sm font-semibold text-[var(--muted-foreground)]">Tối ưu nhập hàng, cảnh báo sớm và kiểm soát nguyên liệu cho quán.</p>
+          <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Trang chủ / Kho hàng</p>
+          <h1 className="dashboard-page-title mt-1">Kho hàng</h1>
+          <p className="dashboard-body-copy mt-1 max-w-2xl">Tối ưu nhập hàng, cảnh báo sớm và kiểm soát nguyên liệu cho quán.</p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <label className="relative min-w-0 sm:w-96">
@@ -1165,6 +1282,7 @@ function WarehouseStockBoard({ warehouse, ingredients }: { warehouse: InventoryW
           ingredientName: ingredient.name,
           ingredientUnit: ingredient.unit,
           locationId: null,
+          batchId: null,
           branchName: null,
           locationName: locationLabel(ingredient),
           batchCode: null,
@@ -1174,6 +1292,7 @@ function WarehouseStockBoard({ warehouse, ingredients }: { warehouse: InventoryW
           incomingQuantity: 0,
           availableQuantity: ingredient.onHandQuantity,
           minimumQuantity: ingredient.minimumQuantity,
+          referenceUnitCost: ingredient.referenceUnitCost,
           status: ingredient.minimumQuantity > 0 && ingredient.onHandQuantity <= ingredient.minimumQuantity ? ("low" as const) : ("available" as const)
         }));
 
@@ -1240,6 +1359,223 @@ function WarehouseStockBoard({ warehouse, ingredients }: { warehouse: InventoryW
         ))}
       </div>
     </section>
+  );
+}
+
+function WasteExpirationDesk({
+  warehouse,
+  ingredients,
+  intelligence
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  intelligence: InventoryIntelligence;
+}) {
+  const stockRows = useMemo<InventoryStockBalance[]>(
+    () =>
+      warehouse.stockBalances.length > 0
+        ? warehouse.stockBalances.filter((row) => row.onHandQuantity > 0 || row.availableQuantity > 0)
+        : ingredients.slice(0, 30).map((ingredient) => ({
+            id: ingredient.id,
+            ingredientId: ingredient.id,
+            ingredientName: ingredient.name,
+            ingredientUnit: ingredient.unit,
+            locationId: null,
+            batchId: null,
+            branchName: null,
+            locationName: locationLabel(ingredient),
+            batchCode: null,
+            expirationDate: null,
+            onHandQuantity: ingredient.onHandQuantity,
+            reservedQuantity: 0,
+            incomingQuantity: 0,
+            availableQuantity: ingredient.onHandQuantity,
+            minimumQuantity: ingredient.minimumQuantity,
+            referenceUnitCost: ingredient.referenceUnitCost,
+            status: ingredient.minimumQuantity > 0 && ingredient.onHandQuantity <= ingredient.minimumQuantity ? "low" : "available"
+          })),
+    [ingredients, warehouse.stockBalances]
+  );
+  const [selectedStockId, setSelectedStockId] = useState(stockRows[0]?.id ?? "");
+  const [movementType, setMovementType] = useState<LossMovementType>("waste");
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState("");
+  const selectedRow = stockRows.find((row) => row.id === selectedStockId) ?? stockRows[0] ?? null;
+  const selectedMovement = lossMovementTypes.find((item) => item.value === movementType);
+  const parsedQuantity = parseNumber(quantity);
+  const isOverAvailable = Boolean(selectedRow && parsedQuantity > selectedRow.availableQuantity);
+  const expiringRows = stockRows
+    .map((row) => ({ row, days: daysUntilDate(row.expirationDate) }))
+    .filter((item): item is { row: InventoryStockBalance; days: number } => item.days !== null && item.row.availableQuantity > 0 && item.days <= 7)
+    .sort((a, b) => a.days - b.days)
+    .slice(0, 12);
+  const expiredRows = expiringRows.filter((item) => item.days <= 0);
+  const expiringValue = expiringRows.reduce((sum, item) => sum + item.row.availableQuantity * item.row.referenceUnitCost, 0);
+  const lossValue = intelligence.wasteSignals.reduce((sum, item) => sum + item.wasteCost, 0);
+
+  const primeLossForm = (row: InventoryStockBalance, nextType: LossMovementType) => {
+    setSelectedStockId(row.id);
+    setMovementType(nextType);
+    setQuantity(String(Math.max(0, row.availableQuantity)));
+    setReason(
+      nextType === "expired"
+        ? `Loại hàng hết hạn${row.batchCode ? ` lô ${row.batchCode}` : ""}${row.expirationDate ? `, HSD ${row.expirationDate}` : ""}`
+        : ""
+    );
+  };
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+      <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Hao hụt & HSD</p>
+            <h2 className="mt-1 text-xl font-black">Ghi nhận xuất giảm theo kho và lô</h2>
+          </div>
+          <Badge tone={stockRows.length > 0 ? "green" : "yellow"}>{stockRows.length} dòng tồn</Badge>
+        </div>
+
+        <form action={recordInventoryMovementAction} className="grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+          <input type="hidden" name="ingredientId" value={selectedRow?.ingredientId ?? ""} />
+          <input type="hidden" name="locationId" value={selectedRow?.locationId ?? ""} />
+          <input type="hidden" name="batchId" value={selectedRow?.batchId ?? ""} />
+          <input type="hidden" name="stockBalanceId" value={selectedRow?.id ?? ""} />
+          <input type="hidden" name="unitCost" value={selectedRow?.referenceUnitCost ? Math.round(selectedRow.referenceUnitCost) : ""} />
+          <div className="grid gap-2">
+            <select
+              value={selectedRow?.id ?? ""}
+              onChange={(event) => setSelectedStockId(event.target.value)}
+              className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+            >
+              {stockRows.length === 0 ? <option value="">Chưa có tồn khả dụng</option> : null}
+              {stockRows.map((row) => (
+                <option key={row.id} value={row.id}>
+                  {row.ingredientName} · {row.locationName || "Kho chính"} · {row.batchCode || row.expirationDate || "Không lô"} · {formatQuantity(row.availableQuantity, row.ingredientUnit)}
+                </option>
+              ))}
+            </select>
+            <select
+              name="movementType"
+              value={movementType}
+              onChange={(event) => setMovementType(event.target.value as LossMovementType)}
+              className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+            >
+              {lossMovementTypes.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-[0.8fr_1.2fr]">
+            <Input
+              name="quantity"
+              type="number"
+              min="0.001"
+              step="0.001"
+              value={quantity}
+              onChange={(event) => setQuantity(event.target.value)}
+              placeholder={selectedRow ? `Số lượng (${selectedRow.ingredientUnit})` : "Số lượng"}
+              className="h-11 rounded-xl bg-white"
+            />
+            <Textarea
+              name="reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder={selectedMovement?.hint ?? "Lý do xuất giảm"}
+              className="min-h-11 rounded-xl bg-white"
+            />
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            <MiniMetric label="Khả dụng" value={selectedRow ? formatQuantity(selectedRow.availableQuantity, selectedRow.ingredientUnit) : "-"} />
+            <MiniMetric label="Giá trị ghi nhận" value={selectedRow ? formatVnd(Math.round(parsedQuantity * selectedRow.referenceUnitCost)) : formatVnd(0)} />
+            <MiniMetric label="HSD" value={selectedRow?.expirationDate ? expirationCopy(selectedRow.expirationDate) : "Không lô"} />
+          </div>
+
+          {isOverAvailable ? (
+            <p className="rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">
+              Số lượng vượt tồn khả dụng của dòng kho đã chọn.
+            </p>
+          ) : null}
+
+          <Button type="submit" disabled={!selectedRow || parsedQuantity <= 0 || isOverAvailable} className="h-11 rounded-2xl">
+            <Trash2 className="h-4 w-4" />
+            Ghi nhận xuất giảm
+          </Button>
+        </form>
+
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          <MiniMetric label="Waste 30 ngày" value={formatVnd(lossValue)} />
+          <MiniMetric label="SKU có waste" value={intelligence.wasteSignals.length.toLocaleString("vi-VN")} />
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {intelligence.wasteSignals.length === 0 ? (
+            <p className="rounded-2xl bg-[var(--soft-surface)] px-3 py-2 text-sm font-bold text-[var(--muted-foreground)]">Chưa có waste hoặc hết hạn đáng chú ý trong 30 ngày.</p>
+          ) : (
+            intelligence.wasteSignals.slice(0, 4).map((item) => (
+              <div key={item.ingredientId} className="flex items-center justify-between gap-3 rounded-2xl bg-[var(--soft-surface)] px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-black">{item.name}</p>
+                  <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">{formatQuantity(item.wasteQuantity, item.unit)} · {item.movementCount} lần</p>
+                </div>
+                <Badge tone={item.wasteCost > 200000 ? "red" : "yellow"}>{formatVnd(item.wasteCost)}</Badge>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Expiration desk</p>
+            <h2 className="mt-1 text-xl font-black">Lô hết hạn và sắp hết hạn</h2>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={expiredRows.length > 0 ? "red" : "green"}>{expiredRows.length} quá hạn</Badge>
+            <Badge tone={expiringRows.length > 0 ? "yellow" : "green"}>{expiringRows.length} cần xem</Badge>
+            <Badge tone="blue">{formatVnd(Math.round(expiringValue))}</Badge>
+          </div>
+        </div>
+
+        {expiringRows.length === 0 ? (
+          <EmptyState icon={PackageCheck} title="Không có lô sát HSD" description="Các batch còn tồn sẽ xuất hiện ở đây khi đã quá hạn hoặc còn dưới 7 ngày." />
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
+            <div className="hidden grid-cols-[1fr_0.85fr_0.65fr_0.65fr_0.55fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] lg:grid">
+              <span>Nguyên liệu / lô</span>
+              <span>Kho</span>
+              <span>HSD</span>
+              <span>Tồn</span>
+              <span>Hành động</span>
+            </div>
+            <div className="max-h-[520px] divide-y divide-[var(--border)] overflow-auto">
+              {expiringRows.map(({ row, days }) => (
+                <div key={row.id} className="grid gap-2 px-4 py-3 text-sm lg:grid-cols-[1fr_0.85fr_0.65fr_0.65fr_0.55fr] lg:items-center">
+                  <div className="min-w-0">
+                    <p className="truncate font-black">{row.ingredientName}</p>
+                    <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">Lô {row.batchCode || "không mã"} · {row.branchName || "Toàn quán"}</p>
+                  </div>
+                  <span className="truncate font-semibold text-[var(--muted-foreground)]">{row.locationName || "Kho chính"}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={days <= 0 ? "red" : "yellow"}>{expirationCopy(row.expirationDate)}</Badge>
+                    {row.expirationDate ? <span className="text-xs font-bold text-[var(--muted-foreground)]">{formatDate(row.expirationDate)}</span> : null}
+                  </div>
+                  <span className="metric-number font-black">{formatQuantity(row.availableQuantity, row.ingredientUnit)}</span>
+                  <Button type="button" size="sm" variant={days <= 0 ? "danger" : "secondary"} onClick={() => primeLossForm(row, "expired")} className="h-9 rounded-xl">
+                    <Trash2 className="h-4 w-4" />
+                    Ghi HSD
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -1654,6 +1990,64 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
 }
 
 function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[] }) {
+  const [supplierId, setSupplierId] = useState("");
+  const [locationId, setLocationId] = useState(warehouse.locations[0]?.id ?? "");
+  const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
+  const [orderQuantity, setOrderQuantity] = useState("");
+  const [orderUnit, setOrderUnit] = useState(ingredients[0]?.unit ?? "");
+  const [unitCost, setUnitCost] = useState(ingredients[0] ? String(Math.round(ingredients[0].referenceUnitCost)) : "");
+  const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
+  const [expirationDate, setExpirationDate] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [lineNote, setLineNote] = useState("");
+  const [purchaseNote, setPurchaseNote] = useState("");
+  const [purchaseLines, setPurchaseLines] = useState<PurchaseDraftLine[]>([]);
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
+  const purchaseRowsJson = useMemo(
+    () =>
+      JSON.stringify(
+        purchaseLines.map((line) => ({
+          ingredientId: line.ingredientId,
+          orderQuantity: line.orderQuantity,
+          orderUnit: line.orderUnit,
+          unitCost: line.unitCost,
+          expirationDate: line.expirationDate,
+          batchCode: line.batchCode,
+          note: line.note
+        }))
+      ),
+    [purchaseLines]
+  );
+  const purchaseTotal = purchaseLines.reduce((sum, line) => sum + Math.round(line.orderQuantity * line.unitCost), 0);
+
+  const addPurchaseLine = () => {
+    if (!selectedIngredient) return;
+    const quantity = parseNumber(orderQuantity);
+    const cost = Math.round(parseNumber(unitCost));
+    if (quantity <= 0 || cost < 0) return;
+    const nextLine: PurchaseDraftLine = {
+      ingredientId: selectedIngredient.id,
+      name: selectedIngredient.name,
+      unit: selectedIngredient.unit,
+      orderQuantity: quantity,
+      orderUnit: orderUnit.trim() || selectedIngredient.unit,
+      unitCost: cost,
+      expirationDate: expirationDate || undefined,
+      batchCode: batchCode.trim() || undefined,
+      note: lineNote.trim() || undefined
+    };
+    setPurchaseLines((current) => [
+      ...current.filter((line) => line.ingredientId !== nextLine.ingredientId || line.expirationDate !== nextLine.expirationDate || line.batchCode !== nextLine.batchCode),
+      nextLine
+    ]);
+    setOrderQuantity("");
+    setOrderUnit(selectedIngredient.unit);
+    setUnitCost(String(Math.round(selectedIngredient.referenceUnitCost)));
+    setExpirationDate("");
+    setBatchCode("");
+    setLineNote("");
+  };
+
   return (
     <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
@@ -1707,12 +2101,13 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
           <Badge tone={warehouse.openPurchaseOrderCount > 0 ? "yellow" : "green"}>{warehouse.openPurchaseOrderCount} PO mở</Badge>
         </div>
         <form action={createInventoryPurchaseOrderAction} className="mb-4 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+          <input type="hidden" name="rowsJson" value={purchaseRowsJson} />
           <div className="grid gap-2 lg:grid-cols-[1fr_1fr]">
-            <select name="supplierId" className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+            <select name="supplierId" value={supplierId} onChange={(event) => setSupplierId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
               <option value="">Chọn NCC sau</option>
               {warehouse.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
             </select>
-            <select name="locationId" className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+            <select name="locationId" value={locationId} onChange={(event) => setLocationId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
               <option value="">Kho chính</option>
               {warehouse.locations.map((location) => (
                 <option key={location.id} value={location.id}>
@@ -1722,24 +2117,63 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
             </select>
           </div>
           <div className="grid gap-2 lg:grid-cols-[1.2fr_0.55fr_0.45fr_0.65fr]">
-            <select name="ingredientId" className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold" required>
+            <select
+              value={ingredientId}
+              onChange={(event) => {
+                const nextIngredientId = event.target.value;
+                const nextIngredient = ingredients.find((ingredient) => ingredient.id === nextIngredientId);
+                setIngredientId(nextIngredientId);
+                setOrderUnit(nextIngredient?.unit ?? "");
+                setUnitCost(nextIngredient ? String(Math.round(nextIngredient.referenceUnitCost)) : "");
+              }}
+              className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+            >
               <option value="">Chọn nguyên liệu</option>
               {ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name} ({ingredient.unit})</option>)}
             </select>
-            <Input name="orderQuantity" type="number" min="0.001" step="0.001" placeholder="SL đặt" className="h-10 rounded-xl bg-white" required />
-            <Input name="orderUnit" placeholder="Đơn vị" className="h-10 rounded-xl bg-white" />
-            <Input name="unitCost" type="number" min={0} step={1} placeholder="Giá / đơn vị" className="h-10 rounded-xl bg-white" required />
+            <Input type="number" min="0.001" step="0.001" placeholder="SL đặt" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input placeholder="Đơn vị" value={orderUnit} onChange={(event) => setOrderUnit(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input type="number" min={0} step={1} placeholder="Giá / đơn vị" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} className="h-10 rounded-xl bg-white" />
           </div>
           <div className="grid gap-2 lg:grid-cols-[0.9fr_0.7fr_0.7fr_auto]">
-            <Input name="expectedDeliveryAt" type="datetime-local" className="h-10 rounded-xl bg-white" />
-            <Input name="expirationDate" type="date" className="h-10 rounded-xl bg-white" />
-            <Input name="batchCode" placeholder="Mã lô" className="h-10 rounded-xl bg-white" />
-            <Button type="submit" size="sm" disabled={ingredients.length === 0} className="h-10 rounded-xl">
-              <ClipboardList className="h-4 w-4" />
-              Tạo PO
+            <Input name="expectedDeliveryAt" type="datetime-local" value={expectedDeliveryAt} onChange={(event) => setExpectedDeliveryAt(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input placeholder="Mã lô" value={batchCode} onChange={(event) => setBatchCode(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Button type="button" size="sm" variant="secondary" onClick={addPurchaseLine} disabled={!selectedIngredient || orderQuantity.trim().length === 0 || unitCost.trim().length === 0} className="h-10 rounded-xl">
+              <PackagePlus className="h-4 w-4" />
+              Thêm dòng
             </Button>
           </div>
-          <Textarea name="note" placeholder="Ghi chú giao hàng, công nợ hoặc điều kiện nhận hàng" className="min-h-16 rounded-xl bg-white" />
+          <Input placeholder="Ghi chú dòng, quy cách giao hoặc giá thỏa thuận" value={lineNote} onChange={(event) => setLineNote(event.target.value)} className="h-10 rounded-xl bg-white" />
+          <DraftLinesPanel
+            emptyIcon={ClipboardList}
+            emptyTitle="Chưa có dòng đặt hàng"
+            emptyDescription="Thêm các nguyên liệu trong hóa đơn hoặc đề xuất nhập hàng, rồi tạo một PO nhiều dòng."
+          >
+            {purchaseLines.map((line) => (
+              <div key={`${line.ingredientId}:${line.expirationDate || "no-exp"}:${line.batchCode || "no-batch"}`} className="grid gap-2 px-3 py-2 text-sm sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                <div className="min-w-0">
+                  <p className="truncate font-black">{line.name}</p>
+                  <p className="truncate text-xs font-semibold text-[var(--muted-foreground)]">
+                    {formatQuantity(line.orderQuantity, line.orderUnit || line.unit)} · {formatVnd(line.unitCost)}/đv{line.expirationDate ? ` · HSD ${line.expirationDate}` : ""}{line.batchCode ? ` · Lô ${line.batchCode}` : ""}
+                  </p>
+                </div>
+                <Badge tone="blue">{formatVnd(Math.round(line.orderQuantity * line.unitCost))}</Badge>
+                <button type="button" onClick={() => setPurchaseLines((current) => current.filter((item) => item.ingredientId !== line.ingredientId || item.expirationDate !== line.expirationDate || item.batchCode !== line.batchCode))} className="h-9 rounded-xl px-3 text-xs font-black text-red-700">
+                  Xóa
+                </button>
+              </div>
+            ))}
+          </DraftLinesPanel>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MiniMetric label="Dòng trong PO" value={purchaseLines.length.toLocaleString("vi-VN")} />
+            <MiniMetric label="Tạm tính" value={formatVnd(purchaseTotal)} />
+          </div>
+          <Textarea name="note" placeholder="Ghi chú chung: giao hàng, công nợ hoặc điều kiện nhận hàng" value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} className="min-h-16 rounded-xl bg-white" />
+          <Button type="submit" disabled={ingredients.length === 0 || purchaseLines.length === 0} className="h-11 rounded-2xl">
+            <ClipboardList className="h-4 w-4" />
+            Tạo PO {purchaseLines.length.toLocaleString("vi-VN")} dòng
+          </Button>
         </form>
         <div className="overflow-hidden rounded-2xl border border-[var(--border)]">
           <div className="hidden grid-cols-[0.7fr_0.9fr_0.7fr_0.6fr_0.65fr_0.65fr] bg-[var(--surface-container-high)] px-4 py-3 text-xs font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)] md:grid">
@@ -1757,26 +2191,26 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
               warehouse.purchaseOrders.map((order) => {
                 const canReceive = !["cancelled", "delivered"].includes(order.status);
                 return (
-                  <div key={order.id} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[0.7fr_0.9fr_0.7fr_0.6fr_0.65fr_0.65fr] md:items-center">
-                    <div className="min-w-0">
-                      <p className="truncate font-black">{order.poNumber}</p>
-                      <p className="text-xs font-semibold text-[var(--muted-foreground)]">{order.lineCount} dòng</p>
+                  <div key={order.id} className="px-4 py-3 text-sm">
+                    <div className="grid gap-2 md:grid-cols-[0.7fr_0.9fr_0.7fr_0.6fr_0.65fr_0.65fr] md:items-center">
+                      <div className="min-w-0">
+                        <p className="truncate font-black">{order.poNumber}</p>
+                        <p className="text-xs font-semibold text-[var(--muted-foreground)]">{order.lineCount} dòng</p>
+                      </div>
+                      <span className="truncate font-semibold text-[var(--muted-foreground)]">{order.supplierName || "Chưa chọn NCC"}</span>
+                      <Badge tone={purchaseOrderTone(order.status)}>{purchaseOrderStatusLabel(order.status)}</Badge>
+                      <span className="font-semibold text-[var(--muted-foreground)]">{order.expectedDeliveryAt ? formatDateTime(order.expectedDeliveryAt) : "-"}</span>
+                      <span className="metric-number font-black">{formatVnd(order.totalAmount)}</span>
+                      <Badge tone={order.status === "delivered" ? "green" : canReceive ? "yellow" : "red"}>
+                        {order.status === "delivered" ? "Xong" : canReceive ? "Chờ nhận" : "Đóng"}
+                      </Badge>
                     </div>
-                    <span className="truncate font-semibold text-[var(--muted-foreground)]">{order.supplierName || "Chưa chọn NCC"}</span>
-                    <Badge tone={purchaseOrderTone(order.status)}>{purchaseOrderStatusLabel(order.status)}</Badge>
-                    <span className="font-semibold text-[var(--muted-foreground)]">{order.expectedDeliveryAt ? formatDateTime(order.expectedDeliveryAt) : "-"}</span>
-                    <span className="metric-number font-black">{formatVnd(order.totalAmount)}</span>
                     {canReceive ? (
-                      <form action={receiveInventoryPurchaseOrderAction}>
-                        <input type="hidden" name="purchaseOrderId" value={order.id} />
-                        <Button type="submit" size="sm" variant="secondary" className="h-9 rounded-xl">
-                          <PackageCheck className="h-4 w-4" />
-                          Nhận
-                        </Button>
-                      </form>
-                    ) : (
-                      <Badge tone={order.status === "delivered" ? "green" : "red"}>{order.status === "delivered" ? "Xong" : "Đóng"}</Badge>
-                    )}
+                      <PurchaseOrderReceiveForm
+                        key={`${order.id}:${order.status}:${order.lines.map((line) => `${line.id}:${line.receivedQuantity}`).join("|")}`}
+                        order={order}
+                      />
+                    ) : null}
                   </div>
                 );
               })
@@ -1788,7 +2222,143 @@ function SupplierPurchaseDesk({ warehouse, ingredients }: { warehouse: Inventory
   );
 }
 
+function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) {
+  const receivableLines = order.lines.filter((line) => line.remainingQuantity > 0);
+  const [receiptLines, setReceiptLines] = useState<PurchaseReceiptDraftLine[]>(
+    receivableLines.map((line) => ({
+      purchaseOrderLineId: line.id,
+      receivedQuantity: String(line.remainingQuantity),
+      unitCost: String(Math.round(line.unitCost)),
+      expirationDate: line.expirationDate ?? "",
+      batchCode: line.batchCode ?? "",
+      note: ""
+    }))
+  );
+  const receiptRowsJson = useMemo(
+    () =>
+      JSON.stringify(
+        receiptLines
+          .map((line) => ({
+            purchaseOrderLineId: line.purchaseOrderLineId,
+            receivedQuantity: parseNumber(line.receivedQuantity),
+            unitCost: Math.round(parseNumber(line.unitCost)),
+            expirationDate: line.expirationDate || undefined,
+            batchCode: line.batchCode.trim() || undefined,
+            note: line.note.trim() || undefined
+          }))
+          .filter((line) => line.receivedQuantity > 0)
+      ),
+    [receiptLines]
+  );
+  const receiptValue = receiptLines.reduce((sum, line) => {
+    const quantity = parseNumber(line.receivedQuantity);
+    const unitCost = Math.round(parseNumber(line.unitCost));
+    return quantity > 0 && unitCost >= 0 ? sum + Math.round(quantity * unitCost) : sum;
+  }, 0);
+  const activeLineCount = receiptLines.filter((line) => parseNumber(line.receivedQuantity) > 0).length;
+
+  const updateReceiptLine = (lineId: string, patch: Partial<PurchaseReceiptDraftLine>) => {
+    setReceiptLines((current) => current.map((line) => (line.purchaseOrderLineId === lineId ? { ...line, ...patch } : line)));
+  };
+
+  if (receivableLines.length === 0) {
+    return (
+      <div className="mt-3 rounded-2xl bg-[var(--soft-surface)] px-3 py-2 text-xs font-bold text-[var(--muted-foreground)]">
+        PO này không còn dòng cần nhận.
+      </div>
+    );
+  }
+
+  return (
+    <form action={receiveInventoryPurchaseOrderAction} className="mt-3 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+      <input type="hidden" name="purchaseOrderId" value={order.id} />
+      <input type="hidden" name="rowsJson" value={receiptRowsJson} />
+      <div className="grid gap-2">
+        {receivableLines.map((line) => {
+          const draft = receiptLines.find((item) => item.purchaseOrderLineId === line.id);
+          if (!draft) return null;
+          const receivedQuantity = parseNumber(draft.receivedQuantity);
+          const overReceivedQuantity = Math.max(0, line.receivedQuantity + receivedQuantity - line.orderQuantity);
+
+          return (
+            <div key={line.id} className="rounded-2xl border border-[var(--border)] bg-white p-3">
+              <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-black">{line.ingredientName}</p>
+                  <p className="text-xs font-semibold text-[var(--muted-foreground)]">
+                    Đặt {formatQuantity(line.orderQuantity, line.orderUnit)} · đã nhận {formatQuantity(line.receivedQuantity, line.orderUnit)} · còn {formatQuantity(line.remainingQuantity, line.orderUnit)}
+                  </p>
+                </div>
+                <Badge tone={overReceivedQuantity > 0 ? "yellow" : "blue"}>
+                  {overReceivedQuantity > 0 ? `Dư ${formatQuantity(overReceivedQuantity, line.orderUnit)}` : formatVnd(Math.round(receivedQuantity * parseNumber(draft.unitCost)))}
+                </Badge>
+              </div>
+              <div className="grid gap-2 md:grid-cols-[0.58fr_0.58fr_0.62fr_0.62fr_1fr]">
+                <Input
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  value={draft.receivedQuantity}
+                  onChange={(event) => updateReceiptLine(line.id, { receivedQuantity: event.target.value })}
+                  className="h-10 rounded-xl bg-white"
+                  aria-label={`Số lượng nhận ${line.ingredientName}`}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={draft.unitCost}
+                  onChange={(event) => updateReceiptLine(line.id, { unitCost: event.target.value })}
+                  className="h-10 rounded-xl bg-white"
+                  aria-label={`Giá nhận ${line.ingredientName}`}
+                />
+                <Input
+                  type="date"
+                  value={draft.expirationDate}
+                  onChange={(event) => updateReceiptLine(line.id, { expirationDate: event.target.value })}
+                  className="h-10 rounded-xl bg-white"
+                  aria-label={`Hạn sử dụng ${line.ingredientName}`}
+                />
+                <Input
+                  value={draft.batchCode}
+                  onChange={(event) => updateReceiptLine(line.id, { batchCode: event.target.value })}
+                  placeholder="Mã lô"
+                  className="h-10 rounded-xl bg-white"
+                  aria-label={`Mã lô ${line.ingredientName}`}
+                />
+                <Input
+                  value={draft.note}
+                  onChange={(event) => updateReceiptLine(line.id, { note: event.target.value })}
+                  placeholder="Ghi chú nhận"
+                  className="h-10 rounded-xl bg-white"
+                  aria-label={`Ghi chú nhận ${line.ingredientName}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-center">
+        <MiniMetric label="Dòng nhận" value={activeLineCount.toLocaleString("vi-VN")} />
+        <MiniMetric label="Giá trị nhận" value={formatVnd(receiptValue)} />
+        <Button type="submit" size="sm" variant="secondary" disabled={activeLineCount === 0} className="h-10 rounded-xl">
+          <PackageCheck className="h-4 w-4" />
+          Nhận hàng
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseCommandCenter }) {
+  const sortedAlerts = [...warehouse.alerts].sort(
+    (a, b) => alertPriorityScore(b) - alertPriorityScore(a) || new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
+  );
+  const criticalCount = warehouse.alerts.filter((alert) => alert.severity === "critical" || alert.severity === "high").length;
+  const operationsCount = warehouse.alerts.filter((alert) => ["out_of_stock", "low_stock", "missing_inventory"].includes(alert.alertType)).length;
+  const lossCount = warehouse.alerts.filter((alert) => ["expired", "expiring_soon", "waste_spike", "abnormal_usage"].includes(alert.alertType)).length;
+  const supplierCount = warehouse.alerts.filter((alert) => ["supplier_delay", "price_spike"].includes(alert.alertType)).length;
+
   return (
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1806,23 +2376,39 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
           </form>
         </div>
       </div>
+      <div className="mb-4 grid gap-2 sm:grid-cols-4">
+        <MiniMetric label="Ưu tiên cao" value={criticalCount.toLocaleString("vi-VN")} />
+        <MiniMetric label="Thiếu hàng" value={operationsCount.toLocaleString("vi-VN")} />
+        <MiniMetric label="Hao hụt / HSD" value={lossCount.toLocaleString("vi-VN")} />
+        <MiniMetric label="NCC / giá" value={supplierCount.toLocaleString("vi-VN")} />
+      </div>
       {warehouse.alerts.length === 0 ? (
         <EmptyState icon={PackageCheck} title="Chưa có cảnh báo mở" description="Alert engine sẽ gom low stock, expiring soon, waste spike, supplier delay và recipe gap ở đây." />
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {warehouse.alerts.map((alert) => (
-            <article key={alert.id} className="rounded-2xl border border-[var(--border)] p-4">
+          {sortedAlerts.map((alert) => (
+            <article
+              key={alert.id}
+              className={`rounded-2xl border p-4 ${
+                alert.severity === "critical" || alert.severity === "high"
+                  ? "border-red-200 bg-red-50/40"
+                  : alert.severity === "medium"
+                    ? "border-amber-200 bg-amber-50/30"
+                    : "border-[var(--border)]"
+              }`}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate font-black">{alert.title}</p>
                   <p className="mt-1 line-clamp-2 text-sm font-semibold text-[var(--muted-foreground)]">{alert.detail || alert.ingredientName || "Cần kiểm tra dữ liệu kho."}</p>
                 </div>
-                <Badge tone={alertTone(alert.severity)}>{alert.severity}</Badge>
+                <Badge tone={alertTone(alert.severity)}>{alertSeverityLabel(alert.severity)}</Badge>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Badge tone="blue">{alert.alertType}</Badge>
-                <Badge tone={workflowStatusTone(alert.status)}>{alert.status}</Badge>
+                <Badge tone="blue">{alertTypeLabel(alert.alertType)}</Badge>
+                <Badge tone={workflowStatusTone(alert.status)}>{alertStatusLabel(alert.status)}</Badge>
                 {alert.branchName ? <Badge tone="neutral">{alert.branchName}</Badge> : null}
+                {alert.ingredientName ? <Badge tone="neutral">{alert.ingredientName}</Badge> : null}
                 <span className="text-xs font-bold text-[var(--muted-foreground)]">{formatDateTime(alert.detectedAt)}</span>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">

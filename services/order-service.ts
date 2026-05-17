@@ -1,4 +1,11 @@
+import type { PostgrestError } from "@supabase/supabase-js";
 import { AppError } from "@/lib/response";
+import {
+  resolveDeliveryStatusTransition,
+  resolveMerchantAcceptTransition,
+  type DeliveryActionStatus
+} from "@/lib/orders/order-state-machine";
+import { resolveOrderBranchAssignment } from "@/lib/orders/branch-attribution";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { buildDeliveryQuoteSnapshot, calculateServiceFee, getPublicOrderingSettingsBySlug, quoteDeliveryForRestaurant } from "@/services/delivery-service";
@@ -11,8 +18,16 @@ import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-bo
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
-import type { DeliveryStatus, FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
-import type { Json } from "@/types/supabase";
+import type {
+  DeliveryStatus,
+  FulfillmentType,
+  OrderBranchAssignmentSource,
+  OrderDto,
+  PaymentMethod,
+  PaymentStatus,
+  TableBillStatus
+} from "@/types/domain";
+import type { Database, Json } from "@/types/supabase";
 
 export type CreateOrderInput = {
   restaurantSlug: string;
@@ -31,6 +46,7 @@ export type CreateOrderInput = {
 
 export type CreateRemoteOrderInput = {
   restaurantSlug: string;
+  branchId?: string;
   fulfillmentType: "PICKUP" | "DELIVERY";
   customerSessionId?: string;
   customerName: string;
@@ -63,10 +79,14 @@ export type OrderCleanupInput = {
 };
 
 type OrderSupabaseClient = ReturnType<typeof createAdminSupabaseClient>;
+type OrderInsertRow = Database["public"]["Tables"]["orders"]["Insert"];
+type RemoteDeliveryQuote = Awaited<ReturnType<typeof quoteDeliveryForRestaurant>> | null;
 
 type RawOrder = {
   id: string;
   restaurant_id?: string;
+  branch_id?: string | null;
+  branch_assignment_source?: OrderBranchAssignmentSource | null;
   status: OrderDto["status"];
   subtotal?: number;
   discount_amount?: number;
@@ -155,6 +175,12 @@ type CourierLocationRow = {
   captured_at: string;
 };
 
+type StoreBranchAssignmentRow = {
+  id: string;
+  is_primary: boolean | null;
+  is_active: boolean | null;
+};
+
 type PublicOrderAccessRow = {
   id: string;
   customer_session_id: string | null;
@@ -191,10 +217,13 @@ type MutableOrderRow = {
 };
 
 const orderSelect =
-  "id,restaurant_id,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
+  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
 
 const kitchenOrderSelect =
-  "id,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
+  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,menuItem:menu_items(id,name))";
+
+const legacyOrderSelect = orderSelect.replace("branch_id,branch_assignment_source,", "");
+const legacyKitchenOrderSelect = kitchenOrderSelect.replace("branch_id,branch_assignment_source,", "");
 
 const activePublicStatuses: OrderDto["status"][] = ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"];
 const defaultCleanupStatuses: OrderDto["status"][] = ["pending", "ordering", "completed", "waiting_payment", "cancelled"];
@@ -221,6 +250,42 @@ function writeKitchenOrdersCache(restaurantId: string, data: OrderDto[]) {
 
 function invalidateRestaurantOrderCache(restaurantId: string) {
   kitchenOrdersCache.delete(restaurantId);
+}
+
+function isMissingOrderBranchSchema(error: PostgrestError | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return (
+    (error.code === "42703" || error.code === "PGRST204") &&
+    /branch_id|branch_assignment_source/i.test(message)
+  );
+}
+
+async function runOrderSelectWithBranchFallback<TData>(
+  buildQuery: (select: string) => PromiseLike<{ data: TData | null; error: PostgrestError | null }>,
+  fallbackSelect = legacyOrderSelect
+) {
+  const result = await buildQuery(orderSelect);
+  if (!isMissingOrderBranchSchema(result.error)) return result;
+  return buildQuery(fallbackSelect);
+}
+
+async function runKitchenSelectWithBranchFallback<TData>(
+  buildQuery: (select: string) => PromiseLike<{ data: TData | null; error: PostgrestError | null }>
+) {
+  const result = await buildQuery(kitchenOrderSelect);
+  if (!isMissingOrderBranchSchema(result.error)) return result;
+  return buildQuery(legacyKitchenOrderSelect);
+}
+
+async function insertOrderWithBranchFallback(supabase: OrderSupabaseClient, payload: OrderInsertRow) {
+  const result = await supabase.from("orders").insert(payload).select("id").single();
+  if (!isMissingOrderBranchSchema(result.error)) return result;
+
+  const { branch_id: _branchId, branch_assignment_source: _branchAssignmentSource, ...legacyPayload } = payload;
+  void _branchId;
+  void _branchAssignmentSource;
+  return supabase.from("orders").insert(legacyPayload).select("id").single();
 }
 
 function normalizeOrderItems(items: CreateOrderInput["items"]) {
@@ -282,6 +347,8 @@ function mapOrder(order: RawOrder): OrderDto {
 
   return {
     id: order.id,
+    branchId: order.branch_id ?? null,
+    branchAssignmentSource: order.branch_assignment_source ?? null,
     status: order.status,
     subtotal: order.subtotal ?? order.total + (order.discount_amount ?? 0),
     discountAmount: order.discount_amount ?? 0,
@@ -357,6 +424,32 @@ function mapOrder(order: RawOrder): OrderDto {
   };
 }
 
+async function wait(ms: number) {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function getIdempotentRemoteOrderResult(
+  orderId: string,
+  supabase: OrderSupabaseClient,
+  deliveryQuote: RemoteDeliveryQuote
+) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const order = await getOrderDto(orderId, supabase);
+    if (order.items.length > 0) {
+      return {
+        order,
+        payment: getPaymentInstructions(order),
+        deliveryQuote
+      };
+    }
+    await wait(120 * (attempt + 1));
+  }
+
+  throw new AppError("Đơn đang được hệ thống xử lý. Vui lòng thử lại sau vài giây.", 409);
+}
+
 async function attachLatestDeliveryLocations(
   restaurantId: string,
   orders: OrderDto[],
@@ -404,6 +497,47 @@ function mapKitchenOrder(order: Omit<RawOrder, "restaurant" | "bill">): OrderDto
     restaurant: null,
     bill: null
   });
+}
+
+async function resolveOrderBranchAssignmentForRestaurant(input: {
+  supabase: OrderSupabaseClient;
+  restaurantId: string;
+  fulfillmentType: FulfillmentType;
+  deliveryNearestStoreId?: string | null;
+  requestedBranchId?: string | null;
+  requireRequestedBranch?: boolean;
+}) {
+  const { data, error } = await input.supabase
+    .from("store_branches")
+    .select("id,is_primary,is_active")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("is_active", true)
+    .order("is_primary", { ascending: false })
+    .order("name", { ascending: true })
+    .limit(24);
+
+  throwIfSupabaseError(error);
+
+  const requestedBranchId = input.requestedBranchId?.trim() || null;
+  const assignment = resolveOrderBranchAssignment({
+    fulfillmentType: input.fulfillmentType,
+    branches: (data ?? []) as StoreBranchAssignmentRow[],
+    deliveryNearestStoreId: input.deliveryNearestStoreId,
+    requestedBranchId
+  });
+
+  if (input.requireRequestedBranch && requestedBranchId && assignment.branchId !== requestedBranchId) {
+    throw new AppError("Chi nhánh nhận món không khả dụng.", 400);
+  }
+
+  return assignment;
+}
+
+function orderBranchInsertFields(assignment: Awaited<ReturnType<typeof resolveOrderBranchAssignmentForRestaurant>>) {
+  return {
+    branch_id: assignment.branchId,
+    branch_assignment_source: assignment.source
+  };
 }
 
 async function closeBillIfNoActiveOrders(supabase: OrderSupabaseClient, restaurantId: string, billId?: string | null) {
@@ -497,11 +631,13 @@ async function getOrCreateOpenTableBill({
 }
 
 async function getOrderDto(orderId: string, supabase: OrderSupabaseClient = createAdminSupabaseClient()) {
-  const { data, error } = await supabase
-    .from("orders")
-    .select(orderSelect)
-    .eq("id", orderId)
-    .single();
+  const { data, error } = await runOrderSelectWithBranchFallback((select) =>
+    supabase
+      .from("orders")
+      .select(select)
+      .eq("id", orderId)
+      .single()
+  );
 
   throwIfSupabaseError(error);
   if (!data) throw new AppError("Không tìm thấy đơn hàng", 404);
@@ -682,26 +818,29 @@ export async function createOrder(input: CreateOrderInput) {
     customerSessionId: input.customerSessionId,
     supabase
   });
+  const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
+    supabase,
+    restaurantId: restaurant.id,
+    fulfillmentType: "DINE_IN",
+    requestedBranchId: table.branch_id ?? null
+  });
 
-  const { data: insertedOrder, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      restaurant_id: restaurant.id,
-      table_id: table.id,
-      bill_id: bill.id,
-      status: "pending",
-      subtotal,
-      discount_amount: discountAmount,
-      promotion_id: promotion?.id ?? null,
-      promotion_code: promotion?.code ?? null,
-      total,
-      payment_method: null,
-      customer_session_id: input.customerSessionId || null,
-      customer_note: input.customerNote || null,
-      idempotency_key: input.idempotencyKey || null
-    })
-    .select("id")
-    .single();
+  const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+    restaurant_id: restaurant.id,
+    table_id: table.id,
+    bill_id: bill.id,
+    ...orderBranchInsertFields(branchAssignment),
+    status: "pending",
+    subtotal,
+    discount_amount: discountAmount,
+    promotion_id: promotion?.id ?? null,
+    promotion_code: promotion?.code ?? null,
+    total,
+    payment_method: null,
+    customer_session_id: input.customerSessionId || null,
+    customer_note: input.customerNote || null,
+    idempotency_key: input.idempotencyKey || null
+  });
 
   if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
     const { data: existing, error: existingError } = await supabase
@@ -789,12 +928,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id, supabase);
-      return {
-        order,
-        payment: getPaymentInstructions(order),
-        deliveryQuote: null
-      };
+      return getIdempotentRemoteOrderResult(existing.id, supabase, null);
     }
   }
 
@@ -840,6 +974,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     restaurantId: settings.id,
     code: input.promotionCode,
     subtotal: itemSubtotal,
+    deliveryFee,
     channel: "WEBSITE"
   });
   const total = subtotal - discountAmount;
@@ -848,43 +983,48 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
   const initialPaymentStatus: PaymentStatus = requiresPrepaidQr ? "waiting_payment" : "unpaid";
   const destination = deliveryQuote?.destination ?? null;
   const shouldStoreRoute = input.fulfillmentType === "DELIVERY" && settings.delivery_tracking_enabled;
-  const { data: insertedOrder, error: orderError } = await supabase
-    .from("orders")
-    .insert({
-      restaurant_id: settings.id,
-      table_id: null,
-      bill_id: null,
-      fulfillment_type: input.fulfillmentType,
-      status: initialStatus,
-      subtotal,
-      discount_amount: discountAmount,
-      promotion_id: promotion?.id ?? null,
-      promotion_code: promotion?.code ?? null,
-      total,
-      payment_method: initialPaymentMethod,
-      payment_status: initialPaymentStatus,
-      customer_session_id: input.customerSessionId || null,
-      customer_note: input.customerNote || null,
-      customer_name: input.customerName.trim(),
-      customer_phone: input.customerPhone.trim(),
-      delivery_address: input.fulfillmentType === "DELIVERY" ? input.deliveryAddress?.trim() || null : null,
-      delivery_lat: input.fulfillmentType === "DELIVERY" ? input.deliveryLat ?? destination?.lat ?? null : null,
-      delivery_lng: input.fulfillmentType === "DELIVERY" ? input.deliveryLng ?? destination?.lng ?? null : null,
-      delivery_distance_km: deliveryQuote?.distanceKm ?? null,
-      delivery_fee: deliveryFee,
-      service_fee: serviceFee,
-      delivery_status: input.fulfillmentType === "DELIVERY" ? "requested" : "none",
-      delivery_route_geometry: shouldStoreRoute ? (deliveryQuote?.routeGeometry ?? null) : null,
-      delivery_route_duration_minutes: shouldStoreRoute ? (deliveryQuote?.routeDurationMinutes ?? deliveryQuote?.etaMinutes ?? null) : null,
-      delivery_route_provider: deliveryQuote?.routeProvider ?? null,
-      delivery_route_confidence: deliveryQuote?.confidence ?? null,
-      delivery_quote_version: deliveryQuote?.quoteVersion ?? null,
-      delivery_quote_snapshot: deliveryQuote ? buildDeliveryQuoteSnapshot(settings, deliveryQuote) : null,
-      delivery_tracking_updated_at: shouldStoreRoute ? new Date().toISOString() : null,
-      idempotency_key: input.idempotencyKey || null
-    })
-    .select("id")
-    .single();
+  const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
+    supabase,
+    restaurantId: settings.id,
+    fulfillmentType: input.fulfillmentType,
+    deliveryNearestStoreId: deliveryQuote?.nearestStore?.id ?? null,
+    requestedBranchId: input.fulfillmentType === "PICKUP" ? input.branchId ?? null : null,
+    requireRequestedBranch: input.fulfillmentType === "PICKUP" && Boolean(input.branchId?.trim())
+  });
+  const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+    restaurant_id: settings.id,
+    table_id: null,
+    bill_id: null,
+    ...orderBranchInsertFields(branchAssignment),
+    fulfillment_type: input.fulfillmentType,
+    status: initialStatus,
+    subtotal,
+    discount_amount: discountAmount,
+    promotion_id: promotion?.id ?? null,
+    promotion_code: promotion?.code ?? null,
+    total,
+    payment_method: initialPaymentMethod,
+    payment_status: initialPaymentStatus,
+    customer_session_id: input.customerSessionId || null,
+    customer_note: input.customerNote || null,
+    customer_name: input.customerName.trim(),
+    customer_phone: input.customerPhone.trim(),
+    delivery_address: input.fulfillmentType === "DELIVERY" ? input.deliveryAddress?.trim() || null : null,
+    delivery_lat: input.fulfillmentType === "DELIVERY" ? input.deliveryLat ?? destination?.lat ?? null : null,
+    delivery_lng: input.fulfillmentType === "DELIVERY" ? input.deliveryLng ?? destination?.lng ?? null : null,
+    delivery_distance_km: deliveryQuote?.distanceKm ?? null,
+    delivery_fee: deliveryFee,
+    service_fee: serviceFee,
+    delivery_status: input.fulfillmentType === "DELIVERY" ? "requested" : "none",
+    delivery_route_geometry: shouldStoreRoute ? (deliveryQuote?.routeGeometry ?? null) : null,
+    delivery_route_duration_minutes: shouldStoreRoute ? (deliveryQuote?.routeDurationMinutes ?? deliveryQuote?.etaMinutes ?? null) : null,
+    delivery_route_provider: deliveryQuote?.routeProvider ?? null,
+    delivery_route_confidence: deliveryQuote?.confidence ?? null,
+    delivery_quote_version: deliveryQuote?.quoteVersion ?? null,
+    delivery_quote_snapshot: deliveryQuote ? buildDeliveryQuoteSnapshot(settings, deliveryQuote) : null,
+    delivery_tracking_updated_at: shouldStoreRoute ? new Date().toISOString() : null,
+    idempotency_key: input.idempotencyKey || null
+  });
 
   if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
     const { data: existing, error: existingError } = await supabase
@@ -897,12 +1037,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 
     throwIfSupabaseError(existingError);
     if (existing) {
-      const order = await getOrderDto(existing.id, supabase);
-      return {
-        order,
-        payment: getPaymentInstructions(order),
-        deliveryQuote
-      };
+      return getIdempotentRemoteOrderResult(existing.id, supabase, deliveryQuote);
     }
   }
 
@@ -1001,26 +1136,31 @@ export async function listPublicOrderHistory(input: {
   if (!table) throw new AppError("Không tìm thấy bàn", 404);
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const customerSessionId = input.customerSessionId;
   const [sessionOrders, tableOpenOrders] = await Promise.all([
-    input.customerSessionId
-      ? supabase
-          .from("orders")
-          .select(orderSelect)
-          .eq("restaurant_id", restaurant.id)
-          .eq("table_id", table.id)
-          .eq("customer_session_id", input.customerSessionId)
-          .gte("created_at", since)
-          .order("created_at", { ascending: false })
-          .limit(30)
+    customerSessionId
+      ? runOrderSelectWithBranchFallback((select) =>
+          supabase
+            .from("orders")
+            .select(select)
+            .eq("restaurant_id", restaurant.id)
+            .eq("table_id", table.id)
+            .eq("customer_session_id", customerSessionId)
+            .gte("created_at", since)
+            .order("created_at", { ascending: false })
+            .limit(30)
+        )
       : Promise.resolve({ data: [], error: null }),
-    supabase
-      .from("orders")
-      .select(orderSelect)
-      .eq("restaurant_id", restaurant.id)
-      .eq("table_id", table.id)
-      .in("status", activePublicStatuses)
-      .order("created_at", { ascending: false })
-      .limit(30)
+    runOrderSelectWithBranchFallback((select) =>
+      supabase
+        .from("orders")
+        .select(select)
+        .eq("restaurant_id", restaurant.id)
+        .eq("table_id", table.id)
+        .in("status", activePublicStatuses)
+        .order("created_at", { ascending: false })
+        .limit(30)
+    )
   ]);
 
   throwIfSupabaseError(sessionOrders.error);
@@ -1034,7 +1174,7 @@ export async function listPublicOrderHistory(input: {
 
   const orders = (await attachLatestDeliveryLocations(restaurant.id, [...byId.values()], supabase))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const tableOpenIds = new Set(((tableOpenOrders.data ?? []) as Array<{ id: string }>).map((order) => order.id));
+  const tableOpenIds = new Set(((tableOpenOrders.data ?? []) as unknown as Array<{ id: string }>).map((order) => order.id));
   const openOrders = orders.filter((order) => tableOpenIds.has(order.id));
 
   return {
@@ -1062,16 +1202,18 @@ export async function listRemoteOrderHistory(input: {
   if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(orderSelect)
-    .eq("restaurant_id", restaurant.id)
-    .is("table_id", null)
-    .eq("customer_session_id", input.customerSessionId)
-    .in("fulfillment_type", ["PICKUP", "DELIVERY"])
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(20);
+  const { data, error } = await runOrderSelectWithBranchFallback((select) =>
+    supabase
+      .from("orders")
+      .select(select)
+      .eq("restaurant_id", restaurant.id)
+      .is("table_id", null)
+      .eq("customer_session_id", input.customerSessionId)
+      .in("fulfillment_type", ["PICKUP", "DELIVERY"])
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(20)
+  );
 
   throwIfSupabaseError(error);
 
@@ -1100,18 +1242,20 @@ export async function listOrdersForRestaurant(
   } = {}
 ) {
   const supabase = createAdminSupabaseClient();
-  let query = supabase
-    .from("orders")
-    .select(orderSelect)
-    .eq("restaurant_id", restaurantId)
-    .order("created_at", { ascending: false })
-    .limit(options.limit ?? (options.includeHistory ? 250 : 100));
+  const { data, error } = await runOrderSelectWithBranchFallback((select) => {
+    let query = supabase
+      .from("orders")
+      .select(select)
+      .eq("restaurant_id", restaurantId)
+      .order("created_at", { ascending: false })
+      .limit(options.limit ?? (options.includeHistory ? 250 : 100));
 
-  if (!options.includeHistory) {
-    query = query.not("status", "in", "(paid,cancelled)");
-  }
+    if (!options.includeHistory) {
+      query = query.not("status", "in", "(paid,cancelled)");
+    }
 
-  const { data, error } = await query;
+    return query;
+  });
 
   throwIfSupabaseError(error);
   return attachLatestDeliveryLocations(
@@ -1125,13 +1269,15 @@ export async function listKitchenOrdersForRestaurant(restaurantId: string) {
   if (cached) return cached;
 
   const supabase = createAdminSupabaseClient();
-  const { data, error } = await supabase
-    .from("orders")
-    .select(kitchenOrderSelect)
-    .eq("restaurant_id", restaurantId)
-    .in("status", ["pending", "ordering"])
-    .order("created_at", { ascending: true })
-    .limit(120);
+  const { data, error } = await runKitchenSelectWithBranchFallback((select) =>
+    supabase
+      .from("orders")
+      .select(select)
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["pending", "ordering"])
+      .order("created_at", { ascending: true })
+      .limit(120)
+  );
 
   throwIfSupabaseError(error);
   const orders = (data ?? []).map((order) => mapKitchenOrder(order as unknown as Omit<RawOrder, "restaurant" | "bill">));
@@ -1143,29 +1289,47 @@ export async function acceptOrder(restaurantId: string, orderId: string, minutes
   const supabase = createAdminSupabaseClient();
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,status")
+    .select("id,status,fulfillment_type,delivery_status")
     .eq("id", orderId)
     .eq("restaurant_id", restaurantId)
     .single();
 
   throwIfSupabaseError(error);
   if (!order) throw new AppError("Không tìm thấy đơn hàng", 404);
-  if (order.status === "cancelled") throw new AppError("Không thể xác nhận đơn đã huỷ", 400);
-  if (order.status !== "pending" && order.status !== "ordering") {
-    throw new AppError("Chỉ đơn mới hoặc đang ra món mới có thể xác nhận", 400);
-  }
+  const acceptTransition = resolveMerchantAcceptTransition({
+    status: order.status,
+    fulfillmentType: order.fulfillment_type,
+    deliveryStatus: order.delivery_status
+  });
+  if (!acceptTransition.allowed) throw new AppError(acceptTransition.reason ?? "Không thể xác nhận đơn hàng", 400);
 
   await deductInventoryForOrder(restaurantId, orderId, actorUserId);
 
   const now = new Date();
+  const nowIso = now.toISOString();
   const serviceDueAt = new Date(now.getTime() + minutes * 60_000).toISOString();
+  const nextDeliveryStatus = acceptTransition.next;
+  const shouldUpdateDeliveryStatus =
+    order.fulfillment_type === "DELIVERY" &&
+    nextDeliveryStatus !== null &&
+    nextDeliveryStatus !== undefined &&
+    order.delivery_status !== nextDeliveryStatus;
+
+  const updatePayload: Database["public"]["Tables"]["orders"]["Update"] = {
+    status: "ordering",
+    accepted_at: nowIso,
+    service_due_at: serviceDueAt,
+    ...(shouldUpdateDeliveryStatus
+      ? {
+          delivery_status: nextDeliveryStatus,
+          delivery_tracking_updated_at: nowIso
+        }
+      : {})
+  };
+
   const { data: updated, error: updateError } = await supabase
     .from("orders")
-    .update({
-      status: "ordering",
-      accepted_at: now.toISOString(),
-      service_due_at: serviceDueAt
-    })
+    .update(updatePayload)
     .eq("id", orderId)
     .eq("restaurant_id", restaurantId)
     .in("status", ["pending", "ordering"])
@@ -1175,6 +1339,22 @@ export async function acceptOrder(restaurantId: string, orderId: string, minutes
   throwIfSupabaseError(updateError);
   if (!updated) {
     throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
+  }
+  if (shouldUpdateDeliveryStatus) {
+    try {
+      await recordDeliveryStatusTrackingEvent({
+        restaurantId,
+        orderId,
+        deliveryStatus: nextDeliveryStatus as DeliveryActionStatus,
+        actorUserId
+      });
+    } catch (error) {
+      console.error("delivery_tracking_accept_event_failed", {
+        restaurantId,
+        orderId,
+        error: error instanceof Error ? error.message : "unknown"
+      });
+    }
   }
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
@@ -1253,6 +1433,10 @@ export async function updateOrderDeliveryStatus(
   }
   if (order.status === "cancelled") {
     throw new AppError("Không thể cập nhật đơn đã huỷ", 400);
+  }
+  const deliveryTransition = resolveDeliveryStatusTransition(order.delivery_status, deliveryStatus);
+  if (!deliveryTransition.allowed) {
+    throw new AppError(deliveryTransition.reason ?? "Chuyển trạng thái giao hàng không hợp lệ", 409);
   }
 
   const nextOrderStatus = deliveryStatus === "delivered" && order.status === "ordering" ? "completed" : order.status;

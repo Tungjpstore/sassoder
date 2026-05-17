@@ -57,13 +57,16 @@ export default function BlogIndexPage() {
           <nav aria-label="Điều hướng blog" className="blog-nav-links">
             <Link href="/">Trang chủ</Link>
             <Link href="/giai-phap">Giải pháp</Link>
+            <Link href="/so-sanh">So sánh</Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog" className="is-active">
               Blog
             </Link>
           </nav>
-          <Link className="blog-nav-cta" href="/dashboard/register?plan=pro">
-            Dùng thử LogiVN
+          <Link className="blog-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -100,7 +103,7 @@ export default function BlogIndexPage() {
         <div className="blog-container">
           <div className="blog-section-head">
             <span className="blog-kicker">Trang giải pháp</span>
-            <h2 id="blog-intent-pages-heading">Cửa vào SEO cho nhu cầu triển khai cụ thể</h2>
+            <h2 id="blog-intent-pages-heading">Cửa vào giải pháp cho nhu cầu triển khai cụ thể</h2>
             <p>
               Các trang giải pháp nối nội dung blog với truy vấn có ý định mua rõ hơn: gọi món QR, VietQR, trà sữa và đặt
               bàn nhận cọc.
@@ -268,8 +271,8 @@ export default function BlogIndexPage() {
             </p>
           </div>
           <div className="blog-cta-actions">
-            <Link href="/" className="blog-button blog-button-light">
-              Xem nền tảng
+            <Link href="/demo" className="blog-button blog-button-light">
+              Xem demo
             </Link>
             <Link href="/pricing" className="blog-button blog-button-orange">
               Xem bảng giá

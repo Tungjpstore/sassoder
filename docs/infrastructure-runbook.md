@@ -54,6 +54,8 @@
   - `RESEND_API_KEY`
   - `REPORT_EMAIL_FROM`
   - `BILLING_EMAIL_FROM`
+  - `AI_OPS_MORNING_BRIEF_EMAIL_ENABLED`
+  - `AI_OPS_MORNING_BRIEF_FROM`
 - Setup/tooling only:
   - `SUPABASE_PROJECT_REF`
   - `SUPABASE_ACCESS_TOKEN`
@@ -108,6 +110,15 @@
 
 - `/api/cron/reports` giờ xử lý nhiều batch trong một lần chạy thay vì dừng ở trang đầu tiên. Response trả thêm `batches` và `hasMore` để biết có còn backlog không.
 - `/api/cron/ai-ops` tạo lại AI Ops Radar cho các quán `active`, lưu lifecycle vào `ai_operation_insights`, và trả summary theo tenant để kiểm tra nhanh.
+- `/api/cron/ai-ops` cũng ghi `ai_morning_brief_runs` khi chạy intent `overview`. Email Morning Brief dùng `ai_morning_brief_preferences` theo từng quán; `AI_OPS_MORNING_BRIEF_EMAIL_ENABLED=true` là global gate cho cron, còn manual trigger có `email=true` sẽ ép gửi theo preference/người nhận hiện tại.
+- `/api/cron/ai-ops` tạo thêm branch-scoped insights khi chạy `overview`. Các insight này dùng schema sẵn có `ai_operation_insights.branch_id` và `scope_key=branch:<branch_id>`, không cần migration mới. Có thể tắt bằng `branches=false` hoặc giới hạn số chi nhánh mỗi quán bằng `branchLimit` / `maxBranches`.
+- Inventory intent trong `/api/cron/ai-ops` đọc thêm tín hiệu economics từ các bảng kho hiện có: projected purchase value, reorder urgency, waste/hao hụt, price spike, supplier delay và food cost cao. Phần này không thêm migration mới, nhưng cần các migration inventory/warehouse/alert hiện có đã được apply.
+- `/dashboard/ai-ops` có branch attribution drill-down 7 ngày cho pickup, dine-in và delivery. Panel này chỉ đọc `orders.branch_id`, `branch_assignment_source`, `fulfillment_type` và `store_branches`, không ghi dữ liệu và không cần cron riêng.
+- `/dashboard/ai-ops` hiển thị AI automation workflows dạng confirm-first checklist cho kho, marketing và nhân sự. Lớp hiện tại chỉ đọc snapshot vận hành, sinh checklist/action link/prompt và không tự ghi DB hoặc gọi side effect khi chưa có xác nhận.
+- `/dashboard/ai-ops` có branch performance comparison 7 ngày cho doanh thu, service time, stock risk và staff coverage. Panel này đọc `orders`, `stock_balances`, `staff_branch_assignments`, `staff_sessions`, `attendance_logs`, `attendance_approval_requests`; nếu một nhóm bảng chưa migrate, panel vẫn hiển thị phần còn lại kèm warning nội bộ.
+- Migration `orders_branch_attribution` thêm `orders.branch_id` và `branch_assignment_source` để branch AI đọc attribution trực tiếp. Cần apply migration này trước khi deploy code ghi các field branch mới vào đơn hàng.
+- Migration `table_branch_assignment` thêm `tables.branch_id` để QR bàn gắn về đúng chi nhánh. Apply sau `orders_branch_attribution` và trước deploy code dashboard table/pickup branch picker để attribution dine-in và pickup không bị rơi về fallback.
+- Chủ quán quản lý inbox, người nhận và retry email tại `/dashboard/ai-ops`. Nếu schema chưa migrate, trang vẫn load ở trạng thái cảnh báo và cron chỉ ghi phần đã sẵn sàng.
 - `/api/cron/reservations/expire` cũng xử lý nhiều batch trong cùng một invocation, tránh bỏ sót reservation hết hạn khi volume tăng.
 - Cả 4 cron routes đều có `maxDuration = 60` để ràng buộc runtime và giảm runaway executions.
 - Mỗi cron route ghi `cron_run_logs` bằng service-role sau khi vượt qua `CRON_SECRET`. `/admin/ops` dùng bảng này để hiển thị lần chạy gần nhất, next-run ETA, age, duration, failure streak, recent history, summary và lỗi cuối cùng.
@@ -118,6 +129,10 @@
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/reports
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/ai-ops
 curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&intent=inventory"
+curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&brief=true&email=false"
+curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&brief=true&email=true"
+curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&branches=false"
+curl -H "Authorization: Bearer $CRON_SECRET" "https://logivn.com/api/cron/ai-ops?limit=5&branchLimit=3"
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/reservations/expire
 curl -H "Authorization: Bearer $CRON_SECRET" https://logivn.com/api/cron/subscriptions
 ```
@@ -129,9 +144,10 @@ Chỉ nên chạy manual trên production khi chấp nhận side effect thật n
 1. Chạy local gate:
    `npm run infra:check && npm run lint && npx tsc --noEmit && npm run build`
 2. Merge sau khi GitHub Actions xanh.
-3. Chạy `Vercel Preflight` nếu thay đổi đụng env, cron, build config hoặc route handlers quan trọng.
-4. Deploy qua Vercel Git integration.
-5. Smoke check ngay sau deploy:
+3. Nếu deploy gồm HR/staff operations, rà thêm `docs/staff-operations-release-checklist.md` trước khi mở traffic.
+4. Chạy `Vercel Preflight` nếu thay đổi đụng env, cron, build config hoặc route handlers quan trọng.
+5. Deploy qua Vercel Git integration.
+6. Smoke check ngay sau deploy:
    - `GET /api/health`
    - đăng nhập `/dashboard`
    - một route customer quan trọng

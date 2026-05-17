@@ -85,6 +85,44 @@ type OperationSnapshot = {
     totalReferenceValue?: number;
     expiringBatchCount?: number;
     openAlertCount?: number;
+    wasteSpikeAlertCount?: number;
+    priceSpikeAlertCount?: number;
+    supplierDelayAlertCount?: number;
+    openPurchaseOrderCount?: number;
+    projectedPurchaseValue?: number;
+    weeklyUsageValue?: number;
+    reorderSuggestionCount?: number;
+    highReorderCount?: number;
+    topReorderSuggestion?: {
+      name?: string;
+      unit?: string;
+      daysLeft?: number | null;
+      reorderQuantity?: number;
+      estimatedCost?: number;
+      urgency?: string;
+    } | null;
+    wasteSignalCount?: number;
+    topWasteSignal?: {
+      name?: string;
+      unit?: string;
+      wasteQuantity?: number;
+      wasteCost?: number;
+      movementCount?: number;
+    } | null;
+    priceSignalCount?: number;
+    topPriceSignal?: {
+      name?: string;
+      latestUnitCost?: number;
+      previousUnitCost?: number;
+      changePercent?: number;
+    } | null;
+    highFoodCostItemCount?: number;
+    topHighFoodCostItem?: {
+      name?: string;
+      price?: number;
+      totalRecipeCost?: number;
+      recipeCostPercent?: number;
+    } | null;
     lowStockIngredients?: Array<{
       name?: string;
       unit?: string;
@@ -460,6 +498,126 @@ export function buildOperationInsights(snapshot: OperationSnapshot, now = new Da
           action: "Mở tab cảnh báo kho để xử lý tồn thấp, lệch kho hoặc lô cần kiểm tra.",
           evidence: [`openInventoryAlerts=${openAlertCount}`],
           metric: { label: "Alert kho", value: String(openAlertCount) },
+          actionIntent: "inventory",
+          actionHref: "/dashboard/inventory"
+        })
+      );
+    }
+
+    const reorderSuggestionCount = asNumber(inventory.reorderSuggestionCount);
+    const projectedPurchaseValue = asNumber(inventory.projectedPurchaseValue);
+    const highReorderCount = asNumber(inventory.highReorderCount);
+    const topReorder = inventory.topReorderSuggestion;
+    if (reorderSuggestionCount > 0 || projectedPurchaseValue > 0 || asNumber(inventory.openPurchaseOrderCount) > 0) {
+      insights.push(
+        buildInsight({
+          kind: "inventory",
+          severity: highReorderCount > 0 || projectedPurchaseValue >= 500000 ? "warning" : "opportunity",
+          title: "Cần chuẩn bị kế hoạch nhập hàng",
+          detail: topReorder?.name
+            ? `${topReorder.name} nên nhập thêm ${Number(asNumber(topReorder.reorderQuantity).toFixed(2)).toLocaleString("vi-VN")} ${topReorder.unit ?? ""}.`
+            : `${reorderSuggestionCount} nguyên liệu có đề xuất mua hoặc PO đang mở.`,
+          action: "Mở Kho hàng để gom các dòng thiếu vào purchase order trước giờ cao điểm.",
+          evidence: [
+            `reorderSuggestions=${reorderSuggestionCount}`,
+            `highReorder=${highReorderCount}`,
+            `projectedPurchase=${projectedPurchaseValue}`,
+            `openPurchaseOrders=${asNumber(inventory.openPurchaseOrderCount)}`
+          ],
+          metric: { label: "Dự kiến nhập", value: formatVnd(projectedPurchaseValue) },
+          actionIntent: "inventory",
+          actionHref: "/dashboard/inventory"
+        })
+      );
+    }
+
+    const topWaste = inventory.topWasteSignal;
+    const wasteSignalCount = asNumber(inventory.wasteSignalCount) || asNumber(inventory.wasteSpikeAlertCount);
+    const wasteCost = asNumber(topWaste?.wasteCost);
+    if (wasteSignalCount > 0) {
+      insights.push(
+        buildInsight({
+          kind: "inventory",
+          severity: wasteCost >= 200000 || wasteSignalCount >= 3 ? "warning" : "info",
+          title: "Hao hụt nguyên liệu cần rà soát",
+          detail: topWaste?.name
+            ? `${topWaste.name} hao hụt khoảng ${formatVnd(wasteCost)} trong dữ liệu gần đây.`
+            : `${wasteSignalCount} tín hiệu hao hụt hoặc waste spike đang mở.`,
+          action: "Mở tab Hao hụt & HSD để kiểm tra lý do, ca phát sinh và điều chỉnh định mức nếu cần.",
+          evidence: [
+            `wasteSignals=${wasteSignalCount}`,
+            `wasteSpikeAlerts=${asNumber(inventory.wasteSpikeAlertCount)}`,
+            topWaste?.name ? `topWaste=${topWaste.name}` : "",
+            wasteCost ? `wasteCost=${wasteCost}` : ""
+          ].filter(Boolean),
+          metric: { label: "Hao hụt", value: topWaste?.name ? formatVnd(wasteCost) : String(wasteSignalCount) },
+          actionIntent: "inventory",
+          actionHref: "/dashboard/inventory"
+        })
+      );
+    }
+
+    const topPrice = inventory.topPriceSignal;
+    const priceSignalCount = asNumber(inventory.priceSignalCount) || asNumber(inventory.priceSpikeAlertCount);
+    const priceChangePercent = asNumber(topPrice?.changePercent);
+    if (priceSignalCount > 0) {
+      insights.push(
+        buildInsight({
+          kind: "inventory",
+          severity: Math.abs(priceChangePercent) >= 15 || asNumber(inventory.priceSpikeAlertCount) > 0 ? "warning" : "info",
+          title: "Giá nhập đang biến động",
+          detail: topPrice?.name
+            ? `${topPrice.name} đổi ${priceChangePercent}% so với giá nhập gần đây.`
+            : `${priceSignalCount} tín hiệu giá nhập cần kiểm tra.`,
+          action: "Cập nhật giá vốn nguyên liệu và xem lại giá bán các món dùng nguyên liệu này.",
+          evidence: [
+            `priceSignals=${priceSignalCount}`,
+            `priceSpikeAlerts=${asNumber(inventory.priceSpikeAlertCount)}`,
+            topPrice?.name ? `topPrice=${topPrice.name}` : "",
+            topPrice?.latestUnitCost ? `latest=${topPrice.latestUnitCost}` : ""
+          ].filter(Boolean),
+          metric: { label: "Giá nhập", value: topPrice ? `${priceChangePercent}%` : String(priceSignalCount) },
+          actionIntent: "inventory",
+          actionHref: "/dashboard/inventory"
+        })
+      );
+    }
+
+    const topFoodCost = inventory.topHighFoodCostItem;
+    const highFoodCostItemCount = asNumber(inventory.highFoodCostItemCount);
+    if (highFoodCostItemCount > 0 && topFoodCost) {
+      insights.push(
+        buildInsight({
+          kind: "inventory",
+          severity: asNumber(topFoodCost.recipeCostPercent) >= 65 ? "warning" : "opportunity",
+          title: "Có món food cost cao",
+          detail: `${topFoodCost.name ?? "Một món"} có cost nguyên liệu khoảng ${Math.round(asNumber(topFoodCost.recipeCostPercent))}% giá bán.`,
+          action: "Rà lại định mức, topping hoặc giá bán để giữ biên lợi nhuận ổn định.",
+          evidence: [
+            `highFoodCostItems=${highFoodCostItemCount}`,
+            `topItem=${asText(topFoodCost.name)}`,
+            `recipeCostPercent=${asNumber(topFoodCost.recipeCostPercent)}`,
+            `recipeCost=${asNumber(topFoodCost.totalRecipeCost)}`,
+            `price=${asNumber(topFoodCost.price)}`
+          ],
+          metric: { label: "Food cost", value: `${Math.round(asNumber(topFoodCost.recipeCostPercent))}%` },
+          actionIntent: "inventory",
+          actionHref: "/dashboard/inventory"
+        })
+      );
+    }
+
+    const supplierDelayAlertCount = asNumber(inventory.supplierDelayAlertCount);
+    if (supplierDelayAlertCount > 0) {
+      insights.push(
+        buildInsight({
+          kind: "inventory",
+          severity: supplierDelayAlertCount >= 2 ? "warning" : "info",
+          title: "Purchase order có rủi ro trễ",
+          detail: `${supplierDelayAlertCount} PO hoặc dòng nhập hàng đang có tín hiệu supplier delay.`,
+          action: "Kiểm tra PO đang mở, gọi nhà cung cấp hoặc chuẩn bị phương án chuyển kho/mua thay thế.",
+          evidence: [`supplierDelayAlerts=${supplierDelayAlertCount}`, `openPurchaseOrders=${asNumber(inventory.openPurchaseOrderCount)}`],
+          metric: { label: "PO trễ", value: String(supplierDelayAlertCount) },
           actionIntent: "inventory",
           actionHref: "/dashboard/inventory"
         })
