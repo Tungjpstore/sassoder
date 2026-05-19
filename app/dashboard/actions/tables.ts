@@ -11,8 +11,16 @@ export async function createTableAction(formData: FormData) {
   const session = await requireOperationalAdminSession("table_qr");
   const parsed = tableSchema.parse({
     name: formData.get("name"),
+    branchId: formData.get("branchId"),
     area: formData.get("area"),
-    capacity: formData.get("capacity")
+    capacity: formData.get("capacity"),
+    floorLabel: formData.get("floorLabel"),
+    seatingZone: formData.get("seatingZone"),
+    tableKind: formData.get("tableKind"),
+    reservationPriority: formData.get("reservationPriority"),
+    isBookable: formData.has("isBookable") ? formData.get("isBookable") === "true" : true,
+    isHidden: formData.get("isHidden") === "true",
+    isUnderMaintenance: formData.get("isUnderMaintenance") === "true"
   });
   await assertRestaurantResourceLimit({
     restaurantId: session.restaurantId,
@@ -31,8 +39,16 @@ export async function updateTableAction(formData: FormData) {
   const parsed = updateTableSchema.parse({
     tableId: formData.get("tableId"),
     name: formData.get("name"),
+    branchId: formData.get("branchId"),
     area: formData.get("area"),
-    capacity: formData.get("capacity")
+    capacity: formData.get("capacity"),
+    floorLabel: formData.get("floorLabel"),
+    seatingZone: formData.get("seatingZone"),
+    tableKind: formData.get("tableKind"),
+    reservationPriority: formData.get("reservationPriority"),
+    isBookable: formData.get("isBookable") === "true",
+    isHidden: formData.get("isHidden") === "true",
+    isUnderMaintenance: formData.get("isUnderMaintenance") === "true"
   });
   await updateTable(session.restaurantId, parsed);
   invalidateRestaurantDashboardCache(session.restaurantId);

@@ -2,11 +2,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeJsonReport, writeTextReport } from "./report-io.mjs";
+import siteUrlHelpers from "./site-url.cjs";
+
+const { resolveSeoSiteUrl } = siteUrlHelpers;
 
 const root = process.cwd();
 const reportsDir = path.join(root, "reports", "seo");
 
-const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://logivn.com").replace(/\/+$/, "");
+const baseUrl = resolveSeoSiteUrl();
 const firecrawlBaseUrl = (process.env.FIRECRAWL_BASE_URL || "https://api.firecrawl.dev").replace(/\/+$/, "");
 const firecrawlApiKey = (process.env.FIRECRAWL_API_KEY || "").trim();
 const required = process.env.SEO_FIRECRAWL_REQUIRED === "1";
@@ -18,8 +21,17 @@ async function readText(file) {
 }
 
 function extractBlogRoutes(blogSource) {
-  const slugs = [...blogSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
-  return ["/blog", ...slugs.map((slug) => `/blog/${slug}`)];
+  const [postSource = "", hubAndEnhancementSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
+  const [hubSource = ""] = hubAndEnhancementSource.split("type BlogArticleEnhancement");
+  const slugs = [
+    ...postSource.matchAll(/slug:\s*"([^"]+)"/g),
+    ...hubSource.matchAll(/slug:\s*"([^"]+)"/g)
+  ].map((match) => match[1]);
+  return ["/blog", ...Array.from(new Set(slugs)).map((slug) => `/blog/${slug}`)];
+}
+
+function extractIntentRoutes(intentSource) {
+  return [...intentSource.matchAll(/path:\s*"([^"]*\/giai-phap\/[^"]+)"/g)].map((match) => match[1]);
 }
 
 function absoluteUrl(route) {
@@ -227,7 +239,11 @@ async function writeFullReport(report) {
 
 async function main() {
   const blog = await readText("lib/seo/blog.ts");
-  const expectedUrls = ["/", "/pricing", ...extractBlogRoutes(blog)].map(absoluteUrl);
+  const intentPages = await readText("lib/seo/intent-pages.ts");
+  const intentPageExpansions = await readText("lib/seo/intent-page-expansions.ts");
+  const intentPageExpansionBatch2 = await readText("lib/seo/intent-page-expansion-batch-2.ts");
+  const combinedIntentPages = `${intentPages}\n${intentPageExpansions}\n${intentPageExpansionBatch2}`;
+  const expectedUrls = ["/", "/pricing", "/giai-phap", ...extractIntentRoutes(combinedIntentPages), ...extractBlogRoutes(blog)].map(absoluteUrl);
   const generatedAt = new Date().toISOString();
   const endpoint = `${firecrawlBaseUrl}/v2/map`;
 

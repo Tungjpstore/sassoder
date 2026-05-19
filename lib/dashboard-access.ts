@@ -36,7 +36,7 @@ export async function requireDashboardAccess(feature?: PlanFeatureKey) {
 export async function requireDashboardAdminAccess(feature?: PlanFeatureKey) {
   const access = await requireDashboardAccess(feature);
   if (access.session.role !== "ADMIN") {
-    redirect("/dashboard");
+    redirect("/dashboard/staff/mobile");
   }
 
   return access;

@@ -3,6 +3,7 @@ import "server-only";
 export { getRestaurantIdBySlug, runCustomerAssistant } from "./ai/customer";
 export {
   generateAiImage,
+  generateInventoryOcrDraft,
   generateMenuOcrDraft,
   generateOnboardingAiImage,
   generateOnboardingBranding,

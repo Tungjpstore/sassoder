@@ -1,6 +1,8 @@
 import type { AiPromptMessage } from "@/services/ai-prompt-router";
 
-export type AiProvider = "qwen" | "xai";
+export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway";
+
+export type AiProviderProtocol = "openai-compatible" | "anthropic-messages";
 
 export type AiTaskType =
   | "customer_ordering"
@@ -47,6 +49,7 @@ export type AiCompletionResult = {
   model: string;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  estimatedCostVnd?: number | null;
   raw?: unknown;
   cacheHit?: boolean;
   latencyMs?: number;
@@ -63,16 +66,42 @@ export type AiCompletionResult = {
     model: string;
     status: "success" | "failed";
     latencyMs: number;
+    estimatedCostVnd?: number | null;
     errorMessage?: string;
   }>;
 };
 
 export type AiProviderConfig = {
   provider: AiProvider;
+  protocol: AiProviderProtocol;
   baseUrl: string;
   apiKey: string;
   chatModel: string;
   fastModel: string;
   imageModel: string;
   ocrModel: string;
+  supportsJsonMode: boolean;
+  supportsToolCalling: boolean;
+  supportsImageGeneration: boolean;
+  supportsOcr: boolean;
+  inputTokenCostPerMillionVnd: number;
+  outputTokenCostPerMillionVnd: number;
+  priority: number;
+};
+
+export type AiProviderReadiness = {
+  provider: AiProvider;
+  configured: boolean;
+  protocol: AiProviderProtocol;
+  envNames: string[];
+  missingEnvNames: string[];
+  chatModel: string;
+  fastModel: string;
+  imageModel: string;
+  ocrModel: string;
+  supportsJsonMode: boolean;
+  supportsToolCalling: boolean;
+  supportsImageGeneration: boolean;
+  supportsOcr: boolean;
+  priority: number;
 };

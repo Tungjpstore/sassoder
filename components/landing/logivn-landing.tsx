@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { JsonLdScript } from "next-seo";
 import {
   ArrowRight,
   BarChart3,
@@ -16,7 +17,10 @@ import {
   WalletCards
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { MarketingFunnelTracker } from "@/components/marketing/funnel-tracker";
 import { SEO_HOME_TITLE } from "@/lib/seo/config";
+import { getFeaturedSeoIntentPages } from "@/lib/seo/intent-pages";
+import { buildFaqSchema } from "@/lib/seo/schema";
 import type { PlatformSiteConfig } from "@/services/platform-public-service";
 
 const brand = "/brand/logivn";
@@ -27,6 +31,8 @@ const quickHighlights = [
   { icon: ClipboardList, label: "Đặt bàn nhận cọc" },
   { icon: Sparkles, label: "Trợ lý thông minh" }
 ];
+
+const footerIntentPages = getFeaturedSeoIntentPages(6);
 
 const platformSignals = [
   {
@@ -159,6 +165,99 @@ const testimonials = [
   }
 ];
 
+const conversionSignals = [
+  { value: "30 ngày", label: "dùng thử đầy đủ trước khi quyết định nâng cấp" },
+  { value: "99K", label: "khởi động với gói Pro cho quán nhỏ và vừa" },
+  { value: "0 POS", label: "không bắt buộc mua máy riêng để bắt đầu gọi món QR" },
+  { value: "1 dashboard", label: "gom bàn, đơn, thanh toán, nhân sự và báo cáo" }
+];
+
+const productDemoPanels = [
+  {
+    icon: QrCode,
+    eyebrow: "QR ordering",
+    metric: "Tại bàn",
+    title: "Khách tự gọi món, thêm topping và gửi order trong vài thao tác",
+    text: "Menu số được thiết kế để khách hiểu nhanh, chọn đúng món và gửi yêu cầu về đúng bàn.",
+    lines: ["Bàn 12 vừa gửi 3 món", "Ghi chú: ít đá, thêm trân châu", "Nhân viên xác nhận trong dashboard"]
+  },
+  {
+    icon: Bell,
+    eyebrow: "Live operations",
+    metric: "Realtime",
+    title: "Nhân viên biết việc tiếp theo thay vì hỏi lại qua nhiều nhóm chat",
+    text: "Trạng thái đơn, bàn, bếp và thanh toán được đặt cạnh nhau để ca phục vụ ít rối hơn.",
+    lines: ["2 đơn đang chờ xác nhận", "4 bàn cần gọi phục vụ", "1 hóa đơn chờ VietQR"]
+  },
+  {
+    icon: Sparkles,
+    eyebrow: "AI assistant",
+    metric: "Insight",
+    title: "AI biến dữ liệu vận hành thành gợi ý chủ quán có thể dùng ngay",
+    text: "Không phải AI cho đẹp. LogiVN ưu tiên các gợi ý về doanh thu, combo, giờ cao điểm và nhân sự.",
+    lines: ["Gợi ý combo theo món bán chạy", "Dự báo khung giờ cao điểm", "Nhắc kiểm tra tồn kho sắp hết"]
+  }
+];
+
+const aiInsightCards = [
+  {
+    label: "Doanh thu",
+    value: "+28%",
+    text: "Khung 19h-21h đang tăng so với trung bình tuần. Gợi ý mở thêm một nhân sự nhận món."
+  },
+  {
+    label: "Combo",
+    value: "Top 3",
+    text: "Trà đào, bánh flan và topping trân châu đang đi cùng nhau nhiều nhất trong order QR."
+  },
+  {
+    label: "Tồn kho",
+    value: "2 món",
+    text: "Sữa tươi và syrup đào có nguy cơ hết trước cuối tuần nếu tốc độ bán giữ nguyên."
+  }
+];
+
+const qrOrderingSteps = [
+  { title: "Scan QR", text: "Khách mở menu theo đúng bàn hoặc khu vực." },
+  { title: "Chọn món", text: "Topping, size, ghi chú và combo rõ ràng trên mobile." },
+  { title: "Quán xác nhận", text: "Đơn mới hiện trên dashboard để nhân viên xử lý." },
+  { title: "Phục vụ", text: "Bếp và phục vụ theo dõi trạng thái cùng một nhịp." },
+  { title: "VietQR", text: "Thanh toán gọn, dễ đối soát theo hóa đơn." }
+];
+
+const homepageFaqItems = [
+  {
+    question: "LogiVN có cần mua máy POS riêng không?",
+    answer:
+      "Không bắt buộc. Quán có thể bắt đầu bằng dashboard web, điện thoại hoặc máy tính bảng, sau đó mở rộng thiết bị khi quy trình đã ổn định."
+  },
+  {
+    question: "Khách có phải tải app để gọi món QR không?",
+    answer:
+      "Không. Khách chỉ cần quét mã QR tại bàn hoặc mở link đặt món online để xem menu, chọn món, gửi order và thanh toán theo quy trình của quán."
+  },
+  {
+    question: "LogiVN có hỗ trợ thanh toán VietQR không?",
+    answer:
+      "Có. LogiVN hỗ trợ luồng thanh toán VietQR để khách chuyển khoản quen thuộc hơn và chủ quán dễ kiểm tra trạng thái thanh toán trong vận hành."
+  },
+  {
+    question: "AI của LogiVN giúp gì cho quán cafe và nhà hàng?",
+    answer:
+      "AI tập trung vào vận hành thực tế như gợi ý combo, phân tích doanh thu, dự đoán giờ cao điểm, nhắc tồn kho và hỗ trợ chủ quán đọc tín hiệu kinh doanh nhanh hơn."
+  },
+  {
+    question: "Gói Pro 99K và Premium 199K khác nhau như thế nào?",
+    answer:
+      "Pro phù hợp để bắt đầu với QR ordering, quản lý đơn và dashboard cơ bản. Premium dành cho quán cần nhiều tự động hóa hơn như AI nâng cao, đặt bàn, báo cáo và các tính năng vận hành mở rộng."
+  },
+  {
+    question: "Quán có được dùng thử trước khi trả phí không?",
+    answer:
+      "Có. LogiVN hỗ trợ dùng thử để chủ quán kiểm tra độ phù hợp với menu, nhân sự, bàn và nhịp phục vụ trước khi quyết định nâng cấp."
+  }
+];
+
 function getPlanHref(planCode: string | undefined, email: string) {
   if (planCode === "enterprise") {
     return `mailto:${email}?subject=${encodeURIComponent("Tư vấn LogiVN cho chuỗi nhiều chi nhánh")}`;
@@ -230,29 +329,23 @@ function getSeoHeroTitle(companyName: string, configuredTitle: string) {
 
 export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }) {
   const { brand: siteBrand, landing, plans } = siteConfig;
-  const heroTitle = getSeoHeroTitle(siteBrand.companyName, landing.heroTitle);
+  const configuredHeroTitle = getSeoHeroTitle(siteBrand.companyName, landing.heroTitle);
+  const heroTitle =
+    configuredHeroTitle === SEO_HOME_TITLE ? "LogiVN giúp quán vận hành thông minh hơn với QR ordering & AI" : configuredHeroTitle;
   const trialDays = plans.reduce((max, plan) => {
     const match = plan.items.join(" ").match(/(\d+)\s*ngày/);
     return match ? Math.max(max, Number(match[1])) : max;
   }, 30);
 
-  const heroProofs = [
-    {
-      value: `${trialDays} ngày`,
-      label: "dùng thử để kiểm tra độ hợp với nhịp vận hành của quán"
-    },
-    {
-      value: "QR + VietQR",
-      label: "từ gọi món đến thanh toán trong cùng một câu chuyện bán hàng"
-    },
-    {
-      value: "1 màn hình",
-      label: "để nhìn bàn, bếp, đơn online và báo cáo ở cùng một nơi"
-    }
-  ];
+  const heroProofs = conversionSignals.map((signal) =>
+    signal.value === "30 ngày" ? { ...signal, value: `${trialDays} ngày` } : signal
+  );
 
   return (
-    <div className="logivn-brand-page">
+    <>
+      <MarketingFunnelTracker page="/" source="homepage" />
+      <JsonLdScript id="logivn-home-faq-jsonld" scriptKey="logivn-home-faq" data={buildFaqSchema(homepageFaqItems)} />
+      <div className="logivn-brand-page">
       <style>{styles}</style>
 
       <header className="lv-header">
@@ -260,6 +353,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
           <Logo logoUrl={siteBrand.logoUrl} label={siteBrand.companyName} priority />
           <nav className="lv-nav-links" aria-label="Điều hướng chính">
             <a href="#solution">Giải pháp</a>
+            <Link href="/demo">Demo</Link>
+            <a href="#ai-operations">AI</a>
             <a href="#features">Lợi ích</a>
             <a href="#journey">Câu chuyện</a>
             <a href="#pricing">Bảng giá</a>
@@ -285,16 +380,19 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
 
           <div className="lv-container lv-hero-shell">
             <div className="lv-hero-copy">
-              <span className="lv-kicker">Nền tảng gọi món cho quán Việt</span>
+              <span className="lv-kicker">SMART ORDERING. BETTER SERVICE.</span>
               <h1>{heroTitle}</h1>
-              <p>{landing.heroSubtitle}</p>
+              <p>
+                QR ordering, order tại bàn, VietQR, quản lý nhân sự, tồn kho và AI assistant trong một nền tảng đủ gọn để
+                quán nhỏ bắt đầu ngay, đủ sâu để chuỗi F&amp;B mở rộng.
+              </p>
               <div className="lv-hero-actions">
                 <Link className="lv-btn lv-btn-orange" href="/dashboard/register?plan=pro">
-                  {landing.primaryCta}
+                  Tạo quán miễn phí
                   <ArrowRight size={18} />
                 </Link>
-                <Link className="lv-btn lv-btn-outline" href="/pricing">
-                  Xem gói phù hợp
+                <Link className="lv-btn lv-btn-outline" href="/demo">
+                  Xem demo vận hành
                 </Link>
               </div>
               <div className="lv-proof-pills" aria-label="Điểm nhấn chuyển đổi">
@@ -313,8 +411,20 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   src={landing.bannerUrl}
                   alt={`${siteBrand.companyName} trong không gian cafe Việt`}
                   fill
+                  priority
+                  fetchPriority="high"
                   sizes="(max-width: 1100px) 100vw, 54vw"
                 />
+                <div className="lv-poster-hotspots" aria-hidden="true">
+                  <span className="lv-poster-live">
+                    <span />
+                    LogiVN Live
+                  </span>
+                  <span className="lv-poster-pay">
+                    <WalletCards size={14} />
+                    VietQR ready
+                  </span>
+                </div>
               </div>
 
               <article className="lv-stage-card lv-stage-card-left">
@@ -371,6 +481,49 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                 </article>
               ))}
             </div>
+
+            <div className="lv-market-strip" aria-label="Mô hình F&B phù hợp với LogiVN">
+              {["Cafe độc lập", "Trà sữa", "Nhà hàng nhỏ", "Quán ăn gia đình", "Chuỗi F&B nhỏ"].map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="lv-section lv-product-demo" id="product-demo" aria-labelledby="lv-product-demo-title">
+          <div className="lv-container">
+            <div className="lv-section-head lv-section-head-centered">
+              <SectionLabel>Product demo</SectionLabel>
+              <h2 id="lv-product-demo-title">Một flow đủ nhanh cho khách, đủ rõ cho nhân viên, đủ sâu cho chủ quán</h2>
+              <p>
+                Homepage mới đưa sản phẩm lên trước: không chỉ nói LogiVN có tính năng gì, mà cho thấy từng nhóm người dùng
+                nhận được điều gì ngay trong ca vận hành.
+              </p>
+            </div>
+
+            <div className="lv-demo-grid">
+              {productDemoPanels.map((panel) => (
+                <article className="lv-demo-card" key={panel.eyebrow}>
+                  <div className="lv-demo-topline">
+                    <span className="lv-demo-icon">
+                      <panel.icon size={18} />
+                    </span>
+                    <strong>{panel.metric}</strong>
+                  </div>
+                  <p className="lv-demo-eyebrow">{panel.eyebrow}</p>
+                  <h3>{panel.title}</h3>
+                  <p>{panel.text}</p>
+                  <div className="lv-demo-lines">
+                    {panel.lines.map((line) => (
+                      <span key={line}>
+                        <Check size={14} />
+                        {line}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
           </div>
         </section>
 
@@ -407,6 +560,49 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   </ul>
                 </article>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="lv-section lv-ai" id="ai-operations" aria-labelledby="lv-ai-title">
+          <div className="lv-container lv-ai-shell">
+            <div className="lv-ai-copy">
+              <SectionLabel>AI-first operations</SectionLabel>
+              <h2 id="lv-ai-title">AI của LogiVN tập trung vào quyết định vận hành, không phải hiệu ứng trình diễn</h2>
+              <p>
+                Chủ quán cần biết giờ nào đông, món nào nên ghép combo, ca nào thiếu người và nguyên liệu nào sắp hết.
+                LogiVN biến dữ liệu order thành insight đủ ngắn để hành động trong ngày.
+              </p>
+              <div className="lv-ai-actions">
+                <Link className="lv-btn lv-btn-orange" href="/dashboard/register?plan=premium">
+                  Thử Premium AI
+                  <ArrowRight size={18} />
+                </Link>
+                <Link className="lv-btn lv-btn-outline" href="/demo">
+                  Xem demo AI
+                </Link>
+              </div>
+            </div>
+
+            <div className="lv-ai-console" aria-label="Minh họa AI assistant LogiVN">
+              <div className="lv-ai-console-head">
+                <span>
+                  <Sparkles size={16} />
+                  LogiVN AI
+                </span>
+                <strong>Live insights</strong>
+              </div>
+              <div className="lv-ai-card-stack">
+                {aiInsightCards.map((insight) => (
+                  <article className="lv-ai-card" key={insight.label}>
+                    <div>
+                      <span>{insight.label}</span>
+                      <strong>{insight.value}</strong>
+                    </div>
+                    <p>{insight.text}</p>
+                  </article>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -453,6 +649,16 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                 Mỗi bước được giữ ở đúng mức cần thiết để nhân viên không bị quá tải, khách không bị lạc hướng và chủ quán
                 vẫn giữ được cái nhìn toàn cục.
               </p>
+            </div>
+
+            <div className="lv-qr-journey" aria-label="Luồng gọi món QR của khách">
+              {qrOrderingSteps.map((step, index) => (
+                <article className="lv-qr-step" key={step.title}>
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </article>
+              ))}
             </div>
 
             <div className="lv-flow-grid">
@@ -522,8 +728,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
                   Tạo quán dùng thử
                   <ArrowRight size={18} />
                 </Link>
-                <Link className="lv-btn lv-btn-ghost" href="/pricing">
-                  Xem bảng giá
+                <Link className="lv-btn lv-btn-ghost" href="/demo">
+                  Xem demo
                 </Link>
               </div>
             </div>
@@ -623,6 +829,28 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
           </div>
         </section>
 
+        <section className="lv-section lv-faq" aria-labelledby="lv-faq-title">
+          <div className="lv-container lv-faq-shell">
+            <div className="lv-faq-copy">
+              <SectionLabel>FAQ</SectionLabel>
+              <h2 id="lv-faq-title">Câu trả lời ngắn cho những điều chủ quán cần biết trước khi thử LogiVN</h2>
+              <p>
+                Những câu hỏi ngắn giúp chủ quán hiểu nhanh LogiVN phù hợp mô hình nào, cần chuẩn bị gì và nên bắt đầu
+                bằng QR, VietQR hay AI vận hành.
+              </p>
+            </div>
+
+            <div className="lv-faq-list">
+              {homepageFaqItems.map((item) => (
+                <details key={item.question}>
+                  <summary>{item.question}</summary>
+                  <p>{item.answer}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section className="lv-final" id="contact">
           <div className="lv-container lv-final-grid">
             <div className="lv-final-copy">
@@ -631,12 +859,12 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
               <p>{landing.finalSubtitle}</p>
               <div className="lv-final-actions">
                 <Link className="lv-btn lv-btn-orange" href="/dashboard/register?plan=pro">
-                  Đăng ký demo ngay
+                  Tạo quán dùng thử
                   <ArrowRight size={18} />
                 </Link>
-                <a className="lv-btn lv-btn-ghost" href={`mailto:${siteBrand.email}`}>
-                  Liên hệ tư vấn
-                </a>
+                <Link className="lv-btn lv-btn-ghost" href="/waitlist">
+                  Pilot có hướng dẫn
+                </Link>
               </div>
               <div className="lv-final-contact">
                 <span>
@@ -662,6 +890,14 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
         </section>
       </main>
 
+      <div className="lv-mobile-sticky-cta" aria-label="Hành động nhanh trên mobile">
+        <Link href="/dashboard/register?plan=pro">
+          Tạo quán miễn phí
+          <ArrowRight size={16} />
+        </Link>
+        <Link href="/demo">Xem demo</Link>
+      </div>
+
       <footer className="lv-footer">
         <div className="lv-container lv-footer-grid">
           <div className="lv-footer-brand">
@@ -674,14 +910,24 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
             <a href="#features">Lợi ích</a>
             <a href="#journey">Câu chuyện</a>
             <a href="#pricing">Bảng giá</a>
+            <Link href="/giai-phap">Tất cả giải pháp</Link>
+            <Link href="/so-sanh">So sánh phần mềm</Link>
+            <Link href="/dia-phuong">Theo địa phương</Link>
             <Link href="/blog">Blog vận hành</Link>
             <Link href="/blog/goi-mon-qr">Hub gọi món QR</Link>
             <Link href="/blog/van-hanh-nha-hang">Hub nhà hàng</Link>
+            {footerIntentPages.map((page) => (
+              <Link key={page.slug} href={page.path}>
+                {page.eyebrow}
+              </Link>
+            ))}
           </div>
 
           <div>
             <h3>Bắt đầu</h3>
             <Link href="/dashboard/register?plan=pro">Tạo quán dùng thử</Link>
+            <Link href="/demo">Xem demo</Link>
+            <Link href="/waitlist">Waitlist pilot</Link>
             <Link href="/dashboard/login">Đăng nhập</Link>
             <Link href="/pricing">So sánh gói</Link>
           </div>
@@ -704,7 +950,8 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
         </div>
         <div className="lv-container lv-copyright">© 2026 {siteBrand.companyName}. All rights reserved.</div>
       </footer>
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -775,7 +1022,7 @@ const styles = `
 .lv-logo {
   display: inline-flex;
   width: 154px;
-  height: 42px;
+  min-height: 44px;
   align-items: center;
 }
 
@@ -808,6 +1055,14 @@ const styles = `
   transition: color 180ms ease, transform 180ms ease, background-color 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
 }
 
+.lv-nav-links a {
+  display: inline-flex;
+  min-width: 48px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+}
+
 .lv-nav-links a:hover,
 .lv-login:hover,
 .lv-inline-link:hover,
@@ -823,7 +1078,7 @@ const styles = `
 
 .lv-login {
   display: inline-flex;
-  min-height: 42px;
+  min-height: 44px;
   align-items: center;
   color: var(--lv-green);
   font-size: 14px;
@@ -958,9 +1213,9 @@ const styles = `
 
 .lv-hero-copy h1 {
   margin-top: 18px;
-  font-size: clamp(3.4rem, 7.2vw, 6.2rem);
-  line-height: 0.94;
-  letter-spacing: -0.04em;
+  font-size: 5.2rem;
+  line-height: 0.96;
+  letter-spacing: 0;
   color: var(--lv-green-strong);
 }
 
@@ -1017,13 +1272,17 @@ const styles = `
 
 .lv-hero-stage {
   position: relative;
-  min-height: 40rem;
-  padding: 18px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-height: 0;
+  padding: 0;
 }
 
 .lv-stage-frame {
   position: relative;
-  min-height: 38rem;
+  grid-column: 1 / -1;
+  min-height: 34.5rem;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 34px;
@@ -1037,19 +1296,58 @@ const styles = `
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 1;
+  pointer-events: none;
   background:
     linear-gradient(180deg, rgba(10, 47, 37, 0.04), rgba(10, 47, 37, 0.22)),
     linear-gradient(90deg, rgba(255, 248, 239, 0.22), transparent 18%, transparent 82%, rgba(10, 47, 37, 0.12));
 }
 
 .lv-stage-frame img {
+  z-index: 0;
   object-fit: cover;
-  object-position: center;
+  object-position: center 52%;
+}
+
+.lv-poster-hotspots {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  inset: 22px;
+  align-items: flex-start;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.lv-poster-live,
+.lv-poster-pay {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  color: rgba(255, 248, 239, 0.9);
+  background: rgba(10, 47, 37, 0.54);
+  box-shadow: 0 18px 36px rgba(10, 47, 37, 0.16);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lv-poster-live span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #F28C28;
+  box-shadow: 0 0 0 4px rgba(255, 248, 239, 0.16);
 }
 
 .lv-stage-card {
-  position: absolute;
-  width: min(19rem, 58%);
+  position: relative;
+  z-index: 3;
+  width: 100%;
   display: grid;
   grid-template-columns: 40px 1fr;
   gap: 14px;
@@ -1060,18 +1358,16 @@ const styles = `
   background: rgba(255, 252, 246, 0.84);
   box-shadow: var(--lv-shadow-soft);
   backdrop-filter: blur(14px);
-  animation: lvFloat 9s ease-in-out infinite;
 }
 
 .lv-stage-card-left {
-  left: -18px;
-  bottom: 104px;
+  left: auto;
+  bottom: auto;
 }
 
 .lv-stage-card-right {
-  right: -10px;
-  top: 46px;
-  animation-delay: 1.8s;
+  right: auto;
+  top: auto;
 }
 
 .lv-stage-icon {
@@ -1101,10 +1397,12 @@ const styles = `
 }
 
 .lv-stage-rail {
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  bottom: 36px;
+  position: relative;
+  grid-column: 1 / -1;
+  z-index: 3;
+  left: auto;
+  right: auto;
+  bottom: auto;
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -1153,7 +1451,7 @@ const styles = `
   margin-top: 14px;
   font-size: clamp(2.2rem, 5vw, 3.45rem);
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   color: var(--lv-green-strong);
 }
 
@@ -1198,7 +1496,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 22px;
   line-height: 1.05;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .lv-signal-card p {
@@ -1207,6 +1505,141 @@ const styles = `
   font-size: 14px;
   line-height: 1.7;
   font-weight: 600;
+}
+
+.lv-market-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.lv-market-strip span {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  padding: 0 14px;
+  border: 1px solid var(--lv-line);
+  border-radius: 999px;
+  color: var(--lv-green);
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.lv-product-demo {
+  padding-top: 52px;
+}
+
+.lv-demo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.lv-demo-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 420px;
+  padding: 24px;
+  border: 1px solid var(--lv-line);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 90% 4%, rgba(242, 140, 40, 0.13), transparent 12rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 252, 246, 0.92));
+  box-shadow: var(--lv-shadow-soft);
+}
+
+.lv-demo-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -26px -38px auto;
+  width: 138px;
+  height: 138px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 32px;
+  transform: rotate(14deg);
+}
+
+.lv-demo-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.lv-demo-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lv-demo-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--lv-green);
+  background: rgba(15, 77, 58, 0.08);
+}
+
+.lv-demo-topline strong {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--lv-orange);
+  background: rgba(242, 140, 40, 0.1);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.lv-demo-eyebrow {
+  margin-top: 24px;
+  color: var(--lv-orange);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.lv-demo-card h3 {
+  margin-top: 10px;
+  color: var(--lv-green-strong);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 28px;
+  line-height: 1.04;
+}
+
+.lv-demo-card p:not(.lv-demo-eyebrow) {
+  margin-top: 14px;
+  color: var(--lv-muted);
+  font-size: 14px;
+  line-height: 1.75;
+  font-weight: 600;
+}
+
+.lv-demo-lines {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.lv-demo-lines span {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 38px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 14px;
+  color: var(--lv-green);
+  background: rgba(15, 77, 58, 0.05);
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 800;
 }
 
 .lv-operating {
@@ -1296,7 +1729,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 28px;
   line-height: 1.02;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lv-operating-card p:not(.lv-operating-eyebrow) {
@@ -1323,6 +1756,132 @@ const styles = `
   font-size: 13px;
   line-height: 1.55;
   font-weight: 800;
+}
+
+.lv-ai {
+  padding-top: 56px;
+}
+
+.lv-ai-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+  gap: 28px;
+  align-items: center;
+  padding: 34px;
+  overflow: hidden;
+  border-radius: 36px;
+  background:
+    radial-gradient(circle at 96% 8%, rgba(242, 140, 40, 0.18), transparent 20rem),
+    linear-gradient(145deg, #0A2F25 0%, #103C31 54%, #FFF7EB 54.2%, #FFF7EB 100%);
+  box-shadow: 0 28px 64px rgba(10, 47, 37, 0.16);
+}
+
+.lv-ai-copy {
+  color: #FFF8EF;
+}
+
+.lv-ai-copy .lv-section-label {
+  color: rgba(248, 184, 106, 0.94);
+}
+
+.lv-ai-copy h2 {
+  margin-top: 14px;
+  color: #FFF8EF;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.2rem, 4.8vw, 3.45rem);
+  line-height: 1;
+}
+
+.lv-ai-copy p {
+  margin-top: 16px;
+  color: rgba(255, 248, 239, 0.78);
+  font-size: 16px;
+  line-height: 1.8;
+  font-weight: 600;
+}
+
+.lv-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 28px;
+}
+
+.lv-ai-console {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 30px;
+  background: rgba(255, 252, 246, 0.82);
+  box-shadow: var(--lv-shadow);
+  backdrop-filter: blur(12px);
+}
+
+.lv-ai-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 4px 12px;
+  border-bottom: 1px solid rgba(15, 77, 58, 0.1);
+}
+
+.lv-ai-console-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--lv-green);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.lv-ai-console-head strong {
+  color: var(--lv-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lv-ai-card-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.lv-ai-card {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 14px;
+  align-items: start;
+  min-height: 104px;
+  padding: 16px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.lv-ai-card div {
+  display: grid;
+  gap: 6px;
+}
+
+.lv-ai-card span {
+  color: var(--lv-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lv-ai-card strong {
+  color: var(--lv-orange);
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.lv-ai-card p {
+  color: var(--lv-green);
+  font-size: 14px;
+  line-height: 1.65;
+  font-weight: 700;
 }
 
 .lv-chapters .lv-container {
@@ -1373,7 +1932,7 @@ const styles = `
   margin-top: 16px;
   font-size: clamp(2rem, 4.4vw, 3rem);
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
   color: var(--lv-green-strong);
 }
 
@@ -1406,6 +1965,7 @@ const styles = `
 .lv-inline-link,
 .lv-pricing-note a {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 8px;
   margin-top: 24px;
@@ -1443,6 +2003,56 @@ const styles = `
   padding-top: 56px;
 }
 
+.lv-qr-journey {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.lv-qr-step {
+  position: relative;
+  min-height: 190px;
+  padding: 18px;
+  border: 1px solid var(--lv-line);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: var(--lv-shadow-soft);
+}
+
+.lv-qr-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  top: 32px;
+  right: -14px;
+  width: 16px;
+  height: 2px;
+  background: rgba(15, 77, 58, 0.22);
+}
+
+.lv-qr-step span {
+  color: rgba(15, 77, 58, 0.28);
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.lv-qr-step h3 {
+  margin-top: 18px;
+  color: var(--lv-green-strong);
+  font-size: 22px;
+  line-height: 1.05;
+  font-weight: 900;
+}
+
+.lv-qr-step p {
+  margin-top: 10px;
+  color: var(--lv-muted);
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 700;
+}
+
 .lv-flow-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1462,7 +2072,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 28px;
   line-height: 1.02;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lv-flow-list {
@@ -1527,7 +2137,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 24px;
   line-height: 1.02;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .lv-step-card p {
@@ -1584,7 +2194,7 @@ const styles = `
   color: #FFF8EF;
   font-size: clamp(2.2rem, 4.8vw, 3.5rem);
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lv-dashboard-copy p {
@@ -1709,7 +2319,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 34px;
   line-height: 0.98;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .lv-price-heading p {
@@ -1819,7 +2429,7 @@ const styles = `
   color: var(--lv-green-strong);
   font-size: 24px;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .lv-testimonial-card span {
@@ -1834,6 +2444,71 @@ const styles = `
   margin-top: 18px;
   color: var(--lv-muted);
   font-size: 15px;
+  line-height: 1.75;
+  font-weight: 600;
+}
+
+.lv-faq {
+  padding-top: 56px;
+}
+
+.lv-faq-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.lv-faq-copy h2 {
+  margin-top: 14px;
+  color: var(--lv-green-strong);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.1rem, 4.6vw, 3.2rem);
+  line-height: 1;
+}
+
+.lv-faq-copy p {
+  margin-top: 16px;
+  color: var(--lv-muted);
+  font-size: 16px;
+  line-height: 1.8;
+  font-weight: 600;
+}
+
+.lv-faq-list {
+  display: grid;
+  gap: 12px;
+}
+
+.lv-faq-list details {
+  border: 1px solid var(--lv-line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: var(--lv-shadow-soft);
+}
+
+.lv-faq-list summary {
+  min-height: 64px;
+  padding: 20px 22px;
+  color: var(--lv-green-strong);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 900;
+}
+
+.lv-faq-list summary::marker {
+  color: var(--lv-orange);
+}
+
+.lv-faq-list details[open] summary {
+  border-bottom: 1px solid rgba(15, 77, 58, 0.1);
+}
+
+.lv-faq-list details p {
+  padding: 0 22px 20px;
+  color: var(--lv-muted);
+  font-size: 14px;
   line-height: 1.75;
   font-weight: 600;
 }
@@ -1927,6 +2602,11 @@ const styles = `
   font-weight: 600;
 }
 
+.lv-footer a {
+  min-height: 44px;
+  align-items: center;
+}
+
 .lv-footer a:hover {
   color: var(--lv-orange);
 }
@@ -1944,37 +2624,41 @@ const styles = `
   font-weight: 600;
 }
 
+.lv-mobile-sticky-cta {
+  display: none;
+}
+
 .lv-nav-links a:focus-visible,
 .lv-login:focus-visible,
 .lv-btn:focus-visible,
 .lv-inline-link:focus-visible,
 .lv-pricing-note a:focus-visible,
-.lv-footer a:focus-visible {
+.lv-footer a:focus-visible,
+.lv-mobile-sticky-cta a:focus-visible,
+.lv-faq-list summary:focus-visible {
   outline: 2px solid rgba(242, 140, 40, 0.54);
   outline-offset: 4px;
 }
 
-@keyframes lvFloat {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
 @media (max-width: 1120px) {
   .lv-hero-shell,
+  .lv-ai-shell,
   .lv-dashboard-shell,
   .lv-final-grid,
+  .lv-faq-shell,
   .lv-pricing-header {
     grid-template-columns: 1fr;
   }
 
+  .lv-hero-copy h1 {
+    font-size: 4.6rem;
+  }
+
   .lv-proof-pills,
   .lv-signal-grid,
+  .lv-demo-grid,
   .lv-operating-grid,
+  .lv-qr-journey,
   .lv-pricing-grid,
   .lv-testimonial-grid,
   .lv-footer-grid {
@@ -1994,6 +2678,16 @@ const styles = `
   .lv-dashboard-media {
     width: 100%;
   }
+
+  .lv-ai-shell {
+    background:
+      radial-gradient(circle at 96% 8%, rgba(242, 140, 40, 0.18), transparent 20rem),
+      linear-gradient(145deg, #0A2F25 0%, #103C31 46%, #FFF7EB 46.2%, #FFF7EB 100%);
+  }
+
+  .lv-qr-step:not(:last-child)::after {
+    display: none;
+  }
 }
 
 @media (max-width: 860px) {
@@ -2012,10 +2706,10 @@ const styles = `
 
   .lv-hero {
     display: flex;
-    min-height: calc(100svh - 68px);
-    align-items: center;
+    min-height: auto;
+    align-items: flex-start;
     padding-top: 26px;
-    padding-bottom: 52px;
+    padding-bottom: 44px;
   }
 
   .lv-section {
@@ -2027,11 +2721,12 @@ const styles = `
   }
 
   .lv-hero-stage {
-    display: none;
+    display: block;
+    width: 100%;
   }
 
   .lv-hero-copy h1 {
-    font-size: clamp(3rem, 9vw, 4.35rem);
+    font-size: 3.8rem;
   }
 
   .lv-section-head h2,
@@ -2047,9 +2742,11 @@ const styles = `
 
   .lv-proof-pills,
   .lv-signal-grid,
+  .lv-demo-grid,
   .lv-operating-grid,
   .lv-flow-grid,
   .lv-steps-grid,
+  .lv-qr-journey,
   .lv-pricing-grid,
   .lv-testimonial-grid,
   .lv-footer-grid {
@@ -2062,8 +2759,12 @@ const styles = `
   }
 
   .lv-stage-frame {
-    height: min(56vw, 380px);
+    height: min(76vw, 430px);
     min-height: 0;
+  }
+
+  .lv-poster-hotspots {
+    inset: 16px;
   }
 
   .lv-stage-card {
@@ -2088,11 +2789,30 @@ const styles = `
   .lv-dashboard-features {
     grid-template-columns: 1fr;
   }
+
+  .lv-ai-shell,
+  .lv-faq-shell {
+    gap: 18px;
+    padding: 22px;
+    border-radius: 26px;
+  }
+
+  .lv-ai-shell {
+    background: linear-gradient(180deg, #0A2F25 0%, #103C31 50%, #FFF7EB 50.2%, #FFF7EB 100%);
+  }
+
+  .lv-ai-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
+  .logivn-brand-page {
+    padding-bottom: 82px;
+  }
+
   .lv-container {
-    width: min(100% - 24px, 520px);
+    width: min(calc(100% - 24px), 520px);
   }
 
   .lv-header {
@@ -2105,7 +2825,7 @@ const styles = `
   }
 
   .lv-nav-actions {
-    gap: 8px;
+    display: none;
   }
 
   .lv-btn,
@@ -2122,9 +2842,11 @@ const styles = `
 
   .lv-btn-sm {
     width: auto;
+    max-width: 150px;
     min-height: 44px;
-    padding: 0 14px;
+    padding: 0 12px;
     font-size: 12px;
+    white-space: nowrap;
   }
 
   .lv-hero-actions,
@@ -2141,7 +2863,7 @@ const styles = `
   }
 
   .lv-section {
-    padding: 30px 0;
+    padding: 24px 0;
   }
 
   .lv-section-label,
@@ -2152,43 +2874,57 @@ const styles = `
   }
 
   .lv-hero {
-    padding-top: 18px;
-    padding-bottom: 34px;
+    padding-top: 14px;
+    padding-bottom: 28px;
   }
 
   .lv-hero-shell {
-    gap: 24px;
+    gap: 18px;
+  }
+
+  .lv-hero-copy,
+  .lv-hero-actions,
+  .lv-proof-pills,
+  .lv-hero-stage {
+    width: 100%;
+    max-width: 360px;
   }
 
   .lv-hero-copy h1 {
-    margin-top: 12px;
-    font-size: clamp(2.35rem, 10.6vw, 3rem);
-    line-height: 0.98;
-    letter-spacing: -0.03em;
+    margin-top: 10px;
+    max-width: 100%;
+    font-size: clamp(1.85rem, 8vw, 2.05rem);
+    line-height: 1.04;
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .lv-hero-copy p {
-    margin-top: 14px;
-    font-size: 14px;
-    line-height: 1.62;
+    max-width: 100%;
+    margin-top: 12px;
+    font-size: 13.5px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .lv-hero-actions,
   .lv-dashboard-actions,
   .lv-final-actions {
     gap: 10px;
-    margin-top: 20px;
+    margin-top: 16px;
   }
 
   .lv-proof-pills {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 9px;
-    margin-top: 18px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
   }
 
   .lv-proof-pill {
-    min-height: 86px;
-    padding: 11px 10px 10px;
+    min-height: 76px;
+    padding: 10px 9px 9px;
   }
 
   .lv-proof-pill strong {
@@ -2214,6 +2950,22 @@ const styles = `
     height: min(86vw, 360px);
     min-height: 0;
     border-radius: 24px;
+  }
+
+  .lv-poster-hotspots {
+    inset: 12px;
+    gap: 8px;
+  }
+
+  .lv-poster-live,
+  .lv-poster-pay {
+    min-height: 30px;
+    padding: 0 9px;
+    font-size: 10.5px;
+  }
+
+  .lv-poster-pay {
+    display: none;
   }
 
   .lv-stage-card {
@@ -2260,7 +3012,7 @@ const styles = `
     margin-top: 10px;
     font-size: clamp(1.65rem, 8vw, 2.25rem);
     line-height: 1.03;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
   }
 
   .lv-section-head p,
@@ -2273,8 +3025,10 @@ const styles = `
   }
 
   .lv-signal-grid,
+  .lv-demo-grid,
   .lv-flow-grid,
   .lv-steps-grid,
+  .lv-qr-journey,
   .lv-pricing-grid,
   .lv-testimonial-grid {
     gap: 12px;
@@ -2302,6 +3056,60 @@ const styles = `
     margin-top: 8px;
     font-size: 13px;
     line-height: 1.55;
+  }
+
+  .lv-market-strip {
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .lv-market-strip span {
+    min-height: 34px;
+    padding: 0 11px;
+    font-size: 11.5px;
+  }
+
+  .lv-product-demo,
+  .lv-ai,
+  .lv-faq {
+    padding-top: 30px;
+  }
+
+  .lv-demo-card {
+    min-height: auto;
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .lv-demo-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 13px;
+  }
+
+  .lv-demo-topline strong {
+    min-height: 28px;
+    font-size: 10.5px;
+  }
+
+  .lv-demo-eyebrow {
+    margin-top: 16px;
+    font-size: 10px;
+  }
+
+  .lv-demo-card h3 {
+    font-size: 20px;
+  }
+
+  .lv-demo-card p:not(.lv-demo-eyebrow),
+  .lv-demo-lines span {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .lv-demo-lines {
+    gap: 8px;
+    margin-top: 14px;
   }
 
   .lv-operating {
@@ -2336,7 +3144,7 @@ const styles = `
 
   .lv-operating-card h3 {
     font-size: 20px;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
   }
 
   .lv-operating-card p:not(.lv-operating-eyebrow),
@@ -2374,7 +3182,7 @@ const styles = `
     margin-top: 10px;
     font-size: clamp(1.55rem, 7.5vw, 2.05rem);
     line-height: 1.03;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
   }
 
   .lv-chapter-copy p {
@@ -2409,6 +3217,25 @@ const styles = `
     padding-top: 30px;
   }
 
+  .lv-qr-step {
+    min-height: auto;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .lv-qr-step span {
+    font-size: 22px;
+  }
+
+  .lv-qr-step h3 {
+    margin-top: 12px;
+    font-size: 19px;
+  }
+
+  .lv-qr-step p {
+    font-size: 13px;
+  }
+
   .lv-flow-card {
     padding: 16px;
     border-radius: 22px;
@@ -2416,7 +3243,7 @@ const styles = `
 
   .lv-flow-card h3 {
     font-size: 21px;
-    letter-spacing: -0.03em;
+    letter-spacing: 0;
   }
 
   .lv-flow-list {
@@ -2463,10 +3290,52 @@ const styles = `
   }
 
   .lv-dashboard-shell,
-  .lv-final-grid {
+  .lv-final-grid,
+  .lv-ai-shell {
     gap: 18px;
     padding: 18px;
     border-radius: 24px;
+  }
+
+  .lv-ai-copy h2,
+  .lv-faq-copy h2 {
+    margin-top: 10px;
+    font-size: clamp(1.65rem, 8vw, 2.25rem);
+    line-height: 1.03;
+  }
+
+  .lv-ai-copy p,
+  .lv-faq-copy p {
+    margin-top: 10px;
+    font-size: 14px;
+    line-height: 1.58;
+  }
+
+  .lv-ai-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .lv-ai-console {
+    padding: 12px;
+    border-radius: 21px;
+  }
+
+  .lv-ai-card {
+    min-height: auto;
+    padding: 13px;
+    border-radius: 16px;
+  }
+
+  .lv-ai-card strong {
+    font-size: 24px;
+  }
+
+  .lv-ai-card p {
+    font-size: 13px;
+    line-height: 1.5;
   }
 
   .lv-dashboard-features {
@@ -2573,6 +3442,30 @@ const styles = `
     line-height: 1.55;
   }
 
+  .lv-faq-shell {
+    padding: 0;
+  }
+
+  .lv-faq-list {
+    gap: 10px;
+  }
+
+  .lv-faq-list details {
+    border-radius: 18px;
+  }
+
+  .lv-faq-list summary {
+    min-height: 56px;
+    padding: 16px;
+    font-size: 14px;
+  }
+
+  .lv-faq-list details p {
+    padding: 0 16px 16px;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
   .lv-final {
     padding: 34px 0 26px;
   }
@@ -2627,6 +3520,40 @@ const styles = `
   .lv-copyright {
     margin-top: 14px;
   }
+
+  .lv-mobile-sticky-cta {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 60;
+    display: grid;
+    grid-template-columns: 1.25fr 0.75fr;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid rgba(15, 77, 58, 0.14);
+    border-radius: 20px;
+    background: rgba(255, 252, 246, 0.92);
+    box-shadow: 0 20px 44px rgba(10, 47, 37, 0.18);
+    backdrop-filter: blur(16px);
+  }
+
+  .lv-mobile-sticky-cta a {
+    display: inline-flex;
+    min-height: 46px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 15px;
+    color: var(--lv-green);
+    font-size: 12px;
+    font-weight: 900;
+  }
+
+  .lv-mobile-sticky-cta a:first-child {
+    color: #FFF8EF;
+    background: var(--lv-green);
+  }
 }
 
 @media (max-width: 420px) {
@@ -2635,11 +3562,11 @@ const styles = `
   }
 
   .lv-hero-copy h1 {
-    font-size: clamp(2.15rem, 10.2vw, 2.65rem);
+    font-size: 2.22rem;
   }
 
   .lv-stage-frame {
-    height: min(80vw, 330px);
+    height: min(88vw, 330px);
   }
 
   .lv-stage-card-right {
@@ -2648,11 +3575,17 @@ const styles = `
 
   .lv-proof-pills,
   .lv-signal-grid,
+  .lv-demo-grid,
   .lv-flow-grid,
   .lv-steps-grid,
+  .lv-qr-journey,
   .lv-pricing-grid,
   .lv-testimonial-grid {
     gap: 10px;
+  }
+
+  .lv-proof-pills {
+    grid-template-columns: 1fr;
   }
 }
 

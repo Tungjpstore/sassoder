@@ -6,9 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, LocateFixed, MapPin, Search, Sparkles } from "lucide-react";
 import { VietnamAdminSelector } from "@/components/location/vietnam-admin-selector";
 import { MapLayerControl } from "@/components/maps/map-layer-control";
+import { MapCanvas } from "@/components/maps/map-canvas";
 import { MapCrosshair, MapGlassPanel, MapLegend, MapScaleBar, MapStatusPill } from "@/components/maps/map-ui-kit";
+import { createLogiVNMarkerElement } from "@/components/maps/logivn-marker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { normalizeCoordinatePair } from "@/lib/geolocation/coordinates";
 import { formatAccuracyMeters, isLowAccuracyLocation, isUnusableAccuracyLocation } from "@/lib/geolocation/coordinate-quality";
 import { applyClientMapLayer, getDefaultClientMapStyle, resolveClientMapStyle, type ClientMapLayerMode } from "@/lib/geolocation/map-style";
 import { cn } from "@/lib/utils";
@@ -35,10 +38,7 @@ const defaultCenter: Coordinate = {
 const fallbackMapStyle = getDefaultClientMapStyle();
 
 function parseCoordinatePair(latitude: string, longitude: string): Coordinate | null {
-  const lat = Number(latitude);
-  const lng = Number(longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return { lat, lng };
+  return normalizeCoordinatePair(latitude, longitude);
 }
 
 function formatCoordinate(value: number) {
@@ -96,14 +96,8 @@ export function StoreLocationPicker({
 
       map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
-      const markerElement = document.createElement("div");
-      markerElement.className =
-        "grid h-12 w-12 place-items-center rounded-[18px] border border-white/70 bg-[radial-gradient(circle_at_30%_30%,rgba(242,140,40,0.96),rgba(201,111,23,0.95))] shadow-[0_18px_40px_rgba(15,77,58,0.28)] backdrop-blur";
-      markerElement.innerHTML =
-        '<span style="display:grid;height:24px;width:24px;place-items:center;border-radius:10px;background:rgba(255,247,235,0.95);color:#0F4D3A;font-size:12px;font-weight:800;">QR</span>';
-
       const marker = new maplibre.Marker({
-        element: markerElement,
+        element: createLogiVNMarkerElement({ label: "Q", tone: "store", title: "Vị trí quán" }),
         draggable: true
       })
         .setLngLat([center.lng, center.lat])
@@ -290,28 +284,28 @@ export function StoreLocationPicker({
 
   if (compact) {
     return (
-      <div className="overflow-hidden rounded-xl border border-[#e7e2d8] bg-[linear-gradient(160deg,rgba(250,246,236,0.92),rgba(238,244,232,0.96))]">
+      <div className="dashboard-map-surface dashboard-map-surface--compact overflow-hidden rounded-xl border border-[#e7e2d8] bg-[linear-gradient(160deg,rgba(250,246,236,0.92),rgba(238,244,232,0.96))]">
         <div className="relative">
-          <div ref={mapContainerRef} className="h-[300px] w-full bg-[radial-gradient(circle_at_top,rgba(15,77,58,0.09),transparent_42%),linear-gradient(180deg,rgba(255,247,235,0.8),rgba(248,242,232,0.95))]" />
+          <MapCanvas ref={mapContainerRef} className="dashboard-map-canvas dashboard-map-canvas--compact h-[300px]" />
           <MapCrosshair />
-          <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-3">
+          <div className="dashboard-map-top-overlay pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-3">
             <MapGlassPanel className="max-w-[68%]">
               <span className="block text-[10px] uppercase tracking-[0.14em] text-[#6a7b6f]">Vị trí quán</span>
               <span className="mt-0.5 block truncate text-[#145a40]">{reverseLabel || "Kéo marker để cập nhật vị trí"}</span>
             </MapGlassPanel>
             <MapStatusPill label="Live" value={mapReady ? "Ready" : "Loading"} tone={mapReady ? "ready" : "loading"} />
           </div>
-          <MapLegend compact items={[{ label: "Quán", tone: "store" }, { label: "Pin", tone: "customer" }]} className="absolute bottom-3 left-3" />
-          <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="absolute bottom-3 right-3" />
+          <MapLegend compact items={[{ label: "Quán", tone: "store" }, { label: "Pin", tone: "customer" }]} className="dashboard-map-legend absolute bottom-3 left-3" />
+          <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="dashboard-map-layer-control absolute bottom-3 right-3" />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="dashboard-map-workspace grid gap-4">
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="overflow-hidden rounded-[28px] border border-[var(--border)] bg-[linear-gradient(160deg,rgba(255,252,246,0.92),rgba(242,247,238,0.96))] shadow-[var(--shadow-lift)]">
+        <div className="dashboard-map-surface overflow-hidden rounded-[28px] border border-[var(--border)] bg-[linear-gradient(160deg,rgba(255,252,246,0.92),rgba(242,247,238,0.96))] shadow-[var(--shadow-lift)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-white/70 px-4 py-3 backdrop-blur">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.16em] text-[var(--primary)]">LogiVN Store Map</p>
@@ -320,9 +314,9 @@ export function StoreLocationPicker({
             <MapStatusPill label="Canvas" value={mapReady ? "Ready" : "Loading"} tone={mapReady ? "ready" : "loading"} />
           </div>
           <div className="relative">
-            <div ref={mapContainerRef} className="h-[420px] w-full bg-[radial-gradient(circle_at_top,rgba(15,77,58,0.09),transparent_42%),linear-gradient(180deg,rgba(255,247,235,0.8),rgba(248,242,232,0.95))] lg:h-[500px]" />
+            <MapCanvas ref={mapContainerRef} className="dashboard-map-canvas h-[420px] lg:h-[500px]" />
             <MapCrosshair />
-            <div className="pointer-events-none absolute inset-x-4 top-4 flex items-start justify-between gap-3">
+            <div className="dashboard-map-top-overlay pointer-events-none absolute inset-x-4 top-4 flex items-start justify-between gap-3">
               <MapGlassPanel className="max-w-[58%]">
                 <span className="block text-[10px] uppercase tracking-[0.14em] text-[#6a7b6f]">Địa chỉ đã nhận diện</span>
                 <span className="mt-0.5 block truncate text-[var(--primary)]">{reverseLabel || "Chưa có địa chỉ ghim"}</span>
@@ -335,7 +329,7 @@ export function StoreLocationPicker({
               <MapLegend items={[{ label: "Quán", tone: "store" }, { label: "Pin đang kéo", tone: "customer" }, { label: "GPS", tone: "gps" }]} />
               <MapScaleBar />
             </div>
-            <MapLayerControl value={mapLayer} onChange={setMapLayer} className="absolute bottom-4 right-4" />
+            <MapLayerControl value={mapLayer} onChange={setMapLayer} className="dashboard-map-layer-control absolute bottom-4 right-4" />
           </div>
         </div>
 

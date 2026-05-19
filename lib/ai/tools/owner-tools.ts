@@ -7,7 +7,7 @@ export const ownerCopilotToolCatalog = [
   },
   {
     name: "analyze_dashboard_area",
-    description: "Đọc dữ liệu thật của quán theo intent rồi trả insight ngắn kèm action queue."
+    description: "Đọc dữ liệu thật của quán theo intent, trả tóm tắt tình hình trước rồi kèm bước xử lý rõ ràng."
   },
   {
     name: "generate_store_setup_plan",

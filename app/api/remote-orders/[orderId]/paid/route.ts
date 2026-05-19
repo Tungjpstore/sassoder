@@ -1,5 +1,5 @@
-import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
-import { AppError, fail, ok } from "@/lib/response";
+import { fail, ok } from "@/lib/response";
+import { assertPublicRateLimits, rateLimitIdentifier } from "@/lib/public-api-rate-limit";
 import { getRequestIpKey } from "@/lib/security/request-ip";
 import { remoteOrderAccessSchema } from "@/lib/validators";
 import { getRemotePublicOrder } from "@/services/order-service";
@@ -11,17 +11,27 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
   try {
     const { orderId } = await params;
     const ip = await getRequestIpKey();
-    const allowed = await checkPersistentRateLimit({
-      scope: "remote_order_paid",
-      identifier: orderId,
-      ip,
-      limit: 8,
-      windowMs: 60_000
-    });
-    if (!allowed) {
-      throw new AppError("Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau.", 429);
-    }
+    await assertPublicRateLimits([
+      {
+        scope: "remote_order_paid",
+        identifier: orderId,
+        ip,
+        limit: 8,
+        windowMs: 60_000,
+        message: "Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau."
+      }
+    ]);
     const body = remoteOrderAccessSchema.parse(await request.json().catch(() => ({})));
+    await assertPublicRateLimits([
+      {
+        scope: "remote_order_paid_session",
+        identifier: rateLimitIdentifier(body.restaurantSlug, body.customerSessionId, orderId),
+        ip,
+        limit: 6,
+        windowMs: 60_000,
+        message: "Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau."
+      }
+    ]);
     await markRemoteCustomerPaid(orderId, body);
     return ok(await getRemotePublicOrder(orderId, body));
   } catch (error) {

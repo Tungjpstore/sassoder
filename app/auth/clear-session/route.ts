@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { safePostClearSessionPath } from "@/lib/auth-flow-routes";
 import {
   cookieNamesFromHeader,
   getHostname,
@@ -6,12 +7,6 @@ import {
   shouldShareCookiesAcrossTenantDomains
 } from "@/lib/supabase/cookie-guards";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
-
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard/login?session=cleared";
-  if (!value.startsWith("/dashboard") && value !== "/") return "/dashboard/login?session=cleared";
-  return value;
-}
 
 function cookieNames(request: Request) {
   const cookieHeader = request.headers.get("cookie") || "";
@@ -40,7 +35,7 @@ function appendExpiredCookie(response: NextResponse, request: Request, name: str
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
-  const response = NextResponse.redirect(new URL(safeNextPath(requestUrl.searchParams.get("next")), request.url));
+  const response = NextResponse.redirect(new URL(safePostClearSessionPath(requestUrl.searchParams.get("next")), request.url));
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Clear-Site-Data", '"cookies"');
 

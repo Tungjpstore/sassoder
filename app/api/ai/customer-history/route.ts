@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { getLatestAiConversationReplay } from "@/lib/ai/memory/restaurant-memory";
-import { fail, ok } from "@/lib/response";
+import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
+import { AppError, fail, ok } from "@/lib/response";
+import { getRequestIpKey } from "@/lib/security/request-ip";
 import { getRestaurantIdBySlug } from "@/services/ai-service";
 
 export const runtime = "nodejs";
@@ -22,6 +24,16 @@ export async function GET(request: Request) {
       threadId: url.searchParams.get("threadId") || undefined,
       limit: url.searchParams.get("limit") || undefined
     });
+    const allowed = await checkPersistentRateLimit({
+      scope: "public_ai_customer_history",
+      identifier: query.restaurantSlug,
+      ip: await getRequestIpKey(),
+      limit: 30,
+      windowMs: 60_000
+    });
+    if (!allowed) {
+      throw new AppError("Bạn thao tác với lịch sử LogiBot hơi nhanh. Vui lòng thử lại sau.", 429);
+    }
 
     const restaurantId = await getRestaurantIdBySlug(query.restaurantSlug);
 

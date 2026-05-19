@@ -46,8 +46,12 @@ function collectSourceFiles(startDir, results = []) {
   for (const entry of readdirSync(startDir)) {
     const absolutePath = path.join(startDir, entry);
     const relativePath = path.relative(rootDir, absolutePath);
+    const firstSegment = relativePath.split(path.sep)[0];
 
-    if ([...ignoredDirectories].some((ignoredDir) => relativePath === ignoredDir || relativePath.startsWith(`${ignoredDir}${path.sep}`))) {
+    if (
+      firstSegment.startsWith(".next") ||
+      [...ignoredDirectories].some((ignoredDir) => relativePath === ignoredDir || relativePath.startsWith(`${ignoredDir}${path.sep}`))
+    ) {
       continue;
     }
 
@@ -182,6 +186,32 @@ function validateServiceRoleBoundary() {
   };
 }
 
+function validateMigrationVersions() {
+  const migrationsDir = path.join(rootDir, "supabase", "migrations");
+  if (!existsSync(migrationsDir)) {
+    return {
+      migrationCount: 0,
+      duplicateVersions: []
+    };
+  }
+
+  const versions = new Map();
+  for (const entry of readdirSync(migrationsDir).filter((name) => name.endsWith(".sql"))) {
+    const match = entry.match(/^(\d{14})_/);
+    if (!match) continue;
+    const version = match[1];
+    versions.set(version, [...(versions.get(version) ?? []), entry]);
+  }
+
+  return {
+    migrationCount: [...versions.values()].reduce((total, files) => total + files.length, 0),
+    duplicateVersions: [...versions.entries()]
+      .filter(([, files]) => files.length > 1)
+      .map(([version, files]) => `${version}: ${files.join(", ")}`)
+      .sort()
+  };
+}
+
 function printSection(title, lines) {
   console.log(`\n${title}`);
   for (const line of lines) {
@@ -193,10 +223,12 @@ const envCheck = validateEnvironmentContract();
 const cronCheck = validateCronContract();
 const hygieneCheck = validateRepositoryHygiene();
 const serviceRoleCheck = validateServiceRoleBoundary();
+const migrationCheck = validateMigrationVersions();
 const failures = [
   ...envCheck.missingKeys.map((key) => `Missing ${key} in .env.example`),
   ...cronCheck.errors,
   ...hygieneCheck.duplicateArtifacts.map((filePath) => `Duplicate source artifact should be removed: ${filePath}`),
+  ...migrationCheck.duplicateVersions.map((version) => `Duplicate Supabase migration version should be resolved: ${version}`),
   ...serviceRoleCheck.directAdminClientFiles.map(
     (filePath) => `Service-role admin client must stay behind a service boundary: ${filePath}`
   )
@@ -207,6 +239,7 @@ printSection("Infrastructure contract", [
   `Declared ${envCheck.declared} env keys in .env.example`,
   `Validated ${cronCheck.cronCount} Vercel cron definitions`,
   `Scanned ${hygieneCheck.duplicateArtifacts.length} duplicate source artifacts`,
+  `Validated ${migrationCheck.migrationCount} Supabase migration files with ${migrationCheck.duplicateVersions.length} duplicate versions`,
   `Validated ${serviceRoleCheck.directAdminClientFiles.length} direct app service-role violations`
 ]);
 
@@ -215,4 +248,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-printSection("Status", ["Environment contract, Vercel cron wiring, source hygiene, and service-role boundaries look consistent"]);
+printSection("Status", ["Environment contract, Vercel cron wiring, source hygiene, migration versions, and service-role boundaries look consistent"]);

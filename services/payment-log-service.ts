@@ -1,16 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
-import type { PaymentLogStatus, PaymentMethod, TableBillStatus } from "@/types/domain";
+import type { PaymentMethod, TableBillStatus } from "@/types/domain";
 import type { Database, Json } from "@/types/supabase";
 
 type TypedSupabaseClient = SupabaseClient<Database>;
 type AuditMetadata = Record<string, Json | undefined>;
+type PaymentLogInsertStatus = NonNullable<Database["public"]["Tables"]["payment_logs"]["Insert"]["status"]>;
+type ReservationDepositLogInsertStatus = NonNullable<Database["public"]["Tables"]["reservation_deposit_logs"]["Insert"]["status"]>;
 
 type PaymentLogEventInput = {
   orderId: string;
   method: PaymentMethod;
-  status: PaymentLogStatus;
+  status: PaymentLogInsertStatus;
   amount: number;
   source: string;
   transitionKey: string;
@@ -22,7 +24,7 @@ type ReservationDepositLogEventInput = {
   reservationId: string;
   restaurantId: string;
   method: PaymentMethod;
-  status: PaymentLogStatus;
+  status: ReservationDepositLogInsertStatus;
   amount: number;
   source: string;
   transitionKey: string;

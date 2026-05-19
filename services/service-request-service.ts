@@ -5,6 +5,7 @@ import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-bo
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
+import { assertPublicTenantActive } from "@/services/tenant-status-guard";
 import type { ServiceRequestDto, ServiceRequestStatus } from "@/types/domain";
 
 type RawServiceRequest = {
@@ -55,15 +56,18 @@ export async function createCustomerServiceRequest(input: {
   const supabase = createPublicTenantAdminClient("service_request_create");
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id")
+    .select("id,allow_legacy_qr,platform_status,deleted_at")
     .eq("slug", input.restaurantSlug)
     .single();
 
   throwIfSupabaseError(restaurantError);
   if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
+  assertPublicTenantActive(restaurant);
   await assertFeatureEntitlement(restaurant.id, "staff_call");
 
-  const table = await getPublicTable(restaurant.id, input.tableId, input.tableAccessToken);
+  const table = await getPublicTable(restaurant.id, input.tableId, input.tableAccessToken, {
+    allowLegacyQr: restaurant.allow_legacy_qr
+  });
   if (!table) throw new AppError("Không tìm thấy bàn hoặc mã QR đã hết hiệu lực. Vui lòng quét lại mã tại bàn.", 403);
 
   if (input.customerSessionId) {

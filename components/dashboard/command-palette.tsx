@@ -2,44 +2,33 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  BarChart3,
-  CalendarCheck,
-  ChefHat,
-  CreditCard,
-  Gift,
-  LayoutDashboard,
-  ListOrdered,
-  Menu,
-  QrCode,
-  Search,
-  Settings,
-  ShoppingBag,
-  UserRound,
-} from "lucide-react";
+import { Search } from "lucide-react";
+import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
 
 type CommandItem = {
   id: string;
   label: string;
   href: string;
-  icon: React.ElementType;
+  icon: DashboardIconId;
   group: string;
   keywords: string;
 };
 
 const commands: CommandItem[] = [
-  { id: "overview", label: "Tổng quan", href: "/dashboard", icon: LayoutDashboard, group: "Vận hành", keywords: "dashboard home tong quan" },
-  { id: "orders", label: "Đơn hàng", href: "/dashboard/orders", icon: ListOrdered, group: "Vận hành", keywords: "order don hang" },
-  { id: "kitchen", label: "Bếp", href: "/dashboard/kitchen", icon: ChefHat, group: "Vận hành", keywords: "kitchen bep nau" },
-  { id: "online", label: "Đặt online", href: "/dashboard/online", icon: ShoppingBag, group: "Vận hành", keywords: "online dat mon giao hang" },
-  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: CalendarCheck, group: "Vận hành", keywords: "reservation dat ban truoc" },
-  { id: "menu", label: "Menu món", href: "/dashboard/menu", icon: Menu, group: "Quản lý", keywords: "menu mon an food" },
-  { id: "tables", label: "Bàn & QR", href: "/dashboard/tables", icon: QrCode, group: "Quản lý", keywords: "table ban qr code" },
-  { id: "payments", label: "Thanh toán", href: "/dashboard/payments", icon: CreditCard, group: "Quản lý", keywords: "payment thanh toan vietqr" },
-  { id: "promotions", label: "Khuyến mãi", href: "/dashboard/promotions", icon: Gift, group: "Quản lý", keywords: "promotion khuyen mai giam gia voucher" },
-  { id: "staff", label: "Nhân viên", href: "/dashboard/staff", icon: UserRound, group: "Hệ thống", keywords: "staff nhan vien" },
-  { id: "analytics", label: "Báo cáo", href: "/dashboard/analytics", icon: BarChart3, group: "Hệ thống", keywords: "analytics bao cao doanh thu" },
-  { id: "settings", label: "Cài đặt", href: "/dashboard/settings", icon: Settings, group: "Hệ thống", keywords: "settings cai dat thiet lap" },
+  { id: "overview", label: "Ca bán hôm nay", href: "/dashboard", icon: "todayShift", group: "Hôm nay", keywords: "dashboard home tong quan ca ban hom nay" },
+  { id: "logibot-ai", label: "LogiBot AI", href: "/dashboard/logibot-ai", icon: "logibotAi", group: "AI", keywords: "logibot ai tro ly van hanh assistant operator" },
+  { id: "orders", label: "Đơn hàng", href: "/dashboard/orders", icon: "orders", group: "Vận hành", keywords: "order don hang" },
+  { id: "kitchen", label: "Bếp", href: "/dashboard/kitchen", icon: "kitchen", group: "Vận hành", keywords: "kitchen bep nau" },
+  { id: "tables", label: "Bàn & QR", href: "/dashboard/tables", icon: "tablesQr", group: "Vận hành", keywords: "table ban qr code" },
+  { id: "payments", label: "Thanh toán", href: "/dashboard/payments", icon: "payments", group: "Vận hành", keywords: "payment thanh toan vietqr" },
+  { id: "online", label: "Đặt online", href: "/dashboard/online", icon: "onlineOrders", group: "Bán hàng", keywords: "online dat mon giao hang" },
+  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: "reservations", group: "Bán hàng", keywords: "reservation dat ban truoc" },
+  { id: "promotions", label: "Khuyến mãi", href: "/dashboard/promotions", icon: "promotions", group: "Bán hàng", keywords: "promotion khuyen mai giam gia voucher" },
+  { id: "menu", label: "Menu món", href: "/dashboard/menu", icon: "menuItems", group: "Quản lý", keywords: "menu mon an food" },
+  { id: "inventory", label: "Kho hàng", href: "/dashboard/inventory", icon: "inventory", group: "Quản lý", keywords: "inventory kho hang ton kho nguyen lieu ocr nhap hang" },
+  { id: "staff", label: "Nhân viên", href: "/dashboard/staff", icon: "staff", group: "Quản lý", keywords: "staff nhan vien" },
+  { id: "analytics", label: "Báo cáo", href: "/dashboard/analytics", icon: "analytics", group: "Hệ thống", keywords: "analytics bao cao doanh thu" },
+  { id: "settings", label: "Cài đặt", href: "/dashboard/settings", icon: "settings", group: "Hệ thống", keywords: "settings cai dat thiet lap" },
 ];
 
 export function CommandPalette() {
@@ -171,7 +160,6 @@ export function CommandPalette() {
               </p>
               {items.map((item) => {
                 const idx = flatList.indexOf(item);
-                const Icon = item.icon;
                 return (
                   <button
                     key={item.id}
@@ -184,7 +172,7 @@ export function CommandPalette() {
                         : "text-[var(--foreground)] hover:bg-[var(--soft-surface)]"
                     }`}
                   >
-                    <Icon size={16} />
+                    <DashboardAssetIcon icon={item.icon} active={idx === activeIndex} />
                     {item.label}
                   </button>
                 );
@@ -211,10 +199,10 @@ export function CommandPaletteTrigger() {
           new KeyboardEvent("keydown", { key: "k", metaKey: true })
         );
       }}
-      className="hidden h-9 min-w-[320px] max-w-[520px] flex-1 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 md:flex"
+      className="hidden h-9 min-w-0 max-w-[520px] flex-1 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 md:flex lg:min-w-[220px] 2xl:min-w-[320px]"
     >
       <Search size={16} className="text-[var(--muted-foreground)]" />
-      <span className="flex-1 text-left">Tìm kiếm nhanh mã đơn, bàn, món...</span>
+      <span className="min-w-0 flex-1 truncate text-left">Tìm kiếm nhanh mã đơn, bàn, món…</span>
       <kbd className="rounded-md border border-[var(--border)] bg-[var(--soft-surface)] px-1.5 py-0.5 text-xs font-semibold">
         ⌘K
       </kbd>

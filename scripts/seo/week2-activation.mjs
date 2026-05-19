@@ -2,10 +2,13 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { readJsonReport, writeJsonReport, writeTextReport } from "./report-io.mjs";
+import siteUrlHelpers from "./site-url.cjs";
+
+const { resolveSeoSiteUrl } = siteUrlHelpers;
 
 const root = process.cwd();
 const reportsDir = path.join(root, "reports", "seo");
-const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || "https://logivn.com").replace(/\/+$/, "");
+const baseUrl = resolveSeoSiteUrl();
 
 async function readText(file) {
   const fullPath = path.join(root, file);
@@ -15,7 +18,7 @@ async function readText(file) {
 
 function extractBlogInventory(blogSource) {
   const [postSource = "", hubAndFunctionsSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
-  const [hubSource = ""] = hubAndFunctionsSource.split("export function getAllBlogPosts");
+  const [hubSource = ""] = hubAndFunctionsSource.split("type BlogArticleEnhancement");
   const postSlugs = [...postSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
   const hubSlugs = [...hubSource.matchAll(/slug:\s*"([^"]+)"/g)].map((match) => match[1]);
 
@@ -23,6 +26,10 @@ function extractBlogInventory(blogSource) {
     postRoutes: postSlugs.map((slug) => `/blog/${slug}`),
     hubRoutes: hubSlugs.map((slug) => `/blog/${slug}`)
   };
+}
+
+function extractIntentRoutes(intentSource) {
+  return [...intentSource.matchAll(/path:\s*"([^"]*\/giai-phap\/[^"]+)"/g)].map((match) => match[1]);
 }
 
 function absoluteUrl(route) {
@@ -62,6 +69,7 @@ function renderMarkdown(report) {
     "## Inventory",
     "",
     `- Expected public URLs: ${report.inventory.expectedPublicUrls}`,
+    `- Intent landing pages: ${report.inventory.intentPages}`,
     `- Blog posts: ${report.inventory.blogPosts}`,
     `- Topic hubs: ${report.inventory.topicHubs}`,
     `- New URLs needing GSC action: ${report.gsc.missingInspectionUrls.length}`,
@@ -89,11 +97,17 @@ async function main() {
   await mkdir(reportsDir, { recursive: true });
 
   const blogSource = await readText("lib/seo/blog.ts");
+  const intentSource = await readText("lib/seo/intent-pages.ts");
+  const intentExpansionSource = await readText("lib/seo/intent-page-expansions.ts");
+  const intentExpansionBatch2Source = await readText("lib/seo/intent-page-expansion-batch-2.ts");
+  const combinedIntentSource = `${intentSource}\n${intentExpansionSource}\n${intentExpansionBatch2Source}`;
   const blogInventory = extractBlogInventory(blogSource);
-  const publicRoutes = ["/", "/pricing", "/blog", ...blogInventory.postRoutes, ...blogInventory.hubRoutes];
+  const intentRoutes = extractIntentRoutes(combinedIntentSource);
+  const publicRoutes = ["/", "/pricing", "/blog", "/giai-phap", ...intentRoutes, ...blogInventory.postRoutes, ...blogInventory.hubRoutes];
   const expectedUrls = publicRoutes.map(absoluteUrl);
   const blogPosts = blogInventory.postRoutes.length;
   const topicHubs = blogInventory.hubRoutes.length;
+  const intentPages = intentRoutes.length;
 
   const blogAudit = await readJsonReport("reports/seo/blog-expansion-audit.json", { root });
   const gscSummary = await readJsonReport("reports/seo/gsc-summary.json", { root });
@@ -163,6 +177,7 @@ async function main() {
     inventory: {
       expectedPublicUrls: expectedUrls.length,
       publicRoutes,
+      intentPages,
       blogPosts,
       topicHubs
     },

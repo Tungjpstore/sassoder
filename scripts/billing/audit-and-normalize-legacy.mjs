@@ -119,6 +119,57 @@ function formatSupabaseError(error) {
   return String(error);
 }
 
+async function syncLegacySubscriptionToBillingV2({
+  supabase,
+  subscription,
+  v2Plan,
+  metadata
+}) {
+  if (!v2Plan?.id) return;
+
+  const { data: existing, error: existingError } = await supabase
+    .from("subscriptions")
+    .select("id,metadata")
+    .eq("restaurant_id", subscription.restaurant_id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw existingError;
+
+  const payload = {
+    plan_id: v2Plan.id,
+    status: subscription.status === "past_due" ? "grace" : subscription.status,
+    interval: "month",
+    started_at: subscription.current_period_start ?? subscription.created_at ?? new Date().toISOString(),
+    current_period_start: subscription.current_period_start,
+    current_period_end: subscription.current_period_end,
+    trial_started_at: subscription.trial_started_at ?? subscription.current_period_start,
+    trial_ends_at: subscription.trial_ends_at,
+    deleted_at: null,
+    metadata: {
+      ...asRecord(existing?.metadata),
+      source: "legacy_audit_normalize",
+      legacySubscriptionId: subscription.id,
+      legacyPlanId: subscription.plan_id,
+      ...metadata
+    },
+    updated_at: new Date().toISOString()
+  };
+
+  if (existing?.id) {
+    const { error } = await supabase.from("subscriptions").update(payload).eq("id", existing.id);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from("subscriptions").insert({
+    restaurant_id: subscription.restaurant_id,
+    ...payload,
+    created_at: subscription.created_at ?? new Date().toISOString()
+  });
+  if (error) throw error;
+}
+
 async function main() {
   loadLocalEnv();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -137,14 +188,15 @@ async function main() {
     { data: v2Plans, error: v2PlansError },
     { data: subscriptions, error: subscriptionsError },
     { data: pendingPayments, error: paymentsError },
-    { data: v2Payments, error: v2PaymentsError }
+    { data: v2Payments, error: v2PaymentsError },
+    { data: v2Subscriptions, error: v2SubscriptionsError }
   ] =
     await Promise.all([
       supabase.from("saas_plans").select("id,code,name,monthly_price"),
       supabase.from("subscription_plans").select("id,code,name,monthly_price").is("deleted_at", null),
       supabase
         .from("restaurant_subscriptions")
-        .select("id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_ends_at,metadata,plan:saas_plans(code,name,monthly_price)")
+        .select("id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_started_at,trial_ends_at,created_at,metadata,plan:saas_plans(code,name,monthly_price)")
         .in("status", ["trialing", "pending_payment", "active", "past_due", "expired"])
         .limit(5000),
       supabase
@@ -152,7 +204,8 @@ async function main() {
         .select("id,restaurant_id,subscription_id,plan_id,months,status,transfer_content,raw_data,created_at")
         .eq("status", "waiting_confirm")
         .limit(5000),
-      supabase.from("payments").select("id,transfer_code,metadata").is("deleted_at", null).limit(5000)
+      supabase.from("payments").select("id,transfer_code,metadata").is("deleted_at", null).limit(5000),
+      supabase.from("subscriptions").select("id,restaurant_id,metadata").is("deleted_at", null).limit(5000)
     ]);
 
   if (plansError) throw plansError;
@@ -160,11 +213,14 @@ async function main() {
   if (subscriptionsError) throw subscriptionsError;
   if (paymentsError) throw paymentsError;
   if (v2PaymentsError && v2PaymentsError.code !== "42P01") throw v2PaymentsError;
+  if (v2SubscriptionsError && v2SubscriptionsError.code !== "42P01") throw v2SubscriptionsError;
 
   const planById = new Map((plans ?? []).map((plan) => [plan.id, plan]));
   const subscriptionById = new Map((subscriptions ?? []).map((subscription) => [subscription.id, subscription]));
   const v2PaymentByTransferCode = new Map((v2Payments ?? []).map((payment) => [payment.transfer_code, payment]));
+  const v2SubscriptionByRestaurantId = new Map((v2Subscriptions ?? []).map((subscription) => [subscription.restaurant_id, subscription]));
   const proPlan = (plans ?? []).find((plan) => plan.code === "pro");
+  const v2PlanByCode = new Map((v2Plans ?? []).map((plan) => [plan.code, plan]));
   const v2ProPlan = (v2Plans ?? []).find((plan) => plan.code === "pro");
 
   const issues = [];
@@ -174,6 +230,7 @@ async function main() {
     const plan = Array.isArray(subscription.plan) ? subscription.plan[0] : subscription.plan;
     const metadata = asRecord(subscription.metadata);
     const requestedPlanCode = normalizePlanCode(metadata.requestedPlanCode);
+    const hasV2Subscription = v2SubscriptionByRestaurantId.has(subscription.restaurant_id);
 
     if (subscription.status === "trialing" && plan?.code === "premium") {
       issues.push({
@@ -215,26 +272,50 @@ async function main() {
           })
         );
 
-        if (v2ProPlan) {
+        if (hasV2Subscription) {
           patchActions.push(
-            supabase
-              .from("subscriptions")
-              .update({
-                plan_id: v2ProPlan.id,
-                metadata: {
-                  source: "legacy_audit_normalize",
-                  legacySubscriptionId: subscription.id,
-                  requestedPlanCode: "premium",
-                  normalizedBy: "billing_audit_script",
-                  normalizedAt: new Date().toISOString(),
-                  normalizedReason: "premium_trial_subscription"
-                },
-                updated_at: new Date().toISOString()
-              })
-              .eq("restaurant_id", subscription.restaurant_id)
-              .is("deleted_at", null)
+            syncLegacySubscriptionToBillingV2({
+              supabase,
+              subscription,
+              v2Plan: v2ProPlan,
+              metadata: {
+                requestedPlanCode: "premium",
+                normalizedBy: "billing_audit_script",
+                normalizedAt: new Date().toISOString(),
+                normalizedReason: "premium_trial_subscription"
+              }
+            })
           );
         }
+      }
+    }
+
+    if (!hasV2Subscription) {
+      issues.push({
+        type: "missing_v2_subscription",
+        subscriptionId: subscription.id,
+        restaurantId: subscription.restaurant_id,
+        detail: "Legacy subscription chưa có subscription tương ứng ở billing v2."
+      });
+
+      if (apply) {
+        const targetV2Plan =
+          subscription.status === "trialing" && plan?.code === "premium"
+            ? v2ProPlan
+            : v2PlanByCode.get(normalizePlanCode(plan?.code));
+        patchActions.push(
+          syncLegacySubscriptionToBillingV2({
+            supabase,
+            subscription,
+            v2Plan: targetV2Plan,
+            metadata: {
+              requestedPlanCode,
+              normalizedBy: "billing_audit_script",
+              normalizedAt: new Date().toISOString(),
+              normalizedReason: "missing_v2_subscription"
+            }
+          })
+        );
       }
     }
 
@@ -365,7 +446,7 @@ async function main() {
   if (apply && patchActions.length) {
     const results = await Promise.all(patchActions);
     for (const result of results) {
-      if (result.error) throw result.error;
+      if (result?.error) throw result.error;
     }
   }
 

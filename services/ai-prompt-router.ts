@@ -1,5 +1,8 @@
 import "server-only";
 
+import { buildOwnerStaffContextLine } from "@/lib/ai/owner-staff-context";
+import { passportDigest, sanitizeOperationalPassport } from "@/lib/ai/operational-passport";
+
 export type AiPromptMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -13,6 +16,8 @@ export type AiRestaurantContext = {
   address: string | null;
   hotline: string | null;
   description: string | null;
+  opening_time?: string | null;
+  closing_time?: string | null;
 };
 
 export type OwnerAiIntent =
@@ -21,6 +26,7 @@ export type OwnerAiIntent =
   | "orders"
   | "kitchen"
   | "menu"
+  | "inventory"
   | "tables"
   | "payments"
   | "promotions"
@@ -33,6 +39,7 @@ export type OwnerAiIntent =
   | "growth";
 
 export type CustomerAiIntent =
+  | "guest_faq"
   | "menu_discovery"
   | "cart"
   | "order_status"
@@ -78,6 +85,146 @@ type IntentRouteRule<TIntent extends string> = {
   weight: number;
 };
 
+type OwnerRoutePlan = {
+  dataNeeds: string[];
+  tools: string[];
+  operatingActions: string[];
+  actionContract: string;
+  outputMode: "answer" | "diagnose" | "draft" | "queue" | "apply";
+  missingDataFallback: string;
+};
+
+const ownerRoutePlans: Record<OwnerAiIntent, OwnerRoutePlan> = {
+  setup: {
+    dataNeeds: ["restaurant setup readiness", "settings", "menu count", "tables/QR", "payment config", "online/reservation flags"],
+    tools: ["analyze_dashboard_area", "generate_store_setup_plan"],
+    operatingActions: ["open settings", "open menu", "open tables", "create setup checklist"],
+    actionContract: "Trả về blocker đầu tiên, route cần mở và checklist setup; không tự bật cấu hình bán thật.",
+    outputMode: "queue",
+    missingDataFallback: "Nếu thiếu readiness/settings, tạo checklist setup ngắn và dẫn chủ quán tới Cài đặt."
+  },
+  overview: {
+    dataNeeds: ["summary24h", "recentOrders", "tables", "payments", "inventory", "operationInsights"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["run operational sweep", "create insight queue", "open priority screen"],
+    actionContract: "Chọn tối đa 1 việc ưu tiên, nêu dữ liệu đã đọc và queue/deck cần mở nếu cần xử lý tiếp.",
+    outputMode: "diagnose",
+    missingDataFallback: "Nếu chưa có snapshot, yêu cầu chạy quét AI vận hành ngay."
+  },
+  orders: {
+    dataNeeds: ["recentOrders", "order status", "payment status", "table/customer", "service_due_at"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open orders", "prioritize pending orders", "create follow-up checklist"],
+    actionContract: "Nêu mã đơn/bàn nếu có, thao tác an toàn tiếp theo và không tự chuyển trạng thái thanh toán.",
+    outputMode: "apply",
+    missingDataFallback: "Nếu thiếu recentOrders, mở Đơn hàng và yêu cầu lọc đơn chờ."
+  },
+  kitchen: {
+    dataNeeds: ["active orders", "order items", "created_at", "service_due_at", "table"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open kitchen", "prioritize overdue items", "group same items"],
+    actionContract: "Sắp thứ tự bếp theo đơn/món quá hạn; nếu thiếu SLA thì tạo checklist kiểm bếp thủ công.",
+    outputMode: "diagnose",
+    missingDataFallback: "Nếu thiếu SLA/order items, trả thứ tự kiểm tra bếp thủ công."
+  },
+  menu: {
+    dataNeeds: ["menu categories", "menu items", "price", "imageUrl", "availability", "topItems", "recommendations"],
+    tools: ["analyze_dashboard_area", "owner_agent_executor", "generate_branding_draft"],
+    operatingActions: ["open menu", "create hidden menu draft", "create combo draft", "create menu copy draft", "prepare image prompt"],
+    actionContract: "Nếu chủ quán yêu cầu tạo menu/món/combo, gọi executor để tạo danh mục và món/combo nháp bị ẩn is_available=false; không tự đổi giá món đang bán.",
+    outputMode: "draft",
+    missingDataFallback: "Nếu menu rỗng, hướng dẫn nhập OCR hoặc tạo món/danh mục đầu tiên."
+  },
+  inventory: {
+    dataNeeds: ["inventory snapshot", "lowStockIngredients", "recipe coverage", "food cost", "purchase suggestions", "open alerts"],
+    tools: ["analyze_dashboard_area", "owner_agent_executor"],
+    operatingActions: ["open inventory", "create purchase order draft", "create purchase checklist", "review low stock", "review food cost"],
+    actionContract: "Nếu có lowStockIngredients và chủ quán xác nhận, gọi executor để tạo PO nháp; không tự nhận hàng hay trừ kho.",
+    outputMode: "queue",
+    missingDataFallback: "Nếu kho chưa migrate, nêu cần bật module kho trước khi AI nhập hàng."
+  },
+  tables: {
+    dataNeeds: ["tables", "active table orders", "qr_enabled", "unpaid total", "service_due_at"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open tables", "open orders", "enable QR checklist"],
+    actionContract: "Nêu bàn/QR có vấn đề, route xử lý và bước kiểm tra trước giờ cao điểm.",
+    outputMode: "diagnose",
+    missingDataFallback: "Nếu thiếu table snapshot, mở Bàn & QR để kiểm tra QR trước giờ cao điểm."
+  },
+  payments: {
+    dataNeeds: ["payment logs", "waiting_confirm", "order totals", "payment method/status"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open payments/orders", "create payment follow-up task", "never auto-confirm"],
+    actionContract: "Chỉ tạo checklist đối soát/mở đơn lọc; tuyệt đối không nói đã xác nhận/hoàn tiền.",
+    outputMode: "apply",
+    missingDataFallback: "Nếu thiếu payment logs, yêu cầu đối soát thủ công theo order total."
+  },
+  promotions: {
+    dataNeeds: ["promotions", "summary24h", "topItems", "active promotions", "operationInsights"],
+    tools: ["analyze_dashboard_area", "owner_agent_executor"],
+    operatingActions: ["create promotion draft", "open promotions", "set inactive until owner review"],
+    actionContract: "Chỉ tạo promotion draft inactive, có min order và kênh rõ; owner phải bật public sau.",
+    outputMode: "draft",
+    missingDataFallback: "Nếu thiếu doanh thu/menu, tạo ưu đãi conservative có min order và không public."
+  },
+  staff: {
+    dataNeeds: ["staff snapshot", "attendance", "approvals", "shifts", "branch assignments", "reviews"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open staff", "create staffing checklist", "review attendance approvals"],
+    actionContract: "Tạo checklist điều phối ca/chấm công; không tự đổi lương, duyệt công hay phân ca nếu chưa confirm.",
+    outputMode: "queue",
+    missingDataFallback: "Nếu thiếu HR schema, nói rõ chưa có dữ liệu chấm công/ca."
+  },
+  online: {
+    dataNeeds: ["online settings", "delivery radius", "fees", "payment mode", "store coordinates"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open online settings", "create delivery setup checklist"],
+    actionContract: "Tạo draft cấu hình giao hàng/pickup có điều kiện kiểm tọa độ; không tự bật nhận đơn nếu thiếu dữ liệu.",
+    outputMode: "draft",
+    missingDataFallback: "Nếu thiếu tọa độ/bán kính, ưu tiên cấu hình địa chỉ trước khi bật giao hàng."
+  },
+  reservations: {
+    dataNeeds: ["reservations", "reservation settings", "deposit status", "table capacity", "hold expiry"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open reservations", "create booking policy draft", "review expiring holds"],
+    actionContract: "Tạo draft chính sách/việc cần kiểm; không tự xác nhận cọc, giữ bàn hoặc hủy booking.",
+    outputMode: "diagnose",
+    missingDataFallback: "Nếu thiếu booking snapshot, hướng dẫn kiểm tra cấu hình đặt bàn/cọc."
+  },
+  reports: {
+    dataNeeds: ["paid orders", "topItems", "revenue", "payment split", "report schedule"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["open analytics", "create report summary", "schedule email report"],
+    actionContract: "Chỉ tóm tắt số liệu có thật, nêu report nên mở/xuất; không bịa doanh thu hoặc dự báo như số đã xảy ra.",
+    outputMode: "answer",
+    missingDataFallback: "Nếu thiếu paid orders, không bịa doanh thu; chỉ nêu dữ liệu chưa đủ."
+  },
+  settings: {
+    dataNeeds: ["restaurant profile", "payment settings", "receipt", "notifications", "brand", "online/reservation flags"],
+    tools: ["analyze_dashboard_area", "generate_store_setup_plan"],
+    operatingActions: ["open settings", "create setup draft", "fix first blocker"],
+    actionContract: "Tạo checklist/draft cấu hình theo blocker; không tự đổi thông tin pháp lý, thanh toán hoặc gói.",
+    outputMode: "queue",
+    missingDataFallback: "Nếu thiếu settings snapshot, dẫn thẳng tới Cài đặt vận hành."
+  },
+  security: {
+    dataNeeds: ["session role", "tenant scope", "entitlement", "payment risks", "public settings"],
+    tools: ["analyze_dashboard_area"],
+    operatingActions: ["create security checklist", "open settings", "avoid exploit detail"],
+    actionContract: "Chỉ đưa checklist phòng thủ và route cấu hình; không mô tả exploit chi tiết hoặc dữ liệu nhạy cảm.",
+    outputMode: "diagnose",
+    missingDataFallback: "Nếu thiếu audit data, chỉ đưa checklist phòng thủ."
+  },
+  growth: {
+    dataNeeds: ["brand profile", "menu", "promotions", "topItems", "summary24h", "operationInsights"],
+    tools: ["analyze_dashboard_area", "owner_agent_executor", "generate_branding_draft"],
+    operatingActions: ["create promotion draft", "create campaign copy", "open promotions", "open menu"],
+    actionContract: "Tạo promotion/content draft có mục tiêu, điều kiện và kênh; không public campaign khi chưa có owner review.",
+    outputMode: "draft",
+    missingDataFallback: "Nếu thiếu brand/menu data, tạo draft copy ngắn nhưng yêu cầu chủ quán kiểm tra trước khi public."
+  }
+};
+
 export const storeSetupDraftConfig: Record<StoreSetupDraftKind, StoreSetupDraftConfig> = {
   brand_profile: {
     kind: "brand_profile",
@@ -100,7 +247,7 @@ export const storeSetupDraftConfig: Record<StoreSetupDraftKind, StoreSetupDraftC
     plan: "pro",
     outputFocus: "Danh mục menu, món mẫu, mô tả ngắn, tag, chiến lược sắp xếp để khách gọi nhanh.",
     guardrails: [
-      "Không tự thêm món vào database.",
+      "Chỉ tạo món vào database khi đi qua Owner Agent Executor và mặc định is_available=false.",
       "Giá chỉ là gợi ý biên độ nếu thiếu dữ liệu chi phí.",
       "Không gợi ý quá nhiều món làm chủ quán khó setup."
     ]
@@ -223,6 +370,21 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
     responseContract: "Trả lời theo: Nhận xét menu, Cơ hội tăng doanh thu, Việc nên chỉnh trong dashboard.",
     suggestions: ["Món nào nên đẩy lên đầu?", "Gợi ý mô tả cho món mới", "Tối ưu danh mục menu giúp dễ gọi"]
   },
+  inventory: {
+    intent: "inventory",
+    label: "Kho hàng",
+    description: "Theo dõi nguyên liệu thấp, định mức món, lô sắp hết hạn, cảnh báo kho và gợi ý nhập hàng.",
+    dataScope: "Inventory snapshot, nguyên liệu dưới ngưỡng, recipe coverage, food cost, hao hụt, purchase order, giá trị tồn kho, alert và lô sắp hết hạn nếu có.",
+    guardrails: [
+      "Không bịa số lượng tồn hoặc giá vốn.",
+      "Không tự tạo phiếu nhập/đơn mua nếu chưa có action xác nhận.",
+      "Ưu tiên nguyên liệu ảnh hưởng món bán chạy hoặc ca cao điểm."
+    ],
+    systemAddendum:
+      "Đóng vai inventory controller cho F&B. Ưu tiên thiếu nguyên liệu, định mức món chưa đủ, lô sắp hết hạn, hao hụt và hành động nhập hàng có thể làm ngay.",
+    responseContract: "Trả lời theo: Rủi ro kho, Món/ca bị ảnh hưởng, Việc cần làm ngay trong Kho hàng.",
+    suggestions: ["Kho đang thiếu gì?", "Món nào thiếu định mức?", "Gợi ý nhập hàng trước giờ cao điểm"]
+  },
   tables: {
     intent: "tables",
     label: "Bàn & QR",
@@ -259,13 +421,13 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
   staff: {
     intent: "staff",
     label: "Nhân viên",
-    description: "Gợi ý phân công, quyền nhân viên, ca làm và xử lý yêu cầu gọi nhân viên.",
-    dataScope: "Role hiện có nếu snapshot cung cấp, yêu cầu gọi nhân viên, đơn/bàn cần người xử lý.",
-    guardrails: ["Ưu tiên least privilege.", "Không đề xuất chia sẻ tài khoản ADMIN."],
+    description: "Gợi ý phân công, quyền nhân viên, ca làm, chấm công, performance coaching và payroll-ready workflow.",
+    dataScope: "Staff snapshot thật: số nhân viên active/suspended, role, chi nhánh, người đang check-in, lượt muộn/tăng ca, yêu cầu chờ duyệt, review hiệu suất và ca sắp tới nếu schema HR đã migrate.",
+    guardrails: ["Ưu tiên least privilege.", "Không đề xuất chia sẻ tài khoản ADMIN.", "Không bịa tên nhân viên nếu snapshot không có danh sách.", "Tách rõ chấm công/payroll cần duyệt với dữ liệu đã chốt."],
     systemAddendum:
-      "Đóng vai quản lý ca. Tập trung phân quyền tối thiểu, trách nhiệm rõ, phản hồi nhanh yêu cầu gọi nhân viên.",
-    responseContract: "Nêu việc cần giao, người/role nên nhận và thời hạn xử lý.",
-    suggestions: ["Phân công nhân viên trong ca đông", "Quyền STAFF nên giới hạn gì?", "Xử lý yêu cầu gọi nhân viên nhanh hơn"]
+      "Đóng vai Head of Workforce Systems cho quán F&B Việt Nam. Khi có staff snapshot, phải trả lời bằng số liệu thật: active/online/check-in, muộn/tăng ca, request chờ, chi nhánh chưa gán, review thấp và ca sắp tới. Nếu thiếu dữ liệu, nói rõ schema/snapshot chưa có thay vì nói chung chung.",
+    responseContract: "Trả lời theo: Tình hình nhân sự, Rủi ro cần xử lý, Việc làm ngay trong HR, Theo dõi payroll/ca tiếp theo.",
+    suggestions: ["Tổng quan nhân sự hôm nay", "Ai đang đi muộn hoặc cần duyệt công?", "Chi nhánh nào thiếu người?", "Ai cần coaching hiệu suất?"]
   },
   online: {
     intent: "online",
@@ -336,6 +498,15 @@ export const ownerAiIntentConfig: Record<OwnerAiIntent, IntentConfig<OwnerAiInte
 };
 
 export const customerAiIntentConfig: Record<CustomerAiIntent, IntentConfig<CustomerAiIntent>> = {
+  guest_faq: {
+    intent: "guest_faq",
+    label: "Hỏi đáp quán",
+    description: "Trả lời tự nhiên các câu hỏi thường ngày của khách về quán, giờ mở cửa, địa chỉ, hotline, wifi, gửi xe, không gian và hỗ trợ cơ bản.",
+    systemAddendum:
+      "Đóng vai lễ tân/phục vụ AI của quán. Trả lời câu hỏi đời thường trước bằng thông tin public có trong context. Không ép CTA nếu khách chỉ hỏi thông tin; chỉ gợi ý xem menu, đặt bàn hoặc gọi nhân viên khi thật sự phù hợp.",
+    responseContract: "1-3 câu tự nhiên như nhân viên quán. Nếu thiếu dữ liệu, nói rõ hệ thống chưa có thông tin đó và gợi ý gọi nhân viên/quán.",
+    suggestions: ["Quán mấy giờ mở cửa?", "Địa chỉ quán ở đâu?", "Quán có wifi/gửi xe không?", "Có cần đặt bàn trước không?"]
+  },
   menu_discovery: {
     intent: "menu_discovery",
     label: "Gợi ý món",
@@ -425,10 +596,38 @@ const ownerKeywordMap: Record<OwnerAiIntent, string[]> = {
   orders: ["don", "order", "nhan don", "xac nhan", "phuc vu", "trang thai don", "xu ly don", "don cho"],
   kitchen: ["bep", "ra mon", "tre mon", "qua gio", "sla", "dang nau", "uu tien bep"],
   menu: ["menu", "mon", "danh muc", "gia", "hinh anh", "ocr", "nhap menu", "anh mon", "tao anh mon", "anh do an", "food photo", "mo ta mon"],
+  inventory: ["kho", "ton kho", "nguyen lieu", "dinh muc", "recipe", "het hang", "nhap kho", "dat hang", "nha cung cap", "food cost", "hao hut"],
   tables: ["ban", "qr", "trong", "dang phuc vu", "so do ban", "ma qr", "in qr"],
   payments: ["thanh toan", "vietqr", "tien mat", "chuyen khoan", "hoa don", "doi soat", "xac nhan tien"],
   promotions: ["khuyen mai", "ma giam", "voucher", "campaign", "uu dai", "giam gia"],
-  staff: ["nhan vien", "phan quyen", "ca lam", "goi nhan vien", "tai khoan staff"],
+  staff: [
+    "nhan su",
+    "nhan vien",
+    "staff",
+    "phan quyen",
+    "ca lam",
+    "lich lam",
+    "cham cong",
+    "check in",
+    "check-in",
+    "di tre",
+    "di muon",
+    "nghi phep",
+    "doi ca",
+    "tang ca",
+    "duyet cong",
+    "bang cong",
+    "luong",
+    "payroll",
+    "hieu suat",
+    "danh gia",
+    "coaching",
+    "chi nhanh",
+    "thieu nguoi",
+    "coverage",
+    "goi nhan vien",
+    "tai khoan staff"
+  ],
   online: ["online", "ship", "giao hang", "pickup", "den lay", "ban kinh", "phi ship", "dat online"],
   reservations: ["dat ban", "coc", "giu ban", "lich", "booking", "reservation", "giu cho"],
   reports: ["bao cao", "doanh thu", "analytics", "bieu do", "excel", "pdf", "email", "xuat bao cao"],
@@ -438,6 +637,34 @@ const ownerKeywordMap: Record<OwnerAiIntent, string[]> = {
 };
 
 const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
+  guest_faq: [
+    "xin chao",
+    "hello",
+    "cam on",
+    "gio mo cua",
+    "may gio",
+    "dong cua",
+    "mo cua",
+    "dia chi quan",
+    "quan o dau",
+    "hotline",
+    "so dien thoai",
+    "lien he",
+    "wifi",
+    "mat khau wifi",
+    "gui xe",
+    "dau xe",
+    "khong gian",
+    "ngoi lai",
+    "lam viec",
+    "hoc bai",
+    "dieu hoa",
+    "nha ve sinh",
+    "tre em",
+    "thu cung",
+    "pet",
+    "cho meo"
+  ],
   menu_discovery: ["goi y", "mon nao", "ngon", "de an", "de uong", "nen thu", "menu", "combo", "nhom", "ngan sach", "duoi"],
   cart: ["gio", "them", "xoa", "so luong", "goi them", "ghi chu"],
   order_status: ["don cua toi", "trang thai", "da nhan", "dang ra", "cho mon", "xac nhan"],
@@ -453,6 +680,7 @@ const ownerRouteRules: Array<IntentRouteRule<OwnerAiIntent>> = [
   { intent: "orders", weight: 5, patterns: ["xu ly tat ca don", "xu ly don cho", "nhan don", "accept order", "don nao can xu ly"] },
   { intent: "payments", weight: 5, patterns: ["xac nhan thanh toan", "doi soat", "vietqr", "da chuyen khoan", "xac nhan tien"] },
   { intent: "menu", weight: 6, patterns: ["tao anh mon", "anh mon an", "anh do an", "food photo", "ocr menu", "quet menu", "nhap menu", "them mon tu ocr"] },
+  { intent: "inventory", weight: 6, patterns: ["ton kho", "nguyen lieu", "thieu hang", "het hang", "dinh muc", "food cost", "nhap kho", "dat hang"] },
   { intent: "growth", weight: 6, patterns: ["tao logo", "prompt logo", "tao slogan", "viet slogan", "bo nhan dien", "thuong hieu", "branding"] },
   { intent: "setup", weight: 5, patterns: ["ke hoach setup", "setup quan", "thiet lap quan", "san sang ban that", "hoan thien setup"] },
   { intent: "tables", weight: 4, patterns: ["in qr", "tai qr", "ma qr", "ban nao", "so do ban"] },
@@ -470,7 +698,30 @@ const customerRouteRules: Array<IntentRouteRule<CustomerAiIntent>> = [
   { intent: "reservation", weight: 6, patterns: ["dat ban", "giu ban", "dat cho", "tien coc", "huy lich", "doi gio", "den muon", "tre gio", "con ban khong"] },
   { intent: "allergy", weight: 5, patterns: ["di ung", "an chay", "khong cay", "it ngot", "khong hai san"] },
   { intent: "promotion", weight: 4, patterns: ["ma giam", "khuyen mai", "voucher", "uu dai"] },
-  { intent: "staff_call", weight: 4, patterns: ["goi nhan vien", "them nuoc", "can ho tro", "gap nhan vien"] }
+  { intent: "staff_call", weight: 4, patterns: ["goi nhan vien", "them nuoc", "can ho tro", "gap nhan vien"] },
+  {
+    intent: "guest_faq",
+    weight: 5,
+    patterns: [
+      "gio mo cua",
+      "may gio mo",
+      "may gio dong",
+      "quan con mo khong",
+      "hom nay co mo khong",
+      "dia chi quan",
+      "quan o dau",
+      "so dien thoai quan",
+      "lien he quan",
+      "mat khau wifi",
+      "co wifi khong",
+      "co cho gui xe khong",
+      "co dau xe khong",
+      "khong gian co yen tinh khong",
+      "co phu hop lam viec khong",
+      "co cho tre em khong",
+      "co cho thu cung khong"
+    ]
+  }
 ];
 
 function foldText(value: string) {
@@ -570,6 +821,61 @@ function formatVnd(value: unknown) {
   return amount > 0 ? `${Math.round(amount).toLocaleString("vi-VN")}đ` : "0đ";
 }
 
+function formatTimeOfDay(value: string | null | undefined) {
+  if (!value) return null;
+  const match = value.match(/^(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : value;
+}
+
+function timeToMinutes(value: string | null | undefined) {
+  const text = formatTimeOfDay(value);
+  if (!text) return null;
+  const [hour, minute] = text.split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function vietnamNowMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value);
+  return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : null;
+}
+
+function restaurantHoursText(restaurant: AiRestaurantContext) {
+  const opening = formatTimeOfDay(restaurant.opening_time);
+  const closing = formatTimeOfDay(restaurant.closing_time);
+  if (!opening && !closing) return "chưa cấu hình";
+  if (opening && closing) return `${opening} - ${closing}`;
+  return opening ? `từ ${opening}` : `đến ${closing}`;
+}
+
+function restaurantOpenStateText(restaurant: AiRestaurantContext) {
+  const opening = timeToMinutes(restaurant.opening_time);
+  const closing = timeToMinutes(restaurant.closing_time);
+  const now = vietnamNowMinutes();
+  if (opening === null || closing === null || now === null) return "chưa đủ dữ liệu để kết luận đang mở hay đóng";
+  const isOpen = opening <= closing ? now >= opening && now < closing : now >= opening || now < closing;
+  return isOpen ? "đang trong khung giờ mở cửa đã cấu hình" : "đang ngoài khung giờ mở cửa đã cấu hình";
+}
+
+function ownerRoutePlanText(intent: OwnerAiIntent) {
+  const plan = ownerRoutePlans[intent];
+  return [
+    `Router plan: output=${plan.outputMode}.`,
+    `Dữ liệu cần đọc trước: ${plan.dataNeeds.join(", ")}.`,
+    `Tool/action nên dùng: ${plan.tools.join(", ")}.`,
+    `Thao tác vận hành hợp lệ: ${plan.operatingActions.join(", ")}.`,
+    `Action contract: ${plan.actionContract}`,
+    `Nếu thiếu dữ liệu: ${plan.missingDataFallback}`
+  ].join("\n");
+}
+
 function statusCountText(value: unknown) {
   const record = recordFromUnknown(value);
   if (!record) return "";
@@ -624,6 +930,9 @@ function buildOwnerNextStep(input: {
   if (input.intent === "menu" || input.menuItemCount === 0 || input.menuUnavailableCount > 0) {
     return "Bước ưu tiên: hướng tới OCR/tạo món/tạo ảnh món và nêu rõ thao tác áp dụng vào menu.";
   }
+  if (input.intent === "inventory") {
+    return "Bước ưu tiên: mở Kho hàng, xử lý nguyên liệu dưới ngưỡng và bổ sung định mức cho món bán chạy.";
+  }
   if (input.setupBlockers.length || input.intent === "setup" || input.intent === "settings") {
     return "Bước ưu tiên: xử lý blocker đầu tiên trong Settings/Menu/Bàn trước, sau đó mới tối ưu tăng trưởng.";
   }
@@ -641,8 +950,16 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const readiness = recordFromUnknown(restaurant?.setupReadiness);
   const tables = recordFromUnknown(snapshot?.tables);
   const menu = recordFromUnknown(snapshot?.menu);
+  const inventory = recordFromUnknown(snapshot?.inventory);
+  const staff = recordFromUnknown(snapshot?.staff);
   const payments = recordFromUnknown(snapshot?.payments);
+  const operationInsights = recordFromUnknown(snapshot?.operationInsights);
+  const insightRows = recordArray(operationInsights?.insights);
+  const primaryInsightId = textValue(operationInsights?.primaryInsightId);
+  const primaryInsight = insightRows.find((insight) => textValue(insight.id) === primaryInsightId) ?? insightRows[0];
   const route = textValue(context?.route) || textValue(context?.currentPath) || textValue(context?.pathname);
+  const plan = ownerRoutePlans[input.intent];
+  const passport = sanitizeOperationalPassport(context?.operationalPassport) || sanitizeOperationalPassport(context?.passport);
   const attentionOrders = topAttentionOrders(snapshot);
   const setupBlockers = [
     ...textArray(readiness?.launchBlockers),
@@ -656,6 +973,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const paymentStatus = statusCountText(summary?.paymentStatusCount);
   const lines = [
     `Context digest ưu tiên: intent=${input.intent}${route ? `, route=${route}` : ""}.`,
+    `Router hiểu nhiệm vụ: ${plan.outputMode}. Cần dữ liệu: ${plan.dataNeeds.join(", ")}. Hành động cho phép: ${plan.operatingActions.join(", ")}. Contract: ${plan.actionContract}`,
     summary
       ? `Ca 24h: ${numberValue(summary.orderCount)} đơn, doanh thu đã thanh toán ${formatVnd(summary.paidRevenue)}${orderStatus ? `, order ${orderStatus}` : ""}${paymentStatus ? `, payment ${paymentStatus}` : ""}.`
       : "Ca 24h: chưa có summary trong snapshot.",
@@ -664,18 +982,36 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
       ? `Bàn/QR: ${numberValue(tables.activeTableCount)}/${numberValue(tables.tableCount)} bàn đang hoạt động, ${numberValue(tables.qrDisabledCount)} QR tắt.`
       : "",
     menu ? `Menu: ${menuItemCount} món, ${menuUnavailableCount} món tạm hết/chưa bán.` : "",
+    inventory
+      ? `Kho: ${numberValue(inventory.lowStockCount)} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(numberValue(inventory.recipeCoveragePercent))}%, ${numberValue(inventory.openAlertCount)} alert mở, dự kiến nhập ${formatVnd(inventory.projectedPurchaseValue)}, ${numberValue(inventory.wasteSignalCount)} tín hiệu hao hụt, ${numberValue(inventory.highFoodCostItemCount)} món food cost cao.`
+      : "",
+    buildOwnerStaffContextLine(staff),
     payments ? `Thanh toán: ${waitingConfirmPayments} giao dịch chờ xác nhận trong snapshot.` : "",
     readiness ? `Setup: điểm ${numberValue(readiness.score)}, blocker ${setupBlockers.slice(0, 3).join(" | ") || "không có blocker rõ"}.` : "",
+    operationInsights ? `AI Ops: ${textValue(operationInsights.summary) || `health ${numberValue(operationInsights.healthScore)}/100`}.` : "",
+    primaryInsight
+      ? `Insight ưu tiên: ${textValue(primaryInsight.title)} - ${textValue(primaryInsight.detail)} Action: ${textValue(primaryInsight.action)}.`
+      : "",
+    passport ? passportDigest(passport) : "",
     buildOwnerNextStep({ intent: input.intent, attentionOrders, waitingConfirmPayments, menuItemCount, menuUnavailableCount, setupBlockers })
   ];
-  return lines.filter(Boolean).join("\n").slice(0, 1800);
+  return lines.filter(Boolean).join("\n").slice(0, 2200);
 }
 
-function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: unknown; orderStatus?: unknown; menuSnapshot?: unknown; reservationStatus?: unknown }) {
+function buildCustomerContextDigest(input: {
+  restaurant: AiRestaurantContext;
+  intent: CustomerAiIntent;
+  cart?: unknown;
+  orderStatus?: unknown;
+  menuSnapshot?: unknown;
+  reservationStatus?: unknown;
+  context?: Record<string, unknown>;
+}) {
   const menu = recordFromUnknown(input.menuSnapshot);
   const cart = recordFromUnknown(input.cart);
   const orderStatus = recordFromUnknown(input.orderStatus);
   const reservationStatus = recordFromUnknown(input.reservationStatus);
+  const context = recordFromUnknown(input.context);
   const categories = recordArray(menu?.categories);
   const menuItemCount = numberValue(menu?.itemCount) || categories.reduce((sum, category) => sum + recordArray(category.items).length, 0);
   const promotions = recordArray(menu?.promotions);
@@ -686,8 +1022,11 @@ function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: un
   const reservationDepositState = textValue(reservationStatus?.depositStatus);
   const reservationStartsAt = textValue(reservationStatus?.startsAt);
   const reservationHoldExpiresAt = textValue(reservationStatus?.holdExpiresAt);
+  const passport = sanitizeOperationalPassport(context?.operationalPassport) || sanitizeOperationalPassport(context?.passport);
   const nextStep =
-    input.intent === "reservation"
+    input.intent === "guest_faq"
+      ? "Bước tiếp: trả lời trực tiếp như nhân viên quán. Không lái sang gọi món nếu khách chỉ hỏi giờ, địa chỉ, wifi, gửi xe hoặc thông tin chung."
+      : input.intent === "reservation"
       ? reservationState
         ? "Bước tiếp: giải thích trạng thái lịch đặt, cọc/giữ bàn và dẫn khách tới CTA cập nhật, chuyển cọc, hủy có xác nhận hoặc gọi quán."
         : "Bước tiếp: dẫn khách chọn ngày, số khách, khung giờ và chuẩn bị số điện thoại."
@@ -701,6 +1040,8 @@ function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: un
 
   return [
     `Context khách ưu tiên: intent=${input.intent}.`,
+    `Thông tin quán public: tên=${input.restaurant.name}; loại hình=${input.restaurant.business_type || "chưa cấu hình"}; địa chỉ=${input.restaurant.address || "chưa cấu hình"}; hotline=${input.restaurant.hotline || "chưa cấu hình"}; giờ mở cửa=${restaurantHoursText(input.restaurant)}; trạng thái giờ hiện tại=${restaurantOpenStateText(input.restaurant)}.`,
+    input.restaurant.description ? `Mô tả quán: ${input.restaurant.description}` : "",
     `Menu đang có: ${categories.length} danh mục, ${menuItemCount} món, ${promotions.length} khuyến mãi.`,
     `Giỏ hàng: ${cartItems.length} dòng món.`,
     orderState || paymentState ? `Đơn hiện tại: ${orderState || "chưa rõ trạng thái"}${paymentState ? `/${paymentState}` : ""}.` : "",
@@ -709,6 +1050,7 @@ function buildCustomerContextDigest(input: { intent: CustomerAiIntent; cart?: un
       : input.intent === "reservation"
         ? "Lịch đặt hiện tại: chưa có booking trong context."
         : "",
+    passport ? passportDigest(passport) : "",
     nextStep
   ]
     .filter(Boolean)
@@ -723,6 +1065,9 @@ function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant:
     "Ngôn ngữ bắt buộc: tiếng Việt tự nhiên, gọn, rõ hành động.",
     "Tuyệt đối không dùng markdown, không dùng **, không dùng tiêu đề dài. Trả plain text ngắn.",
     "Vòng lặp agent bắt buộc: Diagnose dữ liệu -> Decide bước ưu tiên -> Guide thao tác -> Hand off sang action/card nếu cần.",
+    ownerRoutePlanText(config.intent),
+    "Khi chủ quán dùng động từ tạo/chạy/xử lý/lưu cho menu, kho, khuyến mãi, nhân sự, hỗ trợ, báo cáo hoặc chi nhánh: phải handoff sang owner_agent_executor/action card, không chỉ viết lời khuyên.",
+    "Quy tắc router prompt: trước khi trả lời phải tự xác định intent, dữ liệu cần lấy, dữ liệu đang thiếu, action contract và mức rủi ro. Chỉ nêu kết quả cuối cho chủ quán, không lộ chain-of-thought.",
     "Chỉ dùng dữ liệu được cung cấp trong prompt. Nếu thiếu dữ liệu, nói rõ 'chưa có dữ liệu' và đề xuất màn cần cấu hình.",
     "Không tự xác nhận thanh toán, không hủy/xóa dữ liệu, không đổi gói, không hứa đã thay đổi dữ liệu nếu chưa có action chạy thành công.",
     "Không yêu cầu API key/env/token. Không suy đoán dữ liệu quán khác. Không expose raw JSON/tool output cho UI.",
@@ -746,19 +1091,23 @@ function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant:
 
 function buildCustomerPromptKernel(config: IntentConfig<CustomerAiIntent>, restaurant: AiRestaurantContext) {
   return [
-    "Bạn là trợ lý gọi món của LogiVN dành cho khách hàng đang dùng điện thoại.",
-    "Nhiệm vụ: giúp khách ra quyết định nhanh và dẫn tới nút đúng trong giao diện, không tư vấn lan man.",
-    "Ngôn ngữ bắt buộc: tiếng Việt thân thiện, rất ngắn, dễ hiểu.",
+    "Bạn là LogiBot, nhân viên phục vụ/lễ tân AI của quán trên LogiVN dành cho khách hàng đang dùng điện thoại.",
+    "Nhiệm vụ: trả lời đúng câu hỏi của khách trước; nếu khách muốn thao tác thì dẫn tới nút đúng trong giao diện.",
+    "Ngôn ngữ bắt buộc: tiếng Việt tự nhiên, ấm, gọn như nhân viên quán thật.",
     "Tuyệt đối không dùng markdown, không dùng **, không dùng bullet dài.",
+    "Với câu hỏi thường ngày như chào hỏi, giờ mở cửa, địa chỉ, hotline, wifi, gửi xe, không gian, còn mở không: trả lời trực tiếp trước, không ép CTA.",
     "Không tự tạo đơn, không tự thêm/xóa món, không xác nhận đã thanh toán. Hướng dẫn khách bấm nút trong giao diện.",
     "Chỉ gợi ý món có trong menu snapshot. Nếu thiếu dữ liệu, nói rõ và hỏi lại một câu ngắn.",
+    "Chỉ nói thông tin public có trong context. Nếu quán chưa cấu hình giờ mở cửa, wifi, gửi xe hoặc thông tin tương tự, nói 'mình chưa thấy thông tin này trên hệ thống' và gợi ý gọi nhân viên/quán.",
     "Không yêu cầu thông tin nhạy cảm. Với dị ứng nghiêm trọng, khuyên khách gọi nhân viên.",
-    "Không lặp lại danh sách món dài. UI sẽ hiển thị CTA; câu trả lời chỉ giải thích quyết định.",
+    "Không lặp lại danh sách món dài. UI có thể hiển thị CTA; câu trả lời chỉ nhắc CTA khi thật sự giúp khách làm tiếp.",
     "Nếu prompt có Context khách ưu tiên, đọc trước JSON thô và trả lời theo trạng thái menu/giỏ/đơn hiện tại.",
     `Danh mục hỗ trợ: ${config.label} (${config.intent}).`,
     config.systemAddendum,
     `Contract trả lời: ${config.responseContract}`,
-    `Quán: ${restaurant.name}.`
+    `Quán: ${restaurant.name}. Loại hình: ${restaurant.business_type || "chưa cấu hình"}.`,
+    `Địa chỉ: ${restaurant.address || "chưa cấu hình"}. Hotline: ${restaurant.hotline || "chưa cấu hình"}. Giờ mở cửa: ${restaurantHoursText(restaurant)}. Trạng thái giờ hiện tại: ${restaurantOpenStateText(restaurant)}.`,
+    restaurant.description ? `Mô tả quán: ${restaurant.description}` : ""
   ];
 }
 
@@ -767,7 +1116,7 @@ export function normalizeOwnerAiIntent(value: string | null | undefined, message
 }
 
 export function normalizeCustomerAiIntent(value: string | null | undefined, message: string) {
-  return asKey(value, customerAiIntentConfig) ?? inferIntent(message, customerKeywordMap, "menu_discovery", customerRouteRules);
+  return asKey(value, customerAiIntentConfig) ?? inferIntent(message, customerKeywordMap, "guest_faq", customerRouteRules);
 }
 
 export function normalizeStoreSetupDraftKind(value: string | null | undefined) {
@@ -780,6 +1129,7 @@ export function buildOwnerAssistantMessages(input: {
   message: string;
   context?: Record<string, unknown>;
   snapshot?: unknown;
+  memoryContext?: string | null;
 }): AiPromptMessage[] {
   const config = ownerAiIntentConfig[input.intent];
   const contextDigest = buildOwnerContextDigest(input);
@@ -793,9 +1143,11 @@ export function buildOwnerAssistantMessages(input: {
       content: [
         `Yêu cầu của chủ quán:\n${input.message.trim()}`,
         contextDigest ? `\n\n${contextDigest}` : "",
+        input.memoryContext ? `\n\nRestaurant memory được lưu cho đúng quán:\n${input.memoryContext.slice(0, 1800)}` : "",
         input.snapshot ? `\nSnapshot vận hành đúng restaurant_id:\n${jsonBlock(input.snapshot, 9000)}` : "",
         input.context ? `\nNgữ cảnh UI từ dashboard:\n${jsonBlock(input.context, 5000)}` : "",
         "\nHãy trả lời plain text cực gọn theo 3 dòng: Tình huống, Bước tiếp, Nút/màn nên bấm. Không markdown. Không liệt kê dài vì UI đã có nút action riêng."
+        + "\nNếu intent có output=draft/apply/queue, phải nói rõ draft/queue/action nào nên được tạo hoặc mở. Không chỉ tư vấn."
       ].join("")
     }
   ];
@@ -809,6 +1161,7 @@ export function buildCustomerAssistantMessages(input: {
   orderStatus?: unknown;
   menuSnapshot?: unknown;
   reservationStatus?: unknown;
+  context?: Record<string, unknown>;
 }): AiPromptMessage[] {
   const config = customerAiIntentConfig[input.intent];
   const contextDigest = buildCustomerContextDigest(input);
@@ -826,7 +1179,9 @@ export function buildCustomerAssistantMessages(input: {
         input.cart ? `\nGiỏ hàng hiện tại:\n${jsonBlock(input.cart, 3000)}` : "",
         input.orderStatus ? `\nTrạng thái đơn/hóa đơn hiện tại:\n${jsonBlock(input.orderStatus, 3500)}` : "",
         input.reservationStatus ? `\nTrạng thái đặt bàn hiện tại:\n${jsonBlock(input.reservationStatus, 3500)}` : "",
-        "\nTrả lời plain text tối đa 2-3 dòng. Nếu phù hợp, nhắc ngắn rằng khách có thể bấm CTA bên dưới như Thêm món, Mở giỏ, Gọi nhân viên, Tôi đã thanh toán, Hóa đơn, Cập nhật lịch đặt hoặc Huỷ lịch có xác nhận."
+        input.intent === "guest_faq"
+          ? "\nTrả lời plain text tối đa 1-3 câu như nhân viên quán. Không nhắc CTA nếu khách chỉ hỏi thông tin; chỉ gợi ý xem menu, đặt bàn hoặc gọi nhân viên khi câu hỏi thật sự cần thao tác."
+          : "\nTrả lời plain text tối đa 2-3 dòng. Nếu phù hợp, nhắc ngắn rằng khách có thể bấm CTA bên dưới như Thêm món, Mở giỏ, Gọi nhân viên, Tôi đã thanh toán, Hóa đơn, Cập nhật lịch đặt hoặc Huỷ lịch có xác nhận."
       ].join("")
     }
   ];
@@ -964,6 +1319,25 @@ export function buildMenuOcrPrompt(input: { imageUrl?: string; imageBase64?: str
     "Không đưa tiêu đề quán, chữ MENU, số điện thoại, địa chỉ hoặc ghi chú không có giá vào danh sách items.",
     "Không tự thêm món không có trong ảnh/nội dung. Chuẩn hóa lỗi OCR phổ biến nhưng giữ tên món dễ nhận biết.",
     "Tags nên là các nhãn ngắn như bán chạy, đồ uống, món nóng, ăn nhẹ, chay, cay, signature nếu có căn cứ.",
+    contentSource
+  ].join("\n");
+}
+
+export function buildInventoryOcrPrompt(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
+  const contentSource = input.rawText
+    ? `Nội dung hóa đơn/danh sách nhập kho thô:\n${input.rawText}`
+    : `Ảnh hóa đơn/phiếu nhập kho: ${input.imageUrl || input.imageBase64?.slice(0, 120) || "không có"}`;
+
+  return [
+    "Bạn là AI nhập liệu kho cho quán F&B Việt Nam. Hãy trích xuất nguyên liệu/hàng hóa từ hóa đơn, phiếu nhập hoặc danh sách mua hàng.",
+    "Chỉ trả JSON hợp lệ, không markdown, không giải thích ngoài JSON.",
+    "Schema bắt buộc: {\"rows\":[{\"name\":string,\"unit\":string,\"quantity\":number,\"minimumQuantity\":number,\"referenceUnitCost\":number,\"categoryName\":string|null}],\"warnings\":[string],\"confidence\":number}",
+    "name là tên nguyên liệu ngắn gọn, bỏ mã hàng nếu không cần. unit chỉ dùng ký tự latin như kg, g, ml, l, chai, lon, goi, hop, cai, thung, bao.",
+    "quantity là số lượng nhập. Nếu hóa đơn có thành tiền và đơn giá, referenceUnitCost là đơn giá VND dạng số nguyên. Nếu chỉ có tổng tiền, hãy chia theo quantity khi đủ căn cứ.",
+    "minimumQuantity nếu không có trong nội dung thì trả 0, không tự bịa định mức.",
+    "categoryName nên là nhóm ngắn như Bar, Bếp nóng, Dairy, Bao bì, Gia vị nếu có căn cứ; nếu không chắc thì null.",
+    "Không đưa VAT, tổng cộng, phí giao hàng, số điện thoại, địa chỉ, mã đơn, ngày tháng vào rows.",
+    "Nếu OCR mơ hồ, vẫn trả dòng có thể đọc được và thêm cảnh báo rõ trong warnings.",
     contentSource
   ].join("\n");
 }

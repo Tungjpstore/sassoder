@@ -1,13 +1,13 @@
 import { AppError, fail, ok } from "@/lib/response";
 import { getRequestIpKey } from "@/lib/security/request-ip";
 import { calculateShippingFee } from "@/services/maps/delivery-fee-service";
-import { assertMapRateLimit } from "@/services/maps/provider-service";
+import { assertMapRateLimit, buildRateLimitHeaders } from "@/services/maps/provider-service";
 
 export const preferredRegion = "sin1";
 
 export async function POST(request: Request) {
   try {
-    assertMapRateLimit(`delivery:fee:${await getRequestIpKey()}`, 30, 60_000);
+    const rateLimit = await assertMapRateLimit(`delivery:fee:${await getRequestIpKey()}`, 30, 60_000);
     const body = (await request.json()) as {
       distanceKm?: number;
       freeRadiusKm?: number;
@@ -26,7 +26,8 @@ export async function POST(request: Request) {
         baseFee: Number(body.baseFee ?? 0),
         feePerKm: Number(body.feePerKm ?? 0),
         customThresholdKm: Number(body.customThresholdKm ?? 0)
-      })
+      }),
+      { headers: buildRateLimitHeaders(rateLimit) }
     );
   } catch (error) {
     return fail(error);

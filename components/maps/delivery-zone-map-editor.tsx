@@ -10,7 +10,10 @@ import {
   type DeliveryAreaPoint
 } from "@/components/maps/delivery-area-editor";
 import { MapLayerControl } from "@/components/maps/map-layer-control";
+import { MapCanvas } from "@/components/maps/map-canvas";
 import { MapLegend, MapMetricStrip, MapScaleBar, MapStatusPill } from "@/components/maps/map-ui-kit";
+import { createLogiVNMarkerElement } from "@/components/maps/logivn-marker";
+import { fitMapToPoints, toLngLat } from "@/components/maps/route-preview-layer";
 import { applyClientMapLayer, getDefaultClientMapStyle, resolveClientMapStyle, type ClientMapLayerMode } from "@/lib/geolocation/map-style";
 import { cn } from "@/lib/utils";
 import type { GeoJSONSource, Map, Marker } from "maplibre-gl";
@@ -49,10 +52,6 @@ function getSafeCenter(centerLat: number, centerLng: number): DeliveryAreaPoint 
     lat: Number.isFinite(centerLat) ? centerLat : fallbackCenter.lat,
     lng: Number.isFinite(centerLng) ? centerLng : fallbackCenter.lng
   };
-}
-
-function toLngLat(point: DeliveryAreaPoint): [number, number] {
-  return [point.lng, point.lat];
 }
 
 function buildZoneFeatureCollection(points: DeliveryAreaPoint[]) {
@@ -119,20 +118,9 @@ function updateZoneSource(map: Map, points: DeliveryAreaPoint[]) {
   source?.setData(buildZoneFeatureCollection(points));
 }
 
-function createStoreMarkerElement() {
-  const element = document.createElement("div");
-  element.className =
-    "grid h-11 w-11 place-items-center rounded-[17px] border border-white/75 bg-[#0f6944] text-white shadow-[0_18px_34px_rgba(15,105,68,0.32)]";
-  element.innerHTML =
-    '<span style="display:grid;height:23px;width:23px;place-items:center;border-radius:9px;background:rgba(255,247,235,0.95);color:#0f6944;font-size:11px;font-weight:900;">QR</span>';
-  return element;
-}
-
 function createVertexMarkerElement(index: number) {
-  const element = document.createElement("div");
-  element.className =
-    "grid h-8 w-8 cursor-grab place-items-center rounded-full border-2 border-[#0f6944] bg-white text-[11px] font-black text-[#0f6944] shadow-[0_10px_24px_rgba(15,105,68,0.22)] active:cursor-grabbing";
-  element.textContent = String(index + 1);
+  const element = createLogiVNMarkerElement({ label: String(index + 1), tone: "gps", title: `Điểm vùng giao ${index + 1}` });
+  element.className = `${element.className} cursor-grab active:cursor-grabbing`;
   return element;
 }
 
@@ -201,7 +189,7 @@ export function DeliveryZoneMapEditor({
       map.touchZoomRotate.disableRotation();
       map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
-      storeMarkerRef.current = new maplibre.Marker({ element: createStoreMarkerElement() })
+      storeMarkerRef.current = new maplibre.Marker({ element: createLogiVNMarkerElement({ label: "Q", tone: "store", title: "Vị trí quán" }) })
         .setLngLat(toLngLat(initialCenter))
         .addTo(map);
 
@@ -318,29 +306,21 @@ export function DeliveryZoneMapEditor({
     const boundsPoints = points.length ? [...points, center] : [center];
     if (!map || !maplibre || boundsPoints.length === 0) return;
 
-    const first = toLngLat(boundsPoints[0]);
-    const bounds = boundsPoints.reduce(
-      (nextBounds, point) => nextBounds.extend(toLngLat(point)),
-      new maplibre.LngLatBounds(first, first)
-    );
-    map.fitBounds(bounds, { duration: 520, maxZoom: 15, padding: 58 });
+    fitMapToPoints(maplibre, map, boundsPoints, { duration: 520, maxZoom: 15, padding: 58 });
   }
 
   return (
     <div
       className={cn(
-        "overflow-hidden rounded-[28px] border border-[#dfe8dc] bg-[#f7f2e8] shadow-[0_22px_70px_rgba(15,77,58,0.14)]",
+        "dashboard-map-surface dashboard-zone-map-editor overflow-hidden rounded-[28px] border border-[#dfe8dc] bg-[#f7f2e8] shadow-[0_22px_70px_rgba(15,77,58,0.14)]",
         className
       )}
     >
       <div className="relative">
-        <div
-          ref={mapContainerRef}
-          className="h-[420px] w-full bg-[radial-gradient(circle_at_top,rgba(15,77,58,0.11),transparent_42%),linear-gradient(180deg,rgba(255,247,235,0.78),rgba(248,242,232,0.95))] lg:h-[500px]"
-        />
-        <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="absolute right-3 top-[64px]" />
+        <MapCanvas ref={mapContainerRef} className="dashboard-map-canvas h-[420px] lg:h-[500px]" />
+        <MapLayerControl compact value={mapLayer} onChange={setMapLayer} className="dashboard-map-layer-control absolute right-3 top-[64px]" />
 
-        <div className="pointer-events-none absolute left-3 top-3 max-w-[72%] rounded-[20px] border border-white/75 bg-white/90 px-3 py-2 text-xs font-bold text-[#145a40] shadow-[0_14px_34px_rgba(15,77,58,0.14)] backdrop-blur-xl">
+        <div className="dashboard-map-top-overlay pointer-events-none absolute left-3 top-3 max-w-[72%] rounded-[20px] border border-white/75 bg-white/90 px-3 py-2 text-xs font-bold text-[#145a40] shadow-[0_14px_34px_rgba(15,77,58,0.14)] backdrop-blur-xl">
           <span className="block text-[10px] uppercase tracking-[0.14em] text-[#6a7b6f]">Delivery Zone Studio</span>
           <span className="mt-0.5 block">{addingPoint ? "Chạm bản đồ để thêm đỉnh vùng giao hàng" : "Kéo các điểm để chỉnh vùng giao hàng thật"}</span>
         </div>
@@ -352,7 +332,7 @@ export function DeliveryZoneMapEditor({
           <MapScaleBar label="1 km" />
         </div>
 
-        <div className="absolute inset-x-3 bottom-3 rounded-2xl border border-white/75 bg-white/90 p-2 shadow-[0_18px_48px_rgba(15,77,58,0.16)] backdrop-blur sm:inset-x-auto sm:left-3 sm:w-[360px]">
+        <div className="dashboard-map-control-dock absolute inset-x-3 bottom-3 rounded-2xl border border-white/75 bg-white/90 p-2 shadow-[0_18px_48px_rgba(15,77,58,0.16)] backdrop-blur sm:inset-x-auto sm:left-3 sm:w-[360px]">
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"

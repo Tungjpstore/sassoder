@@ -36,7 +36,9 @@ export default async function CustomerTablePage({
   const restaurant = await getCachedPublicMenu(restaurantSlug);
   if (!restaurant) notFound();
 
-  const table = await getPublicTable(restaurant.id, tableId, tableAccessToken);
+  const table = await getPublicTable(restaurant.id, tableId, tableAccessToken, {
+    allowLegacyQr: restaurant.allow_legacy_qr
+  });
   if (!table) notFound();
 
   return (
@@ -63,7 +65,8 @@ export default async function CustomerTablePage({
           categoryId: item.category_id,
           name: item.name,
           price: item.price,
-          image: item.image_url
+          image: item.image_url,
+          modifierGroups: item.modifierGroups ?? []
         }))
       }))}
     />

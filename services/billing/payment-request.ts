@@ -64,6 +64,17 @@ export async function createSubscriptionPaymentRequest({
   if (existingPending) {
     const pending = existingPending as PaymentRow;
     if (pending.plan_id === targetPlan.id && pending.months === normalizedMonths) {
+      await mirrorLegacyPaymentRequestToBillingV2({
+        restaurant,
+        subscription,
+        currentPlanCode: currentPlan.code,
+        targetPlanCode: targetPlan.code,
+        amount: pending.amount,
+        months: pending.months,
+        transferContent: pending.transfer_content,
+        billingAction,
+        legacyPaymentId: pending.id
+      });
       return {
         ...pending,
         qrUrl: vietQrUrl({

@@ -8,9 +8,11 @@ import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotReadable 
 import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
 import { motion } from "framer-motion";
 import { Loader2, ShieldCheck } from "lucide-react";
+import { CopilotThinkingIndicator } from "@/components/ai/copilot-thinking-indicator";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
 import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
+import { buildOperationalPassport, type AiOperationalPassport } from "@/lib/ai/operational-passport";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
 import type { AiAgentPlan } from "@/types/ai-agent";
 
@@ -178,18 +180,19 @@ function buildPlatformAgentResult(message: string, snapshot: PlatformCopilotSnap
   const lead = `${snapshot.metrics.warnings} cảnh báo platform, ${snapshot.metrics.suspendedTenants} tenant tạm dừng, ${snapshot.metrics.pendingPayments} billing chờ xử lý.`;
   const focus = `Ưu tiên mở ${adminRouteLabel(route)} để xử lý đúng vùng thay vì trả lời chung chung.`;
   const safety = failedControls.length ? `Cần kiểm ${failedControls.slice(0, 2).map((item) => item.layer).join(", ")} trước khi release.` : "Các lớp bảo mật chính chưa báo lỗi nghiêm trọng.";
-
+  const reply = [lead, focus, safety].join(" ");
+  const agentPlan: AiAgentPlan = {
+    title: "Platform Ops Agent",
+    summary: `Điều hướng theo rủi ro hiện tại: ${adminRouteLabel(route)} là vùng cần mở trước.`,
+    focusArea: route,
+    nextBestActionId: actions[0]?.id ?? null,
+    safetyNote: "AI chỉ điều hướng và tạo checklist, không tự kích hoạt gói, không xoá tenant.",
+    confidence: snapshot.metrics.warnings > 0 || failedControls.length > 0 ? "high" : "medium"
+  };
   return {
-    reply: [lead, focus, safety].join(" "),
+    reply,
     actions: actions.slice(0, 4),
-    agentPlan: {
-      title: "Platform Ops Agent",
-      summary: `Điều hướng theo rủi ro hiện tại: ${adminRouteLabel(route)} là vùng cần mở trước.`,
-      focusArea: route,
-      nextBestActionId: actions[0]?.id ?? null,
-      safetyNote: "AI chỉ điều hướng và tạo checklist, không tự kích hoạt gói, không xoá tenant.",
-      confidence: snapshot.metrics.warnings > 0 || failedControls.length > 0 ? "high" : "medium"
-    }
+    agentPlan
   };
 }
 
@@ -201,6 +204,7 @@ function PlatformToolCard({
   status?: string;
   result?: string | PlatformAiResult;
   onAction?: (action: PlatformAgentAction) => void;
+  passport?: AiOperationalPassport | null;
 }) {
   const loading = status === "executing" || status === "inProgress";
   const text = typeof result === "string" ? result : result?.reply || "Đã chuẩn bị bước vận hành platform.";
@@ -215,10 +219,13 @@ function PlatformToolCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-semibold">Platform Copilot</p>
-          <p className="truncate text-xs text-[var(--muted-foreground)]">{agentPlan?.summary || "Action-first admin assistant"}</p>
+          <p className="truncate text-xs text-[var(--muted-foreground)]">{agentPlan?.summary || "Trả lời rủi ro trước, thao tác sau"}</p>
         </div>
       </div>
-      <p className="relative z-[1] mt-3 leading-6 text-[var(--muted-foreground)]">{loading ? "Đang phân tích control plane..." : text}</p>
+      <div className="logibot-answer-brief relative z-[1] mt-3">
+        <span>Trả lời chính</span>
+        <p className="logibot-card-brief leading-6 text-[var(--muted-foreground)]">{loading ? "Đang đọc rủi ro vận hành và chuẩn bị kết luận chính..." : text}</p>
+      </div>
       {agentPlan?.safetyNote ? (
         <p className="relative z-[1] mt-3 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-white/60 px-3 py-2 text-xs leading-5 text-[var(--foreground)]">
           {agentPlan.safetyNote}
@@ -231,7 +238,7 @@ function PlatformToolCard({
               key={action.id}
               type="button"
               onClick={() => onAction?.(action)}
-              className={`rounded-2xl border px-3 py-3 text-left transition active:scale-[0.99] ${
+              className={`logibot-action-tile rounded-2xl border px-3 py-3 text-left transition active:scale-[0.99] ${
                 action.priority === "primary"
                   ? "border-[var(--primary)] bg-[var(--primary)] text-[#FFF7EB]"
                   : "border-[var(--border)] bg-white/60 text-[var(--foreground)] hover:border-[var(--primary)]/35"
@@ -292,19 +299,39 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
   }, [router]);
 
   useCopilotResponseWatchdog({
-    timeoutMs: 12_000,
+    timeoutMs: 10_000,
     fallbackText:
       "Platform AI chưa nhận được phản hồi đầy đủ, nhưng bạn vẫn có thể tiếp tục bằng shortcut an toàn: mở khu vực admin liên quan, kiểm tra billing/tenant/security hoặc chạy lại yêu cầu ngắn hơn."
   });
+
+  const targetRoute = inferPlatformRoute(snapshot.activeSection, snapshot.activeSection);
+  const operationalPassport = useMemo(
+    () =>
+      buildOperationalPassport({
+        surface: "admin",
+        title: "Platform Ops Passport",
+        status: snapshot.activeSection,
+        goal: `Quản trị ${snapshot.activeSection} · ${snapshot.metrics.warnings} cảnh báo`,
+        route: targetRoute,
+        nextActionId: `open-${targetRoute}`,
+        nextActionLabel: `Mở ${adminRouteLabel(targetRoute)}`,
+        checkpoint: snapshot.securityControls.find((item) => item.status !== "OK")?.layer ?? "Không có checkpoint mới",
+        handoffRoute: targetRoute,
+        handoffLabel: adminRouteLabel(targetRoute),
+        confidence: snapshot.metrics.warnings > 0 ? "high" : "medium"
+      }),
+    [snapshot, targetRoute]
+  );
 
   const readable = useMemo(
     () => ({
       surface: "platform_admin",
       privacyBoundary: "Không đi sâu doanh thu/đơn riêng tư của tenant. Chỉ quản trị nền tảng, gói, landing, billing, bảo mật.",
       ...snapshot,
-      allowedRoutes: adminRoutes
+      allowedRoutes: adminRoutes,
+      operationalPassport
     }),
-    [snapshot]
+    [operationalPassport, snapshot]
   );
 
   useCopilotAdditionalInstructions({ instructions: buildCopilotSystemInstructions("admin") }, []);
@@ -313,16 +340,16 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
       description: "State control plane /admin của LogiVN: landing, plans, billing, tenant status, security và release readiness.",
       value: readable
     },
-    [readable]
+    [operationalPassport, readable]
   );
   useCopilotChatSuggestions(
     {
       available: "before-first-message",
       suggestions: [
-        { title: "Bảo mật", message: "Tóm tắt 3 rủi ro bảo mật nền tảng cần xử lý trước." },
-        { title: "Gói dịch vụ", message: "Mở khu vực gói dịch vụ và nhắc logic chống bug gói." },
-        { title: "Landing", message: "Mở khu vực Website để chỉnh nội dung landing." },
-        { title: "Thanh toán", message: "Mở xác minh thanh toán gói đang chờ." }
+        { title: "01 Bảo mật", message: "Tóm tắt rủi ro bảo mật quan trọng nhất và đưa action mở đúng khu vực." },
+        { title: "02 Gói dịch vụ", message: "Mở khu vực gói dịch vụ và kiểm tra logic chống bug gói." },
+        { title: "03 Landing", message: "Mở khu vực Website để chỉnh nội dung landing cần ưu tiên." },
+        { title: "04 Thanh toán", message: "Mở xác minh thanh toán gói đang chờ và nêu bước an toàn." }
       ]
     },
     []
@@ -331,6 +358,7 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
   useCopilotAction(
     {
       name: "navigate_platform_admin",
+      followUp: false,
       description: "Mở đúng vùng /admin để dev chỉnh website, gói, billing, tenant, user, bảo mật hoặc release.",
       parameters: [
         {
@@ -352,14 +380,15 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
         router.push(safeRoute);
         return buildPlatformAgentResult(reason || `Mở ${safeRoute}`, { ...snapshot, activeSection: safeRoute });
       },
-      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} />
+      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} passport={operationalPassport} />
     },
-    [router, runPlatformAction, snapshot]
+    [operationalPassport, router, runPlatformAction, snapshot]
   );
 
   useCopilotAction(
     {
       name: "answer_platform_admin_request",
+      followUp: false,
       description:
         "Catch-all bắt buộc cho mọi câu hỏi tự do của platform admin. Luôn trả action card, route an toàn và checklist ngắn; không truy cập dữ liệu riêng tư tenant.",
       parameters: [
@@ -371,14 +400,15 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
         }
       ],
       handler: async ({ message }) => buildPlatformAgentResult(String(message || "Kiểm tra platform"), snapshot),
-      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} />
+      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} passport={operationalPassport} />
     },
-    [runPlatformAction, snapshot]
+    [operationalPassport, runPlatformAction, snapshot]
   );
 
   useCopilotAction(
     {
       name: "summarize_platform_risk",
+      followUp: false,
       description: "Tóm tắt nhanh rủi ro nền tảng dựa trên state /admin hiện tại, không truy cập dữ liệu riêng tư của quán.",
       handler: async () => {
         const result = buildPlatformAgentResult("Tóm tắt rủi ro bảo mật billing release", snapshot);
@@ -391,25 +421,28 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
           ].join(" ")
         };
       },
-      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} />
+      render: ({ status, result }) => <PlatformToolCard status={status} result={result as PlatformAiResult} onAction={runPlatformAction} passport={operationalPassport} />
     },
-    [runPlatformAction, snapshot]
+    [operationalPassport, runPlatformAction, snapshot]
   );
 
   return (
-    <CopilotSidebar
-      defaultOpen={false}
-      width="min(460px, 100vw)"
-      toggleButton={PlatformLogibotToggle}
-      labels={{
-        modalHeaderTitle: "LogiBot Platform",
-        welcomeMessageText: "Mình trả lời bằng card vận hành: mở đúng khu vực admin, tóm tắt rủi ro, kiểm tra billing/tenant/release và đưa shortcut an toàn.",
-        chatInputPlaceholder: "VD: tenant nào rủi ro, kiểm tra billing, mở AI config...",
-        chatDisclaimerText: "Platform AI không truy cập chi tiết doanh thu/đơn riêng tư của từng quán.",
-        chatToggleOpenLabel: "Mở Platform AI",
-        chatToggleCloseLabel: "Đóng Platform AI"
-      }}
-    />
+    <>
+      <CopilotSidebar
+        defaultOpen={false}
+        width="min(460px, 100vw)"
+        toggleButton={PlatformLogibotToggle}
+        labels={{
+          modalHeaderTitle: "LogiBot Platform",
+          welcomeMessageText: "Mình trả lời bằng card vận hành: mở đúng khu vực admin, tóm tắt rủi ro, kiểm tra billing/tenant/release và đưa shortcut an toàn.",
+          chatInputPlaceholder: "VD: tenant nào rủi ro, kiểm tra billing, mở AI config...",
+          chatDisclaimerText: "Platform AI không truy cập chi tiết doanh thu/đơn riêng tư của từng quán.",
+          chatToggleOpenLabel: "Mở Platform AI",
+          chatToggleCloseLabel: "Đóng Platform AI"
+        }}
+      />
+      <CopilotThinkingIndicator surface="platform" />
+    </>
   );
 }
 

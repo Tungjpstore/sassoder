@@ -37,7 +37,7 @@ export function MapLayerControl({
             type="button"
             onClick={() => onChange(mode.id)}
             className={cn(
-              "group inline-flex min-h-10 shrink-0 items-center gap-2 rounded-2xl px-2.5 text-[11px] font-black transition active:scale-[0.98]",
+              "group inline-flex min-h-11 shrink-0 items-center gap-2 rounded-2xl px-3 text-[11px] font-black transition active:scale-[0.98]",
               value === mode.id
                 ? "bg-[#0f4d3a] text-white shadow-[0_10px_24px_rgba(15,77,58,0.22)]"
                 : "bg-white text-[#496253] hover:bg-[#edf7ef]"

@@ -1,4 +1,5 @@
-import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
+import type { AiAgentAction, AiAgentMission, AiAgentPlan, AiCommandDeck } from "@/types/ai-agent";
+import type { AiOperationalPassport } from "@/lib/ai/operational-passport";
 
 export type AiWorkflowCheckpointStatus =
   | "approval_requested"
@@ -30,10 +31,13 @@ export type AiConversationWorkflowSnapshot = {
   suggestions?: string[];
   actions?: AiAgentAction[];
   agentPlan?: AiAgentPlan | null;
+  mission?: AiAgentMission | null;
+  commandDeck?: AiCommandDeck | null;
   completedActionIds?: string[];
   declinedActionIds?: string[];
   pendingApprovalActionId?: string | null;
   latestCheckpoint?: AiWorkflowCheckpoint | null;
+  passport?: AiOperationalPassport | null;
   updatedAt?: string | null;
 };
 

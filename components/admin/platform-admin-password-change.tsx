@@ -28,8 +28,8 @@ export function PlatformAdminPasswordChange({ forced = false, sessionTtlHours }:
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--muted-foreground)]">
               {forced
-                ? "Mật khẩu tạm chỉ dùng để mở khoá lần đầu. Sau khi đổi, LogiVN lưu hash trong Supabase và yêu cầu mật khẩu mới cho các lần đăng nhập sau."
-                : "Cập nhật mật khẩu nội bộ cho /admin. Phiên hiện tại sẽ được làm mới sau khi lưu thành công."}
+                ? "Mật khẩu tạm chỉ dùng để mở khoá lần đầu. Sau khi đổi, LogiVN lưu hash theo admin user hoặc credential bootstrap trong Supabase."
+                : "Cập nhật mật khẩu cho phiên /admin hiện tại. Phiên sẽ được làm mới sau khi lưu thành công."}
             </p>
           </div>
           <div className="grid max-w-3xl gap-3 sm:grid-cols-3">

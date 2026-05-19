@@ -7,7 +7,10 @@ import { Loader2, LocateFixed, MapPin, Navigation, Search } from "lucide-react";
 import { VietnamAdminSelector } from "@/components/location/vietnam-admin-selector";
 import { MapLayerControl } from "@/components/maps/map-layer-control";
 import { MapCrosshair, MapGlassPanel, MapLegend, MapScaleBar, MapStatusPill } from "@/components/maps/map-ui-kit";
+import { createLogiVNMarkerElement } from "@/components/maps/logivn-marker";
+import { fitMapToPoints, removeRoutePreviewLayer, syncRoutePreviewLayer, toLngLat } from "@/components/maps/route-preview-layer";
 import { Button } from "@/components/ui/button";
+import { normalizeCoordinatePair } from "@/lib/geolocation/coordinates";
 import { formatAccuracyMeters, isLowAccuracyLocation, isUnusableAccuracyLocation } from "@/lib/geolocation/coordinate-quality";
 import { applyClientMapLayer, getDefaultClientMapStyle, resolveClientMapStyle, type ClientMapLayerMode } from "@/lib/geolocation/map-style";
 import { cn } from "@/lib/utils";
@@ -23,6 +26,7 @@ type CustomerDeliveryLocationPickerProps = {
   restaurantPoint?: Coordinate | null;
   route?: number[][] | null;
   onAddressChange: (value: string) => void;
+  onManualAddressChange?: (value: string) => void;
   onCoordinateChange: (point: Coordinate) => void;
 };
 
@@ -34,26 +38,7 @@ const defaultCenter: Coordinate = {
 const fallbackMapStyle = getDefaultClientMapStyle();
 
 function parseOptionalCoordinate(latitude?: number, longitude?: number): Coordinate | null {
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-  return {
-    lat: Number(latitude),
-    lng: Number(longitude)
-  };
-}
-
-function toLngLat(point: Coordinate): [number, number] {
-  return [point.lng, point.lat];
-}
-
-function buildRouteFeature(route: number[][]) {
-  return {
-    type: "Feature" as const,
-    properties: {},
-    geometry: {
-      type: "LineString" as const,
-      coordinates: route
-    }
-  };
+  return normalizeCoordinatePair(latitude, longitude);
 }
 
 export function CustomerDeliveryLocationPicker({
@@ -63,6 +48,7 @@ export function CustomerDeliveryLocationPicker({
   restaurantPoint,
   route,
   onAddressChange,
+  onManualAddressChange,
   onCoordinateChange
 }: CustomerDeliveryLocationPickerProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
@@ -171,16 +157,11 @@ export function CustomerDeliveryLocationPicker({
       map.addControl(new maplibre.NavigationControl({ showCompass: false }), "top-right");
 
       if (mountRestaurantPoint) {
-        const storeElement = document.createElement("div");
-        storeElement.className = "grid h-9 w-9 place-items-center rounded-xl border border-white/80 bg-[#0F4D3A] text-white shadow-lg";
-        storeElement.innerHTML = '<span style="font-size:13px;font-weight:900;">Q</span>';
+        const storeElement = createLogiVNMarkerElement({ label: "Q", tone: "store", title: "Quán" });
         restaurantMarkerRef.current = new maplibre.Marker({ element: storeElement }).setLngLat(toLngLat(mountRestaurantPoint)).addTo(map);
       }
 
-      const customerElement = document.createElement("div");
-      customerElement.className =
-        "grid h-11 w-11 place-items-center rounded-[17px] border border-white/80 bg-[radial-gradient(circle_at_30%_30%,rgba(242,140,40,0.98),rgba(201,111,23,0.96))] text-white shadow-[0_18px_34px_rgba(201,111,23,0.25)]";
-      customerElement.innerHTML = '<span style="font-size:18px;font-weight:900;">•</span>';
+      const customerElement = createLogiVNMarkerElement({ label: "•", tone: "customer", title: "Điểm giao" });
       const marker = new maplibre.Marker({ element: customerElement, draggable: true }).setLngLat(toLngLat(mountDestination ?? mountCenter)).addTo(map);
       marker.on("dragend", async () => {
         const point = marker.getLngLat();
@@ -233,36 +214,22 @@ export function CustomerDeliveryLocationPicker({
     if (!map || !mapReady) return;
     if (!map.isStyleLoaded()) return;
     if (!route || route.length < 2) {
-      if (map.getLayer("customer-delivery-route-line")) map.removeLayer("customer-delivery-route-line");
-      if (map.getSource("customer-delivery-route")) map.removeSource("customer-delivery-route");
+      removeRoutePreviewLayer(map, { sourceId: "customer-delivery-route" });
       return;
-    }
-
-    const data = buildRouteFeature(route);
-    const existingSource = map.getSource("customer-delivery-route") as import("maplibre-gl").GeoJSONSource | undefined;
-    if (existingSource) {
-      existingSource.setData(data);
-    } else {
-      map.addSource("customer-delivery-route", {
-        type: "geojson",
-        data
-      });
-      map.addLayer({
-        id: "customer-delivery-route-line",
-        type: "line",
-        source: "customer-delivery-route",
-        paint: {
-          "line-color": "#F28C28",
-          "line-width": 4,
-          "line-opacity": 0.86
-        }
-      });
     }
 
     const maplibre = maplibreRef.current;
     if (!maplibre) return;
-    const bounds = route.reduce((nextBounds, coordinate) => nextBounds.extend(coordinate as [number, number]), new maplibre.LngLatBounds(route[0] as [number, number], route[0] as [number, number]));
-    map.fitBounds(bounds, { padding: 44, duration: 520, maxZoom: 15 });
+    const routePoints = route.map((point) => ({ lng: Number(point[0]), lat: Number(point[1]) })).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+    if (routePoints.length < 2) return;
+    syncRoutePreviewLayer(map, routePoints, {
+      sourceId: "customer-delivery-route",
+      color: "#F28C28",
+      shadowWidth: 7,
+      width: 4,
+      opacity: 0.86
+    });
+    fitMapToPoints(maplibre, map, routePoints, { padding: 44, duration: 520, maxZoom: 15 });
   }, [mapReady, route, styleRevision]);
 
   const handleAdminHintChange = useCallback((hint: string) => {
@@ -383,8 +350,9 @@ export function CustomerDeliveryLocationPicker({
         <textarea
           value={searchQuery}
           onChange={(event) => {
-            setSearchQuery(event.target.value);
-            onAddressChange(event.target.value);
+            const nextAddress = event.target.value;
+            setSearchQuery(nextAddress);
+            (onManualAddressChange ?? onAddressChange)(nextAddress);
           }}
           placeholder="Ví dụ: 12 Nguyễn Huệ hoặc tên tòa nhà/mốc gần bạn"
           className="min-h-20 rounded-xl border border-[rgba(169,197,161,0.45)] bg-white px-3 py-3 text-sm font-semibold outline-none focus:border-[var(--primary)]"

@@ -1,6 +1,11 @@
 /** @type {import('next-sitemap').IConfig} */
+const { assertProductionSeoSiteUrl, resolveSeoSiteUrl } = require("./scripts/seo/site-url.cjs");
+
+const siteUrl = resolveSeoSiteUrl();
+assertProductionSeoSiteUrl(siteUrl);
+
 module.exports = {
-  siteUrl: process.env.NEXT_PUBLIC_APP_URL || "https://logivn.com",
+  siteUrl,
   outDir: "reports/seo/generated",
   generateRobotsTxt: true,
   generateIndexSitemap: false,
@@ -34,7 +39,6 @@ module.exports = {
         disallow: ["/admin/", "/api/", "/auth/", "/dashboard/", "/r/*/table/", "/r/*/reserve/"]
       }
     ],
-    additionalSitemaps: ["https://logivn.com/sitemap.xml"]
+    additionalSitemaps: [`${siteUrl}/sitemap.xml`]
   }
 };
-

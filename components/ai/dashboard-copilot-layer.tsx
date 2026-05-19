@@ -3,19 +3,35 @@
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { forwardRef, useCallback, useMemo, useState, type ButtonHTMLAttributes, type MouseEvent } from "react";
-import { CopilotSidebar, useCopilotChatConfiguration } from "@copilotkit/react-core/v2";
-import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotChat, useCopilotReadable } from "@copilotkit/react-core";
-import { MessageRole, TextMessage } from "@copilotkit/runtime-client-gql";
-import { useCopilotChatSuggestions } from "@copilotkit/react-ui";
+import { useCopilotAction, useCopilotAdditionalInstructions, useCopilotReadable } from "@copilotkit/react-core";
 import { motion } from "framer-motion";
-import { ExternalLink, Loader2, Play, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  Bot,
+  Check,
+  ExternalLink,
+  Loader2,
+  Play,
+  ShieldCheck,
+  Sparkles,
+  X
+} from "lucide-react";
+import { AiCommandDeckPanel } from "@/components/ai/ai-command-deck-panel";
+import { CopilotThinkingIndicator } from "@/components/ai/copilot-thinking-indicator";
+import { LogibotChatSurface, type LogibotChatQuickAction } from "@/components/ai/logibot-chat-surface";
+import { logibotAttachmentLabel, type LogibotAttachmentDraft } from "@/components/ai/logibot-composer";
 import { LogiVNCopilotProvider } from "@/components/ai/logivn-copilot-provider";
-import { useCopilotResponseWatchdog } from "@/components/ai/use-copilot-response-watchdog";
+import { requestLogibot } from "@/components/ai/logibot-client";
 import { useCopilotHistoryReplay } from "@/components/ai/use-copilot-history-replay";
+import { buildAgentMission } from "@/lib/ai/agent-mission";
+import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
+import { buildOperationalPassport, type AiOperationalPassport } from "@/lib/ai/operational-passport";
 import { buildCopilotSystemInstructions } from "@/lib/ai/prompts/copilot-system";
+import { cn } from "@/lib/utils";
 import type { AiConversationReplayPayload, AiConversationWorkflowSnapshot, AiWorkflowCheckpoint, AiWorkflowCheckpointStatus } from "@/types/ai-history";
-import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
+import type { AiAgentAction, AiAgentMission, AiAgentPlan, AiCommandDeck } from "@/types/ai-agent";
 
 /* ─── Types ─── */
 
@@ -27,6 +43,7 @@ type OwnerIntent =
   | "orders"
   | "kitchen"
   | "menu"
+  | "inventory"
   | "tables"
   | "payments"
   | "promotions"
@@ -46,6 +63,9 @@ type OwnerAiResult = {
   suggestions?: string[];
   actions?: AiAgentAction[];
   agentPlan?: AiAgentPlan;
+  mission?: AiAgentMission;
+  commandDeck?: AiCommandDeck | null;
+  passport?: AiOperationalPassport | null;
   provider?: string;
   model?: string;
   data?: unknown;
@@ -78,6 +98,14 @@ type OwnerWorkflowRuntimeResult = OwnerAiResult & {
   checkpointSummary?: string | null;
 };
 
+type OperatingDrawerMessage = {
+  id: string;
+  role: "assistant" | "user";
+  content: string;
+  attachmentLabel?: string;
+  result?: OwnerAiResult | null;
+};
+
 /* ─── Constants ─── */
 
 const logibotLogo = "/brand/logivn/logibot-badge.png";
@@ -89,6 +117,7 @@ const dashboardRoutes = [
   "/dashboard/online",
   "/dashboard/reservations",
   "/dashboard/menu",
+  "/dashboard/inventory",
   "/dashboard/tables",
   "/dashboard/payments",
   "/dashboard/staff",
@@ -103,6 +132,7 @@ const intentRouteMap: Record<OwnerIntent, (typeof dashboardRoutes)[number]> = {
   orders: "/dashboard/orders",
   kitchen: "/dashboard/orders",
   menu: "/dashboard/menu",
+  inventory: "/dashboard/inventory",
   tables: "/dashboard/tables",
   payments: "/dashboard/payments",
   promotions: "/dashboard/promotions",
@@ -121,6 +151,7 @@ const ownerIntentLabels: Record<OwnerIntent, string> = {
   orders: "đơn hàng",
   kitchen: "bếp",
   menu: "menu",
+  inventory: "kho hàng",
   tables: "bàn",
   payments: "thanh toán",
   promotions: "khuyến mãi",
@@ -139,6 +170,7 @@ const ownerIntentByRoute: Record<(typeof dashboardRoutes)[number], OwnerIntent> 
   "/dashboard/online": "online",
   "/dashboard/reservations": "reservations",
   "/dashboard/menu": "menu",
+  "/dashboard/inventory": "inventory",
   "/dashboard/tables": "tables",
   "/dashboard/payments": "payments",
   "/dashboard/staff": "staff",
@@ -149,6 +181,7 @@ const ownerIntentByRoute: Record<(typeof dashboardRoutes)[number], OwnerIntent> 
 
 const ownerIntentHints: Array<[OwnerIntent, string[]]> = [
   ["menu", ["menu", "thực đơn", "thuc don", "món", "mon", "tạo menu", "tao menu", "ocr"]],
+  ["inventory", ["kho", "ton kho", "tồn kho", "nguyên liệu", "nguyen lieu", "định mức", "dinh muc", "food cost", "nhập kho", "nhap kho"]],
   ["payments", ["thanh toán", "thanh toan", "vietqr", "chuyển khoản", "chuyen khoan", "đối soát", "doi soat"]],
   ["orders", ["đơn", "don", "order", "nhận đơn", "nhan don", "xử lý đơn", "xu ly don"]],
   ["tables", ["bàn", "ban", "qr", "khu vực", "khu vuc"]],
@@ -346,7 +379,7 @@ function firstSafeText(...values: Array<string | undefined>) {
 function generatedOwnerDataText(result: Pick<Partial<OwnerAiResult>, "data" | "reply" | "text">) {
   return (
     firstSafeText(result.reply, setupPlanText(result.data), setupDraftText(result.data), structuredBrandingText(result.data), result.text) ||
-    "Mình đã tạo xong bản nháp. Hãy dùng nút bên dưới để mở đúng khu vực thao tác."
+    "Mình đã nhận phản hồi từ hệ thống, nhưng chưa có nội dung đủ rõ để hiển thị an toàn. Hãy hỏi cụ thể hơn hoặc mở màn liên quan để kiểm tra dữ liệu."
   );
 }
 
@@ -460,26 +493,6 @@ function bulkOwnerActionCount(action: AiAgentAction) {
   return safeBulkOwnerActions(action).length;
 }
 
-function summarizeOwnerActionsForUi(actions: AiAgentAction[]) {
-  let confirmCount = 0;
-  let manualCount = 0;
-  let batchCount = 0;
-
-  for (const action of actions) {
-    if (action.safety === "confirm") confirmCount += 1;
-    if (action.safety === "manual_only") manualCount += 1;
-    if (bulkOwnerActionCount(action) > 0) batchCount += 1;
-  }
-
-  return {
-    total: actions.length,
-    confirmCount,
-    manualCount,
-    batchCount,
-    safeCount: Math.max(0, actions.length - confirmCount - manualCount)
-  };
-}
-
 function normalizeOwnerResultForUi(result: OwnerAiResult): OwnerAiResult {
   const actions = generatedOwnerActions(result);
   const dataText = setupPlanText(result.data) || setupDraftText(result.data) || structuredBrandingText(result.data);
@@ -543,6 +556,10 @@ function summarizeOwnerActionResponse(action: AiAgentAction, payload: unknown) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function makeOperatingMessageId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
 function uniqueStrings(values: string[]) {
@@ -656,6 +673,28 @@ function buildOwnerWorkflowRuntimeResult({
     ? `${workflow.latestCheckpoint.actionLabel || "Bước trước"}: ${workflow.latestCheckpoint.status}`
     : null;
   const nextNeedsApproval = nextAction ? requiresApproval(nextAction) : false;
+  const passport = buildOperationalPassport({
+    surface: "dashboard",
+    title: "Workflow runtime",
+    status: workflow.status,
+    goal: workflow.summary,
+    route: null,
+    nextActionId: nextAction?.id ?? null,
+    nextActionLabel: nextAction?.label ?? null,
+    checkpoint: checkpointSummary,
+    handoffRoute: null,
+    handoffLabel: nextAction?.label ?? "Tiếp tục workflow",
+    confidence: activeActions.length > 0 ? "high" : "medium"
+  });
+  const mission = buildAgentMission({
+    surface: "dashboard",
+    title: agentPlan?.title ?? "Workflow runtime",
+    outcome: workflow.summary,
+    actions: nextAction ? [nextAction] : activeActions.slice(0, 3),
+    urgency: nextNeedsApproval ? "now" : activeActions.length > 0 ? "soon" : "watch",
+    estimatedMinutes: Math.max(2, Math.min(10, activeActions.length * 2)),
+    operatorNote: agentPlan?.safetyNote
+  });
 
   const reply =
     mode === "summary"
@@ -680,7 +719,9 @@ function buildOwnerWorkflowRuntimeResult({
     nextActionId: nextAction?.id ?? null,
     completedActionIds: workflow.completedActionIds,
     declinedActionIds: workflow.declinedActionIds,
-    checkpointSummary
+    checkpointSummary,
+    mission,
+    passport
   };
 }
 
@@ -708,7 +749,7 @@ function buildOwnerShortcutResult({
       body: {
         intent: focus,
         threadId,
-        message: `Phân tích nhanh ${label} cho ${restaurantName} và tạo action queue ngắn, ưu tiên việc có thể xử lý ngay.`,
+        message: `Phân tích nhanh ${label} cho ${restaurantName}. Trả lời tình hình chính trước, sau đó đưa các bước xử lý ngắn có thể làm ngay.`,
         context: { currentPath: pathname, source: "owner_operational_shortcuts" }
       },
       intent: focus,
@@ -740,6 +781,29 @@ function buildOwnerShortcutResult({
       safety: "safe"
     }
   ];
+  const passport = buildOperationalPassport({
+    surface: "dashboard",
+    title: `Chủ quán · ${label}`,
+    status: focus,
+    goal: `Tạo lối đi nhanh cho ${label} dựa trên màn hiện tại.`,
+    route: normalizedPath,
+    nextActionId: actions[0]?.id ?? null,
+    nextActionLabel: actions[0]?.label ?? null,
+    checkpoint: `Shortcut ${label}`,
+    handoffRoute: route,
+    handoffLabel: `Mở ${label}`,
+    confidence: "high"
+  });
+  const mission = buildAgentMission({
+    surface: "dashboard",
+    title: `Mission ${label}`,
+    outcome: `Tạo lối đi nhanh cho ${label} dựa trên màn hiện tại.`,
+    route,
+    actions,
+    urgency: "now",
+    estimatedMinutes: 5,
+    operatorNote: "Bắt đầu bằng phân tích dữ liệu thật; action nhạy cảm vẫn cần chủ quán xác nhận."
+  });
 
   return {
     reply: `Mình đã chuẩn bị shortcut cho ${label}. Nên bắt đầu bằng phân tích dữ liệu thật rồi mới mở màn hoặc lập workflow chi tiết.`,
@@ -754,7 +818,9 @@ function buildOwnerShortcutResult({
       nextBestActionId: actions[0]?.id ?? null,
       safetyNote: "Không chạy action nhạy cảm nếu chưa được chủ quán xác nhận.",
       confidence: "high"
-    }
+    },
+    mission,
+    passport
   };
 }
 
@@ -764,20 +830,38 @@ function ToolResultCard({
   title,
   status,
   result,
-  onAction
+  onAction,
+  passport
 }: {
   title: string;
   status?: string;
   result?: OwnerAiResult | string;
   onAction?: (action: AiAgentAction) => Promise<string | void>;
+  passport?: AiOperationalPassport | null;
 }) {
   const isLoading = status === "executing" || status === "inProgress";
   const text = typeof result === "string" ? result : generatedOwnerDataText(result ?? {});
   const actions = typeof result === "string" ? emptyAgentActions : result?.actions ?? emptyAgentActions;
   const agentPlan = typeof result === "string" ? null : result?.agentPlan ?? null;
-  const provider = typeof result === "string" ? null : [result?.provider, result?.model].filter(Boolean).join(" · ");
+  const mission = typeof result === "string" ? null : result?.mission ?? null;
+  const visiblePassport = typeof result === "string" ? passport ?? null : result?.passport ?? passport ?? null;
+  const commandDeck =
+    typeof result === "string"
+      ? null
+      : result?.commandDeck ??
+        (mission
+          ? buildCommandDeck({
+              surface: mission.surface,
+              title: mission.title,
+              headline: text,
+              actions,
+              mission,
+              passport: visiblePassport,
+              confidence: agentPlan?.confidence ?? visiblePassport?.confidence ?? "medium"
+            })
+          : null);
   const visibleActions = useMemo(() => actions.slice(0, 5), [actions]);
-  const actionStats = useMemo(() => summarizeOwnerActionsForUi(actions), [actions]);
+  const shouldShowAnswerBrief = !isLoading && Boolean(text.trim());
   const nextActionLabel = visibleActions.find((action) => action.id === agentPlan?.nextBestActionId)?.label ?? visibleActions[0]?.label ?? "Chờ yêu cầu";
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
@@ -835,21 +919,7 @@ function ToolResultCard({
               {isLoading ? "Đang chạy" : "Sẵn sàng"}
             </span>
           </div>
-          <p className="truncate text-xs text-[var(--muted-foreground)]">{provider || `Bước tiếp: ${nextActionLabel}`}</p>
-        </div>
-      </div>
-      <div className="relative z-[1] mt-4 grid grid-cols-3 gap-2">
-        <div className="rounded-2xl border border-[rgba(15,77,58,0.1)] bg-white/55 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Action</p>
-          <p className="mt-1 text-lg font-black text-[var(--foreground)]">{actionStats.total}</p>
-        </div>
-        <div className="rounded-2xl border border-[rgba(242,140,40,0.2)] bg-[#fff2df] px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Xác nhận</p>
-          <p className="mt-1 text-lg font-black text-[var(--accent-strong)]">{actionStats.confirmCount + actionStats.manualCount}</p>
-        </div>
-        <div className="rounded-2xl border border-[rgba(15,77,58,0.1)] bg-white/55 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Batch</p>
-          <p className="mt-1 text-lg font-black text-[var(--primary)]">{actionStats.batchCount}</p>
+          <p className="truncate text-xs text-[var(--muted-foreground)]">{shouldShowAnswerBrief ? `Trả lời trước · Bước tiếp: ${nextActionLabel}` : `Bước tiếp: ${nextActionLabel}`}</p>
         </div>
       </div>
       {isLoading ? (
@@ -858,22 +928,18 @@ function ToolResultCard({
           <div className="h-3 w-8/12 rounded-full bg-[rgba(15,77,58,0.1)] logibot-skeleton" />
           <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-[var(--primary)]">
             <span className="logibot-typing-bars" />
-            Đang dựng action queue, không để hộp chat trống...
+            Đang đọc dữ liệu ca và chuẩn bị câu trả lời chính...
           </div>
         </div>
-      ) : (
-        <p className="relative z-[1] mt-3 whitespace-pre-line leading-6 text-[var(--muted-foreground)]">{text}</p>
-      )}
-      {agentPlan ? (
-        <div className="relative z-[1] mt-3 rounded-2xl border border-[rgba(15,77,58,0.12)] bg-[linear-gradient(135deg,rgba(255,255,255,0.74),rgba(247,239,226,0.7))] px-3 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--primary)]">{agentPlan.title}</p>
-            <span className="rounded-full bg-[var(--surface)] px-2 py-1 text-[10px] font-bold text-[var(--muted-foreground)]">
-              {agentPlan.confidence === "high" ? "Tự tin cao" : agentPlan.confidence === "medium" ? "Tự tin vừa" : "Cần dữ liệu"}
-            </span>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-[var(--foreground)]">{agentPlan.summary}</p>
-          {agentPlan.safetyNote ? <p className="mt-2 text-[11px] leading-5 text-[var(--muted-foreground)]">{agentPlan.safetyNote}</p> : null}
+      ) : shouldShowAnswerBrief ? (
+        <div className="logibot-answer-brief relative z-[1] mt-3">
+          <span>Trả lời chính</span>
+          <p className="logibot-card-brief whitespace-pre-line leading-6 text-[var(--muted-foreground)]">{text}</p>
+        </div>
+      ) : null}
+      {!isLoading && visibleActions.length ? (
+        <div className="relative z-[1] mt-3">
+          <AiCommandDeckPanel deck={commandDeck} compact />
         </div>
       ) : null}
       {visibleActions.length ? (
@@ -881,7 +947,7 @@ function ToolResultCard({
           {visibleActions.map((action, index) => {
             const bulkCount = bulkOwnerActionCount(action);
             return (
-            <div key={action.id} className={`rounded-xl border px-3 py-3 transition ${actionClass(action)}`}>
+            <div key={action.id} className={`logibot-action-tile rounded-xl border px-3 py-3 transition ${actionClass(action)}`}>
               <button
                 type="button"
                 onClick={() => void handleAction(action)}
@@ -920,7 +986,7 @@ function ToolResultCard({
                 ) : null}
               </button>
               {approvalActionId === action.id ? (
-                <div className={`mt-3 rounded-xl border px-3 py-3 ${action.priority === "primary" ? "border-white/20 bg-[rgba(255,255,255,0.12)]" : "border-[var(--border)] bg-[var(--surface)]"}`}>
+                <div className={`logibot-action-tile mt-3 rounded-xl border px-3 py-3 ${action.priority === "primary" ? "border-white/20 bg-[rgba(255,255,255,0.12)]" : "border-[var(--border)] bg-[var(--surface)]"}`}>
                   <p className={`text-xs font-semibold ${action.priority === "primary" ? "text-[#FFF7EB]" : "text-[var(--foreground)]"}`}>
                     {action.safety === "manual_only" ? "Cần tự kiểm tra trước khi chạy" : "Xác nhận action trước khi chạy"}
                   </p>
@@ -973,39 +1039,282 @@ function ToolResultCard({
             </div>
             );
           })}
-          {actionStats.total > visibleActions.length ? (
-            <p className="rounded-2xl border border-dashed border-[var(--border)] px-3 py-2 text-xs font-semibold text-[var(--muted-foreground)]">
-              Còn {actionStats.total - visibleActions.length} action phụ đã được giữ trong workflow để tránh quá tải lựa chọn.
-            </p>
-          ) : null}
         </div>
       ) : null}
     </motion.div>
   );
 }
 
+function DrawerActionButton({
+  action,
+  onAction
+}: {
+  action: AiAgentAction;
+  onAction: (action: AiAgentAction) => Promise<string | void>;
+}) {
+  const [pending, setPending] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  async function execute() {
+    if (requiresApproval(action) && !confirming) {
+      setConfirming(true);
+      return;
+    }
+
+    setPending(true);
+    setFeedback(null);
+    try {
+      const summary = await onAction(action);
+      setFeedback(summary || "Đã chạy action. Dashboard đang cập nhật.");
+      setConfirming(false);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Action chưa chạy được.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-black/[0.06] bg-white/72 p-3">
+      <button
+        type="button"
+        onClick={() => void execute()}
+        disabled={pending}
+        className={`flex min-h-11 w-full items-center justify-between gap-3 rounded-lg border px-3 text-left text-sm font-black transition disabled:opacity-60 ${actionClass(action)}`}
+      >
+        <span className="min-w-0">
+          <span className="block truncate">{action.label}</span>
+          <span className="mt-0.5 block text-[11px] font-bold opacity-75">{actionSafetyLabel(action)}</span>
+        </span>
+        {pending ? <Loader2 size={16} className="shrink-0 animate-spin" /> : <ArrowRight size={16} className="shrink-0" />}
+      </button>
+      {confirming ? (
+        <div className="mt-2 rounded-lg border border-[#F59E0B]/20 bg-[#F59E0B]/[0.08] p-2 text-xs font-semibold leading-5 text-[#7C4A03]">
+          Action này cần bạn xác nhận. Bấm lại để chạy, hoặc chọn action khác nếu muốn giữ an toàn.
+        </div>
+      ) : null}
+      {feedback ? <p className="mt-2 text-xs font-semibold leading-5 text-[#0F5132]">{feedback}</p> : null}
+    </div>
+  );
+}
+
+function DrawerMessage({
+  message,
+  onAction
+}: {
+  message: OperatingDrawerMessage;
+  onAction: (action: AiAgentAction) => Promise<string | void>;
+}) {
+  const actions = message.result?.actions?.slice(0, 3) ?? [];
+
+  if (message.role === "user") {
+    return (
+      <motion.article
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="ml-auto max-w-[88%] rounded-2xl bg-[#111827] px-4 py-3 text-sm font-semibold leading-6 text-white"
+      >
+        {message.content}
+      </motion.article>
+    );
+  }
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="grid grid-cols-[32px_minmax(0,1fr)] gap-3"
+    >
+      <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#0F5132] text-[#FFF9EF] shadow-[0_12px_24px_rgba(15,81,50,0.18)]">
+        <Bot size={15} />
+      </span>
+      <div className="min-w-0">
+        <div className="rounded-2xl border border-black/[0.06] bg-white/78 p-3 shadow-[0_14px_40px_rgba(17,24,39,0.045)]">
+          <p className="text-sm font-semibold leading-6 text-[#111827]">{message.content}</p>
+        </div>
+        {actions.length ? (
+          <div className="mt-2 grid gap-2">
+            {actions.map((action) => (
+              <DrawerActionButton key={action.id} action={action} onAction={onAction} />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </motion.article>
+  );
+}
+
+function WorkflowTimeline({
+  workflow,
+  actions
+}: {
+  workflow: OwnerWorkflowState;
+  actions: AiAgentAction[];
+}) {
+  const visibleActions = actions.slice(0, 4);
+  const steps = visibleActions.length
+    ? visibleActions.map((action, index) => ({
+        label: action.label,
+        detail: action.description || actionSafetyLabel(action),
+        status:
+          workflow.completedActionIds.includes(action.id)
+            ? "done"
+            : workflow.nextBestActionId === action.id || index === 0
+              ? "running"
+              : "pending"
+      }))
+    : [
+        {
+          label: "Đọc context màn hiện tại",
+          detail: "LogiBot dùng path, intent và dữ liệu dashboard đã expose.",
+          status: "done"
+        },
+        {
+          label: "Chọn hành động an toàn",
+          detail: "Action nhạy cảm luôn cần xác nhận trước khi chạy.",
+          status: workflow.status === "idle" ? "pending" : "running"
+        },
+        {
+          label: "Ghi checkpoint",
+          detail: workflow.latestCheckpoint?.summary || "Khi chạy action, LogiBot lưu lại trạng thái để tiếp tục workflow.",
+          status: workflow.latestCheckpoint ? "done" : "pending"
+        }
+      ];
+
+  return (
+    <section className="rounded-2xl border border-black/[0.06] bg-white/62 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-[0.04em] text-[#0F5132]">
+            <Activity size={14} />
+            Agent đang vận hành
+          </p>
+          <h3 className="mt-1 text-base font-black text-[#111827]">
+            {workflow.summary || "Workflow điều hành ca bán"}
+          </h3>
+        </div>
+        <span className="rounded-full border border-[#0F5132]/15 bg-[#0F5132]/[0.07] px-2.5 py-1 text-[11px] font-black text-[#0F5132]">
+          {workflow.status}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3">
+        {steps.map((step, index) => (
+          <div key={`${step.label}-${index}`} className="grid grid-cols-[30px_minmax(0,1fr)] gap-3">
+            <span
+              className={`grid h-7 w-7 place-items-center rounded-lg border text-xs font-black ${
+                step.status === "done"
+                  ? "border-[#0F5132]/20 bg-[#0F5132] text-white"
+                  : step.status === "running"
+                    ? "border-[#F59E0B]/25 bg-[#F59E0B]/15 text-[#8A5506]"
+                    : "border-black/[0.06] bg-white/74 text-[#6B7280]"
+              }`}
+            >
+              {step.status === "done" ? <Check size={14} /> : step.status === "running" ? <Loader2 size={14} className="animate-spin" /> : index + 1}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-black text-[#111827]">{step.label}</span>
+              <span className="mt-0.5 block text-xs font-semibold leading-5 text-[#6B7280]">{step.detail}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LogibotOperatingDrawer({
+  restaurantName,
+  workflowState,
+  queuedActions,
+  latestAgentPlan,
+  messages,
+  draft,
+  isSending,
+  isExpanded,
+  onDraftChange,
+  onClose,
+  onToggleExpand,
+  onSend,
+  onAction
+}: {
+  restaurantName: string;
+  workflowState: OwnerWorkflowState;
+  queuedActions: AiAgentAction[];
+  latestAgentPlan: AiAgentPlan | null;
+  messages: OperatingDrawerMessage[];
+  draft: string;
+  isSending: boolean;
+  isExpanded: boolean;
+  onDraftChange: (value: string) => void;
+  onClose: () => void;
+  onToggleExpand: () => void;
+  onSend: (message: string, attachments?: LogibotAttachmentDraft[]) => Promise<void>;
+  onAction: (action: AiAgentAction) => Promise<string | void>;
+}) {
+  const activeActions = getActiveWorkflowActions(queuedActions, workflowState);
+  const quickActions: LogibotChatQuickAction[] = [
+    { label: "01 Ca bán", prompt: "Phân tích doanh thu hôm nay từ dữ liệu thật và chỉ ra việc cần làm ngay." },
+    { label: "02 Đơn gấp", prompt: "Đơn nào cần xử lý trước? Trả lời ngắn và đưa action an toàn." },
+    { label: "Tồn kho thấp", prompt: "Kiểm tra tồn kho thấp và tạo kế hoạch nhập hàng nháp nếu cần." },
+    { label: "Tạo khuyến mãi", prompt: "Tạo chiến dịch khuyến mãi an toàn dựa trên món bán chạy và tồn kho hiện tại." }
+  ];
+
+  return (
+    <motion.aside
+      initial={{ x: 520, opacity: 0, scale: 0.98 }}
+      animate={{ x: 0, opacity: 1, scale: 1 }}
+      exit={{ x: 520, opacity: 0, scale: 0.98 }}
+      transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
+      className={cn(
+        "fixed z-[var(--z-dashboard-modal)] overflow-hidden p-0 text-[#111827]",
+        "inset-0 bg-[#F8F7F4]/98 backdrop-blur-2xl",
+        isExpanded
+          ? "lg:inset-4 lg:rounded-[34px] lg:border lg:border-[#111827]/[0.08] lg:bg-white/38 lg:p-2 lg:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
+          : "lg:inset-y-4 lg:right-4 lg:left-auto lg:w-[min(620px,calc(100vw-2rem))] lg:rounded-[34px] lg:border lg:border-[#111827]/[0.08] lg:bg-white/38 lg:p-2 lg:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
+      )}
+    >
+      <LogibotChatSurface
+        title="LogiBot"
+        subtitle={`Điều hành ${restaurantName}`}
+        eyebrow="AI vận hành"
+        statusText={workflowState.status === "idle" ? "Sẵn sàng" : workflowState.status}
+        variant="drawer"
+        className="h-full rounded-none lg:rounded-[28px]"
+        messages={messages}
+        draft={draft}
+        isSending={isSending}
+        quickActions={quickActions}
+        workflowStatus={workflowState.status === "idle" ? undefined : workflowState.status}
+        workflowSummary={latestAgentPlan?.summary || workflowState.summary || null}
+        activeActionCount={activeActions.length}
+        isExpanded={isExpanded}
+        canExpand
+        canClose
+        onDraftChange={onDraftChange}
+        onSend={onSend}
+        onAction={onAction}
+        onClose={onClose}
+        onToggleExpand={onToggleExpand}
+      />
+    </motion.aside>
+  );
+}
+
 /* ─── Toggle Button ─── */
 
 /**
- * Custom toggle button for the CopilotSidebar.
- *
- * When rendered **inside** the CopilotSidebar tree, `useCopilotChatConfiguration`
- * provides the `isModalOpen` / `setModalOpen` pair automatically.
- *
- * When rendered **outside** (before the sidebar has ever mounted), the hook
- * returns `null` and we fall back to calling the `onClick` prop directly
- * (which triggers `setHasEverOpened(true)` from the parent).
+ * Custom floating button for the LogiBot operating drawer.
  */
-const LogibotSidebarToggle = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
-  function LogibotSidebarToggle({ onClick, disabled, className: _className, ...buttonProps }, ref) {
-    const configuration = useCopilotChatConfiguration();
-    const isOpen = configuration?.isModalOpen ?? false;
+type LogibotSidebarToggleProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  open?: boolean;
+};
 
+const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleProps>(
+  function LogibotSidebarToggle({ onClick, disabled, className: _className, open = false, ...buttonProps }, ref) {
     function handleClick(event: MouseEvent<HTMLButtonElement>) {
       if (disabled) return;
       onClick?.(event);
-      if (event.defaultPrevented) return;
-      configuration?.setModalOpen(!isOpen);
     }
 
     return (
@@ -1014,19 +1323,19 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<
         type="button"
         onClick={handleClick}
         disabled={disabled}
-        className={`fixed bottom-5 right-5 z-[70] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-semibold transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 active:scale-95 ${
-          isOpen
+        className={`fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-semibold transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 active:scale-95 lg:bottom-5 lg:right-5 ${
+          open
             ? "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] shadow-[var(--shadow-soft)]"
             : "border-[var(--primary)]/25 bg-gradient-to-r from-[var(--primary)] to-[var(--primary-hover)] text-[#FFF7EB] shadow-[0_8px_32px_rgba(15,77,58,0.24)] hover:shadow-[0_12px_40px_rgba(15,77,58,0.3)]"
         }`}
-        aria-label={isOpen ? "Đóng LogiBot" : "Mở LogiBot"}
-        aria-pressed={isOpen}
+        aria-label={open ? "Đóng LogiBot" : "Mở LogiBot"}
+        aria-pressed={open}
         {...buttonProps}
       >
         <span className="relative h-10 w-10 overflow-hidden rounded-full border border-[rgba(255,255,255,0.15)] bg-[#FFF7EB]">
           <Image src={logibotLogo} alt="LogiBot" fill sizes="40px" className="object-cover" />
         </span>
-        <span className="hidden text-sm sm:inline">{isOpen ? "Đóng LogiBot" : "LogiBot OS"}</span>
+        <span className="hidden text-sm sm:inline">{open ? "Đóng LogiBot" : "LogiBot AI"}</span>
       </button>
     );
   }
@@ -1045,11 +1354,14 @@ function DashboardCopilotExperience({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { appendMessage } = useCopilotChat();
   const [hasEverOpened, setHasEverOpened] = useState(false);
   const [queuedActions, setQueuedActions] = useState<AiAgentAction[]>([]);
   const [latestAgentPlan, setLatestAgentPlan] = useState<AiAgentPlan | null>(null);
   const [workflowState, setWorkflowState] = useState<OwnerWorkflowState>(() => emptyOwnerWorkflowState());
+  const [drawerMessages, setDrawerMessages] = useState<OperatingDrawerMessage[]>([]);
+  const [drawerDraft, setDrawerDraft] = useState("");
+  const [isDrawerSending, setIsDrawerSending] = useState(false);
+  const [isDrawerExpanded, setIsDrawerExpanded] = useState(false);
   const currentOwnerIntent = useMemo(() => inferOwnerIntentFromPath(pathname), [pathname]);
 
   const rememberOwnerResult = useCallback((
@@ -1078,34 +1390,6 @@ function DashboardCopilotExperience({
     return normalizedResult;
   }, []);
 
-  const handleCopilotFallback = useCallback(
-    (lastUserMessage: string) => {
-      const focus = inferOwnerIntentFromMessage(lastUserMessage, currentOwnerIntent);
-      rememberOwnerResult({
-        ...buildOwnerShortcutResult({
-          focus,
-          pathname,
-          restaurantName,
-          threadId
-        }),
-        reply: "LogiBot mất quá lâu để phản hồi, nên mình đã dựng shortcut hành động an toàn dựa trên màn hiện tại thay vì để bạn chờ."
-      });
-    },
-    [currentOwnerIntent, pathname, rememberOwnerResult, restaurantName, threadId]
-  );
-
-  const fallbackText = useCallback(
-    (lastUserMessage: string) =>
-      `Mình chưa nhận được phản hồi đầy đủ cho câu: "${lastUserMessage.slice(0, 120)}". Mình đã chuẩn bị shortcut an toàn theo đúng màn hiện tại; bạn có thể bấm gợi ý nhanh hoặc hỏi lại ngắn hơn để LogiBot chạy phân tích tiếp.`,
-    []
-  );
-
-  useCopilotResponseWatchdog({
-    timeoutMs: 14_000,
-    fallbackText,
-    onFallback: handleCopilotFallback
-  });
-
   function findQueuedAction(actionId: string) {
     return queuedActions.find((action) => action.id === actionId) ?? null;
   }
@@ -1127,7 +1411,9 @@ function DashboardCopilotExperience({
           intentLabel: history.workflow.intentLabel ?? undefined,
           suggestions: history.workflow.suggestions,
           actions: history.workflow.actions,
-          agentPlan: history.workflow.agentPlan ?? undefined
+          agentPlan: history.workflow.agentPlan ?? undefined,
+          mission: history.workflow.mission ?? undefined,
+          passport: history.workflow.passport ?? undefined
         },
         true,
         {
@@ -1211,6 +1497,25 @@ function DashboardCopilotExperience({
     () => selectNextOwnerWorkflowAction(queuedActions, latestAgentPlan, workflowState),
     [latestAgentPlan, queuedActions, workflowState]
   );
+  const operationalPassport = useMemo(
+    () =>
+      buildOperationalPassport({
+        surface: "dashboard",
+        title: `Chủ quán · ${ownerIntentLabels[currentOwnerIntent]}`,
+        status: workflowState.status,
+        goal: latestAgentPlan?.summary || workflowState.summary,
+        route: pathname,
+        nextActionId: nextWorkflowAction?.id ?? null,
+        nextActionLabel: nextWorkflowAction?.label ?? null,
+        checkpoint: workflowState.latestCheckpoint
+          ? `${workflowState.latestCheckpoint.actionLabel || "Bước trước"}: ${workflowState.latestCheckpoint.status}`
+          : null,
+        handoffRoute: nextWorkflowAction?.href ?? intentRouteMap[currentOwnerIntent],
+        handoffLabel: nextWorkflowAction?.label ?? ownerIntentLabels[currentOwnerIntent],
+        confidence: latestAgentPlan?.confidence ?? (workflowState.pendingApprovalActionId ? "high" : activeWorkflowActions.length > 0 ? "medium" : "low")
+      }),
+    [activeWorkflowActions.length, currentOwnerIntent, latestAgentPlan, nextWorkflowAction, pathname, workflowState]
+  );
 
   const readableState = useMemo(
     () => ({
@@ -1222,6 +1527,7 @@ function DashboardCopilotExperience({
       routeByIntent: intentRouteMap,
       currentIntent: currentOwnerIntent,
       currentIntentLabel: ownerIntentLabels[currentOwnerIntent],
+      operationalPassport,
       actionCatalog: queuedActions.map((action) => ({
         id: action.id,
         label: action.label,
@@ -1248,22 +1554,21 @@ function DashboardCopilotExperience({
         completedActionCount: workflowState.completedActionIds.length,
         declinedActionCount: workflowState.declinedActionIds.length
       },
-      operationalShortcut:
-        activeWorkflowActions.length > 0 || hasRecoveredHistory
-          ? {
-              tool: "continue_owner_workflow",
-              reason: "Có workflow/action đang mở, nên tiếp tục bằng runtime trước khi phân tích mới."
-            }
-          : {
-              tool: "get_owner_operational_shortcuts",
-              focus: currentOwnerIntent,
-              reason: "Chưa có action queue; tạo shortcut dựa trên màn hiện tại để tránh trả lời chung chung."
-            },
+      conversationalRouter: {
+        primaryTool: "answer_owner_request",
+        dataTool: "analyze_dashboard_area",
+        workflowTool: "continue_owner_workflow",
+        rule:
+          "Mỗi câu hỏi mới phải được trả lời theo nguyên văn câu hỏi trước. Chỉ dùng continue_owner_workflow khi user nói rõ muốn tiếp tục workflow cũ.",
+        focus: currentOwnerIntent,
+        activeWorkflowActionCount: activeWorkflowActions.length,
+        hasRecoveredHistory
+      },
       hasRecoveredHistory,
       criticalRule:
         "AI chỉ mở đúng màn hoặc gọi API phân tích; không tự xác nhận thanh toán, không tự xoá dữ liệu. Action nhạy cảm luôn phải qua xác nhận của người dùng."
     }),
-    [activeWorkflowActions.length, currentOwnerIntent, hasRecoveredHistory, latestAgentPlan, nextWorkflowAction, pathname, queuedActions, restaurantId, restaurantName, workflowState]
+    [activeWorkflowActions.length, currentOwnerIntent, hasRecoveredHistory, latestAgentPlan, nextWorkflowAction, operationalPassport, pathname, queuedActions, restaurantId, restaurantName, workflowState]
   );
 
   /* System prompt & readable context */
@@ -1274,21 +1579,6 @@ function DashboardCopilotExperience({
       value: readableState
     },
     [readableState]
-  );
-
-  /* Suggestion chips */
-  useCopilotChatSuggestions(
-    {
-      available: "before-first-message",
-      suggestions: [
-        { title: "Tiếp tục", message: "Tiếp tục workflow AI đang mở hoặc tạo shortcut vận hành phù hợp màn hiện tại." },
-        { title: "Ca bán", message: "Tóm tắt ca bán hiện tại và 3 việc cần xử lý ngay." },
-        { title: "Đơn hàng", message: "Đơn nào cần thao tác tiếp theo? Mở đúng màn đơn hàng." },
-        { title: "Setup quán", message: "Tạo kế hoạch setup quán trong 30 phút, từng bước rõ ràng." },
-        { title: "Thanh toán", message: "Kiểm tra giao dịch cần đối soát và mở màn thanh toán." }
-      ]
-    },
-    []
   );
 
   function removeQueuedAction(actionId: string) {
@@ -1380,12 +1670,7 @@ function DashboardCopilotExperience({
     }
 
     if (action.type === "prompt" && action.prompt) {
-      await appendMessage(
-        new TextMessage({
-          role: MessageRole.User,
-          content: action.prompt
-        })
-      );
+      await sendDrawerMessage(action.prompt);
       const remainingActions = removeQueuedAction(action.id);
       syncWorkflowWithQueue(remainingActions, {
         status: "handoff",
@@ -1445,10 +1730,74 @@ function DashboardCopilotExperience({
     return "Action đã được chuẩn bị.";
   }
 
+  async function sendDrawerMessage(message: string, attachments: LogibotAttachmentDraft[] = []) {
+    const userMessage = message.trim();
+    if ((!userMessage && !attachments.length) || isDrawerSending) return;
+
+    const finalMessage = userMessage || "Đọc file đính kèm và cho biết bước xử lý tiếp theo.";
+    const attachmentLabel = logibotAttachmentLabel(attachments);
+    const focus = inferOwnerIntentFromMessage(finalMessage, currentOwnerIntent);
+    setDrawerDraft("");
+    setDrawerMessages((current) => [
+      ...current,
+      {
+        id: makeOperatingMessageId(),
+        role: "user",
+        content: finalMessage,
+        attachmentLabel: attachmentLabel || undefined
+      }
+    ]);
+    setIsDrawerSending(true);
+
+    try {
+      const result = rememberOwnerResult(
+        (await requestLogibot({
+          message: finalMessage,
+          attachments,
+          assistantBody: {
+            intent: focus,
+            threadId,
+            message: finalMessage,
+            context: {
+              currentPath: pathname,
+              currentIntent: currentOwnerIntent,
+              activeWorkflow: workflowState,
+              operationalPassport,
+              source: "logibot_operating_drawer_v2"
+            }
+          }
+        })) as OwnerAiResult
+      );
+
+      setDrawerMessages((current) => [
+        ...current,
+        {
+          id: makeOperatingMessageId(),
+          role: "assistant",
+          content: generatedOwnerDataText(result),
+          result
+        }
+      ]);
+    } catch (error) {
+      setDrawerMessages((current) => [
+        ...current,
+        {
+          id: makeOperatingMessageId(),
+          role: "assistant",
+          content: error instanceof Error ? error.message : "LogiBot chưa xử lý được yêu cầu này. Hãy thử lại với câu hỏi ngắn hơn.",
+          result: null
+        }
+      ]);
+    } finally {
+      setIsDrawerSending(false);
+    }
+  }
+
   /* Tool: navigate */
   useCopilotAction(
     {
       name: "navigate_dashboard",
+      followUp: false,
       description: "Mở đúng màn hình dashboard khi chủ quán cần thao tác. Chỉ dùng route thuộc allowedRoutes.",
       parameters: [
         {
@@ -1481,16 +1830,17 @@ function DashboardCopilotExperience({
         }));
         return { reply: reason || `Đã mở ${safeRoute}.`, actions: [] };
       },
-      render: ({ status, result }) => <ToolResultCard title="Mở đúng màn" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Mở đúng màn" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [router, runOwnerAction]
+    [operationalPassport, router, runOwnerAction]
   );
 
   useCopilotAction(
     {
       name: "answer_owner_request",
+      followUp: false,
       description:
-        "Catch-all bắt buộc cho mọi câu hỏi tự do của chủ quán. Nhận nguyên câu hỏi, tự suy luận intent/backend, đọc dữ liệu thật khi cần và luôn trả card có CTA an toàn.",
+        "Catch-all bắt buộc cho mọi câu hỏi tự do của chủ quán. Với chào hỏi/cảm ơn/test bot, backend trả lời xã giao và không phân tích ca; với nội dung vận hành, backend tự suy luận intent, đọc dữ liệu thật khi cần và trả card có CTA an toàn.",
       parameters: [
         {
           name: "message",
@@ -1520,33 +1870,32 @@ function DashboardCopilotExperience({
                 currentPath: pathname,
                 currentIntent: currentOwnerIntent,
                 activeWorkflow: workflowState,
+                operationalPassport,
                 source: "copilotkit_catch_all"
               }
             })
           );
-        } catch {
+        } catch (error) {
           return rememberOwnerResult({
-            ...buildOwnerShortcutResult({
-              focus: fallbackIntent,
-              pathname,
-              restaurantName,
-              threadId
-            }),
-            reply: "Mình chưa nhận được phản hồi AI đầy đủ, nhưng đã dựng card hành động an toàn để bạn tiếp tục ngay."
+            reply: error instanceof Error ? error.message : "LogiBot chưa đọc được dữ liệu cho yêu cầu này. Hãy thử lại bằng câu hỏi ngắn hơn.",
+            intent: fallbackIntent,
+            intentLabel: ownerIntentLabels[fallbackIntent],
+            actions: []
           });
         }
       },
-      render: ({ status, result }) => <ToolResultCard title="Trả lời vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Trả lời vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [currentOwnerIntent, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId, workflowState]
+    [currentOwnerIntent, operationalPassport, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId, workflowState]
   );
 
   /* Tool: analyze */
   useCopilotAction(
     {
       name: "analyze_dashboard_area",
+      followUp: false,
       description:
-        "Đọc dữ liệu thật theo nghiệp vụ và trả về insight ngắn, action queue rõ ràng. Dùng cho đơn, bếp, bàn, thanh toán, online, đặt bàn, báo cáo, setup.",
+        "Đọc dữ liệu thật theo nghiệp vụ, trả lời tình hình chính trước rồi mới đưa bước xử lý rõ ràng. Dùng cho đơn, bếp, bàn, thanh toán, online, đặt bàn, báo cáo, setup.",
       parameters: [
         {
           name: "intent",
@@ -1571,29 +1920,27 @@ function DashboardCopilotExperience({
               intent: focus,
               threadId,
               message: question,
-              context: { currentPath: pathname, source: "copilotkit" }
+              context: { currentPath: pathname, source: "copilotkit", operationalPassport }
             })
           );
-        } catch {
+        } catch (error) {
           return rememberOwnerResult({
-            ...buildOwnerShortcutResult({
-              focus,
-              pathname,
-              restaurantName,
-              threadId
-            }),
-            reply: "Mình chưa đọc được dữ liệu AI lúc này, nhưng đã chuẩn bị shortcut an toàn để bạn tiếp tục thao tác thay vì để trống."
+            reply: error instanceof Error ? error.message : "LogiBot chưa đọc được dữ liệu cho khu vực này. Hãy thử lại bằng câu hỏi ngắn hơn.",
+            intent: focus,
+            intentLabel: ownerIntentLabels[focus],
+            actions: []
           });
         }
       },
-      render: ({ status, result }) => <ToolResultCard title="Phân tích vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Phân tích vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [currentOwnerIntent, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId]
+    [currentOwnerIntent, operationalPassport, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId]
   );
 
   useCopilotAction(
     {
       name: "continue_owner_workflow",
+      followUp: false,
       description:
         "Tiếp tục workflow owner hiện tại bằng runtime deterministic. Dùng sau khi đã có activeWorkflow/actionCatalog, đặc biệt sau reload hoặc sau một checkpoint đã hoàn tất.",
       parameters: [
@@ -1612,16 +1959,17 @@ function DashboardCopilotExperience({
           agentPlan: latestAgentPlan,
           workflow: workflowState
         }),
-      render: ({ status, result }) => <ToolResultCard title="Workflow runtime" status={status} result={result as OwnerWorkflowRuntimeResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Workflow runtime" status={status} result={result as OwnerWorkflowRuntimeResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [latestAgentPlan, queuedActions, runOwnerAction, workflowState]
+    [latestAgentPlan, operationalPassport, queuedActions, runOwnerAction, workflowState]
   );
 
   useCopilotAction(
     {
       name: "get_owner_operational_shortcuts",
+      followUp: false,
       description:
-        "Tạo card shortcut deterministic cho owner khi câu hỏi còn mơ hồ hoặc chưa có action queue. Không đọc dữ liệu thô ra UI; chỉ tạo action an toàn để phân tích, mở màn hoặc lập workflow.",
+        "Tạo card shortcut an toàn cho owner khi câu hỏi còn mơ hồ. Không đọc dữ liệu thô ra UI; chỉ tạo bước tiếp theo để phân tích, mở màn hoặc lập workflow.",
       parameters: [
         {
           name: "focus",
@@ -1640,14 +1988,15 @@ function DashboardCopilotExperience({
             threadId
           })
         ),
-      render: ({ status, result }) => <ToolResultCard title="Shortcut vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Shortcut vận hành" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [currentOwnerIntent, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId]
+    [currentOwnerIntent, operationalPassport, pathname, rememberOwnerResult, restaurantName, runOwnerAction, threadId]
   );
 
   useCopilotAction(
     {
       name: "run_owner_action",
+      followUp: false,
       description:
         "Thực thi một action đã có trong actionCatalog hiện tại. Chỉ dùng actionId có thật. Nếu action có safety confirm/manual_only thì không được chạy trực tiếp trước khi được phê duyệt.",
       parameters: [
@@ -1670,9 +2019,9 @@ function DashboardCopilotExperience({
 
         return await runOwnerAction(action);
       },
-      render: ({ status, result }) => <ToolResultCard title="Thực thi action" status={status} result={String(result || "Đang chạy action...")} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Thực thi action" status={status} result={String(result || "Đang chạy action...")} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [queuedActions, runOwnerAction]
+    [operationalPassport, queuedActions, runOwnerAction]
   );
 
   useCopilotAction(
@@ -1772,6 +2121,7 @@ function DashboardCopilotExperience({
   useCopilotAction(
     {
       name: "generate_store_setup_plan",
+      followUp: false,
       description: "Tạo kế hoạch setup cửa hàng theo từng bước rõ ràng, có điểm chặn bán thật và nơi cần thao tác.",
       parameters: [
         {
@@ -1789,15 +2139,16 @@ function DashboardCopilotExperience({
         }
       ],
       handler: async ({ mode, focus }) => rememberOwnerResult(await postJson<OwnerAiResult>("/api/admin/ai/setup-plan", { mode, focus })),
-      render: ({ status, result }) => <ToolResultCard title="Kế hoạch setup AI" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Kế hoạch setup AI" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [rememberOwnerResult, runOwnerAction]
+    [operationalPassport, rememberOwnerResult, runOwnerAction]
   );
 
   /* Tool: branding */
   useCopilotAction(
     {
       name: "generate_branding_draft",
+      followUp: false,
       description: "Sinh slogan, mô tả quán, voice thương hiệu và prompt tạo logo/menu preview bằng dữ liệu quán thật.",
       parameters: [
         {
@@ -1821,28 +2172,34 @@ function DashboardCopilotExperience({
             restaurantName
           })
         ),
-      render: ({ status, result }) => <ToolResultCard title="Branding draft" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} />
+      render: ({ status, result }) => <ToolResultCard title="Branding draft" status={status} result={result as OwnerAiResult} onAction={runOwnerAction} passport={operationalPassport} />
     },
-    [rememberOwnerResult, restaurantName, runOwnerAction]
+    [operationalPassport, rememberOwnerResult, restaurantName, runOwnerAction]
   );
 
   /* ─── Render ─── */
 
   return (
     <>
+      <CopilotThinkingIndicator enabled={hasEverOpened} surface="dashboard" />
       {hasEverOpened ? (
-        <CopilotSidebar
-          defaultOpen={true}
-          width="min(460px, 100vw)"
-          toggleButton={LogibotSidebarToggle}
-          labels={{
-            modalHeaderTitle: "LogiBot OS",
-            welcomeMessageText: "Mình ưu tiên hành động: đọc dữ liệu ca, mở đúng màn, tạo checklist và đưa nút xử lý an toàn thay vì trả lời chung chung.",
-            chatInputPlaceholder: "VD: xử lý đơn đang chờ, kiểm tra ca, tạo logo, quét menu...",
-            chatDisclaimerText: "LogiBot không tự xác nhận thanh toán, huỷ/xoá dữ liệu hoặc đổi cấu hình nhạy cảm nếu chưa có thao tác của bạn.",
-            chatToggleOpenLabel: "Mở LogiBot",
-            chatToggleCloseLabel: "Đóng LogiBot"
+        <LogibotOperatingDrawer
+          restaurantName={restaurantName}
+          workflowState={workflowState}
+          queuedActions={queuedActions}
+          latestAgentPlan={latestAgentPlan}
+          messages={drawerMessages}
+          draft={drawerDraft}
+          isSending={isDrawerSending}
+          isExpanded={isDrawerExpanded}
+          onDraftChange={setDrawerDraft}
+          onClose={() => {
+            setHasEverOpened(false);
+            setIsDrawerExpanded(false);
           }}
+          onToggleExpand={() => setIsDrawerExpanded((current) => !current)}
+          onSend={sendDrawerMessage}
+          onAction={runOwnerAction}
         />
       ) : (
         <LogibotSidebarToggle

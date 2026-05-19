@@ -11,6 +11,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ orde
     const access = customerOrderAccessSchema.parse({
       restaurantSlug: url.searchParams.get("restaurantSlug"),
       tableId: url.searchParams.get("tableId"),
+      tableAccessToken: url.searchParams.get("tableAccessToken") || undefined,
       customerSessionId: url.searchParams.get("customerSessionId") || undefined
     });
 

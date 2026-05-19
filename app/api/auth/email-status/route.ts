@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { getAuthEmailDeliveryStatus } from "@/lib/auth-email-delivery";
+import { buildPublicAuthEmailStatusPayload } from "@/lib/auth-email-status-response";
 import { checkPersistentAuthRateLimit } from "@/lib/auth-rate-limit";
 import { authEmailStatusSchema } from "@/lib/validators";
-import { getAuthEmailRegistrationStatus } from "@/services/auth-service";
 
 export const dynamic = "force-dynamic";
 
@@ -66,11 +67,8 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const status = await getAuthEmailRegistrationStatus(parsed.data.email);
-    return jsonResponse({
-      email: parsed.data.email,
-      status
-    });
+    const emailDeliveryStatus = getAuthEmailDeliveryStatus();
+    return jsonResponse(buildPublicAuthEmailStatusPayload(emailDeliveryStatus));
   } catch (error) {
     console.error("[auth/email-status] Failed to check email status", {
       message: error instanceof Error ? error.message : String(error)

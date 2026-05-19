@@ -4,6 +4,12 @@ import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import {
+  authenticatedDashboardLandingPath,
+  dashboardLoginPathForOnboarding,
+  onboardingDashboardLandingPath
+} from "@/lib/auth-flow-routes";
+import { getDashboardSmokeSessionProfile } from "@/lib/dashboard-smoke-session";
 import { isSupabaseAuthSessionCookieName } from "@/lib/supabase/cookie-guards";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { SessionProfile } from "@/types/domain";
@@ -113,6 +119,9 @@ async function readProfileWithAdmin(user: AuthIdentity) {
 }
 
 export const getSessionProfile = cache(async (): Promise<SessionProfile | null> => {
+  const smokeProfile = await getDashboardSmokeSessionProfile();
+  if (smokeProfile) return smokeProfile;
+
   if (!(await hasAuthSessionCookie())) return null;
   const supabase = await createServerSupabaseClient();
   const user = await readAuthIdentity(supabase);
@@ -207,4 +216,23 @@ export async function requireOnboardingUser() {
   const user = await getAuthUser();
   if (!user) redirect("/dashboard/login");
   return user;
+}
+
+export async function requireOnboardingUserForPath(next?: unknown) {
+  const session = await getSessionProfile();
+  if (session) redirect(authenticatedDashboardLandingPath(next));
+
+  const user = await getAuthUser();
+  if (!user) {
+    redirect(dashboardLoginPathForOnboarding(next));
+  }
+  return user;
+}
+
+export async function redirectAuthenticatedDashboardUser(next?: unknown) {
+  const session = await getSessionProfile();
+  if (session) redirect(authenticatedDashboardLandingPath(next));
+
+  const user = await getAuthUser();
+  if (user) redirect(onboardingDashboardLandingPath(next));
 }

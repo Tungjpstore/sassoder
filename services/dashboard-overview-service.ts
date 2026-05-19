@@ -35,11 +35,43 @@ type TopOrderRow = {
     | null;
 };
 
+type TodayOverviewOrderRow = {
+  status: OrderStatus;
+  payment_status?: string | null;
+  payment_method: PaymentMethod | null;
+  fulfillment_type?: "DINE_IN" | "PICKUP" | "DELIVERY";
+  total: number;
+  created_at: string;
+};
+
+export type AdminOverviewOrderSource = {
+  key: "DINE_IN" | "PICKUP" | "DELIVERY";
+  label: string;
+  count: number;
+  revenue: number;
+};
+
+export type AdminOverviewHourlyRevenue = {
+  label: string;
+  revenue: number;
+  orderCount: number;
+};
+
+export type AdminOverviewPaymentMethod = {
+  key: "QR" | "CASH" | "PENDING";
+  label: string;
+  value: number;
+  count: number;
+};
+
 type AdminOverview = Awaited<ReturnType<typeof getRestaurantAdminDashboard>> & {
   tables: Awaited<ReturnType<typeof listTablesWithStatus>>;
   recentOrders: AdminRecentOrder[];
   topItems: AdminTopItem[];
   monthRevenue: number;
+  orderSourcesToday: AdminOverviewOrderSource[];
+  hourlyRevenueToday: AdminOverviewHourlyRevenue[];
+  paymentMethodsToday: AdminOverviewPaymentMethod[];
 };
 
 const overviewCache = new Map<string, { expiresAt: number; value: AdminOverview }>();
@@ -86,11 +118,17 @@ function summarizeItems(items: RecentOrderRow["items"]) {
   );
 }
 
+function hourLabel(hour: number) {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
 export async function getAdminDashboardOverview(restaurantId: string): Promise<AdminOverview> {
   const cached = readCachedOverview(restaurantId);
   if (cached) return cached;
 
   const supabase = await createServerSupabaseClient();
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
   const monthStart = new Date();
   monthStart.setDate(1);
   monthStart.setHours(0, 0, 0, 0);
@@ -111,16 +149,25 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
     .gte("created_at", monthStart.toISOString())
     .order("created_at", { ascending: false })
     .limit(220);
+  const todayOrdersPromise = supabase
+    .from("orders")
+    .select("status,payment_status,payment_method,fulfillment_type,total,created_at")
+    .eq("restaurant_id", restaurantId)
+    .gte("created_at", startOfDay.toISOString())
+    .order("created_at", { ascending: true })
+    .limit(800);
 
-  const [dashboardBundle, tables, recentOrdersResult, topOrdersResult] = await Promise.all([
+  const [dashboardBundle, tables, recentOrdersResult, topOrdersResult, todayOrdersResult] = await Promise.all([
     dashboardPromise,
     tablesPromise,
     recentOrdersPromise,
-    topOrdersPromise
+    topOrdersPromise,
+    todayOrdersPromise
   ]);
 
   throwIfSupabaseError(recentOrdersResult.error);
   throwIfSupabaseError(topOrdersResult.error);
+  throwIfSupabaseError(todayOrdersResult.error);
 
   const recentOrders = ((recentOrdersResult.data ?? []) as unknown as RecentOrderRow[]).map((order) => ({
     id: order.id,
@@ -134,6 +181,7 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
 
   const itemMap = new Map<string, AdminTopItem>();
   const topOrderRows = (topOrdersResult.data ?? []) as unknown as TopOrderRow[];
+  const todayRows = (todayOrdersResult.data ?? []) as unknown as TodayOverviewOrderRow[];
   let monthRevenue = 0;
 
   for (const order of topOrderRows) {
@@ -156,12 +204,62 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
     }
   }
 
+  const orderSources = new Map<AdminOverviewOrderSource["key"], AdminOverviewOrderSource>([
+    ["DINE_IN", { key: "DINE_IN", label: "QR tại bàn", count: 0, revenue: 0 }],
+    ["PICKUP", { key: "PICKUP", label: "Đến lấy", count: 0, revenue: 0 }],
+    ["DELIVERY", { key: "DELIVERY", label: "Giao hàng", count: 0, revenue: 0 }]
+  ]);
+  const hourlyRevenue = new Map<number, { revenue: number; orderCount: number }>();
+  for (let hour = 6; hour <= 23; hour += 1) hourlyRevenue.set(hour, { revenue: 0, orderCount: 0 });
+
+  const paymentMethods = new Map<AdminOverviewPaymentMethod["key"], AdminOverviewPaymentMethod>([
+    ["QR", { key: "QR", label: "VietQR", value: 0, count: 0 }],
+    ["CASH", { key: "CASH", label: "Tiền mặt", value: 0, count: 0 }],
+    ["PENDING", { key: "PENDING", label: "Chưa thu", value: 0, count: 0 }]
+  ]);
+
+  for (const order of todayRows) {
+    if (order.status === "cancelled") continue;
+
+    const sourceKey = order.fulfillment_type === "PICKUP" || order.fulfillment_type === "DELIVERY" ? order.fulfillment_type : "DINE_IN";
+    const source = orderSources.get(sourceKey);
+    if (source) {
+      source.count += 1;
+      source.revenue += order.status === "paid" || order.payment_status === "paid" ? order.total : 0;
+    }
+
+    const hour = new Date(order.created_at).getHours();
+    const hourEntry = hourlyRevenue.get(hour);
+    if (hourEntry) {
+      hourEntry.orderCount += 1;
+      if (order.status === "paid" || order.payment_status === "paid") hourEntry.revenue += order.total;
+    }
+
+    const paymentKey = order.status === "paid" || order.payment_status === "paid"
+      ? order.payment_method === "QR"
+        ? "QR"
+        : "CASH"
+      : "PENDING";
+    const payment = paymentMethods.get(paymentKey);
+    if (payment) {
+      payment.count += 1;
+      payment.value += order.total;
+    }
+  }
+
   const overview = {
     ...dashboardBundle,
     tables,
     recentOrders,
     topItems: [...itemMap.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 8),
-    monthRevenue
+    monthRevenue,
+    orderSourcesToday: [...orderSources.values()],
+    hourlyRevenueToday: [...hourlyRevenue.entries()].map(([hour, value]) => ({
+      label: hourLabel(hour),
+      revenue: value.revenue,
+      orderCount: value.orderCount
+    })),
+    paymentMethodsToday: [...paymentMethods.values()]
   };
 
   writeCachedOverview(restaurantId, overview);

@@ -32,6 +32,20 @@ const dryRun = args.has("--dry-run");
 const baseUrl = normalizeBaseUrl(process.env.RESPONSIVE_SMOKE_BASE_URL ?? process.argv.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:3000");
 const routes = parseCsv(process.env.RESPONSIVE_SMOKE_ROUTES, defaultRoutes);
 const viewports = parseViewports(process.env.RESPONSIVE_SMOKE_VIEWPORTS) ?? defaultViewports;
+const dashboardSmokeAuth = process.env.RESPONSIVE_SMOKE_AUTH_SECRET
+  ? {
+      cookieName: process.env.RESPONSIVE_SMOKE_AUTH_COOKIE_NAME || "logivn-dashboard-smoke",
+      restaurantSlug: process.env.RESPONSIVE_SMOKE_AUTH_RESTAURANT_SLUG || "demo-pho",
+      secret: process.env.RESPONSIVE_SMOKE_AUTH_SECRET
+    }
+  : null;
+const publicDashboardRoutes = new Set([
+  "/dashboard/login",
+  "/dashboard/register",
+  "/dashboard/forgot-password",
+  "/dashboard/reset-password",
+  "/dashboard/verify-email"
+]);
 
 function normalizeBaseUrl(value) {
   return value.replace(/\/+$/, "");
@@ -68,6 +82,31 @@ function parseViewports(value) {
 function urlForRoute(route) {
   if (/^https?:\/\//.test(route)) return route;
   return `${baseUrl}${route.startsWith("/") ? route : `/${route}`}`;
+}
+
+function routePath(routeOrUrl) {
+  if (/^https?:\/\//.test(routeOrUrl)) return new URL(routeOrUrl).pathname;
+  return routeOrUrl.startsWith("/") ? routeOrUrl : `/${routeOrUrl}`;
+}
+
+function isProtectedDashboardRoute(routeOrUrl) {
+  const path = routePath(routeOrUrl);
+  return path.startsWith("/dashboard") && !publicDashboardRoutes.has(path);
+}
+
+async function applyDashboardSmokeAuth(page) {
+  if (!dashboardSmokeAuth) return;
+
+  await page.send("Network.enable");
+  await page.send("Network.setCookie", {
+    url: baseUrl,
+    name: dashboardSmokeAuth.cookieName,
+    value: `${dashboardSmokeAuth.restaurantSlug}:${dashboardSmokeAuth.secret}`,
+    path: "/",
+    httpOnly: true,
+    secure: baseUrl.startsWith("https:"),
+    sameSite: "Lax"
+  });
 }
 
 function inspectPage() {
@@ -221,12 +260,13 @@ async function createTarget(port) {
   return response.json();
 }
 
-async function inspectUrl({ chrome, url, viewport }) {
+async function inspectUrl({ chrome, route, url, viewport }) {
   const target = await createTarget(chrome.port);
   const page = new CdpSession(target.webSocketDebuggerUrl);
   try {
     await page.send("Page.enable");
     await page.send("Runtime.enable");
+    await applyDashboardSmokeAuth(page);
     await page.send("Emulation.setDeviceMetricsOverride", {
       width: viewport.width,
       height: viewport.height,
@@ -246,12 +286,22 @@ async function inspectUrl({ chrome, url, viewport }) {
       awaitPromise: true
     });
     const value = evaluation.result?.value;
+    const finalPath = value?.url ? new URL(value.url).pathname : "";
+    const overflowFailure = (value?.overflowX ?? 0) > 2;
+    const authRedirectFailure =
+      Boolean(dashboardSmokeAuth) &&
+      isProtectedDashboardRoute(route) &&
+      ["/dashboard/login", "/dashboard/onboarding"].includes(finalPath);
+    const statusReason = overflowFailure ? "horizontal-overflow" : authRedirectFailure ? "auth-redirect" : "pass";
+
     return {
       ...value,
       route: new URL(url).pathname,
+      finalPath,
       viewport: viewport.name,
       viewportSize: value?.viewport,
-      status: value?.overflowX > 2 ? "fail" : "pass"
+      statusReason,
+      status: statusReason === "pass" ? "pass" : "fail"
     };
   } finally {
     page.close();
@@ -277,21 +327,26 @@ function markdownReport(summary) {
     `Base URL: ${summary.baseUrl}`,
     `Routes: ${summary.routes.join(", ")}`,
     `Viewports: ${summary.viewports.map((viewport) => `${viewport.name} ${viewport.width}x${viewport.height}`).join(", ")}`,
+    `Dashboard auth: ${summary.dashboardSmokeAuth?.enabled ? `enabled for ${summary.dashboardSmokeAuth.restaurantSlug}` : "disabled"}`,
     `Failures: ${summary.failureCount}`,
     "",
-    "| Route | Viewport | Status | Overflow X | Small Targets |",
-    "| --- | --- | --- | --- | --- |",
+    "| Route | Viewport | Final Path | Status | Reason | Overflow X | Small Targets |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
     ...summary.results.map((result) => {
-      return `| ${result.route} | ${result.viewport} | ${result.status} | ${result.overflowX}px | ${result.smallTouchTargetCount} |`;
+      return `| ${result.route} | ${result.viewport} | ${result.finalPath || result.route} | ${result.status} | ${result.statusReason || "pass"} | ${result.overflowX}px | ${result.smallTouchTargetCount} |`;
     }),
     ""
   ];
 
   const failures = summary.results.filter((result) => result.status === "fail");
   if (failures.length) {
-    lines.push("## Overflow Samples", "");
+    lines.push("## Failure Samples", "");
     for (const failure of failures) {
-      lines.push(`### ${failure.route} ${failure.viewport}`, "");
+      lines.push(`### ${failure.route} ${failure.viewport}`, "", `Reason: ${failure.statusReason || "unknown"}`, "");
+      if (failure.statusReason === "auth-redirect") {
+        lines.push(`- Final path: ${failure.finalPath || "unknown"}`, "");
+        continue;
+      }
       for (const sample of failure.horizontalOverflowSamples ?? []) {
         lines.push(`- ${sample.tag} "${sample.label}" left=${sample.left} right=${sample.right} width=${sample.width}`);
       }
@@ -308,7 +363,14 @@ if (dryRun) {
       {
         baseUrl,
         routes,
-        viewports
+        viewports,
+        dashboardSmokeAuth: dashboardSmokeAuth
+          ? {
+              enabled: true,
+              cookieName: dashboardSmokeAuth.cookieName,
+              restaurantSlug: dashboardSmokeAuth.restaurantSlug
+            }
+          : { enabled: false }
       },
       null,
       2
@@ -334,9 +396,11 @@ try {
   const results = [];
   for (const route of routes) {
     for (const viewport of viewports) {
-      const result = await inspectUrl({ chrome, url: urlForRoute(route), viewport });
+      const result = await inspectUrl({ chrome, route, url: urlForRoute(route), viewport });
       results.push(result);
-      console.log(`${result.status.toUpperCase()} ${result.route} ${result.viewport} overflow=${result.overflowX}px smallTargets=${result.smallTouchTargetCount}`);
+      console.log(
+        `${result.status.toUpperCase()} ${result.route} ${result.viewport} final=${result.finalPath || result.route} reason=${result.statusReason} overflow=${result.overflowX}px smallTargets=${result.smallTouchTargetCount}`
+      );
     }
   }
 
@@ -345,6 +409,13 @@ try {
     baseUrl,
     routes,
     viewports,
+    dashboardSmokeAuth: dashboardSmokeAuth
+      ? {
+          enabled: true,
+          cookieName: dashboardSmokeAuth.cookieName,
+          restaurantSlug: dashboardSmokeAuth.restaurantSlug
+        }
+      : { enabled: false },
     failureCount: results.filter((result) => result.status === "fail").length,
     results
   };

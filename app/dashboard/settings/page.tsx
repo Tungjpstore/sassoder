@@ -33,6 +33,9 @@ import { requestSubscriptionPaymentAction, updateReportScheduleAction, updateRes
 import { BillingWorkspace } from "@/components/billing/billing-workspace";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AiSetupStudio } from "@/components/dashboard/ai-setup-studio";
+import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-controls";
+import { BranchSettingsPanel } from "@/components/dashboard/branch-settings-panel";
+import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
 import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
 import { PaymentSettingsForm } from "@/components/dashboard/payment-settings-form";
 import { Button } from "@/components/ui/button";
@@ -44,6 +47,9 @@ import { cn } from "@/lib/utils";
 import { getReportScheduleForRestaurant, listRecentReportLogs, type ReportScheduleSettings } from "@/services/report-schedule-service";
 import { getRestaurantDashboard, listRestaurantUsers } from "@/services/restaurant-service";
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
+import { listStoreBranchesForManagement } from "@/services/branch-service";
+import { listDeliveryBranchSettings, type BranchDeliverySettings } from "@/services/delivery/branch-delivery-settings-service";
+import { getMapOperationalMetrics } from "@/services/map-ops-service";
 import { getRestaurantBillingPortal } from "@/services/subscription-service";
 import type { Database } from "@/types/supabase";
 
@@ -55,6 +61,7 @@ type SettingsSectionKey =
   | "profile"
   | "ai_setup"
   | "hours"
+  | "branches"
   | "tables"
   | "online"
   | "payments"
@@ -75,6 +82,7 @@ const settingsSections: SettingsSection[] = [
   { key: "profile", label: "Hồ sơ quán", description: "Tên, loại hình, liên hệ; địa chỉ lấy từ bản đồ", icon: Users },
   { key: "ai_setup", label: "Nhận diện thông minh", description: "Tạo slogan, mô tả và logo cho quán", icon: Sparkles },
   { key: "hours", label: "Giờ hoạt động", description: "Giờ mở cửa và QR cũ", icon: Clock3 },
+  { key: "branches", label: "Chi nhánh", description: "Chi nhánh mặc định, tọa độ và trạng thái", icon: Store },
   { key: "tables", label: "Bàn & QR", description: "Bàn, khu vực và link QR", icon: QrCode },
   { key: "online", label: "Đặt món online", description: "Đến lấy, giao hàng, phí ship", icon: Bike },
   { key: "payments", label: "Thanh toán", description: "Ngân hàng nhận VietQR", icon: CreditCard },
@@ -95,7 +103,7 @@ const settingsSectionGroups: Array<{
   {
     title: "Nền tảng cửa hàng",
     description: "Những gì khách và hệ thống luôn cần biết về quán.",
-    keys: ["profile", "hours", "brand", "receipt"]
+    keys: ["profile", "hours", "branches", "brand", "receipt"]
   },
   {
     title: "Bán hàng & thanh toán",
@@ -147,7 +155,7 @@ function FieldGroup({
 }) {
   return (
     <section className="dashboard-panel p-4">
-      <h2 className="text-lg font-semibold text-[var(--foreground)]">{title}</h2>
+      <h2 className="dashboard-section-title">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
   );
@@ -693,8 +701,8 @@ function periodProgress(start: string | null | undefined, end: string | null | u
 function BillingStepHeader({ index, title, subtitle }: { index: number; title: string; subtitle: string }) {
   return (
     <div className="mb-4">
-      <p className="text-[13px] font-black tracking-[-0.01em] text-[#171B18]">{index}. {title}</p>
-      <p className="mt-1 text-xs font-medium text-[#667069]">{subtitle}</p>
+      <p className="text-sm font-semibold text-[var(--foreground)]">{index}. {title}</p>
+      <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{subtitle}</p>
     </div>
   );
 }
@@ -709,7 +717,7 @@ function BillingSurface({ children, className }: { children: ReactNode; classNam
 
 function SoftPill({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <span className={cn("inline-flex min-h-7 items-center rounded-full border px-3 text-[11px] font-black", className)}>
+    <span className={cn("inline-flex min-h-7 items-center rounded-full border px-3 text-xs font-semibold", className)}>
       {children}
     </span>
   );
@@ -756,6 +764,120 @@ function UsageMiniCard({
   );
 }
 
+function BillingReadinessItem({ done, label, detail }: { done: boolean; label: string; detail: string }) {
+  return (
+    <div className="flex min-h-[74px] items-start gap-2 rounded-[14px] border border-[#E8E0D5] bg-white px-3 py-3">
+      <span className={cn("mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full", done ? "bg-[#EAF7EF] text-[#0F6B3F]" : "bg-[#FFF5E8] text-[#B96618]")}>
+        {done ? <Check size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-xs font-black text-[#151915]">{label}</span>
+        <span className="mt-1 block text-[11px] font-semibold leading-4 text-[#6F766F]">{detail}</span>
+      </span>
+    </div>
+  );
+}
+
+function BillingCommandCenter({
+  usable,
+  daysLeft,
+  accessStatusLabel,
+  hasPendingPayment,
+  pendingChangeSummary,
+  waitingCount,
+  failedCount,
+  confirmedCount,
+  aiPercent,
+  exportPercent,
+  actionHref,
+  actionLabel,
+  actionDetail
+}: {
+  usable: boolean;
+  daysLeft: number;
+  accessStatusLabel: string;
+  hasPendingPayment: boolean;
+  pendingChangeSummary?: string | null;
+  waitingCount: number;
+  failedCount: number;
+  confirmedCount: number;
+  aiPercent: number | null;
+  exportPercent: number | null;
+  actionHref: string;
+  actionLabel: string;
+  actionDetail: string;
+}) {
+  const quotaPressure = (aiPercent ?? 0) >= 85 || (exportPercent ?? 0) >= 85;
+  const renewalReady = daysLeft > 7 || hasPendingPayment;
+  const billingClean = failedCount === 0 && waitingCount === 0;
+  const readinessScore = Math.min(
+    100,
+    Math.round((usable ? 35 : 0) + (renewalReady ? 25 : 0) + (!quotaPressure ? 20 : 0) + (billingClean ? 20 : 0))
+  );
+
+  return (
+    <section className="mb-4 rounded-[22px] border border-[#E0E9DD] bg-[linear-gradient(135deg,#F3FAF4,#FFF7EB)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0F6B3F]">Billing readiness</p>
+          <h3 className="mt-1 text-base font-black text-[#151915]">Trung tâm quyết định gói & thanh toán</h3>
+          <p className="mt-1 max-w-2xl text-xs font-semibold leading-5 text-[#667069]">
+            Gom trạng thái truy cập, gia hạn, quota AI/export và lịch sử thanh toán để chủ quán biết bước tiếp theo ngay.
+          </p>
+        </div>
+        <div className="grid min-w-[180px] grid-cols-[76px_minmax(0,1fr)] gap-2 rounded-[18px] border border-[#CFE8D8] bg-white p-3">
+          <div>
+            <p className="text-[11px] font-black text-[#667069]">Sẵn sàng</p>
+            <p className="mt-1 text-2xl font-black tracking-[-0.04em] text-[#0F6B3F]">{readinessScore}%</p>
+          </div>
+          <div className="grid content-center gap-1 text-[11px] font-bold text-[#667069]">
+            <span>{accessStatusLabel}</span>
+            <span>{daysLeft > 0 ? `Còn ${daysLeft} ngày` : "Cần gia hạn"}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <BillingReadinessItem
+            done={usable}
+            label="Quyền truy cập"
+            detail={usable ? "Dashboard và tính năng gói hiện tại đang dùng được." : "Gói đang không usable, cần xử lý thanh toán hoặc gia hạn."}
+          />
+          <BillingReadinessItem
+            done={renewalReady}
+            label="Gia hạn chu kỳ"
+            detail={hasPendingPayment ? "Đã có yêu cầu thanh toán chờ xác nhận." : daysLeft > 7 ? "Chưa cần can thiệp trước ca vận hành." : "Sắp hết hạn, nên tạo VietQR gia hạn."}
+          />
+          <BillingReadinessItem
+            done={!quotaPressure}
+            label="Áp lực quota"
+            detail={quotaPressure ? `AI ${aiPercent ?? 0}% · Export ${exportPercent ?? 0}%, nên cân nhắc nâng gói.` : "Quota AI/export vẫn trong ngưỡng an toàn."}
+          />
+          <BillingReadinessItem
+            done={billingClean}
+            label="Lịch sử thanh toán"
+            detail={billingClean ? `Không có giao dịch kẹt. Thành công ${confirmedCount}.` : `${waitingCount} đang xử lý, ${failedCount} thất bại cần rà lại.`}
+          />
+        </div>
+
+        <aside className="rounded-[18px] border border-[#F3D3AA] bg-white p-3">
+          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#B96618]">Hành động tiếp theo</p>
+          <p className="mt-2 text-sm font-black leading-5 text-[#151915]">{actionLabel}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-[#667069]">{actionDetail}</p>
+          {pendingChangeSummary ? (
+            <p className="mt-3 rounded-xl bg-[#FFF5E8] px-3 py-2 text-[11px] font-bold leading-4 text-[#9B5417]">{pendingChangeSummary}</p>
+          ) : null}
+          <Link href={actionHref} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#075C38] px-4 text-sm font-black text-white transition hover:bg-[#064D30]">
+            Đi tới bước xử lý
+            <ArrowRight size={15} aria-hidden="true" />
+          </Link>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function PaymentStatusPill({ status }: { status: BillingPaymentView["status"] }) {
   return <span className={cn("rounded-full border px-2.5 py-1 text-[11px] font-black", paymentStatusClass(status))}>{paymentStatusLabel(status)}</span>;
 }
@@ -798,6 +920,38 @@ function SubscriptionSettingsPanel({
   const confirmedCount = billing.paymentRequests.filter((payment) => payment.status === "confirmed").length;
   const waitingCount = billing.paymentRequests.filter((payment) => payment.status === "waiting_confirm").length;
   const failedCount = billing.paymentRequests.filter((payment) => payment.status === "rejected" || payment.status === "expired").length;
+  const aiUsagePercent = aiQuota ? usagePercent(aiQuota.used, aiQuota.limit) : null;
+  const exportUsagePercent = exportQuota ? usagePercent(exportQuota.used, exportQuota.limit) : null;
+  const quotaPressure = (aiUsagePercent ?? 0) >= 85 || (exportUsagePercent ?? 0) >= 85;
+  const billingAction = pending
+    ? {
+        href: billingStepHref("processing", pending.id),
+        label: "Theo dõi thanh toán đang chờ xác nhận",
+        detail: `Yêu cầu ${pending.transfer_content} đang chờ kích hoạt gói.`
+      }
+    : !billing.usable
+      ? {
+          href: billingStepHref("payment"),
+          label: "Tạo hoặc hoàn tất thanh toán để mở lại quyền",
+          detail: "Gói hiện tại chưa usable, ưu tiên xử lý trước khi vận hành ca."
+        }
+      : billing.daysLeft <= 7
+        ? {
+            href: billingStepHref("payment"),
+            label: "Gia hạn trước khi hết chu kỳ",
+            detail: billing.daysLeft > 0 ? `Còn ${billing.daysLeft} ngày, nên tạo VietQR gia hạn ngay.` : "Chu kỳ đã hết hạn, cần tạo thanh toán mới."
+          }
+        : quotaPressure
+          ? {
+              href: billingStepHref("compare"),
+              label: "Rà quota và cân nhắc nâng gói",
+              detail: `AI ${aiUsagePercent ?? 0}% · Export ${exportUsagePercent ?? 0}% trong chu kỳ hiện tại.`
+            }
+          : {
+              href: billingStepHref("current"),
+              label: "Gói đang ổn, tiếp tục theo dõi sử dụng",
+              detail: "Không có thanh toán kẹt hoặc quota vượt ngưỡng trong chu kỳ này."
+            };
   const activeStepIndex = Math.max(0, billingSteps.findIndex((step) => step.key === activeStep));
   const activeStepMeta = billingSteps[activeStepIndex] ?? billingSteps[0];
   const previousStep = billingSteps[activeStepIndex - 1]?.key ?? null;
@@ -1265,7 +1419,7 @@ function SubscriptionSettingsPanel({
   }
 
   return (
-    <section className="billing-flow-shell flex min-h-[calc(100dvh-132px)] flex-col rounded-[30px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:p-6">
+    <section className="billing-flow-shell dashboard-operations-stack flex min-h-[calc(100dvh-132px)] flex-col rounded-[30px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:p-6">
       {billingError ? (
         <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-[#F4D7AF] bg-[#FFF5E8] p-4 text-sm font-semibold leading-6 text-[#9B5417]">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -1279,7 +1433,7 @@ function SubscriptionSettingsPanel({
       </div>
 
       <nav aria-label="Billing flow" className="mb-4 overflow-hidden rounded-[20px] border border-[#E7E0D6] bg-[#FFFDF8] p-2">
-        <div className="flex gap-2 overflow-x-auto pb-1">
+        <div className="dashboard-segmented-scroll flex gap-2 overflow-x-auto pb-1">
           {billingSteps.map((step) => {
             const active = step.key === activeStep;
             return (
@@ -1301,6 +1455,22 @@ function SubscriptionSettingsPanel({
           })}
         </div>
       </nav>
+
+      <BillingCommandCenter
+        usable={billing.usable}
+        daysLeft={billing.daysLeft}
+        accessStatusLabel={accessStatusLabel}
+        hasPendingPayment={Boolean(pending)}
+        pendingChangeSummary={pendingChange?.summary ?? null}
+        waitingCount={waitingCount}
+        failedCount={failedCount}
+        confirmedCount={confirmedCount}
+        aiPercent={aiUsagePercent}
+        exportPercent={exportUsagePercent}
+        actionHref={billingAction.href}
+        actionLabel={billingAction.label}
+        actionDetail={billingAction.detail}
+      />
 
       <div className="billing-flow-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">{pageContent}</div>
 
@@ -1344,13 +1514,13 @@ function SettingsHomeGrid({
   entitlementWarning: string | null;
 }) {
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack grid gap-3">
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="admin-hero-panel relative overflow-hidden px-4 py-4">
           <div className="relative z-[1]">
-            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Settings cockpit</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[var(--foreground)]">Cài đặt vận hành</h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--muted-foreground)]">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
+            <p className="dashboard-eyebrow">Settings cockpit</p>
+            <h1 className="dashboard-page-title mt-1">Cài đặt vận hành</h1>
+            <p className="dashboard-body-copy mt-1 max-w-2xl">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
 
             <div className="mt-3 flex flex-wrap gap-2">
               {[
@@ -1367,17 +1537,17 @@ function SettingsHomeGrid({
 
             <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Mức sẵn sàng</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Mức sẵn sàng</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{readiness.score}%</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{readiness.completedCount}/{readiness.totalCount} mục xong</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Việc chặn vận hành</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Việc chặn vận hành</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{readiness.criticalMissing.length}</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">Cần xử lý trước</p>
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tài sản vận hành</p>
+                <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Tài sản vận hành</p>
                 <p className="mt-1 text-2xl font-semibold text-[var(--foreground)]">{tableCount} bàn</p>
                 <p className="mt-0.5 text-xs text-[var(--muted-foreground)]">{menuItemCount} món</p>
               </div>
@@ -1386,8 +1556,8 @@ function SettingsHomeGrid({
         </div>
 
         <aside className="dashboard-panel p-4">
-          <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--primary)]">Next actions</p>
-          <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Việc nên làm tiếp</h2>
+          <p className="dashboard-eyebrow">Next actions</p>
+          <h2 className="dashboard-section-title mt-1">Việc nên làm tiếp</h2>
 
           <div className="mt-3 grid gap-2">
             {readiness.nextActions.slice(0, 3).map((action) => (
@@ -1414,11 +1584,11 @@ function SettingsHomeGrid({
         </aside>
       </section>
 
-      <section className="grid gap-3 xl:grid-cols-3">
+      <section className="dashboard-settings-grid grid gap-3 xl:grid-cols-3">
         {settingsSectionGroups.map((group) => (
           <section key={group.title} className="dashboard-panel p-3">
             <div className="px-2 pb-2 pt-1">
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">{group.title}</p>
+              <p className="dashboard-eyebrow">{group.title}</p>
             </div>
             <div className="grid gap-2">
               {group.keys.map((key) => {
@@ -1472,9 +1642,9 @@ function SettingsDrawerSwitch({
       aria-label="Chuyển khu vực cài đặt"
       className="mb-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-1.5"
     >
-      <div className="flex gap-1.5 overflow-x-auto overscroll-x-contain pb-1">
+      <div className="dashboard-segmented-scroll flex gap-1.5 pb-1">
         {settingsSectionGroups.map((group) => (
-          <div key={group.title} className="flex gap-1.5">
+          <div key={group.title} className="flex shrink-0 gap-1.5">
             {group.keys.map((key) => {
               const item = settingsSectionMap[key];
               const Icon = item.icon;
@@ -1507,6 +1677,9 @@ function SettingsDrawerSwitch({
 function renderActiveSection({
   activeSection,
   restaurant,
+  branchSettings,
+  branchDeliverySettings,
+  mapOperationalMetrics,
   sessionEmail,
   tableCount,
   menuItemCount,
@@ -1523,6 +1696,9 @@ function renderActiveSection({
 }: {
   activeSection: SettingsSectionKey;
   restaurant: RestaurantRow;
+  branchSettings: Awaited<ReturnType<typeof listStoreBranchesForManagement>>;
+  branchDeliverySettings: BranchDeliverySettings[];
+  mapOperationalMetrics: Awaited<ReturnType<typeof getMapOperationalMetrics>> | null;
   sessionEmail: string;
   tableCount: number;
   menuItemCount: number;
@@ -1540,8 +1716,17 @@ function renderActiveSection({
   if (activeSection === "profile") return <ProfileSettingsForm restaurant={restaurant} email={sessionEmail} />;
   if (activeSection === "ai_setup") return <AiSetupStudio readiness={setupReadiness} restaurantName={restaurant.name} />;
   if (activeSection === "hours") return <HoursSettingsForm restaurant={restaurant} />;
+  if (activeSection === "branches") return <BranchSettingsPanel branches={branchSettings} />;
   if (activeSection === "tables") return <TablesSettingsPanel restaurant={restaurant} tableCount={tableCount} qrMenuUrl={qrMenuUrl} />;
-  if (activeSection === "online") return <OrderingSettingsForm settings={restaurant} onlineUrl={onlineOrderUrl} compact />;
+  if (activeSection === "online") {
+    return (
+      <div className="grid gap-4">
+        <BranchDeliveryControls branches={branchDeliverySettings} />
+        {mapOperationalMetrics ? <MapOperationalMetricsPanel metrics={mapOperationalMetrics} /> : null}
+        <OrderingSettingsForm settings={restaurant} onlineUrl={onlineOrderUrl} compact />
+      </div>
+    );
+  }
   if (activeSection === "payments") {
     return (
       <PaymentSettingsForm
@@ -1602,6 +1787,14 @@ export default async function AdminSettingsPage({
         })
       : null;
   const restaurantUsers = activeSection === "billing" ? await listRestaurantUsers(session.restaurantId) : [];
+  const branchSettings = await listStoreBranchesForManagement(session.restaurantId);
+  const [branchDeliverySettings, mapOperationalMetrics] =
+    activeSection === "online"
+      ? await Promise.all([
+          listDeliveryBranchSettings(session.restaurantId),
+          getMapOperationalMetrics(session.restaurantId, 24)
+        ])
+      : [[], null];
   const [reportSchedule, reportLogs] =
     activeSection === "notifications"
       ? await Promise.all([
@@ -1619,6 +1812,8 @@ export default async function AdminSettingsPage({
   const hoursConfigured = Boolean(restaurant.opening_time && restaurant.closing_time);
   const notificationCoverage = [restaurant.notify_new_order, restaurant.notify_payment_waiting].filter(Boolean).length;
   const onlineFlowCount = [restaurant.pickup_enabled, restaurant.delivery_enabled].filter(Boolean).length;
+  const activeBranchCount = branchSettings.filter((branch) => branch.is_active).length;
+  const primaryBranch = branchSettings.find((branch) => branch.is_primary && branch.is_active) ?? branchSettings.find((branch) => branch.is_active);
   const sectionStates: Record<SettingsSectionKey, SettingsSectionState> = {
     profile:
       profileMissingCount === 0
@@ -1632,6 +1827,10 @@ export default async function AdminSettingsPage({
       hoursConfigured
         ? { label: "Đã cấu hình", detail: `${timeValue(restaurant.opening_time)} - ${timeValue(restaurant.closing_time)}`, tone: "success" }
         : { label: "Chưa đủ giờ bán", detail: "Cần giờ mở và đóng cửa để đồng bộ trải nghiệm khách.", tone: "neutral" },
+    branches:
+      activeBranchCount > 0 && primaryBranch
+        ? { label: `${activeBranchCount} hoạt động`, detail: `Mặc định: ${primaryBranch.name}. Không cần tạo thủ công nếu quán chỉ có một điểm bán.`, tone: "success" }
+        : { label: "Đang khởi tạo", detail: "Hệ thống sẽ tạo một chi nhánh chính để gán quyền cho quán hiện hành.", tone: "warning" },
     tables:
       dashboard.tables > 0
         ? { label: `${dashboard.tables} bàn`, detail: restaurant.allow_legacy_qr ? "QR cũ đang bật cho khách quen." : "QR cũ đang tắt.", tone: "success" }
@@ -1680,7 +1879,7 @@ export default async function AdminSettingsPage({
       entitlement={entitlement}
       subtitle="Chỉnh nhanh theo từng vùng vận hành"
     >
-      <section className="min-h-[calc(100vh-128px)]">
+      <section className="dashboard-operations-stack min-h-[calc(100vh-128px)]">
         <SettingsHomeGrid
           activeSection={activeSection}
           sectionStates={sectionStates}
@@ -1691,22 +1890,22 @@ export default async function AdminSettingsPage({
         />
 
         {activeSection && activeMeta ? (
-          <div className="fixed inset-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
+          <div className="dashboard-settings-fullscreen fixed inset-y-0 left-0 right-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:left-[216px]">
             <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-3 py-2 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-4">
               <div className="flex min-w-0 items-center gap-3">
                 <Link
                   href="/dashboard/settings"
-                  className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
                 >
                   <ArrowLeft size={16} aria-hidden="true" />
                   Quay lại
                 </Link>
-                <span className="dashboard-stat-icon h-9 w-9 shrink-0">
+                <span className="dashboard-stat-icon h-11 w-11 shrink-0">
                   <ActiveIcon size={18} aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Màn hình cài đặt</p>
-                  <h1 id="settings-fullscreen-title" className="truncate text-lg font-semibold text-[var(--foreground)]">{activeMeta.label}</h1>
+                  <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Màn hình cài đặt</p>
+                  <h1 id="settings-fullscreen-title" className="dashboard-section-title truncate">{activeMeta.label}</h1>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1718,7 +1917,7 @@ export default async function AdminSettingsPage({
                 <Link
                   href="/dashboard/settings"
                   aria-label="Thu nhỏ màn hình cài đặt"
-                  className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
+                  className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
                 >
                   <X size={18} aria-hidden="true" />
                 </Link>
@@ -1729,13 +1928,16 @@ export default async function AdminSettingsPage({
               role="dialog"
               aria-modal="true"
               aria-labelledby="settings-fullscreen-title"
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4"
+              className="dashboard-settings-dialog-body min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4"
             >
-              <div className="mx-auto w-full max-w-[1680px]">
+              <div className="dashboard-settings-dialog-inner mx-auto w-full max-w-[1680px]">
                 {activeSection === "billing" ? null : <SettingsDrawerSwitch activeSection={activeSection} sectionStates={sectionStates} />}
                 {renderActiveSection({
                   activeSection,
                   restaurant,
+                  branchSettings,
+                  branchDeliverySettings,
+                  mapOperationalMetrics,
                   sessionEmail: session.email,
                   tableCount: dashboard.tables,
                   menuItemCount: dashboard.menuItems,

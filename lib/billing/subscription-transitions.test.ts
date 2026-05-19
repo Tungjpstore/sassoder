@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   buildPaymentPolicySummary,
   computeConfirmedSubscriptionTransition,
+  getSubscriptionAccessStatus,
+  getSubscriptionGraceEnd,
   isSubscriptionUsable,
   type LegacyPlanSnapshot,
   type LegacySubscriptionSnapshot
@@ -66,6 +68,22 @@ test("active and pending subscriptions are usable only inside a valid access win
     ),
     false
   );
+});
+
+test("past due subscriptions stay usable only during the grace period", () => {
+  const subscription = {
+    ...activeSubscription(),
+    status: "past_due",
+    current_period_end: iso("2026-05-08T12:00:00.000Z")
+  } satisfies LegacySubscriptionSnapshot;
+
+  assert.equal(getSubscriptionGraceEnd(subscription), iso("2026-05-15T12:00:00.000Z"));
+  assert.equal(isSubscriptionUsable(subscription, fixedNow), true);
+  assert.equal(getSubscriptionAccessStatus(subscription, fixedNow), "grace");
+
+  const afterGrace = new Date("2026-05-16T12:00:00.000Z");
+  assert.equal(isSubscriptionUsable(subscription, afterGrace), false);
+  assert.equal(getSubscriptionAccessStatus(subscription, afterGrace), "expired");
 });
 
 test("renewals extend from the existing period end without losing paid days", () => {

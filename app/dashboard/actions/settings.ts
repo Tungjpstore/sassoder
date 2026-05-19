@@ -8,10 +8,14 @@ import {
   paymentSettingsSchema,
   reportScheduleSchema,
   reservationSettingsSchema,
-  restaurantSettingsSchema
+  restaurantSettingsSchema,
+  storeBranchSchema,
+  updateStoreBranchSchema
 } from "@/lib/validators";
 import { assertAdmin } from "@/services/auth-service";
+import { createStoreBranch, updateStoreBranch } from "@/services/branch-service";
 import { updateRestaurantOrderingSettings } from "@/services/delivery-service";
+import { updateDeliveryBranchAvailability } from "@/services/delivery/branch-delivery-settings-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 import { updateReportSchedule } from "@/services/report-schedule-service";
 import { updateReservationSettings } from "@/services/reservation-service";
@@ -31,6 +35,41 @@ const aiSetupBrandApplySchema = z.object({
   logoUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
   includeLogo: z.preprocess((value) => value === "true" || value === true, z.boolean().optional())
 });
+
+const branchDeliveryAvailabilitySchema = z.object({
+  branchId: z.string().uuid(),
+  acceptingDelivery: z.boolean(),
+  deliveryPaused: z.boolean(),
+  temporarilyClosed: z.boolean(),
+  deliveryOpeningTime: z.string().regex(/^\d{2}:\d{2}$/).optional().or(z.literal("")),
+  deliveryClosingTime: z.string().regex(/^\d{2}:\d{2}$/).optional().or(z.literal("")),
+  deliveryAvailabilityNote: z.string().trim().max(160).optional().or(z.literal(""))
+});
+
+function branchFormData(formData: FormData) {
+  return {
+    branchId: formData.get("branchId"),
+    name: formData.get("name"),
+    address: formData.get("address") ?? "",
+    latitude: formData.get("latitude") ?? "",
+    longitude: formData.get("longitude") ?? "",
+    isPrimary: formData.get("isPrimary") === "true",
+    isActive: formData.get("isActive") === "true"
+  };
+}
+
+function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<typeof requireOperationalAdminSession>>) {
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateMenuCache();
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/tables");
+  revalidatePath("/dashboard/staff");
+  revalidatePath("/dashboard/orders");
+  revalidatePath("/dashboard/inventory");
+  revalidatePath("/dashboard/ai-ops");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+}
 
 export async function updatePaymentSettingsAction(
   _prevState: { error?: string; success?: string } | undefined,
@@ -158,6 +197,48 @@ export async function updateReportScheduleAction(formData: FormData) {
   revalidatePath("/dashboard/analytics");
 }
 
+export async function createStoreBranchAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession();
+  const parsed = storeBranchSchema.safeParse(branchFormData(formData));
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra thông tin chi nhánh." };
+  }
+
+  try {
+    await createStoreBranch(session.restaurantId, parsed.data);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không tạo được chi nhánh." };
+  }
+
+  revalidateBranchSettingsSurfaces(session);
+  return { success: "Đã tạo chi nhánh và đồng bộ quyền vận hành cho quán." };
+}
+
+export async function updateStoreBranchAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession();
+  const parsed = updateStoreBranchSchema.safeParse(branchFormData(formData));
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra thông tin chi nhánh." };
+  }
+
+  try {
+    await updateStoreBranch(session.restaurantId, parsed.data.branchId, parsed.data);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không lưu được chi nhánh." };
+  }
+
+  revalidateBranchSettingsSurfaces(session);
+  return { success: "Đã cập nhật chi nhánh và quyền vận hành liên quan." };
+}
+
 export async function updateOrderingSettingsAction(
   _prevState: { error?: string; success?: string } | undefined,
   formData: FormData
@@ -226,6 +307,38 @@ export async function updateOrderingSettingsAction(
   revalidatePath("/dashboard/orders");
   revalidatePath(`/r/${session.restaurant.slug}`);
   return { success: "Đã lưu cấu hình đặt món online." };
+}
+
+export async function updateBranchDeliveryAvailabilityAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  const session = await requireOperationalAdminSession("online_ordering");
+  const parsed = branchDeliveryAvailabilitySchema.safeParse({
+    branchId: formData.get("branchId"),
+    acceptingDelivery: formData.get("acceptingDelivery") === "true",
+    deliveryPaused: formData.get("deliveryPaused") === "true",
+    temporarilyClosed: formData.get("temporarilyClosed") === "true",
+    deliveryOpeningTime: formData.get("deliveryOpeningTime") ?? "",
+    deliveryClosingTime: formData.get("deliveryClosingTime") ?? "",
+    deliveryAvailabilityNote: formData.get("deliveryAvailabilityNote") ?? ""
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra cấu hình giao hàng của chi nhánh." };
+  }
+
+  try {
+    await updateDeliveryBranchAvailability(session.restaurantId, parsed.data);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không cập nhật được trạng thái giao hàng của chi nhánh." };
+  }
+
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/orders");
+  revalidatePath(`/r/${session.restaurant.slug}`);
+  return { success: "Đã cập nhật trạng thái giao hàng của chi nhánh." };
 }
 
 export async function updateReservationSettingsAction(

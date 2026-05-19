@@ -27,7 +27,7 @@ export function PaymentSettingsForm({
           <Banknote size={18} aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold">Thông tin ngân hàng nhận tiền</h2>
+          <h2 className="dashboard-section-title">Thông tin ngân hàng nhận tiền</h2>
           <p className="mt-1 text-sm leading-6 text-[var(--muted-foreground)]">
             Website tự dùng thông tin này để tạo mã VietQR cho từng đơn chuyển khoản.
           </p>
@@ -36,7 +36,7 @@ export function PaymentSettingsForm({
 
       <div className="mt-6 grid gap-3 md:grid-cols-3">
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Trạng thái</p>
+          <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Trạng thái</p>
           <p className="mt-2 text-base font-semibold text-[var(--foreground)]">
             {isConfigured ? "VietQR sẵn sàng" : "Chưa đủ thông tin"}
           </p>
@@ -45,12 +45,12 @@ export function PaymentSettingsForm({
           </p>
         </div>
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Ngân hàng</p>
+          <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Ngân hàng</p>
           <p className="mt-2 text-base font-semibold text-[var(--foreground)]">{bankCode || "Chưa chọn"}</p>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">Mã viết tắt theo chuẩn VietQR.</p>
         </div>
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tài khoản nhận tiền</p>
+          <p className="text-xs font-semibold uppercase text-[var(--muted-foreground)]">Tài khoản nhận tiền</p>
           <p className="mt-2 text-base font-semibold text-[var(--foreground)]">{bankAccount || "Chưa có số tài khoản"}</p>
           <p className="mt-1 truncate text-sm text-[var(--muted-foreground)]">{bankAccountName || "Chưa có tên chủ tài khoản"}</p>
         </div>

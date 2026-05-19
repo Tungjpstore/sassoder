@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Loader2, LocateFixed, MapPinned, Navigation, Phone, Route } from "lucide-react";
 import { RouteMiniMap } from "@/components/customer/route-mini-map";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,19 @@ function formatDistance(distanceKm: number | null) {
   return `${distanceKm.toFixed(distanceKm >= 10 ? 0 : 1)} km`;
 }
 
+function subscribeUserAgent(onStoreChange: () => void) {
+  const timeout = window.setTimeout(onStoreChange, 0);
+  return () => window.clearTimeout(timeout);
+}
+
+function getClientUserAgent() {
+  return navigator.userAgent;
+}
+
+function getServerUserAgent() {
+  return "";
+}
+
 export function RestaurantVisitMapCard({
   restaurant,
   title = "Đường đến quán",
@@ -48,11 +61,12 @@ export function RestaurantVisitMapCard({
   const [route, setRoute] = useState<ResolvedRouteResult | null>(null);
   const [routing, setRouting] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const userAgent = useSyncExternalStore(subscribeUserAgent, getClientUserAgent, getServerUserAgent);
 
   const directionsHref = destination
     ? buildDirectionsHref(destination, {
         origin: location,
-        userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent
+        userAgent
       })
     : null;
   const fallbackDistanceKm = location && destination ? calculateDistance(location, destination) : null;

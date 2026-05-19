@@ -2,6 +2,8 @@ import "server-only";
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies, headers } from "next/headers";
+import { getValidDashboardSmokeCookie } from "@/lib/dashboard-smoke-session";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import {
   getHostname,
@@ -56,6 +58,10 @@ async function expireSupabaseCookiesByPredicate(predicate: (name: string) => boo
 }
 
 export async function createServerSupabaseClient(options: CreateServerSupabaseClientOptions = {}) {
+  if (await getValidDashboardSmokeCookie()) {
+    return createAdminSupabaseClient();
+  }
+
   const { url, anonKey } = getSupabaseBrowserEnv();
   const cookieStore = await cookies();
   const requestHeaders = await headers();

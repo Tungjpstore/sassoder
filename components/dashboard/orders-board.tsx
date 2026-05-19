@@ -1,14 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ElementType } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, CheckCircle2, ChefHat, Filter, LocateFixed, MapPinned, MoreVertical, Navigation, RadioTower, ReceiptText, RefreshCw, Search, TimerReset, Trash2, Truck, UserPlus, XCircle } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ChefHat, Clock3, Filter, Flame, LocateFixed, MapPinned, MoreVertical, Navigation, QrCode, RadioTower, ReceiptText, RefreshCw, Search, ShoppingBag, TimerReset, Trash2, Truck, UserPlus, WalletCards, XCircle } from "lucide-react";
 import { buildDirectionsUrl, RouteMiniMap } from "@/components/customer/route-mini-map";
 import { useConfirmDialog } from "@/components/dashboard/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { resolveDeliveryQuoteSnapshotInsight } from "@/lib/delivery/quote-snapshot-insight";
+import {
+  getAllowedDeliveryStatusTransitions,
+  getRestaurantOrderActionCopy,
+  orderNeedsPaymentAttention,
+  resolveOrderPaymentStatus,
+  resolveMerchantAcceptTransition,
+  shouldReturnOnlineOrderToKitchenAfterPayment,
+  type DeliveryActionStatus
+} from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { OrderDto } from "@/types/domain";
 
@@ -33,6 +43,8 @@ function paymentTone(status: string | null | undefined): "neutral" | "green" | "
 type RealtimeState = "connecting" | "connected" | "error";
 type OrderFilter = "all" | "pending" | "ordering" | "completed" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled" | "history";
 type ChannelFilter = "all" | "DINE_IN" | "PICKUP" | "DELIVERY";
+type ConcreteChannelFilter = Exclude<ChannelFilter, "all">;
+type OrderMutationAction = "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status";
 type CourierLiveLocation = {
   lat: number;
   lng: number;
@@ -49,6 +61,19 @@ type DeliveryCourier = {
   lastLocationAt: string | null;
   createdAt: string;
   updatedAt: string | null;
+};
+type DispatchCandidate = DeliveryCourier & {
+  rank: number;
+  score: number;
+  eligible: boolean;
+  reason: string;
+  distanceToPickupKm: number | null;
+  etaToPickupMinutes: number | null;
+  totalEtaMinutes: number;
+  deliveryLegMinutes: number;
+  confidence: "high" | "medium" | "low";
+  provider: string;
+  activeOrderCount?: number;
 };
 
 const orderFilters: Array<{ label: string; value: OrderFilter }> = [
@@ -116,6 +141,10 @@ function minutesSince(value: string) {
   return Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
 }
 
+function minutesSinceAt(value: string, nowMs: number) {
+  return Math.max(0, Math.floor((nowMs - new Date(value).getTime()) / 60000));
+}
+
 function minutesUntil(value?: string | null) {
   if (!value) return null;
   return Math.ceil((new Date(value).getTime() - Date.now()) / 60000);
@@ -159,11 +188,56 @@ type BillGroup = {
   overdueCount: number;
 };
 
+type OrderRushTone = "green" | "yellow" | "blue" | "red" | "neutral";
+type OrderRushMeta = {
+  actionLabel: string;
+  label: string;
+  score: number;
+  tone: OrderRushTone;
+};
+type OperationsSnapshot = {
+  open: number;
+  pending: number;
+  cooking: number;
+  ready: number;
+  payment: number;
+  overdue: number;
+  oldestAge: number;
+  activeRevenue: number;
+  priorityGroups: Array<BillGroup & { rush: OrderRushMeta }>;
+};
+type ChannelOpsStat = {
+  count: number;
+  key: ConcreteChannelFilter;
+  label: string;
+  revenue: number;
+  urgent: number;
+};
+
+const channelIcons: Record<ConcreteChannelFilter, ElementType> = {
+  DINE_IN: QrCode,
+  PICKUP: ShoppingBag,
+  DELIVERY: Truck
+};
+
+const deliveryQuickActions: Array<{ label: string; status: DeliveryActionStatus; icon: ElementType }> = [
+  { label: "Nhận giao", status: "accepted", icon: MapPinned },
+  { label: "Đang giao", status: "out_for_delivery", icon: Navigation },
+  { label: "Đã giao", status: "delivered", icon: CheckCircle2 }
+];
+
+function formatClock(value: Date | null) {
+  if (!value) return "Đang đồng bộ";
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
+}
+
 function deriveBillStatus(orders: OrderDto[], bill: OrderDto["bill"]): OrderDto["status"] {
   if (bill?.status === "paid") return "paid";
   if (bill?.status === "cancelled") return "cancelled";
   if (bill?.status === "waiting_confirm") return "waiting_confirm";
   if (bill?.status === "waiting_payment") return "waiting_payment";
+  if (orders.some((order) => resolveOrderPaymentStatus(order) === "waiting_confirm")) return "waiting_confirm";
+  if (orders.some((order) => resolveOrderPaymentStatus(order) === "waiting_payment")) return "waiting_payment";
   if (orders.some((order) => order.status === "pending")) return "pending";
   if (orders.some((order) => order.status === "ordering")) return "ordering";
   if (orders.some((order) => order.status === "completed")) return "completed";
@@ -188,10 +262,8 @@ function buildBillGroups(orders: OrderDto[]): BillGroup[] {
       const sortedOrders = [...billOrders].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       const bill = sortedOrders.find((order) => order.bill)?.bill ?? null;
       const paymentOrder =
-        sortedOrders.find((order) => order.paymentStatus === "waiting_confirm") ??
-        sortedOrders.find((order) => order.paymentStatus === "waiting_payment") ??
-        sortedOrders.find((order) => order.status === "waiting_confirm") ??
-        sortedOrders.find((order) => order.status === "waiting_payment") ??
+        sortedOrders.find((order) => resolveOrderPaymentStatus(order) === "waiting_confirm") ??
+        sortedOrders.find((order) => resolveOrderPaymentStatus(order) === "waiting_payment") ??
         null;
 
       return {
@@ -210,10 +282,391 @@ function buildBillGroups(orders: OrderDto[]): BillGroup[] {
     .sort((a, b) => new Date(b.latestAt).getTime() - new Date(a.latestAt).getTime());
 }
 
+function isOpenBillStatus(status: OrderDto["status"]) {
+  return status !== "paid" && status !== "cancelled";
+}
+
+function getBillGroupAge(group: BillGroup, nowMs = Date.now()) {
+  const oldestCreatedAt = group.orders.reduce((oldest, order) => {
+    return new Date(order.createdAt).getTime() < new Date(oldest).getTime() ? order.createdAt : oldest;
+  }, group.latestAt);
+
+  return minutesSinceAt(oldestCreatedAt, nowMs);
+}
+
+function groupNeedsPayment(group: BillGroup) {
+  return group.status === "waiting_payment" || group.status === "waiting_confirm" || group.orders.some(orderNeedsPaymentAttention);
+}
+
+function getBillGroupRush(group: BillGroup, nowMs = Date.now()): OrderRushMeta {
+  const age = getBillGroupAge(group, nowMs);
+
+  if (group.overdueCount > 0) {
+    return {
+      actionLabel: "Mở bếp",
+      label: `${group.overdueCount} món quá giờ`,
+      score: 1000 + group.overdueCount * 80 + age,
+      tone: "red"
+    };
+  }
+
+  if (group.status === "waiting_confirm") {
+    return {
+      actionLabel: "Xác nhận",
+      label: "Cần xác nhận tiền",
+      score: 860 + age,
+      tone: "yellow"
+    };
+  }
+
+  if (group.status === "pending") {
+    const primaryOrder = group.orders.find((order) => order.status === "pending") ?? group.orders[0];
+    const actionCopy = primaryOrder ? getRestaurantOrderActionCopy(primaryOrder) : null;
+    return {
+      actionLabel: actionCopy?.priorityActionLabel ?? "Nhận đơn",
+      label: age >= 5 ? `Đơn mới ${age} phút` : "Đơn mới",
+      score: 760 + age * 8,
+      tone: age >= 5 ? "red" : "green"
+    };
+  }
+
+  if (group.status === "ordering") {
+    return {
+      actionLabel: "Theo dõi bếp",
+      label: age >= 15 ? `Đang làm ${age} phút` : "Đang ra món",
+      score: 560 + age * 4,
+      tone: age >= 15 ? "yellow" : "green"
+    };
+  }
+
+  if (groupNeedsPayment(group)) {
+    return {
+      actionLabel: "Thu tiền",
+      label: "Chờ thanh toán",
+      score: 540 + age,
+      tone: "blue"
+    };
+  }
+
+  if (group.status === "completed") {
+    return {
+      actionLabel: "Chốt bill",
+      label: "Đã phục vụ",
+      score: 360 + age,
+      tone: "blue"
+    };
+  }
+
+  return {
+    actionLabel: "Xem chi tiết",
+    label: orderStatusLabel(group.status),
+    score: age,
+    tone: "neutral"
+  };
+}
+
+function buildOperationsSnapshot(groups: BillGroup[], nowMs: number): OperationsSnapshot {
+  const openGroups = groups.filter((group) => isOpenBillStatus(group.status));
+  const priorityGroups = openGroups
+    .map((group) => ({ ...group, rush: getBillGroupRush(group, nowMs) }))
+    .filter((group) => group.rush.score >= 360)
+    .sort((a, b) => b.rush.score - a.rush.score || b.total - a.total)
+    .slice(0, 3);
+
+  return {
+    open: openGroups.length,
+    pending: groups.filter((group) => group.status === "pending").length,
+    cooking: groups.filter((group) => group.status === "ordering").length,
+    ready: groups.filter((group) => group.status === "completed").length,
+    payment: groups.filter(groupNeedsPayment).length,
+    overdue: groups.reduce((sum, group) => sum + group.overdueCount, 0),
+    oldestAge: openGroups.reduce((max, group) => Math.max(max, getBillGroupAge(group, nowMs)), 0),
+    activeRevenue: openGroups.reduce((sum, group) => sum + group.total, 0),
+    priorityGroups
+  };
+}
+
+function buildChannelOpsStats(groups: BillGroup[]): ChannelOpsStat[] {
+  const stats: ChannelOpsStat[] = [
+    { key: "DINE_IN", label: "QR tại bàn", count: 0, revenue: 0, urgent: 0 },
+    { key: "PICKUP", label: "Khách đến lấy", count: 0, revenue: 0, urgent: 0 },
+    { key: "DELIVERY", label: "Giao hàng", count: 0, revenue: 0, urgent: 0 }
+  ];
+
+  for (const group of groups) {
+    if (!isOpenBillStatus(group.status)) continue;
+    const primaryChannel = group.orders.find((order) => order.fulfillmentType !== "DINE_IN")?.fulfillmentType ?? "DINE_IN";
+    const target = stats.find((item) => item.key === primaryChannel);
+    if (!target) continue;
+    target.count += 1;
+    target.revenue += group.total;
+    if (group.status === "pending" || group.overdueCount > 0 || groupNeedsPayment(group)) target.urgent += 1;
+  }
+
+  return stats;
+}
+
+function buildSlaBands(groups: BillGroup[], nowMs: number) {
+  const openGroups = groups
+    .filter((group) => isOpenBillStatus(group.status))
+    .map((group) => ({
+      ...group,
+      age: getBillGroupAge(group, nowMs),
+      rush: getBillGroupRush(group, nowMs)
+    }));
+
+  const critical = openGroups.filter((group) => group.rush.tone === "red" || group.age >= 20);
+  const warning = openGroups.filter((group) => !critical.some((item) => item.id === group.id) && (group.rush.tone === "yellow" || group.age >= 8));
+  const stable = openGroups.filter(
+    (group) => !critical.some((item) => item.id === group.id) && !warning.some((item) => item.id === group.id)
+  );
+
+  return [
+    {
+      key: "critical",
+      label: "Nguy cơ miss",
+      description: "Quá giờ, đơn già hoặc cần xử lý ngay",
+      groups: critical.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "red" as const
+    },
+    {
+      key: "warning",
+      label: "Cần theo dõi",
+      description: "Sắp trễ, chờ xác nhận hoặc đang mở lâu",
+      groups: warning.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "yellow" as const
+    },
+    {
+      key: "stable",
+      label: "Đang ổn",
+      description: "Bill mở chưa vượt ngưỡng vận hành",
+      groups: stable.sort((a, b) => b.rush.score - a.rush.score || b.age - a.age),
+      tone: "green" as const
+    }
+  ];
+}
+
+function channelStatTone(stat: ChannelOpsStat): OrderRushTone {
+  if (stat.urgent > 0) return "yellow";
+  if (stat.key === "DELIVERY") return "blue";
+  return stat.count > 0 ? "green" : "neutral";
+}
+
+function rushToneClass(tone: OrderRushTone) {
+  if (tone === "red") return "border-[var(--accent)]/28 bg-[var(--danger-soft)] text-[var(--accent-strong)]";
+  if (tone === "yellow") return "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]";
+  if (tone === "blue") return "border-[var(--secondary)]/35 bg-[var(--secondary-soft)] text-[var(--primary)]";
+  if (tone === "green") return "border-[var(--primary)]/18 bg-[var(--primary-soft)] text-[var(--primary)]";
+  return "border-[var(--border)] bg-[var(--soft-surface)] text-[var(--foreground)]";
+}
+
+function OrderOpsMetric({
+  icon: Icon,
+  label,
+  value,
+  meta,
+  tone
+}: {
+  icon: ElementType;
+  label: string;
+  value: string | number;
+  meta: string;
+  tone: OrderRushTone;
+}) {
+  return (
+    <article className={`rounded-xl border px-3 py-2.5 ${rushToneClass(tone)}`}>
+      <div className="flex items-start justify-between gap-3">
+        <span className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--surface)]/70">
+          <Icon size={17} />
+        </span>
+        {tone === "red" ? <AlertTriangle size={17} /> : null}
+      </div>
+      <p className="mt-2 text-xs font-semibold uppercase opacity-80">{label}</p>
+      <p className="metric-number mt-0.5 text-2xl font-semibold">{value}</p>
+      <p className="mt-0.5 truncate text-xs font-medium opacity-80">{meta}</p>
+    </article>
+  );
+}
+
+function OrderShiftCommandCenter({
+  operationsSnapshot,
+  channelStats,
+  slaBands,
+  statusCounts,
+  activeTotal,
+  clockTick,
+  onFilterStatus,
+  onFilterChannel,
+  onSelectGroup
+}: {
+  operationsSnapshot: OperationsSnapshot;
+  channelStats: ChannelOpsStat[];
+  slaBands: ReturnType<typeof buildSlaBands>;
+  statusCounts: Record<OrderFilter, number>;
+  activeTotal: number;
+  clockTick: number;
+  onFilterStatus: (filter: OrderFilter) => void;
+  onFilterChannel: (channel: ChannelFilter) => void;
+  onSelectGroup: (groupId: string | null) => void;
+}) {
+  const criticalBand = slaBands.find((band) => band.key === "critical");
+  const warningBand = slaBands.find((band) => band.key === "warning");
+  const leadingGroup = operationsSnapshot.priorityGroups[0] ?? criticalBand?.groups[0] ?? warningBand?.groups[0] ?? null;
+  const totalUrgentChannels = channelStats.reduce((sum, stat) => sum + stat.urgent, 0);
+  const shiftScore = Math.max(
+    0,
+    100 -
+      operationsSnapshot.pending * 10 -
+      operationsSnapshot.overdue * 14 -
+      operationsSnapshot.payment * 7 -
+      (criticalBand?.groups.length ?? 0) * 8 -
+      Math.max(0, operationsSnapshot.oldestAge - 15)
+  );
+  const shiftTone: OrderRushTone = shiftScore >= 82 ? "green" : shiftScore >= 62 ? "yellow" : "red";
+  const checks = [
+    {
+      id: "new",
+      label: "Đơn mới đã nhận",
+      value: operationsSnapshot.pending.toLocaleString("vi-VN"),
+      done: operationsSnapshot.pending === 0,
+      action: () => onFilterStatus("pending")
+    },
+    {
+      id: "kitchen",
+      label: "Bếp không quá giờ",
+      value: operationsSnapshot.overdue.toLocaleString("vi-VN"),
+      done: operationsSnapshot.overdue === 0,
+      action: () => onFilterStatus("ordering")
+    },
+    {
+      id: "payment",
+      label: "Bill chờ tiền sạch",
+      value: operationsSnapshot.payment.toLocaleString("vi-VN"),
+      done: operationsSnapshot.payment === 0,
+      action: () => onFilterStatus("waiting_confirm")
+    },
+    {
+      id: "channel",
+      label: "Kênh nóng được tách",
+      value: totalUrgentChannels.toLocaleString("vi-VN"),
+      done: totalUrgentChannels === 0,
+      action: () => onFilterChannel(channelStats.find((stat) => stat.urgent > 0)?.key ?? "all")
+    }
+  ];
+
+  return (
+    <section className="dashboard-panel dashboard-command-center p-3">
+      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
+        <div className={`rounded-xl border p-4 ${rushToneClass(shiftTone)}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase opacity-80">Shift command</p>
+              <h2 className="mt-1 text-xl font-semibold">Điều phối ca bán hàng</h2>
+            </div>
+            <Badge tone={shiftTone === "red" ? "red" : shiftTone === "yellow" ? "yellow" : "green"}>{shiftScore}/100</Badge>
+          </div>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Bill mở</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.open}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Tiền đang mở</p>
+              <p className="metric-number mt-1 text-lg font-semibold">{formatVnd(activeTotal)}</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Đơn lâu nhất</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.oldestAge}p</p>
+            </div>
+            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
+              <p className="text-xs font-semibold opacity-75">Lịch sử hôm nay</p>
+              <p className="metric-number mt-1 text-2xl font-semibold">{statusCounts.history}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist chạm-là-xử-lý</p>
+              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {checks.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={item.action}
+                  className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
+                >
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-[var(--foreground)]">Việc đầu tiên nên làm</p>
+              <Badge tone={leadingGroup ? getBillGroupRush(leadingGroup, clockTick).tone : "green"}>{leadingGroup ? "Có việc" : "Ổn"}</Badge>
+            </div>
+            {leadingGroup ? (
+              <button
+                type="button"
+                onClick={() => onSelectGroup(leadingGroup.id)}
+                className={`w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] ${rushToneClass(getBillGroupRush(leadingGroup, clockTick).tone)}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{leadingGroup.tableName}</span>
+                    <span className="mt-0.5 block truncate text-xs font-semibold opacity-80">
+                      #{leadingGroup.id.slice(0, 8).toUpperCase()} · {getBillGroupAge(leadingGroup, clockTick)} phút
+                    </span>
+                  </span>
+                  <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-xs font-semibold">{getBillGroupRush(leadingGroup, clockTick).actionLabel}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold">{getBillGroupRush(leadingGroup, clockTick).label}</p>
+                <p className="metric-number mt-1 text-sm font-semibold opacity-85">{formatVnd(leadingGroup.total)}</p>
+              </button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có bill cần kéo lên đầu ca.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function playOrderNotice() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.05, context.currentTime + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.24);
+    window.setTimeout(() => void context.close().catch(() => undefined), 320);
+  } catch {
+    // Visual realtime updates remain the source of truth when audio is blocked.
+  }
+}
+
 function applyOptimisticOrderAction(
   orders: OrderDto[],
   orderId: string,
-  action: "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status",
+  action: OrderMutationAction,
   body?: unknown
 ) {
   if (action === "delete-test") {
@@ -231,7 +684,12 @@ function applyOptimisticOrderAction(
       const sameBill = Boolean(targetBillId && order.bill?.id === targetBillId);
 
       if (action === "confirm-payment" && (sameOrder || sameBill)) {
-        const shouldReturnToKitchen = order.fulfillmentType !== "DINE_IN" && (order.status === "waiting_confirm" || order.status === "waiting_payment");
+        const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          fulfillmentType: order.fulfillmentType,
+          billId: order.bill?.id ?? null
+        });
         return {
           ...order,
           status: shouldReturnToKitchen ? ("pending" as const) : ("paid" as const),
@@ -244,11 +702,22 @@ function applyOptimisticOrderAction(
       if (!sameOrder) return order;
 
       if (action === "accept") {
+        const acceptTransition = resolveMerchantAcceptTransition(order);
+        const nextDeliveryStatus = acceptTransition.next ?? order.deliveryStatus;
+        const isFreshAccept = order.status === "pending";
+        const shouldUpdateDeliveryStatus =
+          acceptTransition.allowed &&
+          order.fulfillmentType === "DELIVERY" &&
+          nextDeliveryStatus !== undefined &&
+          nextDeliveryStatus !== order.deliveryStatus;
+
         return {
           ...order,
           status: "ordering" as const,
-          acceptedAt: now.toISOString(),
-          serviceDueAt: nextDue
+          deliveryStatus: shouldUpdateDeliveryStatus ? nextDeliveryStatus : order.deliveryStatus,
+          deliveryTrackingUpdatedAt: shouldUpdateDeliveryStatus ? now.toISOString() : order.deliveryTrackingUpdatedAt,
+          acceptedAt: order.acceptedAt ?? now.toISOString(),
+          serviceDueAt: isFreshAccept ? nextDue : order.serviceDueAt
         };
       }
 
@@ -333,20 +802,31 @@ export function OrdersBoard({
   const [couriers, setCouriers] = useState<DeliveryCourier[]>([]);
   const [couriersLoading, setCouriersLoading] = useState(false);
   const [courierMutationOrderId, setCourierMutationOrderId] = useState<string | null>(null);
+  const [dispatchCandidatesByOrder, setDispatchCandidatesByOrder] = useState<Record<string, DispatchCandidate[]>>({});
+  const [dispatchLoadingOrderId, setDispatchLoadingOrderId] = useState<string | null>(null);
   const [newCourierName, setNewCourierName] = useState("");
   const [newCourierPhone, setNewCourierPhone] = useState("");
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [networkOnline, setNetworkOnline] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
   const [selectedGroupId, setSelectedGroupIdValue] = useState<string | null>(searchParams.get("order"));
   const { confirm, confirmDialog } = useConfirmDialog();
   const refreshTimerRef = useRef<number | null>(null);
+  const previousPendingOrderIdsRef = useRef(new Set(initialOrders.filter((order) => order.status === "pending").map((order) => order.id)));
   const inFlightRefreshRef = useRef(false);
   const queuedRefreshRef = useRef(false);
   const loadOrdersRef = useRef<({ silent }?: { silent?: boolean }) => Promise<void>>(async () => undefined);
+  const mutateOrderRef = useRef<((orderId: string, action: OrderMutationAction, body?: unknown) => Promise<void>) | null>(null);
+  const setSelectedGroupIdRef = useRef<((nextGroupId: string | null) => void) | null>(null);
   const [filter, setFilterValue] = useState<OrderFilter>(() => readOrderFilter(searchParams.get("status")));
   const [query, setQueryValue] = useState(searchParams.get("q") ?? "");
   const [locationFilter, setLocationFilterValue] = useState(searchParams.get("source") ?? "all");
   const [channelFilter, setChannelFilterValue] = useState<ChannelFilter>(() => readChannelFilter(searchParams.get("channel")));
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [clockTick, setClockTick] = useState(() => Date.now());
+  const fallbackRefreshMs = realtimeState === "connected" ? 30_000 : 10_000;
 
   function replaceUrlState(updates: {
     channel?: ChannelFilter;
@@ -422,6 +902,43 @@ export function OrdersBoard({
     return () => window.removeEventListener("popstate", syncFiltersFromHistory);
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockTick(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const updateNetworkStatus = () => setNetworkOnline(window.navigator.onLine);
+    window.addEventListener("online", updateNetworkStatus);
+    window.addEventListener("offline", updateNetworkStatus);
+    updateNetworkStatus();
+    return () => {
+      window.removeEventListener("online", updateNetworkStatus);
+      window.removeEventListener("offline", updateNetworkStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const updateVisibility = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", updateVisibility);
+    window.addEventListener("focus", updateVisibility);
+    updateVisibility();
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+      window.removeEventListener("focus", updateVisibility);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!networkOnline || !pageVisible) return;
+    const timer = window.setInterval(() => void loadOrdersRef.current({ silent: true }), fallbackRefreshMs);
+    return () => window.clearInterval(timer);
+  }, [fallbackRefreshMs, networkOnline, pageVisible]);
+
+  useEffect(() => {
+    if (networkOnline && pageVisible) void loadOrdersRef.current({ silent: true });
+  }, [networkOnline, pageVisible]);
+
   async function loadOrders({ silent = false }: { silent?: boolean } = {}) {
     if (inFlightRefreshRef.current) {
       queuedRefreshRef.current = true;
@@ -435,7 +952,13 @@ export function OrdersBoard({
       const response = await fetch("/api/admin/orders?history=true", { cache: "no-store" });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không tải được đơn hàng");
-      setOrders(json.data as OrderDto[]);
+      const nextOrders = json.data as OrderDto[];
+      const nextPendingIds = new Set(nextOrders.filter((order) => order.status === "pending").map((order) => order.id));
+      const hasNewPendingOrder = [...nextPendingIds].some((id) => !previousPendingOrderIdsRef.current.has(id));
+      previousPendingOrderIdsRef.current = nextPendingIds;
+      if (hasNewPendingOrder && silent) playOrderNotice();
+      setOrders(nextOrders);
+      setLastSyncedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được đơn hàng");
     } finally {
@@ -460,6 +983,23 @@ export function OrdersBoard({
       setError(err instanceof Error ? err.message : "Không tải được danh sách shipper");
     } finally {
       if (!silent) setCouriersLoading(false);
+    }
+  }
+
+  async function loadDispatchCandidates(orderId: string, { silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setDispatchLoadingOrderId(orderId);
+    try {
+      const response = await fetch(`/api/admin/orders/${orderId}/dispatch-candidates`, { cache: "no-store" });
+      const json = await response.json();
+      if (!json.ok) throw new Error(json.error ?? "Không tải được gợi ý shipper");
+      setDispatchCandidatesByOrder((current) => ({
+        ...current,
+        [orderId]: json.data as DispatchCandidate[]
+      }));
+    } catch (err) {
+      if (!silent) setError(err instanceof Error ? err.message : "Không tải được gợi ý shipper");
+    } finally {
+      if (!silent) setDispatchLoadingOrderId(null);
     }
   }
 
@@ -492,7 +1032,7 @@ export function OrdersBoard({
     refreshTimerRef.current = window.setTimeout(() => void loadOrdersRef.current({ silent: true }), delay);
   }
 
-  async function mutateOrder(orderId: string, action: "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status", body?: unknown) {
+  async function mutateOrder(orderId: string, action: OrderMutationAction, body?: unknown) {
     if (action === "cancel") {
       const confirmed = await confirm({
         title: "Huỷ đơn",
@@ -518,11 +1058,14 @@ export function OrdersBoard({
     const previousOrders = orders;
     setMutatingOrderId(orderId);
     setError(null);
+    setNotice(null);
     setOrders((current) => applyOptimisticOrderAction(current, orderId, action, body));
 
     try {
       const response = await fetch(`/api/admin/orders/${orderId}/${action}`, {
         method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
         ...(body
           ? {
               headers: { "Content-Type": "application/json" },
@@ -532,6 +1075,12 @@ export function OrdersBoard({
       });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại");
+      if (action === "confirm-payment") {
+        setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
+      }
+      if (action === "confirm-payment") {
+        void loadOrdersRef.current({ silent: true });
+      }
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previousOrders);
@@ -540,6 +1089,11 @@ export function OrdersBoard({
       setMutatingOrderId(null);
     }
   }
+
+  useEffect(() => {
+    mutateOrderRef.current = mutateOrder;
+    setSelectedGroupIdRef.current = setSelectedGroupId;
+  });
 
   async function cleanupVisibleTestOrders() {
     if (!canManageTestOrders) {
@@ -782,6 +1336,7 @@ export function OrdersBoard({
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         scheduleRealtimeRefresh
       )
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, scheduleRealtimeRefresh)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "delivery_tracking_events", filter: `restaurant_id=eq.${restaurantId}` },
@@ -816,6 +1371,7 @@ export function OrdersBoard({
         if (status === "SUBSCRIBED") setRealtimeState("connected");
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           setRealtimeState("error");
+          scheduleRealtimeRefresh();
         }
       });
 
@@ -826,6 +1382,9 @@ export function OrdersBoard({
   }, [restaurantId]);
 
   const billGroups = useMemo(() => buildBillGroups(orders), [orders]);
+  const operationsSnapshot = useMemo(() => buildOperationsSnapshot(billGroups, clockTick), [billGroups, clockTick]);
+  const channelStats = useMemo(() => buildChannelOpsStats(billGroups), [billGroups]);
+  const slaBands = useMemo(() => buildSlaBands(billGroups, clockTick), [billGroups, clockTick]);
   const activeTotal = useMemo(
     () => billGroups.filter((group) => group.status !== "paid" && group.status !== "cancelled").reduce((sum, group) => sum + group.total, 0),
     [billGroups]
@@ -860,9 +1419,16 @@ export function OrdersBoard({
     selectedGroup?.orders.find((order) => order.paymentStatus === "waiting_confirm" || order.paymentStatus === "waiting_payment") ??
     (selectedGroup && (selectedGroup.status === "waiting_confirm" || selectedGroup.status === "waiting_payment") ? selectedGroup.orders[0] : null);
   const selectedDeliveryOrder = selectedGroup?.orders.find((order) => order.fulfillmentType === "DELIVERY") ?? null;
+  const selectedDeliveryOrderId = selectedDeliveryOrder?.id ?? null;
+  const selectedDeliveryTransitions = selectedDeliveryOrder
+    ? getAllowedDeliveryStatusTransitions(selectedDeliveryOrder.deliveryStatus)
+    : [];
   const selectedCourierLocation = selectedDeliveryOrder
     ? courierLocations[selectedDeliveryOrder.id] ?? selectedDeliveryOrder.deliveryCourierLocation ?? null
     : null;
+  const selectedDispatchCandidates = selectedDeliveryOrder ? dispatchCandidatesByOrder[selectedDeliveryOrder.id] ?? [] : [];
+  const selectedBestDispatchCandidate = selectedDispatchCandidates.find((candidate) => candidate.eligible) ?? null;
+  const selectedDeliveryQuoteInsight = resolveDeliveryQuoteSnapshotInsight(selectedDeliveryOrder?.deliveryQuoteSnapshot ?? null);
   const selectedDeliveryMapUrl = selectedDeliveryOrder
     ? buildDirectionsUrl(
         {
@@ -875,11 +1441,161 @@ export function OrdersBoard({
         }
       )
     : null;
+  const shortcutPendingOrder = selectedPendingOrders[0] ?? null;
+  const shortcutServingOrder = selectedServingOrders[0] ?? null;
+  const shortcutPendingActionCopy = shortcutPendingOrder ? getRestaurantOrderActionCopy(shortcutPendingOrder) : null;
+  const hasSelectedGroup = Boolean(selectedGroup);
+  const shortcutPendingOrderId = shortcutPendingOrder?.id ?? null;
+  const shortcutServingOrderId = shortcutServingOrder?.id ?? null;
+  const selectedPaymentOrderId = selectedPaymentOrder?.id ?? null;
+  const pressureTone: OrderRushTone = operationsSnapshot.overdue > 0 ? "red" : operationsSnapshot.pending > 0 || operationsSnapshot.payment > 0 ? "yellow" : operationsSnapshot.cooking > 0 ? "blue" : "green";
+  const pressureLabel = operationsSnapshot.overdue
+    ? `${operationsSnapshot.overdue} quá giờ`
+    : operationsSnapshot.pending
+      ? `${operationsSnapshot.pending} chờ nhận`
+      : operationsSnapshot.payment
+        ? `${operationsSnapshot.payment} chờ tiền`
+        : "Nhịp ổn";
+
+  useEffect(() => {
+    if (!selectedDeliveryOrderId) return;
+    if (dispatchCandidatesByOrder[selectedDeliveryOrderId]) return;
+    const orderId = selectedDeliveryOrderId;
+    let cancelled = false;
+
+    async function hydrateDispatchCandidates() {
+      try {
+        const response = await fetch(`/api/admin/orders/${orderId}/dispatch-candidates`, { cache: "no-store" });
+        const json = await response.json();
+        if (!json.ok || cancelled) return;
+        setDispatchCandidatesByOrder((current) => ({
+          ...current,
+          [orderId]: json.data as DispatchCandidate[]
+        }));
+      } catch {
+        // Manual refresh shows the actionable error; silent hydrate should not interrupt order ops.
+      }
+    }
+
+    void hydrateDispatchCandidates();
+    return () => {
+      cancelled = true;
+    };
+  }, [dispatchCandidatesByOrder, selectedDeliveryOrderId]);
+
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null) {
+      if (!(target instanceof HTMLElement)) return false;
+      return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target.isContentEditable;
+    }
+
+    function handleShortcut(event: KeyboardEvent) {
+      if (!hasSelectedGroup || event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+
+      const key = event.key.toLowerCase();
+      if (key === "escape") {
+        event.preventDefault();
+        setSelectedGroupIdRef.current?.(null);
+        return;
+      }
+
+      if (key === "a" && shortcutPendingOrderId) {
+        event.preventDefault();
+        void mutateOrderRef.current?.(shortcutPendingOrderId, "accept", { minutes: 15 });
+        return;
+      }
+
+      if (key === "s" && shortcutServingOrderId) {
+        event.preventDefault();
+        void mutateOrderRef.current?.(shortcutServingOrderId, "complete");
+        return;
+      }
+
+      if (key === "t" && shortcutServingOrderId) {
+        event.preventDefault();
+        void mutateOrderRef.current?.(shortcutServingOrderId, "timer", { minutes: 10 });
+        return;
+      }
+
+      if (key === "p" && selectedPaymentOrderId) {
+        event.preventDefault();
+        void mutateOrderRef.current?.(selectedPaymentOrderId, "confirm-payment");
+      }
+    }
+
+    document.addEventListener("keydown", handleShortcut);
+    return () => document.removeEventListener("keydown", handleShortcut);
+  }, [hasSelectedGroup, selectedPaymentOrderId, shortcutPendingOrderId, shortcutServingOrderId]);
 
   return (
-    <div className="grid gap-3">
+    <div className="dashboard-operations-stack dashboard-orders-workspace grid gap-3">
       {confirmDialog}
       {error && <div className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">{error}</div>}
+      {notice && <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">{notice}</div>}
+
+      <section className="admin-hero-panel rounded-[14px] p-4">
+        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0 pr-14 sm:pr-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
+                <span className="inline-flex items-center gap-1.5">
+                  <RadioTower size={13} />
+                  {realtimeLabel(realtimeState)}
+                </span>
+              </Badge>
+              <Badge tone={pressureTone === "red" ? "red" : pressureTone === "yellow" ? "yellow" : pressureTone === "blue" ? "blue" : "green"}>{pressureLabel}</Badge>
+              <Badge tone={operationsSnapshot.open ? "blue" : "green"}>{operationsSnapshot.open} bill đang mở</Badge>
+            </div>
+            <h2 className="dashboard-page-title mt-3">Trung tâm xử lý đơn realtime</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
+              Xác nhận đơn online, theo dõi bếp, chốt phục vụ, xác nhận VietQR và điều phối giao hàng trong một màn đủ nhanh cho giờ cao điểm.
+            </p>
+          </div>
+          <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Cập nhật</span>
+              <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+              <div
+                className={`h-full rounded-full ${pressureTone === "red" ? "bg-[var(--tertiary)]" : pressureTone === "yellow" ? "bg-[var(--accent)]" : "bg-[var(--primary)]"}`}
+                style={{ width: `${Math.min(100, Math.max(12, operationsSnapshot.oldestAge * 4))}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void loadOrders()}
+                disabled={loading}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] disabled:opacity-60"
+              >
+                <RefreshCw size={15} className={loading ? "animate-spin" : undefined} />
+                Làm mới
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilter(operationsSnapshot.pending ? "pending" : operationsSnapshot.payment ? "waiting_confirm" : "all")}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-semibold text-[var(--background)]"
+              >
+                <Flame size={15} />
+                Ưu tiên
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <OrderShiftCommandCenter
+        operationsSnapshot={operationsSnapshot}
+        channelStats={channelStats}
+        slaBands={slaBands}
+        statusCounts={statusCounts}
+        activeTotal={activeTotal}
+        clockTick={clockTick}
+        onFilterStatus={setFilter}
+        onFilterChannel={setChannelFilter}
+        onSelectGroup={setSelectedGroupId}
+      />
 
       <section className="dashboard-panel p-3">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
@@ -901,7 +1617,7 @@ export function OrdersBoard({
                     if (item.label === "Chờ thanh toán") setFilter("waiting_confirm");
                     if (item.label === "Lịch sử") setFilter("history");
                   }}
-                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
+                  className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] hover:text-[var(--primary)]"
                 >
                   <Icon size={15} className="text-[var(--primary)]" />
                   {item.label}
@@ -921,37 +1637,191 @@ export function OrdersBoard({
           </div>
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+        <div className="mt-3 grid gap-2 xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+          <OrderOpsMetric icon={ReceiptText} label="Đơn mở" value={operationsSnapshot.open} meta={`${formatVnd(operationsSnapshot.activeRevenue)} chưa chốt`} tone={operationsSnapshot.open > 0 ? "blue" : "green"} />
+          <OrderOpsMetric icon={Flame} label="Cần nhận" value={operationsSnapshot.pending} meta={operationsSnapshot.pending > 0 ? "Ưu tiên xác nhận ngay" : "Không có đơn mới"} tone={operationsSnapshot.pending > 0 ? "yellow" : "green"} />
+          <OrderOpsMetric icon={ChefHat} label="Áp lực bếp" value={operationsSnapshot.overdue} meta={operationsSnapshot.overdue > 0 ? `${operationsSnapshot.cooking} đang làm` : `${operationsSnapshot.cooking} đang làm ổn`} tone={operationsSnapshot.overdue > 0 ? "red" : operationsSnapshot.cooking > 0 ? "yellow" : "green"} />
+          <OrderOpsMetric icon={WalletCards} label="Chờ tiền" value={operationsSnapshot.payment} meta={`${operationsSnapshot.ready} bill đã phục vụ · lâu nhất ${operationsSnapshot.oldestAge}p`} tone={operationsSnapshot.payment > 0 ? "yellow" : "green"} />
+        </div>
+
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+            <div>
+              <p className="text-sm font-semibold text-[var(--foreground)]">Điều phối theo kênh</p>
+              <p className="text-xs font-medium text-[var(--muted-foreground)]">Tách QR tại bàn, khách đến lấy và giao hàng để không miss đơn lúc cao điểm.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setChannelFilter("all")}
+              className={`inline-flex min-h-10 items-center rounded-lg border px-3 text-xs font-semibold transition ${
+                channelFilter === "all"
+                  ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]"
+                  : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]"
+              }`}
+            >
+              Tất cả kênh
+            </button>
+          </div>
+          <div className="grid gap-2 lg:grid-cols-3">
+            {channelStats.map((stat) => {
+              const Icon = channelIcons[stat.key];
+              const isActive = channelFilter === stat.key;
+              const tone = channelStatTone(stat);
+              const share = operationsSnapshot.open > 0 ? Math.round((stat.count / operationsSnapshot.open) * 100) : 0;
+
+              return (
+                <button
+                  key={stat.key}
+                  type="button"
+                  onClick={() => setChannelFilter(stat.key)}
+                  aria-pressed={isActive}
+                  className={`min-h-[124px] rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] ${
+                    isActive ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]" : rushToneClass(tone)
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--surface)]/80">
+                      <Icon size={18} />
+                    </span>
+                    <Badge tone={stat.urgent > 0 ? "yellow" : stat.count > 0 ? "green" : "neutral"}>
+                      {stat.urgent > 0 ? `${stat.urgent} cần xử lý` : stat.count > 0 ? "Đang ổn" : "Trống"}
+                    </Badge>
+                  </div>
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{stat.label}</span>
+                      <span className="metric-number mt-0.5 block text-2xl font-semibold">{stat.count}</span>
+                    </span>
+                    <span className="metric-number text-right text-sm font-semibold">{formatVnd(stat.revenue)}</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+                    <div
+                      className={`h-full rounded-full ${stat.urgent > 0 ? "bg-[var(--accent)]" : isActive ? "bg-[var(--primary)]" : "bg-[var(--primary)]/70"}`}
+                      style={{ width: stat.count > 0 ? `${Math.max(12, share)}%` : "0%" }}
+                    />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {operationsSnapshot.priorityGroups.length > 0 ? (
+          <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--primary)] text-white">
+                  <Clock3 size={15} />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-[var(--foreground)]">Ưu tiên giờ cao điểm</p>
+                  <p className="text-xs font-medium text-[var(--muted-foreground)]">Đơn già, quá giờ và thanh toán chờ xác nhận.</p>
+                </div>
+              </div>
+              <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
+                Top {operationsSnapshot.priorityGroups.length}
+              </span>
+            </div>
+            <div className="grid gap-2 lg:grid-cols-3">
+              {operationsSnapshot.priorityGroups.map((group) => (
+                <button
+                  key={group.id}
+                  type="button"
+                  onClick={() => setSelectedGroupId(group.id)}
+                  className={`min-h-[96px] rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] ${rushToneClass(group.rush.tone)}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-semibold">{group.tableName}</span>
+                      <span className="mt-0.5 block truncate text-xs font-semibold opacity-80">#{group.id.slice(0, 8).toUpperCase()} · {getBillGroupAge(group, clockTick)} phút</span>
+                    </span>
+                    <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-xs font-semibold">{group.rush.actionLabel}</span>
+                  </div>
+                  <p className="mt-2 text-sm font-semibold">{group.rush.label}</p>
+                  <p className="metric-number mt-1 text-xs font-semibold opacity-80">{formatVnd(group.total)}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--primary)] text-white">
+                <AlertTriangle size={15} />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-[var(--foreground)]">SLA guard chống miss đơn</p>
+                <p className="text-xs font-medium text-[var(--muted-foreground)]">Phân tầng bill mở theo tuổi đơn, quá giờ bếp và thanh toán treo.</p>
+              </div>
+            </div>
+            <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1.5 text-xs font-semibold text-[var(--muted-foreground)]">
+              {operationsSnapshot.oldestAge} phút lâu nhất
+            </span>
+          </div>
+          <div className="grid gap-2 lg:grid-cols-3">
+            {slaBands.map((band) => {
+              const firstGroup = band.groups[0];
+              const total = band.groups.reduce((sum, group) => sum + group.total, 0);
+              return (
+                <button
+                  key={band.key}
+                  type="button"
+                  onClick={() => {
+                    if (firstGroup) setSelectedGroupId(firstGroup.id);
+                  }}
+                  disabled={!firstGroup}
+                  className={`min-h-[112px] rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] disabled:cursor-default disabled:opacity-75 ${rushToneClass(band.tone)}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{band.label}</span>
+                      <span className="mt-0.5 block text-xs font-medium opacity-80">{band.description}</span>
+                    </span>
+                    <span className="metric-number shrink-0 text-2xl font-semibold">{band.groups.length}</span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold opacity-85">
+                    <span className="truncate">{firstGroup ? `${firstGroup.tableName} · ${firstGroup.age} phút` : "Không có bill"}</span>
+                    <span className="metric-number shrink-0">{formatVnd(total)}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="dashboard-ops-toolbar dashboard-order-filter-grid mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Trạng thái
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as OrderFilter)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               {orderFilters.map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Nguồn
             <select
               value={locationFilter}
               onChange={(event) => setLocationFilter(event.target.value)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               {locationOptions.map((location) => (
                 <option key={location} value={location}>{location === "all" ? "Tất cả bàn/kênh" : location}</option>
               ))}
             </select>
           </label>
-          <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+          <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Kênh
             <select
               value={channelFilter}
               onChange={(event) => setChannelFilter(event.target.value as ChannelFilter)}
-              className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
+              className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal text-[var(--foreground)] outline-none"
             >
               <option value="all">Tất cả kênh</option>
               <option value="DINE_IN">QR tại bàn</option>
@@ -965,14 +1835,14 @@ export function OrdersBoard({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Tìm mã đơn, bàn, khách, món..."
-              className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium outline-none"
+              className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium outline-none"
             />
           </label>
           <button
             type="button"
             onClick={() => void loadOrders()}
             disabled={loading}
-            className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--primary)]"
+            className="inline-flex h-11 items-center justify-center gap-2 self-end rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold text-[var(--primary)]"
           >
             {loading ? <RefreshCw className="animate-spin" size={16} /> : <Filter size={16} />}
             Làm mới
@@ -988,7 +1858,7 @@ export function OrdersBoard({
               type="button"
               onClick={() => void cleanupVisibleTestOrders()}
               disabled={loading}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-xs font-black text-red-700 transition hover:border-red-300 disabled:opacity-60"
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--accent)]/25 bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--accent-strong)] transition hover:border-[var(--accent)]/45 disabled:opacity-60"
             >
               <Trash2 size={14} />
               Dọn đơn test
@@ -996,12 +1866,12 @@ export function OrdersBoard({
           </div>
         ) : null}
 
-        <div className="mt-3 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
+        <div className="dashboard-segmented-scroll mt-3 flex gap-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-1.5">
           {orderFilters.map((item) => (
             <button
               key={item.value}
               onClick={() => setFilter(item.value)}
-              className={`h-9 shrink-0 rounded-lg px-3 text-sm font-semibold transition ${
+              className={`h-11 shrink-0 rounded-lg px-3 text-sm font-semibold transition ${
                 filter === item.value
                   ? "bg-[var(--surface)] text-[var(--primary)]"
                   : "text-[var(--muted-foreground)] hover:bg-[var(--surface)]"
@@ -1012,8 +1882,8 @@ export function OrdersBoard({
           ))}
         </div>
 
-        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-          <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em]">
+        <div className="dashboard-data-surface mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+          <div className="dashboard-data-header grid grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] gap-3 px-4 py-3 text-xs font-semibold uppercase">
             <span>Mã đơn</span>
             <span>Nguồn</span>
             <span>Món / lượt gọi</span>
@@ -1023,12 +1893,32 @@ export function OrdersBoard({
           </div>
           <div className="dashboard-data-list">
             {visibleBillGroups.length === 0 && (
-              <div className="grid min-h-40 place-items-center px-5 py-8 text-sm font-semibold text-[var(--muted-foreground)]">
-                Không có đơn phù hợp.
+              <div className="grid min-h-56 place-items-center px-5 py-8 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+                <div className="max-w-md">
+                  <span className="mx-auto grid h-12 w-12 place-items-center rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--primary)]">
+                    <Search size={19} />
+                  </span>
+                  <h3 className="mt-3 text-base font-semibold text-[var(--foreground)]">Không có đơn trong bộ lọc này</h3>
+                  <p className="mt-1 leading-6">Đổi trạng thái, kênh hoặc xoá bộ lọc để quay lại toàn bộ luồng vận hành hiện tại.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFilter("all");
+                      setLocationFilter("all");
+                      setChannelFilter("all");
+                      setQuery("");
+                    }}
+                    className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary-strong)] px-4 text-sm font-semibold text-[var(--background)]"
+                  >
+                    Xoá bộ lọc
+                  </button>
+                </div>
               </div>
             )}
             {visibleBillGroups.map((group) => {
               const mainOrder = group.orders[0];
+              const rush = getBillGroupRush(group, clockTick);
+              const age = getBillGroupAge(group, clockTick);
               const itemPreview = group.orders
                 .flatMap((order) => order.items.map((item) => `${item.quantity}x ${item.menuItem?.name ?? "Món"}`))
                 .slice(0, 3)
@@ -1040,9 +1930,22 @@ export function OrdersBoard({
                   tabIndex={0}
                   onClick={() => setSelectedGroupId(group.id)}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") setSelectedGroupId(group.id);
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedGroupId(group.id);
+                    }
                   }}
-                  className={`dashboard-data-row dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
+                  aria-label={`Mở chi tiết hóa đơn ${group.id.slice(0, 10).toUpperCase()}`}
+                  aria-pressed={selectedGroup?.id === group.id}
+                  className={`dashboard-data-row dashboard-selectable-row grid cursor-pointer gap-3 border-l-4 px-4 py-3 lg:grid-cols-[1.2fr_0.9fr_1.5fr_0.9fr_1fr_112px] ${
+                    rush.tone === "red"
+                      ? "border-l-[var(--accent)]"
+                      : rush.tone === "yellow"
+                        ? "border-l-[var(--accent)]"
+                        : rush.tone === "blue"
+                          ? "border-l-[var(--primary)]"
+                          : "border-l-transparent"
+                  } ${
                     selectedGroup?.id === group.id ? "dashboard-selected-row" : ""
                   }`}
                 >
@@ -1057,10 +1960,11 @@ export function OrdersBoard({
                   </span>
                   <span className="dashboard-data-field text-sm font-semibold text-[var(--muted-foreground)]" data-label="Thời gian">
                     {formatOrderTime(group.latestAt)}
-                    <span className="block text-xs font-medium">{minutesSince(group.latestAt)} phút trước</span>
+                    <span className="block text-xs font-medium">{age} phút trước</span>
                   </span>
                   <span className="dashboard-data-field dashboard-data-badges flex flex-wrap items-center gap-2" data-label="Trạng thái">
                     <Badge tone={statusTone(group.status)}>{orderStatusLabel(group.status)}</Badge>
+                    {isOpenBillStatus(group.status) ? <Badge tone={rush.tone}>{rush.label}</Badge> : null}
                     {mainOrder.paymentStatus !== "unpaid" && (
                       <Badge tone={paymentTone(mainOrder.paymentStatus)}>{paymentStatusLabel(mainOrder.paymentStatus)}</Badge>
                     )}
@@ -1079,7 +1983,7 @@ export function OrdersBoard({
                         event.stopPropagation();
                         setSelectedGroupId(group.id);
                       }}
-                      className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] lg:hidden"
+                      className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] lg:hidden"
                       aria-label="Mở chi tiết đơn"
                     >
                       <MoreVertical size={16} />
@@ -1099,7 +2003,7 @@ export function OrdersBoard({
                 setChannelFilter("all");
                 setQuery("");
               }}
-              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-semibold text-[var(--primary)]"
+              className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-semibold text-[var(--primary)]"
             >
               Xoá bộ lọc
             </button>
@@ -1118,8 +2022,8 @@ export function OrdersBoard({
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
-                <h2 id="order-detail-drawer-title" className="mt-1 truncate text-xl font-semibold text-[var(--foreground)]">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
+                <h2 id="order-detail-drawer-title" className="dashboard-section-title mt-1 truncate">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <Badge tone={statusTone(selectedGroup.status)}>{orderStatusLabel(selectedGroup.status)}</Badge>
                   {selectedGroup.overdueCount > 0 && <Badge tone="yellow">{selectedGroup.overdueCount} đơn quá giờ</Badge>}
@@ -1128,12 +2032,26 @@ export function OrdersBoard({
               <button
                 type="button"
                 onClick={() => setSelectedGroupId(null)}
-                className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
+                className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
                 aria-label="Đóng chi tiết đơn"
               >
                 <XCircle size={18} />
               </button>
             </div>
+            {(error || notice) && (
+              <div className="grid shrink-0 gap-2 px-4 pt-3 sm:px-5">
+                {error ? (
+                  <div role="alert" className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
+                    {error}
+                  </div>
+                ) : null}
+                {notice ? (
+                  <div role="status" className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">
+                    {notice}
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
@@ -1198,6 +2116,43 @@ export function OrdersBoard({
                     courierLocation={selectedCourierLocation}
                     compact
                   />
+                  {selectedDeliveryQuoteInsight ? (
+                    <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-[var(--foreground)]">Chất lượng quote giao hàng</p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">
+                            {selectedDeliveryQuoteInsight.detail}
+                          </p>
+                        </div>
+                        <Badge tone={selectedDeliveryQuoteInsight.tone}>{selectedDeliveryQuoteInsight.label}</Badge>
+                      </div>
+                      {selectedDeliveryQuoteInsight.badges.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedDeliveryQuoteInsight.badges.slice(0, 7).map((badge) => (
+                            <span key={badge} className="rounded-full border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {selectedDeliveryOrder.deliveryTrackingSnapshot ? (
+                    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-[var(--foreground)]">Live tracking readiness</p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">
+                            {selectedDeliveryOrder.deliveryTrackingSnapshot.detail}
+                          </p>
+                        </div>
+                        <Badge tone={selectedDeliveryOrder.deliveryTrackingSnapshot.state === "stale" ? "yellow" : selectedDeliveryOrder.deliveryTrackingSnapshot.state === "moving" || selectedDeliveryOrder.deliveryTrackingSnapshot.state === "arriving" ? "green" : "neutral"}>
+                          {selectedDeliveryOrder.deliveryTrackingSnapshot.label}
+                        </Badge>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-sm shadow-[0_14px_30px_rgba(15,77,58,0.06)]">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
@@ -1220,7 +2175,7 @@ export function OrdersBoard({
                       )}
                     </div>
 
-                    <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+                    <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
                       Chọn shipper
                       <select
                         value={selectedDeliveryOrder.deliveryCourierId ?? ""}
@@ -1232,10 +2187,56 @@ export function OrdersBoard({
                         {couriers.map((courier) => (
                           <option key={courier.id} value={courier.id}>
                             {courier.name}{courier.phone ? ` · ${courier.phone}` : ""} · {courierStatusLabel(courier.status)}
+                            {selectedDispatchCandidates.find((candidate) => candidate.id === courier.id)?.rank === 1 ? " · đề xuất" : ""}
                           </option>
                         ))}
                       </select>
                     </label>
+
+                    <div className="rounded-xl border border-[var(--border)] bg-white/70 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-black uppercase text-[var(--muted-foreground)]">Gợi ý điều phối</p>
+                          <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">
+                            {selectedBestDispatchCandidate
+                              ? `${selectedBestDispatchCandidate.name} · đến quán ~${selectedBestDispatchCandidate.etaToPickupMinutes ?? "?"} phút`
+                              : dispatchLoadingOrderId === selectedDeliveryOrder.id
+                                ? "Đang tính theo GPS và khoảng cách tuyến..."
+                                : "Chưa có shipper đủ dữ liệu GPS"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void loadDispatchCandidates(selectedDeliveryOrder.id)}
+                          disabled={dispatchLoadingOrderId === selectedDeliveryOrder.id}
+                          className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-black text-[var(--foreground)] disabled:opacity-60"
+                        >
+                          <RefreshCw size={14} className={dispatchLoadingOrderId === selectedDeliveryOrder.id ? "animate-spin" : ""} />
+                          Cập nhật
+                        </button>
+                      </div>
+                      {selectedDispatchCandidates.length > 0 ? (
+                        <div className="mt-3 grid gap-2">
+                          {selectedDispatchCandidates.slice(0, 3).map((candidate) => (
+                            <button
+                              type="button"
+                              key={candidate.id}
+                              onClick={() => void assignCourier(selectedDeliveryOrder.id, candidate.id)}
+                              disabled={!candidate.eligible || courierMutationOrderId === selectedDeliveryOrder.id}
+                              className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2 text-left text-xs font-semibold text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                              <span className="flex items-center justify-between gap-2">
+                                <span>#{candidate.rank} {candidate.name}</span>
+                                <span>{candidate.etaToPickupMinutes ?? "?"} phút tới quán</span>
+                              </span>
+                              <span className="text-[var(--muted-foreground)]">
+                                {candidate.reason} · {candidate.distanceToPickupKm?.toFixed(1) ?? "?"} km · {candidate.provider}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
 
                     <form
                       onSubmit={(event) => {
@@ -1319,18 +2320,16 @@ export function OrdersBoard({
                     ) : null}
                   </div>
                   <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: "Nhận giao", status: "accepted", icon: MapPinned },
-                      { label: "Đang giao", status: "out_for_delivery", icon: Navigation },
-                      { label: "Đã giao", status: "delivered", icon: CheckCircle2 }
-                    ].map((item) => {
+                    {deliveryQuickActions.map((item) => {
                       const Icon = item.icon;
+                      const canUseStatus = selectedDeliveryTransitions.includes(item.status);
                       return (
                         <Button
                           key={item.status}
                           variant={selectedDeliveryOrder.deliveryStatus === item.status ? "primary" : "secondary"}
                           onClick={() => mutateOrder(selectedDeliveryOrder.id, "delivery-status", { status: item.status })}
-                          disabled={mutatingOrderId === selectedDeliveryOrder.id}
+                          disabled={mutatingOrderId === selectedDeliveryOrder.id || !canUseStatus}
+                          title={canUseStatus ? item.label : "Cần cập nhật theo đúng thứ tự giao hàng"}
                           className="min-h-11 shadow-none hover:shadow-none"
                         >
                           <Icon size={15} />
@@ -1357,33 +2356,36 @@ export function OrdersBoard({
                   </div>
                 ) : null}
 
-                {selectedPendingOrders.map((order) => (
-                  <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn mới"}</p>
-                        <p className="mt-1 text-xs text-[var(--muted-foreground)]">{order.items.length} món · {minutesSince(order.createdAt)} phút trước</p>
+                {selectedPendingOrders.map((order) => {
+                  const actionCopy = getRestaurantOrderActionCopy(order);
+                  return (
+                    <div key={`pending-${order.id}`} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{order.items[0]?.menuItem?.name ?? "Đơn mới"}</p>
+                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">{order.items.length} món · {minutesSince(order.createdAt)} phút trước</p>
+                        </div>
+                        <Badge>{actionCopy.pendingBadge}</Badge>
                       </div>
-                      <Badge>Chờ nhận</Badge>
-                    </div>
-                    <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-3" : "grid-cols-2"}`}>
-                      <Button onClick={() => mutateOrder(order.id, "accept", { minutes: 15 })} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
-                        <Check size={16} />
-                        Nhận đơn
-                      </Button>
-                      <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
-                        <XCircle size={16} />
-                        Từ chối
-                      </Button>
-                      {canManageTestOrders && canDeleteTestOrder(order) ? (
-                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
-                          <Trash2 size={16} />
-                          Xoá test
+                      <div className={`mt-3 grid gap-2 ${canManageTestOrders && canDeleteTestOrder(order) ? "grid-cols-3" : "grid-cols-2"}`}>
+                        <Button onClick={() => mutateOrder(order.id, "accept", { minutes: 15 })} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                          <Check size={16} />
+                          {actionCopy.acceptLabel}
                         </Button>
-                      ) : null}
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "cancel")} disabled={mutatingOrderId === order.id} className="shadow-none hover:shadow-none">
+                          <XCircle size={16} />
+                          {actionCopy.rejectLabel}
+                        </Button>
+                        {canManageTestOrders && canDeleteTestOrder(order) ? (
+                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
+                            <Trash2 size={16} />
+                            Xoá test
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {selectedServingOrders.map((order) => {
                   const dueIn = minutesUntil(order.serviceDueAt);
@@ -1415,7 +2417,7 @@ export function OrdersBoard({
                           Huỷ đơn
                         </Button>
                         {canManageTestOrders && canDeleteTestOrder(order) ? (
-                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                          <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
                             <Trash2 size={16} />
                             Xoá test
                           </Button>
@@ -1440,7 +2442,7 @@ export function OrdersBoard({
                         Huỷ đơn
                       </Button>
                       {canManageTestOrders && canDeleteTestOrder(order) ? (
-                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-red-200 text-red-700 shadow-none hover:shadow-none">
+                        <Button variant="secondary" onClick={() => mutateOrder(order.id, "delete-test")} disabled={mutatingOrderId === order.id} className="border-[var(--accent)]/25 text-[var(--accent-strong)] shadow-none hover:shadow-none">
                           <Trash2 size={16} />
                           Xoá test
                         </Button>
@@ -1456,7 +2458,7 @@ export function OrdersBoard({
                         <p className="text-sm font-semibold text-[var(--foreground)]">Thanh toán hóa đơn</p>
                         <p className="mt-1 text-xs text-[var(--muted-foreground)]">{paymentMethodLabel(selectedGroup.paymentMethod)} · {formatVnd(selectedGroup.total)}</p>
                       </div>
-                      <Badge tone="yellow">{orderStatusLabel(selectedGroup.status)}</Badge>
+                      <Badge tone="yellow">{paymentStatusLabel(selectedPaymentOrder.paymentStatus)}</Badge>
                     </div>
                     <Button onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")} disabled={mutatingOrderId === selectedPaymentOrder.id} className="mt-3 w-full shadow-none hover:shadow-none">
                       <CheckCircle2 size={16} />
@@ -1474,6 +2476,7 @@ export function OrdersBoard({
                       <div key={`${order.id}-${index}`} className="grid grid-cols-[minmax(0,1fr)_44px_96px] items-center gap-3 border-b border-[var(--border)] px-3 py-3 last:border-b-0">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold">{item.menuItem?.name ?? "Không rõ món"}</p>
+                          {item.modifierSummary && <p className="mt-1 truncate text-xs font-semibold text-[var(--primary)]">{item.modifierSummary}</p>}
                           {item.note && <p className="mt-1 truncate text-xs font-semibold text-[var(--muted-foreground)]">{item.note}</p>}
                         </div>
                         <span className="metric-number text-center text-sm font-semibold">{item.quantity}</span>
@@ -1487,16 +2490,116 @@ export function OrdersBoard({
               <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                 <div className="flex justify-between gap-4 text-sm">
                   <span className="text-[var(--muted-foreground)]">Tạm tính</span>
-                  <span className="metric-number font-black">{formatVnd(Math.max(0, selectedGroup.total - selectedDeliveryFee))}</span>
+                  <span className="metric-number font-semibold">{formatVnd(Math.max(0, selectedGroup.total - selectedDeliveryFee))}</span>
                 </div>
                 <div className="mt-3 flex justify-between gap-4 text-sm">
                   <span className="text-[var(--muted-foreground)]">Phí giao hàng</span>
-                  <span className="metric-number font-black">{formatVnd(selectedDeliveryFee)}</span>
+                  <span className="metric-number font-semibold">{formatVnd(selectedDeliveryFee)}</span>
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-4">
                   <span className="font-semibold text-[var(--foreground)]">Tổng tiền</span>
                   <span className="metric-number text-2xl font-semibold text-[var(--accent)]">{formatVnd(selectedGroup.total)}</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="shrink-0 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-4 py-3 backdrop-blur-xl sm:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold uppercase text-[var(--muted-foreground)]">
+                    {selectedGroup.tableName}
+                  </span>
+                  <span className="metric-number mt-0.5 block text-lg font-semibold text-[var(--foreground)]">
+                    {formatVnd(selectedGroup.total)}
+                  </span>
+                </span>
+                <Badge tone={selectedGroup.overdueCount > 0 ? "red" : groupNeedsPayment(selectedGroup) ? "yellow" : statusTone(selectedGroup.status)}>
+                  {selectedGroup.overdueCount > 0 ? "Quá giờ" : groupNeedsPayment(selectedGroup) ? "Chờ tiền" : orderStatusLabel(selectedGroup.status)}
+                </Badge>
+              </div>
+
+              <div className="mt-2 flex flex-wrap gap-2">
+                {shortcutPendingOrder ? (
+                  <Button
+                    type="button"
+                    onClick={() => mutateOrder(shortcutPendingOrder.id, "accept", { minutes: 15 })}
+                    disabled={mutatingOrderId === shortcutPendingOrder.id}
+                    aria-keyshortcuts="A"
+                    title={shortcutPendingActionCopy?.acceptTitle ?? "Nhận đơn nhanh"}
+                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
+                  >
+                    <Check size={16} />
+                    {shortcutPendingActionCopy?.acceptLabel ?? "Nhận đơn"}
+                  </Button>
+                ) : shortcutServingOrder ? (
+                  <Button
+                    type="button"
+                    onClick={() => mutateOrder(shortcutServingOrder.id, "complete")}
+                    disabled={mutatingOrderId === shortcutServingOrder.id}
+                    aria-keyshortcuts="S"
+                    title="Đánh dấu đã phục vụ"
+                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
+                  >
+                    <ChefHat size={16} />
+                    Đã phục vụ
+                  </Button>
+                ) : selectedPaymentOrder ? (
+                  <Button
+                    type="button"
+                    onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
+                    disabled={mutatingOrderId === selectedPaymentOrder.id}
+                    aria-keyshortcuts="P"
+                    title="Xác nhận thanh toán"
+                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
+                  >
+                    <CheckCircle2 size={16} />
+                    Xác nhận thanh toán
+                  </Button>
+                ) : null}
+
+                {shortcutServingOrder ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => mutateOrder(shortcutServingOrder.id, "timer", { minutes: 10 })}
+                    disabled={mutatingOrderId === shortcutServingOrder.id}
+                    aria-keyshortcuts="T"
+                    title="Gia hạn bếp"
+                    className="min-h-12 shadow-none hover:shadow-none"
+                  >
+                    <TimerReset size={16} />
+                    +10 phút
+                  </Button>
+                ) : null}
+
+                {selectedPaymentOrder && (shortcutPendingOrder || shortcutServingOrder) ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
+                    disabled={mutatingOrderId === selectedPaymentOrder.id}
+                    aria-keyshortcuts="P"
+                    title="Xác nhận thanh toán"
+                    className="min-h-12 shadow-none hover:shadow-none"
+                  >
+                    <CheckCircle2 size={16} />
+                    Thu tiền
+                  </Button>
+                ) : null}
+
+                {shortcutPendingOrder ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => mutateOrder(shortcutPendingOrder.id, "cancel")}
+                    disabled={mutatingOrderId === shortcutPendingOrder.id}
+                    title="Từ chối đơn"
+                    className="min-h-12 shadow-none hover:shadow-none"
+                  >
+                    <XCircle size={16} />
+                    {shortcutPendingActionCopy?.rejectLabel ?? "Từ chối"}
+                  </Button>
+                ) : null}
               </div>
             </div>
           </aside>

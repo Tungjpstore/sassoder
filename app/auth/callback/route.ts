@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dashboardLoginPathForNext, safeDashboardNextPath, safeProtectedDashboardNextPath } from "@/lib/auth-flow-routes";
 import { getDashboardDestinationForHost } from "@/lib/dashboard-destination";
 import {
   chunkedCookieNames,
@@ -13,11 +14,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 import { consumeRegistrationIntentForUser, getRestaurantForUser } from "@/services/restaurant-service";
 
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
-  if (!value.startsWith("/dashboard")) return "/dashboard";
-  return value;
-}
+export const dynamic = "force-dynamic";
 
 function redirectUrl(request: Request, pathOrUrl: string, extraCookieNames: string[] = []) {
   const response = pathOrUrl.startsWith("http")
@@ -28,10 +25,8 @@ function redirectUrl(request: Request, pathOrUrl: string, extraCookieNames: stri
   return response;
 }
 
-function redirectAuthError(request: Request, authError: string, extraCookieNames: string[] = []) {
-  const url = new URL("/dashboard/login", request.url);
-  url.searchParams.set("authError", authError);
-  const response = NextResponse.redirect(url);
+function redirectAuthError(request: Request, authError: string, next: string, extraCookieNames: string[] = []) {
+  const response = NextResponse.redirect(new URL(dashboardLoginPathForNext(next, { authError }), request.url));
   response.headers.set("Cache-Control", "no-store");
   appendExpiredAuthFlowCookies(response, request, extraCookieNames);
   return response;
@@ -87,7 +82,7 @@ function appendExpiredAuthFlowCookies(response: NextResponse, request: Request, 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
-  const next = safeNextPath(requestUrl.searchParams.get("next"));
+  const next = safeDashboardNextPath(requestUrl.searchParams.get("next"), "/dashboard");
   const oauthKey = safeOAuthKey(requestUrl.searchParams.get("oauthKey"));
   const cleanupCookieNames = oauthCleanupCookieNames(oauthKey);
   const providerError = requestUrl.searchParams.get("error");
@@ -98,7 +93,7 @@ export async function GET(request: Request) {
       providerError,
       providerErrorDescription
     });
-    return redirectAuthError(request, providerError ? "provider" : "missing_code", cleanupCookieNames);
+    return redirectAuthError(request, providerError ? "provider" : "missing_code", next, cleanupCookieNames);
   }
 
   const supabase = await createServerSupabaseClient({
@@ -113,7 +108,7 @@ export async function GET(request: Request) {
   } catch (error) {
     const message = errorMessage(error);
     console.error("[auth/callback] Code exchange exception", { message });
-    return redirectAuthError(request, "callback", cleanupCookieNames);
+    return redirectAuthError(request, "callback", next, cleanupCookieNames);
   }
 
   const { error } = exchangeResult;
@@ -123,13 +118,29 @@ export async function GET(request: Request) {
       code: "code" in error ? error.code : undefined,
       status: "status" in error ? error.status : undefined
     });
-    return redirectAuthError(request, "callback", cleanupCookieNames);
+    return redirectAuthError(request, "callback", next, cleanupCookieNames);
   }
 
   const session = exchangeResult.data.session;
-  if (oauthKey && session?.access_token && session.refresh_token) {
+  let user = session?.user ?? exchangeResult.data.user ?? null;
+
+  if (oauthKey) {
+    if (!session?.access_token || !session.refresh_token) {
+      console.error("[auth/callback] Missing exchanged OAuth session", {
+        hasSession: Boolean(session),
+        hasAccessToken: Boolean(session?.access_token),
+        hasRefreshToken: Boolean(session?.refresh_token),
+        hasUser: Boolean(user?.id),
+        hasEmail: Boolean(user?.email)
+      });
+      return redirectAuthError(request, "session", next, cleanupCookieNames);
+    }
+
     const defaultSupabase = await createServerSupabaseClient({ ignoreAuthSession: true });
-    const { error: sessionCopyError } = await defaultSupabase.auth.setSession({
+    const {
+      data: { user: copiedUser },
+      error: sessionCopyError
+    } = await defaultSupabase.auth.setSession({
       access_token: session.access_token,
       refresh_token: session.refresh_token
     });
@@ -140,32 +151,18 @@ export async function GET(request: Request) {
         code: "code" in sessionCopyError ? sessionCopyError.code : undefined,
         status: "status" in sessionCopyError ? sessionCopyError.status : undefined
       });
-      return redirectAuthError(request, "session", cleanupCookieNames);
+      return redirectAuthError(request, "session", next, cleanupCookieNames);
     }
+
+    user = copiedUser ?? user;
   }
 
-  let userResult: Awaited<ReturnType<typeof supabase.auth.getUser>>;
-
-  try {
-    userResult = await supabase.auth.getUser();
-  } catch (error) {
-    const message = errorMessage(error);
-    console.error("[auth/callback] User read exception", { message });
-    return redirectAuthError(request, "session", cleanupCookieNames);
-  }
-
-  const {
-    data: { user },
-    error: userError
-  } = userResult;
-
-  if (userError || !user?.id || !user.email) {
+  if (!user?.id || !user.email) {
     console.error("[auth/callback] Missing session user", {
-      message: userError?.message,
       hasUser: Boolean(user?.id),
       hasEmail: Boolean(user?.email)
     });
-    return redirectAuthError(request, "session", cleanupCookieNames);
+    return redirectAuthError(request, "session", next, cleanupCookieNames);
   }
 
   const restaurant =
@@ -174,6 +171,10 @@ export async function GET(request: Request) {
 
   if (restaurant) {
     const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+    const protectedNext = safeProtectedDashboardNextPath(next);
+    if (protectedNext && protectedNext !== "/dashboard") {
+      return redirectUrl(request, protectedNext, cleanupCookieNames);
+    }
     return redirectUrl(request, getDashboardDestinationForHost(restaurant.slug, host), cleanupCookieNames);
   }
 

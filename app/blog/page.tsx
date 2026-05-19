@@ -12,6 +12,7 @@ import {
   getBlogTopicClusters,
   getBlogTopicHubPath
 } from "@/lib/seo/blog";
+import { getFeaturedSeoIntentPages } from "@/lib/seo/intent-pages";
 import { createSeoMetadata } from "@/lib/seo/metadata";
 import { buildBreadcrumbSchema, buildItemListSchema } from "@/lib/seo/schema";
 
@@ -29,6 +30,7 @@ export default function BlogIndexPage() {
   const categories = getBlogCategories();
   const topicClusters = getBlogTopicClusters();
   const topicHubs = getAllBlogTopicHubs();
+  const intentPages = getFeaturedSeoIntentPages();
   const featuredPost = posts[0];
   const secondaryPosts = posts.slice(1);
 
@@ -54,13 +56,17 @@ export default function BlogIndexPage() {
           <LogiVNLogo href="/" className="h-10" priority />
           <nav aria-label="Điều hướng blog" className="blog-nav-links">
             <Link href="/">Trang chủ</Link>
+            <Link href="/giai-phap">Giải pháp</Link>
+            <Link href="/so-sanh">So sánh</Link>
+            <Link href="/dia-phuong">Địa phương</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog" className="is-active">
               Blog
             </Link>
           </nav>
-          <Link className="blog-nav-cta" href="/dashboard/register?plan=pro">
-            Dùng thử LogiVN
+          <Link className="blog-nav-cta" href="/demo">
+            Xem demo
             <ArrowRight size={16} />
           </Link>
         </div>
@@ -90,6 +96,47 @@ export default function BlogIndexPage() {
               thực và đặt món online trước khi chọn gói phù hợp.
             </p>
           </aside>
+        </div>
+      </section>
+
+      <section className="blog-clusters" aria-labelledby="blog-intent-pages-heading">
+        <div className="blog-container">
+          <div className="blog-section-head">
+            <span className="blog-kicker">Trang giải pháp</span>
+            <h2 id="blog-intent-pages-heading">Cửa vào giải pháp cho nhu cầu triển khai cụ thể</h2>
+            <p>
+              Các trang giải pháp nối nội dung blog với truy vấn có ý định mua rõ hơn: gọi món QR, VietQR, trà sữa và đặt
+              bàn nhận cọc.
+            </p>
+          </div>
+          <Link className="blog-cluster-index-link" href="/giai-phap">
+            Xem tất cả trang giải pháp
+            <ArrowRight size={15} />
+          </Link>
+
+          <div className="blog-cluster-grid">
+            {intentPages.map((page) => (
+              <article className="blog-cluster-card" key={page.slug}>
+                <div className="blog-cluster-topline">
+                  <span>Giải pháp</span>
+                  <span>{page.eyebrow}</span>
+                </div>
+                <h3>
+                  <Link href={page.path}>{page.h1}</Link>
+                </h3>
+                <p>{page.description}</p>
+                <ul>
+                  {page.takeaways.slice(0, 2).map((takeaway) => (
+                    <li key={takeaway}>{takeaway}</li>
+                  ))}
+                </ul>
+                <Link className="blog-cluster-hub-link" href={page.path}>
+                  Xem trang giải pháp
+                  <ArrowRight size={15} />
+                </Link>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -224,8 +271,8 @@ export default function BlogIndexPage() {
             </p>
           </div>
           <div className="blog-cta-actions">
-            <Link href="/" className="blog-button blog-button-light">
-              Xem nền tảng
+            <Link href="/demo" className="blog-button blog-button-light">
+              Xem demo
             </Link>
             <Link href="/pricing" className="blog-button blog-button-orange">
               Xem bảng giá
@@ -308,6 +355,13 @@ const styles = `
   color: var(--blog-muted);
   font-size: 14px;
   font-weight: 750;
+}
+
+.blog-nav-links a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding-inline: 8px;
 }
 
 .blog-nav-links .is-active,
@@ -542,6 +596,21 @@ const styles = `
   margin-top: 12px;
 }
 
+.blog-cluster-index-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-top: 18px;
+  border: 1px solid rgba(15, 77, 58, 0.14);
+  border-radius: 999px;
+  padding: 0 16px;
+  color: var(--blog-green);
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 14px;
+  font-weight: 850;
+}
+
 .blog-cluster-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -593,6 +662,9 @@ const styles = `
 }
 
 .blog-cluster-card a {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
   color: var(--blog-muted);
   font-size: 14px;
   font-weight: 750;
@@ -672,6 +744,12 @@ const styles = `
   font-size: 13px;
 }
 
+.blog-footer a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+}
+
 @media (max-width: 900px) {
   .blog-hero-grid,
   .blog-grid,
@@ -701,6 +779,11 @@ const styles = `
 
   .blog-hero {
     padding-top: 34px;
+  }
+
+  .blog-hero h1 {
+    font-size: clamp(2.35rem, 10vw, 3rem);
+    line-height: 1;
   }
 
   .blog-featured-card {

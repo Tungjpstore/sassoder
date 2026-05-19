@@ -207,6 +207,13 @@ async function main() {
       console.log(`- transfers: ${summary.missing.paymentTransferCodes.join(", ")}`);
     }
   }
+
+  const blockingChecks = checks.filter((check) => check.status !== "pass");
+  if (blockingChecks.length > 0) {
+    console.error("");
+    console.error(`billing:verify blocked by ${blockingChecks.length} non-pass check(s).`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error) => {

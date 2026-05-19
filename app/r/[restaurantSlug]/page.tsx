@@ -66,7 +66,9 @@ export default async function TenantMenuFallbackPage({
           serviceFeeEnabled: restaurant.service_fee_enabled,
           serviceFeePercent: restaurant.service_fee_percent,
           serviceFeeMin: restaurant.service_fee_min,
-          serviceFeeMax: restaurant.service_fee_max
+          serviceFeeMax: restaurant.service_fee_max,
+          branches: restaurant.branches,
+          promotions: restaurant.onlinePromotions
         }}
         categories={restaurant.categories.map((category) => ({
           id: category.id,
@@ -76,7 +78,8 @@ export default async function TenantMenuFallbackPage({
             categoryId: item.category_id,
             name: item.name,
             price: item.price,
-            image: item.image_url
+            image: item.image_url,
+            modifierGroups: item.modifierGroups ?? []
           }))
         }))}
       />

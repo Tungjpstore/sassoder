@@ -12,21 +12,25 @@ export type OrderStatus =
 
 export type PaymentMethod = "QR" | "CASH";
 export type PaymentStatus = "unpaid" | "waiting_payment" | "waiting_confirm" | "paid" | "failed" | "refunded";
+export type OrderBranchAssignmentSource = "delivery_quote" | "single_branch" | "primary_branch" | "manual" | "legacy_backfill";
 export type OnlinePaymentMode = "PAY_AFTER" | "QR_PREPAID";
 export type FulfillmentType = "DINE_IN" | "PICKUP" | "DELIVERY";
 export type DeliveryStatus = "none" | "requested" | "accepted" | "out_for_delivery" | "delivered" | "rejected";
 export type TableBillStatus = "open" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled";
 
-export type PaymentLogStatus = "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled";
+export type PaymentLogStatus = "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
 export type ServiceRequestStatus = "open" | "acknowledged" | "resolved" | "cancelled";
 export type ReservationStatus =
   | "draft"
+  | "pending"
   | "holding"
   | "waiting_deposit_confirm"
   | "confirmed"
+  | "checked_in"
   | "seated"
   | "completed"
   | "cancelled"
+  | "rejected"
   | "expired"
   | "no_show";
 export type ReservationDepositStatus =
@@ -39,6 +43,21 @@ export type ReservationDepositStatus =
   | "forfeited"
   | "refunded";
 export type ReservationDepositType = "FIXED" | "PER_PERSON";
+export type InventoryMovementType =
+  | "receive"
+  | "deduct_sale"
+  | "adjust_increase"
+  | "adjust_decrease"
+  | "waste"
+  | "rollback"
+  | "transfer_in"
+  | "transfer_out"
+  | "expired"
+  | "internal_use"
+  | "supplier_return"
+  | "reserve"
+  | "release_reserve";
+export type InventoryCountStatus = "draft" | "submitted" | "applied" | "cancelled";
 
 export type SessionProfile = {
   userId: string;
@@ -57,6 +76,8 @@ export type SessionProfile = {
 
 export type OrderDto = {
   id: string;
+  branchId?: string | null;
+  branchAssignmentSource?: OrderBranchAssignmentSource | null;
   status: OrderStatus;
   subtotal: number;
   discountAmount: number;
@@ -81,6 +102,7 @@ export type OrderDto = {
     coordinates: number[][];
   } | null;
   deliveryRouteDurationMinutes?: number | null;
+  deliveryQuoteSnapshot?: import("@/types/supabase").Json | null;
   deliveryTrackingUpdatedAt?: string | null;
   deliveryCourierId?: string | null;
   deliveryAssignedAt?: string | null;
@@ -98,6 +120,7 @@ export type OrderDto = {
     speedMps?: number | null;
     capturedAt?: string | null;
   } | null;
+  deliveryTrackingSnapshot?: import("@/services/delivery/tracking-snapshot-service").DeliveryTrackingSnapshot | null;
   bill: {
     id: string;
     status: TableBillStatus;
@@ -128,6 +151,16 @@ export type OrderDto = {
   items: Array<{
     quantity: number;
     price: number;
+    modifiers?: Array<{
+      groupId: string;
+      groupName: string;
+      optionId: string;
+      optionName: string;
+      priceDelta: number;
+      quantity: number;
+      lineTotal: number;
+    }>;
+    modifierSummary?: string | null;
     note: string | null;
     menuItem: { id?: string; name: string } | null;
   }>;
@@ -163,12 +196,18 @@ export type ReservationDto = {
   paymentMethod: PaymentMethod | null;
   customerNote: string | null;
   internalNote: string | null;
+  preferredTableAreaId: string | null;
+  preferredSeatingZone: "indoor" | "outdoor" | "mixed" | string | null;
+  preferredTableKind: "standard" | "vip" | "bar" | "community" | string | null;
   source: string;
   createdAt: string;
   updatedAt: string | null;
   confirmedAt: string | null;
+  checkedInAt: string | null;
   seatedAt: string | null;
+  completedAt: string | null;
   cancelledAt: string | null;
+  rejectedAt: string | null;
   expiredAt: string | null;
   noShowAt: string | null;
   seatedTableBillId: string | null;
@@ -177,5 +216,9 @@ export type ReservationDto = {
     name: string;
     area: string;
     capacity: number;
+    tableAreaId?: string | null;
+    floorLabel?: string | null;
+    seatingZone?: "indoor" | "outdoor" | "mixed" | string | null;
+    tableKind?: "standard" | "vip" | "bar" | "community" | string | null;
   }>;
 };

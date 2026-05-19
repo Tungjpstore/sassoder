@@ -10,6 +10,7 @@ export async function GET(request: Request) {
     const body = publicOrderHistorySchema.parse({
       restaurantSlug: url.searchParams.get("restaurantSlug"),
       tableId: url.searchParams.get("tableId"),
+      tableAccessToken: url.searchParams.get("tableAccessToken") || undefined,
       customerSessionId: url.searchParams.get("customerSessionId") || undefined
     });
 

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { buildResolvedEntitlementSnapshot } from "@/lib/billing/entitlements";
-import { buildPaymentPolicySummary, isSubscriptionUsable } from "@/lib/billing/subscription-transitions";
+import { buildPaymentPolicySummary, getSubscriptionAccessStatus, isSubscriptionUsable } from "@/lib/billing/subscription-transitions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { asFeatures, asRecord, daysUntil, normalizeBillingPlanCode, vietQrUrl } from "./billing-utils";
 import { readBillingV2Bridge } from "./billing-v2-bridge";
@@ -108,7 +108,7 @@ export async function getRestaurantBillingPortal({
     planCode: normalizeBillingPlanCode(currentPlan.code),
     planName: currentPlan.name,
     daysLeft,
-    status: !usable ? "expired" : pendingPayment ? "pending_payment" : "active",
+    status: pendingPayment ? "pending_payment" : getSubscriptionAccessStatus(subscription),
     usage,
     trialsUsed
   });

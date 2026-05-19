@@ -5,6 +5,7 @@ import type { BillingPlanCode } from "@/lib/billing/types";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { addDays, asFeatures, asRecord, hashMaybe, normalizeBillingPlanCode, normalizeSettings } from "./billing-utils";
+import { mirrorLegacySubscriptionToBillingV2 } from "./billing-v2-bridge";
 import type { PlanRow, RestaurantRow, SubscriptionRow } from "./billing-types";
 
 export function getSubscriptionAccessEnd(subscription: SubscriptionRow) {
@@ -90,33 +91,34 @@ export async function repairRequestedOnboardingPlanIfNeeded({
       ? (metadata.requestedPlanCode as BillingPlanCode)
       : null;
   const intendedPlanCode = requestedPlanCode ?? metadataRequestedPlanCode;
-  const canRepairStatus = subscription.status === "trialing" || subscription.status === "pending_payment";
+  const shouldNormalizePremiumTrial =
+    intendedPlanCode === "premium" &&
+    metadata.source === "onboarding" &&
+    subscription.status === "trialing" &&
+    currentPlan?.code === "premium";
 
-  if (
-    intendedPlanCode !== "premium" ||
-    metadata.source !== "onboarding" ||
-    !canRepairStatus ||
-    currentPlan?.code === "premium"
-  ) {
+  if (!shouldNormalizePremiumTrial) {
     return { subscription, plan: currentPlan ?? null, repaired: false };
   }
 
-  const premiumPlan = await getActivePlanByCode("premium");
-  if (subscription.plan_id === premiumPlan.id) {
-    return { subscription, plan: premiumPlan, repaired: false };
+  const proPlan = await getActivePlanByCode("pro");
+  if (subscription.plan_id === proPlan.id) {
+    return { subscription, plan: proPlan, repaired: false };
   }
 
   const { data, error } = await supabase
     .from("restaurant_subscriptions")
     .update({
-      plan_id: premiumPlan.id,
+      plan_id: proPlan.id,
       updated_at: new Date().toISOString(),
       metadata: {
         ...metadata,
         requestedPlanCode: "premium",
-        repairedRequestedPlanAt: new Date().toISOString(),
-        repairedFromPlanCode: currentPlan?.code ?? null,
-        repairedFromPlanId: subscription.plan_id
+        normalizedBy: "runtime_subscription_repair",
+        normalizedAt: new Date().toISOString(),
+        normalizedReason: "premium_trial_subscription",
+        normalizedFromPlanCode: currentPlan?.code ?? null,
+        normalizedFromPlanId: subscription.plan_id
       }
     })
     .eq("id", subscription.id)
@@ -124,7 +126,9 @@ export async function repairRequestedOnboardingPlanIfNeeded({
     .single();
 
   if (error) throw error;
-  return { subscription: data as SubscriptionRow, plan: premiumPlan, repaired: true };
+  const repairedSubscription = data as SubscriptionRow;
+  await mirrorLegacySubscriptionToBillingV2({ subscription: repairedSubscription, planCode: proPlan.code });
+  return { subscription: repairedSubscription, plan: proPlan, repaired: true };
 }
 
 export async function getRestaurant(restaurantId: string) {
@@ -157,9 +161,9 @@ export async function createInitialRestaurantSubscription({
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const requestedPlanCode = normalizeBillingPlanCode(planCode);
-  const plan = await getDefaultPlan(requestedPlanCode);
+  const trialPlan = await getDefaultPlan("pro");
   const now = new Date();
-  const trialEnds = addDays(now, plan.trial_days);
+  const trialEnds = addDays(now, trialPlan.trial_days);
   const normalizedOwnerEmail = ownerEmail.toLowerCase();
 
   const { data: existing, error: existingError } = await supabase
@@ -188,6 +192,7 @@ export async function createInitialRestaurantSubscription({
 
   if (claimsError && claimsError.code !== "PGRST205") throw claimsError;
   const hasUsedTrial = Number(existingTrialClaims ?? 0) > 0;
+  const plan = hasUsedTrial && requestedPlanCode !== "pro" ? await getDefaultPlan(requestedPlanCode) : trialPlan;
 
   const { data, error } = await supabase
     .from("restaurant_subscriptions")
@@ -218,6 +223,7 @@ export async function createInitialRestaurantSubscription({
     user_agent_hash: hashMaybe(userAgent)
   });
 
+  await mirrorLegacySubscriptionToBillingV2({ subscription: data as SubscriptionRow, planCode: plan.code });
   return data as SubscriptionRow;
 }
 

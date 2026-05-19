@@ -12,9 +12,9 @@ import {
 type CartStore = {
   items: Record<string, DineInCartItem>;
   add: (item: Omit<DineInCartItem, "quantity">) => void;
-  decrement: (menuItemId: string) => void;
-  remove: (menuItemId: string) => void;
-  setNote: (menuItemId: string, note: string) => void;
+  decrement: (lineId: string) => void;
+  remove: (lineId: string) => void;
+  setNote: (lineId: string, note: string) => void;
   clear: () => void;
 };
 
@@ -24,17 +24,17 @@ export const useDineInCartStore = create<CartStore>((set) => ({
     set((state) => ({
       items: addDineInCartItem(state.items, item)
     })),
-  decrement: (menuItemId) =>
+  decrement: (lineId) =>
     set((state) => ({
-      items: decrementDineInCartItem(state.items, menuItemId)
+      items: decrementDineInCartItem(state.items, lineId)
     })),
-  remove: (menuItemId) =>
+  remove: (lineId) =>
     set((state) => ({
-      items: removeDineInCartItem(state.items, menuItemId)
+      items: removeDineInCartItem(state.items, lineId)
     })),
-  setNote: (menuItemId, note) =>
+  setNote: (lineId, note) =>
     set((state) => ({
-      items: setDineInCartItemNote(state.items, menuItemId, note)
+      items: setDineInCartItemNote(state.items, lineId, note)
     })),
   clear: () => set({ items: {} })
 }));

@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isInvalidRefreshTokenError } from "@/lib/supabase/auth-errors";
 import { getHostname, sharedSupabaseCookieOptions } from "@/lib/supabase/cookie-guards";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import type { Database } from "@/types/supabase";
@@ -42,6 +43,7 @@ export async function updateSession(request: NextRequest) {
     }
   });
 
-  await supabase.auth.getClaims();
+  const { error } = await supabase.auth.getClaims();
+  if (isInvalidRefreshTokenError(error)) throw error;
   return response;
 }

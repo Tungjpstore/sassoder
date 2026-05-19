@@ -10,7 +10,7 @@ import {
   absoluteAssetUrl,
   absoluteSeoUrl
 } from "@/lib/seo/config";
-import { getAppUrl } from "@/lib/app-url";
+import { getSeoUrl } from "@/lib/app-url";
 
 type SeoMetadataInput = {
   title?: string;
@@ -34,7 +34,7 @@ export function createSeoMetadata({
   const resolvedTitle = title || SEO_DEFAULT_TITLE;
 
   return {
-    metadataBase: new URL(getAppUrl()),
+    metadataBase: new URL(getSeoUrl()),
     title: title
       ? resolvedTitle
       : {

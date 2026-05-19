@@ -1,6 +1,6 @@
 # LogiVN SEO Foundation Report
 
-Generated: 2026-05-11T14:45:01.573Z
+Generated: 2026-05-19T10:40:31.715Z
 Score: 100/100
 
 | Area | Status | Confidence | Finding | Evidence | Fix |

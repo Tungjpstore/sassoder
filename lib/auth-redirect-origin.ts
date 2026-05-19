@@ -13,7 +13,7 @@ export function getOAuthCallbackOrigin(request: Request) {
   if (hostname === LEGACY_ROOT_DOMAIN) return `https://${LEGACY_ROOT_DOMAIN}`;
   if (hostname === ROOT_DOMAIN) return `https://${ROOT_DOMAIN}`;
 
-  if (hostname.endsWith(`.${ROOT_DOMAIN}`)) return `https://${ROOT_DOMAIN}`;
+  if (hostname.endsWith(`.${ROOT_DOMAIN}`)) return `https://${host}`;
 
   return getAppUrl();
 }

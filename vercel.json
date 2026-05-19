@@ -7,8 +7,12 @@
       "schedule": "0 1 * * *"
     },
     {
+      "path": "/api/cron/ai-ops",
+      "schedule": "30 1 * * *"
+    },
+    {
       "path": "/api/cron/reservations/expire",
-      "schedule": "0 2 * * *"
+      "schedule": "45 1 * * *"
     },
     {
       "path": "/api/cron/subscriptions",

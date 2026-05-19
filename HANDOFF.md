@@ -1,6 +1,7 @@
 # LogiVN Project Handoff
 
 Generated: 2026-05-09
+Last updated: 2026-05-17
 
 ## Project Overview
 
@@ -25,7 +26,16 @@ Workspace:
 
 Current branch:
 
-`codex/seo-agentic-runtime`
+`codex/p0-production-clean`
+
+Latest engineering update:
+
+- 2026-05-17: Git worktree hygiene pass completed. Stale `/private/tmp` worktree metadata was pruned, the active worktree is clean, and branch/worktree tracking docs were added: `WORKTREE_MAP.md`, `ACTIVE_BRANCHES.md`, `MIGRATION_LOG.md`, and `RELEASE_NOTES.md`.
+- 2026-05-17: Current release commit is `531a181 chore: consolidate LogiVN production release`; branch is ahead of `origin/codex/p0-production-clean` by 1 commit and `git push --dry-run origin codex/p0-production-clean` succeeded during audit.
+- 2026-05-16: `/admin` P1 RBAC foundation completed locally, not deployed.
+- Migration added: `supabase/migrations/20260516165000_platform_admin_rbac_foundation.sql`.
+- Build hardening added: root layout no longer fetches Google Fonts at build time; it uses CSS font stacks to avoid CI/build network flakiness.
+- Latest local validation passed: `git diff --check`, `npm run lint`, `npx tsc --noEmit --pretty false --incremental false`, `npm test`, `NEXT_PRIVATE_BUILD_WORKER=0 npm run build`.
 
 ## Project Architecture
 
@@ -73,6 +83,11 @@ Important route groups:
 - Dashboard route split from admin:
   - `/dashboard` is for restaurant owners.
   - `/admin` is for LogiVN platform/dev management.
+- Platform `/admin` RBAC foundation:
+  - roles: owner, ops, billing, content, support, readonly
+  - server-side permission guards for platform refresh, content, billing, tenant and user mutations
+  - user-scoped sessions, session events, revocation-ready table design and actor-aware audit logs
+  - bootstrap password fallback remains only before the first platform admin user is created; existing legacy cookies still parse as owner sessions to avoid surprise lockout
 - Landing page and pricing page with SEO metadata.
 - QR/table ordering foundation.
 - Online ordering foundation.

@@ -52,6 +52,8 @@ export type ConfirmedSubscriptionTransition = {
   metadata: Record<string, unknown>;
 };
 
+export const DEFAULT_GRACE_PERIOD_DAYS = 7;
+
 export function addPreciseDays(date: Date, days: number) {
   return new Date(date.getTime() + days * 86_400_000);
 }
@@ -66,6 +68,34 @@ export function getSubscriptionWindowEnd(subscription: Pick<LegacySubscriptionSn
   return subscription.current_period_end || subscription.trial_ends_at;
 }
 
+export function getSubscriptionGraceEnd(
+  subscription: Pick<LegacySubscriptionSnapshot, "current_period_end">,
+  graceDays = DEFAULT_GRACE_PERIOD_DAYS
+) {
+  return subscription.current_period_end ? addPreciseDays(new Date(subscription.current_period_end), graceDays).toISOString() : null;
+}
+
+export function isSubscriptionInGrace(
+  subscription: Pick<LegacySubscriptionSnapshot, "status" | "current_period_end">,
+  now = new Date(),
+  graceDays = DEFAULT_GRACE_PERIOD_DAYS
+) {
+  if (subscription.status !== "past_due" || !subscription.current_period_end) return false;
+  const periodEnd = new Date(subscription.current_period_end).getTime();
+  const graceEnd = new Date(getSubscriptionGraceEnd(subscription, graceDays) ?? "").getTime();
+  const nowTime = now.getTime();
+  return periodEnd < nowTime && nowTime <= graceEnd;
+}
+
+export function getSubscriptionAccessStatus(
+  subscription: Pick<LegacySubscriptionSnapshot, "status" | "current_period_end" | "trial_ends_at">,
+  now = new Date()
+): "active" | "grace" | "expired" | "pending_payment" {
+  if (isSubscriptionInGrace(subscription, now)) return "grace";
+  if (!isSubscriptionUsable(subscription, now)) return "expired";
+  return subscription.status === "pending_payment" ? "pending_payment" : "active";
+}
+
 export function isSubscriptionUsable(subscription: Pick<LegacySubscriptionSnapshot, "status" | "current_period_end" | "trial_ends_at">, now = new Date()) {
   const accessEnd = getSubscriptionWindowEnd(subscription);
   const accessEndValue = accessEnd ?? null;
@@ -78,6 +108,10 @@ export function isSubscriptionUsable(subscription: Pick<LegacySubscriptionSnapsh
   if (subscription.status === "pending_payment") {
     if (!accessEndValue) return false;
     return new Date(accessEndValue).getTime() >= now.getTime();
+  }
+
+  if (subscription.status === "past_due") {
+    return isSubscriptionInGrace(subscription, now);
   }
 
   return false;

@@ -8,7 +8,8 @@ import {
   clearPlatformAdminSession,
   createPlatformAdminSession,
   getPlatformAdminSession,
-  isPlatformAdminAuthenticated,
+  requirePlatformAdminPermission,
+  type PlatformAdminPermission,
   verifyPlatformAdminPassword
 } from "@/lib/platform-admin-auth";
 import {
@@ -25,6 +26,10 @@ import { confirmSubscriptionPayment, rejectSubscriptionPayment } from "@/service
 const DEFAULT_LANDING_BANNER_URL = "/brand/logivn/01-banner-overview-hero-v2.png";
 
 const loginSchema = z.object({
+  email: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() ? value.trim().toLowerCase() : undefined),
+    z.string().email().optional()
+  ),
   password: z.string().min(1)
 });
 
@@ -97,17 +102,42 @@ const planSchema = z.object({
   isActive: z.enum(["true", "false"])
 });
 
-const tenantStatusSchema = z.object({
-  restaurantId: z.string().uuid(),
-  status: z.enum(["active", "suspended", "deleted"]),
-  reason: z.string().trim().max(300).optional()
-});
+const actionReasonSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+  z.string().max(300).optional()
+);
 
-const userStatusSchema = z.object({
-  userId: z.string().uuid(),
-  status: z.enum(["active", "blocked"]),
-  reason: z.string().trim().max(300).optional()
-});
+const tenantStatusSchema = z
+  .object({
+    restaurantId: z.string().uuid(),
+    status: z.enum(["active", "suspended", "deleted"]),
+    reason: actionReasonSchema
+  })
+  .superRefine((value, context) => {
+    if (value.status !== "active" && !value.reason) {
+      context.addIssue({
+        code: "custom",
+        path: ["reason"],
+        message: "Vui lòng nhập lý do khi tạm dừng hoặc xóa tenant."
+      });
+    }
+  });
+
+const userStatusSchema = z
+  .object({
+    userId: z.string().uuid(),
+    status: z.enum(["active", "blocked"]),
+    reason: actionReasonSchema
+  })
+  .superRefine((value, context) => {
+    if (value.status === "blocked" && !value.reason) {
+      context.addIssue({
+        code: "custom",
+        path: ["reason"],
+        message: "Vui lòng nhập lý do khi khóa người dùng."
+      });
+    }
+  });
 
 const paymentActionSchema = z.object({
   paymentId: z.string().uuid(),
@@ -120,10 +150,18 @@ const billingAnomalySchema = z.object({
   paymentId: z.string().uuid().optional()
 });
 
-async function ensurePlatformAdmin() {
-  if (!(await isPlatformAdminAuthenticated())) {
-    redirect("/admin");
-  }
+async function requirePlatformAdmin(permission: PlatformAdminPermission = "platform.read") {
+  return requirePlatformAdminPermission(permission);
+}
+
+function tenantStatusPermission(status: z.infer<typeof tenantStatusSchema>["status"]): PlatformAdminPermission {
+  if (status === "active") return "tenants.restore";
+  if (status === "suspended") return "tenants.suspend";
+  return "tenants.delete";
+}
+
+function userStatusPermission(status: z.infer<typeof userStatusSchema>["status"]): PlatformAdminPermission {
+  return status === "active" ? "users.restore" : "users.block";
 }
 
 function revalidateAdmin() {
@@ -143,20 +181,29 @@ function revalidateAdmin() {
 
 export async function platformAdminLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
   const parsed = loginSchema.safeParse({
+    email: formData.get("email"),
     password: formData.get("password")
   });
 
   if (!parsed.success) {
-    return { error: "Vui lòng nhập mật khẩu nội bộ." };
+    return { error: "Vui lòng nhập email hợp lệ hoặc mật khẩu nội bộ." };
   }
 
-  const verification = await verifyPlatformAdminPassword(parsed.data.password);
+  const verification = await verifyPlatformAdminPassword(
+    parsed.data.email
+      ? { email: parsed.data.email, password: parsed.data.password }
+      : parsed.data.password
+  );
 
   if (!verification.ok) {
-    return { error: "Mật khẩu /admin không đúng." };
+    return { error: "Email hoặc mật khẩu /admin không đúng." };
   }
 
-  await createPlatformAdminSession({ mustChangePassword: verification.mustChangePassword });
+  await createPlatformAdminSession({
+    mustChangePassword: verification.mustChangePassword,
+    user: verification.user,
+    permissions: verification.permissions
+  });
   redirect(verification.mustChangePassword ? "/admin/change-password" : "/admin");
 }
 
@@ -188,7 +235,18 @@ export async function platformAdminChangePasswordAction(
     return { error: "Mật khẩu hiện tại không đúng." };
   }
 
-  await createPlatformAdminSession({ mustChangePassword: false });
+  await createPlatformAdminSession({
+    mustChangePassword: false,
+    user: session.userId
+      ? {
+          id: session.userId,
+          email: session.email ?? "platform-admin",
+          display_name: session.displayName,
+          role: session.role
+        }
+      : undefined,
+    permissions: session.permissions
+  });
   redirect("/admin");
 }
 
@@ -198,12 +256,12 @@ export async function platformAdminLogoutAction() {
 }
 
 export async function refreshPlatformAdminAction() {
-  await ensurePlatformAdmin();
+  await requirePlatformAdmin("platform.refresh");
   revalidateAdmin();
 }
 
 export async function updateBrandSettingAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("content.write");
   const parsed = brandSchema.parse({
     companyName: formData.get("companyName"),
     legalName: formData.get("legalName"),
@@ -221,13 +279,14 @@ export async function updateBrandSettingAction(formData: FormData) {
     value: {
       ...parsed,
       logoUrl: uploadedLogo || parsed.logoUrl || "/brand/logivn/logo-horizontal-nav.png"
-    }
+    },
+    updatedBy: session.actor
   });
   revalidateAdmin();
 }
 
 export async function updateLandingSettingAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("content.write");
   const parsed = landingSchema.parse({
     heroTitle: formData.get("heroTitle"),
     heroSubtitle: formData.get("heroSubtitle"),
@@ -248,13 +307,14 @@ export async function updateLandingSettingAction(formData: FormData) {
     value: {
       ...parsed,
       bannerUrl: uploadedBanner || parsed.bannerUrl || DEFAULT_LANDING_BANNER_URL
-    }
+    },
+    updatedBy: session.actor
   });
   revalidateAdmin();
 }
 
 export async function updateBillingSettingAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("billing.write");
   const parsed = billingSchema.parse({
     bankCode: formData.get("bankCode"),
     bankAccount: formData.get("bankAccount"),
@@ -263,12 +323,12 @@ export async function updateBillingSettingAction(formData: FormData) {
     defaultPlanCode: formData.get("defaultPlanCode")
   });
 
-  await updatePlatformSetting({ key: "billing", value: parsed });
+  await updatePlatformSetting({ key: "billing", value: parsed, updatedBy: session.actor });
   revalidateAdmin();
 }
 
 export async function updateSaasPlanAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("billing.write");
   const parsed = planSchema.parse({
     planId: formData.get("planId"),
     name: formData.get("name"),
@@ -289,64 +349,65 @@ export async function updateSaasPlanAction(formData: FormData) {
       .split("\n")
       .map((feature) => feature.trim())
       .filter(Boolean),
-    isActive: parsed.isActive === "true"
+    isActive: parsed.isActive === "true",
+    updatedBy: session.actor
   });
   revalidateAdmin();
 }
 
 export async function updateTenantPlatformStatusAction(formData: FormData) {
-  await ensurePlatformAdmin();
   const parsed = tenantStatusSchema.parse({
     restaurantId: formData.get("restaurantId"),
     status: formData.get("status"),
     reason: formData.get("reason")
   });
+  const session = await requirePlatformAdmin(tenantStatusPermission(parsed.status));
 
-  await updateTenantPlatformStatus(parsed);
+  await updateTenantPlatformStatus({ ...parsed, updatedBy: session.actor });
   revalidateAdmin();
 }
 
 export async function updatePlatformUserStatusAction(formData: FormData) {
-  await ensurePlatformAdmin();
   const parsed = userStatusSchema.parse({
     userId: formData.get("userId"),
     status: formData.get("status"),
     reason: formData.get("reason")
   });
+  const session = await requirePlatformAdmin(userStatusPermission(parsed.status));
 
-  await updatePlatformUserStatus(parsed);
+  await updatePlatformUserStatus({ ...parsed, updatedBy: session.actor });
   revalidateAdmin();
 }
 
 export async function confirmSubscriptionPaymentAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("billing.write");
   const parsed = paymentActionSchema.parse({
     paymentId: formData.get("paymentId")
   });
 
-  await confirmSubscriptionPayment({ paymentId: parsed.paymentId });
+  await confirmSubscriptionPayment({ paymentId: parsed.paymentId, confirmedBy: session.actor });
   revalidateAdmin();
 }
 
 export async function rejectSubscriptionPaymentAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("billing.write");
   const parsed = paymentActionSchema.parse({
     paymentId: formData.get("paymentId"),
     reason: formData.get("reason")
   });
 
-  await rejectSubscriptionPayment({ paymentId: parsed.paymentId, reason: parsed.reason });
+  await rejectSubscriptionPayment({ paymentId: parsed.paymentId, reason: parsed.reason, rejectedBy: session.actor });
   revalidateAdmin();
 }
 
 export async function resolveBillingAnomalyAction(formData: FormData) {
-  await ensurePlatformAdmin();
+  const session = await requirePlatformAdmin("billing.write");
   const parsed = billingAnomalySchema.parse({
     key: formData.get("key"),
     subscriptionId: formData.get("subscriptionId") || undefined,
     paymentId: formData.get("paymentId") || undefined
   });
 
-  await resolveBillingAnomaly(parsed);
+  await resolveBillingAnomaly({ ...parsed, resolvedBy: session.actor });
   revalidateAdmin();
 }

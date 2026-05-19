@@ -51,6 +51,79 @@ function mapLegacySubscriptionStatusToBillingStatus(status: SubscriptionRow["sta
   return status === "past_due" ? "grace" : "active";
 }
 
+export async function mirrorLegacySubscriptionToBillingV2({
+  subscription,
+  planCode
+}: {
+  subscription: SubscriptionRow;
+  planCode: string;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  try {
+    const { data: v2Plan, error: planError } = await supabase
+      .from("subscription_plans")
+      .select("id,code")
+      .eq("code", normalizeBillingPlanCode(planCode))
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (planError) {
+      if (isMissingSchemaError(planError)) return;
+      throw planError;
+    }
+    if (!v2Plan?.id) return;
+
+    const { data: existingSubscription, error: subscriptionError } = await supabase
+      .from("subscriptions")
+      .select("id,metadata")
+      .eq("restaurant_id", subscription.restaurant_id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (subscriptionError) throw subscriptionError;
+
+    const metadata = {
+      ...((existingSubscription?.metadata && typeof existingSubscription.metadata === "object" && !Array.isArray(existingSubscription.metadata)
+        ? existingSubscription.metadata
+        : {}) as Record<string, unknown>),
+      source: "legacy_bridge",
+      legacySubscriptionId: subscription.id,
+      legacyPlanId: subscription.plan_id
+    };
+
+    const payload = {
+      plan_id: v2Plan.id,
+      status: mapLegacySubscriptionStatusToBillingStatus(subscription.status),
+      interval: "month",
+      started_at: subscription.created_at,
+      current_period_start: subscription.current_period_start,
+      current_period_end: subscription.current_period_end,
+      trial_started_at: subscription.trial_started_at,
+      trial_ends_at: subscription.trial_ends_at,
+      metadata,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existingSubscription?.id) {
+      const { error: updateError } = await supabase.from("subscriptions").update(payload).eq("id", existingSubscription.id);
+      if (updateError) throw updateError;
+      return;
+    }
+
+    const { error: insertError } = await supabase.from("subscriptions").insert({
+      restaurant_id: subscription.restaurant_id,
+      ...payload
+    });
+    if (insertError) throw insertError;
+  } catch (error) {
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[subscription-service] Failed to mirror legacy subscription to billing v2", error);
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function mirrorLegacyPaymentRequestToBillingV2({
   restaurant,
   subscription,
@@ -123,10 +196,29 @@ export async function mirrorLegacyPaymentRequestToBillingV2({
       v2SubscriptionId = createdSubscription.id;
     }
 
-    const invoiceNumber = `LGV-${restaurant.slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)}-${Date.now().toString(36).toUpperCase()}`;
-    const { data: invoice, error: invoiceError } = await supabase
+    const { data: existingPayment, error: existingPaymentError } = await supabase
+      .from("payments")
+      .select("id")
+      .eq("transfer_code", transferContent)
+      .is("deleted_at", null)
+      .maybeSingle();
+    if (existingPaymentError) throw existingPaymentError;
+    if (existingPayment?.id) return;
+
+    const invoiceNumber = `LGV-${restaurant.slug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8)}-${transferContent
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(-14)}`;
+    const { data: existingInvoice, error: existingInvoiceError } = await supabase
       .from("invoices")
-      .insert({
+      .select("id")
+      .eq("invoice_number", invoiceNumber)
+      .maybeSingle();
+    if (existingInvoiceError) throw existingInvoiceError;
+
+    let invoice = existingInvoice;
+    if (!invoice?.id) {
+      const { data: createdInvoice, error: invoiceError } = await supabase.from("invoices").insert({
         restaurant_id: restaurant.id,
         subscription_id: v2SubscriptionId,
         plan_id: targetV2PlanId,
@@ -147,7 +239,9 @@ export async function mirrorLegacyPaymentRequestToBillingV2({
       })
       .select("id")
       .single();
-    if (invoiceError) throw invoiceError;
+      if (invoiceError) throw invoiceError;
+      invoice = createdInvoice;
+    }
 
     const { data: payment, error: paymentError } = await supabase
       .from("payments")

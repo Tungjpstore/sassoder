@@ -1,27 +1,61 @@
 "use client";
 
 import Image from "next/image";
-import { useActionState, useEffect, useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Eye, EyeOff, Flame, ImageIcon, Loader2, Pencil, Plus, Save, Search, Sparkles, Tags, TimerReset, Trash2, Utensils, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from "react";
+import {
+  AlertTriangle,
+  BarChart3,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Flame,
+  ImageIcon,
+  Layers3,
+  Loader2,
+  Pencil,
+  Plus,
+  RadioTower,
+  RefreshCw,
+  Save,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Tags,
+  TimerReset,
+  Trash2,
+  Utensils,
+  X
+} from "lucide-react";
 import {
   createCategoryAction,
+  createMenuModifierGroupAction,
+  createMenuModifierOptionAction,
   createMenuItemAction,
+  deleteMenuModifierGroupAction,
+  deleteMenuModifierOptionAction,
   deleteMenuItemAction,
   importMenuOcrItemsAction,
+  toggleMenuModifierOptionAvailabilityAction,
   toggleMenuItemAvailabilityAction,
+  updateMenuModifierGroupAction,
+  updateMenuModifierOptionAction,
   updateMenuItemAction
 } from "@/app/dashboard/actions";
-import { Badge } from "@/components/ui/badge";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
+import { DashboardMetricCard } from "@/components/dashboard/primitives";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatVnd } from "@/lib/money";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import { cn } from "@/lib/utils";
 import type { AdminMenuCategory, AdminMenuItem } from "@/services/menu-service";
 
 type MenuItemWithCategory = AdminMenuItem & { categoryName: string };
 type AvailabilityFilter = "all" | "available" | "paused";
 type MenuPanelMode = "closed" | "stats" | "aiOcr" | "createCategory" | "createItem" | "editItem";
+type RealtimeState = "connecting" | "connected" | "error";
 type OcrDraft = {
   categories: Array<{
     name: string;
@@ -97,17 +131,38 @@ function menuImportDuplicateKey(value: string) {
     .replace(/\s+/g, " ");
 }
 
+function realtimeLabel(status: RealtimeState) {
+  if (status === "connected") return "Menu live";
+  if (status === "error") return "Live gián đoạn";
+  return "Đang nối live";
+}
+
+function realtimeTone(status: RealtimeState): "green" | "yellow" | "red" {
+  if (status === "connected") return "green";
+  if (status === "error") return "red";
+  return "yellow";
+}
+
+function formatClock(value: Date | null) {
+  if (!value) return "Đang đồng bộ";
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(value);
+}
+
 export function MenuWorkspace({
+  restaurantId,
   categories,
   topItemIds,
   topItemNames,
   restaurantName
 }: {
+  restaurantId: string;
   categories: AdminMenuCategory[];
   topItemIds: string[];
   topItemNames: string[];
   restaurantName: string;
 }) {
+  const router = useRouter();
+  const refreshTimerRef = useRef<number | null>(null);
   const topIdSet = useMemo(() => new Set(topItemIds), [topItemIds]);
   const items = useMemo(
     () => categories.flatMap((category) => category.items.map((item) => ({ ...item, categoryName: category.name }))),
@@ -129,7 +184,63 @@ export function MenuWorkspace({
   const [aiFoodImageError, setAiFoodImageError] = useState<string | null>(null);
   const [aiFoodImageLoading, setAiFoodImageLoading] = useState<"create" | "edit" | null>(null);
   const [appliedAiFoodImageUrl, setAppliedAiFoodImageUrl] = useState<string | null>(null);
+  const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+  const [isRefreshing, startRefreshTransition] = useTransition();
   const [ocrImportState, importOcrFormAction, ocrImportPending] = useActionState<OcrImportActionState | undefined, FormData>(importMenuOcrItemsAction, undefined);
+
+  useEffect(() => {
+    const supabase = createBrowserSupabaseClient();
+    const scheduleRefresh = (delay = 260) => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        startRefreshTransition(() => {
+          router.refresh();
+          setLastSyncedAt(new Date());
+        });
+      }, delay);
+    };
+    const scheduleRealtimeRefresh = () => {
+      setRealtimeState("connected");
+      scheduleRefresh();
+    };
+
+    const channel = supabase
+      .channel(`admin-menu:${restaurantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_categories", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRealtimeRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_items", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRealtimeRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_modifier_groups", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRealtimeRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "menu_modifier_options", filter: `restaurant_id=eq.${restaurantId}` }, scheduleRealtimeRefresh)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") setRealtimeState("connected");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setRealtimeState("error");
+          scheduleRefresh(0);
+        }
+      });
+
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== "hidden" && window.navigator.onLine) scheduleRefresh(0);
+    };
+    const fallbackTimer = window.setInterval(refreshIfVisible, 45_000);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    window.addEventListener("focus", refreshIfVisible);
+
+    return () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      window.clearInterval(fallbackTimer);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+      window.removeEventListener("focus", refreshIfVisible);
+      supabase.removeChannel(channel);
+    };
+  }, [restaurantId, router]);
+
+  function refreshMenu() {
+    startRefreshTransition(() => {
+      router.refresh();
+      setLastSyncedAt(new Date());
+    });
+  }
 
   const selectedItem = selectedItemId ? items.find((item) => item.id === selectedItemId) ?? null : null;
   const aiOcrImportItems = useMemo(() => flattenOcrDraft(aiOcrDraft), [aiOcrDraft]);
@@ -159,10 +270,44 @@ export function MenuWorkspace({
 
   const availableItems = items.filter((item) => item.is_available).length;
   const pausedItems = items.length - availableItems;
+  const missingImageItems = items.filter((item) => !item.image_url).length;
+  const modifierGroupCount = items.reduce((sum, item) => sum + (item.modifierGroups?.length ?? 0), 0);
+  const modifierOptionCount = items.reduce(
+    (sum, item) => sum + (item.modifierGroups ?? []).reduce((groupSum, group) => groupSum + group.options.length, 0),
+    0
+  );
+  const itemsWithModifiers = items.filter((item) => (item.modifierGroups?.length ?? 0) > 0).length;
+  const averagePrice = items.length ? Math.round(items.reduce((sum, item) => sum + item.price, 0) / items.length) : 0;
+  const menuReadiness = items.length
+    ? Math.min(100, Math.round(((availableItems * 0.55 + (items.length - missingImageItems) * 0.3 + Math.min(categories.length, items.length) * 0.15) / items.length) * 100))
+    : 0;
+  const categoryHealth = categories.map((category) => {
+    const active = category.items.filter((item) => item.is_available).length;
+    const missingImage = category.items.filter((item) => !item.image_url).length;
+    return {
+      id: category.id,
+      name: category.name,
+      total: category.items.length,
+      active,
+      missingImage,
+      paused: category.items.length - active
+    };
+  });
+  const menuActionQueue = [
+    ...items
+      .filter((item) => !item.is_available)
+      .slice(0, 3)
+      .map((item) => ({ key: `paused-${item.id}`, label: item.name, meta: `${item.categoryName} · đang tạm hết`, tone: "yellow" as const, itemId: item.id })),
+    ...items
+      .filter((item) => item.is_available && !item.image_url)
+      .slice(0, 3)
+      .map((item) => ({ key: `image-${item.id}`, label: item.name, meta: `${item.categoryName} · thiếu ảnh menu`, tone: "blue" as const, itemId: item.id }))
+  ].slice(0, 5);
   const stats = [
     { label: "Tổng món đang bán", value: availableItems, meta: "Đang hiển thị với khách", icon: Sparkles, tone: "orange" },
     { label: "Món bán chạy", value: topItemIds.length, meta: topItemNames[0] ?? "Chưa có dữ liệu bán", icon: Flame, tone: "orange" },
     { label: "Món tạm hết", value: pausedItems, meta: "Không hiển thị trên menu khách", icon: TimerReset, tone: "red" },
+    { label: "Tùy chọn", value: modifierGroupCount, meta: `${modifierOptionCount} lựa chọn topping/size`, icon: SlidersHorizontal, tone: "green" },
     { label: "Danh mục", value: categories.length, meta: categories.map((category) => category.name).slice(0, 3).join(", ") || "Chưa có", icon: Utensils, tone: "green" }
   ];
 
@@ -465,11 +610,11 @@ export function MenuWorkspace({
                 </Button>
               </div>
               {isApplied ? (
-                <p className="mt-2 rounded-lg border border-[var(--primary)]/16 bg-[var(--primary-soft)] px-3 py-2 text-xs font-bold text-[var(--primary-strong)]">
+                <p className="mt-2 rounded-lg border border-[var(--primary)]/16 bg-[var(--primary-soft)] px-3 py-2 text-xs font-semibold text-[var(--primary-strong)]">
                   Đã gắn ảnh vào form. Bấm {mode === "create" ? "Thêm món" : "Lưu thay đổi"} để lưu vào database và hiển thị trên menu khách.
                 </p>
               ) : null}
-              <p className="mt-2 truncate text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Sẵn sàng áp dụng</p>
+              <p className="mt-2 truncate text-[10px] font-semibold uppercase text-[var(--muted-foreground)]">Sẵn sàng áp dụng</p>
             </div>
           </div>
         ) : null}
@@ -477,21 +622,231 @@ export function MenuWorkspace({
     );
   }
 
+  function modifierRuleText(group: NonNullable<MenuItemWithCategory["modifierGroups"]>[number]) {
+    const minText = group.minSelect > 0 ? `chọn ${group.minSelect}` : "không bắt buộc";
+    const maxText = group.maxSelect === null ? "không giới hạn" : `tối đa ${group.maxSelect}`;
+    return `${minText} · ${maxText}`;
+  }
+
+  function renderModifierManager(item: MenuItemWithCategory) {
+    const groups = item.modifierGroups ?? [];
+
+    return (
+      <section className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
+              <SlidersHorizontal size={15} className="text-[var(--primary)]" />
+              Topping & tùy chọn
+            </p>
+            <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+              {groups.length ? `${groups.length} nhóm · ${groups.reduce((sum, group) => sum + group.options.length, 0)} lựa chọn` : "Chưa có tùy chọn cho món này"}
+            </p>
+          </div>
+          <Badge tone={groups.length ? "green" : "yellow"}>{groups.length ? "Đã cấu hình" : "Chưa có"}</Badge>
+        </div>
+
+        <form action={createMenuModifierGroupAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-3">
+          <input type="hidden" name="itemId" value={item.id} />
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_86px_86px]">
+            <Input name="name" placeholder="Size, Đá, Đường, Topping..." required />
+            <Input name="minSelect" type="number" min={0} max={20} defaultValue={0} aria-label="Tối thiểu" />
+            <Input name="maxSelect" type="number" min={0} max={20} placeholder="Tối đa" aria-label="Tối đa" />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+              <input type="checkbox" name="isRequired" value="true" className="h-4 w-4 accent-[var(--primary)]" />
+              Bắt buộc chọn
+            </label>
+            <Button size="sm" className="shadow-none hover:shadow-none">
+              <Plus size={14} />
+              Thêm nhóm
+            </Button>
+          </div>
+        </form>
+
+        <div className="grid gap-3">
+          {groups.map((group) => (
+            <article key={group.id} className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <form action={updateMenuModifierGroupAction} className="grid gap-2">
+                <input type="hidden" name="itemId" value={item.id} />
+                <input type="hidden" name="groupId" value={group.id} />
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-[var(--foreground)]">{group.name}</p>
+                    <p className="mt-0.5 text-xs font-semibold text-[var(--muted-foreground)]">{modifierRuleText(group)}</p>
+                  </div>
+                  {group.required ? <Badge tone="yellow">Bắt buộc</Badge> : <Badge>Tuỳ chọn</Badge>}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px_76px]">
+                  <Input name="name" defaultValue={group.name} required />
+                  <Input name="minSelect" type="number" min={0} max={20} defaultValue={group.minSelect} aria-label="Tối thiểu" />
+                  <Input name="maxSelect" type="number" min={0} max={20} defaultValue={group.maxSelect ?? ""} aria-label="Tối đa" />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                    <input type="checkbox" name="isRequired" value="true" defaultChecked={group.required} className="h-4 w-4 accent-[var(--primary)]" />
+                    Bắt buộc
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
+                      <Save size={14} />
+                      Lưu nhóm
+                    </Button>
+                  </div>
+                </div>
+              </form>
+
+              <div className="grid gap-2">
+                {group.options.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-3 text-xs font-semibold text-[var(--muted-foreground)]">
+                    Chưa có lựa chọn trong nhóm này.
+                  </div>
+                ) : (
+                  group.options.map((option) => (
+                    <div key={option.id} className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2">
+                      <form action={updateMenuModifierOptionAction} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                        <input type="hidden" name="groupId" value={group.id} />
+                        <input type="hidden" name="optionId" value={option.id} />
+                        <Input name="name" defaultValue={option.name} required />
+                        <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={option.priceDelta} aria-label="Giá cộng thêm" />
+                        <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
+                          <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                            <input type="checkbox" name="isAvailable" value="true" defaultChecked={option.isAvailable !== false} className="h-4 w-4 accent-[var(--primary)]" />
+                            Đang bán · {option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "không phụ phí"}
+                          </label>
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
+                              <Save size={14} />
+                              Lưu
+                            </Button>
+                          </div>
+                        </div>
+                      </form>
+                      <div className="flex flex-wrap gap-2">
+                        <form action={toggleMenuModifierOptionAvailabilityAction}>
+                          <input type="hidden" name="optionId" value={option.id} />
+                          <input type="hidden" name="isAvailable" value={String(option.isAvailable === false)} />
+                          <Button size="sm" variant="ghost" className="shadow-none hover:shadow-none">
+                            {option.isAvailable === false ? <Eye size={14} /> : <EyeOff size={14} />}
+                            {option.isAvailable === false ? "Bật bán" : "Tạm hết"}
+                          </Button>
+                        </form>
+                        <form action={deleteMenuModifierOptionAction}>
+                          <input type="hidden" name="optionId" value={option.id} />
+                          <ConfirmActionButton
+                            size="sm"
+                            variant="danger"
+                            className="shadow-none hover:shadow-none"
+                            confirmTitle="Xóa tùy chọn"
+                            confirmDescription={`Xóa "${option.name}" khỏi nhóm ${group.name}. Các đơn cũ vẫn giữ snapshot đã đặt.`}
+                            confirmLabel="Xóa tùy chọn"
+                          >
+                            <Trash2 size={14} />
+                            Xóa
+                          </ConfirmActionButton>
+                        </form>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <form action={createMenuModifierOptionAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                <input type="hidden" name="groupId" value={group.id} />
+                <Input name="name" placeholder="Trân châu, size L, ít đá..." required />
+                <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={0} aria-label="Giá cộng thêm" />
+                <input type="hidden" name="isAvailable" value="true" />
+                <Button size="sm" className="shadow-none hover:shadow-none sm:col-span-2">
+                  <Plus size={14} />
+                  Thêm lựa chọn
+                </Button>
+              </form>
+
+              <form action={deleteMenuModifierGroupAction} className="border-t border-[var(--border)] pt-2">
+                <input type="hidden" name="groupId" value={group.id} />
+                <ConfirmActionButton
+                  size="sm"
+                  variant="ghost"
+                  className="text-[var(--accent-strong)] shadow-none hover:shadow-none"
+                  confirmTitle="Xóa nhóm tùy chọn"
+                  confirmDescription={`Nhóm "${group.name}" sẽ không còn hiển thị trong menu khách.`}
+                  confirmLabel="Xóa nhóm"
+                >
+                  <Trash2 size={14} />
+                  Xóa nhóm này
+                </ConfirmActionButton>
+              </form>
+            </article>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   const topMenuItems = items.filter((item) => topIdSet.has(item.id)).slice(0, 5);
   const activeCategoryName = categoryFilter === "all" ? "Tất cả danh mục" : categories.find((category) => category.id === categoryFilter)?.name ?? "Danh mục";
 
   return (
-    <div className="grid gap-3">
-      <section className="dashboard-panel p-4">
+    <div className="dashboard-menu-workspace grid gap-3">
+      <section className="admin-hero-panel rounded-[14px] p-4">
+        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={realtimeTone(realtimeState)}>
+                <span className="inline-flex items-center gap-1.5">
+                  <RadioTower size={13} />
+                  {realtimeLabel(realtimeState)}
+                </span>
+              </Badge>
+              <Badge tone={menuReadiness >= 85 ? "green" : menuReadiness >= 65 ? "yellow" : "red"}>{menuReadiness}% sẵn sàng</Badge>
+              <Badge tone={pausedItems ? "yellow" : "green"}>{pausedItems ? `${pausedItems} món tạm hết` : "Không thiếu món"}</Badge>
+            </div>
+            <h2 className="dashboard-page-title mt-3">Menu vận hành & QR ordering</h2>
+            <p className="dashboard-body-copy mt-2 max-w-3xl">
+              Quản lý món, ảnh, giá và tình trạng bán theo nhịp vận hành thực tế. Menu sạch giúp khách gọi món nhanh hơn, bếp ít nhầm hơn và AI có dữ liệu tốt hơn để upsell.
+            </p>
+          </div>
+          <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Cập nhật</span>
+              <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+              <div className={cn("h-full rounded-full", menuReadiness >= 85 ? "bg-[var(--primary)]" : menuReadiness >= 65 ? "bg-[var(--accent)]" : "bg-[var(--tertiary)]")} style={{ width: `${menuReadiness}%` }} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="secondary" onClick={refreshMenu} disabled={isRefreshing} className="h-10 flex-1 shadow-none hover:shadow-none">
+                <RefreshCw size={15} className={isRefreshing ? "animate-spin" : undefined} />
+                Làm mới
+              </Button>
+              <Button type="button" onClick={() => openPanel("createItem")} className="h-10 flex-1 shadow-none hover:shadow-none">
+                <Plus size={15} />
+                Thêm món
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="dashboard-menu-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <DashboardMetricCard icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
+        <DashboardMetricCard icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
+        <DashboardMetricCard icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
+        <DashboardMetricCard icon={SlidersHorizontal} label="Topping" value={modifierGroupCount} meta={`${itemsWithModifiers} món có tùy chọn`} tone={modifierGroupCount ? "green" : "yellow"} />
+        <DashboardMetricCard icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
+      </section>
+
+      <section className="dashboard-panel dashboard-menu-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu operations</p>
-            <h2 className="mt-1 text-xl font-semibold text-[var(--foreground)]">Danh sách món đang quản lý</h2>
+            <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu operations</p>
+            <h2 className="dashboard-section-title mt-1">Danh sách món đang quản lý</h2>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">
               {availableItems} món đang bán · {pausedItems} món tạm hết · {categories.length} danh mục
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="dashboard-menu-toolbar flex flex-wrap gap-2">
             <Button type="button" variant="secondary" className="h-10 shadow-none hover:shadow-none" onClick={() => openPanel("stats")}>
               <BarChart3 size={16} />
               Tổng quan
@@ -511,29 +866,29 @@ export function MenuWorkspace({
           </div>
         </div>
 
-        <div className="mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_210px_190px]">
-            <label className="relative grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+        <div className="dashboard-menu-filter-grid mb-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_210px_190px]">
+            <label className="relative grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Tìm món
               <Search className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-[var(--outline)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Tên món hoặc danh mục..."
-                className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
+                className="h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none focus:border-[var(--primary)]"
               />
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Danh mục
-              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả danh mục</option>
                 {categories.map((category) => (
                   <option key={category.id} value={category.id}>{category.name}</option>
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+            <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
               Trạng thái
-              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
+              <select value={availabilityFilter} onChange={(event) => setAvailabilityFilter(event.target.value as AvailabilityFilter)} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold normal-case tracking-normal outline-none">
                 <option value="all">Tất cả</option>
                 <option value="available">Đang bán</option>
                 <option value="paused">Tạm hết</option>
@@ -541,11 +896,90 @@ export function MenuWorkspace({
             </label>
         </div>
 
-        <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+        <div className="dashboard-menu-insight-grid mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Layers3 size={16} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-semibold text-[var(--foreground)]">Danh mục & độ phủ</h3>
+              </div>
+              <Badge tone={categories.length ? "green" : "yellow"}>{categories.length || "Chưa có"}</Badge>
+            </div>
+            {categoryHealth.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                Chưa có danh mục. Tạo danh mục trước để menu khách dễ quét và bếp dễ đọc.
+              </div>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+                {categoryHealth.map((category) => {
+                  const activeRate = Math.round((category.active / Math.max(category.total, 1)) * 100);
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setCategoryFilter(category.id)}
+                      className={cn(
+                        "rounded-lg border bg-[var(--surface)] p-3 text-left transition hover:border-[var(--primary)]",
+                        categoryFilter === category.id ? "border-[var(--primary)] ring-2 ring-[var(--primary)]/15" : "border-[var(--border)]"
+                      )}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="truncate text-sm font-semibold text-[var(--foreground)]">{category.name}</p>
+                        <span className="text-xs font-semibold text-[var(--primary)]">{category.active}/{category.total}</span>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
+                        <div className={cn("h-full rounded-full", category.paused ? "bg-[var(--accent)]" : "bg-[var(--primary)]")} style={{ width: `${activeRate}%` }} />
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-[var(--muted-foreground)]">
+                        <span>{activeRate}% đang bán</span>
+                        {category.missingImage ? <span className="text-[var(--accent-strong)]">{category.missingImage} thiếu ảnh</span> : null}
+                        {category.paused ? <span>{category.paused} tạm hết</span> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle size={16} className={menuActionQueue.length ? "text-[var(--accent)]" : "text-[var(--primary)]"} />
+                <h3 className="text-sm font-semibold text-[var(--foreground)]">Cần hoàn thiện</h3>
+              </div>
+              <Badge tone={menuActionQueue.length ? "yellow" : "green"}>{menuActionQueue.length || "Ổn"}</Badge>
+            </div>
+            <div className="grid gap-2">
+              {menuActionQueue.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+                  Menu đã đủ trạng thái cơ bản. Có thể tập trung tối ưu giá, combo và upsell.
+                </div>
+              ) : (
+                menuActionQueue.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => openPanel("editItem", item.itemId)}
+                    className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-sm font-semibold text-[var(--foreground)]">{item.label}</span>
+                      <Badge tone={item.tone}>{item.tone === "yellow" ? "Tạm hết" : "Thiếu ảnh"}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{item.meta}</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="dashboard-menu-category-rail mb-3 flex gap-2 overflow-x-auto pb-1">
           <button
             type="button"
             onClick={() => setCategoryFilter("all")}
-            className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
+            className={`h-11 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === "all" ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
           >
             Tất cả ({items.length})
           </button>
@@ -554,15 +988,15 @@ export function MenuWorkspace({
               key={category.id}
               type="button"
               onClick={() => setCategoryFilter(category.id)}
-              className={`h-9 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
+              className={`h-11 shrink-0 rounded-lg border px-3 text-sm font-semibold ${categoryFilter === category.id ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"}`}
             >
               {category.name} ({category.items.length})
             </button>
           ))}
         </div>
 
-        <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
-          <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase tracking-[0.06em] max-lg:hidden">
+        <div className="dashboard-menu-table overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)]">
+          <div className="dashboard-muted-header grid grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] gap-3 px-4 py-3 text-xs font-semibold uppercase max-lg:hidden">
             <span>Ảnh</span>
             <span>Món ăn</span>
             <span>Danh mục</span>
@@ -570,7 +1004,7 @@ export function MenuWorkspace({
             <span>Trạng thái</span>
             <span>Thao tác</span>
           </div>
-          <div className="divide-y divide-[var(--border)]">
+          <div className="dashboard-menu-item-list divide-y divide-[var(--border)]">
             {filteredItems.length === 0 && (
               <div className="grid min-h-48 place-items-center px-5 py-8 text-sm font-semibold text-[var(--muted-foreground)]">
                 Không có món phù hợp với {activeCategoryName.toLowerCase()}.
@@ -587,22 +1021,28 @@ export function MenuWorkspace({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") openPanel("editItem", item.id);
                   }}
-                  className={`dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 text-left lg:grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] ${isSelected ? "dashboard-selected-row" : ""}`}
+                  className={`dashboard-menu-item-row dashboard-selectable-row grid cursor-pointer gap-3 px-4 py-3 text-left lg:grid-cols-[64px_minmax(220px,1.5fr)_minmax(120px,0.7fr)_120px_120px_180px] ${isSelected ? "dashboard-selected-row" : ""}`}
                 >
-                  <span className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 48)}</span>
-                  <span className="min-w-0">
+                  <span className="dashboard-menu-image grid h-12 w-12 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 48)}</span>
+                  <span className="dashboard-menu-name min-w-0">
                     <span className="block truncate text-sm font-semibold">{item.name}</span>
                     <span className="font-mono text-xs font-medium text-[var(--muted-foreground)]">Mã: CF{String(index + 1).padStart(3, "0")}</span>
                     {topIdSet.has(item.id) ? <span className="mt-1 block text-xs font-semibold text-[var(--accent)]">Bán chạy</span> : null}
+                    {(item.modifierGroups?.length ?? 0) > 0 ? (
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-[var(--primary-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--primary)]">
+                        <SlidersHorizontal size={12} />
+                        {item.modifierGroups?.length} nhóm tùy chọn
+                      </span>
+                    ) : null}
                   </span>
-                  <span className="text-sm font-medium">{item.categoryName}</span>
-                  <span className="metric-number text-sm font-semibold">{formatVnd(item.price)}</span>
-                  <span><Badge tone={item.is_available ? "green" : "yellow"}>{item.is_available ? "Đang bán" : "Tạm hết"}</Badge></span>
-                  <span className="flex flex-wrap gap-2" onClick={(event) => event.stopPropagation()}>
+                  <span className="dashboard-menu-field text-sm font-medium" data-label="Danh mục">{item.categoryName}</span>
+                  <span className="dashboard-menu-field metric-number text-sm font-semibold" data-label="Giá bán">{formatVnd(item.price)}</span>
+                  <span className="dashboard-menu-field" data-label="Trạng thái"><Badge tone={item.is_available ? "green" : "yellow"}>{item.is_available ? "Đang bán" : "Tạm hết"}</Badge></span>
+                  <span className="dashboard-menu-actions flex flex-wrap gap-2" data-label="Thao tác" onClick={(event) => event.stopPropagation()}>
                     <button
                       type="button"
                       onClick={() => openPanel("editItem", item.id)}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]"
+                      className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]"
                     >
                       <Pencil size={14} />
                       Sửa
@@ -610,7 +1050,7 @@ export function MenuWorkspace({
                     <form action={toggleMenuItemAvailabilityAction}>
                       <input type="hidden" name="itemId" value={item.id} />
                       <input type="hidden" name="isAvailable" value={String(!item.is_available)} />
-                      <button className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
+                      <button className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-xs font-semibold text-[var(--foreground)]" aria-label="Đổi trạng thái">
                         {item.is_available ? <EyeOff size={14} /> : <Eye size={14} />}
                         {item.is_available ? "Tạm hết" : "Bật bán"}
                       </button>
@@ -638,8 +1078,8 @@ export function MenuWorkspace({
           >
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Menu</p>
-                <h3 id="menu-workspace-drawer-title" className="mt-1 text-xl font-semibold text-[var(--foreground)]">
+                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu</p>
+                <h3 id="menu-workspace-drawer-title" className="dashboard-section-title mt-1">
                   {panelMode === "stats" && "Tổng quan menu"}
                   {panelMode === "aiOcr" && "Nhập menu nhanh"}
                   {panelMode === "createCategory" && "Thêm danh mục"}
@@ -647,14 +1087,14 @@ export function MenuWorkspace({
                   {panelMode === "editItem" && (selectedItem?.name ?? "Sửa món")}
                 </h3>
               </div>
-              <button type="button" onClick={closePanel} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]" aria-label="Đóng bảng nổi">
+              <button type="button" onClick={closePanel} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]" aria-label="Đóng bảng nổi">
                 <X size={18} />
               </button>
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {uploadError ? (
-                <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">
+                <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">
                   {uploadError}
                 </div>
               ) : null}
@@ -667,7 +1107,7 @@ export function MenuWorkspace({
                       return (
                         <div key={stat.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
                           <span className="dashboard-stat-icon bg-[var(--soft-surface)]"><Icon size={18} /></span>
-                          <p className="mt-3 text-xs font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">{stat.label}</p>
+                          <p className="mt-3 text-xs font-semibold uppercase text-[var(--muted-foreground)]">{stat.label}</p>
                           <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stat.value}</p>
                           <p className="mt-1 text-sm text-[var(--muted-foreground)]">{stat.meta}</p>
                         </div>
@@ -681,7 +1121,7 @@ export function MenuWorkspace({
                         <p className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm text-[var(--muted-foreground)]">Chưa có dữ liệu bán chạy thật.</p>
                       ) : (
                         topMenuItems.map((item) => (
-                          <button key={item.id} type="button" onClick={() => openPanel("editItem", item.id)} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-left">
+                          <button key={item.id} type="button" onClick={() => openPanel("editItem", item.id)} className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2 text-left">
                             <span className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg bg-[var(--soft-surface)]">{renderImage(item, 40)}</span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-sm font-semibold">{item.name}</span>
@@ -734,12 +1174,12 @@ export function MenuWorkspace({
                     />
                   </label>
                   {aiOcrError ? (
-                    <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">{aiOcrError}</div>
+                    <div className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">{aiOcrError}</div>
                   ) : null}
                   {ocrImportState?.success ? (
                     <div
                       role="status"
-                      className={`rounded-xl border px-4 py-3 text-sm font-bold ${
+                      className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
                         (ocrImportState.inserted ?? 0) > 0
                           ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary-strong)]"
                           : "border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
@@ -754,7 +1194,7 @@ export function MenuWorkspace({
                     </div>
                   ) : null}
                   {ocrImportState?.error ? (
-                    <div role="alert" className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-bold text-[var(--accent-strong)]">
+                    <div role="alert" className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">
                       {ocrImportState.error}
                     </div>
                   ) : null}
@@ -780,7 +1220,7 @@ export function MenuWorkspace({
                               <p className="truncate text-sm font-semibold text-[var(--foreground)]">{item.name}</p>
                               <p className="text-xs font-medium text-[var(--muted-foreground)]">
                                 {item.categoryName}
-                                {item.isDuplicate ? <span className="ml-2 font-bold text-[var(--accent)]">Đã có, sẽ bỏ qua</span> : null}
+                                {item.isDuplicate ? <span className="ml-2 font-semibold text-[var(--accent)]">Đã có, sẽ bỏ qua</span> : null}
                               </p>
                             </div>
                             <p className="metric-number text-right text-sm font-semibold">{formatVnd(item.price)}</p>
@@ -834,7 +1274,7 @@ export function MenuWorkspace({
                   <input type="hidden" name="image" defaultValue="" />
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none" required>
+                    <select name="categoryId" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none" required>
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
@@ -862,7 +1302,8 @@ export function MenuWorkspace({
               )}
 
               {panelMode === "editItem" && selectedItem && (
-                <form key={selectedItem.id} action={updateMenuItemAction} onSubmit={handleMenuFormSubmit} className="grid gap-4">
+                <div key={selectedItem.id} className="grid gap-4">
+                <form action={updateMenuItemAction} onSubmit={handleMenuFormSubmit} className="grid gap-4">
                   <input type="hidden" name="itemId" value={selectedItem.id} />
                   <input type="hidden" name="image" defaultValue="" />
                   <div className="flex items-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
@@ -879,7 +1320,7 @@ export function MenuWorkspace({
                   </label>
                   <label className="grid gap-2 text-sm font-semibold">
                     Danh mục
-                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
+                    <select name="categoryId" defaultValue={selectedItem.category_id} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
                       {categories.map((category) => (
                         <option key={category.id} value={category.id}>{category.name}</option>
                       ))}
@@ -919,6 +1360,8 @@ export function MenuWorkspace({
                     </ConfirmActionButton>
                   </div>
                 </form>
+                {renderModifierManager(selectedItem)}
+                </div>
               )}
             </div>
           </aside>

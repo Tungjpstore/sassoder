@@ -1,5 +1,8 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { isPublicDashboardAuthPath, safeProtectedDashboardNextPath } from "@/lib/auth-flow-routes";
+import { DASHBOARD_SMOKE_SESSION_COOKIE, dashboardSmokeAuthEnabled, parseDashboardSmokeCookie } from "@/lib/dashboard-smoke-auth";
+import { isInvalidRefreshTokenError } from "@/lib/supabase/auth-errors";
 import {
   cookieNamesFromHeader,
   getHostname,
@@ -12,19 +15,22 @@ import {
 import { updateSession } from "@/lib/supabase/proxy";
 import { getTenantSlugFromHost, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
-const publicDashboardPaths = new Set([
-  "/dashboard/login",
-  "/dashboard/register",
-  "/dashboard/setup",
-  "/dashboard/verify-email",
-  "/dashboard/forgot-password",
-  "/dashboard/reset-password"
-]);
+const staffSlugLoginPathPattern = /^\/staff\/[a-z0-9-]{2,80}\/login$/;
+const staffSubdomainSlugPathPattern = /^\/([a-z0-9-]{2,80})(?:\/login)?$/;
 
 function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
     .getAll()
     .some((cookie) => isSupabaseAuthSessionCookieName(cookie.name));
+}
+
+function hasDashboardSmokeAuthCookie(request: NextRequest) {
+  if (!dashboardSmokeAuthEnabled()) return false;
+  const secret = process.env.DASHBOARD_SMOKE_AUTH_SECRET;
+  if (!secret) return false;
+
+  const parsed = parseDashboardSmokeCookie(request.cookies.get(DASHBOARD_SMOKE_SESSION_COOKIE)?.value);
+  return parsed?.secret === secret;
 }
 
 function isServerActionRequest(request: NextRequest) {
@@ -64,10 +70,15 @@ function shouldBypassProxySessionRefresh(request: NextRequest, pathname: string)
   return (
     pathname.startsWith("/auth/") ||
     pathname.startsWith("/api/") ||
-    publicDashboardPaths.has(pathname) ||
+    (isPublicDashboardAuthPath(pathname) && !hasSupabaseAuthCookie(request)) ||
+    isPublicStaffPath(pathname) ||
     isServerActionRequest(request) ||
     isPrefetchOrRscRequest(request)
   );
+}
+
+export function isExpectedAuthSessionRepairError(error: unknown) {
+  return isInvalidRefreshTokenError(error);
 }
 
 function authTransientCookieNames(request: NextRequest) {
@@ -101,8 +112,14 @@ function appendExpiredCookie(response: NextResponse, request: NextRequest, name:
 
 function repairOversizedSupabaseCookieHeader(request: NextRequest) {
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard/login";
-  url.search = "?session=cleared&reason=header";
+  url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
+  url.search = "";
+  url.searchParams.set("session", "cleared");
+  url.searchParams.set("reason", "header");
+  const next = protectedDashboardNextPath(request);
+  if (next && url.pathname === "/dashboard/login") {
+    url.searchParams.set("next", next);
+  }
 
   const response = NextResponse.redirect(url);
   response.headers.set("Cache-Control", "no-store");
@@ -116,8 +133,14 @@ function repairOversizedSupabaseCookieHeader(request: NextRequest) {
 
 function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") {
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard/login";
-  url.search = `?session=cleared&reason=${encodeURIComponent(reason)}`;
+  url.pathname = loginRedirectPathForPathname(request.nextUrl.pathname);
+  url.search = "";
+  url.searchParams.set("session", "cleared");
+  url.searchParams.set("reason", reason);
+  const next = protectedDashboardNextPath(request);
+  if (next && url.pathname === "/dashboard/login") {
+    url.searchParams.set("next", next);
+  }
 
   const response = pathnameNeedsLoginRedirect(request.nextUrl.pathname)
     ? NextResponse.redirect(url)
@@ -136,7 +159,20 @@ function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") 
 }
 
 function pathnameNeedsLoginRedirect(pathname: string) {
-  return pathname.startsWith("/dashboard") && !publicDashboardPaths.has(pathname);
+  return pathname.startsWith("/dashboard") && !isPublicDashboardAuthPath(pathname);
+}
+
+function loginRedirectPathForPathname(pathname: string) {
+  return pathname.startsWith("/dashboard/staff/mobile") ? "/staff/login" : "/dashboard/login";
+}
+
+function protectedDashboardNextPath(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  return safeProtectedDashboardNextPath(`${pathname}${request.nextUrl.search}`);
+}
+
+function isPublicStaffPath(pathname: string) {
+  return pathname === "/staff/login" || staffSlugLoginPathPattern.test(pathname);
 }
 
 function appendExpiredTransientCookies(response: NextResponse, request: NextRequest) {
@@ -163,16 +199,36 @@ export async function proxy(request: NextRequest) {
     return noStoreNoContent();
   }
 
+  if (host === `staff.${ROOT_DOMAIN}` && (pathname === "/" || pathname === "/login")) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/staff/login";
+    return NextResponse.rewrite(url);
+  }
+
+  if (host === `staff.${ROOT_DOMAIN}`) {
+    const slugMatch = pathname.match(staffSubdomainSlugPathPattern);
+    if (slugMatch?.[1]) {
+      const url = request.nextUrl.clone();
+      url.pathname = `/staff/${slugMatch[1]}/login`;
+      return NextResponse.rewrite(url);
+    }
+  }
+
   if (
     pathname.startsWith("/dashboard") &&
-    !publicDashboardPaths.has(pathname) &&
+    !isPublicDashboardAuthPath(pathname) &&
     shouldApplyDashboardPageGate(request) &&
     !hasSupabaseAuthCookie(request) &&
+    !hasDashboardSmokeAuthCookie(request) &&
     !isServerActionRequest(request)
   ) {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard/login";
+    url.pathname = loginRedirectPathForPathname(pathname);
     url.search = "";
+    const next = protectedDashboardNextPath(request);
+    if (next && url.pathname === "/dashboard/login") {
+      url.searchParams.set("next", next);
+    }
     return NextResponse.redirect(url);
   }
 
@@ -234,10 +290,12 @@ export async function proxy(request: NextRequest) {
     const response = await updateSession(request);
     return appendExpiredTransientCookies(response, request);
   } catch (error) {
-    console.error("[proxy] Supabase session refresh failed", {
-      pathname,
-      message: error instanceof Error ? error.message : String(error)
-    });
+    if (!isExpectedAuthSessionRepairError(error)) {
+      console.error("[proxy] Supabase session refresh failed", {
+        pathname,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
     return appendExpiredTransientCookies(repairInvalidSupabaseSession(request), request);
   }
 }

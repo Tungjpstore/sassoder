@@ -1,15 +1,23 @@
 import { AppError } from "@/lib/response";
+import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
+import { shouldReturnOnlineOrderToKitchenAfterPayment } from "@/lib/orders/order-state-machine";
+import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitlement";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { buildVietQrUrl } from "@/lib/vietqr";
+import { invalidateAdminReportCache } from "@/services/dashboard-report-service";
+import { invalidateRestaurantOrderCache } from "@/services/order-service";
 import { billStatusToOrderPaymentState, ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
+import { completeReservationForBill } from "@/services/reservation-service";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
+import { getPublicTable } from "@/services/table-service";
+import { assertPublicTenantActive } from "@/services/tenant-status-guard";
+import { writeOperationalEvent } from "@/services/operational-observability-service";
 import type { FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
 
 type PaymentInstructionOrder = Pick<OrderDto, "id" | "total" | "paymentMethod" | "paymentConfig" | "bill">;
-type ServiceSupabaseClient = ReturnType<typeof createAdminSupabaseClient> | Awaited<ReturnType<typeof createServerSupabaseClient>>;
+type ServiceSupabaseClient = ReturnType<typeof createAdminSupabaseClient>;
 
 type PaymentOrderRow = {
   id: string;
@@ -20,6 +28,7 @@ type PaymentOrderRow = {
   payment_status?: PaymentStatus | null;
   fulfillment_type?: FulfillmentType;
   bill_id?: string | null;
+  customer_session_id?: string | null;
   bill:
     | {
         id: string;
@@ -27,6 +36,7 @@ type PaymentOrderRow = {
         total: number;
         payment_method: PaymentMethod | null;
         paid_at?: string | null;
+        customer_session_id?: string | null;
       }
     | Array<{
         id: string;
@@ -34,6 +44,7 @@ type PaymentOrderRow = {
         total: number;
         payment_method: PaymentMethod | null;
         paid_at?: string | null;
+        customer_session_id?: string | null;
       }>
     | null;
 };
@@ -41,6 +52,7 @@ type PaymentOrderRow = {
 type CustomerOrderAccessInput = {
   restaurantSlug: string;
   tableId: string;
+  tableAccessToken?: string;
   customerSessionId?: string;
 };
 
@@ -62,28 +74,82 @@ function startPaymentLogStatus(method: PaymentMethod) {
   return method === "QR" ? "pending" : "waiting_confirm";
 }
 
+function invalidatePaymentDerivedCaches(restaurantId: string) {
+  invalidateRestaurantOrderCache(restaurantId);
+  invalidateRestaurantDashboardCache(restaurantId);
+  invalidateAdminReportCache(restaurantId);
+}
+
 async function getRestaurantIdBySlug(slug: string) {
   const supabase = createAdminSupabaseClient();
-  const { data: restaurant, error } = await supabase.from("restaurants").select("id").eq("slug", slug).single();
+  const { data: restaurant, error } = await supabase.from("restaurants").select("id,platform_status,deleted_at").eq("slug", slug).single();
   throwIfSupabaseError(error);
   if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
+  assertPublicTenantActive(restaurant);
   return restaurant.id;
+}
+
+async function getRestaurantAccessBySlug(slug: string) {
+  const supabase = createAdminSupabaseClient();
+  const { data: restaurant, error } = await supabase
+    .from("restaurants")
+    .select("id,allow_legacy_qr,platform_status,deleted_at")
+    .eq("slug", slug)
+    .single();
+  throwIfSupabaseError(error);
+  if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
+  assertPublicTenantActive(restaurant);
+  return restaurant;
 }
 
 async function getCustomerPaymentOrder(orderId: string, access: CustomerOrderAccessInput) {
   const supabase = createAdminSupabaseClient();
-  const restaurantId = await getRestaurantIdBySlug(access.restaurantSlug);
+  const restaurant = await getRestaurantAccessBySlug(access.restaurantSlug);
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,restaurant_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
+    .select("id,restaurant_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,customer_session_id,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
     .eq("id", orderId)
-    .eq("restaurant_id", restaurantId)
+    .eq("restaurant_id", restaurant.id)
     .eq("table_id", access.tableId)
     .single();
 
   throwIfSupabaseError(error);
   if (!order) throw new AppError("Không tìm thấy đơn hàng cho bàn này", 404);
-  return order as unknown as PaymentOrderRow;
+  const typedOrder = order as unknown as PaymentOrderRow;
+  const bill = firstOrNull(typedOrder.bill);
+  const table = await getPublicTable(restaurant.id, access.tableId, access.tableAccessToken, {
+    allowLegacyQr: restaurant.allow_legacy_qr
+  });
+
+  if (
+    !canAccessDineInOrder({
+      customerSessionId: access.customerSessionId,
+      orderCustomerSessionId: typedOrder.customer_session_id,
+      orderStatus: typedOrder.status,
+      billCustomerSessionId: bill?.customer_session_id,
+      billStatus: bill?.status,
+      hasValidTableQr: Boolean(table)
+    })
+  ) {
+    writeOperationalEvent({
+      area: "payment",
+      event: "customer_payment_access_mismatch",
+      status: "warn",
+      restaurantId: restaurant.id,
+      metadata: {
+        orderId,
+        tableId: access.tableId,
+        hasCustomerSession: Boolean(access.customerSessionId),
+        orderHasCustomerSession: Boolean(typedOrder.customer_session_id),
+        billId: bill?.id ?? null,
+        billStatus: bill?.status ?? null,
+        hasValidTableQr: Boolean(table)
+      }
+    });
+    throw new AppError("Phiên gọi món không khớp với đơn hàng này", 403);
+  }
+
+  return typedOrder;
 }
 
 async function getRemotePaymentOrder(orderId: string, access: RemoteOrderAccessInput) {
@@ -370,7 +436,7 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
       source: "customer_bill_checkout"
     });
 
-    invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+    invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
   }
 
@@ -422,7 +488,7 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
     amount: typedOrder.total,
     source: "customer_checkout"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
 
@@ -526,7 +592,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       source: "customer_bill_button"
     });
 
-    invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+    invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
   }
 
@@ -575,7 +641,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
     amount: typedOrder.total,
     source: "customer_button"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
 
@@ -628,31 +694,37 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
     amount: typedOrder.total,
     source: "remote_order_customer_paid_button"
   });
-  invalidateRestaurantDashboardCache(typedOrder.restaurant_id);
+  invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getRemotePaymentOrder(orderId, access);
 }
 
 export async function confirmPayment(restaurantId: string, orderId: string) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const typedOrder = await getMerchantPaymentOrder(supabase, restaurantId, orderId);
   const bill = firstOrNull(typedOrder.bill);
 
   if (bill) {
+    const billPaymentMethod = bill.payment_method ?? typedOrder.payment_method;
     if (bill.status === "paid") {
+      if (billPaymentMethod) {
+        await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(billPaymentMethod));
+      }
       await syncOrdersToBillState(supabase, {
         restaurantId,
         billId: bill.id,
         billStatus: "paid",
-        paymentMethod: bill.payment_method ?? typedOrder.payment_method ?? "QR",
+        paymentMethod: billPaymentMethod ?? "QR",
         paidAt: bill.paid_at ?? null
       });
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         billId: bill.id,
         amount: bill.total,
-        method: bill.payment_method ?? typedOrder.payment_method ?? "QR",
+        method: billPaymentMethod ?? "QR",
         source: "merchant_bill_manual_confirm"
       });
+      await completeReservationForBill(restaurantId, bill.id);
+      invalidatePaymentDerivedCaches(restaurantId);
       return getMerchantPaymentOrder(supabase, restaurantId, orderId);
     }
     if (bill.status === "cancelled") {
@@ -664,6 +736,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     if (!bill.payment_method) {
       throw new AppError("Hóa đơn bàn chưa chọn phương thức thanh toán", 400);
     }
+    await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(bill.payment_method));
 
     const now = new Date().toISOString();
     const { data: updatedBill, error: billError } = await supabase
@@ -694,6 +767,8 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
           method: currentBill.payment_method ?? bill.payment_method,
           source: "merchant_bill_manual_confirm"
         });
+        await completeReservationForBill(restaurantId, currentBill.id);
+        invalidatePaymentDerivedCaches(restaurantId);
         return currentOrder;
       }
       throw new AppError("Không thể xác nhận thanh toán cho hóa đơn này", 409);
@@ -713,13 +788,15 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
       method: bill.payment_method,
       source: "merchant_bill_manual_confirm"
     });
+    await completeReservationForBill(restaurantId, bill.id);
 
-    invalidateRestaurantDashboardCache(restaurantId);
+    invalidatePaymentDerivedCaches(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);
   }
 
   if (isPaidOrder(typedOrder)) {
     if (typedOrder.payment_method) {
+      await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         amount: typedOrder.total,
@@ -727,6 +804,7 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         source: "merchant_manual_confirm"
       });
     }
+    invalidatePaymentDerivedCaches(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);
   }
   if (typedOrder.status === "cancelled") {
@@ -742,17 +820,15 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
   if (!typedOrder.payment_method) {
     throw new AppError("Đơn hàng chưa chọn phương thức thanh toán", 400);
   }
+  await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
 
   const now = new Date().toISOString();
-  const shouldReturnToKitchen =
-    typedOrder.bill_id === null &&
-    typedOrder.fulfillment_type !== "DINE_IN" &&
-    (
-      typedOrder.status === "waiting_confirm" ||
-      typedOrder.status === "waiting_payment" ||
-      typedOrder.payment_status === "waiting_confirm" ||
-      typedOrder.payment_status === "waiting_payment"
-    );
+  const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
+    status: typedOrder.status,
+    paymentStatus: typedOrder.payment_status ?? null,
+    fulfillmentType: typedOrder.fulfillment_type,
+    billId: typedOrder.bill_id ?? null
+  });
 
   const { data: updated, error: updateError } = await supabase
     .from("orders")
@@ -788,6 +864,6 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     method: typedOrder.payment_method,
     source: "merchant_manual_confirm"
   });
-  invalidateRestaurantDashboardCache(restaurantId);
+  invalidatePaymentDerivedCaches(restaurantId);
   return getMerchantPaymentOrder(supabase, restaurantId, orderId);
 }

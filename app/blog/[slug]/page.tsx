@@ -97,6 +97,7 @@ export default async function BlogArticlePage({ params }: { params: Promise<{ sl
           <LogiVNLogo href="/" className="h-10" priority />
           <nav aria-label="Điều hướng bài viết" className="article-nav-links">
             <Link href="/">Trang chủ</Link>
+            <Link href="/demo">Demo</Link>
             <Link href="/pricing">Bảng giá</Link>
             <Link href="/blog">Blog</Link>
           </nav>
@@ -399,9 +400,9 @@ function BlogTopicHubPage({ hub }: { hub: BlogTopicHub }) {
               <div className="article-side-card">
                 <span>Bước tiếp theo</span>
                 <h2>Muốn thử trên quán thật?</h2>
-                <p>Đi từ nhóm bài viết sang nền tảng hoặc bảng giá để chọn gói phù hợp với mô hình vận hành của quán.</p>
-                <Link href="/pricing">
-                  Xem bảng giá
+                <p>Đi từ nhóm bài viết sang demo hoặc bảng giá để chọn gói phù hợp với mô hình vận hành của quán.</p>
+                <Link href="/demo">
+                  Xem demo
                   <ArrowRight size={16} />
                 </Link>
               </div>
@@ -503,6 +504,13 @@ const styles = `
   font-weight: 760;
 }
 
+.article-nav-links a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding-inline: 8px;
+}
+
 .article-nav-links a:hover {
   color: var(--article-green);
 }
@@ -520,6 +528,7 @@ const styles = `
 
 .article-back {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 8px;
   color: var(--article-green);
@@ -687,6 +696,9 @@ const styles = `
 }
 
 .article-faq summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
   color: var(--article-green-strong);
   cursor: pointer;
   font-weight: 850;
@@ -829,6 +841,11 @@ const styles = `
 
   .article-hero {
     padding-top: 34px;
+  }
+
+  .article-hero h1 {
+    font-size: clamp(2.35rem, 10vw, 3rem);
+    line-height: 1;
   }
 }
 `;

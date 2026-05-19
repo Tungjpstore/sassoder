@@ -26,6 +26,7 @@ import {
 } from "@/components/dashboard/action-center-cache";
 import { orderStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { orderNeedsPaymentAttention, resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 import type { OrderDto, ServiceRequestDto } from "@/types/domain";
@@ -97,15 +98,7 @@ function actionSummary(orders: OrderDto[], requests: ServiceRequestDto[]) {
     if (order.status === "ordering") serving += 1;
     const dueIn = minutesUntil(order.serviceDueAt);
     if (order.status === "ordering" && dueIn !== null && dueIn < 0) overdue += 1;
-    const billStatus = order.bill?.status;
-    if (
-      billStatus === "waiting_confirm" ||
-      billStatus === "waiting_payment" ||
-      order.paymentStatus === "waiting_confirm" ||
-      order.paymentStatus === "waiting_payment" ||
-      order.status === "waiting_confirm" ||
-      order.status === "waiting_payment"
-    ) {
+    if (orderNeedsPaymentAttention(order)) {
       paymentKeys.add(order.bill?.id ?? order.id);
     }
   }
@@ -137,13 +130,12 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
   for (const order of orders) {
     const location = orderLocationLabel(order);
     const dueIn = minutesUntil(order.serviceDueAt);
-    const billStatus = order.bill?.status;
-    const paymentStatus = billStatus ?? order.paymentStatus ?? order.status;
+    const paymentStatus = resolveOrderPaymentStatus(order);
     const paymentKey = order.bill?.id ?? order.id;
 
     if (
       !paymentKeys.has(paymentKey) &&
-      (paymentStatus === "waiting_confirm" || paymentStatus === "waiting_payment")
+      orderNeedsPaymentAttention(order)
     ) {
       paymentKeys.add(paymentKey);
       actions.push({
@@ -238,6 +230,34 @@ function realtimeLabel(state: RealtimeState) {
   return "Đang nối";
 }
 
+type BrowserAudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+
+function playActionNoticeSound(tone: QuickAction["tone"]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const AudioContextConstructor = window.AudioContext ?? (window as BrowserAudioWindow).webkitAudioContext;
+    if (!AudioContextConstructor) return;
+
+    const audioContext = new AudioContextConstructor();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const frequency = tone === "red" ? 760 : tone === "yellow" ? 620 : 520;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.22, audioContext.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.045, audioContext.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.2);
+    window.setTimeout(() => void audioContext.close().catch(() => undefined), 300);
+  } catch {}
+}
+
 export function AdminLiveActionCenter({
   initialOrders,
   initialRequests,
@@ -327,6 +347,7 @@ export function AdminLiveActionCenter({
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         () => scheduleRefresh()
       )
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => scheduleRefresh())
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "table_bills", filter: `restaurant_id=eq.${restaurantId}` },
@@ -339,7 +360,10 @@ export function AdminLiveActionCenter({
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") setRealtimeState("connected");
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setRealtimeState("error");
+          scheduleRefresh(0);
+        }
       });
 
     const onVisibility = () => {
@@ -369,7 +393,10 @@ export function AdminLiveActionCenter({
     }
 
     const freshAction = actions.find((action) => !knownKeys.has(action.key) && !dismissedNoticeKeysRef.current.has(action.key));
-    if (freshAction) setNoticeAction(freshAction);
+    if (freshAction) {
+      setNoticeAction(freshAction);
+      playActionNoticeSound(freshAction.tone);
+    }
 
     setNoticeAction((current) => {
       if (!current) return current;
@@ -471,8 +498,8 @@ export function AdminLiveActionCenter({
         <section className="dashboard-minimal-card flex min-h-0 flex-col p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Realtime queue</p>
-              <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Việc cần xử lý</h2>
+              <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Realtime queue</p>
+              <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
             </div>
             <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
               <RadioTower size={13} />
@@ -523,10 +550,10 @@ export function AdminLiveActionCenter({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
             <p className="text-xs text-[var(--muted-foreground)]">{summary.total} việc đang chờ</p>
             <div className="flex flex-wrap gap-2">
-              <Link href="/dashboard/orders" className="inline-flex h-9 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
+              <Link href="/dashboard/orders" className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
                 Mở đơn hàng
               </Link>
-              <Link href="/dashboard/kitchen" className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
+              <Link href="/dashboard/kitchen" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
                 Mở bếp
               </Link>
             </div>
@@ -560,14 +587,14 @@ export function AdminLiveActionCenter({
           <Bell size={18} />
           <span className="hidden xl:inline">{summary.total > 0 ? "Cần xử lý" : "Thông báo"}</span>
           {summary.total > 0 && (
-            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-black text-white">
+            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-white">
               {summary.total}
             </span>
           )}
         </button>
 
         {open && (
-          <div className="absolute right-0 top-[calc(100%+10px)] z-[var(--z-dashboard-panel)] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+          <div className="fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))] z-[var(--z-dashboard-panel)] max-h-[calc(100dvh-8rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:absolute md:inset-x-auto md:right-0 md:top-[calc(100%+10px)] md:w-[min(420px,calc(100vw-24px))] md:max-h-none">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--foreground)]">Luồng thao tác nhanh</p>
@@ -578,7 +605,7 @@ export function AdminLiveActionCenter({
               </button>
             </div>
             {error && <div className="mx-4 mt-3 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-xs font-bold text-[var(--accent-strong)]">{error}</div>}
-            <div className="max-h-[460px] overflow-y-auto p-3">
+            <div className="max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain p-3 md:max-h-[460px]">
               {loading && actions.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 rounded-lg bg-[var(--soft-surface)] p-5 text-sm font-medium text-[var(--muted-foreground)]">
                   <Loader2 className="animate-spin" size={17} />
@@ -598,7 +625,7 @@ export function AdminLiveActionCenter({
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted-foreground)]">
               <span className="inline-flex items-center gap-1.5"><RadioTower size={14} />{realtimeLabel(realtimeState)}</span>
-              <Link href="/dashboard/orders" className="font-black text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
+              <Link href="/dashboard/orders" className="font-semibold text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
             </div>
           </div>
         )}
@@ -661,11 +688,11 @@ function FloatingActionNotice({
           <Icon size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Yêu cầu mới</p>
+          <p className="dashboard-eyebrow text-[var(--accent)]">Yêu cầu mới</p>
           <h3 className="mt-1 whitespace-normal break-words text-base font-semibold leading-snug text-[var(--foreground)]">{action.title}</h3>
           <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-[var(--muted-foreground)]">{action.subtitle}</p>
           {action.kind !== "resolve-request" ? (
-            <p className="metric-number mt-1 text-sm font-black text-[var(--accent)]">{formatVnd(action.amount)}</p>
+            <p className="metric-number mt-1 text-sm font-semibold text-[var(--accent)]">{formatVnd(action.amount)}</p>
           ) : null}
         </div>
         <button type="button" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]" aria-label="Đóng thông báo">
@@ -673,11 +700,11 @@ function FloatingActionNotice({
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 p-3">
-        <Link href={action.href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
           <ReceiptText size={15} />
           Xem chi tiết
         </Link>
-        <Button type="button" onClick={onRun} disabled={pending} className="min-h-10 shadow-none hover:shadow-none">
+        <Button type="button" onClick={onRun} disabled={pending} className="min-h-11 shadow-none hover:shadow-none">
           {pending ? <Loader2 className="animate-spin" size={15} /> : action.kind === "complete" ? <CheckCircle2 size={15} /> : action.kind === "accept" ? <ChefHat size={15} /> : action.kind === "timer" ? <Clock3 size={15} /> : action.kind === "resolve-request" ? <Bell size={15} /> : <CreditCard size={15} />}
           {action.label}
         </Button>
@@ -722,7 +749,7 @@ function QuickActionRow({
         </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Link href={action.href} className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
           <ReceiptText size={14} />
           Chi tiết
         </Link>

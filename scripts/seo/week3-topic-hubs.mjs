@@ -71,7 +71,7 @@ async function main() {
   const hasLlmsTopicHubHeading = llms.includes("## Topic hubs") || llms.includes("## Nhóm chủ đề");
 
   const [postSource = "", hubAndFunctionsSource = ""] = blogSource.split("export const BLOG_TOPIC_HUBS");
-  const [hubSource = ""] = hubAndFunctionsSource.split("export function getAllBlogPosts");
+  const [hubSource = ""] = hubAndFunctionsSource.split("type BlogArticleEnhancement");
   const postSlugs = extractStrings(postSource, /slug:\s*"([^"]+)"/g);
   const hubSlugs = extractStrings(hubSource, /slug:\s*"([^"]+)"/g);
   const hubTitles = extractStrings(hubSource, /title:\s*"([^"]+)"/g);
