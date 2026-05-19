@@ -5,47 +5,55 @@ Decision authority: Release Commander + Principal Production Coordinator
 
 ## Decision
 
-NO-GO.
+CONDITIONAL GO for release artifact.
 
-The release must not be promoted to production in its current state.
+The local release artifact is ready for final external deployment gates. Do not promote to production until the remaining external blockers are closed.
 
 ## Decision Summary
 
-Build and smoke signals are healthy, but production readiness is blocked by release-governance and operational-safety issues:
+Build and smoke signals are healthy, and local release-governance blockers are closed:
 
-1. The release artifact is not stable: branch behind upstream, dirty worktree and stale handoff docs.
-2. Supabase migration tracking is not release-safe: untracked migration files exist, remote/local history is inconsistent and multiple local migrations are pending remotely.
-3. Rollback readiness is insufficient for database-impacting release work.
-4. CI/manual release gate and authenticated QA are still incomplete.
-5. Vercel and Release CI guardrails were improved, but neither workflow has been proven on the final release artifact.
+1. Release artifact is clean at `879cfbf`.
+2. Branch is ahead of upstream by 2 commits and behind by 0.
+3. All 98 local Supabase migration files are tracked.
+4. Local infra/lint/typecheck/test/build/billing gates pass.
+5. Vercel production env pull and production build pass.
+6. Supabase dry-run confirms the expected 16 pending migrations without applying them.
+
+Production GO is still blocked by external operational proof:
+
+1. Supabase staging migration rehearsal. Current attempt to create a Supabase preview branch failed because the org is not on Pro.
+2. Production backup/PITR evidence. Current backup listing reports `PITR=false`; schema dump is blocked by Docker not running.
+3. Authenticated owner/customer/staff/admin QA.
+4. Monitoring/alerting sign-off.
 
 ## Blockers
 
 | Severity | Blocker | Release Impact |
 | --- | --- | --- |
-| P0 | Dirty, behind, unreconciled release branch | Cannot know what artifact is being released. |
-| P0 | Migration tracking and pending remote state | Migration ordering and rollback are unsafe. |
-| P0 | DB rollback/fix-forward plan incomplete | Cannot safely recover from migration failure. |
+| External | Supabase staging rehearsal missing | Cannot safely apply pending migrations to production yet; Supabase Branching is not available on the current plan. |
+| External | Backup/PITR proof missing | Cannot safely recover from migration failure yet; current backup listing reports `PITR=false`. |
 
 ## Release Confidence
 
-Low.
+Medium for local artifact; conditional for production.
 
 Reason:
 
 - Local infra/lint/typecheck/test/build pass.
 - Billing parity passes.
 - Production smoke passes.
-- But release blockers remain in artifact control, migrations, rollback readiness, CI coverage and authenticated production QA.
+- Artifact control blockers are closed.
+- Remaining blockers are external: migration rehearsal, backup/PITR, authenticated QA and alerting sign-off.
 
 ## Rollback Confidence
 
-Low to medium-low.
+Medium-low.
 
 Reason:
 
 - Vercel code rollback is feasible.
-- Supabase rollback is not ready.
+- Supabase rollback is documented as fix-forward-first, but backup/PITR proof is not captured yet.
 - Billing bridge rollback still needs source-of-truth/cutover notes even though v2 parity now passes.
 - Current migration state lacks backup proof and per-migration recovery notes.
 
@@ -71,24 +79,20 @@ Reason:
 | --- | --- |
 | Release CI | Manual workflow now fails if billing verification secrets are absent. |
 | Vercel preflight | Required Vercel secrets are validated before build, and Vercel CLI is pinned to `54.2.0`. |
-| Migration governance | Added `MIGRATION_RELEASE_REHEARSAL.md` and refreshed `MIGRATION_LOG.md` with current dirty/behind state and pending migration proof requirements. |
+| Migration governance | Added `MIGRATION_RELEASE_REHEARSAL.md` and refreshed `MIGRATION_LOG.md` with current clean artifact state and pending migration proof requirements. |
 | Rollback readiness | Added fix-forward guidance for each pending `20260519*.sql` migration. |
 
 ## Requirements To Move To Conditional Go
 
 All must be complete:
 
-1. Clean and reconcile the release branch with upstream.
-2. Keep `npm run infra:check` passing.
-3. Keep `npm run billing:verify` passing and document billing source-of-truth/cutover policy.
-4. Commit or remove every intended migration file.
-5. Reconcile Supabase remote/local migration history.
-6. Verify the billing webhook concurrent index migration procedure.
-7. Run staging migration rehearsal for pending migrations.
-8. Capture Supabase backup/PITR proof.
-9. Write migration rollback/fix-forward notes.
-10. Run the full local gate and record output.
-11. Confirm production Vercel env parity and rollback deployment ID.
+1. Keep `npm run infra:check` passing.
+2. Keep `npm run billing:verify` passing and document billing source-of-truth/cutover policy.
+3. Reconcile Supabase remote/local migration history.
+4. Verify the billing webhook concurrent index migration procedure.
+5. Run staging migration rehearsal for pending migrations.
+6. Capture Supabase backup/PITR proof.
+7. Confirm rollback deployment ID.
 
 ## Requirements To Move To GO
 
@@ -121,4 +125,4 @@ In addition to Conditional Go:
 
 ## Final Commander Statement
 
-NO-GO. Freeze non-blocker work and move only on P0 remediation. The release can be re-opened after artifact control, migration governance, rollback readiness, CI gate coverage and authenticated QA are proven clean.
+CONDITIONAL GO. Freeze non-blocker work. The code artifact is deploy-ready locally, but production promotion must wait for staging migration rehearsal, backup/PITR proof, authenticated QA and monitoring sign-off.

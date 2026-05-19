@@ -13,12 +13,12 @@ Do not apply this batch to production until the same ordered batch has passed st
 | Item | Status |
 | --- | --- |
 | Local SQL migration files | 98 |
-| Git-tracked SQL migration files | 69 |
-| Untracked SQL migration files | 29 |
+| Git-tracked SQL migration files | 98 |
+| Untracked SQL migration files | 0 |
 | Local branch | `codex/p0-production-clean` |
-| Branch relationship | Behind upstream by 4 commits |
+| Branch relationship | Ahead of upstream by 2 commits, behind by 0 |
 | Pending batch | `20260519090000` through `20260519201100` |
-| Special blocker | `20260519120000_billing_webhook_idempotency.sql` uses `create unique index concurrently` |
+| Special blocker | `20260519120000_billing_webhook_idempotency.sql` creates a regular unique partial index; verify no duplicate request signatures before apply |
 
 ## Pre-Rehearsal Entry Criteria
 
@@ -31,7 +31,7 @@ All items must be true before staging apply:
 | Migration files tracked | Every intended SQL file is committed/tracked. |
 | Migration history captured | `supabase migration list --linked` output saved. |
 | Backup captured | Staging backup or restore point recorded. |
-| Concurrent index decision | `20260519120000` is proven safe in the runner or split into a separate approved operation. |
+| Billing idempotency index decision | `20260519120000` is proven safe on staging and duplicate `request_signature` rows are absent. |
 
 ## Ordered Pending Batch
 
@@ -51,7 +51,7 @@ Apply only in timestamp order:
 | 10 | `20260519114500_ai_owner_agent_approval_tokens.sql` | Service-role-only approval tokens. |
 | 11 | `20260519115000_ai_security_events.sql` | AI security event isolation. |
 | 12 | `20260519115500_ai_conversation_actor_scope.sql` | AI conversation actor scoping. |
-| 13 | `20260519120000_billing_webhook_idempotency.sql` | Concurrent index apply behavior. |
+| 13 | `20260519120000_billing_webhook_idempotency.sql` | Unique partial index apply behavior. |
 | 14 | `20260519190000_platform_admin_governance_hardening.sql` | Platform admin RBAC. |
 | 15 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime publication membership. |
 | 16 | `20260519201100_users_lower_email_lookup_idx.sql` | Lowercase email lookup index. |
@@ -171,7 +171,7 @@ Abort the release if:
 
 - any migration applies out of order,
 - any intended migration file is still untracked,
-- `create unique index concurrently` fails in the runner,
+- billing webhook unique index fails in the runner,
 - RLS checks show unintended anon/authenticated access,
 - tenant-crossing writes succeed,
 - billing duplicate webhook protection cannot be proven,

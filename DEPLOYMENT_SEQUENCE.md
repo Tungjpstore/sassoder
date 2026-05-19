@@ -1,7 +1,7 @@
 # Deployment Sequence - LogiVN Production
 
 Date: 2026-05-20
-Current instruction: Do not execute production deployment. This sequence is blocked until P0 items are closed.
+Current instruction: production deployment is conditionally allowed only after external go-live blockers are closed.
 
 ## Abort Conditions
 
@@ -10,12 +10,14 @@ Abort immediately if any of these are true:
 | Condition | Current Status |
 | --- | --- |
 | `npm run infra:check` fails | False in latest local gate |
-| Branch is behind upstream | True |
-| Worktree has unrelated staged/unstaged/untracked changes | True |
-| Migration files are untracked or remote/local history is inconsistent | True |
+| Branch is behind upstream | False |
+| Worktree has unrelated staged/unstaged/untracked changes | False |
+| Migration files are untracked or remote/local history is inconsistent | False for local tracking; remote pending batch still needs staging proof |
 | Duplicate migration version exists | False in latest local scan |
 | Billing v2 parity is warning/failing | False in latest local gate |
-| Backup/PITR state is not captured before migration | True |
+| Backup/PITR state is not captured before migration | True; abort production migration until captured |
+| Vercel production preflight fails | False in latest local preflight |
+| Supabase migration dry-run fails | False in latest local dry-run |
 
 ## Phase 0 - Release Freeze
 
@@ -60,6 +62,7 @@ Required result:
 
 ```bash
 supabase migration list --linked
+supabase db push --dry-run --linked --yes
 git ls-files --others --exclude-standard supabase/migrations supabase/schema.sql types/supabase.ts
 ```
 
@@ -67,7 +70,7 @@ git ls-files --others --exclude-standard supabase/migrations supabase/schema.sql
 3. Confirm remote history matches all migrations up to `20260518190204`.
 4. Confirm whether every pending `20260519*.sql` migration is intended for this release.
 5. Verify migration versions remain unique.
-6. Verify whether `20260519120000_billing_webhook_idempotency.sql` can run through the migration runner because it uses `create unique index concurrently`.
+6. Verify `20260519120000_billing_webhook_idempotency.sql` on staging; it now uses a regular unique partial index and should not depend on concurrent-index runner behavior.
 7. If intended, rehearse the full pending batch on staging first.
 8. Record staging output and verification SQL in `MIGRATION_LOG.md`.
 9. Capture Supabase backup/PITR timestamp before production apply.

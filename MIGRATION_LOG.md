@@ -5,21 +5,20 @@ Last updated: 2026-05-20
 ## Current Snapshot
 
 - Local SQL migration files: 98
-- Tracked migration files: 69
-- Untracked migration files: 29
+- Tracked migration files: 98
+- Untracked migration files: 0
 - Current integration branch: `codex/p0-production-clean`
-- Current local commit: `5256d81`
+- Current local commit: `879cfbf`
 - Current upstream commit: `57d9784`
-- Branch relationship: local is behind upstream by 4 commits
-- Working tree status during snapshot: not release-clean; 429 staged files, 208 unstaged modified files and 229 untracked files
+- Branch relationship: local is ahead of upstream by 2 commits, behind by 0
+- Working tree status during snapshot: clean
 
 ## Release Commander Status
 
-This migration log is not a production apply approval. It records the current release-risk picture only.
+This migration log is not a production apply approval. It records the current release-risk picture and the clean local artifact state.
 
-Release remains NO-GO until:
+Production migration remains blocked until:
 
-- every intended migration file is tracked in Git,
 - remote and local migration history are reconciled,
 - the pending batch is rehearsed on staging using `MIGRATION_RELEASE_REHEARSAL.md`,
 - backup/PITR proof is captured,
@@ -63,10 +62,42 @@ Current release review treats these as pending remote migrations until proven ot
 | `20260519114500_ai_owner_agent_approval_tokens.sql` | Approval tokens are service-role-only and expire/consume correctly. |
 | `20260519115000_ai_security_events.sql` | Anon/authenticated users cannot read/write the security event stream. |
 | `20260519115500_ai_conversation_actor_scope.sql` | Existing AI conversation reads stay scoped to the correct actor. |
-| `20260519120000_billing_webhook_idempotency.sql` | Non-transactional/concurrent index procedure is proven before staging/prod apply. |
+| `20260519120000_billing_webhook_idempotency.sql` | Regular unique partial index applies without relying on concurrent-index transaction behavior. |
 | `20260519190000_platform_admin_governance_hardening.sql` | Platform admin RBAC cannot exceed scoped permissions. |
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime tables are published intentionally and UI degrades if realtime is unavailable. |
 | `20260519201100_users_lower_email_lookup_idx.sql` | Email lookup index exists and helper performance does not regress. |
+
+## Dry-Run Evidence
+
+`supabase db push --dry-run --linked --yes` exits 0 and would apply these 16 migrations without changing the database:
+
+```text
+20260519090000_reservation_realtime_publication.sql
+20260519092131_restrict_public_store_branch_reads.sql
+20260519100000_inventory_order_atomicity.sql
+20260519101000_promotion_identity_timezone.sql
+20260519102000_inventory_stale_stock_alert.sql
+20260519103000_staff_operations_security_hardening.sql
+20260519103500_promotion_free_item_rewards.sql
+20260519110000_reservation_tenant_integrity_guards.sql
+20260519112000_reservation_reminder_dedupe.sql
+20260519114500_ai_owner_agent_approval_tokens.sql
+20260519115000_ai_security_events.sql
+20260519115500_ai_conversation_actor_scope.sql
+20260519120000_billing_webhook_idempotency.sql
+20260519190000_platform_admin_governance_hardening.sql
+20260519201000_dashboard_operations_realtime_publication.sql
+20260519201100_users_lower_email_lookup_idx.sql
+```
+
+## Staging / Backup Evidence
+
+- `supabase branches list --project-ref tfhqatvevbrbzaaqjhfa` exits 0 and shows no preview branches.
+- `supabase branches create release-20260520 --project-ref tfhqatvevbrbzaaqjhfa` exits 1: Branching requires Supabase Pro or above.
+- `supabase backups list --project-ref tfhqatvevbrbzaaqjhfa` exits 0 and reports `WALG=true`, `PITR=false`, `EARLIEST TIMESTAMP=0`, `LATEST TIMESTAMP=0`.
+- `supabase db dump --linked --file /tmp/...pre-release-schema.sql` exits 1 because Docker daemon is not running; the empty 0B dump artifact was removed.
+
+Release commander note: production migration remains blocked until a staging/rehearsal database and usable backup/PITR evidence are available.
 
 ## Safety Rules
 
@@ -98,6 +129,6 @@ npm test
 ## Open Follow-Ups
 
 - Add Supabase staging apply notes after the next migration rehearsal.
-- Confirm `20260519120000_billing_webhook_idempotency.sql` runner behavior or split it into an explicit operational indexing step.
+- Confirm `20260519120000_billing_webhook_idempotency.sql` on staging; it no longer uses `create index concurrently`.
 - Add production rollback notes for platform admin RBAC.
 - Confirm whether inventory warehouse v2 migrations need seed or backfill steps.

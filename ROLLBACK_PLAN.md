@@ -92,7 +92,7 @@ supabase migration list --linked
 | Billing v2 bridge | Do not delete v2 billing rows during rollback. Parity currently passes, but source-of-truth/cutover behavior must be documented before release. |
 | Pending `20260519*.sql` batch | Treat as unreleased until tracked, rehearsed and backed up. Do not apply any subset to production without an ordering and verification note. |
 | Duplicate migration version risk | Latest local scan shows no duplicate versions. Keep this as a pre-apply check; if a duplicate appears or was manually applied, stop and repair migration history explicitly before continuing. |
-| `20260519120000_billing_webhook_idempotency.sql` | Concurrent unique index cannot be blindly assumed safe in every migration runner. Verify runner transaction behavior or handle as an explicit operational indexing step. |
+| `20260519120000_billing_webhook_idempotency.sql` | Uses a regular unique partial index to avoid migration-runner transaction issues. If it fails, inspect duplicate `request_signature` rows before retrying. |
 
 ## Pending Batch Fix-Forward Map
 
@@ -110,7 +110,7 @@ supabase migration list --linked
 | `20260519114500_ai_owner_agent_approval_tokens.sql` | Owner AI action approval cannot create/consume tokens. | Disable AI apply-plan actions and fix-forward token table/policy/function behavior. |
 | `20260519115000_ai_security_events.sql` | Security event writes fail or leak visibility. | Keep AI security stream service-role-only; fix-forward grants/RLS and verify anon/authenticated cannot read. |
 | `20260519115500_ai_conversation_actor_scope.sql` | Existing AI conversations become inaccessible or cross-actor scope is wrong. | Disable conversation memory reuse and fix-forward actor scoping/backfill. |
-| `20260519120000_billing_webhook_idempotency.sql` | Migration runner rejects concurrent index or webhook dedupe is incomplete. | Stop migration batch before production; run index creation as a separately approved non-transactional operation or replace with tested SQL. |
+| `20260519120000_billing_webhook_idempotency.sql` | Unique index fails due to duplicate webhook signatures or lock pressure. | Stop migration batch before production; inspect duplicate `request_signature` rows and reconcile billing logs before retrying. |
 | `20260519190000_platform_admin_governance_hardening.sql` | Platform admin role permissions are over-deleted or scoped mutation fails. | Freeze platform admin mutations and restore intended permission rows with a fix-forward seed/migration. |
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime events are noisy/missing. | Disable dashboard realtime dependence and fix-forward publication membership. |
 | `20260519201100_users_lower_email_lookup_idx.sql` | Email helper performance remains slow or index build locks unexpectedly. | Cancel unsafe index build if still running; recreate during a maintenance window with a tested concurrent procedure. |

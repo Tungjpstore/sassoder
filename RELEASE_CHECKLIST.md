@@ -1,14 +1,14 @@
 # Release Checklist - LogiVN Production
 
 Date: 2026-05-20
-Current result: NO-GO
+Current result: CONDITIONAL GO for local artifact
 
 ## 1. Merge Freeze And Source Control
 
 | Item | Status | Evidence / Required Action |
 | --- | --- | --- |
-| Confirm release branch and commit | Blocked | Current local branch is `codex/p0-production-clean` at `5256d81`, behind upstream `57d9784` by 4 commits. |
-| Clean worktree before release | Blocked | Current local state: 429 staged files, 208 unstaged modified files and 229 untracked files. |
+| Confirm release branch and commit | Pass locally | Current local branch is `codex/p0-production-clean` at `879cfbf`, ahead of upstream `57d9784` by 2 commits and behind by 0. |
+| Clean worktree before release | Pass | No staged, unstaged or untracked files after release artifact commit. |
 | Freeze non-blocker work | Required now | Only blocker remediation should land until next release review. |
 | Refresh handoff/release docs | Blocked | Existing branch/worktree/migration docs are stale relative to today. |
 | Ensure no hidden worktrees | Pass | Prunable stale worktree metadata was removed; `git worktree list` now shows only the current worktree. |
@@ -38,23 +38,24 @@ Current result: NO-GO
 | CI runs infra contract | Present | `.github/workflows/seo-ci.yml` now runs `npm run infra:check`. |
 | CI runs unit tests | Present | `.github/workflows/seo-ci.yml` now runs `npm test`. |
 | CI runs build | Present | `.github/workflows/seo-ci.yml` runs `npm run build`. |
-| Vercel production preflight | Workflow present, not executed | `.github/workflows/vercel-preflight.yml` exists, validates secrets and pins Vercel CLI `54.2.0`; run it with `environment=production` after GitHub secrets are configured. |
+| Vercel production preflight | Pass locally | `vercel pull --yes --environment=production` and `vercel build --prod` passed with Vercel CLI `54.2.0`. |
 | Vercel rollback target identified | Pending | Capture current production deployment ID/URL before promotion. |
 
 ## 4. Supabase And Migration Gate
 
 | Item | Status | Required Action |
 | --- | --- | --- |
-| Local migration files all tracked | Blocked | 98 local SQL migrations exist, but only 69 are currently tracked by Git. |
+| Local migration files all tracked | Pass | 98 local SQL migrations exist and all 98 are tracked by Git. |
 | Remote migration history reconciled | Blocked | Remote is applied through `20260518190204`; local pending migrations run from `20260519090000` through `20260519201100`. |
 | Migration versions are unique | Pass locally | Duplicate `20260519103000` was resolved as `20260519103500_promotion_free_item_rewards.sql`; keep this verified before staging/prod. |
-| Migration order locked | Conditional | Timestamp order is clear, but tracking/state is not release-safe. |
-| Staging migration rehearsal complete | Missing | Apply pending migration batch to staging using `MIGRATION_RELEASE_REHEARSAL.md` and record output. |
+| Migration dry-run | Pass | `supabase db push --dry-run --linked --yes` exits 0 and lists 16 pending migrations in timestamp order. |
+| Migration order locked | Conditional | Timestamp order is clear, tracked and dry-run verified; staging apply proof is still required. |
+| Staging migration rehearsal complete | Blocked externally | Supabase Branching is unavailable on the current org plan; provide staging DB URL/project or enable branching. |
 | Schema/types aligned with migrations | Blocked | `supabase/schema.sql` and `types/supabase.ts` have staged/modified drift. |
 | RLS guardrails pass | Pass for app boundary | `infra:check` now reports 0 direct app service-role violations; pending RLS/security migrations still need staging verification. |
-| Backup/PITR confirmed | Missing | Capture backup timestamp before migration. |
+| Backup/PITR confirmed | Blocked externally | Supabase backup list reports `PITR=false`; CLI dump is blocked because Docker daemon is not running. |
 | Rollback/fix-forward SQL notes ready | Missing | Required for realtime publication, RLS rewrites, trigger/function changes and generated/index changes. |
-| Concurrent index migration verified | Missing | `20260519120000_billing_webhook_idempotency.sql` uses `create unique index concurrently`; confirm runner behavior or split procedure. |
+| Concurrent index migration verified | Pass locally | `20260519120000_billing_webhook_idempotency.sql` no longer uses `concurrently`; staging rehearsal remains final proof. |
 
 ## 5. Vercel And Runtime Config Gate
 
@@ -63,7 +64,7 @@ Current result: NO-GO
 | `vercel.json` valid | Conditional | 4 crons and `sin1` region are present. |
 | Cron route files exist and enforce secret | Pass for static contract | `infra:check` validates cron wiring. Cron runtime behavior still needs staging/manual trigger proof. |
 | Cron schedules match docs | Pass for static docs | `docs/infrastructure-runbook.md` and `vercel.json` both list reservations expiry at `45 1 * * *`. |
-| Production env parity verified | Missing | Need controlled Vercel env review. |
+| Production env parity verified | Pass for build preflight | Vercel production env pull succeeded and production build passed. Secret value review/rotation still belongs to Ops. |
 | Production URLs smoke-tested | Pass | `https://logivn.com` smoke passed. |
 | Wildcard tenant domain tested | Missing | No fresh wildcard subdomain smoke captured. |
 | DNS/domain readiness confirmed | Conditional | Root domain passed; wildcard/DNS provider status not rechecked today. |
@@ -109,4 +110,4 @@ These are not optional for production:
 
 ## Release Checklist Result
 
-NO-GO until all P0 blockers in `CROSS_TEAM_BLOCKERS.md` are closed and this checklist is rerun from a clean release artifact.
+CONDITIONAL GO for the local release artifact. Production deployment still requires the external go-live blockers in `CROSS_TEAM_BLOCKERS.md` to be closed.

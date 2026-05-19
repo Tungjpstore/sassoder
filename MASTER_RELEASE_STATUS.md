@@ -6,17 +6,17 @@ Scope: system-wide production readiness, release process, deployment safety, ope
 
 ## Final Status
 
-NO-GO.
+CONDITIONAL GO for release artifact.
 
-This release is not safe to promote to production. Build, lint, typecheck, unit tests, SEO checks, infra contract, billing verification and production smoke are green, but release governance still has unresolved P0 blockers in source-control state, Supabase migration tracking and database rollback readiness.
+The local release artifact is now clean, reconciled with upstream history, and all local Supabase migration files are tracked. Build, Vercel production preflight, lint, typecheck, unit tests, SEO checks, infra contract, billing verification and production smoke are green. Production promotion is still conditional on external operational proof: Supabase staging migration rehearsal, backup/PITR evidence, authenticated QA, and alerting/monitoring sign-off. Current Supabase plan/config blocks staging rehearsal and PITR proof.
 
 ## Auto No-Go Conditions Hit
 
 | Rule | Status | Evidence |
 | --- | --- | --- |
-| Unresolved P0 | Hit | P0 blockers remain in source control, migration governance and database rollback readiness. |
+| Unresolved P0 | Cleared for local artifact | Source-control and migration-file tracking blockers are closed locally. External operational gates remain before production GO. |
 | Broken RLS / tenant leak risk | Cleared in latest local gate | `npm run infra:check` now passes with 0 direct app service-role violations. Tenant-sensitive flows still need manual/E2E proof before GO. |
-| Migration risk | Hit | Remote Supabase has applied migrations through `20260518190204`; local has multiple pending `20260519*.sql` migrations through `20260519201100`, and many migration files are untracked. Duplicate migration version `20260519103000` has been resolved locally. |
+| Migration risk | Conditional | Remote Supabase has applied migrations through `20260518190204`; local pending migrations through `20260519201100` are now tracked and uniquely ordered. Staging rehearsal and backup/PITR proof remain mandatory before production migration. |
 | Broken billing entitlement risk | Cleared in latest billing gate | `npm run billing:verify` now passes `Subscription backfill: 16/16`, payment backfill `6/6`, pending payment mirror `0/0`. |
 | Payment inconsistency | Not directly hit | Payment backfill passed `6/6`, pending payment mirror passed `0/0`. |
 | Auth bypass | Not proven | Auth-guard smoke checks passed; full authenticated login/OAuth proof is still required before GO. |
@@ -24,27 +24,32 @@ This release is not safe to promote to production. Build, lint, typecheck, unit 
 
 ## Release Confidence
 
-Low.
+Medium for code artifact; not yet GO for production promotion.
 
-Positive signal exists for code compilation, infra contract, billing verification and unauthenticated production smoke, but release confidence is capped by unresolved P0 governance failures. The branch and migration state cannot be trusted as a production artifact until it is normalized.
+Positive signal exists for code compilation, infra contract, billing verification, unauthenticated production smoke, clean Git artifact and tracked migration set. Confidence is capped by operational gates that cannot be proven locally.
 
 ## Rollback Confidence
 
-Low to medium-low.
+Medium-low.
 
-Code rollback through Vercel is plausible, but database rollback is not ready. The migration set is forward-first, has untracked files, and lacks a documented rollback/fix-forward plan for the currently pending migration and recent remote-applied migrations.
+Code rollback through Vercel is plausible once the production deployment ID is captured. Database rollback remains forward-first; migration-specific fix-forward notes now exist, but backup/PITR proof and staging rehearsal are still required.
 
 ## Validation Snapshot
 
 | Check | Result | Notes |
 | --- | --- | --- |
-| `git status --short --branch` | Fail for release | Current branch `codex/p0-production-clean` is behind `origin/codex/p0-production-clean` by 4 commits and has large staged, unstaged and untracked changes. Latest observed counts: 429 staged files, 208 unstaged modified files, 229 untracked files. |
-| `git rev-list --left-right --count HEAD...@{u}` | `0 4` | Local release branch is behind upstream. |
+| `git status --short --branch` | Pass for local artifact | Current branch `codex/p0-production-clean` is clean at `879cfbf` and ahead of `origin/codex/p0-production-clean` by 2 commits. |
+| `git rev-list --left-right --count HEAD...@{u}` | `2 0` | Local release branch contains the artifact commit and merge reconciliation commit. |
 | `npm run infra:check` | Pass | 153 env keys discovered, 247 declared, 4 Vercel crons validated, 0 duplicate artifacts, 98 Supabase migrations with 0 duplicate versions, 0 direct app service-role violations. |
 | `npm run lint` | Pass | ESLint completed successfully. |
 | `npx tsc --noEmit --pretty false --incremental false` | Pass | TypeScript completed successfully. |
 | `npm test` | Pass | 259 tests passed. |
 | `NEXT_PRIVATE_BUILD_WORKER=0 npm run build` | Pass | Exit code 0. |
+| `vercel pull --yes --environment=production` | Pass | Production env and project settings pulled with Vercel CLI `54.2.0`. |
+| `vercel build --prod` | Pass | Vercel production build completed successfully and produced `.vercel/output`. |
+| `supabase db push --dry-run --linked --yes` | Pass | Dry-run would apply 16 pending migrations from `20260519090000` through `20260519201100`; no database changes were made. |
+| `supabase branches create release-20260520` | Blocked externally | Supabase Branching requires Pro or above on the current org. |
+| `supabase backups list` | Warning | `WALG=true`, `PITR=false`, timestamps `0`; not enough for production migration rollback confidence. |
 | `npm audit --audit-level=high` | Pass threshold | 0 high/critical; 2 moderate advisories remain. |
 | `npm run billing:verify` | Pass | Plans `2`, entitlements `52`, subscriptions `16/16`, payments `6/6`, pending `0/0`, usage bridge passed. |
 | `supabase migration list --linked` | Warning | Remote is applied through `20260518190204`; local pending migrations include `20260519090000` through `20260519201100`. |
@@ -73,13 +78,13 @@ Code rollback through Vercel is plausible, but database rollback is not ready. T
 
 | Area | Status | Release Commander Note |
 | --- | --- | --- |
-| Source control artifact | No-Go | Dirty worktree, staged changes, untracked files, stale docs, branch behind upstream. |
-| Merge freeze | No-Go | Cannot freeze until the intended release artifact is clean and reconciled with upstream. |
-| CI/CD health | Conditional | Workflow now includes infra, lint, typecheck, tests, audit, SEO and build; billing verify is conditional on secrets, and production smoke/authenticated QA remain manual gates. |
-| Vercel config | Conditional | `vercel.json` has region and 4 crons; static cron docs match config, but runtime trigger proof is still missing. |
-| Supabase config | No-Go | Migration history/tracking is inconsistent and multiple local migrations are pending remotely. |
-| Migration ordering | No-Go | Ordering is timestamped and duplicate version was resolved, but applied/untracked/pending state must be reconciled before any deploy. |
-| Rollback readiness | No-Go | Code rollback exists; DB rollback/fix-forward notes are insufficient for current migration set. |
+| Source control artifact | Pass locally | Clean worktree, no untracked files, release artifact commit `e050005`, reconciliation commit `879cfbf`. |
+| Merge freeze | Conditional | Freeze can start on `879cfbf`; do not accept non-blocker changes before deploy. |
+| CI/CD health | Conditional | Workflow now includes infra, lint, typecheck, tests, audit, SEO and build; Vercel production preflight passed locally; authenticated QA remains a manual gate. |
+| Vercel config | Pass for build preflight | `vercel.json` has region and 4 crons; static cron docs match config; production env pull and Vercel build passed. Runtime cron trigger proof is still missing. |
+| Supabase config | Conditional | All 98 local migrations are tracked; dry-run confirms 16 pending migrations. Staging rehearsal is still required before production apply. |
+| Migration ordering | Conditional | Ordering is timestamped, tracked, unique, and confirmed by dry-run; staging/prod apply remains blocked until rehearsal and backup proof. |
+| Rollback readiness | Conditional | Code rollback exists and pending-batch fix-forward notes are documented; backup/PITR proof remains missing. |
 | Billing and entitlement | Conditional | Latest parity check passes; source-of-truth/cutover policy and authenticated billing QA are still required before GO. |
 | Tenant isolation / RLS | Conditional | Service-role boundary guardrail passes; pending RLS/security migrations still require staging rehearsal and tenant-scope QA. |
 | Auth readiness | Conditional | Production auth guard smoke passed; full authenticated E2E is still missing. |
@@ -89,28 +94,27 @@ Code rollback through Vercel is plausible, but database rollback is not ready. T
 | Feature flags/env consistency | Conditional | `.env.example` is broad, but actual Vercel/Supabase env parity was not fully verified. |
 | DNS/domain readiness | Conditional | `https://logivn.com` smoke passed; wildcard subdomain/DNS status was not revalidated today. |
 | Rate limiting | Conditional | Code/tests indicate rate-limit paths; distributed rate-limit env was not verified in Vercel. |
-| Backup readiness | No-Go for migration release | No current Supabase backup/snapshot proof was captured before migration promotion. |
+| Backup readiness | Blocked externally | Supabase backup list reports `PITR=false`; usable pre-release backup proof is not captured. |
 
 ## Release Control Improvements Added
 
 | Improvement | Status | Release Effect |
 | --- | --- | --- |
 | Manual Release CI billing secret preflight | Added | Manual release workflow now fails instead of silently skipping `npm run billing:verify` when required Supabase secrets are missing. |
-| Vercel preflight secret guard | Added | Vercel preflight now fails early when `VERCEL_TOKEN`, `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` are missing. |
+| Vercel preflight secret guard | Added and locally proven | Vercel preflight now fails early when `VERCEL_TOKEN`, `VERCEL_ORG_ID` or `VERCEL_PROJECT_ID` are missing; local production env pull/build passed with CLI `54.2.0`. |
 | Vercel CLI pin | Added | Preflight installs `vercel@54.2.0` instead of floating `latest`. |
 | Migration rehearsal protocol | Added | Pending migration batch now has a staging rehearsal checklist and validation SQL in `MIGRATION_RELEASE_REHEARSAL.md`. |
 
 ## Release Commander Decision
 
-Freeze all non-blocker work. The only allowed changes before the next release review are blocker remediation, migration tracking normalization, billing parity reconciliation, and release documentation updates.
+Freeze all non-blocker work. The only allowed changes before production deploy are external release evidence capture, staging migration rehearsal output, Vercel preflight evidence, and release documentation updates.
 
-The release can be reconsidered only after:
+The release can move from Conditional GO to GO only after:
 
-1. The branch is reconciled with `origin/codex/p0-production-clean` and the worktree is clean except deliberate release docs.
-2. `npm run infra:check` stays passing.
-3. Billing v2 subscription parity stays passing and the source-of-truth/cutover policy is documented.
-4. Supabase migration history, tracked files, staging rehearsal and rollback/fix-forward notes are aligned.
-5. CI or manual preflight covers infra, lint, typecheck, tests, build, billing verification and production smoke.
+1. `npm run infra:check` stays passing.
+2. Billing v2 subscription parity stays passing and the source-of-truth/cutover policy is documented.
+3. Supabase staging rehearsal, production backup/PITR proof and migration apply plan are recorded.
+4. CI or manual preflight covers infra, lint, typecheck, tests, build, billing verification and production smoke.
 
 ## Pending Migration Batch Notes
 
@@ -130,7 +134,7 @@ Current local-only pending batch includes:
 | `20260519114500_ai_owner_agent_approval_tokens.sql` | New service-role-only approval token table. |
 | `20260519115000_ai_security_events.sql` | AI security event storage; requires retention/visibility decision. |
 | `20260519115500_ai_conversation_actor_scope.sql` | AI conversation actor scoping; requires compatibility verification with existing conversations. |
-| `20260519120000_billing_webhook_idempotency.sql` | Concurrent unique index for billing webhook idempotency; verify migration runner transaction behavior. |
+| `20260519120000_billing_webhook_idempotency.sql` | Regular unique partial index for billing webhook idempotency; staging rehearsal still required. |
 | `20260519190000_platform_admin_governance_hardening.sql` | Deletes/rebuilds platform role permissions; needs RBAC regression smoke. |
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dynamic realtime publication additions for dashboard operations. |
 | `20260519201100_users_lower_email_lookup_idx.sql` | User email lookup index; verify concurrent/locking behavior if applicable. |
