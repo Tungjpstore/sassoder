@@ -1,7 +1,16 @@
 import "server-only";
 
 import { cache } from "react";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import {
+  authenticatedDashboardLandingPath,
+  dashboardLoginPathForOnboarding,
+  onboardingDashboardLandingPath
+} from "@/lib/auth-flow-routes";
+import { getDashboardSmokeSessionProfile } from "@/lib/dashboard-smoke-session";
+import { isSupabaseAuthSessionCookieName } from "@/lib/supabase/cookie-guards";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { SessionProfile } from "@/types/domain";
 
@@ -30,26 +39,6 @@ type ProfileRow = {
     | null;
 };
 
-const sessionProfileCache = new Map<string, { expiresAt: number; value: SessionProfile }>();
-const sessionProfileTtlMs = 45_000;
-
-function readCachedProfile(userId: string) {
-  const cached = sessionProfileCache.get(userId);
-  if (!cached) return null;
-  if (cached.expiresAt <= Date.now()) {
-    sessionProfileCache.delete(userId);
-    return null;
-  }
-  return cached.value;
-}
-
-function cacheProfile(profile: SessionProfile) {
-  sessionProfileCache.set(profile.userId, {
-    value: profile,
-    expiresAt: Date.now() + sessionProfileTtlMs
-  });
-}
-
 async function readAuthIdentity(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>): Promise<AuthIdentity | null> {
   try {
     const { data: claimsData } = await supabase.auth.getClaims();
@@ -72,18 +61,71 @@ async function readAuthIdentity(supabase: Awaited<ReturnType<typeof createServer
   }
 }
 
+async function hasAuthSessionCookie() {
+  const cookieStore = await cookies();
+  return cookieStore.getAll().some((cookie) => isSupabaseAuthSessionCookieName(cookie.name));
+}
+
 export const getAuthUser = cache(async () => {
+  if (!(await hasAuthSessionCookie())) return null;
   const supabase = await createServerSupabaseClient();
   return readAuthIdentity(supabase);
 });
 
+async function readProfileWithAdmin(user: AuthIdentity) {
+  const supabase = createAdminSupabaseClient();
+  const initialProfileResult = (await supabase
+    .from("users")
+    .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+    .eq("id", user.id)
+    .maybeSingle()) as any;
+  let data = initialProfileResult.data;
+  let error = initialProfileResult.error;
+
+  if (error) {
+    const legacy = (await supabase
+      .from("users")
+      .select("id,email,role,restaurant_id,restaurant:restaurants(id,name,slug,business_type)")
+      .eq("id", user.id)
+      .maybeSingle()) as any;
+
+    data = legacy.data;
+    error = legacy.error;
+  }
+
+  if (!data && !error) {
+    const fallback = (await supabase
+      .from("users")
+      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+      .eq("email", user.email.toLowerCase())
+      .maybeSingle()) as any;
+
+    data = fallback.data;
+    error = fallback.error;
+
+    if (error) {
+      const legacyFallback = (await supabase
+        .from("users")
+        .select("id,email,role,restaurant_id,restaurant:restaurants(id,name,slug,business_type)")
+        .eq("email", user.email.toLowerCase())
+        .maybeSingle()) as any;
+
+      data = legacyFallback.data;
+      error = legacyFallback.error;
+    }
+  }
+
+  return error ? null : (data as ProfileRow | null);
+}
+
 export const getSessionProfile = cache(async (): Promise<SessionProfile | null> => {
+  const smokeProfile = await getDashboardSmokeSessionProfile();
+  if (smokeProfile) return smokeProfile;
+
+  if (!(await hasAuthSessionCookie())) return null;
   const supabase = await createServerSupabaseClient();
   const user = await readAuthIdentity(supabase);
   if (!user) return null;
-
-  const cached = readCachedProfile(user.id);
-  if (cached) return cached;
 
   const initialProfileResult = (await supabase
     .from("users")
@@ -126,7 +168,12 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
     }
   }
 
-  const profileRow = data as ProfileRow | null;
+  let profileRow = data as ProfileRow | null;
+  if (error || !profileRow || !profileRow.restaurant) {
+    profileRow = await readProfileWithAdmin(user);
+    if (profileRow?.restaurant) error = null;
+  }
+
   if (error || !profileRow || !profileRow.restaurant) return null;
   if (profileRow.account_status === "blocked") return null;
 
@@ -149,7 +196,6 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
     }
   } satisfies SessionProfile;
 
-  cacheProfile(profile);
   return profile;
 });
 
@@ -170,4 +216,23 @@ export async function requireOnboardingUser() {
   const user = await getAuthUser();
   if (!user) redirect("/dashboard/login");
   return user;
+}
+
+export async function requireOnboardingUserForPath(next?: unknown) {
+  const session = await getSessionProfile();
+  if (session) redirect(authenticatedDashboardLandingPath(next));
+
+  const user = await getAuthUser();
+  if (!user) {
+    redirect(dashboardLoginPathForOnboarding(next));
+  }
+  return user;
+}
+
+export async function redirectAuthenticatedDashboardUser(next?: unknown) {
+  const session = await getSessionProfile();
+  if (session) redirect(authenticatedDashboardLandingPath(next));
+
+  const user = await getAuthUser();
+  if (user) redirect(onboardingDashboardLandingPath(next));
 }

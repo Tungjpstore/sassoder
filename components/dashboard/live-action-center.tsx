@@ -18,14 +18,27 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  fetchActionCenter,
+  readCachedActionCenter,
+  writeCachedActionCenter,
+  type ActionCenterSnapshot
+} from "@/components/dashboard/action-center-cache";
 import { orderStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import { orderNeedsPaymentAttention, resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 import type { OrderDto, ServiceRequestDto } from "@/types/domain";
 
 type QuickActionKind = "accept" | "complete" | "timer" | "confirm-payment" | "resolve-request";
 type RealtimeState = "connecting" | "connected" | "error";
+type LoadActionCenterOptions = {
+  includeOrders?: boolean;
+  includeRequests?: boolean;
+  force?: boolean;
+  silent?: boolean;
+};
 
 type QuickAction = {
   key: string;
@@ -42,6 +55,13 @@ type QuickAction = {
   tone: "green" | "yellow" | "blue" | "red";
   body?: unknown;
   href: string;
+};
+
+type AdminLiveActionCenterProps = {
+  initialOrders?: OrderDto[];
+  initialRequests?: ServiceRequestDto[];
+  restaurantId: string;
+  variant?: "popover" | "panel";
 };
 
 function minutesUntil(value?: string | null) {
@@ -78,15 +98,7 @@ function actionSummary(orders: OrderDto[], requests: ServiceRequestDto[]) {
     if (order.status === "ordering") serving += 1;
     const dueIn = minutesUntil(order.serviceDueAt);
     if (order.status === "ordering" && dueIn !== null && dueIn < 0) overdue += 1;
-    const billStatus = order.bill?.status;
-    if (
-      billStatus === "waiting_confirm" ||
-      billStatus === "waiting_payment" ||
-      order.paymentStatus === "waiting_confirm" ||
-      order.paymentStatus === "waiting_payment" ||
-      order.status === "waiting_confirm" ||
-      order.status === "waiting_payment"
-    ) {
+    if (orderNeedsPaymentAttention(order)) {
       paymentKeys.add(order.bill?.id ?? order.id);
     }
   }
@@ -118,13 +130,12 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
   for (const order of orders) {
     const location = orderLocationLabel(order);
     const dueIn = minutesUntil(order.serviceDueAt);
-    const billStatus = order.bill?.status;
-    const paymentStatus = billStatus ?? order.paymentStatus ?? order.status;
+    const paymentStatus = resolveOrderPaymentStatus(order);
     const paymentKey = order.bill?.id ?? order.id;
 
     if (
       !paymentKeys.has(paymentKey) &&
-      (paymentStatus === "waiting_confirm" || paymentStatus === "waiting_payment")
+      orderNeedsPaymentAttention(order)
     ) {
       paymentKeys.add(paymentKey);
       actions.push({
@@ -199,23 +210,68 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
   return actions.sort((a, b) => a.priority - b.priority || b.amount - a.amount).slice(0, 8);
 }
 
+function applyOptimisticOrderAction(orders: OrderDto[], action: QuickAction, now: Date, nextDue: string) {
+  return orders
+    .map((order) => {
+      const sameOrder = order.id === action.orderId;
+      const sameBill = action.billId && order.bill?.id === action.billId;
+      if (action.kind === "confirm-payment" && (sameOrder || sameBill)) return { ...order, status: "paid" as const };
+      if (action.kind === "accept" && sameOrder) return { ...order, status: "ordering" as const, acceptedAt: now.toISOString(), serviceDueAt: new Date(now.getTime() + 15 * 60_000).toISOString() };
+      if (action.kind === "complete" && sameOrder) return { ...order, status: "completed" as const, servedAt: now.toISOString() };
+      if (action.kind === "timer" && sameOrder) return { ...order, serviceDueAt: nextDue };
+      return order;
+    })
+    .filter((order) => order.status !== "paid");
+}
+
 function realtimeLabel(state: RealtimeState) {
-  if (state === "connected") return "Realtime";
+  if (state === "connected") return "Tức thời";
   if (state === "error") return "Mất kết nối";
   return "Đang nối";
 }
 
+type BrowserAudioWindow = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+
+function playActionNoticeSound(tone: QuickAction["tone"]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const AudioContextConstructor = window.AudioContext ?? (window as BrowserAudioWindow).webkitAudioContext;
+    if (!AudioContextConstructor) return;
+
+    const audioContext = new AudioContextConstructor();
+    const oscillator = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    const frequency = tone === "red" ? 760 : tone === "yellow" ? 620 : 520;
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.22, audioContext.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.045, audioContext.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.18);
+    oscillator.connect(gain);
+    gain.connect(audioContext.destination);
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.2);
+    window.setTimeout(() => void audioContext.close().catch(() => undefined), 300);
+  } catch {}
+}
+
 export function AdminLiveActionCenter({
+  initialOrders,
+  initialRequests,
   restaurantId,
   variant = "popover"
-}: {
-  restaurantId: string;
-  variant?: "popover" | "panel";
-}) {
-  const [orders, setOrders] = useState<OrderDto[]>([]);
-  const [requests, setRequests] = useState<ServiceRequestDto[]>([]);
+}: AdminLiveActionCenterProps) {
+  const hasInitialOrders = initialOrders !== undefined;
+  const hasInitialRequests = initialRequests !== undefined;
+  const [initialCache] = useState<ActionCenterSnapshot | null>(() => readCachedActionCenter(restaurantId));
+  const hasCachedSnapshot = Boolean(initialCache);
+  const [orders, setOrders] = useState<OrderDto[]>(() => initialOrders ?? initialCache?.orders ?? []);
+  const [requests, setRequests] = useState<ServiceRequestDto[]>(() => initialRequests ?? initialCache?.requests ?? []);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!hasCachedSnapshot && (!hasInitialOrders || !hasInitialRequests));
   const [mutatingKey, setMutatingKey] = useState<string | null>(null);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -225,36 +281,63 @@ export function AdminLiveActionCenter({
   const knownActionKeysRef = useRef<Set<string> | null>(null);
   const dismissedNoticeKeysRef = useRef(new Set<string>());
 
-  const loadOrders = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+  useEffect(() => {
+    if (!hasInitialOrders || !hasInitialRequests) return;
+    writeCachedActionCenter(restaurantId, {
+      orders: initialOrders ?? [],
+      requests: initialRequests ?? [],
+      fetchedAt: Date.now()
+    });
+  }, [hasInitialOrders, hasInitialRequests, initialOrders, initialRequests, restaurantId]);
+
+  const loadOrders = useCallback(async ({
+    includeOrders = true,
+    includeRequests = true,
+    force = false,
+    silent = false
+  }: LoadActionCenterOptions = {}) => {
+    if (!includeOrders && !includeRequests) {
+      if (!silent) setLoading(false);
+      return;
+    }
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const [ordersResponse, requestsResponse] = await Promise.all([
-        fetch("/api/admin/orders", { cache: "no-store" }),
-        fetch("/api/admin/service-requests", { cache: "no-store" })
-      ]);
-      const [ordersJson, requestsJson] = await Promise.all([ordersResponse.json(), requestsResponse.json()]);
-      if (!ordersJson.ok) throw new Error(ordersJson.error ?? "Không tải được luồng đơn hàng");
-      if (!requestsJson.ok) throw new Error(requestsJson.error ?? "Không tải được yêu cầu gọi nhân viên");
-      setOrders(ordersJson.data as OrderDto[]);
-      setRequests(requestsJson.data as ServiceRequestDto[]);
+      const snapshot = await fetchActionCenter({ restaurantId, force });
+      if (includeOrders) setOrders(snapshot.orders);
+      if (includeRequests) setRequests(snapshot.requests);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được luồng vận hành");
     } finally {
       inFlightRef.current = false;
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [restaurantId]);
 
   const scheduleRefresh = useCallback((delay = 220) => {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = window.setTimeout(() => void loadOrders({ silent: true }), delay);
+    refreshTimerRef.current = window.setTimeout(() => void loadOrders({ force: true, silent: true }), delay);
   }, [loadOrders]);
 
   useEffect(() => {
-    const initialLoadTimer = window.setTimeout(() => void loadOrders(), 0);
+    const shouldLoadInitialOrders = !hasInitialOrders;
+    const shouldLoadInitialRequests = !hasInitialRequests;
+    const shouldRevalidateWarmCache = hasCachedSnapshot && (shouldLoadInitialOrders || shouldLoadInitialRequests);
+    const initialLoadTimer =
+      shouldLoadInitialOrders || shouldLoadInitialRequests
+        ? window.setTimeout(
+            () =>
+              void loadOrders({
+                includeOrders: shouldLoadInitialOrders,
+                includeRequests: shouldLoadInitialRequests,
+                force: shouldRevalidateWarmCache,
+                silent: shouldRevalidateWarmCache
+              }),
+            shouldRevalidateWarmCache ? 180 : 0
+          )
+        : null;
 
     const supabase = createBrowserSupabaseClient();
     const channel = supabase
@@ -264,6 +347,7 @@ export function AdminLiveActionCenter({
         { event: "*", schema: "public", table: "orders", filter: `restaurant_id=eq.${restaurantId}` },
         () => scheduleRefresh()
       )
+      .on("postgres_changes", { event: "*", schema: "public", table: "order_items" }, () => scheduleRefresh())
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "table_bills", filter: `restaurant_id=eq.${restaurantId}` },
@@ -276,21 +360,24 @@ export function AdminLiveActionCenter({
       )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") setRealtimeState("connected");
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setRealtimeState("error");
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          setRealtimeState("error");
+          scheduleRefresh(0);
+        }
       });
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void loadOrders({ silent: true });
+      if (document.visibilityState === "visible") void loadOrders({ force: true, silent: true });
     };
     document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      window.clearTimeout(initialLoadTimer);
+      if (initialLoadTimer !== null) window.clearTimeout(initialLoadTimer);
       if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
       document.removeEventListener("visibilitychange", onVisibility);
       supabase.removeChannel(channel);
     };
-  }, [loadOrders, restaurantId, scheduleRefresh]);
+  }, [hasCachedSnapshot, hasInitialOrders, hasInitialRequests, loadOrders, restaurantId, scheduleRefresh]);
 
   const summary = useMemo(() => actionSummary(orders, requests), [orders, requests]);
   const actions = useMemo(() => buildQuickActions(orders, requests), [orders, requests]);
@@ -306,7 +393,10 @@ export function AdminLiveActionCenter({
     }
 
     const freshAction = actions.find((action) => !knownKeys.has(action.key) && !dismissedNoticeKeysRef.current.has(action.key));
-    if (freshAction) setNoticeAction(freshAction);
+    if (freshAction) {
+      setNoticeAction(freshAction);
+      playActionNoticeSound(freshAction.tone);
+    }
 
     setNoticeAction((current) => {
       if (!current) return current;
@@ -335,7 +425,13 @@ export function AdminLiveActionCenter({
         setMutatingKey(null);
         return;
       }
-      setRequests((current) => current.filter((request) => request.id !== action.requestId));
+      const nextRequests = requests.filter((request) => request.id !== action.requestId);
+      setRequests(nextRequests);
+      writeCachedActionCenter(restaurantId, {
+        orders,
+        requests: nextRequests,
+        fetchedAt: now.getTime()
+      });
       try {
         const response = await fetch(`/api/admin/service-requests/${action.requestId}/resolve`, {
           method: "POST"
@@ -345,6 +441,11 @@ export function AdminLiveActionCenter({
         scheduleRefresh(80);
       } catch (err) {
         setRequests(previousRequests);
+        writeCachedActionCenter(restaurantId, {
+          orders,
+          requests: previousRequests,
+          fetchedAt: now.getTime()
+        });
         setError(err instanceof Error ? err.message : "Không xử lý được yêu cầu hỗ trợ");
       } finally {
         setMutatingKey(null);
@@ -357,19 +458,13 @@ export function AdminLiveActionCenter({
       return;
     }
 
-    setOrders((current) =>
-      current
-        .map((order) => {
-          const sameOrder = order.id === action.orderId;
-          const sameBill = action.billId && order.bill?.id === action.billId;
-          if (action.kind === "confirm-payment" && (sameOrder || sameBill)) return { ...order, status: "paid" as const };
-          if (action.kind === "accept" && sameOrder) return { ...order, status: "ordering" as const, acceptedAt: now.toISOString(), serviceDueAt: new Date(now.getTime() + 15 * 60_000).toISOString() };
-          if (action.kind === "complete" && sameOrder) return { ...order, status: "completed" as const, servedAt: now.toISOString() };
-          if (action.kind === "timer" && sameOrder) return { ...order, serviceDueAt: nextDue };
-          return order;
-        })
-        .filter((order) => order.status !== "paid")
-    );
+    const nextOrders = applyOptimisticOrderAction(orders, action, now, nextDue);
+    setOrders(nextOrders);
+    writeCachedActionCenter(restaurantId, {
+      orders: nextOrders,
+      requests,
+      fetchedAt: now.getTime()
+    });
 
     try {
       const response = await fetch(`/api/admin/orders/${action.orderId}/${actionEndpoint(action.kind)}`, {
@@ -386,6 +481,11 @@ export function AdminLiveActionCenter({
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previousOrders);
+      writeCachedActionCenter(restaurantId, {
+        orders: previousOrders,
+        requests,
+        fetchedAt: now.getTime()
+      });
       setError(err instanceof Error ? err.message : "Thao tác thất bại");
     } finally {
       setMutatingKey(null);
@@ -398,11 +498,8 @@ export function AdminLiveActionCenter({
         <section className="dashboard-minimal-card flex min-h-0 flex-col p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Realtime queue</p>
-              <h2 className="mt-1 text-lg font-semibold text-[var(--foreground)]">Việc cần xử lý</h2>
-              <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-                Đơn mới, thanh toán, gọi nhân viên và bàn quá giờ.
-              </p>
+              <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Realtime queue</p>
+              <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
             </div>
             <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
               <RadioTower size={13} />
@@ -421,30 +518,30 @@ export function AdminLiveActionCenter({
                 <p className="truncate text-[11px] font-medium text-[var(--muted-foreground)]">{item.label}</p>
                 <p className="metric-number mt-0.5 text-xl font-semibold text-[var(--foreground)]">{item.value}</p>
                 {item.label === "Đang phục vụ" && summary.overdue > 0 ? (
-                  <p className="text-[10px] font-semibold text-[#FB7185]">{summary.overdue} quá giờ</p>
+                  <p className="text-[10px] font-semibold text-[var(--tertiary)]">{summary.overdue} quá giờ</p>
                 ) : null}
               </div>
             ))}
           </div>
 
-          {error ? <div className="mt-3 rounded-lg border border-[rgba(251,113,133,0.2)] bg-[rgba(251,113,133,0.08)] p-3 text-xs font-semibold text-[#FB7185]">{error}</div> : null}
+          {error ? <div className="mt-3 rounded-lg border border-[var(--tertiary)]/12 bg-[var(--danger-soft)] p-3 text-xs font-semibold text-[var(--tertiary)]">{error}</div> : null}
 
           <div className="mt-3 grid min-h-0 flex-1 gap-2 overflow-y-auto pr-1">
             {loading && actions.length === 0 ? (
-              <div className="flex min-h-[120px] items-center justify-center gap-2 rounded-lg bg-[var(--soft-surface)] p-5 text-sm font-medium text-[var(--muted-foreground)]">
+              <div className="flex min-h-[72px] items-center justify-center gap-2 rounded-lg bg-[var(--soft-surface)] p-4 text-sm font-medium text-[var(--muted-foreground)]">
                 <Loader2 className="animate-spin" size={17} />
                 Đang tải luồng vận hành...
               </div>
             ) : actions.length === 0 ? (
-              <div className="grid min-h-[120px] place-items-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-5 text-center">
+              <div className="grid min-h-[72px] place-items-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-center">
                 <div>
-                  <CheckCircle2 className="mx-auto text-[var(--primary)]" size={28} />
-                  <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">Không có việc gấp</p>
+                  <CheckCircle2 className="mx-auto text-[var(--primary)]" size={22} />
+                  <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">Không có việc gấp</p>
                   <p className="mt-1 text-xs text-[var(--muted-foreground)]">Ca bán đang ổn.</p>
                 </div>
               </div>
             ) : (
-              actions.slice(0, 6).map((action) => (
+              actions.slice(0, 5).map((action) => (
                 <QuickActionRow key={action.key} action={action} pending={mutatingKey === action.key} onRun={() => runAction(action)} />
               ))
             )}
@@ -453,10 +550,10 @@ export function AdminLiveActionCenter({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-3">
             <p className="text-xs text-[var(--muted-foreground)]">{summary.total} việc đang chờ</p>
             <div className="flex flex-wrap gap-2">
-              <Link href="/dashboard/orders" className="inline-flex h-9 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
+              <Link href="/dashboard/orders" className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--primary)] px-3 text-xs font-semibold text-white">
                 Mở đơn hàng
               </Link>
-              <Link href="/dashboard/kitchen" className="inline-flex h-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
+              <Link href="/dashboard/kitchen" className="inline-flex min-h-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--foreground)]">
                 Mở bếp
               </Link>
             </div>
@@ -482,33 +579,33 @@ export function AdminLiveActionCenter({
           type="button"
           onClick={() => setOpen((value) => !value)}
           className={cn(
-            "relative inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--soft-surface)]",
-            summary.total > 0 && "border-[rgba(245,158,11,0.3)] bg-[rgba(245,158,11,0.08)] text-[var(--accent)]"
+            "relative inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:bg-[var(--soft-surface)]",
+            summary.total > 0 && "border-[var(--accent)]/30 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
           )}
           aria-label="Luồng thao tác nhanh"
         >
           <Bell size={18} />
           <span className="hidden xl:inline">{summary.total > 0 ? "Cần xử lý" : "Thông báo"}</span>
           {summary.total > 0 && (
-            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-black text-white">
+            <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--accent)] px-1 text-[10px] font-semibold text-white">
               {summary.total}
             </span>
           )}
         </button>
 
         {open && (
-          <div className="absolute right-0 top-[calc(100%+10px)] z-[70] w-[min(420px,calc(100vw-24px))] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl">
+          <div className="fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))] z-[var(--z-dashboard-panel)] max-h-[calc(100dvh-8rem)] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_16px_42px_rgba(0,0,0,0.3)] backdrop-blur-xl md:absolute md:inset-x-auto md:right-0 md:top-[calc(100%+10px)] md:w-[min(420px,calc(100vw-24px))] md:max-h-none">
             <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
               <div>
                 <p className="text-sm font-semibold text-[var(--foreground)]">Luồng thao tác nhanh</p>
                 <p className="text-xs text-[var(--muted-foreground)]">{summary.pending} đơn mới · {summary.serving} đang phục vụ · {summary.payment} thanh toán · {summary.staff} gọi nhân viên</p>
               </div>
-              <button type="button" onClick={() => setOpen(false)} className="grid h-9 w-9 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]">
+              <button type="button" onClick={() => setOpen(false)} className="grid h-11 w-11 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]">
                 <X size={17} />
               </button>
             </div>
-            {error && <div className="mx-4 mt-3 rounded-xl border border-[#E11D48]/30 bg-[#E11D48]/8 p-3 text-xs font-bold text-[#BE123C]">{error}</div>}
-            <div className="max-h-[460px] overflow-y-auto p-3">
+            {error && <div className="mx-4 mt-3 rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-xs font-bold text-[var(--accent-strong)]">{error}</div>}
+            <div className="max-h-[calc(100dvh-14rem)] overflow-y-auto overscroll-contain p-3 md:max-h-[460px]">
               {loading && actions.length === 0 ? (
                 <div className="flex items-center justify-center gap-2 rounded-lg bg-[var(--soft-surface)] p-5 text-sm font-medium text-[var(--muted-foreground)]">
                   <Loader2 className="animate-spin" size={17} />
@@ -528,14 +625,14 @@ export function AdminLiveActionCenter({
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted-foreground)]">
               <span className="inline-flex items-center gap-1.5"><RadioTower size={14} />{realtimeLabel(realtimeState)}</span>
-              <Link href="/dashboard/orders" className="font-black text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
+              <Link href="/dashboard/orders" className="font-semibold text-[var(--primary)]" onClick={() => setOpen(false)}>Mở bảng đơn hàng</Link>
             </div>
           </div>
         )}
       </div>
 
       {primaryActions.length > 0 && (
-        <section className="fixed bottom-4 right-4 z-[55] hidden w-[380px] overflow-hidden rounded-xl border border-[rgba(245,158,11,0.2)] bg-[var(--surface)] shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl xl:block">
+        <section className="fixed bottom-4 right-4 z-[var(--z-dashboard-panel)] hidden w-[380px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl xl:block">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)]">Cần xử lý ngay</p>
@@ -577,37 +674,37 @@ function FloatingActionNotice({
   const Icon = action.icon;
   const toneClass =
     action.tone === "red"
-      ? "border-[rgba(251,113,133,0.25)] bg-[rgba(251,113,133,0.1)] text-[#FB7185]"
+      ? "border-[var(--tertiary)]/12 bg-[var(--danger-soft)] text-[var(--tertiary)]"
       : action.tone === "yellow"
-        ? "border-[rgba(245,158,11,0.25)] bg-[rgba(245,158,11,0.1)] text-[var(--accent)]"
+        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
         : action.tone === "blue"
-          ? "border-[rgba(96,165,250,0.25)] bg-[rgba(96,165,250,0.1)] text-[#60A5FA]"
-          : "border-[rgba(52,211,153,0.25)] bg-[rgba(52,211,153,0.1)] text-[var(--primary)]";
+          ? "border-[var(--secondary)]/35 bg-[var(--secondary-soft)] text-[var(--primary)]"
+          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
 
   return (
-    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[90] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[rgba(245,158,11,0.2)] bg-[var(--surface)] shadow-[0_18px_48px_rgba(0,0,0,0.3)] backdrop-blur-xl md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
+    <aside className="dashboard-notice-pop fixed inset-x-3 top-[70px] z-[var(--z-dashboard-panel)] mx-auto max-w-[430px] overflow-hidden rounded-xl border border-[var(--accent)]/20 bg-[var(--surface)] shadow-[var(--shadow-lift)] backdrop-blur-xl md:inset-x-auto md:right-6 md:top-[70px] md:mx-0">
       <div className="flex items-start gap-3 border-b border-[var(--border)] px-4 py-3">
         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${toneClass}`}>
           <Icon size={20} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Yêu cầu mới</p>
+          <p className="dashboard-eyebrow text-[var(--accent)]">Yêu cầu mới</p>
           <h3 className="mt-1 whitespace-normal break-words text-base font-semibold leading-snug text-[var(--foreground)]">{action.title}</h3>
           <p className="mt-1 whitespace-normal break-words text-sm leading-snug text-[var(--muted-foreground)]">{action.subtitle}</p>
           {action.kind !== "resolve-request" ? (
-            <p className="metric-number mt-1 text-sm font-black text-[var(--accent)]">{formatVnd(action.amount)}</p>
+            <p className="metric-number mt-1 text-sm font-semibold text-[var(--accent)]">{formatVnd(action.amount)}</p>
           ) : null}
         </div>
-        <button type="button" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]" aria-label="Đóng thông báo">
+        <button type="button" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)] hover:bg-[var(--soft-surface)]" aria-label="Đóng thông báo">
           <X size={17} />
         </button>
       </div>
       <div className="grid grid-cols-2 gap-2 p-3">
-        <Link href={action.href} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
           <ReceiptText size={15} />
           Xem chi tiết
         </Link>
-        <Button type="button" onClick={onRun} disabled={pending} className="min-h-10 shadow-none hover:shadow-none">
+        <Button type="button" onClick={onRun} disabled={pending} className="min-h-11 shadow-none hover:shadow-none">
           {pending ? <Loader2 className="animate-spin" size={15} /> : action.kind === "complete" ? <CheckCircle2 size={15} /> : action.kind === "accept" ? <ChefHat size={15} /> : action.kind === "timer" ? <Clock3 size={15} /> : action.kind === "resolve-request" ? <Bell size={15} /> : <CreditCard size={15} />}
           {action.label}
         </Button>
@@ -634,11 +731,11 @@ function QuickActionRow({
       <div className="flex items-start gap-3">
         <span
           className={cn(
-            "grid h-9 w-9 shrink-0 place-items-center rounded-lg",
-            action.tone === "red" && "bg-[rgba(251,113,133,0.1)] text-[#FB7185]",
-            action.tone === "yellow" && "bg-[rgba(245,158,11,0.1)] text-[var(--accent)]",
-            action.tone === "blue" && "bg-[rgba(96,165,250,0.1)] text-[#60A5FA]",
-            action.tone === "green" && "bg-[rgba(52,211,153,0.1)] text-[var(--primary)]"
+            "grid h-11 w-11 shrink-0 place-items-center rounded-lg",
+            action.tone === "red" && "bg-[var(--danger-soft)] text-[var(--tertiary)]",
+            action.tone === "yellow" && "bg-[var(--accent-soft)] text-[var(--accent-strong)]",
+            action.tone === "blue" && "bg-[var(--secondary-soft)] text-[var(--primary)]",
+            action.tone === "green" && "bg-[var(--primary-soft)] text-[var(--primary)]"
           )}
         >
           <Icon size={18} />
@@ -652,7 +749,7 @@ function QuickActionRow({
         </div>
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2">
-        <Link href={action.href} className="inline-flex min-h-9 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
+        <Link href={action.href} className="inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-center text-xs font-semibold leading-tight text-[var(--foreground)]">
           <ReceiptText size={14} />
           Chi tiết
         </Link>

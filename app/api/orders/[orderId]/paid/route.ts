@@ -1,5 +1,8 @@
-import { fail, ok } from "@/lib/response";
+import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
+import { AppError, fail, ok } from "@/lib/response";
+import { getRequestIpKey } from "@/lib/security/request-ip";
 import { customerOrderAccessSchema } from "@/lib/validators";
+import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import { getPublicOrder } from "@/services/order-service";
 import { markCustomerPaid } from "@/services/payment-service";
 
@@ -8,8 +11,29 @@ export const preferredRegion = "sin1";
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
     const { orderId } = await params;
-    const body = customerOrderAccessSchema.parse(await request.json());
-    await markCustomerPaid(orderId, body);
+    const ip = await getRequestIpKey();
+    const allowed = await checkPersistentRateLimit({
+      scope: "order_paid",
+      identifier: orderId,
+      ip,
+      limit: 8,
+      windowMs: 60_000
+    });
+    if (!allowed) {
+      throw new AppError("Bạn thao tác thanh toán quá nhanh. Vui lòng thử lại sau.", 429);
+    }
+    const body = customerOrderAccessSchema.parse(await request.json().catch(() => ({})));
+    const paymentOrder = await markCustomerPaid(orderId, body);
+    await broadcastVpsRealtime({
+      event: "payment_update",
+      restaurantId: paymentOrder.restaurant_id,
+      tableId: body.tableId,
+      orderId,
+      payload: {
+        orderId,
+        action: "customer.payment_submitted"
+      }
+    });
     return ok(await getPublicOrder(orderId, body));
   } catch (error) {
     return fail(error);

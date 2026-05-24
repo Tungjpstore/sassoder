@@ -11,6 +11,7 @@ const ownerAiSchema = z.object({
   message: z.string().trim().min(2).max(3000),
   intent: z.string().trim().max(60).optional(),
   category: z.string().trim().max(60).optional(),
+  threadId: z.string().trim().min(6).max(200).optional(),
   context: z.record(z.unknown()).optional()
 });
 
@@ -23,6 +24,7 @@ export async function POST(request: Request) {
       await runOwnerAssistant({
         restaurantId: session.restaurantId,
         userId: session.userId,
+        threadId: body.threadId,
         message: body.message,
         intent: body.intent || body.category,
         context: body.context

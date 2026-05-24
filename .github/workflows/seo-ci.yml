@@ -1,0 +1,66 @@
+name: Release CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seo-checks:
+    name: Release checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Infrastructure contract
+        run: npm run infra:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit --pretty false
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Security audit threshold
+        run: npm audit --audit-level=high
+
+      - name: Billing secrets preflight
+        if: ${{ github.event_name == 'workflow_dispatch' && (env.NEXT_PUBLIC_SUPABASE_URL == '' || env.SUPABASE_SERVICE_ROLE_KEY == '') }}
+        run: |
+          echo "Manual release runs require NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets for billing verification."
+          exit 1
+
+      - name: Billing v2 cutover verification
+        if: ${{ env.NEXT_PUBLIC_SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: npm run billing:verify
+
+      - name: SEO Week 5 audit
+        run: npm run seo:week5
+
+      - name: Agentic SEO audit
+        run: npm run seo:agentic
+
+      - name: Build
+        run: npm run build

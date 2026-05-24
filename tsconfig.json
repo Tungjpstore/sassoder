@@ -37,7 +37,9 @@
   ],
   "exclude": [
     "node_modules",
-    ".next/types/**/* 2.ts",
-    ".next/dev/types/**/* 2.ts"
+    "**/* 2",
+    "**/* 2.*",
+    "**/* 3",
+    "**/* 3.*"
   ]
 }

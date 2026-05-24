@@ -2,49 +2,31 @@ import "server-only";
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies, headers } from "next/headers";
+import { getValidDashboardSmokeCookie } from "@/lib/dashboard-smoke-session";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
-import { ROOT_DOMAIN } from "@/lib/tenant-domain";
+import {
+  getHostname,
+  isCookieChunkForBase,
+  isSupabaseAuthFlowCookieName,
+  isSupabaseAuthSessionCookieName,
+  sharedSupabaseCookieOptions,
+  shouldShareCookiesAcrossTenantDomains
+} from "@/lib/supabase/cookie-guards";
 import type { Database } from "@/types/supabase";
 
 type CreateServerSupabaseClientOptions = {
   ignoreAuthSession?: boolean;
   cookieName?: string;
+  suppressAuthSessionCookieWrites?: boolean;
 };
 
-function isSupabaseAuthSessionCookie(name: string) {
-  return name.startsWith("sb-") && name.includes("-auth-token") && !name.includes("code-verifier");
-}
-
-function isSupabaseAuthFlowCookie(name: string) {
-  return name.startsWith("sb-") && name.includes("code-verifier");
-}
-
-function getHostname(host: string) {
-  if (host.startsWith("[")) return host.slice(1, host.indexOf("]"));
-  return host.split(":")[0]?.toLowerCase() ?? "";
-}
-
-function shouldShareCookiesAcrossTenantDomains(hostname: string) {
-  return process.env.VERCEL_ENV === "production" && (hostname === ROOT_DOMAIN || hostname.endsWith(`.${ROOT_DOMAIN}`));
-}
-
-function sharedCookieOptions(hostname: string) {
-  if (!shouldShareCookiesAcrossTenantDomains(hostname)) return {};
-
-  return {
-    domain: `.${ROOT_DOMAIN}`,
-    path: "/",
-    sameSite: "lax" as const,
-    secure: true
-  };
-}
-
 export async function expireSupabaseAuthSessionCookies() {
-  await expireSupabaseCookiesByPredicate(isSupabaseAuthSessionCookie);
+  await expireSupabaseCookiesByPredicate(isSupabaseAuthSessionCookieName);
 }
 
 export async function expireSupabaseAuthFlowCookies() {
-  await expireSupabaseCookiesByPredicate(isSupabaseAuthFlowCookie);
+  await expireSupabaseCookiesByPredicate(isSupabaseAuthFlowCookieName);
 }
 
 async function expireSupabaseCookiesByPredicate(predicate: (name: string) => boolean) {
@@ -67,7 +49,7 @@ async function expireSupabaseCookiesByPredicate(predicate: (name: string) => boo
 
     if (shouldShareCookiesAcrossTenantDomains(hostname)) {
       cookieStore.set(cookie.name, "", {
-        ...sharedCookieOptions(hostname),
+        ...sharedSupabaseCookieOptions(hostname),
         maxAge: 0,
         expires: new Date(0)
       });
@@ -76,6 +58,10 @@ async function expireSupabaseCookiesByPredicate(predicate: (name: string) => boo
 }
 
 export async function createServerSupabaseClient(options: CreateServerSupabaseClientOptions = {}) {
+  if (await getValidDashboardSmokeCookie()) {
+    return createAdminSupabaseClient();
+  }
+
   const { url, anonKey } = getSupabaseBrowserEnv();
   const cookieStore = await cookies();
   const requestHeaders = await headers();
@@ -86,7 +72,7 @@ export async function createServerSupabaseClient(options: CreateServerSupabaseCl
   function getRequestCookies() {
     const allCookies = cookieStore.getAll();
     const sessionFilteredCookies = options.ignoreAuthSession
-      ? allCookies.filter((cookie) => !isSupabaseAuthSessionCookie(cookie.name))
+      ? allCookies.filter((cookie) => !isSupabaseAuthSessionCookieName(cookie.name))
       : allCookies;
     const latestFlowCookies = latestSupabaseAuthFlowCookies(rawCookieHeader);
 
@@ -94,7 +80,7 @@ export async function createServerSupabaseClient(options: CreateServerSupabaseCl
 
     return [
       ...latestFlowCookies,
-      ...sessionFilteredCookies.filter((cookie) => !isSupabaseAuthFlowCookie(cookie.name))
+      ...sessionFilteredCookies.filter((cookie) => !isSupabaseAuthFlowCookieName(cookie.name))
     ];
   }
 
@@ -110,12 +96,14 @@ export async function createServerSupabaseClient(options: CreateServerSupabaseCl
       },
       setAll(cookiesToSet) {
         try {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, {
-              ...options,
-              ...sharedCookieOptions(hostname)
+          cookiesToSet
+            .filter(({ name, value }) => !shouldSuppressAuthCookieWrite(name, value, options))
+            .forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, {
+                ...options,
+                ...sharedSupabaseCookieOptions(hostname)
+              });
             });
-          });
         } catch {
           // Server Components cannot set cookies. Server Actions and Route Handlers can.
         }
@@ -138,10 +126,16 @@ function latestSupabaseAuthFlowCookies(cookieHeader: string) {
 
     const name = trimmed.slice(0, separatorIndex);
     const value = trimmed.slice(separatorIndex + 1);
-    if (!isSupabaseAuthFlowCookie(name)) return;
+    if (!isSupabaseAuthFlowCookieName(name)) return;
 
     latestByName.set(name, value);
   });
 
   return Array.from(latestByName, ([name, value]) => ({ name, value }));
+}
+
+function shouldSuppressAuthCookieWrite(name: string, value: string, options: CreateServerSupabaseClientOptions) {
+  if (!options.suppressAuthSessionCookieWrites || value === "") return false;
+  if (isSupabaseAuthSessionCookieName(name)) return true;
+  return options.cookieName ? isCookieChunkForBase(name, options.cookieName) : false;
 }

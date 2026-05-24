@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-08T10:02:50.581Z",
+  "generatedAt": "2026-05-19T10:40:31.715Z",
   "scope": "seo-foundation",
   "score": 100,
   "findings": [
@@ -16,6 +16,18 @@
       "seoImpact": "Search engines receive explicit crawl rules and sitemap discovery."
     },
     {
+      "id": "robots-render-assets",
+      "area": "crawlability",
+      "severity": "critical",
+      "confidence": "CONFIRMED",
+      "file": "app/robots.ts",
+      "finding": "Robots keeps Next.js render assets crawlable.",
+      "fix": "Never disallow /_next/ because Googlebot needs CSS, JS and image assets to render public pages.",
+      "status": "pass",
+      "evidence": "app/robots.ts exists and explicitly allows Next.js render assets",
+      "seoImpact": "Search engines receive explicit crawl rules and sitemap discovery."
+    },
+    {
       "id": "sitemap-route",
       "area": "indexing",
       "severity": "critical",
@@ -25,6 +37,30 @@
       "fix": "Keep sitemap focused on indexable marketing URLs until tenant SEO policy is explicit.",
       "status": "pass",
       "evidence": "app/sitemap.ts exists",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "rss-feed-route",
+      "area": "crawl-optimization",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "app/feed.xml/route.ts",
+      "finding": "RSS feed route exists for editorial discovery.",
+      "fix": "Keep feed.xml generated from the shared blog registry so new posts are discoverable without hardcoded URLs.",
+      "status": "pass",
+      "evidence": "app/feed.xml/route.ts exists and emits RSS from shared blog posts",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "landing-metadata",
+      "area": "metadata",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/page.tsx",
+      "finding": "Landing metadata is pinned to the Week 1 brand and QR ordering keyword target.",
+      "fix": "Keep the home title unique, brand-led and aligned with the H1.",
+      "status": "pass",
+      "evidence": "app/page.tsx exists and uses SEO_HOME_TITLE + SEO_HOME_DESCRIPTION",
       "seoImpact": "Search engines receive clearer indexability and entity signals."
     },
     {
@@ -38,6 +74,30 @@
       "status": "pass",
       "evidence": "app/llms.txt/route.ts exists",
       "seoImpact": "AI search crawlers receive concise citation guidance."
+    },
+    {
+      "id": "favicon-assets",
+      "area": "metadata",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "public/favicon.ico",
+      "finding": "Root favicon assets exist for browser and Google Search result discovery.",
+      "fix": "Keep /favicon.ico and 48x48+ PNG favicon variants crawlable at stable root URLs.",
+      "status": "pass",
+      "evidence": "root favicon.ico, 48x48 PNG, 512x512 icon and apple icon exist",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "favicon-metadata",
+      "area": "metadata",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "lib/seo/metadata.ts",
+      "finding": "Shared metadata emits icon links for public pages.",
+      "fix": "Keep rel icon and apple icon metadata wired through createSeoMetadata.",
+      "status": "pass",
+      "evidence": "lib/seo/metadata.ts exists and emits favicon/apple icon metadata",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
     },
     {
       "id": "dashboard-noindex",
@@ -57,10 +117,10 @@
       "severity": "high",
       "confidence": "CONFIRMED",
       "file": "components/seo/site-json-ld.tsx",
-      "finding": "Organization, WebSite and SoftwareApplication JSON-LD are emitted server-side.",
-      "fix": "Validate schema in CI after every schema change.",
+      "finding": "Organization, WebSite and SoftwareApplication JSON-LD are emitted from shared schema builders.",
+      "fix": "Validate stable @id fragments and schema output in CI after every schema change.",
       "status": "pass",
-      "evidence": "components/seo/site-json-ld.tsx exists and uses next-seo JSON-LD helpers",
+      "evidence": "components/seo/site-json-ld.tsx exists and uses shared schema builders",
       "seoImpact": "Search engines receive clearer indexability and entity signals."
     },
     {
@@ -74,6 +134,174 @@
       "status": "pass",
       "evidence": "lighthouserc.cjs exists",
       "seoImpact": "SEO regressions can fail pull requests before deployment."
+    },
+    {
+      "id": "seo-ci-workflow",
+      "area": "validation",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": ".github/workflows/seo-ci.yml",
+      "finding": "GitHub Actions SEO workflow exists.",
+      "fix": "Run SEO audit, typecheck, build and Lighthouse CI for every pull request.",
+      "status": "pass",
+      "evidence": ".github/workflows/seo-ci.yml exists",
+      "seoImpact": "SEO regressions can fail pull requests before deployment."
+    },
+    {
+      "id": "schema-stable-ids",
+      "area": "structured-data",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "lib/seo/schema.ts",
+      "finding": "Schema entity IDs normalize the root URL before fragment IDs are appended.",
+      "fix": "Keep Organization, WebSite and SoftwareApplication @id values stable across deploys.",
+      "status": "pass",
+      "evidence": "lib/seo/schema.ts exists and normalizes schema fragment IDs",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "pricing-jsonld",
+      "area": "structured-data",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "components/seo/pricing-page-json-ld.tsx",
+      "finding": "Pricing page emits FAQ and breadcrumb JSON-LD.",
+      "fix": "Keep visible pricing FAQ copy and JSON-LD answers in sync whenever packages or entitlements change.",
+      "status": "pass",
+      "evidence": "components/seo/pricing-page-json-ld.tsx exists and includes FAQ + breadcrumb schema builders",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "pricing-visible-faq",
+      "area": "answer-engine",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "app/pricing/page.tsx",
+      "finding": "Pricing FAQ structured data is mirrored by visible FAQ content.",
+      "fix": "Do not emit FAQPage JSON-LD without matching visible page copy.",
+      "status": "pass",
+      "evidence": "app/pricing/page.tsx exists and renders pricingFaqItems visibly",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "pricing-isr",
+      "area": "performance",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/pricing/page.tsx",
+      "finding": "Pricing page uses cached public plan data instead of per-request dynamic rendering.",
+      "fix": "Keep pricing on ISR/cached public data so SEO crawlers receive a fast, stable public page.",
+      "status": "pass",
+      "evidence": "app/pricing/page.tsx exists and uses ISR with cached public plans",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "blog-index-route",
+      "area": "content-seo",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/blog/page.tsx",
+      "finding": "Blog index route exists with metadata, internal links and ItemList structured data.",
+      "fix": "Keep /blog focused on topic clusters and link naturally to landing and pricing pages.",
+      "status": "pass",
+      "evidence": "app/blog/page.tsx exists and includes metadata + ItemList + shared blog posts",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "blog-article-route",
+      "area": "content-seo",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/blog/[slug]/page.tsx",
+      "finding": "Blog article route emits Article, FAQ and breadcrumb structured data.",
+      "fix": "Require every article to have unique title, description, canonical path and visible FAQ copy before adding it to sitemap.",
+      "status": "pass",
+      "evidence": "app/blog/[slug]/page.tsx exists and includes Article + FAQ schema with static params",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "blog-sitemap",
+      "area": "indexing",
+      "severity": "high",
+      "confidence": "CONFIRMED",
+      "file": "app/sitemap.ts",
+      "finding": "Blog index and article URLs are included in the sitemap.",
+      "fix": "Keep blog sitemap generation tied to the shared blog content registry.",
+      "status": "pass",
+      "evidence": "app/sitemap.ts exists and maps blog posts into sitemap entries",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "lhci-summary-reporting",
+      "area": "validation",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/run-lhci.mjs",
+      "finding": "Lighthouse CI writes summary artifacts for downstream SEO reporting.",
+      "fix": "Keep reports/seo/lighthouse-summary.json stable so the agentic audit can consume real score evidence.",
+      "status": "pass",
+      "evidence": "scripts/seo/run-lhci.mjs exists and writes lighthouse-summary.json",
+      "seoImpact": "SEO regressions can fail pull requests before deployment."
+    },
+    {
+      "id": "blog-expansion-audit",
+      "area": "content-seo",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/blog-expansion-audit.mjs",
+      "finding": "Week 2 blog expansion has an automated content and internal-linking quality gate.",
+      "fix": "Run npm run seo:blog after adding blog posts, topic clusters or article schema changes.",
+      "status": "pass",
+      "evidence": "scripts/seo/blog-expansion-audit.mjs exists and writes blog expansion reports",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "week2-activation-report",
+      "area": "validation",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/week2-activation.mjs",
+      "finding": "Week 2 SEO activation report separates local readiness from post-deploy Firecrawl and GSC actions.",
+      "fix": "Run npm run seo:week2 before deploy handoffs and after refreshing Firecrawl/GSC evidence.",
+      "status": "pass",
+      "evidence": "scripts/seo/week2-activation.mjs exists and writes Week 2 activation reports",
+      "seoImpact": "SEO regressions can fail pull requests before deployment."
+    },
+    {
+      "id": "gsc-week1-readiness",
+      "area": "indexing",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/gsc-week1-readiness.mjs",
+      "finding": "Google Search Console Week 1 indexing readiness can be generated without sensitive credentials.",
+      "fix": "Run this before deploys and attach reports/seo/GSC-WEEK1-READINESS.md to SEO handoffs.",
+      "status": "pass",
+      "evidence": "scripts/seo/gsc-week1-readiness.mjs exists and writes JSON + Markdown readiness reports",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "gsc-reporting",
+      "area": "indexing",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/gsc-reporting.mjs",
+      "finding": "Google Search Console action logs and exports are normalized into SEO summary artifacts.",
+      "fix": "Keep reports/seo/gsc-summary.json as the agentic audit input for indexing, performance and GSC action evidence.",
+      "status": "pass",
+      "evidence": "scripts/seo/gsc-reporting.mjs exists and writes GSC summary artifacts",
+      "seoImpact": "Search engines receive clearer indexability and entity signals."
+    },
+    {
+      "id": "firecrawl-readiness",
+      "area": "crawlability",
+      "severity": "medium",
+      "confidence": "CONFIRMED",
+      "file": "scripts/seo/firecrawl-readiness.mjs",
+      "finding": "Firecrawl mapping integration can generate live crawl evidence when credentials are available.",
+      "fix": "Set FIRECRAWL_API_KEY in CI to write reports/seo/firecrawl-summary.json; keep the script non-blocking without credentials.",
+      "status": "pass",
+      "evidence": "scripts/seo/firecrawl-readiness.mjs exists and can write Firecrawl summary artifacts",
+      "seoImpact": "Search engines receive explicit crawl rules and sitemap discovery."
     }
   ]
 }

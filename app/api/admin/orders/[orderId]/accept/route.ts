@@ -1,18 +1,46 @@
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
-import { serviceTimerSchema } from "@/lib/validators";
-import { acceptOrder } from "@/services/order-service";
+import { adminOrderIdSchema, serviceTimerSchema } from "@/lib/validators";
+import { broadcastVpsRealtime } from "@/lib/vps/realtime";
+import { writeAuditLog } from "@/services/audit-log-service";
+import { acceptOrder, getOrderLifecycleSnapshot } from "@/services/order-service";
 
 export const preferredRegion = "sin1";
 
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
-    assertSameOriginRequest(request);
-    const session = await requireOperationalDashboardApiSession({ feature: "order_realtime" });
-    const { orderId } = await params;
+    assertSameOriginRequest(request, { requireOrigin: true });
+    const session = await requireOperationalDashboardApiSession({
+      feature: "order_realtime",
+      permission: "orders.update"
+    });
+    const { orderId } = adminOrderIdSchema.parse(await params);
     const body = serviceTimerSchema.partial().parse(await request.json().catch(() => ({})));
-    return ok(await acceptOrder(session.restaurantId, orderId, body.minutes ?? 15));
+    const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
+    const data = await acceptOrder(session.restaurantId, orderId, body.minutes ?? 15, session.userId);
+    await writeAuditLog({
+      restaurantId: session.restaurantId,
+      actorUserId: session.userId,
+      actorRole: session.role,
+      action: "order.accept",
+      entityType: "order",
+      entityId: orderId,
+      beforeData: before,
+      afterData: data,
+      metadata: { minutes: body.minutes ?? 15 }
+    });
+    await broadcastVpsRealtime({
+      event: "order_confirmed",
+      restaurantId: session.restaurantId,
+      orderId,
+      payload: {
+        orderId,
+        action: "order.accept",
+        minutes: body.minutes ?? 15
+      }
+    });
+    return ok(data);
   } catch (error) {
     return fail(error);
   }

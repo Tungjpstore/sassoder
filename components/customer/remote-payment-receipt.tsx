@@ -43,7 +43,11 @@ export function RemotePaymentReceipt({
     url?: string;
   } | null;
 }) {
-  const subtotal = order.subtotal ?? Math.max(0, order.total - (order.deliveryFee ?? 0) + (order.discountAmount ?? 0));
+  const serviceFee = order.serviceFee ?? 0;
+  const subtotal = Math.max(
+    0,
+    (order.subtotal ?? order.total + (order.discountAmount ?? 0)) - (order.deliveryFee ?? 0) - serviceFee
+  );
   const discount = order.discountAmount ?? 0;
   const deliveryFee = order.deliveryFee ?? 0;
   const paidAt = order.paidAt ?? order.bill?.paidAt ?? order.updatedAt ?? order.createdAt;
@@ -127,7 +131,11 @@ export function RemotePaymentReceipt({
                 <div className="divide-y divide-[rgba(169,197,161,0.45)] bg-white/58">
                   {order.items.map((item, index) => (
                     <div key={`${item.menuItem?.id ?? item.menuItem?.name ?? "item"}-${index}`} className="grid grid-cols-[minmax(0,1fr)_38px_84px] items-start gap-2 px-3 py-3 text-xs sm:text-sm">
-                      <span className="min-w-0 break-words font-semibold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                      <span className="min-w-0">
+                        <span className="block break-words font-semibold">{item.menuItem?.name ?? "Món đã gọi"}</span>
+                        {item.modifierSummary ? <span className="mt-1 block break-words text-[11px] font-bold text-[var(--muted-foreground)]">{item.modifierSummary}</span> : null}
+                        {item.note ? <span className="mt-1 block break-words text-[11px] font-semibold text-[var(--accent)]">{item.note}</span> : null}
+                      </span>
                       <span className="text-center font-bold tabular-nums">{item.quantity}</span>
                       <span className="text-right font-bold tabular-nums">{formatVnd(item.quantity * item.price)}</span>
                     </div>
@@ -137,6 +145,7 @@ export function RemotePaymentReceipt({
               <p className="receipt-row"><span>Tạm tính</span><strong>{formatVnd(subtotal)}</strong></p>
               <p className="receipt-row"><span>Giảm giá</span><strong className="text-[var(--accent)]">-{formatVnd(discount)}</strong></p>
               <p className="receipt-row"><span>Phí giao hàng</span><strong>{formatVnd(deliveryFee)}</strong></p>
+              {serviceFee > 0 ? <p className="receipt-row"><span>Phí dịch vụ</span><strong>{formatVnd(serviceFee)}</strong></p> : null}
               <p className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-2xl border border-[rgba(242,140,40,0.34)] bg-[#FFF7EB] px-3 py-3 font-black sm:mt-2 sm:px-4">
                 <span>TỔNG CỘNG</span>
                 <span className="whitespace-nowrap text-xl text-[var(--accent)] sm:text-2xl">{formatVnd(order.total)}</span>

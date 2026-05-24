@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  getOwnerAgentToolContract,
+  normalizeOwnerAgentCommand,
+  type OwnerAgentDomain
+} from "@/lib/ai/owner-agent-command";
 import type { AiAgentAction, AiAgentPlan } from "@/types/ai-agent";
 import type { CustomerAiIntent, OwnerAiIntent } from "@/services/ai-prompt-router";
 
@@ -8,6 +13,12 @@ type OwnerAgentMeta = {
   title: string;
   summary: string;
   safetyNote: string;
+};
+
+type ToolRunRecord = {
+  name: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
 };
 
 const ownerAgentMeta: Record<OwnerAiIntent, OwnerAgentMeta> = {
@@ -21,25 +32,31 @@ const ownerAgentMeta: Record<OwnerAiIntent, OwnerAgentMeta> = {
     route: "/dashboard",
     title: "Shift Operator",
     summary: "Đọc nhịp ca hiện tại, gom cảnh báo và đưa một hành động ưu tiên.",
-    safetyNote: "AI không tự xử lý đơn, chỉ mở đúng khu vực thao tác."
+    safetyNote: "AI chỉ chạy action vận hành sau khi chủ quán xác nhận; thanh toán vẫn phải tự đối soát."
   },
   orders: {
     route: "/dashboard/orders",
     title: "Order Controller",
     summary: "Phân loại đơn, chỉ ra trạng thái tiếp theo và nút cần bấm.",
-    safetyNote: "Nhận đơn, phục vụ và thanh toán vẫn cần thao tác thủ công."
+    safetyNote: "AI có thể nhận/hoàn tất đơn bằng action đã xác nhận; thanh toán luôn manual_only."
   },
   kitchen: {
     route: "/dashboard/orders",
     title: "Kitchen Dispatcher",
     summary: "Ưu tiên đơn theo thời gian chờ, SLA ra món và nguy cơ quá hạn.",
-    safetyNote: "AI không cam kết giờ ra món nếu dữ liệu thiếu."
+    safetyNote: "AI không cam kết giờ ra món nếu dữ liệu thiếu; action ra món cần chủ quán xác nhận."
   },
   menu: {
     route: "/dashboard/menu",
     title: "Menu Architect",
     summary: "Tối ưu danh mục, món, tag, mô tả và nháp menu từ AI.",
-    safetyNote: "AI không tự thêm món vào database."
+    safetyNote: "AI có thể tạo danh mục/món nháp bị ẩn sau xác nhận; chủ quán kiểm tra rồi mới bật bán."
+  },
+  inventory: {
+    route: "/dashboard/inventory",
+    title: "Inventory Controller",
+    summary: "Theo dõi tồn kho, định mức món, cảnh báo thiếu hàng và gợi ý nhập trước cao điểm.",
+    safetyNote: "AI có thể tạo PO nháp từ tồn thấp sau xác nhận; không tự nhận hàng hoặc trừ kho."
   },
   tables: {
     route: "/dashboard/tables",
@@ -57,7 +74,7 @@ const ownerAgentMeta: Record<OwnerAiIntent, OwnerAgentMeta> = {
     route: "/dashboard/promotions",
     title: "Growth Campaigner",
     summary: "Tạo mã giảm có điều kiện, kênh hiển thị và chống lạm dụng.",
-    safetyNote: "Khuyến mãi luôn cần min order, thời hạn và kiểm soát lợi nhuận."
+    safetyNote: "AI chỉ tạo promotion draft chưa active/chưa public; chủ quán kiểm soát lợi nhuận trước khi bật."
   },
   staff: {
     route: "/dashboard/staff",
@@ -99,9 +116,26 @@ const ownerAgentMeta: Record<OwnerAiIntent, OwnerAgentMeta> = {
     route: "/dashboard/promotions",
     title: "Brand Growth Agent",
     summary: "Tạo nội dung thương hiệu, slogan, chiến dịch và prompt ảnh an toàn.",
-    safetyNote: "Prompt ảnh tránh chữ nhỏ để không lỗi typography."
+    safetyNote: "AI có thể tạo campaign/promotion draft chưa public; prompt ảnh tránh chữ nhỏ để không lỗi typography."
   }
 };
+
+function formatVnd(value: number) {
+  return `${Math.max(0, Number(value || 0)).toLocaleString("vi-VN")}đ`;
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function dedupeActions(actions: AiAgentAction[]) {
+  const seen = new Set<string>();
+  return actions.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
 
 function action(input: AiAgentAction): AiAgentAction {
   return {
@@ -123,33 +157,89 @@ function ownerOrderMainItem(order: Record<string, unknown>) {
   return `${quantity > 0 ? `${quantity}x ` : ""}${String(first.name ?? "món")}`;
 }
 
+function buildAcceptOrderAction(order?: Record<string, unknown>, priority: AiAgentAction["priority"] = "primary") {
+  if (!order?.id) return null;
+  return action({
+    id: `accept-order-${String(order.id)}`,
+    type: "api",
+    label: `Nhận đơn #${ownerOrderCode(order)}`,
+    description: [String(order.tableName || "Bàn"), ownerOrderMainItem(order)].filter(Boolean).join(" · "),
+    endpoint: `/api/admin/orders/${String(order.id)}/accept`,
+    body: { minutes: 15 },
+    intent: "orders",
+    priority,
+    safety: "confirm"
+  });
+}
+
+function buildBulkAcceptOrdersAction(pendingOrders: Array<Record<string, unknown>>) {
+  const executableOrders = pendingOrders.filter((order) => order.id).slice(0, 6);
+  if (executableOrders.length < 2) return null;
+
+  const bulkActions = executableOrders.map((order) => ({
+    id: `accept-order-${String(order.id)}`,
+    type: "api",
+    label: `Nhận đơn #${ownerOrderCode(order)}`,
+    description: [String(order.tableName || "Bàn"), ownerOrderMainItem(order)].filter(Boolean).join(" · "),
+    endpoint: `/api/admin/orders/${String(order.id)}/accept`,
+    body: { minutes: 15 },
+    intent: "orders",
+    safety: "confirm"
+  }));
+
+  return action({
+    id: `bulk-accept-pending-${executableOrders.map((order) => String(order.id).slice(0, 8)).join("-")}`,
+    type: "ui",
+    label: `Nhận ${executableOrders.length} đơn chờ`,
+    description: `Chạy tuần tự các đơn pending gần nhất, mỗi đơn vẫn ghi checkpoint và cập nhật dashboard.`,
+    body: {
+      kind: "bulk_owner_actions",
+      actions: bulkActions
+    },
+    intent: "orders",
+    priority: "primary",
+    safety: "confirm"
+  });
+}
+
 function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
   const data = (snapshot ?? {}) as {
     recentOrders?: Array<Record<string, unknown>>;
     tables?: { tables?: Array<Record<string, unknown>> };
     payments?: { waitingConfirm?: number; logs?: Array<Record<string, unknown>> };
     menu?: { unavailableCount?: number; categories?: Array<Record<string, unknown>> };
+    inventory?: {
+      lowStockCount?: number;
+      recipeCoveragePercent?: number;
+      openAlertCount?: number;
+      projectedPurchaseValue?: number;
+      wasteSignalCount?: number;
+      highFoodCostItemCount?: number;
+    };
+    staff?: {
+      activeCount?: number;
+      memberCount?: number;
+      currentlyClockedIn?: number;
+      lateCount24h?: number;
+      unassignedActiveCount?: number;
+      averageReviewScore?: number;
+      lowReviewCount?: number;
+      draftReviewCount?: number;
+      pendingApprovalCount?: number;
+      pendingApprovalByType?: Record<string, number>;
+      upcomingShiftCount?: number;
+    };
   };
   const actions: AiAgentAction[] = [];
   const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
 
   if (intent === "orders" || intent === "overview" || intent === "kitchen") {
-    const pending = orders.find((order) => order.status === "pending");
-    if (pending?.id) {
-      actions.push(
-        action({
-          id: `accept-order-${String(pending.id)}`,
-          type: "api",
-          label: `Nhận đơn #${ownerOrderCode(pending)}`,
-          description: [String(pending.tableName || "Bàn"), ownerOrderMainItem(pending)].filter(Boolean).join(" · "),
-          endpoint: `/api/admin/orders/${String(pending.id)}/accept`,
-          body: { minutes: 15 },
-          intent: "orders",
-          priority: "primary",
-          safety: "confirm"
-        })
-      );
-    }
+    const pendingOrders = orders.filter((order) => order.status === "pending");
+    const bulkPendingAction = buildBulkAcceptOrdersAction(pendingOrders);
+    if (bulkPendingAction) actions.push(bulkPendingAction);
+
+    const pendingAction = buildAcceptOrderAction(pendingOrders[0], bulkPendingAction ? "secondary" : "primary");
+    if (pendingAction) actions.push(pendingAction);
 
     const cooking = orders.find((order) => order.status === "ordering");
     if (cooking?.id) {
@@ -161,7 +251,7 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
           description: [String(cooking.tableName || "Bàn"), ownerOrderMainItem(cooking)].filter(Boolean).join(" · "),
           endpoint: `/api/admin/orders/${String(cooking.id)}/complete`,
           intent: "orders",
-          priority: pending ? "secondary" : "primary",
+          priority: pendingOrders.length > 0 ? "secondary" : "primary",
           safety: "confirm"
         })
       );
@@ -177,7 +267,7 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
           description: [String(completed.tableName || "Bàn"), `${Number(completed.total ?? 0).toLocaleString("vi-VN")}đ`].filter(Boolean).join(" · "),
           href: `/dashboard/orders?status=${String(completed.status)}`,
           intent: "payments",
-          priority: pending || cooking ? "secondary" : "primary",
+          priority: pendingOrders.length > 0 || cooking ? "secondary" : "primary",
           safety: "manual_only"
         })
       );
@@ -256,13 +346,320 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
     }
   }
 
+  if (intent === "inventory" || intent === "overview") {
+    const lowStockCount = Number(data.inventory?.lowStockCount ?? 0);
+    const recipeCoveragePercent = Number(data.inventory?.recipeCoveragePercent ?? 0);
+    const openAlertCount = Number(data.inventory?.openAlertCount ?? 0);
+    const projectedPurchaseValue = Number(data.inventory?.projectedPurchaseValue ?? 0);
+    const wasteSignalCount = Number(data.inventory?.wasteSignalCount ?? 0);
+    const highFoodCostItemCount = Number(data.inventory?.highFoodCostItemCount ?? 0);
+    if (lowStockCount > 0 || openAlertCount > 0 || projectedPurchaseValue > 0 || wasteSignalCount > 0 || highFoodCostItemCount > 0 || (recipeCoveragePercent > 0 && recipeCoveragePercent < 70)) {
+      actions.push(
+        action({
+          id: "open-inventory-ai-risk",
+          type: "link",
+          label:
+            lowStockCount > 0
+              ? `Xử lý ${lowStockCount} nguyên liệu thiếu`
+              : projectedPurchaseValue > 0
+                ? "Tạo kế hoạch nhập hàng"
+                : wasteSignalCount > 0
+                  ? "Rà soát hao hụt kho"
+                  : "Mở cảnh báo kho",
+          description:
+            lowStockCount > 0
+              ? `Ưu tiên nhập hàng trước khi nhận thêm cao điểm.`
+              : projectedPurchaseValue > 0
+                ? `Dự kiến nhập ${Math.round(projectedPurchaseValue).toLocaleString("vi-VN")}đ · ${wasteSignalCount} tín hiệu hao hụt.`
+                : `Recipe coverage ${Math.round(recipeCoveragePercent)}% · ${openAlertCount} alert mở · ${highFoodCostItemCount} món food cost cao.`,
+          href: "/dashboard/inventory",
+          intent: "inventory",
+          priority: intent === "inventory" ? "primary" : "secondary"
+        })
+      );
+    }
+  }
+
+  if (intent === "staff") {
+    const pendingApprovals = Number(data.staff?.pendingApprovalCount ?? 0);
+    const lateCount = Number(data.staff?.lateCount24h ?? 0);
+    const upcomingShiftCount = Number(data.staff?.upcomingShiftCount ?? 0);
+    const unassignedActiveCount = Number(data.staff?.unassignedActiveCount ?? 0);
+    const lowReviewCount = Number(data.staff?.lowReviewCount ?? 0);
+    const draftReviewCount = Number(data.staff?.draftReviewCount ?? 0);
+    const averageReviewScore = Number(data.staff?.averageReviewScore ?? 0);
+
+    if (pendingApprovals > 0) {
+      actions.push(
+        action({
+          id: "open-staff-approvals",
+          type: "link",
+          label: `Duyệt ${pendingApprovals} yêu cầu`,
+          description: "Mở Nhân sự để xử lý nghỉ phép, đổi ca, tăng ca hoặc chỉnh công đang chờ.",
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: "primary",
+          safety: "confirm"
+        })
+      );
+    }
+
+    if (unassignedActiveCount > 0) {
+      actions.push(
+        action({
+          id: "open-staff-branch-setup",
+          type: "link",
+          label: `Gán chi nhánh cho ${unassignedActiveCount} nhân sự`,
+          description: "Mở HR để chốt branch assignment trước khi xếp ca và tính công.",
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 ? "secondary" : "primary"
+        })
+      );
+    }
+
+    if (lowReviewCount > 0 || draftReviewCount > 0 || (averageReviewScore > 0 && averageReviewScore < 4)) {
+      actions.push(
+        action({
+          id: "open-staff-performance-coaching",
+          type: "link",
+          label: lowReviewCount > 0 ? `Coaching ${lowReviewCount} nhân sự` : "Chốt đánh giá hiệu suất",
+          description:
+            lowReviewCount > 0
+              ? `Review thấp cần kèm cặp · điểm TB ${averageReviewScore ? averageReviewScore.toFixed(1) : "--"}/5.`
+              : `${draftReviewCount} đánh giá nháp cần hoàn tất để xếp ca công bằng.`,
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 || unassignedActiveCount > 0 ? "secondary" : "primary"
+        })
+      );
+    }
+
+    if (lateCount > 0 || upcomingShiftCount > 0) {
+      actions.push(
+        action({
+          id: "open-staff-attendance",
+          type: "link",
+          label: lateCount > 0 ? `Xem ${lateCount} lượt muộn` : "Xem ca sắp tới",
+          description:
+            lateCount > 0
+              ? "Kiểm tra chấm công, lượt muộn và ca cần cân lại."
+              : `Có ${upcomingShiftCount} ca sắp tới cần theo dõi coverage.`,
+          href: "/dashboard/staff",
+          intent: "staff",
+          priority: pendingApprovals > 0 ? "secondary" : "primary"
+        })
+      );
+    }
+  }
+
   return actions;
 }
 
-export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: string[] = [], snapshot?: unknown) {
+function buildOwnerToolActions(intent: OwnerAiIntent, snapshot: unknown, toolRuns: ToolRunRecord[] = []) {
+  const actions: AiAgentAction[] = [];
+  const snapshotData = (snapshot ?? {}) as { recentOrders?: Array<Record<string, unknown>> };
+  const recentOrders = Array.isArray(snapshotData.recentOrders) ? snapshotData.recentOrders : [];
+
+  for (const toolRun of toolRuns) {
+    const result = asRecord(toolRun.result);
+    if (!result || result.status !== "success") continue;
+
+    if (toolRun.name === "detect_payment_issue") {
+      const issues = Array.isArray(result.issues) ? (result.issues as Array<Record<string, unknown>>) : [];
+      const firstIssue = issues[0];
+      const issueRef = String(firstIssue?.orderId ?? "");
+      const matchedOrder = recentOrders.find((order) => String(order.shortId ?? "") === issueRef || String(order.id ?? "").slice(0, 8).toUpperCase() === issueRef);
+
+      if (matchedOrder?.id && String(firstIssue?.status ?? "") === "waiting_confirm") {
+        actions.push(
+          action({
+            id: `confirm-payment-tool-${String(matchedOrder.id)}`,
+            type: "api",
+            label: `Đối soát tiền #${issueRef}`,
+            description: `${String(firstIssue?.method || "Thanh toán")} · ${formatVnd(Number(firstIssue?.amount ?? matchedOrder.total ?? 0))}`,
+            endpoint: `/api/admin/orders/${String(matchedOrder.id)}/confirm-payment`,
+            intent: "payments",
+            priority: "primary",
+            safety: "manual_only"
+          })
+        );
+      }
+
+      actions.push(
+        action({
+          id: `payment-watch-${issues.length || 0}`,
+          type: "link",
+          label: "Mở bàn đối soát",
+          description: issues.length > 0 ? `${issues.length} giao dịch cần kiểm tra thủ công.` : "Kiểm tra lại trạng thái giao dịch gần nhất.",
+          href: "/dashboard/payments",
+          intent: "payments",
+          priority: intent === "payments" ? "primary" : "secondary",
+          safety: "manual_only"
+        })
+      );
+    }
+
+    if (toolRun.name === "search_menu") {
+      const items = Array.isArray(result.results) ? (result.results as Array<Record<string, unknown>>) : [];
+      const firstItem = items[0];
+      if (firstItem?.id) {
+        actions.push(
+          action({
+            id: `tool-menu-${String(firstItem.id)}`,
+            type: "link",
+            label: `Mở món ${String(firstItem.name || "trong menu")}`,
+            description: [String(firstItem.categoryName || "Danh mục"), Number(firstItem.price ?? 0) > 0 ? formatVnd(Number(firstItem.price)) : ""]
+              .filter(Boolean)
+              .join(" · "),
+            href: `/dashboard/menu?item=${String(firstItem.id)}`,
+            intent: "menu",
+            priority: intent === "menu" ? "primary" : "secondary"
+          })
+        );
+      }
+    }
+
+    if (toolRun.name === "summarize_sales") {
+      actions.push(
+        action({
+          id: `sales-summary-${String(result.timeRange || "today")}`,
+          type: "link",
+          label: "Mở báo cáo doanh thu",
+          description: `${Number(result.totalOrders ?? 0)} đơn · ${formatVnd(Number(result.totalRevenue ?? 0))}`,
+          href: "/dashboard/analytics",
+          intent: "reports",
+          priority: intent === "reports" ? "primary" : "secondary"
+        })
+      );
+    }
+
+    if (toolRun.name === "find_best_seller") {
+      const topItems = Array.isArray(result.bestSellers) ? (result.bestSellers as Array<Record<string, unknown>>) : [];
+      const topName = String(topItems[0]?.name ?? "");
+      if (topName) {
+        actions.push(
+          action({
+            id: `upsell-best-seller-${topName.toLowerCase().replace(/\s+/g, "-")}`,
+            type: "prompt",
+            label: "Tạo upsell từ món bán chạy",
+            description: `Dùng ${topName} làm anchor cho combo hoặc khuyến mãi.`,
+            prompt: `Dựa trên món bán chạy ${topName}, gợi ý một upsell hoặc combo bán nhanh trong ca này.`,
+            intent: "growth",
+            priority: "secondary"
+          })
+        );
+      }
+    }
+
+    if (toolRun.name === "generate_campaign") {
+      const campaign = asRecord(result.suggestedCampaign);
+      const title = String(campaign?.title ?? "chiến dịch mới");
+      const impact = String(campaign?.estimatedImpact ?? "");
+      actions.push(
+        action({
+          id: `campaign-draft-${title.toLowerCase().replace(/\s+/g, "-")}`,
+          type: "api",
+          label: "Biến thành draft khuyến mãi",
+          description: [title, impact].filter(Boolean).join(" · "),
+          endpoint: "/api/admin/ai/setup-draft",
+          body: {
+            kind: "promotion_launch",
+            focus: `Triển khai chiến dịch ${title}${impact ? `. Mục tiêu: ${impact}.` : "."}`
+          },
+          intent: "promotions",
+          priority: intent === "promotions" || intent === "growth" ? "primary" : "secondary"
+        })
+      );
+    }
+  }
+
+  return actions;
+}
+
+function buildOwnerInsightAction(intent: OwnerAiIntent, snapshot?: unknown) {
+  const data = asRecord(snapshot);
+  const operationInsights = asRecord(data?.operationInsights);
+  const insights = Array.isArray(operationInsights?.insights) ? (operationInsights.insights as Array<Record<string, unknown>>) : [];
+  const primaryInsightId = String(operationInsights?.primaryInsightId ?? "");
+  const insight = insights.find((item) => String(item.id ?? "") === primaryInsightId) ?? insights[0];
+  if (!insight) return null;
+
+  const title = String(insight.title ?? "").trim();
+  const actionText = String(insight.action ?? "").trim();
+  if (!title || !actionText) return null;
+
+  const severity = String(insight.severity ?? "");
+  const actionIntent = String(insight.actionIntent ?? intent);
+  return action({
+    id: `ops-insight-${String(insight.id ?? title).slice(0, 80)}`,
+    type: "prompt",
+    label: `Xử lý: ${title.slice(0, 54)}`,
+    description: actionText.slice(0, 150),
+    prompt: `Dựa trên insight vận hành "${title}", đề xuất bước xử lý ngắn, an toàn và có thể làm ngay trong LogiVN.`,
+    intent: actionIntent,
+    priority: severity === "critical" || severity === "warning" ? "primary" : "secondary",
+    safety: "safe"
+  });
+}
+
+function buildOwnerExecutorAction(intent: OwnerAiIntent, ownerMessage = "") {
+  const domain = intent as OwnerAgentDomain;
+  const command = normalizeOwnerAgentCommand(null, domain, ownerMessage);
+  const contract = getOwnerAgentToolContract(command);
+  if (!contract) return null;
+
+  const writesDraft = contract.writes.some((item) => item !== "none");
+  const description = writesDraft
+    ? `Đọc ${contract.reads.slice(0, 2).join(" + ")} rồi tạo nháp an toàn: ${contract.writes.join(", ")}.`
+    : `Đọc ${contract.reads.slice(0, 2).join(" + ")} rồi dựng workflow/checklist thao tác.`;
+
+  return action({
+    id: `owner-agent-${contract.command}`,
+    type: "api",
+    label: contract.label,
+    description,
+    endpoint: "/api/admin/ai/agent/execute",
+    body: {
+      domain: contract.domain,
+      command: contract.command,
+      message: ownerMessage || `Chạy ${contract.label.toLowerCase()} cho quán hiện tại.`,
+      confirm: true,
+      mode: "execute"
+    },
+    intent: contract.domain,
+    priority: intent === "menu" || intent === "inventory" || intent === "promotions" || intent === "growth" ? "primary" : "secondary",
+    safety: contract.safety
+  });
+}
+
+export function buildOwnerAgentActions(
+  intent: OwnerAiIntent,
+  suggestions: string[] = [],
+  snapshot?: unknown,
+  toolRuns: ToolRunRecord[] = [],
+  ownerMessage = ""
+) {
   const route = ownerAgentMeta[intent].route;
+  const data = (snapshot ?? {}) as {
+    staff?: {
+      lateCount24h?: number;
+      pendingApprovalCount?: number;
+      unassignedActiveCount?: number;
+      lowReviewCount?: number;
+      draftReviewCount?: number;
+      averageReviewScore?: number;
+      upcomingShiftCount?: number;
+    };
+  };
   const dataActions = buildOwnerDataActions(intent, snapshot);
+  const toolActions = buildOwnerToolActions(intent, snapshot, toolRuns);
+  const insightAction = buildOwnerInsightAction(intent, snapshot);
+  const executorAction = buildOwnerExecutorAction(intent, ownerMessage || suggestions[0] || "");
   const actions: AiAgentAction[] = [
+    ...toolActions,
+    ...(insightAction ? [insightAction] : []),
+    ...(executorAction ? [executorAction] : []),
     ...dataActions,
     action({
       id: `open-${intent}`,
@@ -437,19 +834,6 @@ export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: strin
     );
   }
 
-  if (intent === "staff") {
-    actions.push(
-      action({
-        id: "open-staff-management",
-        type: "link",
-        label: "Quản lý nhân viên",
-        description: "Mời nhân viên và phân quyền theo least privilege.",
-        href: "/dashboard/staff",
-        intent: "staff"
-      })
-    );
-  }
-
   if (intent === "security") {
     actions.push(
       action({
@@ -463,7 +847,7 @@ export function buildOwnerAgentActions(intent: OwnerAiIntent, suggestions: strin
     );
   }
 
-  return actions.slice(0, 5);
+  return dedupeActions(actions).slice(0, 5);
 }
 
 export function buildOwnerAgentPlan(intent: OwnerAiIntent, actions: AiAgentAction[]): AiAgentPlan {
@@ -480,6 +864,13 @@ export function buildOwnerAgentPlan(intent: OwnerAiIntent, actions: AiAgentActio
 }
 
 const customerIntentMeta: Record<CustomerAiIntent, Omit<AiAgentPlan, "nextBestActionId">> = {
+  guest_faq: {
+    title: "Guest Concierge",
+    summary: "Trả lời câu hỏi thường ngày của khách và chỉ mở thao tác khi thật sự cần.",
+    focusArea: "guest_support",
+    safetyNote: "AI chỉ dùng thông tin public của quán, không đoán chính sách chưa cấu hình.",
+    confidence: "medium"
+  },
   menu_discovery: {
     title: "Menu Guide",
     summary: "Gợi ý món từ menu thật và đưa khách tới đúng danh mục/giỏ.",
@@ -549,7 +940,9 @@ type CustomerActionContext = {
   menuSnapshot?: unknown;
   cart?: unknown;
   orderStatus?: unknown;
+  reservationStatus?: unknown;
   message?: string;
+  toolRuns?: ToolRunRecord[];
 };
 
 function foldCustomerText(value: string) {
@@ -598,6 +991,103 @@ function customerOrderPaymentAction(orderStatus?: unknown) {
   return null;
 }
 
+function customerReservationActions(restaurantSlug: string, reservationStatus?: unknown) {
+  const reservation = asRecord(reservationStatus);
+  const status = String(reservation?.status ?? "");
+  const depositStatus = String(reservation?.depositStatus ?? reservation?.deposit_status ?? "");
+  const depositPaidAmount = Number(reservation?.depositPaidAmount ?? reservation?.deposit_paid_amount ?? 0);
+  const hasPersistedReservation = Boolean(status && status !== "draft");
+  const actions: AiAgentAction[] = [];
+
+  if (!reservation) {
+    return [
+      action({
+        id: "customer-open-reservation",
+        type: "link",
+        label: "Đặt bàn trước",
+        href: `/r/${restaurantSlug}/reserve`,
+        priority: "primary"
+      })
+    ];
+  }
+
+  if (!hasPersistedReservation) {
+    return [
+      action({
+        id: "customer-reservation-start",
+        type: "ui",
+        label: "Tiếp tục đặt bàn",
+        description: "Quay về bước chọn ngày, số khách và khung giờ.",
+        uiTarget: "reservation",
+        body: { action: "start" },
+        intent: "reservation",
+        priority: "primary"
+      })
+    ];
+  }
+
+  actions.push(
+    action({
+      id: "customer-reservation-refresh",
+      type: "ui",
+      label: "Cập nhật lịch đặt",
+      description: "Tải lại trạng thái giữ bàn, cọc và xác nhận từ quán.",
+      uiTarget: "reservation",
+      body: { action: "refresh" },
+      intent: "reservation",
+      priority: "primary"
+    })
+  );
+
+  const canCancel =
+    (status === "holding" || status === "confirmed") &&
+    depositPaidAmount <= 0 &&
+    depositStatus !== "paid" &&
+    depositStatus !== "waiting_confirm" &&
+    !(status === "confirmed" && Number(reservation?.depositRequiredAmount ?? reservation?.deposit_required_amount ?? 0) > 0);
+
+  if (canCancel) {
+    actions.push(
+      action({
+        id: "customer-reservation-cancel",
+        type: "ui",
+        label: "Huỷ lịch đặt",
+        description: "Mở hộp xác nhận huỷ. LogiBot không tự huỷ nếu khách chưa xác nhận.",
+        uiTarget: "reservation",
+        body: { action: "cancel" },
+        intent: "reservation",
+        priority: "secondary",
+        safety: "confirm"
+      })
+    );
+  }
+
+  actions.push(
+    action({
+      id: "customer-reservation-new",
+      type: "ui",
+      label: "Đặt thêm lịch khác",
+      description: "Bắt đầu một lượt đặt bàn mới trên cùng quán.",
+      uiTarget: "reservation",
+      body: { action: "new" },
+      intent: "reservation",
+      priority: "secondary"
+    }),
+    action({
+      id: "customer-reservation-call",
+      type: "ui",
+      label: "Gọi quán",
+      description: "Dùng khi đã chuyển cọc, cần đổi giờ hoặc cần hỗ trợ trực tiếp.",
+      uiTarget: "staff_call",
+      intent: "reservation",
+      priority: "secondary",
+      safety: "manual_only"
+    })
+  );
+
+  return actions;
+}
+
 function rankCustomerItems(menuSnapshot: unknown, message?: string) {
   const terms = foldCustomerText(message ?? "")
     .split(/[^a-z0-9]+/i)
@@ -616,11 +1106,119 @@ function rankCustomerItems(menuSnapshot: unknown, message?: string) {
     .map((entry) => entry.item);
 }
 
+function toolRecommendedItems(toolRuns: ToolRunRecord[] = []) {
+  const items = toolRuns.flatMap((toolRun) => {
+    const result = asRecord(toolRun.result);
+    if (!result || result.status !== "success") return [];
+
+    if (toolRun.name === "search_menu") {
+      return (Array.isArray(result.results) ? result.results : []).map((item) => {
+        const record = asRecord(item);
+        if (!record?.id || !record.name || record.isAvailable === false) return null;
+        return {
+          id: String(record.id),
+          categoryId: String(record.categoryId ?? ""),
+          categoryName: String(record.categoryName ?? "Danh mục"),
+          name: String(record.name),
+          price: Number(record.price ?? 0),
+          image: typeof record.image === "string" ? record.image : null
+        };
+      });
+    }
+
+    if (toolRun.name === "create_combo") {
+      return (Array.isArray(result.items) ? result.items : []).map((item) => {
+        const record = asRecord(item);
+        if (!record?.id || !record.name) return null;
+        return {
+          id: String(record.id),
+          categoryId: String(record.categoryId ?? ""),
+          categoryName: String(record.categoryName ?? "Combo gợi ý"),
+          name: String(record.name),
+          price: Number(record.price ?? 0),
+          image: typeof record.image === "string" ? record.image : null
+        };
+      });
+    }
+
+    return [];
+  });
+
+  return items
+    .filter((item): item is NonNullable<(typeof items)[number]> => Boolean(item?.id && item.name))
+    .filter((item, index, collection) => collection.findIndex((candidate) => candidate.id === item.id) === index)
+    .slice(0, 3);
+}
+
+function buildGuestFaqActions(restaurantSlug: string, message?: string) {
+  const folded = foldCustomerText(message ?? "");
+  const actions: AiAgentAction[] = [];
+  const asksMenu = /menu|thuc don|mon|do uong|gia|goi mon|dat mon/.test(folded);
+  const asksReservation = /dat ban|giu ban|ban trong|cho ngoi|di nhom|nhom dong/.test(folded);
+  const asksSupport = /hotline|so dien thoai|lien he|goi|wifi|gui xe|dau xe|nhan vien|ho tro|gap quan|mat khau|su co|gio|mo cua|dong cua|dia chi|o dau|thu cung|pet|tre em|khong gian/.test(folded);
+
+  if (asksReservation) {
+    actions.push(
+      action({
+        id: "customer-faq-reservation",
+        type: "link",
+        label: "Đặt bàn trước",
+        href: `/r/${restaurantSlug}/reserve`,
+        priority: "primary"
+      })
+    );
+  }
+
+  if (asksMenu) {
+    actions.push(
+      action({
+        id: "customer-faq-menu",
+        type: "ui",
+        label: "Xem thực đơn",
+        uiTarget: "menu",
+        priority: actions.length === 0 ? "primary" : "secondary"
+      })
+    );
+  }
+
+  if (asksSupport) {
+    actions.push(
+      action({
+        id: "customer-faq-staff",
+        type: "ui",
+        label: "Hỏi nhân viên",
+        description: "Dùng khi thông tin như wifi, gửi xe, hotline hoặc chính sách quán chưa hiển thị rõ.",
+        uiTarget: "staff_call",
+        priority: !asksMenu && !asksReservation ? "primary" : "secondary",
+        safety: "safe"
+      })
+    );
+  }
+
+  actions.push(
+    action({
+      id: "customer-faq-followup",
+      type: "prompt",
+      label: "Hỏi câu khác",
+      prompt: "Trả lời như nhân viên quán, ngắn gọn và dựa trên thông tin quán đang có.",
+      intent: "guest_faq",
+      priority: "secondary"
+    })
+  );
+
+  return actions;
+}
+
 export function buildCustomerAgentActions(intent: CustomerAiIntent, restaurantSlug: string, context: CustomerActionContext = {}) {
   const actions: AiAgentAction[] = [];
-  const recommendedItems = rankCustomerItems(context.menuSnapshot, context.message);
+  const toolItems = toolRecommendedItems(context.toolRuns);
+  const recommendedItems = toolItems.length ? toolItems : rankCustomerItems(context.menuSnapshot, context.message);
 
-  if (intent === "menu_discovery" || intent === "promotion" || intent === "allergy") {
+  if (intent === "guest_faq") {
+    return dedupeActions(buildGuestFaqActions(restaurantSlug, context.message)).slice(0, 4);
+  }
+
+  if (intent === "menu_discovery" || intent === "promotion" || intent === "allergy" || (intent === "cart" && toolItems.length > 0)) {
     recommendedItems.forEach((item, index) => {
       actions.push(
         action({
@@ -708,15 +1306,7 @@ export function buildCustomerAgentActions(intent: CustomerAiIntent, restaurantSl
   }
 
   if (intent === "reservation") {
-    actions.push(
-      action({
-        id: "customer-open-reservation",
-        type: "link",
-        label: "Đặt bàn trước",
-        href: `/r/${restaurantSlug}/reserve`,
-        priority: "primary"
-      })
-    );
+    actions.push(...customerReservationActions(restaurantSlug, context.reservationStatus));
   }
 
   actions.push(
@@ -729,7 +1319,7 @@ export function buildCustomerAgentActions(intent: CustomerAiIntent, restaurantSl
     })
   );
 
-  return actions.slice(0, 4);
+  return dedupeActions(actions).slice(0, 4);
 }
 
 export function buildCustomerAgentPlan(intent: CustomerAiIntent, actions: AiAgentAction[]): AiAgentPlan {

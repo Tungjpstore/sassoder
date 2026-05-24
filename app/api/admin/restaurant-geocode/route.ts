@@ -18,7 +18,7 @@ export async function POST(request: Request) {
 
     const coordinate = await geocodeAddressWithMapbox(address);
     if (!coordinate) {
-      throw new AppError("Không lấy được tọa độ từ địa chỉ hiện tại. Vui lòng kiểm tra địa chỉ quán hoặc cấu hình Mapbox.", 400);
+      throw new AppError("Không lấy được tọa độ từ địa chỉ hiện tại. Vui lòng kiểm tra địa chỉ quán hoặc cấu hình provider bản đồ.", 400);
     }
 
     return ok({

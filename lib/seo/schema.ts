@@ -1,12 +1,32 @@
-import { absoluteAssetUrl, absoluteSeoUrl, SEO_COMPANY_NAME, SEO_DEFAULT_DESCRIPTION, SEO_DEFAULT_IMAGE_PATH, SEO_BRAND_LOGO_PATH, SEO_SITE_NAME } from "@/lib/seo/config";
+import {
+  SEO_BRAND_LOGO_PATH,
+  SEO_COMPANY_NAME,
+  SEO_DEFAULT_DESCRIPTION,
+  SEO_DEFAULT_IMAGE_PATH,
+  SEO_LEGAL_NAME,
+  SEO_ORGANIZATION_SAME_AS,
+  SEO_SITE_NAME,
+  absoluteAssetUrl,
+  absoluteSeoUrl
+} from "@/lib/seo/config";
+import type { BlogPost } from "@/lib/seo/blog";
+import type { SeoIntentPage } from "@/lib/seo/intent-pages";
+
+function seoRootUrl() {
+  return absoluteSeoUrl("/").replace(/\/+$/, "");
+}
+
+function schemaId(fragment: "organization" | "website" | "software") {
+  return `${seoRootUrl()}/#${fragment}`;
+}
 
 export function buildOrganizationSchema() {
-  return {
+  const schema = {
     "@context": "https://schema.org",
     "@type": "Organization",
-    "@id": `${absoluteSeoUrl("/")}/#organization`,
+    "@id": schemaId("organization"),
     name: SEO_COMPANY_NAME,
-    legalName: SEO_COMPANY_NAME,
+    legalName: SEO_LEGAL_NAME,
     url: absoluteSeoUrl("/"),
     logo: {
       "@type": "ImageObject",
@@ -26,26 +46,27 @@ export function buildOrganizationSchema() {
       name: "Việt Nam"
     }
   };
+
+  if (SEO_ORGANIZATION_SAME_AS.length > 0) {
+    return {
+      ...schema,
+      sameAs: [...SEO_ORGANIZATION_SAME_AS]
+    };
+  }
+
+  return schema;
 }
 
 export function buildWebSiteSchema() {
   return {
     "@context": "https://schema.org",
     "@type": "WebSite",
-    "@id": `${absoluteSeoUrl("/")}/#website`,
+    "@id": schemaId("website"),
     name: SEO_SITE_NAME,
     url: absoluteSeoUrl("/"),
     inLanguage: "vi-VN",
     publisher: {
-      "@id": `${absoluteSeoUrl("/")}/#organization`
-    },
-    potentialAction: {
-      "@type": "SearchAction",
-      target: {
-        "@type": "EntryPoint",
-        urlTemplate: `${absoluteSeoUrl("/")}?q={search_term_string}`
-      },
-      "query-input": "required name=search_term_string"
+      "@id": schemaId("organization")
     }
   };
 }
@@ -54,7 +75,7 @@ export function buildSoftwareApplicationSchema() {
   return {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
-    "@id": `${absoluteSeoUrl("/")}/#software`,
+    "@id": schemaId("software"),
     name: SEO_SITE_NAME,
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
@@ -62,7 +83,7 @@ export function buildSoftwareApplicationSchema() {
     image: absoluteAssetUrl(SEO_DEFAULT_IMAGE_PATH),
     description: SEO_DEFAULT_DESCRIPTION,
     publisher: {
-      "@id": `${absoluteSeoUrl("/")}/#organization`
+      "@id": schemaId("organization")
     },
     offers: {
       "@type": "AggregateOffer",
@@ -70,14 +91,18 @@ export function buildSoftwareApplicationSchema() {
       lowPrice: 99000,
       highPrice: 199000,
       offerCount: 2,
-      availability: "https://schema.org/InStock"
+      availability: "https://schema.org/InStock",
+      url: absoluteSeoUrl("/pricing")
     },
     featureList: [
       "Gọi món bằng QR theo bàn",
-      "Quản lý đơn realtime",
+      "Quản lý đơn theo thời gian thực",
       "Thanh toán VietQR và tiền mặt",
       "Đặt món online và đặt bàn trước",
-      "AI hỗ trợ vận hành quán"
+      "Trợ lý thông minh hỗ trợ vận hành quán",
+      "Quản lý nhân viên, ca làm và phân quyền",
+      "Quản lý tồn kho, định mức nguyên liệu và cảnh báo thiếu hàng",
+      "Báo cáo doanh thu và món bán chạy"
     ]
   };
 }
@@ -95,3 +120,117 @@ export function buildBreadcrumbSchema(items: Array<{ name: string; path: string 
   };
 }
 
+export function buildFaqSchema(items: Array<{ question: string; answer: string }>) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: item.answer
+      }
+    }))
+  };
+}
+
+export function buildBlogPostingSchema(post: BlogPost) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "@id": `${absoluteSeoUrl(`/blog/${post.slug}`)}#article`,
+    headline: post.title,
+    description: post.description,
+    url: absoluteSeoUrl(`/blog/${post.slug}`),
+    image: absoluteAssetUrl(SEO_DEFAULT_IMAGE_PATH),
+    datePublished: post.publishedAt,
+    dateModified: post.updatedAt,
+    inLanguage: "vi-VN",
+    mainEntityOfPage: {
+      "@type": "WebPage",
+      "@id": absoluteSeoUrl(`/blog/${post.slug}`)
+    },
+    author: {
+      "@type": "Organization",
+      name: SEO_COMPANY_NAME,
+      url: absoluteSeoUrl("/")
+    },
+    publisher: {
+      "@id": schemaId("organization")
+    },
+    keywords: post.keywords.join(", "),
+    articleSection: post.category,
+    about: {
+      "@type": "Thing",
+      name: post.topic
+    },
+    mentions: post.keywords.map((keyword) => ({
+      "@type": "Thing",
+      name: keyword
+    })),
+    isAccessibleForFree: true,
+    isPartOf: {
+      "@type": "Blog",
+      name: "Blog LogiVN",
+      url: absoluteSeoUrl("/blog")
+    }
+  };
+}
+
+export function buildItemListSchema(items: Array<{ name: string; path: string; description?: string }>) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    itemListElement: items.map((item, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      url: absoluteSeoUrl(item.path),
+      name: item.name,
+      description: item.description
+    }))
+  };
+}
+
+export function buildIntentLandingSchema(page: SeoIntentPage) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    "@id": `${absoluteSeoUrl(page.path)}#service`,
+    name: page.h1,
+    serviceType: page.eyebrow,
+    description: page.description,
+    url: absoluteSeoUrl(page.path),
+    inLanguage: "vi-VN",
+    provider: {
+      "@id": schemaId("organization")
+    },
+    areaServed: {
+      "@type": "Country",
+      name: "Việt Nam"
+    },
+    audience: {
+      "@type": "Audience",
+      audienceType: "Chủ quán cafe, trà sữa và nhà hàng Việt"
+    },
+    keywords: page.keywords.join(", "),
+    hasOfferCatalog: {
+      "@type": "OfferCatalog",
+      name: "Gói LogiVN cho quán Việt",
+      itemListElement: [
+        {
+          "@type": "Offer",
+          url: absoluteSeoUrl("/pricing"),
+          itemOffered: {
+            "@type": "SoftwareApplication",
+            "@id": schemaId("software")
+          }
+        }
+      ]
+    },
+    mainEntityOfPage: {
+      "@type": "WebPage",
+      "@id": absoluteSeoUrl(page.path)
+    }
+  };
+}

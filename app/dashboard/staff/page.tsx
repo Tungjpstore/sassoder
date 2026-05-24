@@ -1,36 +1,28 @@
+import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import { AdminShell } from "@/components/dashboard/app-shell";
-import { StaffWorkspace } from "@/components/dashboard/staff-workspace";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
-import { getRestaurantAdminDashboard, listRestaurantUsers } from "@/services/restaurant-service";
+import { StaffOperationsWorkspace } from "@/features/staff/components/staff-operations-workspace";
+import { getStaffOperationsBundle } from "@/features/staff/services/staff-operations-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminStaffPage() {
-  const { session, entitlement } = await requireDashboardAccess("staff_management");
-  const [{ dashboard, operations }, users] = await Promise.all([
-    getRestaurantAdminDashboard(session.restaurantId),
-    listRestaurantUsers(session.restaurantId)
-  ]);
+  const { session, entitlement } = await requireDashboardAdminAccess("staff_management");
+  const bundle = await getStaffOperationsBundle(session.restaurantId, session.userId);
 
   return (
     <AdminShell
       title="Nhân viên"
-      restaurantName={dashboard.restaurant.name}
+      restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Quản lý tài khoản vận hành và quyền truy cập trong quán"
+      subtitle="Quản lý hồ sơ, ca làm và quyền vận hành trong một màn hình"
+      hideHeading
     >
-      <StaffWorkspace
-        users={users}
-        operations={operations}
-        currentUserId={session.userId}
-        currentRole={session.role}
-        fallbackUser={{
-          id: session.userId,
-          email: session.email,
-          role: session.role,
-          restaurant_id: session.restaurantId
-        }}
+      <StaffOperationsWorkspace
+        bundle={bundle}
+        restaurantId={session.restaurantId}
+        restaurantName={session.restaurant.name}
+        illustrationSrc="/brand/logivn/staff-operations-illustration.png"
       />
     </AdminShell>
   );

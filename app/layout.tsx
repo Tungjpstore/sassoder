@@ -1,39 +1,9 @@
 import type { Metadata } from "next";
-import { Be_Vietnam_Pro, Inter, Lexend, Sora } from "next/font/google";
 import { SiteJsonLd } from "@/components/seo/site-json-ld";
 import { defaultSeoMetadata } from "@/lib/seo/metadata";
-import "@copilotkit/react-core/v2/styles.css";
 import "./globals.css";
 
 export const preferredRegion = "sin1";
-
-const beVietnam = Be_Vietnam_Pro({
-  subsets: ["vietnamese", "latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-be-vietnam",
-  display: "swap"
-});
-
-const lexend = Lexend({
-  subsets: ["vietnamese", "latin"],
-  weight: ["400", "600", "700", "900"],
-  variable: "--font-lexend",
-  display: "swap"
-});
-
-const sora = Sora({
-  subsets: ["latin", "latin-ext"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-sora",
-  display: "swap"
-});
-
-const inter = Inter({
-  subsets: ["vietnamese", "latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-inter",
-  display: "swap"
-});
 
 export const metadata: Metadata = defaultSeoMetadata;
 
@@ -41,6 +11,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="vi" data-scroll-behavior="smooth" suppressHydrationWarning>
       <head>
+        <link rel="alternate" type="application/rss+xml" title="Blog LogiVN RSS" href="/feed.xml" />
         <script
           dangerouslySetInnerHTML={{
             __html: `try{if(localStorage.getItem("admin-theme")==="dark")document.documentElement.classList.add("dark-admin")}catch(e){}`
@@ -48,7 +19,14 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
         <SiteJsonLd />
       </head>
-      <body className={`${beVietnam.variable} ${lexend.variable} ${sora.variable} ${inter.variable}`}>{children}</body>
+      <body>
+        <a className="skip-link" href="#main-content">
+          Bỏ qua điều hướng
+        </a>
+        <div id="main-content" className="app-main-content" tabIndex={-1}>
+          {children}
+        </div>
+      </body>
     </html>
   );
 }

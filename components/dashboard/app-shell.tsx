@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { CalendarDays, ChevronDown, CircleHelp, ExternalLink, Settings, Store } from "lucide-react";
+import { CalendarDays, ChevronDown, CircleHelp, ExternalLink, Store } from "lucide-react";
 import { DashboardCopilotLayer } from "@/components/ai/dashboard-copilot-layer";
 import { CommandPalette, CommandPaletteTrigger } from "@/components/dashboard/command-palette";
-import { AdminDesktopNav, AdminMobileNav } from "@/components/dashboard/dashboard-nav";
+import { DashboardQuickActionsFab } from "@/components/dashboard/dashboard-quick-actions-fab";
+import { DashboardAssetIcon } from "@/components/dashboard/dashboard-icon-assets";
+import { AdminDesktopNav, AdminMobileMenuTrigger, AdminMobileNav } from "@/components/dashboard/dashboard-nav";
 import { DarkModeToggle } from "@/components/dashboard/dark-mode-toggle";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { LogoutButton } from "@/components/dashboard/logout-button";
@@ -21,7 +23,10 @@ export function AdminShell({
   subtitle,
   topbarVariant = "default",
   hideHeading = false,
-  showLiveActionCenter = true
+  showLiveActionCenter = true,
+  showQuickActionsFab = true,
+  showDashboardCopilot = true,
+  focusMode = false
 }: {
   children: React.ReactNode;
   title: string;
@@ -32,6 +37,9 @@ export function AdminShell({
   topbarVariant?: "default" | "overview";
   hideHeading?: boolean;
   showLiveActionCenter?: boolean;
+  showQuickActionsFab?: boolean;
+  showDashboardCopilot?: boolean;
+  focusMode?: boolean;
 }) {
   const today = new Intl.DateTimeFormat("vi-VN", {
     weekday: "long",
@@ -48,21 +56,37 @@ export function AdminShell({
 
   return (
     <ToastProvider>
-      <main className="stitch-admin admin-shell-bg relative min-h-screen overflow-hidden text-[var(--foreground)]">
+      <main className="stitch-admin open-design-mobile admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
-        <aside className="fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[#0F1419] text-[var(--foreground)] lg:flex">
+        <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "md:hidden" : "md:flex"}`}>
           {/* Subtle gradient overlay */}
-          <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 40%, rgba(245,158,11,0.02) 100%)" }} />
-          <Link href="/dashboard" className="relative z-[1] mx-3 mt-3 flex h-14 items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 transition hover:border-[rgba(52,211,153,0.2)]">
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{ background: "linear-gradient(180deg, rgba(15,77,58,0.04) 0%, transparent 42%, rgba(242,140,40,0.04) 100%)" }}
+          />
+          <Link href="/dashboard" className="relative z-[1] mx-3 mt-3 flex h-12 items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 transition hover:border-[var(--primary)]/25">
             <span className="inline-flex">
-              <LogiVNLogo className="h-9" priority />
+              <LogiVNLogo className="h-8" priority />
             </span>
           </Link>
           <AdminDesktopNav />
-          <div className="relative z-[1] mx-3 mt-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+          {entitlement && "planName" in entitlement ? (
+            <Link
+              href="/dashboard/settings?section=billing"
+              className="relative z-[1] mx-3 mt-auto block rounded-xl border border-[var(--primary)]/15 bg-[linear-gradient(135deg,var(--primary-soft),#fff)] p-3 transition hover:border-[var(--primary)]/35"
+            >
+              <span className="dashboard-eyebrow text-[var(--primary)]">Gói hiện tại</span>
+              <span className="mt-1 block truncate text-sm font-semibold text-[var(--foreground)]">{entitlement.planName}</span>
+              <span className="mt-1 block text-xs font-semibold text-[var(--muted-foreground)]">
+                {"daysLeft" in entitlement ? `Còn ${entitlement.daysLeft} ngày` : "Quản lý gói"}
+              </span>
+              <span className="mt-2 inline-flex text-xs font-semibold text-[var(--primary)]">Nâng cấp gói</span>
+            </Link>
+          ) : null}
+          <div className={`relative z-[1] mx-3 ${entitlement && "planName" in entitlement ? "mt-2" : "mt-auto"} rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2.5`}>
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[rgba(52,211,153,0.2)] bg-[rgba(52,211,153,0.08)] text-[var(--primary)]">
-                <Store size={18} />
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]">
+                <Store size={16} />
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-sm font-semibold">{restaurantName}</span>
@@ -74,7 +98,7 @@ export function AdminShell({
           <div className="relative z-[1] mx-3 mt-2">
             <LogoutButton />
           </div>
-          <div className="relative z-[1] mt-3 flex h-10 items-center justify-center gap-2 border-t border-[var(--border)] text-[11px] font-medium text-[var(--muted-foreground)]">
+          <div className="relative z-[1] mt-2 flex h-9 items-center justify-center gap-2 border-t border-[var(--border)] text-xs font-medium text-[var(--muted-foreground)]">
             Powered by
             <span className="rounded-md border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1">
               <LogiVNLogo className="h-4" />
@@ -83,18 +107,24 @@ export function AdminShell({
         </aside>
 
         {/* ── Main content ── */}
-        <section className="relative z-[1] lg:pl-[216px]">
-          <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[rgba(12,16,23,0.75)] px-4 py-2 backdrop-blur-xl md:px-5">
+        <section className={`relative ${focusMode ? "" : "md:pl-[216px]"}`}>
+          <header className="dashboard-mobile-topbar sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[rgba(255,247,235,0.9)] px-3 py-2 backdrop-blur-xl sm:px-4 md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className="lg:hidden">
-                  <LogiVNLogo className="h-8" priority />
+                <div className={focusMode ? "block" : "md:hidden"}>
+                  <AdminMobileMenuTrigger className="dashboard-mobile-menu-trigger grid h-11 w-11 place-items-center rounded-xl text-[var(--foreground)]" />
+                </div>
+                <div className="min-w-0 md:hidden">
+                  <p className="dashboard-mobile-restaurant-label truncate text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+                    {restaurantName}
+                  </p>
+                  <p className="dashboard-mobile-title truncate text-sm font-semibold text-[var(--foreground)]">{title}</p>
                 </div>
                 {topbarVariant === "overview" ? (
                   <div className="hidden items-center gap-3 md:flex">
                     <Link
                       href="/dashboard/settings"
-                      className="inline-flex h-9 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[rgba(52,211,153,0.2)]"
+                      className="inline-flex h-9 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)]/25"
                     >
                       <Store size={16} className="text-[var(--primary)]" />
                       <span className="truncate">{restaurantName}</span>
@@ -102,7 +132,7 @@ export function AdminShell({
                     </Link>
                     <Link
                       href="/dashboard/analytics"
-                      className="inline-flex h-9 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)]"
+                      className="inline-flex h-9 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25"
                     >
                       <CalendarDays size={15} className="text-[var(--muted-foreground)]" />
                       {today.replace(/^./, (char) => char.toUpperCase())}
@@ -113,33 +143,48 @@ export function AdminShell({
                   <CommandPaletteTrigger />
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                {restaurantId && showLiveActionCenter ? <AdminLiveActionCenter restaurantId={restaurantId} /> : null}
-                <DarkModeToggle />
+              <div className="flex shrink-0 items-center gap-2">
                 <Link
-                  href="/dashboard/settings"
-                  className="hidden h-9 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
+                  href="/dashboard/analytics"
+                  className="dashboard-mobile-date-pill inline-flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-[var(--foreground)] md:hidden"
+                >
+                  Hôm nay
+                  <ChevronDown size={13} />
+                </Link>
+                {restaurantId && showLiveActionCenter ? (
+                  <div className="dashboard-mobile-live-action">
+                    <AdminLiveActionCenter restaurantId={restaurantId} />
+                  </div>
+                ) : null}
+                <div className="hidden sm:block">
+                  <DarkModeToggle />
+                </div>
+                <button
+                  type="button"
+                  disabled
+                  className="hidden h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] opacity-70 xl:inline-flex"
                   aria-label="Trợ giúp"
+                  title="Trợ giúp sẽ được mở ở phiên bản tiếp theo"
                 >
                   <CircleHelp size={16} />
                   <span className="hidden xl:inline">Trợ giúp</span>
-                </Link>
+                </button>
                 <Link
                   href="/dashboard/settings"
-                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
+                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 lg:inline-flex"
                   aria-label="Cài đặt"
                 >
-                  <Settings size={16} />
+                  <DashboardAssetIcon icon="settings" size="sm" />
                 </Link>
                 <Link
                   href="/"
-                  className="hidden h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[rgba(52,211,153,0.2)] md:inline-flex"
+                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 xl:inline-flex"
                   aria-label="Mở trang chủ"
                 >
                   <ExternalLink size={16} />
                 </Link>
-                <div className="hidden h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 lg:flex">
-                  <span className="grid h-7 w-7 place-items-center rounded-md bg-gradient-to-br from-[var(--primary)] to-[#0F4D3A] text-xs font-semibold text-[#0C1017]">
+                <div className="hidden h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 xl:flex">
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-gradient-to-br from-[var(--primary)] to-[var(--primary-hover)] text-xs font-semibold text-[#FFF7EB]">
                     {restaurantName.charAt(0).toUpperCase()}
                   </span>
                   <span className="min-w-0">
@@ -148,13 +193,13 @@ export function AdminShell({
                   <ChevronDown size={16} className="text-[var(--outline)]" />
                 </div>
               </div>
-              <div className="lg:hidden">
+              <div className="dashboard-mobile-logout md:hidden">
                 <LogoutButton compact />
               </div>
             </div>
-            <AdminMobileNav />
           </header>
-          <div className="mx-auto w-full max-w-[1600px] px-4 py-3 md:px-5">
+          {focusMode ? null : <AdminMobileNav />}
+          <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pb-5 md:pt-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${
@@ -184,10 +229,10 @@ export function AdminShell({
               </section>
             ) : null}
             {!hideHeading && (
-              <section className="admin-hero-panel relative mb-4 overflow-hidden px-6 py-5">
+              <section className="admin-hero-panel relative mb-4 hidden overflow-hidden px-4 py-3.5 md:block">
                 <div className="relative z-[1]">
-                  <h1 className="text-2xl font-semibold tracking-tight text-[var(--foreground)] md:text-3xl">{title}</h1>
-                  {subtitle && <p className="mt-1.5 max-w-2xl text-sm text-[var(--muted-foreground)]">{subtitle}</p>}
+                  <h1 className="dashboard-page-title">{title}</h1>
+                  {subtitle && <p className="dashboard-body-copy mt-1 max-w-2xl md:truncate">{subtitle}</p>}
                 </div>
               </section>
             )}
@@ -195,7 +240,8 @@ export function AdminShell({
           </div>
         </section>
         <CommandPalette />
-        {canUseOwnerAi && restaurantId ? <DashboardCopilotLayer restaurantId={restaurantId} restaurantName={restaurantName} /> : null}
+        {focusMode || !showQuickActionsFab ? null : <DashboardQuickActionsFab />}
+        {showDashboardCopilot && canUseOwnerAi && restaurantId ? <DashboardCopilotLayer restaurantId={restaurantId} restaurantName={restaurantName} /> : null}
       </main>
     </ToastProvider>
   );

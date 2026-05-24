@@ -1,8 +1,11 @@
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
+import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-boundary";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
+import { getPublicTable } from "@/services/table-service";
+import { assertPublicTenantActive } from "@/services/tenant-status-guard";
 import type { ServiceRequestDto, ServiceRequestStatus } from "@/types/domain";
 
 type RawServiceRequest = {
@@ -46,29 +49,26 @@ const serviceRequestSelect =
 export async function createCustomerServiceRequest(input: {
   restaurantSlug: string;
   tableId: string;
+  tableAccessToken?: string;
   customerSessionId?: string;
   message?: string;
 }) {
-  const supabase = createAdminSupabaseClient();
+  const supabase = createPublicTenantAdminClient("service_request_create");
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id")
+    .select("id,allow_legacy_qr,platform_status,deleted_at")
     .eq("slug", input.restaurantSlug)
     .single();
 
   throwIfSupabaseError(restaurantError);
   if (!restaurant) throw new AppError("Không tìm thấy quán", 404);
+  assertPublicTenantActive(restaurant);
   await assertFeatureEntitlement(restaurant.id, "staff_call");
 
-  const { data: table, error: tableError } = await supabase
-    .from("tables")
-    .select("id,name")
-    .eq("id", input.tableId)
-    .eq("restaurant_id", restaurant.id)
-    .single();
-
-  throwIfSupabaseError(tableError);
-  if (!table) throw new AppError("Không tìm thấy bàn", 404);
+  const table = await getPublicTable(restaurant.id, input.tableId, input.tableAccessToken, {
+    allowLegacyQr: restaurant.allow_legacy_qr
+  });
+  if (!table) throw new AppError("Không tìm thấy bàn hoặc mã QR đã hết hiệu lực. Vui lòng quét lại mã tại bàn.", 403);
 
   if (input.customerSessionId) {
     const since = new Date(Date.now() - 90_000).toISOString();

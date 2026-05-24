@@ -24,7 +24,7 @@ export function LogiVNLogo({ href, className, priority = false, label = "LogiVN"
   if (!href) return logo;
 
   return (
-    <Link href={href} aria-label={label} className="inline-flex shrink-0 items-center">
+    <Link href={href} aria-label={label} className="inline-flex min-h-12 shrink-0 items-center">
       {logo}
     </Link>
   );

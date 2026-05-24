@@ -21,6 +21,25 @@ function isFileLike(value: FormDataEntryValue | null): value is File {
   return typeof File !== "undefined" && value instanceof File;
 }
 
+function fileNameFromUrl(imageUrl: string) {
+  try {
+    const pathname = new URL(imageUrl).pathname;
+    const fileName = pathname.split("/").pop();
+    return fileName && fileName.includes(".") ? fileName : "logivn-ai-image.png";
+  } catch {
+    return "logivn-ai-image.png";
+  }
+}
+
+function isPersistedMenuImageUrl(imageUrl: string) {
+  try {
+    const url = new URL(imageUrl);
+    return url.hostname.endsWith(".supabase.co") && url.pathname.includes(`/storage/v1/object/public/${menuImageBucket}/`);
+  } catch {
+    return false;
+  }
+}
+
 function resolveImageFileType({
   fileName,
   contentType
@@ -122,4 +141,60 @@ export async function uploadMenuImageFile({
 
   const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);
   return data.publicUrl;
+}
+
+export async function uploadRemoteMenuImageUrl({
+  restaurantId,
+  imageUrl
+}: {
+  restaurantId: string;
+  imageUrl?: string | null;
+}) {
+  if (!imageUrl) return undefined;
+
+  let response: Response;
+  try {
+    response = await fetch(imageUrl, { cache: "no-store" });
+  } catch {
+    throw new AppError("Không tải được ảnh AI để lưu vào thư viện LogiVN.", 400);
+  }
+
+  if (!response.ok) {
+    throw new AppError("Ảnh AI đã hết hạn hoặc không thể tải về. Vui lòng tạo lại ảnh.", 400);
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "";
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const imageType = assertMenuImage({
+    fileName: fileNameFromUrl(imageUrl),
+    contentType,
+    size: bytes.byteLength
+  });
+
+  const supabase = createAdminSupabaseClient();
+  const path = `${restaurantId}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${imageType.extension}`;
+  const { error } = await supabase.storage.from(menuImageBucket).upload(path, bytes, {
+    contentType: imageType.contentType,
+    cacheControl: "31536000",
+    upsert: false
+  });
+
+  if (error) {
+    throw new AppError(error.message || "Không lưu được ảnh AI vào Supabase Storage.", 400);
+  }
+
+  const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+export async function persistMenuImageUrl({
+  restaurantId,
+  imageUrl
+}: {
+  restaurantId: string;
+  imageUrl?: string | null;
+}) {
+  if (!imageUrl) return undefined;
+  if (isPersistedMenuImageUrl(imageUrl)) return imageUrl;
+  return uploadRemoteMenuImageUrl({ restaurantId, imageUrl });
 }

@@ -1,6 +1,6 @@
-import { headers } from "next/headers";
+import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
 import { AppError, fail, ok } from "@/lib/response";
-import { rateLimit } from "@/lib/rate-limit";
+import { getRequestIpKey } from "@/lib/security/request-ip";
 import { serviceRequestSchema } from "@/lib/validators";
 import { createCustomerServiceRequest } from "@/services/service-request-service";
 
@@ -8,13 +8,19 @@ export const preferredRegion = "sin1";
 
 export async function POST(request: Request) {
   try {
-    const headerStore = await headers();
-    const ip = headerStore.get("x-forwarded-for") ?? "local";
-    if (!rateLimit(`service-request:${ip}`, 10, 60_000)) {
+    const ip = await getRequestIpKey();
+    const allowed = await checkPersistentRateLimit({
+      scope: "service_request",
+      identifier: "call_staff",
+      ip,
+      limit: 10,
+      windowMs: 60_000
+    });
+    if (!allowed) {
       throw new AppError("Bạn gọi hỗ trợ quá nhanh. Vui lòng chờ một chút.", 429);
     }
 
-    const body = serviceRequestSchema.parse(await request.json());
+    const body = serviceRequestSchema.parse(await request.json().catch(() => ({})));
     const result = await createCustomerServiceRequest(body);
     return ok(result, { status: 201 });
   } catch (error) {

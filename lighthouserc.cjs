@@ -1,8 +1,23 @@
 module.exports = {
   ci: {
     collect: {
-      url: ["http://127.0.0.1:3000/", "http://127.0.0.1:3000/pricing"],
+      url: [
+        "http://127.0.0.1:3000/",
+        "http://127.0.0.1:3000/pricing",
+        "http://127.0.0.1:3000/demo",
+        "http://127.0.0.1:3000/waitlist",
+        "http://127.0.0.1:3000/blog",
+        "http://127.0.0.1:3000/giai-phap",
+        "http://127.0.0.1:3000/giai-phap/goi-mon-qr-cho-quan-cafe",
+        "http://127.0.0.1:3000/blog/goi-mon-qr",
+        "http://127.0.0.1:3000/blog/phan-mem-goi-mon-qr-cho-quan-cafe",
+        "http://127.0.0.1:3000/blog/menu-qr-la-gi",
+        "http://127.0.0.1:3000/blog/order-tai-ban-khong-can-app"
+      ],
       numberOfRuns: 1,
+      startServerCommand: "npm run start -- --hostname 127.0.0.1 --port 3000",
+      startServerReadyPattern: "Ready",
+      startServerReadyTimeout: 60000,
       settings: {
         chromeFlags: "--headless=new --no-sandbox --disable-dev-shm-usage"
       }
@@ -15,8 +30,7 @@ module.exports = {
         "canonical": "error",
         "document-title": "error",
         "meta-description": "error",
-        "robots-txt": "error",
-        "structured-data": "warn"
+        "robots-txt": "error"
       }
     },
     upload: {
@@ -25,4 +39,3 @@ module.exports = {
     }
   }
 };
-

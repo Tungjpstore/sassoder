@@ -1,25 +1,31 @@
-import { AppError, fail, ok } from "@/lib/response";
+import { assertCronSecret } from "@/lib/cron/auth";
+import { fail, ok } from "@/lib/response";
+import { runLoggedCron } from "@/services/cron-run-log-service";
 import { expireStaleRestaurantSubscriptions } from "@/services/subscription-service";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
-
-function assertCronSecret(request: Request) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) {
-    if (process.env.VERCEL_ENV === "production") throw new AppError("Thiếu CRON_SECRET", 500);
-    return;
-  }
-
-  if (request.headers.get("authorization") !== `Bearer ${secret}`) {
-    throw new AppError("Không có quyền chạy cron", 401);
-  }
-}
+export const maxDuration = 60;
 
 export async function GET(request: Request) {
   try {
     assertCronSecret(request);
-    return ok(await expireStaleRestaurantSubscriptions());
+    return ok(
+      await runLoggedCron({
+        request,
+        jobKey: "subscriptions",
+        run: () => expireStaleRestaurantSubscriptions(),
+        statusFromResult: (result) => (result.reminders.failed > 0 ? "warn" : "success"),
+        summaryFromResult: (result) => ({
+          expiredTrials: result.expiredTrials,
+          pastDueSubscriptions: result.pastDueSubscriptions,
+          remindersScanned: result.reminders.scanned,
+          remindersSent: result.reminders.sent,
+          remindersSkipped: result.reminders.skipped,
+          remindersFailed: result.reminders.failed
+        })
+      })
+    );
   } catch (error) {
     return fail(error);
   }

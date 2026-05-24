@@ -1,0 +1,139 @@
+name: GreenCloud VPS Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/vps/**"
+      - ".github/workflows/vps-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Git ref or SHA to deploy
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: greencloud-vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: VPS config preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.git_ref || github.ref }}
+
+      - name: Create placeholder env
+        run: |
+          cp infra/vps/.env.example /tmp/logivn-vps.env
+          sed -i 's/^LOGIVN_INTERNAL_API_KEY=.*/LOGIVN_INTERNAL_API_KEY=ci-placeholder/' /tmp/logivn-vps.env
+          sed -i 's/^REDIS_PASSWORD=.*/REDIS_PASSWORD=ci-placeholder/' /tmp/logivn-vps.env
+          sed -i 's/^GF_SECURITY_ADMIN_PASSWORD=.*/GF_SECURITY_ADMIN_PASSWORD=ci-placeholder/' /tmp/logivn-vps.env
+
+      - name: Validate Docker Compose
+        run: docker compose --env-file /tmp/logivn-vps.env -f infra/vps/docker-compose.yml config >/dev/null
+
+      - name: Validate shell scripts
+        run: bash -n infra/vps/scripts/*.sh
+
+  deploy:
+    name: Deploy to GreenCloud VPS
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      DEPLOY_REF: ${{ github.event.inputs.git_ref || github.sha }}
+      REPO_URL: https://github.com/Tungjpstore/sassoder.git
+      APP_ROOT: /opt/logivn
+    steps:
+      - name: Skip until VPS secrets are configured
+        if: ${{ env.VPS_HOST == '' || env.VPS_SSH_KEY == '' }}
+        run: |
+          echo "VPS_HOST and VPS_SSH_KEY are not configured; skipping deploy after preflight."
+          echo "Configure repository secrets VPS_HOST, VPS_SSH_KEY, and optionally VPS_USER/VPS_PORT to enable auto-deploy."
+
+      - name: Normalize SSH defaults
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        run: |
+          echo "VPS_USER=${VPS_USER:-deploy}" >> "$GITHUB_ENV"
+          echo "VPS_PORT=${VPS_PORT:-22}" >> "$GITHUB_ENV"
+
+      - name: Prepare SSH
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/logivn_vps_key
+          chmod 600 ~/.ssh/logivn_vps_key
+          ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        run: |
+          ssh -i ~/.ssh/logivn_vps_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "DEPLOY_REF='$DEPLOY_REF' REPO_URL='$REPO_URL' APP_ROOT='$APP_ROOT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if ! mkdir -p "$APP_ROOT" 2>/dev/null; then
+            sudo -n mkdir -p "$APP_ROOT"
+          fi
+
+          if [ ! -w "$APP_ROOT" ]; then
+            sudo -n chown -R "$(id -un):$(id -gn)" "$APP_ROOT"
+          fi
+
+          mkdir -p "$APP_ROOT/backups/worktrees"
+
+          if [ -e "$APP_ROOT/app" ] && [ ! -d "$APP_ROOT/app/.git" ]; then
+            backup_path="$APP_ROOT/backups/worktrees/app-non-git-$(date -u +%Y%m%dT%H%M%SZ)"
+            mv "$APP_ROOT/app" "$backup_path"
+            echo "Moved existing non-git app directory to $backup_path"
+          fi
+
+          if [ ! -d "$APP_ROOT/app/.git" ]; then
+            git clone "$REPO_URL" "$APP_ROOT/app"
+          fi
+
+          cd "$APP_ROOT/app"
+          if [ -n "$(git status --porcelain)" ]; then
+            dirty_backup="$APP_ROOT/backups/worktrees/dirty-$(date -u +%Y%m%dT%H%M%SZ)"
+            mkdir -p "$dirty_backup"
+            git status --short > "$dirty_backup/status.txt"
+            git diff > "$dirty_backup/worktree.diff" || true
+            git ls-files --others --exclude-standard -z | tar --null -T - -czf "$dirty_backup/untracked.tgz" 2>/dev/null || true
+            echo "Saved dirty worktree backup to $dirty_backup"
+          fi
+
+          git fetch origin --prune
+          git checkout --force "$DEPLOY_REF"
+          git reset --hard "$DEPLOY_REF"
+          git clean -fd
+          chmod +x infra/vps/scripts/*.sh
+
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh
+          sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only
+          REMOTE
+
+      - name: Deployment summary
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        run: |
+          {
+            echo "### GreenCloud VPS deploy"
+            echo ""
+            echo "- Host: $VPS_HOST"
+            echo "- Ref: $DEPLOY_REF"
+            echo "- Rollback: rerun this workflow with a previous commit SHA in git_ref"
+          } >> "$GITHUB_STEP_SUMMARY"

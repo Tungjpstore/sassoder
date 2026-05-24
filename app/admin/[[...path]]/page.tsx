@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { PlatformAdminConsole } from "@/components/admin/platform-admin-console";
 import { PlatformAdminLogin } from "@/components/admin/platform-admin-login";
 import { PlatformAdminPasswordChange } from "@/components/admin/platform-admin-password-change";
+import { getActivePlatformAdminSection } from "@/features/platform-admin/navigation";
 import { getPlatformAdminAuthStatus, getPlatformAdminSession } from "@/lib/platform-admin-auth";
 import { getPlatformAdminSnapshot } from "@/services/platform-admin-service";
 
@@ -14,24 +15,6 @@ export const metadata: Metadata = {
     follow: false
   }
 };
-
-type ActiveSection = "overview" | "site" | "plans" | "billing" | "tenants" | "users" | "security" | "release";
-
-const activeSections = new Set<ActiveSection>([
-  "overview",
-  "site",
-  "plans",
-  "billing",
-  "tenants",
-  "users",
-  "security",
-  "release"
-]);
-
-function getActiveSection(path?: string[]): ActiveSection {
-  const section = path?.[0] || "overview";
-  return activeSections.has(section as ActiveSection) ? (section as ActiveSection) : "overview";
-}
 
 export default async function SystemAdminPage({ params }: { params: Promise<{ path?: string[] }> }) {
   const [authStatus, session, routeParams] = await Promise.all([
@@ -46,6 +29,9 @@ export default async function SystemAdminPage({ params }: { params: Promise<{ pa
         configured={authStatus.configured}
         devFallbackEnabled={authStatus.devFallbackEnabled}
         requiresFirstPasswordChange={authStatus.requiresFirstPasswordChange}
+        rbacConfigured={authStatus.rbacConfigured}
+        adminUsersConfigured={authStatus.adminUsersConfigured}
+        bootstrapFallbackEnabled={authStatus.bootstrapFallbackEnabled}
         sessionTtlHours={authStatus.sessionTtlHours}
       />
     );
@@ -56,5 +42,5 @@ export default async function SystemAdminPage({ params }: { params: Promise<{ pa
   }
 
   const snapshot = await getPlatformAdminSnapshot();
-  return <PlatformAdminConsole snapshot={snapshot} activeSection={getActiveSection(routeParams.path)} />;
+  return <PlatformAdminConsole snapshot={snapshot} session={session} activeSection={getActivePlatformAdminSection(routeParams.path)} />;
 }

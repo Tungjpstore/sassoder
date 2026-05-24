@@ -1,5 +1,5 @@
 node_modules
-.next
+.next*
 out
 dist
 .env
@@ -9,10 +9,18 @@ supabase/.temp
 *.log
 .DS_Store
 coverage
+reports/seo/
+reports/responsive/
+docs/p1-progress-*.md
+docs/p2-progress-*.md
+.lighthouseci/
 prisma/dev.db
 .vercel
 *.tsbuildinfo
-**/page 2.tsx
+
+# Local duplicate artifacts created by desktop/editor sync tools.
+* 2
+* 2.*
 .agents/
 .codex/
 .codex-kit/

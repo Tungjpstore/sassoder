@@ -1,0 +1,76 @@
+groups:
+  - name: logivn-redis
+    rules:
+      - alert: RedisMemoryHigh
+        expr: redis_memory_max_bytes > 0 and redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis memory is above 85%
+          description: "Redis memory usage is {{ $value | humanizePercentage }} of maxmemory."
+
+      - alert: RedisAofDisabled
+        expr: redis_aof_enabled == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis AOF persistence is disabled
+          description: Queue and operational event durability depend on AOF.
+
+      - alert: RedisExporterDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis exporter is down
+          description: Prometheus cannot scrape Redis health metrics.
+
+  - name: logivn-queues
+    rules:
+      - alert: QueueBacklogHigh
+        expr: sum by (queue) (logivn_queue_jobs{state=~"waiting|delayed"}) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: BullMQ backlog is high
+          description: "Queue {{ $labels.queue }} has {{ $value }} waiting or delayed jobs."
+
+      - alert: PaymentQueueFailure
+        expr: sum by (queue) (logivn_queue_jobs{queue=~"payments\\..*\\.dlq",state="waiting"}) > 0 or increase(logivn_worker_jobs_failed_total{queue=~"payments\\..*",final="true"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Payment queue has failed jobs
+          description: Payment processing failures require immediate review.
+
+      - alert: NotificationDelay
+        expr: max by (queue) (logivn_queue_oldest_wait_seconds{queue=~"telegram\\.notifications|push\\.notifications|email\\.notifications"}) > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notification queue is delayed
+          description: "Queue {{ $labels.queue }} has a job waiting for more than 5 minutes."
+
+      - alert: WorkerDown
+        expr: up{job="logivn-services",instance="worker:3500"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: BullMQ worker service is down
+          description: The worker service metrics endpoint is unavailable.
+
+      - alert: RetrySpike
+        expr: increase(logivn_worker_jobs_failed_total[10m]) > 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: BullMQ retry spike detected
+          description: More than 20 job failures occurred in 10 minutes.

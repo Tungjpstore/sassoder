@@ -1,15 +1,20 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { safeDashboardNextPath } from "@/lib/auth-flow-routes";
 import { getDashboardDestinationForHost } from "@/lib/dashboard-destination";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { consumeRegistrationIntentForUser, getRestaurantForUser } from "@/services/restaurant-service";
 
 const emailOtpTypes = new Set(["signup", "magiclink", "recovery", "invite", "email_change", "email"]);
 
-function safeNextPath(value: string | null) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/dashboard";
-  if (!value.startsWith("/dashboard")) return "/dashboard";
-  return value;
+function emailOtpTypeCandidates(type: string): EmailOtpType[] {
+  const candidates = [type];
+
+  if (type === "signup" || type === "magiclink") {
+    candidates.push("email");
+  }
+
+  return Array.from(new Set(candidates)) as EmailOtpType[];
 }
 
 function redirectUrl(request: Request, pathOrUrl: string) {
@@ -37,20 +42,32 @@ export async function GET(request: Request) {
     return redirectUrl(request, "/dashboard/login?authError=invalid_link");
   }
 
-  const next = safeNextPath(requestUrl.searchParams.get("next") ?? (type === "recovery" ? "/dashboard/reset-password" : null));
+  const next = safeDashboardNextPath(requestUrl.searchParams.get("next") ?? (type === "recovery" ? "/dashboard/reset-password" : null), "/dashboard");
 
   await expireSupabaseAuthSessionCookies();
 
   const supabase = await createServerSupabaseClient({ ignoreAuthSession: true });
-  const { error } = await supabase.auth.verifyOtp({
-    token_hash: tokenHash,
-    type: type as EmailOtpType
-  });
+  let verified = false;
+  let lastErrorMessage = "";
 
-  if (error) {
+  for (const candidateType of emailOtpTypeCandidates(type)) {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: candidateType
+    });
+
+    if (!error) {
+      verified = true;
+      break;
+    }
+
+    lastErrorMessage = error.message;
+  }
+
+  if (!verified) {
     console.error("[auth/confirm] OTP link verification failed", {
       type,
-      message: error.message
+      message: lastErrorMessage
     });
     return authErrorResponse(request, "confirm");
   }

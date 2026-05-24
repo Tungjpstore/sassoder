@@ -2,35 +2,72 @@
 
 import Link from "next/link";
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, MailCheck, RefreshCw, ShieldCheck } from "lucide-react";
 import { resendEmailOtpAction, verifyEmailOtpAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { buildDashboardLoginPath } from "@/lib/auth-onboarding-intent";
+import { buildOtpCooldownStorageKey, normalizeOtpDigits, otpCooldownExpiresAt, remainingOtpCooldownSeconds } from "@/lib/auth-otp-flow";
 
-function OtpInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+const resendCooldownSeconds = 60;
+
+export function OtpInput({
+  value,
+  disabled = false,
+  onChange
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (v: string) => void;
+}) {
   const inputsRef = useRef<(HTMLInputElement | null)[]>([]);
 
   useEffect(() => {
     inputsRef.current[0]?.focus();
   }, []);
 
+  const applyDigits = useCallback(
+    (index: number, digits: string) => {
+      const cleanedDigits = normalizeOtpDigits(digits, 6 - index);
+      const chars = value.padEnd(6, " ").split("");
+      cleanedDigits.split("").forEach((digit, offset) => {
+        chars[index + offset] = digit;
+      });
+
+      const next = chars.join("").slice(0, 6).trimEnd();
+      onChange(next);
+      inputsRef.current[Math.min(index + cleanedDigits.length, 5)]?.focus();
+    },
+    [value, onChange]
+  );
+
   const handleChange = useCallback(
     (index: number, digit: string) => {
-      const cleaned = digit.replace(/\D/g, "").slice(-1);
-      const chars = value.split("");
+      const cleaned = normalizeOtpDigits(digit);
+      if (cleaned.length > 1) {
+        applyDigits(index, cleaned);
+        return;
+      }
+
+      const chars = value.padEnd(6, " ").split("");
       chars[index] = cleaned;
-      const next = chars.join("").slice(0, 6);
-      onChange(next.padEnd(6, " ").trimEnd());
+      const next = chars.join("").slice(0, 6).trimEnd();
+      onChange(next);
       if (cleaned && index < 5) {
         inputsRef.current[index + 1]?.focus();
       }
     },
-    [value, onChange]
+    [applyDigits, value, onChange]
   );
 
   const handleKeyDown = useCallback(
     (index: number, event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Backspace" && !value[index] && index > 0) {
         inputsRef.current[index - 1]?.focus();
+      }
+      if (event.key === "ArrowLeft" && index > 0) {
+        inputsRef.current[index - 1]?.focus();
+      }
+      if (event.key === "ArrowRight" && index < 5) {
+        inputsRef.current[index + 1]?.focus();
       }
     },
     [value]
@@ -39,16 +76,14 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
   const handlePaste = useCallback(
     (event: React.ClipboardEvent) => {
       event.preventDefault();
-      const pasted = event.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-      onChange(pasted);
-      const focusIdx = Math.min(pasted.length, 5);
-      inputsRef.current[focusIdx]?.focus();
+      const pasted = normalizeOtpDigits(event.clipboardData.getData("text"));
+      applyDigits(0, pasted);
     },
-    [onChange]
+    [applyDigits]
   );
 
   return (
-    <div className="flex justify-center gap-2 sm:gap-3" onPaste={handlePaste}>
+    <div className="flex justify-center gap-1 sm:gap-2" onPaste={handlePaste}>
       {Array.from({ length: 6 }).map((_, i) => (
         <input
           key={i}
@@ -59,7 +94,9 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
           value={value[i] || ""}
           onChange={(e) => handleChange(i, e.target.value)}
           onKeyDown={(e) => handleKeyDown(i, e)}
-          className="h-14 w-11 rounded-xl border border-[var(--border)] bg-[var(--background)] text-center text-2xl font-black text-[var(--foreground)] outline-none transition-all duration-200 focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)] sm:h-16 sm:w-14 sm:text-3xl"
+          aria-label={`Số OTP thứ ${i + 1}`}
+          disabled={disabled}
+          className="h-12 w-11 rounded-md border border-[#d8dee9] bg-[#f8fafc] text-center text-xl font-black text-[#111827] outline-none transition focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:w-12"
           autoComplete={i === 0 ? "one-time-code" : "off"}
         />
       ))}
@@ -67,93 +104,132 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
   );
 }
 
-export function VerifyEmailForm({ email }: { email: string }) {
+export function VerifyEmailForm({ email, nextPath = "" }: { email: string; nextPath?: string }) {
   const [verifyState, verifyAction, verifyPending] = useActionState(verifyEmailOtpAction, undefined);
   const [resendState, resendAction, resendPending] = useActionState(resendEmailOtpAction, undefined);
   const [otp, setOtp] = useState("");
+  const [manualEmail, setManualEmail] = useState("");
+  const [cooldown, setCooldown] = useState(email ? resendCooldownSeconds : 0);
   const formRef = useRef<HTMLFormElement>(null);
+  const lastSubmittedOtpRef = useRef("");
+  const normalizedEmail = email.trim().toLowerCase();
+  const effectiveEmail = normalizedEmail || manualEmail.trim().toLowerCase();
+  const canVerify = Boolean(effectiveEmail) && /^\d{6}$/.test(otp);
+  const canResend = Boolean(effectiveEmail) && cooldown === 0 && !resendPending;
+  const loginHref = buildDashboardLoginPath({ email: effectiveEmail, next: nextPath });
+  const cooldownStorageKey = buildOtpCooldownStorageKey({ email: effectiveEmail, purpose: "signup" });
 
-  // Auto-submit when 6 digits entered
+  const handleResendSubmit = useCallback(() => {
+    setOtp("");
+    lastSubmittedOtpRef.current = "";
+    setCooldown(resendCooldownSeconds);
+    if (cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey]);
+
   useEffect(() => {
-    if (otp.length === 6 && /^\d{6}$/.test(otp) && formRef.current) {
+    if (canVerify && !verifyPending && lastSubmittedOtpRef.current !== `${effectiveEmail}:${otp}` && formRef.current) {
+      lastSubmittedOtpRef.current = `${effectiveEmail}:${otp}`;
       formRef.current.requestSubmit();
     }
-  }, [otp]);
+  }, [canVerify, effectiveEmail, otp, verifyPending]);
+
+  useEffect(() => {
+    if (!cooldownStorageKey) return;
+    const timeout = window.setTimeout(() => {
+      setCooldown((current) => Math.max(current, remainingOtpCooldownSeconds(window.sessionStorage.getItem(cooldownStorageKey))));
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [cooldownStorageKey]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const interval = window.setInterval(() => {
+      setCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [cooldown]);
+
+  useEffect(() => {
+    if (resendState?.success && cooldownStorageKey) {
+      window.sessionStorage.setItem(cooldownStorageKey, String(otpCooldownExpiresAt()));
+    }
+  }, [cooldownStorageKey, resendState?.success]);
 
   return (
-    <main className="stitch-onboarding min-h-screen bg-[var(--background)] text-[var(--foreground)]">
-      <div className="relative flex min-h-screen flex-col overflow-hidden">
-        <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[600px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[var(--primary)]/8 blur-[120px]" />
-        <div className="pointer-events-none absolute -right-32 bottom-0 h-[500px] w-[500px] rounded-full bg-[var(--accent)]/6 blur-[120px]" />
+    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
+        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
+          <div className="mb-4 flex flex-col items-center text-center">
+            <LogiVNLogo href="/" className="h-10" priority />
+            <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Xác thực email</h1>
+            {effectiveEmail ? <p className="mt-2 text-xs font-bold text-[#667085]">{effectiveEmail}</p> : null}
+            <p className="mt-2 max-w-[280px] text-sm font-semibold leading-6 text-[#667085]">
+              Nhập mã 6 số vừa gửi qua email. Mã chỉ dùng một lần và sẽ hết hạn sau ít phút.
+            </p>
+          </div>
 
-        <header className="relative z-10 flex min-h-16 items-center justify-center border-b border-[var(--border)] bg-[var(--surface)]/60 px-5 py-3 backdrop-blur-xl">
-          <LogiVNLogo href="/" className="h-9" priority />
-        </header>
-
-        <section className="auth-fade-in relative z-10 mx-auto flex w-full max-w-[460px] flex-1 flex-col items-center justify-center gap-6 px-5 py-10">
-          <div className="w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)]/80 p-6 shadow-[var(--shadow-lift)] ring-1 ring-[var(--primary)]/5 backdrop-blur-2xl sm:p-8">
-            {/* Icon + heading */}
-            <div className="mb-7 text-center">
-              <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--primary)] shadow-[var(--glow-primary)]">
-                <MailCheck className="h-7 w-7 text-white" />
-              </div>
-              <p className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--primary)]">Xác thực email</p>
-              <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">Nhập mã OTP</h1>
-              <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-                LogiVN đã gửi mã gồm 6 chữ số đến <strong className="text-[var(--foreground)]">{email || "email của bạn"}</strong>.
-                Sau khi xác thực, hệ thống sẽ tự tạo quán và mở dashboard.
-              </p>
-            </div>
-
-            {/* OTP form */}
-            <form ref={formRef} action={verifyAction} className="grid gap-5">
-              <input type="hidden" name="email" value={email} />
+            <form ref={formRef} action={verifyAction} className="grid gap-4">
+              {!normalizedEmail ? (
+                <label className="grid gap-2 text-sm font-semibold text-[#344054]">
+                  Email đăng ký
+                  <input
+                    value={manualEmail}
+                    onChange={(event) => setManualEmail(event.target.value)}
+                    name="visibleEmail"
+                    type="email"
+                    inputMode="email"
+                    className="h-12 rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
+                    placeholder="admin@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+              ) : null}
+              <input type="hidden" name="email" value={effectiveEmail} />
               <input type="hidden" name="token" value={otp} />
+              <input type="hidden" name="next" value={nextPath} />
 
-              <OtpInput value={otp} onChange={setOtp} />
+              <OtpInput value={otp} disabled={verifyPending} onChange={setOtp} />
 
               {verifyState?.error && (
-                <p className="rounded-xl border border-[var(--danger)]/30 bg-[var(--danger-soft)] p-3 text-center text-sm text-[var(--accent-strong)]">
+                <p className="rounded-md border border-[#F28C28]/35 bg-[#fff7ed] p-3 text-center text-sm font-semibold text-[#9a4a17]">
                   {verifyState.error}
                 </p>
               )}
+              {verifyPending ? (
+                <p className="text-center text-xs font-bold text-[#667085]">Đang kiểm tra mã và chuẩn bị chuyển sang bước thiết lập quán...</p>
+              ) : null}
 
               <button
-                className="login-cta-glow flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-[var(--primary)] px-5 text-base font-black uppercase tracking-[0.1em] text-white shadow-[var(--glow-primary)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_0_30px_rgba(52,211,153,0.25)] disabled:pointer-events-none disabled:opacity-50"
-                disabled={verifyPending}
+                className="flex h-12 w-full items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
+                disabled={verifyPending || !canVerify}
               >
-                {verifyPending ? "Đang xác thực..." : "Xác thực & tạo quán"}
-                <ArrowRight className="h-5 w-5" />
+                {verifyPending ? "Đang xác thực..." : "Xác nhận mã"}
               </button>
             </form>
 
-            {/* Resend */}
-            <form action={resendAction} className="mt-4">
-              <input type="hidden" name="email" value={email} />
+            <form action={resendAction} onSubmit={handleResendSubmit} className="mt-4">
+              <input type="hidden" name="email" value={effectiveEmail} />
+              <input type="hidden" name="next" value={nextPath} />
               <button
                 type="submit"
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-strong)] px-4 text-sm font-bold text-[var(--primary-strong)] transition-all hover:-translate-y-0.5 hover:border-[var(--primary)]/30 disabled:opacity-50"
-                disabled={resendPending || !email}
+                className="flex h-11 w-full items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-bold text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 disabled:opacity-50"
+                disabled={!canResend}
               >
-                <RefreshCw className={resendPending ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                Gửi lại mã
+                {resendPending ? "Đang gửi..." : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
               </button>
-              {resendState?.success && <p className="mt-3 text-center text-sm font-semibold text-[var(--primary)]">{resendState.success}</p>}
-              {resendState?.error && <p className="mt-3 text-center text-sm text-[var(--accent-strong)]">{resendState.error}</p>}
+              {resendState?.success && <p className="mt-3 text-center text-sm font-semibold text-[#0F4D3A]">{resendState.success}</p>}
+              {resendState?.error && <p className="mt-3 text-center text-sm font-semibold text-[#9a4a17]">{resendState.error}</p>}
             </form>
 
-            {/* Security note */}
-            <div className="mt-6 flex items-start gap-3 rounded-xl border border-[var(--primary)]/10 bg-[var(--primary-soft)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--primary)]" />
-              <span>Mã OTP giúp xác nhận chủ quán sở hữu email trước khi tạo dữ liệu nhà hàng và quyền quản trị.</span>
-            </div>
-
-            <Link className="mt-5 block text-center text-sm font-semibold text-[var(--muted-foreground)] transition hover:text-[var(--primary)]" href="/dashboard/login">
+            <Link className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[#0F4D3A] transition hover:text-[#0b3d2e]" href={loginHref}>
               Quay lại đăng nhập
             </Link>
-          </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </main>
   );
 }

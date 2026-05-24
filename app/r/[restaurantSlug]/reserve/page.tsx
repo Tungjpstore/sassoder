@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { ReservationClient } from "@/components/customer/reservation-client";
 import { createSeoMetadata } from "@/lib/seo/metadata";
-import { getPublicReservationSettingsBySlug } from "@/services/reservation-service";
+import { getPublicReservationPreferenceOptionsBySlug, getPublicReservationSettingsBySlug } from "@/services/reservation-service";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,7 @@ export default async function PublicReservationPage({
   const { restaurantSlug } = await params;
   const restaurant = await getPublicReservationSettingsBySlug(restaurantSlug);
   if (!restaurant) notFound();
+  const preferenceOptions = await getPublicReservationPreferenceOptionsBySlug(restaurantSlug);
 
   return (
     <ReservationClient
@@ -38,6 +39,8 @@ export default async function PublicReservationPage({
         slug: restaurant.slug,
         logoUrl: restaurant.logo_url,
         address: restaurant.address,
+        storeLat: restaurant.store_lat,
+        storeLng: restaurant.store_lng,
         hotline: restaurant.hotline,
         contactEmail: restaurant.contact_email,
         reservationsEnabled: restaurant.reservations_enabled,
@@ -47,7 +50,12 @@ export default async function PublicReservationPage({
         holdMinutes: restaurant.reservation_hold_minutes,
         durationMinutes: restaurant.reservation_duration_minutes,
         maxDaysAhead: restaurant.reservation_max_days_ahead,
-        minNoticeMinutes: restaurant.reservation_min_notice_minutes
+        minNoticeMinutes: restaurant.reservation_min_notice_minutes,
+        preferenceOptions: preferenceOptions ?? {
+          tableAreas: [],
+          seatingZones: [],
+          tableKinds: []
+        }
       }}
     />
   );

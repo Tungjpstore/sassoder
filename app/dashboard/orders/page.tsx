@@ -4,6 +4,7 @@ import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center
 import { OrdersBoard } from "@/components/dashboard/orders-board";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { listOrdersForRestaurant } from "@/services/order-service";
+import { listOpenServiceRequests } from "@/services/service-request-service";
 
 export const dynamic = "force-dynamic";
 
@@ -20,20 +21,31 @@ export default async function AdminOrdersPage() {
       showLiveActionCenter={false}
     >
       <Suspense fallback={<OrdersBoardSkeleton />}>
-        <OrdersBoardContent restaurantId={session.restaurantId} />
+        <OrdersBoardContent restaurantId={session.restaurantId} canManageTestOrders={session.role === "ADMIN"} />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function OrdersBoardContent({ restaurantId }: { restaurantId: string }) {
-  const orders = await listOrdersForRestaurant(restaurantId, { includeHistory: true });
+async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { restaurantId: string; canManageTestOrders: boolean }) {
+  const [orders, serviceRequests] = await Promise.all([
+    listOrdersForRestaurant(restaurantId, { includeHistory: true }),
+    listOpenServiceRequests(restaurantId)
+  ]);
+  const initialOrders = JSON.parse(JSON.stringify(orders));
+  const initialRequests = JSON.parse(JSON.stringify(serviceRequests));
+
   return (
-    <div className="grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <div className="xl:sticky xl:top-[92px] xl:h-[calc(100vh-112px)]">
-        <AdminLiveActionCenter restaurantId={restaurantId} variant="panel" />
+    <div className="dashboard-order-service-shell grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div className="dashboard-order-live-panel xl:sticky xl:top-[92px] xl:h-[calc(100vh-112px)]">
+        <AdminLiveActionCenter
+          initialOrders={initialOrders}
+          initialRequests={initialRequests}
+          restaurantId={restaurantId}
+          variant="panel"
+        />
       </div>
-      <OrdersBoard initialOrders={JSON.parse(JSON.stringify(orders))} restaurantId={restaurantId} />
+      <OrdersBoard initialOrders={initialOrders} restaurantId={restaurantId} canManageTestOrders={canManageTestOrders} />
     </div>
   );
 }

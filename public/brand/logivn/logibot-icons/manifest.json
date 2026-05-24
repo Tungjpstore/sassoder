@@ -1,0 +1,33 @@
+{
+  "assetSet": "logivn-logibot-icons",
+  "provider": "xai",
+  "model": "grok-imagine-image-quality",
+  "updatedAt": "2026-05-18",
+  "assets": [
+    {
+      "id": "operator",
+      "title": "LogiBot operator mark",
+      "src": "/brand/logivn/logibot-icons/operator.png"
+    },
+    {
+      "id": "file",
+      "title": "Attach file and menu scan",
+      "src": "/brand/logivn/logibot-icons/file.png"
+    },
+    {
+      "id": "voice",
+      "title": "Voice input",
+      "src": "/brand/logivn/logibot-icons/voice.png"
+    },
+    {
+      "id": "command",
+      "title": "AI command palette",
+      "src": "/brand/logivn/logibot-icons/command.png"
+    },
+    {
+      "id": "send",
+      "title": "Send command",
+      "src": "/brand/logivn/logibot-icons/send.png"
+    }
+  ]
+}

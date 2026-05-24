@@ -82,6 +82,10 @@ Mo rong menu thanh recipe:
 
 Gia tri: kiem soat loi nhuan, rat dang tien voi quan co nhieu chi nhanh.
 
+Tai lieu P0 da duoc tach rieng de bat dau implementation:
+- `docs/inventory-commercialization-plan.md`
+- `docs/inventory-v1-spec.md`
+
 ### 7. Dat ban va waitlist
 
 Them luong front-of-house:

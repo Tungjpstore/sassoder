@@ -11,28 +11,34 @@ export async function generateMetadata({
 }: {
   params: Promise<{ restaurantSlug: string; tableId: string }>;
 }) {
-  const { restaurantSlug } = await params;
+  const { restaurantSlug, tableId } = await params;
   const restaurant = await getCachedPublicMenu(restaurantSlug);
 
   return createSeoMetadata({
     title: restaurant ? `${restaurant.name} - Gọi món tại bàn` : "Gọi món tại bàn",
     description: "Trang gọi món QR theo bàn trên LogiVN. Trang này dành cho khách tại quán và không được lập chỉ mục công khai.",
-    path: `/r/${restaurantSlug}`,
+    path: `/r/${restaurantSlug}/table/${tableId}`,
     image: restaurant?.logo_url || undefined,
     noIndex: true
   });
 }
 
 export default async function CustomerTablePage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ restaurantSlug: string; tableId: string }>;
+  searchParams: Promise<{ t?: string | string[] }>;
 }) {
   const { restaurantSlug, tableId } = await params;
+  const query = await searchParams;
+  const tableAccessToken = Array.isArray(query.t) ? query.t[0] : query.t;
   const restaurant = await getCachedPublicMenu(restaurantSlug);
   if (!restaurant) notFound();
 
-  const table = await getPublicTable(restaurant.id, tableId);
+  const table = await getPublicTable(restaurant.id, tableId, tableAccessToken, {
+    allowLegacyQr: restaurant.allow_legacy_qr
+  });
   if (!table) notFound();
 
   return (
@@ -50,6 +56,7 @@ export default async function CustomerTablePage({
         promotions: restaurant.promotions
       }}
       table={{ id: table.id, name: table.name }}
+      tableAccessToken={table.qr_token ?? tableAccessToken}
       categories={restaurant.categories.map((category) => ({
         id: category.id,
         name: category.name,
@@ -58,7 +65,8 @@ export default async function CustomerTablePage({
           categoryId: item.category_id,
           name: item.name,
           price: item.price,
-          image: item.image_url
+          image: item.image_url,
+          modifierGroups: item.modifierGroups ?? []
         }))
       }))}
     />

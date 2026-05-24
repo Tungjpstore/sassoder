@@ -10,7 +10,7 @@ import {
   absoluteAssetUrl,
   absoluteSeoUrl
 } from "@/lib/seo/config";
-import { getAppUrl } from "@/lib/app-url";
+import { getSeoUrl } from "@/lib/app-url";
 
 type SeoMetadataInput = {
   title?: string;
@@ -34,7 +34,7 @@ export function createSeoMetadata({
   const resolvedTitle = title || SEO_DEFAULT_TITLE;
 
   return {
-    metadataBase: new URL(getAppUrl()),
+    metadataBase: new URL(getSeoUrl()),
     title: title
       ? resolvedTitle
       : {
@@ -44,6 +44,16 @@ export function createSeoMetadata({
     description,
     alternates: {
       canonical
+    },
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "any" },
+        { url: "/favicon-48x48.png", type: "image/png", sizes: "48x48" },
+        { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+        { url: "/icon.png", type: "image/png", sizes: "512x512" }
+      ],
+      shortcut: ["/favicon.ico"],
+      apple: [{ url: "/apple-icon.png", type: "image/png", sizes: "180x180" }]
     },
     robots: noIndex
       ? {

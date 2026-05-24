@@ -37,7 +37,7 @@ const payload = {
   mailer_autoconfirm: false,
   mailer_secure_email_change_enabled: true,
   mailer_otp_length: 6,
-  mailer_otp_exp: 3600,
+  mailer_otp_exp: 900,
   refresh_token_rotation_enabled: true,
   security_update_password_require_reauthentication: true,
   security_refresh_token_reuse_interval: 10,
