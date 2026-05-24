@@ -308,7 +308,7 @@ infra/vps/scripts/validate.sh
 - Redis is not exposed publicly.
 - Redis uses AOF, password auth, protected mode, maxmemory, and an internal Docker network.
 - Redis/BullMQ uses `maxmemory-policy noeviction` so queue, lock, and stream keys are never silently evicted; producers should fail fast when Redis reaches its memory ceiling.
-- Infrastructure images are pinned to explicit version tags in Compose. Upgrade Grafana, Prometheus, Alertmanager, RedisInsight, Uptime Kuma, node-exporter, and cAdvisor intentionally, then run `SMOKE_MONITORING=true infra/vps/scripts/smoke-compose.sh` before VPS rollout.
+- Infrastructure images are pinned to explicit version tags in Compose, and `npm run infra:check` rejects `latest`, major-only, or minor-only tags. Upgrade Redis, Grafana, Prometheus, Alertmanager, RedisInsight, Uptime Kuma, node-exporter, and cAdvisor intentionally, then run `SMOKE_MONITORING=true infra/vps/scripts/smoke-compose.sh` before VPS rollout.
 - Service ports bind to `127.0.0.1`; only Nginx exposes HTTPS.
 - RedisInsight binds to `127.0.0.1:5540`; use an SSH tunnel instead of opening it publicly.
 - Bull Board is disabled unless `BULL_BOARD_ENABLED=true` and protected by app-level Basic Auth. The monitor Nginx route also uses the monitoring htpasswd file.

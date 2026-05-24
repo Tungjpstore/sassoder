@@ -134,7 +134,7 @@ RedisInsight is bound to `127.0.0.1:5540` for SSH-tunneled inspection. Bull Boar
 
 Prometheus alert rules live in `infra/vps/monitoring/alerts.yml` and cover Redis memory/AOF/exporter health, queue backlog, worker death, retry spikes, payment DLQ failures, and notification delay. Alertmanager posts internally to `gateway:3100/alerts`; the gateway can forward to Better Stack, Slack, or another incident webhook through `ALERT_WEBHOOK_FORWARD_URL`.
 
-Monitoring container images are pinned to explicit version tags in `infra/vps/docker-compose.yml`. Do not reintroduce `latest` for Grafana, Prometheus, Alertmanager, RedisInsight, Uptime Kuma, node-exporter, or cAdvisor; upgrades should be deliberate and validated with the monitoring smoke script.
+VPS container images are pinned to explicit version tags in `infra/vps/docker-compose.yml`, and `npm run infra:check` rejects `latest`, major-only, or minor-only tags. Do not reintroduce dynamic tags for Redis, Grafana, Prometheus, Alertmanager, RedisInsight, Uptime Kuma, node-exporter, or cAdvisor; upgrades should be deliberate and validated with the monitoring smoke script.
 
 `infra/vps/scripts/backup.sh` triggers `BGSAVE` and `BGREWRITEAOF`, then archives the Redis Docker volume.
 
