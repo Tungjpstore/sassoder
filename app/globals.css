@@ -7241,7 +7241,7 @@ img {
   -webkit-backdrop-filter: none !important;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 767px) {
   .stitch-admin {
     --surface: #fffdfa;
     --surface-strong: #ffffff;
@@ -7815,8 +7815,8 @@ img {
   }
 }
 
-/* Mobile reference system: make every admin screen read like the same cream/white operational app. */
-@media (max-width: 1023px) {
+/* Mobile reference system: make phone admin screens read like the same cream/white operational app. */
+@media (max-width: 767px) {
   .dashboard-workspace {
     width: 100% !important;
     max-width: 430px !important;
@@ -8348,8 +8348,8 @@ img {
   }
 }
 
-/* Mobile finish pass: operational cards, usable nav, and tablet-safe widths without touching desktop. */
-@media (max-width: 1023px) {
+/* Mobile finish pass: operational phone cards and usable nav without touching desktop/tablet. */
+@media (max-width: 767px) {
   html,
   body {
     overflow-x: clip;
@@ -8684,7 +8684,7 @@ img {
   }
 }
 
-@media (min-width: 640px) and (max-width: 1023px) {
+@media (min-width: 640px) and (max-width: 767px) {
   .dashboard-workspace {
     max-width: min(100%, 720px) !important;
   }
@@ -8722,8 +8722,8 @@ img {
   }
 }
 
-/* Mobile ratio sync: keep desktop untouched while matching the compact sketch rhythm. */
-@media (max-width: 1023px) {
+/* Mobile ratio sync: keep desktop/tablet untouched while matching the compact sketch rhythm. */
+@media (max-width: 767px) {
   .stitch-admin {
     --dashboard-mobile-floating-bottom: calc(var(--dashboard-mobile-nav-height) + 0.35rem);
   }
@@ -9061,8 +9061,8 @@ img {
   }
 }
 
-/* Open Design v0.8 mobile refresh: scoped to dashboard shell and capped below desktop. */
-@media (max-width: 1023px) {
+/* Open Design v0.8 mobile refresh: scoped to dashboard shell and capped to phone widths. */
+@media (max-width: 767px) {
   .open-design-mobile {
     --odm-ink: #26312b;
     --odm-ink-strong: #14221b;
@@ -9968,7 +9968,7 @@ img {
   }
 }
 
-@media (min-width: 640px) and (max-width: 1023px) {
+@media (min-width: 640px) and (max-width: 767px) {
   .open-design-mobile .dashboard-workspace {
     max-width: min(100%, 744px) !important;
     padding-inline: 1rem !important;

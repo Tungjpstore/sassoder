@@ -1,32 +1,111 @@
+import { createBullBoard } from "@bull-board/api";
+import { BullMQAdapter } from "@bull-board/api/bullMQAdapter";
+import { ExpressAdapter } from "@bull-board/express";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { readEnv, servicePort } from "../shared/env.js";
+import { priorityNames, queueNames, readEnv, servicePort } from "../shared/env.js";
 import { createHttpApp, listen, requireInternalApiKey } from "../shared/http.js";
+import { acquireLock, releaseLock } from "../shared/locks.js";
 import { createLogger } from "../shared/logger.js";
-import { enqueueJob, queueSummary } from "../shared/queues.js";
+import {
+  deadLetterQueueName,
+  failedJobs,
+  enqueueJob,
+  getQueue,
+  publishOperationalEvent,
+  queueSummary,
+  recentOperationalEvents
+} from "../shared/queues.js";
+import { checkRedisRateLimit } from "../shared/rate-limit.js";
+import { createRedisConnection, redisServerSnapshot } from "../shared/redis.js";
+import { tenantRateLimitKey } from "../shared/redis-keys.js";
+import { getRealtimeState, listRealtimeState, setRealtimeState } from "../shared/realtime-state.js";
 import { hasSupabaseConfig, supabaseAdmin } from "../shared/supabase.js";
 
 const logger = createLogger("gateway");
 const app = createHttpApp({ logger, serviceName: "gateway" });
+const controlRedis = createRedisConnection("gateway-control");
+installQueueDashboard();
 
 const enqueueSchema = z.object({
-  queueName: z.enum([
-    "notifications",
-    "invoices",
-    "ai-jobs",
-    "image-optimization",
-    "analytics",
-    "delivery-routing",
-    "cron-tasks"
-  ]),
+  queueName: z.enum(queueNames),
   name: z.string().min(1).max(120),
-  data: z.record(z.string(), z.unknown()).default({}),
+  data: z.record(z.string(), z.unknown()).and(z.object({ tenantId: z.string().min(1).optional(), restaurantId: z.string().min(1).optional() })),
+  priority: z.enum(priorityNames).optional(),
   opts: z.record(z.string(), z.unknown()).optional()
+});
+
+const eventSchema = z
+  .object({
+    type: z.enum([
+      "order.created",
+      "order.confirmed",
+      "payment.received",
+      "payment.waiting_confirm",
+      "reservation.created",
+      "inventory.low",
+      "staff.checked_in",
+      "sla.warning"
+    ]),
+    eventId: z.string().min(8).max(180),
+    tenantId: z.string().min(1).optional(),
+    restaurantId: z.string().min(1).optional(),
+    branchId: z.string().min(1).nullable().optional(),
+    occurredAt: z.string().datetime().optional()
+  })
+  .passthrough()
+  .refine((value) => value.tenantId || value.restaurantId, {
+    message: "tenantId or restaurantId is required"
+  });
+
+const lockAcquireSchema = z.object({
+  key: z.string().min(8).max(240).regex(/^lock:/),
+  tenantId: z.string().min(1),
+  ttlMs: z.number().int().min(1000).max(120_000).default(30_000)
+});
+
+const lockReleaseSchema = z.object({
+  key: z.string().min(8).max(240).regex(/^lock:/),
+  token: z.string().min(16).max(160)
+});
+
+const rateLimitSchema = z.object({
+  tenantId: z.string().min(1),
+  scope: z.string().min(1).max(80),
+  identifier: z.string().min(1).max(160),
+  limit: z.number().int().min(1).max(10_000),
+  windowMs: z.number().int().min(1000).max(86_400_000)
+});
+
+const realtimeStateSchema = z.object({
+  tenantId: z.string().min(1),
+  scope: z.enum(["tables", "staff-online", "kitchen", "active-orders", "dashboards"]),
+  identifier: z.string().min(1).max(160),
+  value: z.record(z.string(), z.unknown()),
+  ttlSeconds: z.number().int().min(5).max(86_400).default(300)
+});
+
+const alertmanagerSchema = z.object({
+  status: z.string().optional(),
+  receiver: z.string().optional(),
+  alerts: z
+    .array(
+      z.object({
+        status: z.string().optional(),
+        labels: z.record(z.string(), z.string()).default({}),
+        annotations: z.record(z.string(), z.string()).default({}),
+        startsAt: z.string().optional(),
+        endsAt: z.string().optional()
+      })
+    )
+    .default([])
 });
 
 app.get("/ready", async (_req, res) => {
   const checks = {
     supabaseConfigured: hasSupabaseConfig(),
-    supabaseReachable: false
+    supabaseReachable: false,
+    redisReachable: false
   };
 
   if (checks.supabaseConfigured) {
@@ -35,10 +114,41 @@ app.get("/ready", async (_req, res) => {
     if (error) logger.warn({ error }, "Supabase readiness probe failed");
   }
 
-  res.status(checks.supabaseConfigured && checks.supabaseReachable ? 200 : 503).json({
-    ok: checks.supabaseConfigured && checks.supabaseReachable,
+  try {
+    checks.redisReachable = (await controlRedis.ping()) === "PONG";
+  } catch (error) {
+    logger.warn({ error }, "Redis readiness probe failed");
+  }
+
+  const ready = checks.supabaseConfigured && checks.supabaseReachable && checks.redisReachable;
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
     checks
   });
+});
+
+app.post("/events", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = eventSchema.parse(req.body);
+    const jobs = await publishOperationalEvent(payload);
+    res.status(202).json({ ok: true, eventId: payload.eventId, type: payload.type, jobs });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/events/recent", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const query = z
+      .object({
+        tenantId: z.string().min(1).optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50)
+      })
+      .parse(req.query);
+    res.json({ ok: true, events: await recentOperationalEvents(query) });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/queues", requireInternalApiKey, async (_req, res, next) => {
@@ -49,11 +159,116 @@ app.get("/queues", requireInternalApiKey, async (_req, res, next) => {
   }
 });
 
+app.get("/queues/failed", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const queueName = z
+      .enum(queueNames.map((name) => `${name}.dlq`).concat(queueNames))
+      .parse(req.query.queueName || queueNames[0]);
+    const limit = z.coerce.number().int().min(1).max(100).default(25).parse(req.query.limit);
+    res.json({ ok: true, queueName, jobs: await failedJobs({ queueName, limit }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/queues/jobs", requireInternalApiKey, async (req, res, next) => {
   try {
     const payload = enqueueSchema.parse(req.body);
     const job = await enqueueJob(payload);
     res.status(202).json({ ok: true, jobId: job.id, queueName: payload.queueName });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/locks/acquire", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = lockAcquireSchema.parse(req.body);
+    const lock = await acquireLock(controlRedis, payload);
+    res.status(lock.acquired ? 200 : 423).json(lock);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/locks/release", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = lockReleaseSchema.parse(req.body);
+    res.json({ ok: true, released: await releaseLock(controlRedis, payload) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/rate-limits/check", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = rateLimitSchema.parse(req.body);
+    const result = await checkRedisRateLimit(controlRedis, {
+      key: tenantRateLimitKey(payload.tenantId, payload.scope, payload.identifier),
+      limit: payload.limit,
+      windowMs: payload.windowMs
+    });
+    res.status(result.allowed ? 200 : 429).json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/alerts", async (req, res, next) => {
+  try {
+    const payload = alertmanagerSchema.parse(req.body);
+    logger.warn(
+      {
+        status: payload.status,
+        receiver: payload.receiver,
+        alerts: payload.alerts.map((alert) => ({
+          status: alert.status,
+          alertname: alert.labels.alertname,
+          severity: alert.labels.severity,
+          summary: alert.annotations.summary
+        }))
+      },
+      "alertmanager notification received"
+    );
+    await forwardAlertmanagerPayload(payload);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/realtime/state", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = realtimeStateSchema.parse(req.body);
+    const result = await setRealtimeState(controlRedis, payload);
+    res.status(202).json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/realtime/state", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const query = z
+      .object({
+        tenantId: z.string().min(1),
+        scope: realtimeStateSchema.shape.scope,
+        identifier: z.string().min(1).max(160).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(100)
+      })
+      .parse(req.query);
+    const state = query.identifier
+      ? await getRealtimeState(controlRedis, query)
+      : await listRealtimeState(controlRedis, query);
+    res.json({ ok: true, state });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/redis/health", requireInternalApiKey, async (_req, res, next) => {
+  try {
+    res.json({ ok: true, redis: await redisServerSnapshot(controlRedis) });
   } catch (error) {
     next(error);
   }
@@ -77,3 +292,110 @@ app.use((error, _req, res, _next) => {
 });
 
 listen(app, servicePort(3100), logger);
+
+function installQueueDashboard() {
+  if (readEnv("BULL_BOARD_ENABLED", "false") !== "true") return;
+
+  const username = readEnv("BULL_BOARD_USERNAME");
+  const password = readEnv("BULL_BOARD_PASSWORD");
+  if (!username || !password) {
+    logger.warn("Bull Board is enabled but BULL_BOARD_USERNAME or BULL_BOARD_PASSWORD is missing");
+    return;
+  }
+
+  const basePath = normalizeBasePath(readEnv("BULL_BOARD_BASE_PATH", "/queues/board"));
+  const serverAdapter = new ExpressAdapter();
+  serverAdapter.setBasePath(basePath);
+
+  createBullBoard({
+    queues: queueNames.concat(queueNames.map(deadLetterQueueName)).map((name) => new BullMQAdapter(getQueue(name))),
+    serverAdapter,
+    options: {
+      uiConfig: {
+        boardTitle: "LogiVN Queue Operations",
+        boardLogo: {
+          path: "https://logivn.com/favicon.ico",
+          width: 32,
+          height: 32
+        }
+      }
+    }
+  });
+
+  app.use(basePath, requireBullBoardAuth({ username, password }), queueDashboardSecurityHeaders, serverAdapter.getRouter());
+  logger.info({ basePath }, "Bull Board queue dashboard mounted");
+}
+
+function requireBullBoardAuth({ username, password }) {
+  return (req, res, next) => {
+    const authorization = req.header("authorization") || "";
+    if (!authorization.startsWith("Basic ")) return requestBasicAuth(res);
+
+    const decoded = Buffer.from(authorization.slice("Basic ".length), "base64").toString("utf8");
+    const separatorIndex = decoded.indexOf(":");
+    if (separatorIndex < 0) return requestBasicAuth(res);
+
+    const providedUsername = decoded.slice(0, separatorIndex);
+    const providedPassword = decoded.slice(separatorIndex + 1);
+    if (secureEqual(providedUsername, username) && secureEqual(providedPassword, password)) return next();
+
+    return requestBasicAuth(res);
+  };
+}
+
+function requestBasicAuth(res) {
+  res.setHeader("WWW-Authenticate", 'Basic realm="LogiVN queues", charset="UTF-8"');
+  return res.status(401).send("authentication_required");
+}
+
+function queueDashboardSecurityHeaders(_req, res, next) {
+  res.setHeader(
+    "Content-Security-Policy",
+    [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: https://logivn.com",
+      "connect-src 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'"
+    ].join("; ")
+  );
+  next();
+}
+
+function secureEqual(left, right) {
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
+}
+
+function normalizeBasePath(path) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+}
+
+async function forwardAlertmanagerPayload(payload) {
+  const forwardUrl = readEnv("ALERT_WEBHOOK_FORWARD_URL");
+  if (!forwardUrl) return;
+
+  const headers = { "content-type": "application/json" };
+  const token = readEnv("ALERT_WEBHOOK_FORWARD_TOKEN");
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  const response = await fetch(forwardUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000)
+  }).catch((error) => {
+    logger.error({ error }, "alert forward failed");
+    return null;
+  });
+
+  if (response && !response.ok) {
+    logger.error({ status: response.status }, "alert forward rejected");
+  }
+}

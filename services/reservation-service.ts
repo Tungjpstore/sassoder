@@ -23,6 +23,7 @@ import { isReservationPastNoShowGrace, reservationNoShowAvailableAt, roundUpToSl
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { assertPublicTenantActive, isPublicTenantActive } from "@/services/tenant-status-guard";
+import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import type { PaymentMethod, ReservationDepositStatus, ReservationDepositType, ReservationDto, ReservationStatus } from "@/types/domain";
 import type { Database, Json } from "@/types/supabase";
 
@@ -2014,6 +2015,19 @@ export async function createReservation(input: {
   }
 
   const nextReservation = await getReservationById(reservation.id, settings.id);
+  await enqueueTelegramNotification({
+    type: "reservation.created",
+    eventId: `reservation.created:${nextReservation.id}`,
+    restaurantId: settings.id,
+    branchId: null,
+    reservation: {
+      id: nextReservation.id,
+      startsAt: nextReservation.startsAt,
+      partySize: nextReservation.partySize,
+      customerName: nextReservation.customerName,
+      depositRequiredAmount: nextReservation.depositRequiredAmount
+    }
+  });
   invalidateRestaurantDashboardCache(settings.id);
   return {
     reservation: nextReservation,

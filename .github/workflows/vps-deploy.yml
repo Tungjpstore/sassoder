@@ -86,12 +86,20 @@ jobs:
             "DEPLOY_REF='$DEPLOY_REF' REPO_URL='$REPO_URL' APP_ROOT='$APP_ROOT' bash -s" <<'REMOTE'
           set -euo pipefail
 
-          if ! mkdir -p "$APP_ROOT/app" 2>/dev/null; then
-            sudo -n mkdir -p "$APP_ROOT/app"
+          if ! mkdir -p "$APP_ROOT" 2>/dev/null; then
+            sudo -n mkdir -p "$APP_ROOT"
           fi
 
           if [ ! -w "$APP_ROOT" ]; then
             sudo -n chown -R "$(id -un):$(id -gn)" "$APP_ROOT"
+          fi
+
+          mkdir -p "$APP_ROOT/backups/worktrees"
+
+          if [ -e "$APP_ROOT/app" ] && [ ! -d "$APP_ROOT/app/.git" ]; then
+            backup_path="$APP_ROOT/backups/worktrees/app-non-git-$(date -u +%Y%m%dT%H%M%SZ)"
+            mv "$APP_ROOT/app" "$backup_path"
+            echo "Moved existing non-git app directory to $backup_path"
           fi
 
           if [ ! -d "$APP_ROOT/app/.git" ]; then
@@ -99,11 +107,23 @@ jobs:
           fi
 
           cd "$APP_ROOT/app"
+          if [ -n "$(git status --porcelain)" ]; then
+            dirty_backup="$APP_ROOT/backups/worktrees/dirty-$(date -u +%Y%m%dT%H%M%SZ)"
+            mkdir -p "$dirty_backup"
+            git status --short > "$dirty_backup/status.txt"
+            git diff > "$dirty_backup/worktree.diff" || true
+            git ls-files --others --exclude-standard -z | tar --null -T - -czf "$dirty_backup/untracked.tgz" 2>/dev/null || true
+            echo "Saved dirty worktree backup to $dirty_backup"
+          fi
+
           git fetch origin --prune
-          git checkout "$DEPLOY_REF"
+          git checkout --force "$DEPLOY_REF"
+          git reset --hard "$DEPLOY_REF"
+          git clean -fd
           chmod +x infra/vps/scripts/*.sh
 
           APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh
+          sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh
           APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only
           REMOTE
 

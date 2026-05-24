@@ -38,6 +38,7 @@ import { BranchSettingsPanel } from "@/components/dashboard/branch-settings-pane
 import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
 import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
 import { PaymentSettingsForm } from "@/components/dashboard/payment-settings-form";
+import { TelegramConnectPanel } from "@/components/dashboard/telegram-connect-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getDashboardAccessForSettings } from "@/lib/dashboard-access";
@@ -332,10 +333,12 @@ function formatDateTime(value: string | null) {
 
 function NotificationSettingsForm({
   restaurant,
+  branches,
   reportSchedule,
   reportLogs
 }: {
   restaurant: RestaurantRow;
+  branches: Awaited<ReturnType<typeof listStoreBranchesForManagement>>;
   reportSchedule: ReportScheduleSettings | null;
   reportLogs: Awaited<ReturnType<typeof listRecentReportLogs>>;
 }) {
@@ -363,6 +366,17 @@ function NotificationSettingsForm({
           </div>
         </FieldGroup>
       </form>
+
+      <FieldGroup title="Kết nối Telegram">
+        <TelegramConnectPanel
+          branches={branches.map((branch) => ({
+            id: branch.id,
+            name: branch.name,
+            isPrimary: branch.is_primary,
+            isActive: branch.is_active
+          }))}
+        />
+      </FieldGroup>
 
       {reportSchedule ? (
         <form action={updateReportScheduleAction}>
@@ -1695,7 +1709,7 @@ function renderActiveSection({
     );
   }
   if (activeSection === "notifications") {
-    return <NotificationSettingsForm restaurant={restaurant} reportSchedule={reportSchedule} reportLogs={reportLogs} />;
+    return <NotificationSettingsForm restaurant={restaurant} branches={branchSettings} reportSchedule={reportSchedule} reportLogs={reportLogs} />;
   }
   if (activeSection === "billing" && billingPortal) {
     return (

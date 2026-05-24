@@ -4,6 +4,7 @@ import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
 import { AppError } from "@/lib/response";
 
 type PublicRateLimitRule = {
+  tenantId?: string;
   scope: string;
   identifier: string;
   ip: string;

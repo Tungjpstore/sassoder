@@ -58,7 +58,7 @@ export function AdminShell({
     <ToastProvider>
       <main className="stitch-admin open-design-mobile admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
-        <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "lg:hidden" : "lg:flex"}`}>
+        <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "md:hidden" : "md:flex"}`}>
           {/* Subtle gradient overlay */}
           <div
             className="pointer-events-none absolute inset-0"
@@ -107,14 +107,14 @@ export function AdminShell({
         </aside>
 
         {/* ── Main content ── */}
-        <section className={`relative ${focusMode ? "" : "lg:pl-[216px]"}`}>
+        <section className={`relative ${focusMode ? "" : "md:pl-[216px]"}`}>
           <header className="dashboard-mobile-topbar sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[rgba(255,247,235,0.9)] px-3 py-2 backdrop-blur-xl sm:px-4 md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
-                <div className={focusMode ? "block" : "lg:hidden"}>
+                <div className={focusMode ? "block" : "md:hidden"}>
                   <AdminMobileMenuTrigger className="dashboard-mobile-menu-trigger grid h-11 w-11 place-items-center rounded-xl text-[var(--foreground)]" />
                 </div>
-                <div className="min-w-0 lg:hidden">
+                <div className="min-w-0 md:hidden">
                   <p className="dashboard-mobile-restaurant-label truncate text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
                     {restaurantName}
                   </p>
@@ -146,7 +146,7 @@ export function AdminShell({
               <div className="flex shrink-0 items-center gap-2">
                 <Link
                   href="/dashboard/analytics"
-                  className="dashboard-mobile-date-pill inline-flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-[var(--foreground)] lg:hidden"
+                  className="dashboard-mobile-date-pill inline-flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-[var(--foreground)] md:hidden"
                 >
                   Hôm nay
                   <ChevronDown size={13} />
@@ -193,13 +193,13 @@ export function AdminShell({
                   <ChevronDown size={16} className="text-[var(--outline)]" />
                 </div>
               </div>
-              <div className="dashboard-mobile-logout lg:hidden">
+              <div className="dashboard-mobile-logout md:hidden">
                 <LogoutButton compact />
               </div>
             </div>
           </header>
           {focusMode ? null : <AdminMobileNav />}
-          <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pt-4 lg:pb-5">
+          <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pb-5 md:pt-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <section
                 className={`mb-3 rounded-xl border px-4 py-3 text-sm ${
@@ -229,7 +229,7 @@ export function AdminShell({
               </section>
             ) : null}
             {!hideHeading && (
-              <section className="admin-hero-panel relative mb-4 hidden overflow-hidden px-4 py-3.5 lg:block">
+              <section className="admin-hero-panel relative mb-4 hidden overflow-hidden px-4 py-3.5 md:block">
                 <div className="relative z-[1]">
                   <h1 className="dashboard-page-title">{title}</h1>
                   {subtitle && <p className="dashboard-body-copy mt-1 max-w-2xl md:truncate">{subtitle}</p>}

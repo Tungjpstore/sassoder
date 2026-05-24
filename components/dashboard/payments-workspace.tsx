@@ -11,6 +11,7 @@ import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
+import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { AdminPaymentTransaction } from "@/services/dashboard-report-service";
 import type { PaymentMethod, PaymentStatus } from "@/types/domain";
@@ -521,6 +522,19 @@ export function PaymentsWorkspace({
       supabase.removeChannel(channel);
     };
   }, [restaurantId, router]);
+
+  useVpsRealtime({
+    restaurantId,
+    events: OPERATIONAL_REALTIME_EVENTS,
+    onStateChange: setRealtimeState,
+    onEvent: () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        setLastSyncedAt(new Date());
+        router.refresh();
+      }, 220);
+    }
+  });
 
   const confirmPayment = useCallback(async (orderId: string) => {
     setMutatingId(orderId);

@@ -1271,7 +1271,7 @@ function LogibotOperatingDrawer({
         "inset-0 bg-[#F8F7F4]/98 backdrop-blur-2xl",
         isExpanded
           ? "lg:inset-4 lg:rounded-[34px] lg:border lg:border-[#111827]/[0.08] lg:bg-white/38 lg:p-2 lg:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
-          : "lg:inset-y-4 lg:right-4 lg:left-auto lg:w-[min(620px,calc(100vw-2rem))] lg:rounded-[34px] lg:border lg:border-[#111827]/[0.08] lg:bg-white/38 lg:p-2 lg:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
+          : "md:inset-y-4 md:right-4 md:left-auto md:w-[min(620px,calc(100vw-2rem))] md:rounded-[34px] md:border md:border-[#111827]/[0.08] md:bg-white/38 md:p-2 md:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
       )}
     >
       <LogibotChatSurface
@@ -1323,7 +1323,7 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleP
         type="button"
         onClick={handleClick}
         disabled={disabled}
-        className={`fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-semibold transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 active:scale-95 lg:bottom-5 lg:right-5 ${
+        className={`fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-semibold transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 active:scale-95 md:bottom-5 md:right-5 ${
           open
             ? "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] shadow-[var(--shadow-soft)]"
             : "border-[var(--primary)]/25 bg-gradient-to-r from-[var(--primary)] to-[var(--primary-hover)] text-[#FFF7EB] shadow-[0_8px_32px_rgba(15,77,58,0.24)] hover:shadow-[0_12px_40px_rgba(15,77,58,0.3)]"

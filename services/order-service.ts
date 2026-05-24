@@ -31,8 +31,10 @@ import { invalidateRestaurantDashboardCache } from "@/services/restaurant-servic
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
+import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
+import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import type {
   DeliveryStatus,
   FulfillmentType,
@@ -1323,6 +1325,36 @@ export async function createOrder(input: CreateOrderInput) {
   }
 
   const order = await getOrderDto(insertedOrder.id, supabase);
+  await enqueueTelegramNotification({
+    type: "order.created",
+    eventId: `order.created:${order.id}`,
+    restaurantId: restaurant.id,
+    branchId: order.branchId ?? null,
+    order: {
+      id: order.id,
+      displayCode: order.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
+      itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+      total: order.total,
+      tableName: order.table?.name ?? null,
+      fulfillmentType: order.fulfillmentType,
+      customerName: order.customerName ?? null
+    }
+  });
+  await broadcastVpsRealtime({
+    event: "new_order",
+    restaurantId: restaurant.id,
+    tableId: table.id,
+    orderId: order.id,
+    payload: {
+      orderId: order.id,
+      branchId: order.branchId ?? null,
+      tableId: table.id,
+      tableName: order.table?.name ?? null,
+      fulfillmentType: order.fulfillmentType,
+      status: order.status,
+      total: order.total
+    }
+  });
   invalidateRestaurantOrderCache(restaurant.id);
   invalidateRestaurantDashboardCache(restaurant.id);
   return {
@@ -1550,6 +1582,34 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
   }
 
   const order = await getOrderDto(insertedOrder.id, supabase);
+  await enqueueTelegramNotification({
+    type: "order.created",
+    eventId: `order.created:${order.id}`,
+    restaurantId: settings.id,
+    branchId: order.branchId ?? null,
+    order: {
+      id: order.id,
+      displayCode: order.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
+      itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+      total: order.total,
+      tableName: null,
+      fulfillmentType: order.fulfillmentType,
+      customerName: order.customerName ?? null
+    }
+  });
+  await broadcastVpsRealtime({
+    event: "new_order",
+    restaurantId: settings.id,
+    orderId: order.id,
+    payload: {
+      orderId: order.id,
+      branchId: order.branchId ?? null,
+      fulfillmentType: order.fulfillmentType,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      total: order.total
+    }
+  });
   invalidateRestaurantOrderCache(settings.id);
   invalidateRestaurantDashboardCache(settings.id);
   return {
@@ -1841,6 +1901,22 @@ export async function acceptOrder(restaurantId: string, orderId: string, minutes
       });
     }
   }
+  const confirmedOrder = await getOrderDto(orderId, supabase);
+  await enqueueTelegramNotification({
+    type: "order.confirmed",
+    eventId: `order.confirmed:${orderId}`,
+    restaurantId,
+    branchId: confirmedOrder.branchId ?? null,
+    order: {
+      id: confirmedOrder.id,
+      displayCode: confirmedOrder.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
+      itemCount: confirmedOrder.items.reduce((sum, item) => sum + item.quantity, 0),
+      total: confirmedOrder.total,
+      tableName: confirmedOrder.table?.name ?? null,
+      fulfillmentType: confirmedOrder.fulfillmentType,
+      customerName: confirmedOrder.customerName ?? null
+    }
+  });
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
   return updated;

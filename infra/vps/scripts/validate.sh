@@ -59,6 +59,8 @@ main() {
 
   log "Docker services"
   docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" ps
+  docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
+  log "redis OK"
 
   check_url http://127.0.0.1:3100/health gateway
   check_url http://127.0.0.1:3200/health socket
@@ -67,6 +69,10 @@ main() {
   check_url http://127.0.0.1:3500/health worker
   check_url http://127.0.0.1:3600/health telegram-bot
   check_url http://127.0.0.1:3001 uptime-kuma
+  check_url http://127.0.0.1:3002/grafana/api/health grafana
+  check_url http://127.0.0.1:9090/-/ready prometheus
+  check_url http://127.0.0.1:5540 redisinsight
+  check_url http://127.0.0.1:9093/-/ready alertmanager
 
   if [ "$LOCAL_ONLY" = false ]; then
     for host in api.logivn.com ws.logivn.com worker.logivn.com monitor.logivn.com; do

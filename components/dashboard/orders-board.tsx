@@ -19,6 +19,7 @@ import {
   shouldReturnOnlineOrderToKitchenAfterPayment,
   type DeliveryActionStatus
 } from "@/lib/orders/order-state-machine";
+import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { OrderDto } from "@/types/domain";
 
@@ -1380,6 +1381,16 @@ export function OrdersBoard({
       supabase.removeChannel(channel);
     };
   }, [restaurantId]);
+
+  useVpsRealtime({
+    restaurantId,
+    events: OPERATIONAL_REALTIME_EVENTS,
+    onStateChange: setRealtimeState,
+    onEvent: () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => void loadOrdersRef.current({ silent: true }), 180);
+    }
+  });
 
   const billGroups = useMemo(() => buildBillGroups(orders), [orders]);
   const operationsSnapshot = useMemo(() => buildOperationsSnapshot(billGroups, clockTick), [billGroups, clockTick]);

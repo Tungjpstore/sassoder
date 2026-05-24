@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { fetchKitchenOrders, readCachedKitchenOrders, writeCachedKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
 import { formatVnd } from "@/lib/money";
+import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { cn } from "@/lib/utils";
 import type { OrderDto } from "@/types/domain";
@@ -714,6 +715,16 @@ export function KitchenBoard({
       supabase.removeChannel(channel);
     };
   }, [restaurantId]);
+
+  useVpsRealtime({
+    restaurantId,
+    events: OPERATIONAL_REALTIME_EVENTS,
+    onStateChange: setRealtimeState,
+    onEvent: () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => void loadOrdersRef.current({ silent: true, force: true }), 180);
+    }
+  });
 
   const pendingOrders = useMemo(() => orders.filter((order) => order.status === "pending"), [orders]);
   const cookingOrders = useMemo(() => orders.filter((order) => order.status === "ordering"), [orders]);

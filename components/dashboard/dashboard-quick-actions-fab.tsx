@@ -94,7 +94,7 @@ export function DashboardQuickActionsFab() {
   }, [open]);
 
   return (
-    <div className="dashboard-quick-fab fixed bottom-[var(--dashboard-mobile-floating-bottom)] left-4 z-[var(--z-dashboard-panel)] lg:bottom-5 lg:left-[236px]">
+    <div className="dashboard-quick-fab fixed bottom-[var(--dashboard-mobile-floating-bottom)] left-4 z-[var(--z-dashboard-panel)] md:bottom-5 md:left-[236px]">
       {open ? (
         <>
           <button

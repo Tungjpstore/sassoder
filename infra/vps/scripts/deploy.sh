@@ -7,6 +7,7 @@ APP_ROOT=${APP_ROOT:-/opt/logivn}
 ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
 COMPOSE_FILE="$VPS_DIR/docker-compose.yml"
 BACKUP_DIR="$APP_ROOT/backups/deploy/$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_BACKUP=${LOGIVN_DEPLOY_BACKUP_ENABLED:-auto}
 
 log() {
   printf '[logivn-deploy] %s\n' "$*"
@@ -29,6 +30,21 @@ backup_current_config() {
   if [ -d /etc/nginx/sites-available ]; then
     cp -a /etc/nginx/sites-available "$BACKUP_DIR/nginx-sites-available" 2>/dev/null || true
   fi
+}
+
+backup_runtime_data() {
+  if [ "$RUN_BACKUP" = "false" ]; then
+    log "Skipping runtime backup before deploy"
+    return
+  fi
+
+  if [ "$RUN_BACKUP" = "auto" ] && ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q redis >/dev/null 2>&1; then
+    log "Skipping runtime backup before first deploy"
+    return
+  fi
+
+  log "Running runtime backup before deploy"
+  APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$VPS_DIR/scripts/backup.sh"
 }
 
 validate_compose() {
@@ -74,6 +90,7 @@ post_deploy_checks() {
 main() {
   require_env_file
   backup_current_config
+  backup_runtime_data
   validate_compose
   deploy_compose
   post_deploy_checks

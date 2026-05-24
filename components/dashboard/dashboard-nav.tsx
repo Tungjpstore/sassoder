@@ -225,7 +225,7 @@ export function AdminMobileNav() {
   return (
     <>
       <nav
-        className="dashboard-mobile-nav-shell fixed inset-x-0 bottom-0 z-[70] border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-2 pb-[calc(0.45rem+env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-18px_44px_rgba(15,77,58,0.12)] backdrop-blur-xl lg:hidden"
+        className="dashboard-mobile-nav-shell fixed inset-x-0 bottom-0 z-[70] border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-2 pb-[calc(0.45rem+env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-18px_44px_rgba(15,77,58,0.12)] backdrop-blur-xl md:hidden"
         aria-label="Điều hướng chính trên di động"
       >
         <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
@@ -279,7 +279,7 @@ export function AdminMobileNav() {
       </nav>
 
       {open ? (
-        <div className="fixed inset-0 z-[90] lg:hidden" role="presentation">
+        <div className="fixed inset-0 z-[90] md:hidden" role="presentation">
           <button
             type="button"
             className="absolute inset-0 bg-black/24 backdrop-blur-[2px]"

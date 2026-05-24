@@ -5,7 +5,8 @@
 - Vercel remains active for `logivn.com` and `app.logivn.com`.
 - Supabase remains primary for PostgreSQL, Auth, Realtime light usage, and Storage.
 - GreenCloud VPS backend infrastructure lives in `infra/vps/`.
-- DNS for `api.logivn.com`, `ws.logivn.com`, `worker.logivn.com`, and `monitor.logivn.com` must point to the VPS before SSL issuance.
+- DNS for `api.logivn.com`, `ws.logivn.com`, `worker.logivn.com`, and `monitor.logivn.com` points to the GreenCloud VPS.
+- `monitor.logivn.com`, `/grafana/`, and `/queues/board/` share the same Nginx Basic Auth identity. The password is not committed; it is stored only in `/opt/logivn/.env` as `BULL_BOARD_PASSWORD`.
 
 ## Provisioning Order
 
@@ -18,7 +19,7 @@
 7. Run `infra/vps/scripts/issue-certs.sh`.
 8. Run `infra/vps/scripts/install-cron.sh`.
 9. Run `infra/vps/scripts/validate.sh`.
-10. Add Vercel frontend env values for `LOGIVN_API_PUBLIC_URL` and `LOGIVN_WS_PUBLIC_URL` after endpoints are healthy.
+10. Add Vercel frontend env values for `LOGIVN_API_PUBLIC_URL`, `LOGIVN_WS_PUBLIC_URL`, and `NEXT_PUBLIC_LOGIVN_WS_PUBLIC_URL` after endpoints are healthy.
 
 ## Environment Variable Checklist
 
@@ -30,6 +31,8 @@ VPS required:
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GF_SECURITY_ADMIN_PASSWORD`
+- `BULL_BOARD_USERNAME`
+- `BULL_BOARD_PASSWORD`
 
 VPS optional but expected soon:
 
@@ -43,6 +46,8 @@ Vercel additions after VPS cutover:
 
 - `LOGIVN_API_PUBLIC_URL=https://api.logivn.com`
 - `LOGIVN_WS_PUBLIC_URL=https://ws.logivn.com`
+- `NEXT_PUBLIC_LOGIVN_WS_PUBLIC_URL=https://ws.logivn.com`
+- `LOGIVN_INTERNAL_API_KEY=<same internal key as the VPS>`
 
 Do not move Supabase Auth or database credentials out of Supabase/Vercel. The VPS only receives server-side secrets needed for background execution.
 
@@ -63,13 +68,20 @@ curl -fsS https://worker.logivn.com/health
 curl -fsS https://monitor.logivn.com
 ```
 
+Bull Board:
+
+```bash
+curl -fsS -u "$BULL_BOARD_USERNAME:$BULL_BOARD_PASSWORD" \
+  https://monitor.logivn.com/queues/board/
+```
+
 Queue enqueue:
 
 ```bash
 curl -fsS https://api.logivn.com/queues/jobs \
   -H "content-type: application/json" \
   -H "x-logivn-internal-key: $LOGIVN_INTERNAL_API_KEY" \
-  -d '{"queueName":"notifications","name":"smoke","data":{"source":"ops"}}'
+  -d '{"queueName":"orders.processing","name":"smoke","data":{"tenantId":"00000000-0000-0000-0000-000000000000","source":"ops"}}'
 ```
 
 Realtime broadcast:

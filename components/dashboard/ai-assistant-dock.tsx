@@ -598,7 +598,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-semibold text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 lg:bottom-5 lg:right-5"
+        className="fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] py-1 pl-1 pr-4 text-sm font-semibold text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 md:bottom-5 md:right-5"
       >
         <span className="grid h-12 w-12 overflow-hidden rounded-full">
           <Image src={logibotLogo} alt="LogiBot" width={48} height={48} className="h-full w-full object-cover" priority />
@@ -607,7 +607,7 @@ export function AiAssistantDock({ restaurantName }: { restaurantName: string }) 
       </button>
 
       {open ? (
-        <section className="fixed inset-x-3 bottom-[calc(var(--dashboard-mobile-floating-bottom)_+_4.5rem)] z-[var(--z-dashboard-panel)] flex h-[min(720px,calc(100dvh_-_var(--dashboard-mobile-nav-height)_-_11rem))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)] lg:inset-x-auto lg:bottom-20 lg:right-5 lg:w-[min(820px,calc(100vw-32px))]">
+        <section className="fixed inset-x-3 bottom-[calc(var(--dashboard-mobile-floating-bottom)_+_4.5rem)] z-[var(--z-dashboard-panel)] flex h-[min(720px,calc(100dvh_-_var(--dashboard-mobile-nav-height)_-_11rem))] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-lift)] md:inset-x-auto md:bottom-20 md:right-5 md:w-[min(820px,calc(100vw-32px))]">
           <header className="flex items-center justify-between bg-[var(--primary)] px-4 py-3 text-white">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-12 w-12 shrink-0 overflow-hidden rounded-full border border-white/20 bg-[var(--surface)] p-0.5">

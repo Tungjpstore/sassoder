@@ -1,8 +1,9 @@
 import { createAdapter } from "@socket.io/redis-adapter";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
 import { z } from "zod";
-import { internalApiKey, parseOrigins, servicePort } from "../shared/env.js";
+import { internalApiKey, parseOrigins, readEnv, servicePort } from "../shared/env.js";
 import { createHttpApp, listen } from "../shared/http.js";
 import { createLogger } from "../shared/logger.js";
 import { assertRedisHealthy, createRedisConnection } from "../shared/redis.js";
@@ -48,9 +49,16 @@ io.adapter(createAdapter(pubClient, subClient));
 
 io.use((socket, next) => {
   const provided = socket.handshake.auth?.internalKey || socket.handshake.headers["x-logivn-internal-key"];
+  const token = socket.handshake.auth?.token;
   const publicClient = socket.handshake.auth?.publicClient === true || socket.handshake.auth?.publicClient === "true";
+  const realtimeClaims = verifyRealtimeToken(token);
 
-  if (publicClient || provided === internalApiKey()) {
+  if (realtimeClaims) {
+    socket.data.realtimeClaims = realtimeClaims;
+    return next();
+  }
+
+  if (provided === internalApiKey() || (publicClient && allowPublicClients())) {
     return next();
   }
 
@@ -63,6 +71,12 @@ io.on("connection", (socket) => {
   socket.on("join_restaurant", (input, callback) => {
     try {
       const payload = roomJoinSchema.parse(input);
+      const claims = socket.data.realtimeClaims;
+      if (claims?.restaurantId && claims.restaurantId !== payload.restaurantId) {
+        callback?.({ ok: false, error: "restaurant_forbidden" });
+        return;
+      }
+
       socket.join(restaurantRoom(payload.restaurantId));
       if (payload.tableId) socket.join(tableRoom(payload.restaurantId, payload.tableId));
       if (payload.orderId) socket.join(orderRoom(payload.orderId));
@@ -106,3 +120,37 @@ app.post("/broadcast", (req, res) => {
 
 const port = servicePort(3200);
 listen(httpServer, port, logger);
+
+function allowPublicClients() {
+  return readEnv("LOGIVN_SOCKET_ALLOW_PUBLIC_CLIENTS", "false") === "true";
+}
+
+function verifyRealtimeToken(token) {
+  if (typeof token !== "string" || !token.includes(".")) return null;
+
+  try {
+    const [encodedPayload, signature] = token.split(".");
+    if (!encodedPayload || !signature) return null;
+
+    const expected = signPayload(encodedPayload);
+    if (!safeEqual(signature, expected)) return null;
+
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.scope !== "dashboard" || typeof payload.restaurantId !== "string" || payload.exp < now) return null;
+    return payload;
+  } catch (error) {
+    logger.warn({ error }, "invalid realtime token");
+    return null;
+  }
+}
+
+function signPayload(encodedPayload) {
+  return createHmac("sha256", internalApiKey()).update(encodedPayload).digest("base64url");
+}
+
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}

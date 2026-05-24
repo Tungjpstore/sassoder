@@ -22,7 +22,7 @@ const chatSchema = z.object({
 });
 
 const asyncJobSchema = chatSchema.extend({
-  tenantId: z.string().optional(),
+  tenantId: z.string().min(1),
   jobType: z.enum(["logibot", "analytics", "menu_generation", "assistant", "staff_support"]).default("assistant")
 });
 
@@ -40,7 +40,7 @@ app.post("/jobs", requireInternalApiKey, async (req, res, next) => {
   try {
     const payload = asyncJobSchema.parse(req.body);
     const job = await enqueueJob({
-      queueName: "ai-jobs",
+      queueName: payload.jobType === "analytics" ? "ai.analytics" : "ai.chat",
       name: payload.jobType,
       data: payload
     });

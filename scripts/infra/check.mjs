@@ -47,9 +47,11 @@ function collectSourceFiles(startDir, results = []) {
     const absolutePath = path.join(startDir, entry);
     const relativePath = path.relative(rootDir, absolutePath);
     const firstSegment = relativePath.split(path.sep)[0];
+    const segments = relativePath.split(path.sep);
 
     if (
       firstSegment.startsWith(".next") ||
+      segments.some((segment) => ignoredDirectories.has(segment)) ||
       [...ignoredDirectories].some((ignoredDir) => relativePath === ignoredDir || relativePath.startsWith(`${ignoredDir}${path.sep}`))
     ) {
       continue;

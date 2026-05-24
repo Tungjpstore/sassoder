@@ -171,6 +171,7 @@ configure_sysctl() {
   backup_file /etc/sysctl.d/99-logivn.conf
   cat > /etc/sysctl.d/99-logivn.conf <<'EOF'
 vm.swappiness=10
+vm.overcommit_memory=1
 fs.file-max=2097152
 net.core.somaxconn=4096
 net.ipv4.tcp_fin_timeout=15

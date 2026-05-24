@@ -2,6 +2,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema } from "@/lib/validators";
+import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { getOrderLifecycleSnapshot, markOrderCompleted } from "@/services/order-service";
 
@@ -26,6 +27,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       entityId: orderId,
       beforeData: before,
       afterData: data
+    });
+    await broadcastVpsRealtime({
+      event: "kitchen_update",
+      restaurantId: session.restaurantId,
+      orderId,
+      payload: {
+        orderId,
+        action: "order.complete"
+      }
     });
     return ok(data);
   } catch (error) {

@@ -665,7 +665,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
   return (
     <div className="grid gap-3">
       {showActivationPanel ? (
-        <div className="hidden lg:block">
+        <div className="hidden md:block">
           {showOnboardedWelcome ? <OnboardingDraftCleanup /> : null}
           <OnboardingWelcomePanel
             restaurantName={dashboard.restaurant.name}
@@ -677,7 +677,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
         </div>
       ) : null}
 
-      <section className="logivn-mobile-overview grid gap-3 lg:hidden" aria-label="Tổng quan vận hành mobile">
+      <section className="logivn-mobile-overview grid gap-3 md:hidden" aria-label="Tổng quan vận hành mobile">
         <Link href="/dashboard/settings" className="mobile-store-card">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#fff4df] text-[var(--primary)]">
             <Store size={20} />
@@ -838,7 +838,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
         </div>
       </section>
 
-      <div className="hidden gap-3 lg:grid">
+      <div className="hidden gap-3 md:grid">
       {/* ── Hero welcome strip ── */}
       <section className="admin-hero-panel dashboard-wallpaper-stage relative overflow-hidden px-4 py-3.5">
         <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

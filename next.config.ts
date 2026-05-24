@@ -8,7 +8,7 @@ const contentSecurityPolicy = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.mapbox.com https://events.mapbox.com https://rsapi.goong.io https://tiles.goong.io https://*.goong.io https://tile.openstreetmap.org https://*.arcgisonline.com https://server.arcgisonline.com https://services.arcgisonline.com https://img.vietqr.io https://api.qrserver.com https://vercel.live",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.logivn.com https://ws.logivn.com wss://ws.logivn.com https://api.mapbox.com https://events.mapbox.com https://rsapi.goong.io https://tiles.goong.io https://*.goong.io https://tile.openstreetmap.org https://*.arcgisonline.com https://server.arcgisonline.com https://services.arcgisonline.com https://img.vietqr.io https://api.qrserver.com https://vercel.live",
   "media-src 'self' blob:",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",

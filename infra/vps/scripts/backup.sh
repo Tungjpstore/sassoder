@@ -33,7 +33,8 @@ backup_configs() {
 
 backup_redis() {
   log "Backing up Redis volume"
-  docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" exec -T redis redis-cli -a "$REDIS_PASSWORD" BGSAVE >/dev/null || true
+  docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" BGSAVE >/dev/null || true
+  docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" BGREWRITEAOF >/dev/null || true
   sleep 3
   docker run --rm \
     -v logivn_redis-data:/data:ro \

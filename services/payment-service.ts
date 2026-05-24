@@ -13,6 +13,7 @@ import { invalidateRestaurantDashboardCache } from "@/services/restaurant-servic
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
+import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import type { FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
 
@@ -518,6 +519,12 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
         amount: bill.total,
         source: "customer_bill_button"
       });
+      await enqueuePaymentWaitingConfirmNotification({
+        restaurantId: typedOrder.restaurant_id,
+        orderId,
+        billId: bill.id,
+        amount: bill.total
+      });
       return getCustomerPaymentOrder(orderId, access);
     }
     if (bill.status === "waiting_confirm") {
@@ -591,6 +598,12 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       amount: bill.total,
       source: "customer_bill_button"
     });
+    await enqueuePaymentWaitingConfirmNotification({
+      restaurantId: typedOrder.restaurant_id,
+      orderId,
+      billId: bill.id,
+      amount: bill.total
+    });
 
     invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
@@ -607,6 +620,12 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       orderId,
       amount: typedOrder.total,
       source: "customer_button"
+    });
+    await enqueuePaymentWaitingConfirmNotification({
+      restaurantId: typedOrder.restaurant_id,
+      orderId,
+      billId: typedOrder.bill_id ?? null,
+      amount: typedOrder.total
     });
     return getCustomerPaymentOrder(orderId, access);
   }
@@ -641,6 +660,12 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
     amount: typedOrder.total,
     source: "customer_button"
   });
+  await enqueuePaymentWaitingConfirmNotification({
+    restaurantId: typedOrder.restaurant_id,
+    orderId,
+    billId: typedOrder.bill_id ?? null,
+    amount: typedOrder.total
+  });
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
@@ -660,6 +685,12 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
       orderId,
       amount: typedOrder.total,
       source: "remote_order_customer_paid_button"
+    });
+    await enqueuePaymentWaitingConfirmNotification({
+      restaurantId: typedOrder.restaurant_id,
+      orderId,
+      billId: typedOrder.bill_id ?? null,
+      amount: typedOrder.total
     });
     return getRemotePaymentOrder(orderId, access);
   }
@@ -694,8 +725,34 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
     amount: typedOrder.total,
     source: "remote_order_customer_paid_button"
   });
+  await enqueuePaymentWaitingConfirmNotification({
+    restaurantId: typedOrder.restaurant_id,
+    orderId,
+    billId: typedOrder.bill_id ?? null,
+    amount: typedOrder.total
+  });
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getRemotePaymentOrder(orderId, access);
+}
+
+async function enqueuePaymentWaitingConfirmNotification(input: {
+  restaurantId: string;
+  orderId: string;
+  billId?: string | null;
+  amount: number;
+}) {
+  await enqueueTelegramNotification({
+    type: "payment.waiting_confirm",
+    eventId: `payment.waiting_confirm:${input.billId ?? input.orderId}`,
+    restaurantId: input.restaurantId,
+    branchId: null,
+    payment: {
+      orderId: input.orderId,
+      billId: input.billId ?? null,
+      amount: input.amount,
+      method: "QR"
+    }
+  });
 }
 
 export async function confirmPayment(restaurantId: string, orderId: string) {

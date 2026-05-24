@@ -34,6 +34,7 @@ import { ConfirmActionButton } from "@/components/dashboard/confirm-action-butto
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { cn } from "@/lib/utils";
@@ -623,6 +624,21 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
       supabase.removeChannel(channel);
     };
   }, [restaurantId, router]);
+
+  useVpsRealtime({
+    restaurantId,
+    events: OPERATIONAL_REALTIME_EVENTS,
+    onStateChange: setRealtimeState,
+    onEvent: () => {
+      if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = window.setTimeout(() => {
+        startRefreshTransition(() => {
+          router.refresh();
+          setLastSyncedAt(new Date());
+        });
+      }, 180);
+    }
+  });
 
   function refreshTables() {
     startRefreshTransition(() => {
