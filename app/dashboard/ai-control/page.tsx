@@ -56,6 +56,7 @@ function providerLabel(provider: AiProviderReadiness["provider"]) {
   if (provider === "openai") return "OpenAI";
   if (provider === "gemini") return "Gemini";
   if (provider === "claude") return "Claude";
+  if (provider === "nvidia") return "NVIDIA DSX Air";
   if (provider === "qwen") return "Qwen";
   return "xAI";
 }

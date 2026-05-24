@@ -60,7 +60,7 @@ function AnalyticsCommandCenter({ report }: { report: AdminReport }) {
   ];
 
   return (
-    <section className="dashboard-panel mt-4 p-3">
+    <section className="dashboard-panel dashboard-command-center dashboard-mobile-report-command mt-4 p-3">
       <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-start justify-between gap-3">

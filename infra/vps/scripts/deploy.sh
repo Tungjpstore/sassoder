@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+VPS_DIR="$REPO_ROOT/infra/vps"
+APP_ROOT=${APP_ROOT:-/opt/logivn}
+ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
+COMPOSE_FILE="$VPS_DIR/docker-compose.yml"
+BACKUP_DIR="$APP_ROOT/backups/deploy/$(date -u +%Y%m%dT%H%M%SZ)"
+
+log() {
+  printf '[logivn-deploy] %s\n' "$*"
+}
+
+require_env_file() {
+  if [ ! -f "$ENV_FILE" ]; then
+    mkdir -p "$APP_ROOT"
+    cp "$VPS_DIR/.env.example" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    printf 'Created %s from template. Fill production secrets, then rerun deploy.\n' "$ENV_FILE" >&2
+    exit 2
+  fi
+}
+
+backup_current_config() {
+  mkdir -p "$BACKUP_DIR"
+  cp -a "$ENV_FILE" "$BACKUP_DIR/env.backup"
+  cp -a "$COMPOSE_FILE" "$BACKUP_DIR/docker-compose.yml"
+  if [ -d /etc/nginx/sites-available ]; then
+    cp -a /etc/nginx/sites-available "$BACKUP_DIR/nginx-sites-available" 2>/dev/null || true
+  fi
+}
+
+validate_compose() {
+  log "Validating docker compose config"
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null
+}
+
+deploy_compose() {
+  log "Building images"
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull
+
+  log "Starting services"
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
+}
+
+wait_for_health() {
+  local path="$1"
+  local label="$2"
+  local attempts=40
+
+  for _ in $(seq 1 "$attempts"); do
+    if curl -fsS "$path" >/dev/null 2>&1; then
+      log "$label is healthy"
+      return
+    fi
+    sleep 3
+  done
+
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
+  printf '%s did not become healthy: %s\n' "$label" "$path" >&2
+  exit 1
+}
+
+post_deploy_checks() {
+  wait_for_health "http://127.0.0.1:3100/health" "gateway"
+  wait_for_health "http://127.0.0.1:3200/health" "socket"
+  wait_for_health "http://127.0.0.1:3300/health" "ai-service"
+  wait_for_health "http://127.0.0.1:3400/health" "image-service"
+  wait_for_health "http://127.0.0.1:3500/health" "worker"
+  wait_for_health "http://127.0.0.1:3600/health" "telegram-bot"
+}
+
+main() {
+  require_env_file
+  backup_current_config
+  validate_compose
+  deploy_compose
+  post_deploy_checks
+  docker image prune -f --filter "until=168h" >/dev/null || true
+  log "Deployment complete. Config backup: $BACKUP_DIR"
+}
+
+main "$@"

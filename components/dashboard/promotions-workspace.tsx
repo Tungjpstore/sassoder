@@ -189,7 +189,7 @@ export function PromotionsWorkspace({
 
   return (
     <div className="grid gap-3">
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-promotions-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat) => {
           return (
             <DashboardMetricCard key={stat.label} icon={stat.icon} label={stat.label} value={stat.value} meta={stat.meta} tone={stat.value ? "green" : "yellow"} />

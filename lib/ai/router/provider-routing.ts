@@ -6,9 +6,10 @@ type ProviderRoutingCandidate = Pick<
 >;
 
 const reasoningTasks = new Set<AiTaskType>(["analytics_reasoning", "business_insight"]);
+const batchTasks = new Set<AiTaskType>(["batch_report", "batch_inventory", "batch_marketing", "batch_ocr", "batch_embedding"]);
 const fastOperationalTasks = new Set<AiTaskType>(["customer_ordering", "upsell", "dashboard_operation", "tool"]);
 const creativeTasks = new Set<AiTaskType>(["menu_generation", "branding"]);
-const deterministicTasks = new Set<AiTaskType>(["setup", "ocr", "image"]);
+const deterministicTasks = new Set<AiTaskType>(["setup", "ocr", "image", "batch_ocr", "batch_embedding"]);
 
 function supportsTask(candidate: ProviderRoutingCandidate, taskType: AiTaskType, options?: AiCompletionOptions) {
   if (taskType === "ocr") return candidate.supportsOcr;
@@ -31,6 +32,16 @@ export function buildAiProviderOrder(input: {
     return [...(capable.includes("qwen") ? ["qwen" as AiProvider] : []), ...capable.filter((provider) => provider !== "qwen")];
   }
 
+  if (batchTasks.has(input.taskType)) {
+    const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
+    const ordered: AiProvider[] = preferred ? [preferred] : capable.includes("nvidia") ? ["nvidia"] : [];
+    const fallbackPreference: AiProvider[] = ["nvidia", "qwen", "openai", "gemini", "xai", "vercel_gateway", "claude"];
+    for (const provider of fallbackPreference) {
+      if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);
+    }
+    return ordered;
+  }
+
   const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
   const primary =
     preferred ??
@@ -46,10 +57,10 @@ export function buildAiProviderOrder(input: {
 
   const ordered: AiProvider[] = primary ? [primary] : [];
   const fallbackPreference: AiProvider[] = deterministicTasks.has(input.taskType)
-    ? ["qwen", "openai", "gemini", "xai", "vercel_gateway"]
+    ? ["qwen", "openai", "gemini", "nvidia", "xai", "vercel_gateway"]
     : reasoningTasks.has(input.taskType)
-      ? ["openai", "xai", "claude", "gemini", "qwen", "vercel_gateway"]
-      : ["qwen", "openai", "gemini", "xai", "vercel_gateway", "claude"];
+      ? ["openai", "xai", "claude", "gemini", "qwen", "nvidia", "vercel_gateway"]
+      : ["qwen", "openai", "gemini", "xai", "vercel_gateway", "claude", "nvidia"];
 
   for (const provider of fallbackPreference) {
     if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);

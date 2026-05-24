@@ -1,6 +1,6 @@
 import type { AiPromptMessage } from "@/services/ai-prompt-router";
 
-export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway";
+export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway" | "nvidia";
 
 export type AiProviderProtocol = "openai-compatible" | "anthropic-messages";
 
@@ -11,6 +11,11 @@ export type AiTaskType =
   | "dashboard_operation"
   | "analytics_reasoning"
   | "business_insight"
+  | "batch_report"
+  | "batch_inventory"
+  | "batch_marketing"
+  | "batch_ocr"
+  | "batch_embedding"
   | "setup"
   | "branding"
   | "ocr"

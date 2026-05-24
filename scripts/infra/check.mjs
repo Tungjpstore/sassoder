@@ -20,7 +20,7 @@ const ignoredDirectories = new Set([
   "reports",
   "supabase/.temp"
 ]);
-const systemEnvKeys = new Set(["NODE_ENV", "VERCEL_ENV", "VERCEL_GIT_COMMIT_SHA", "VERCEL_REGION"]);
+const systemEnvKeys = new Set(["NODE_ENV", "PATH", "VERCEL_ENV", "VERCEL_GIT_COMMIT_SHA", "VERCEL_REGION"]);
 const appServiceRoleAllowlist = new Set(["app/api/health/route.ts"]);
 const adminClientImportPatterns = [
   /from\s+["']@\/lib\/supabase\/admin["']/,

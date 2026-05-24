@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useState, useSyncExternalStore, type FormEvent } from "react";
-import { ArrowRight, Building2, Delete, Fingerprint, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Building2, CheckCircle2, ChevronRight, Clock3, Delete, Fingerprint, LockKeyhole, MapPin, ShieldCheck, Store } from "lucide-react";
 import { pinLoginAction } from "@/app/dashboard/actions/auth";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
@@ -93,79 +93,104 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
   };
 
   return (
-    <main className="stitch-admin min-h-screen overflow-hidden bg-[var(--background)] text-[var(--foreground)]">
-      <section className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-5 sm:px-6 lg:px-8">
-        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_14%_10%,rgba(15,77,58,0.13),transparent_28%),radial-gradient(circle_at_82%_16%,rgba(242,140,40,0.11),transparent_24%)]" />
-
-        <header className="relative z-[1] flex items-center justify-between">
+    <main className="min-h-screen overflow-x-hidden bg-[#F4F6F3] text-[#17201B]">
+      <section className="mx-auto grid min-h-screen w-full max-w-full grid-cols-[minmax(0,1fr)] content-start gap-5 px-4 py-5 sm:px-6 lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_430px] lg:items-center lg:py-8">
+        <header className="flex items-center justify-between lg:col-span-2">
           <LogiVNLogo href="/" className="h-9" priority />
-          <Link href="/dashboard/login" className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs font-black text-[var(--muted-foreground)]">
-            Chủ quán đăng nhập
+          <Link href="/dashboard/login" className="rounded-lg border border-[#D7DFDA] bg-white px-3 py-2 text-xs font-black text-[#526058]">
+            Chủ quán
           </Link>
         </header>
 
-        <div className="relative z-[1] grid flex-1 items-center gap-6 py-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(340px,0.65fr)]">
-          <section className="hidden rounded-[32px] border border-[var(--border)] bg-[linear-gradient(135deg,#0F4D3A,#133C31_58%,#F28C28_132%)] p-6 text-[#FFF7EB] shadow-[var(--shadow-lift)] lg:block">
-            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-white/70">
-              <ShieldCheck size={16} />
-              Khu vực nhân viên
+        <div className="hidden min-w-0 lg:grid lg:gap-4">
+          <section className="rounded-lg border border-[#16231D] bg-[#16231D] p-5 text-white shadow-[0_18px_42px_rgba(22,35,29,0.16)]">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black uppercase text-white/52">LogiVN Staff</p>
+                <h1 className="mt-2 max-w-xl text-[40px] font-black leading-[1.02]">
+                  Vào ca trong vài giây.
+                </h1>
+              </div>
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-white/10 text-[#BDF4CC]">
+                <ShieldCheck size={22} />
+              </span>
             </div>
-            <h1 className="mt-8 max-w-lg text-5xl font-black leading-[0.95] tracking-[-0.06em]">
-              Vào ca nhanh. Không chen vào tài khoản chủ quán.
-            </h1>
-            <p className="mt-5 max-w-md text-sm font-semibold leading-6 text-white/72">
-              PIN staff chạy ở luồng riêng cho từng quán, phù hợp kiosk/PWA tại chi nhánh. Dashboard chủ quán vẫn dùng Google/email như bình thường.
-            </p>
-            <div className="mt-10 grid grid-cols-3 gap-3">
+            <div className="mt-6 grid grid-cols-3 gap-2">
               {[
-                ["PIN riêng", "4-8 số"],
-                ["Theo quán", "slug cố định"],
-                ["Bảo mật", "rate limit"]
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-3xl border border-white/18 bg-white/10 p-4 backdrop-blur">
-                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white/58">{label}</p>
-                  <p className="mt-2 text-lg font-black">{value}</p>
-                </div>
-              ))}
+                { icon: Fingerprint, label: "PIN", value: "4-8 số" },
+                { icon: Store, label: "Quán", value: restaurantName || restaurantSlug || recentSlug || "Chọn quán" },
+                { icon: Clock3, label: "Ca", value: "Staff app" }
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.label} className="min-w-0 rounded-lg border border-white/10 bg-white/[0.075] p-3">
+                    <Icon size={16} className="text-[#BDF4CC]" />
+                    <p className="mt-2 truncate text-[10px] font-black uppercase text-white/50">{item.label}</p>
+                    <p className="mt-1 truncate text-[13px] font-black text-white">{item.value}</p>
+                  </div>
+                );
+              })}
             </div>
           </section>
 
-          <section className="mx-auto w-full max-w-[420px] rounded-[28px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-lift)] sm:p-5">
-            <div className="rounded-[24px] border border-[var(--border)] bg-[var(--surface-container)] p-4">
+          <section className="grid grid-cols-3 gap-2">
+            {[
+              { icon: CheckCircle2, label: "Check-in", tone: "bg-[#E8F5EC] text-[#0F6A45]" },
+              { icon: MapPin, label: "GPS/QR", tone: "bg-[#EAF2FF] text-[#2456A6]" },
+              { icon: LockKeyhole, label: "Tách quyền", tone: "bg-[#FFF3DE] text-[#98530F]" }
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <div key={item.label} className="rounded-lg border border-[#DBE2DE] bg-white p-3 shadow-[0_10px_24px_rgba(24,33,29,0.04)]">
+                  <span className={`grid h-9 w-9 place-items-center rounded-lg ${item.tone}`}>
+                    <Icon size={16} />
+                  </span>
+                  <p className="mt-3 truncate text-[13px] font-black text-[#17201B]">{item.label}</p>
+                </div>
+              );
+            })}
+          </section>
+        </div>
+
+        <section className="mx-0 min-w-0 w-full max-w-[358px] rounded-lg border border-[#DBE2DE] bg-white p-4 shadow-[0_18px_42px_rgba(24,33,29,0.08)] sm:mx-auto sm:max-w-[430px] sm:p-5">
+            <div className="rounded-lg border border-[#E0E6E1] bg-[#F8FAF7] p-4">
               <div className="flex items-center justify-between gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--primary)] text-[#FFF7EB]">
+                <span className="grid h-12 w-12 place-items-center rounded-lg bg-[#16231D] text-white">
                   {mode === "pin" ? <LockKeyhole size={22} /> : <Building2 size={22} />}
                 </span>
-                <span className="rounded-full border border-[var(--primary)]/20 bg-[var(--primary-soft)] px-3 py-1 text-xs font-black text-[var(--primary)]">
+                <span className="rounded-md border border-[#B8DDC0] bg-[#E8F5EC] px-3 py-1 text-xs font-black text-[#0F5D3F]">
                   Staff PIN
                 </span>
               </div>
-              <h2 className="mt-5 text-2xl font-black tracking-[-0.04em]">
+              <h2 className="mt-5 text-[24px] font-black leading-tight">
                 {mode === "pin" ? restaurantName || restaurantSlug || "Đăng nhập ca" : "Chọn quán để vào ca"}
               </h2>
-              <p className="mt-2 text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+              <p className="mt-2 text-sm font-semibold leading-6 text-[#65736B]">
                 {mode === "pin"
-                  ? "Nhập PIN được quản lý cấp để mở màn hình vận hành nhân viên."
-                  : "Nhập mã quán một lần, sau đó nhân viên chỉ dùng màn PIN riêng của quán."}
+                  ? "Nhập PIN nhân viên để mở màn hình làm việc."
+                  : "Nhập mã quán để mở màn PIN của chi nhánh."}
               </p>
             </div>
 
             {mode === "gate" ? (
               <form onSubmit={handleGateSubmit} className="mt-4 grid gap-3">
                 <label className="grid gap-1">
-                  <span className="text-[11px] font-black uppercase tracking-[0.14em] text-[var(--muted-foreground)]">Mã quán</span>
+                  <span className="text-[11px] font-black uppercase text-[#65736B]">Mã quán</span>
                   <input
+                    name="restaurantSlug"
                     value={slug}
                     onChange={(event) => setSlug(normalizeSlug(event.target.value))}
-                    placeholder="vi-du: cn-cau-giay"
-                    className="h-14 rounded-2xl border px-4 text-base font-black outline-none"
+                    placeholder="vd: cn-cau-giay…"
+                    className="h-14 rounded-lg border border-[#D7DFDA] bg-white px-4 text-base font-black outline-none"
                     autoCapitalize="none"
+                    autoComplete="off"
                     autoCorrect="off"
+                    spellCheck={false}
                   />
                 </label>
-                <button type="submit" disabled={normalizeSlug(slug).length < 2} className="dashboard-primary-action min-h-14 rounded-2xl disabled:opacity-50">
+                <button type="submit" disabled={normalizeSlug(slug).length < 2} className="flex min-h-14 items-center justify-center gap-2 rounded-lg bg-[#16231D] px-4 text-[15px] font-black text-white transition active:scale-[0.99] disabled:opacity-50">
                   Tiếp tục
-                  <ArrowRight size={17} />
+                  <ChevronRight size={17} />
                 </button>
                 {recentSlug ? (
                   <button
@@ -174,7 +199,7 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
                       const normalized = rememberRestaurantSlug(recentSlug);
                       if (normalized) router.push(`/staff/${normalized}/login`);
                     }}
-                    className="min-h-11 rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] px-4 text-xs font-black text-[var(--muted-foreground)]"
+                    className="min-h-12 rounded-lg border border-[#D7DFDA] bg-[#F8FAF7] px-4 text-xs font-black text-[#526058]"
                   >
                     Quán gần đây: {recentSlug}
                   </button>
@@ -186,12 +211,12 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
                 <input type="hidden" name="pin" value={pin} />
 
                 <div className="grid gap-2 text-center">
-                  <div className="mx-auto flex h-14 min-w-52 items-center justify-center gap-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] px-4">
-                    {Array.from({ length: 6 }).map((_, index) => (
-                      <span key={index} className={`h-3 w-3 rounded-full ${index < pin.length ? "bg-[var(--primary)]" : "bg-[var(--surface-container-highest)]"}`} />
+                  <div className="mx-auto flex h-14 min-w-56 items-center justify-center gap-2 rounded-lg border border-[#D7DFDA] bg-[#F8FAF7] px-4">
+                    {Array.from({ length: 8 }).map((_, index) => (
+                      <span key={index} className={`h-3 w-3 rounded-full ${index < pin.length ? "bg-[#16231D]" : "bg-[#D7DFDA]"}`} />
                     ))}
                   </div>
-                  {state?.error ? <p className="rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-xs font-bold text-[var(--accent-strong)]">{state.error}</p> : null}
+                  {state?.error ? <p aria-live="polite" className="rounded-lg border border-[#F0C38A] bg-[#FFF4E5] px-3 py-2 text-xs font-bold text-[#98530F]">{state.error}</p> : null}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
@@ -200,30 +225,29 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
                       key={value}
                       type="button"
                       onClick={() => appendPin(value)}
-                      className="min-h-16 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] text-2xl font-black shadow-sm active:scale-[0.98]"
+                      className="min-h-16 rounded-lg border border-[#D7DFDA] bg-white text-2xl font-black shadow-sm transition active:scale-[0.98]"
                     >
                       {value}
                     </button>
                   ))}
-                  <button type="button" onClick={() => setPin("")} className="min-h-16 rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] text-sm font-black">
+                  <button type="button" onClick={() => setPin("")} className="min-h-16 rounded-lg border border-[#D7DFDA] bg-[#F8FAF7] text-sm font-black text-[#526058] transition active:scale-[0.98]">
                     Xoá
                   </button>
-                  <button type="button" onClick={() => appendPin("0")} className="min-h-16 rounded-2xl border border-[var(--border)] bg-[var(--surface-strong)] text-2xl font-black shadow-sm active:scale-[0.98]">
+                  <button type="button" onClick={() => appendPin("0")} className="min-h-16 rounded-lg border border-[#D7DFDA] bg-white text-2xl font-black shadow-sm transition active:scale-[0.98]">
                     0
                   </button>
-                  <button type="button" onClick={() => setPin((current) => current.slice(0, -1))} className="grid min-h-16 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--surface-container)]">
+                  <button type="button" onClick={() => setPin((current) => current.slice(0, -1))} className="grid min-h-16 place-items-center rounded-lg border border-[#D7DFDA] bg-[#F8FAF7] text-[#526058] transition active:scale-[0.98]">
                     <Delete size={20} />
                   </button>
                 </div>
 
-                <button type="submit" disabled={pending || pin.length < 4} className="dashboard-primary-action min-h-14 rounded-2xl disabled:opacity-50">
+                <button type="submit" disabled={pending || pin.length < 4} className="flex min-h-14 items-center justify-center gap-2 rounded-lg bg-[#16231D] px-4 text-[15px] font-black text-white transition active:scale-[0.99] disabled:opacity-50">
                   <Fingerprint size={17} />
-                  {pending ? "Đang kiểm tra..." : "Vào ca"}
+                  {pending ? "Đang kiểm tra…" : "Vào ca"}
                 </button>
               </form>
             )}
           </section>
-        </div>
       </section>
     </main>
   );

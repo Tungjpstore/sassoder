@@ -42,7 +42,17 @@ export async function requireDashboardAdminAccess(feature?: PlanFeatureKey) {
   return access;
 }
 
-export async function getDashboardAccessForSettings() {
-  const { session, entitlement } = await requireDashboardAdminAccess();
+export async function getDashboardAccessForSettings(activeSection?: string | null) {
+  const session = await requireSession();
+  const entitlement = await getRestaurantEntitlement(session.restaurantId);
+
+  if (session.role !== "ADMIN") {
+    redirect("/dashboard/staff/mobile");
+  }
+
+  if (!entitlement.allowed && activeSection !== "billing") {
+    redirect(billingRedirectUrl());
+  }
+
   return { session, entitlement };
 }

@@ -101,7 +101,7 @@ export function isSubscriptionUsable(subscription: Pick<LegacySubscriptionSnapsh
   const accessEndValue = accessEnd ?? null;
   const hasCurrentWindow = accessEndValue ? new Date(accessEndValue).getTime() >= now.getTime() : true;
 
-  if (subscription.status === "active" || subscription.status === "trialing") {
+  if (subscription.status === "active" || subscription.status === "trialing" || subscription.status === "cancelled") {
     return hasCurrentWindow;
   }
 

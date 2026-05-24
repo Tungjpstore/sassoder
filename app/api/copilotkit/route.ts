@@ -30,6 +30,7 @@ function isModelCompatibleWithProvider(model: string, provider: AiProviderConfig
   if (provider === "xai") return normalizedModel.startsWith("grok");
   if (provider === "openai") return normalizedModel.startsWith("gpt") || normalizedModel.startsWith("o");
   if (provider === "gemini") return normalizedModel.startsWith("gemini");
+  if (provider === "nvidia") return normalizedModel.includes("/") || normalizedModel.startsWith("nvidia");
   if (provider === "vercel_gateway") return normalizedModel.includes("/");
   return false;
 }

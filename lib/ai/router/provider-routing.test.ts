@@ -63,3 +63,22 @@ test("buildAiProviderOrder keeps qwen first for OCR when available", () => {
 
   assert.deepEqual(order, ["qwen", "openai", "gemini"]);
 });
+
+test("buildAiProviderOrder sends batch jobs to nvidia before normal fallbacks", () => {
+  const order = buildAiProviderOrder({
+    taskType: "batch_report",
+    candidates: [candidate("qwen"), candidate("nvidia"), candidate("openai")]
+  });
+
+  assert.deepEqual(order.slice(0, 3), ["nvidia", "qwen", "openai"]);
+});
+
+test("buildAiProviderOrder honors an explicit batch provider while retaining nvidia fallback", () => {
+  const order = buildAiProviderOrder({
+    taskType: "batch_inventory",
+    preferredProvider: "openai",
+    candidates: [candidate("qwen"), candidate("nvidia"), candidate("openai")]
+  });
+
+  assert.deepEqual(order.slice(0, 3), ["openai", "nvidia", "qwen"]);
+});

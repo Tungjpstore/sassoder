@@ -46,6 +46,11 @@ export function isCookieHeaderOverRepairBudget(cookieHeader: string | null) {
   return (cookieHeader?.length ?? 0) > SUPABASE_COOKIE_REPAIR_THRESHOLD_BYTES;
 }
 
+export function shouldRepairOversizedSupabaseCookieHeader(cookieHeader: string | null) {
+  if (!isCookieHeaderOverRepairBudget(cookieHeader)) return false;
+  return cookieNamesFromHeader(cookieHeader ?? "", isSupabaseCookieName).length > 0;
+}
+
 export function getHostname(host: string) {
   if (host.startsWith("[")) return host.slice(1, host.indexOf("]"));
   return host.split(":")[0]?.toLowerCase() ?? "";

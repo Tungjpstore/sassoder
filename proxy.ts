@@ -6,10 +6,10 @@ import { isInvalidRefreshTokenError } from "@/lib/supabase/auth-errors";
 import {
   cookieNamesFromHeader,
   getHostname,
-  isCookieHeaderOverRepairBudget,
   isSupabaseAuthFlowCookieName,
   isSupabaseAuthSessionCookieName,
   isSupabaseCookieName,
+  shouldRepairOversizedSupabaseCookieHeader,
   shouldShareCookiesAcrossTenantDomains
 } from "@/lib/supabase/cookie-guards";
 import { updateSession } from "@/lib/supabase/proxy";
@@ -191,7 +191,7 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const cookieHeader = request.headers.get("cookie");
 
-  if (!pathname.startsWith("/auth/clear-session") && isCookieHeaderOverRepairBudget(cookieHeader)) {
+  if (!pathname.startsWith("/auth/clear-session") && shouldRepairOversizedSupabaseCookieHeader(cookieHeader)) {
     return repairOversizedSupabaseCookieHeader(request);
   }
 

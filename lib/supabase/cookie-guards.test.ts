@@ -8,6 +8,7 @@ import {
   isSupabaseAuthFlowCookieName,
   isSupabaseAuthSessionCookieName,
   isSupabaseCookieName,
+  shouldRepairOversizedSupabaseCookieHeader,
   SUPABASE_COOKIE_REPAIR_THRESHOLD_BYTES
 } from "@/lib/supabase/cookie-guards";
 
@@ -42,5 +43,15 @@ describe("Supabase cookie guards", () => {
   it("detects cookie headers before they reach Vercel's hard failure zone", () => {
     assert.equal(isCookieHeaderOverRepairBudget("a".repeat(SUPABASE_COOKIE_REPAIR_THRESHOLD_BYTES + 1)), true);
     assert.equal(isCookieHeaderOverRepairBudget("a".repeat(SUPABASE_COOKIE_REPAIR_THRESHOLD_BYTES)), false);
+  });
+
+  it("repairs oversized headers only when Supabase cookies are present", () => {
+    const largeNonSupabaseCookie = `tracking=${"x".repeat(SUPABASE_COOKIE_REPAIR_THRESHOLD_BYTES + 1)}`;
+
+    assert.equal(shouldRepairOversizedSupabaseCookieHeader(largeNonSupabaseCookie), false);
+    assert.equal(
+      shouldRepairOversizedSupabaseCookieHeader(`${largeNonSupabaseCookie}; sb-project-auth-token=stale`),
+      true
+    );
   });
 });

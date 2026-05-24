@@ -4,7 +4,7 @@ import { FileJson, FileSpreadsheet, Mail, Printer } from "lucide-react";
 
 export function AnalyticsExportActions() {
   return (
-    <div className="mb-4 flex flex-wrap justify-end gap-3 print:hidden">
+    <div className="dashboard-analytics-actions mb-4 flex flex-wrap justify-end gap-3 print:hidden">
       <button
         type="button"
         onClick={() => window.print()}

@@ -9,8 +9,9 @@ const openAiBaseUrl = "https://api.openai.com/v1";
 const geminiOpenAiBaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai";
 const claudeBaseUrl = "https://api.anthropic.com/v1";
 const vercelGatewayBaseUrl = "https://ai-gateway.vercel.sh/v1";
+const nvidiaBaseUrl = "https://integrate.api.nvidia.com/v1";
 
-const providerOrder: AiProvider[] = ["qwen", "openai", "gemini", "xai", "claude", "vercel_gateway"];
+const providerOrder: AiProvider[] = ["qwen", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"];
 
 type ProviderDefinition = {
   provider: AiProvider;
@@ -89,6 +90,26 @@ function providerDefinitions(): ProviderDefinition[] {
       supportsImageGeneration: true,
       supportsOcr: true,
       priority: 10
+    },
+    {
+      provider: "nvidia",
+      protocol: "openai-compatible",
+      keyEnvNames: ["NVIDIA_AI_API_KEY", "DSX_AIR_API_KEY", "NVIDIA_API_KEY"],
+      baseUrlEnvNames: ["NVIDIA_AI_BASE_URL", "DSX_AIR_BASE_URL", "NVIDIA_BASE_URL"],
+      baseUrl: nvidiaBaseUrl,
+      chatModelEnvNames: ["NVIDIA_AI_CHAT_MODEL", "NVIDIA_AI_MODEL", "DSX_AIR_CHAT_MODEL", "DSX_AIR_MODEL"],
+      fastModelEnvNames: ["NVIDIA_AI_FAST_MODEL", "NVIDIA_AI_CHAT_MODEL", "NVIDIA_AI_MODEL", "DSX_AIR_FAST_MODEL", "DSX_AIR_MODEL"],
+      imageModelEnvNames: ["NVIDIA_AI_IMAGE_MODEL", "NVIDIA_AI_VISION_MODEL", "DSX_AIR_IMAGE_MODEL", "DSX_AIR_VISION_MODEL"],
+      ocrModelEnvNames: ["NVIDIA_AI_OCR_MODEL", "NVIDIA_AI_VISION_MODEL", "DSX_AIR_OCR_MODEL", "DSX_AIR_VISION_MODEL"],
+      chatModel: "meta/llama-3.1-70b-instruct",
+      fastModel: "meta/llama-3.1-8b-instruct",
+      imageModel: "unsupported",
+      ocrModel: "unsupported",
+      supportsJsonMode: true,
+      supportsToolCalling: true,
+      supportsImageGeneration: false,
+      supportsOcr: false,
+      priority: 15
     },
     {
       provider: "openai",
@@ -258,8 +279,9 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
 }
 
 export function normalizeAiProviderId(value?: string | null): AiProvider | undefined {
-  const normalized = value?.trim() as AiProvider | undefined;
-  return normalized && providerOrder.includes(normalized) ? normalized : undefined;
+  const normalized = value?.trim();
+  if (normalized === "dsx_air" || normalized === "dsx-air" || normalized === "nvidia_dsx_air") return "nvidia";
+  return normalized && providerOrder.includes(normalized as AiProvider) ? (normalized as AiProvider) : undefined;
 }
 
 export function estimateAiCostVnd(config: AiProviderConfig, inputTokens?: number | null, outputTokens?: number | null) {

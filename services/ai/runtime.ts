@@ -1,6 +1,7 @@
 import "server-only";
 
 import { runAiCompletion } from "@/lib/ai/router/model-router";
+import { normalizeAiProviderId } from "@/lib/ai/providers/registry";
 import { getScopedRestaurantMemoryContext, persistAiConversationMessage } from "@/lib/ai/memory/restaurant-memory";
 import { sanitizeOcrText, sanitizeOcrTextList } from "@/lib/ai/ocr/sanitizer";
 import type { AiCompletionOptions, AiCompletionResult, AiProvider, AiProviderConfig, AiTaskType } from "@/lib/ai/router/types";
@@ -254,15 +255,7 @@ function normalizeNativeAiProvider(value?: string | null): NativeAiProvider | un
 }
 
 function normalizeAiProvider(value?: string | null): AiProvider | undefined {
-  const normalized = value?.trim();
-  return normalized === "qwen" ||
-    normalized === "xai" ||
-    normalized === "openai" ||
-    normalized === "gemini" ||
-    normalized === "claude" ||
-    normalized === "vercel_gateway"
-    ? normalized
-    : undefined;
+  return normalizeAiProviderId(value);
 }
 
 function normalizePrompt(value: string) {

@@ -737,7 +737,7 @@ function ReservationIntakeCommandCenter({
   ];
 
   return (
-    <section className="dashboard-panel p-3">
+    <section className="dashboard-panel dashboard-command-center p-3">
       <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-start justify-between gap-3">
@@ -1650,8 +1650,8 @@ export function ReservationsWorkspace({
     <>
       <div className="dashboard-operations-stack grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-4">
-          <section className="admin-hero-panel rounded-[14px] p-4">
-            <div className="relative z-[1] grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-center">
+          <section className="admin-hero-panel dashboard-mobile-reservation-hero rounded-[14px] p-4">
+            <div className="dashboard-mobile-reservation-intro relative z-[1] grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-center">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={settings.reservations_enabled ? "green" : "yellow"}>{settings.reservations_enabled ? "Đang nhận đặt bàn" : "Đang tắt đặt bàn"}</Badge>
@@ -1713,7 +1713,7 @@ export function ReservationsWorkspace({
               </div>
             </div>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+            <div className="dashboard-mobile-reservation-stats mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               {[
                 { label: "Tổng lịch", value: stats.total, icon: CalendarCheck },
                 { label: "Đang giữ", value: stats.holding, icon: Clock3 },
@@ -1733,7 +1733,7 @@ export function ReservationsWorkspace({
               })}
             </div>
 
-            <div className="mt-4">
+            <div className="dashboard-mobile-hide mt-4">
               <ReservationIntakeCommandCenter
                 stats={stats}
                 operationalQueues={operationalQueues}
@@ -1747,7 +1747,7 @@ export function ReservationsWorkspace({
               />
             </div>
 
-            <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div className="dashboard-mobile-hide mt-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
               <div className="flex flex-wrap items-center justify-between gap-3 px-1 pb-2">
                 <div className="flex items-center gap-2">
                   <span className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--primary)] text-white">
@@ -1850,7 +1850,7 @@ export function ReservationsWorkspace({
               </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="dashboard-mobile-hide mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">

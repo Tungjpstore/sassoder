@@ -1,0 +1,61 @@
+{
+  "format": "JSON",
+  "title": "LogiVN AI Lab - DSX Air",
+  "ztp": null,
+  "content": {
+    "nodes": {
+      "logivn-ai-core": {
+        "cpu": 32,
+        "memory": 40960,
+        "storage": 200,
+        "os": "generic/ubuntu2404"
+      },
+      "logivn-ai-worker": {
+        "cpu": 16,
+        "memory": 12288,
+        "storage": 120,
+        "os": "generic/ubuntu2404"
+      }
+    },
+    "links": [
+      [
+        {
+          "node": "logivn-ai-core",
+          "interface": "eth1"
+        },
+        {
+          "node": "logivn-ai-worker",
+          "interface": "eth1"
+        }
+      ],
+      [
+        {
+          "node": "logivn-ai-core",
+          "interface": "eth2"
+        },
+        "outbound"
+      ],
+      [
+        {
+          "node": "logivn-ai-worker",
+          "interface": "eth2"
+        },
+        "outbound"
+      ]
+    ],
+    "oob": {
+      "nodes": {
+        "oob-mgmt-server": {
+          "cpu": 2,
+          "memory": 2048,
+          "storage": 20
+        },
+        "oob-mgmt-switch": {
+          "cpu": 1,
+          "memory": 1024,
+          "storage": 10
+        }
+      }
+    }
+  }
+}

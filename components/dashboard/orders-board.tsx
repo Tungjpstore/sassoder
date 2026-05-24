@@ -1598,8 +1598,8 @@ export function OrdersBoard({
       />
 
       <section className="dashboard-panel p-3">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="dashboard-mobile-order-status flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+          <div className="dashboard-mobile-order-tabs flex min-w-0 flex-wrap items-center gap-2">
             {[
               { label: "Chờ nhận", value: statusCounts.pending, icon: TimerReset },
               { label: "Đang ra món", value: statusCounts.ordering, icon: ChefHat },
@@ -1626,7 +1626,7 @@ export function OrdersBoard({
               );
             })}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="dashboard-mobile-order-live flex items-center gap-2">
             <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
               <RadioTower size={13} />
               {realtimeLabel(realtimeState)}
@@ -1637,14 +1637,14 @@ export function OrdersBoard({
           </div>
         </div>
 
-        <div className="mt-3 grid gap-2 xl:grid-cols-[repeat(4,minmax(0,1fr))]">
+        <div className="dashboard-mobile-order-metrics mt-3 grid gap-2 xl:grid-cols-[repeat(4,minmax(0,1fr))]">
           <OrderOpsMetric icon={ReceiptText} label="Đơn mở" value={operationsSnapshot.open} meta={`${formatVnd(operationsSnapshot.activeRevenue)} chưa chốt`} tone={operationsSnapshot.open > 0 ? "blue" : "green"} />
           <OrderOpsMetric icon={Flame} label="Cần nhận" value={operationsSnapshot.pending} meta={operationsSnapshot.pending > 0 ? "Ưu tiên xác nhận ngay" : "Không có đơn mới"} tone={operationsSnapshot.pending > 0 ? "yellow" : "green"} />
           <OrderOpsMetric icon={ChefHat} label="Áp lực bếp" value={operationsSnapshot.overdue} meta={operationsSnapshot.overdue > 0 ? `${operationsSnapshot.cooking} đang làm` : `${operationsSnapshot.cooking} đang làm ổn`} tone={operationsSnapshot.overdue > 0 ? "red" : operationsSnapshot.cooking > 0 ? "yellow" : "green"} />
           <OrderOpsMetric icon={WalletCards} label="Chờ tiền" value={operationsSnapshot.payment} meta={`${operationsSnapshot.ready} bill đã phục vụ · lâu nhất ${operationsSnapshot.oldestAge}p`} tone={operationsSnapshot.payment > 0 ? "yellow" : "green"} />
         </div>
 
-        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+        <div className="dashboard-mobile-order-channels mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)]">Điều phối theo kênh</p>
@@ -1707,7 +1707,7 @@ export function OrdersBoard({
         </div>
 
         {operationsSnapshot.priorityGroups.length > 0 ? (
-          <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+          <div className="dashboard-mobile-hide mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
               <div className="flex items-center gap-2">
                 <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--primary)] text-white">
@@ -1745,7 +1745,7 @@ export function OrdersBoard({
           </div>
         ) : null}
 
-        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
+        <div className="dashboard-mobile-hide mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-2.5">
           <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
             <div className="flex items-center gap-2">
               <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--primary)] text-white">
@@ -1791,7 +1791,7 @@ export function OrdersBoard({
           </div>
         </div>
 
-        <div className="dashboard-ops-toolbar dashboard-order-filter-grid mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
+        <div className="dashboard-mobile-hide dashboard-ops-toolbar dashboard-order-filter-grid mt-3 grid gap-3 lg:grid-cols-[168px_168px_168px_minmax(0,1fr)_110px]">
           <label className="grid gap-1 text-xs font-semibold uppercase text-[var(--muted-foreground)]">
             Trạng thái
             <select
@@ -1850,7 +1850,7 @@ export function OrdersBoard({
         </div>
 
         {canManageTestOrders ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
+          <div className="dashboard-mobile-hide mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
             <p className="text-xs font-semibold text-[var(--muted-foreground)]">
               Chế độ test: chỉ xoá cứng đơn chưa thanh toán, không xoá đơn đã/chờ xác nhận chuyển khoản.
             </p>

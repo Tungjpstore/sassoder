@@ -1070,7 +1070,7 @@ export function InventoryWorkspaceV2({
         onRefresh={refreshInventory}
       />
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="inventory-summary-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           icon={BrainCircuit}
           label="Sức khỏe kho AI"
@@ -1237,7 +1237,7 @@ function InventoryPageHeader({
   onRefresh: () => void;
 }) {
   return (
-    <section className="rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
+    <section className="inventory-page-header rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Trang chủ / Kho hàng</p>

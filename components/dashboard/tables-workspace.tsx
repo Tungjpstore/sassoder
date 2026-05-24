@@ -267,7 +267,7 @@ function FloorIntakeCommandCenter({
   ];
 
   return (
-    <section className="dashboard-panel p-3">
+    <section className="dashboard-panel dashboard-command-center dashboard-mobile-table-command p-3">
       <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-start justify-between gap-3">
@@ -888,7 +888,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
         </div>
       </section>
 
-      <section className="dashboard-ops-metrics-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-mobile-table-metrics dashboard-ops-metrics-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <TablesMetric icon={Table2} label="Tổng bàn" value={total} meta={`${areaStats.length || 1} khu vực đang quản lý`} tone="blue" />
         <TablesMetric icon={CheckCircle2} label="Bàn trống" value={counts.available} meta={`${Math.round((counts.available / Math.max(total, 1)) * 100)}% sẵn sàng nhận khách`} tone="green" />
         <TablesMetric icon={Users} label="Đang phục vụ" value={serving} meta={counts.overdue ? `${counts.overdue} bàn quá giờ` : `${counts.awaiting_payment} bàn chờ thu`} tone={counts.overdue > 0 ? "red" : counts.needs_confirm > 0 ? "yellow" : "green"} />
@@ -917,7 +917,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
         onOpenTable={openTableDrawer}
       />
 
-      <section className="dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+      <section className="dashboard-mobile-hide dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
         <div className="dashboard-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -1005,7 +1005,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="dashboard-section-title">Sơ đồ bàn realtime</h2>
-                <p className="mt-1 max-w-2xl text-sm font-medium leading-6 text-[var(--muted-foreground)]">
+                <p className="dashboard-mobile-hide mt-1 max-w-2xl text-sm font-medium leading-6 text-[var(--muted-foreground)]">
                   Bàn được nhóm theo khu vực, màu theo trạng thái vận hành. Bấm vào từng bàn để mở QR, chỉnh thông tin, xoay token hoặc xử lý bàn đang có hóa đơn.
                 </p>
               </div>
@@ -1069,7 +1069,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               </Button>
             </div>
 
-            <div className="dashboard-ops-split mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="dashboard-mobile-hide dashboard-ops-split mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">

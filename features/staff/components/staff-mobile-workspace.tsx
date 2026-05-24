@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition, type ReactNode } from "react";
 import {
   AlertTriangle,
   Bell,
   CalendarClock,
   CheckCircle2,
   ChefHat,
+  ChevronRight,
   Clock3,
   CreditCard,
   Fingerprint,
@@ -252,6 +253,88 @@ function readGpsPosition(): Promise<GpsPoint> {
 
 function activeAttendanceForMember(bundle: StaffOperationsBundle, staffMemberId: string) {
   return bundle.attendanceFeed.find((item) => item.staffMemberId === staffMemberId && !item.clockOutAt) ?? null;
+}
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function AppCard({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <section className={cn("rounded-lg border border-[#DBE2DE] bg-white shadow-[0_10px_26px_rgba(24,33,29,0.045)]", className)}>
+      {children}
+    </section>
+  );
+}
+
+function SectionHeader({ title, action }: { title: string; action?: ReactNode }) {
+  return (
+    <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E8ECE9] px-3.5">
+      <h2 className="text-[14px] font-black text-[#17201B]">{title}</h2>
+      {action}
+    </div>
+  );
+}
+
+function EmptyState({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <div className="flex min-h-[76px] items-center gap-2.5 px-3.5 py-3 text-[13px] font-bold text-[#65736B]">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[#EEF6F0] text-[#0F6A45]">{icon}</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function MetricTile({
+  icon,
+  label,
+  value,
+  tone
+}: {
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+  tone: "green" | "blue" | "amber" | "red" | "neutral";
+}) {
+  const toneClass = {
+    green: "bg-[#E8F6EC] text-[#0F6A45]",
+    blue: "bg-[#EAF2FF] text-[#2456A6]",
+    amber: "bg-[#FFF3DE] text-[#98530F]",
+    red: "bg-[#FFF0EE] text-[#A43C32]",
+    neutral: "bg-[#F2F4F1] text-[#526058]"
+  }[tone];
+
+  return (
+    <div className="min-w-0 rounded-lg border border-[#E0E6E1] bg-white p-2.5">
+      <span className={cn("grid h-9 w-9 place-items-center rounded-lg", toneClass)}>{icon}</span>
+      <p className="mt-2 truncate text-[20px] font-black leading-none text-[#17201B]">{value}</p>
+      <p className="mt-1 truncate text-[10px] font-black uppercase text-[#6A766E]">{label}</p>
+    </div>
+  );
+}
+
+function StatusLine({
+  label,
+  value,
+  tone
+}: {
+  label: string;
+  value: ReactNode;
+  tone: "ready" | "warning" | "neutral";
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-white/10 bg-white/[0.075] px-2.5 py-2">
+      <p className="truncate text-[9px] font-black uppercase text-white/48">{label}</p>
+      <p
+        className={cn(
+          "mt-0.5 truncate text-[11px] font-black",
+          tone === "warning" ? "text-[#FFD7A8]" : tone === "ready" ? "text-[#BDF4CC]" : "text-white/72"
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
 }
 
 export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantName, userId }: StaffMobileWorkspaceProps) {
@@ -597,6 +680,25 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     })();
   };
 
+  const currentShift = todayAssignments[0] ?? upcomingAssignments[0] ?? null;
+  const clockSourceLabel = canUseGps ? "GPS" : qrReady ? "QR" : "Cần QR";
+  const activeStateLabel = activeAttendance ? "Đang trong ca" : "Sẵn sàng vào ca";
+  const primaryClockLabel = isPending
+    ? "Đang xử lý…"
+    : canUseGps
+      ? activeAttendance
+        ? "Check-out GPS"
+        : "Check-in GPS"
+      : activeAttendance
+        ? "Check-out tại quán"
+        : "Check-in tại quán";
+  const requestSubmitLabel = submittingRequest ? "Đang gửi…" : `Gửi ${staffRequestLabel(requestKind).toLowerCase()}`;
+  const tabs = [
+    { key: "work" as const, label: "Việc", value: sortedWorkItems.length, icon: ListChecks },
+    { key: "shift" as const, label: "Ca", value: activeAttendance ? activeDuration : todayAssignments.length || "--", icon: Clock3 },
+    { key: "requests" as const, label: "Yêu cầu", value: pendingRequestCount, icon: Send }
+  ];
+
   if (!staff) {
     return (
       <main className="stitch-admin min-h-screen bg-[var(--background)] p-4 text-[var(--foreground)]">
@@ -612,237 +714,21 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
   }
 
   return (
-    <main className="stitch-admin min-h-screen bg-[#EEF1EA] text-[#17201B]">
-      <section className="mx-auto min-h-screen w-full max-w-md pb-[calc(11rem+env(safe-area-inset-bottom))]">
-        <header className="sticky top-0 z-30 border-b border-[#D9DED4] bg-[#EEF1EA]/95 px-3 pb-2 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur">
-          <div className="flex min-h-12 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[#13231E] text-sm font-black text-white">
-                {initials(staff.fullName)}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] font-black leading-5">{staff.fullName}</span>
-                <span className="block truncate text-[11px] font-bold text-[#66736B]">{restaurantName}</span>
-              </span>
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() =>
-                  startTransition(() => {
-                    void refreshBundle();
-                  })
-                }
-                className="grid h-11 w-11 place-items-center rounded-lg border border-[#D9DED4] bg-white text-[#415049] active:scale-[0.98]"
-                aria-label="Làm mới dữ liệu"
-              >
-                <RefreshCw size={17} className={isPending ? "animate-spin" : undefined} />
-              </button>
-              <a href="/auth/clear-session" className="grid h-11 w-11 place-items-center rounded-lg border border-[#D9DED4] bg-white text-[#415049]" aria-label="Đăng xuất">
-                <LogOut size={17} />
-              </a>
-            </div>
-          </div>
-
-          <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg border border-[#D9DED4] bg-white p-1">
-            {[
-              { key: "shift" as const, label: "Ca", value: activeAttendance ? activeDuration : todayAssignments.length || "--", icon: Clock3 },
-              { key: "work" as const, label: "Việc", value: sortedWorkItems.length, icon: ListChecks },
-              { key: "requests" as const, label: "Yêu cầu", value: pendingRequestCount, icon: Send }
-            ].map((item) => {
-              const Icon = item.icon;
-              const active = activeView === item.key;
-              return (
-                <button
-                  key={item.key}
-                  type="button"
-                  onClick={() => setActiveView(item.key)}
-                  className={`grid min-h-11 grid-cols-[18px_minmax(0,1fr)] items-center gap-1 rounded-md px-2 text-left transition active:scale-[0.99] ${
-                    active ? "bg-[#13231E] text-white" : "bg-transparent text-[#526058]"
-                  }`}
-                >
-                  <Icon size={16} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-[11px] font-black">{item.label}</span>
-                    <span className={`block truncate text-[10px] font-black ${active ? "text-white/68" : "text-[#7B877F]"}`}>{item.value}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </header>
-
-        <section className="px-3 pt-2">
-          <div className="rounded-lg border border-[#1B3029] bg-[#13231E] p-3 text-white shadow-[0_18px_42px_rgba(19,35,30,0.18)]">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/50">{selectedBranchName}</p>
-                <h1 className="mt-1 text-[22px] font-black leading-none">
-                  {activeAttendance ? "Đang làm" : "Chưa vào ca"}
-                </h1>
-              </div>
-              <span className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border px-2.5 text-[11px] font-black ${
-                offlineQueue.isOnline ? "border-[#86D99E]/30 bg-[#14382A] text-[#BDF4CC]" : "border-[#F6B06A]/40 bg-[#4D2F18] text-[#FFD7A8]"
-              }`}>
-                {offlineQueue.isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
-                {offlineQueue.isOnline ? "Online" : "Offline"}
-              </span>
-            </div>
-
-            <div className="mt-3 grid grid-cols-[1.35fr_0.95fr] gap-2">
-              <div className="rounded-md border border-white/10 bg-white/[0.07] p-3">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white/48">Thời lượng</p>
-                <p className="mt-1 text-xl font-black leading-tight">{activeAttendance ? activeDuration : "--"}</p>
-              </div>
-              <div className="rounded-md border border-white/10 bg-white/[0.07] p-3">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white/48">Check-in</p>
-                <p className="mt-1 text-xl font-black leading-tight">{formatTime(activeAttendance?.clockInAt ?? latestAttendance?.clockInAt)}</p>
-              </div>
-            </div>
-
-            <div className="mt-2 hidden grid-cols-4 gap-1.5 sm:grid">
-              {[
-                { icon: CalendarClock, label: "Ca", value: todayAssignments[0]?.shiftName ?? "Trống", tone: "text-[#BDF4CC]" },
-                { icon: Store, label: "Vai trò", value: staff.roleTitle, tone: "text-[#BFE0FF]" },
-                { icon: Clock3, label: "Muộn", value: `${staff.lateMinutesToday}p`, tone: staff.lateMinutesToday ? "text-[#FFD7A8]" : "text-[#BDF4CC]" },
-                { icon: ShieldAlert, label: "Risk", value: `${staff.suspiciousScore}`, tone: staff.suspiciousScore >= 40 ? "text-[#FFD7A8]" : "text-[#BDF4CC]" }
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.label} className="min-w-0 rounded-md border border-white/10 bg-white/[0.06] p-2">
-                    <Icon size={14} className={item.tone} />
-                    <p className="mt-1 truncate text-[9px] font-black uppercase tracking-[0.1em] text-white/46">{item.label}</p>
-                    <p className="truncate text-[11px] font-black text-white">{item.value}</p>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="mt-2 hidden grid-cols-2 gap-1.5 sm:grid">
-              {readinessItems.map((item) => (
-                <div key={item.label} className="min-w-0 rounded-md border border-white/10 bg-white/[0.06] px-2 py-1.5">
-                  <p className="truncate text-[9px] font-black uppercase tracking-[0.1em] text-white/45">{item.label}</p>
-                  <p className={`truncate text-[11px] font-black ${
-                    item.tone === "warning" ? "text-[#FFD7A8]" : item.tone === "ready" ? "text-[#BDF4CC]" : "text-white/72"
-                  }`}>
-                    {item.value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {message ? (
-            <div
-              className={`mt-2 rounded-lg border px-3 py-2 text-sm font-bold ${
-                message.tone === "success"
-                  ? "border-[#B8DDC0] bg-[#E8F5EC] text-[#0F5D3F]"
-                  : message.tone === "neutral"
-                    ? "border-[#D9DED4] bg-white text-[#526058]"
-                    : "border-[#F0C38A] bg-[#FFF4E5] text-[#98530F]"
-              }`}
-            >
-              {message.text}
-            </div>
-          ) : null}
-        </section>
-
-        {activeView === "shift" ? (
-          <section className="grid gap-3 px-3 pt-3">
-            <section className="rounded-lg border border-[#D9DED4] bg-white">
-              <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E6E9E2] px-3">
-                <h2 className="text-sm font-black">Lịch ca</h2>
-                <span className="rounded-md bg-[#EEF1EA] px-2 py-1 text-[10px] font-black text-[#66736B]">{upcomingAssignments.length} ca</span>
-              </div>
-              <div className="divide-y divide-[#E6E9E2]">
-                {upcomingAssignments.map((assignment) => (
-                  <div key={assignment.id} className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-black">{assignment.shiftName}</p>
-                      <p className="mt-0.5 truncate text-[12px] font-bold text-[#66736B]">{formatDate(assignment.scheduledDate)} · {assignment.branchName ?? staff.primaryBranchName ?? "Toàn quán"}</p>
-                    </div>
-                    <span className={`rounded-md border px-2 py-1 text-[10px] font-black ${shiftStatusTone(assignment.status)}`}>
-                      {shiftStatusLabel(assignment.status)}
-                    </span>
-                  </div>
-                ))}
-                {!upcomingAssignments.length ? (
-                  <div className="flex min-h-[64px] items-center gap-2 px-3 py-2 text-sm font-bold text-[#66736B]">
-                    <CheckCircle2 size={17} className="text-[#0F6A45]" />
-                    Chưa có ca sắp tới.
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-[#D9DED4] bg-white">
-              <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E6E9E2] px-3">
-                <h2 className="text-sm font-black">Chấm công gần đây</h2>
-                <span className="rounded-md bg-[#EEF1EA] px-2 py-1 text-[10px] font-black text-[#66736B]">{attendanceStateLabel(activeAttendance?.state ?? latestAttendance?.state)}</span>
-              </div>
-              <div className="grid grid-cols-3 divide-x divide-[#E6E9E2]">
-                {recentAttendance.map((item) => (
-                  <div key={item.id} className="min-w-0 px-2 py-3 text-center">
-                    <p className="truncate text-[10px] font-black uppercase tracking-[0.08em] text-[#66736B]">{attendanceStateLabel(item.state)}</p>
-                    <p className="mt-1 text-[16px] font-black">{formatTime(item.clockInAt)}</p>
-                    <p className="mt-0.5 truncate text-[10px] font-bold text-[#7B877F]">{item.branchName ?? "Toàn quán"}</p>
-                  </div>
-                ))}
-                {!recentAttendance.length ? (
-                  <div className="col-span-3 flex min-h-[72px] items-center gap-2 px-3 text-sm font-bold text-[#66736B]">
-                    <Clock3 size={17} />
-                    Chưa có lượt chấm công.
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-[#D9DED4] bg-white">
-              <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E6E9E2] px-3">
-                <h2 className="text-sm font-black">Thông báo</h2>
-                <span className="rounded-md bg-[#FFF4E5] px-2 py-1 text-[10px] font-black text-[#98530F]">{unreadNotifications.length} mới</span>
-              </div>
-              <div className="divide-y divide-[#E6E9E2]">
-                {visibleNotifications.map((notification) => (
-                  <div key={notification.id} className={`flex min-h-[64px] items-start gap-2 px-3 py-2 ${notification.status === "unread" ? "bg-[#FFF9EF]" : ""}`}>
-                    <Bell className="mt-0.5 shrink-0 text-[#C76A1B]" size={16} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-[13px] font-black">{notification.title}</p>
-                        <span className="shrink-0 text-[10px] font-black text-[#7B877F]">{relativeTime(notification.createdAt)}</span>
-                      </div>
-                      {notification.body ? <p className="mt-0.5 line-clamp-2 text-[12px] font-semibold text-[#66736B]">{notification.body}</p> : null}
-                    </div>
-                  </div>
-                ))}
-                {!visibleNotifications.length ? (
-                  <div className="flex min-h-[64px] items-center gap-2 px-3 text-sm font-bold text-[#66736B]">
-                    <CheckCircle2 size={17} className="text-[#0F6A45]" />
-                    Chưa có thông báo mới.
-                  </div>
-                ) : null}
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-[#D9DED4] bg-white p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-black">Offline</h2>
-                  <p className="mt-0.5 text-xs font-bold text-[#66736B]">{syncStatusText(offlineQueue.queue.length, offlineQueue.isOnline, offlineQueue.syncing)} · {offlineQueue.queue.length} hàng đợi</p>
-                </div>
-                <span className={`grid h-10 w-10 place-items-center rounded-lg ${offlineQueue.isOnline ? "bg-[#E8F5EC] text-[#0F6A45]" : "bg-[#FFF4E5] text-[#98530F]"}`}>
-                  {offlineQueue.isOnline ? <Wifi size={18} /> : <WifiOff size={18} />}
+    <main className="min-h-screen bg-[#F4F6F3] text-[#17201B]">
+      <section className="mx-auto grid min-h-screen w-full max-w-6xl gap-4 px-3 pb-4 pt-[calc(0.75rem+env(safe-area-inset-top))] sm:px-4 lg:grid-cols-[minmax(360px,440px)_minmax(0,1fr)] lg:py-6">
+        <div className="min-w-0 lg:sticky lg:top-6 lg:self-start">
+          <header className="sticky top-0 z-30 -mx-3 border-b border-[#E0E6E1] bg-[#F4F6F3]/95 px-3 pb-2 backdrop-blur sm:-mx-4 sm:px-4 lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:px-0 lg:pb-0">
+            <div className="flex min-h-12 items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[#16231D] text-sm font-black text-white">
+                  {initials(staff.fullName)}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[15px] font-black leading-5">{staff.fullName}</span>
+                  <span className="block truncate text-[11px] font-bold text-[#65736B]">{restaurantName}</span>
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => void offlineQueue.syncQueue({ force: true })}
-                  disabled={offlineQueue.syncing || offlineQueue.queue.length === 0}
-                  className="min-h-11 rounded-lg border border-[#D9DED4] bg-[#EEF1EA] px-3 text-sm font-black text-[#17201B] disabled:opacity-50"
-                >
-                  Đồng bộ
-                </button>
+              <div className="flex shrink-0 items-center gap-1.5">
                 <button
                   type="button"
                   onClick={() =>
@@ -850,288 +736,498 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
                       void refreshBundle();
                     })
                   }
-                  className="min-h-11 rounded-lg border border-[#13231E] bg-white px-3 text-sm font-black text-[#13231E]"
+                  className="grid h-11 w-11 place-items-center rounded-lg border border-[#D7DFDA] bg-white text-[#415049] transition active:scale-[0.98]"
+                  aria-label="Làm mới dữ liệu"
                 >
-                  Làm mới
+                  <RefreshCw size={17} className={isPending ? "animate-spin" : undefined} />
                 </button>
+                <a
+                  href="/auth/clear-session"
+                  className="grid h-11 w-11 place-items-center rounded-lg border border-[#D7DFDA] bg-white text-[#415049] transition active:scale-[0.98]"
+                  aria-label="Đăng xuất"
+                >
+                  <LogOut size={17} />
+                </a>
               </div>
-            </section>
-          </section>
-        ) : null}
-
-        {activeView === "work" ? (
-          <section className="grid gap-3 px-3 pt-3">
-            <section className="grid grid-cols-4 gap-2">
-              {[
-                { label: "Đơn mới", value: mobileOps.pendingOrders, icon: ListChecks, tone: "bg-[#EEF4FF] text-[#1D4F91]" },
-                { label: "Bếp", value: mobileOps.cookingOrders, icon: ChefHat, tone: "bg-[#F0F7EA] text-[#2F6B23]" },
-                { label: "Tiền", value: mobileOps.waitingPayments, icon: CreditCard, tone: "bg-[#FFF4E5] text-[#98530F]" },
-                { label: "Gọi", value: mobileOps.serviceRequests, icon: Bell, tone: "bg-[#FFF0F0] text-[#A43C32]" }
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.label} className="rounded-lg border border-[#D9DED4] bg-white p-2">
-                    <span className={`grid h-8 w-8 place-items-center rounded-md ${item.tone}`}><Icon size={15} /></span>
-                    <p className="mt-2 text-xl font-black leading-none">{item.value}</p>
-                    <p className="mt-1 truncate text-[10px] font-black uppercase tracking-[0.08em] text-[#66736B]">{item.label}</p>
-                  </div>
-                );
-              })}
-            </section>
-
-            <section className="rounded-lg border border-[#D9DED4] bg-white">
-              <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E6E9E2] px-3">
-                <h2 className="text-sm font-black">Hàng việc</h2>
-                <span className="rounded-md bg-[#FFF4E5] px-2 py-1 text-[10px] font-black text-[#98530F]">{mobileOps.urgentCount} gấp</span>
-              </div>
-              <div className="divide-y divide-[#E6E9E2]">
-                {sortedWorkItems.map((item) => {
-                  const Icon = workItemIcon(item.kind);
-                  const key = workItemKey(item);
-                  const isProcessing = processingWorkItemKey === key;
-                  return (
-                    <div key={key} className="px-3 py-3">
-                      <div className="flex items-start gap-3">
-                        <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-lg border ${workItemTone(item.priority)}`}>
-                          <Icon size={17} />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-start justify-between gap-2">
-                            <p className="line-clamp-1 text-[14px] font-black">{item.title}</p>
-                            {item.tableName ? <span className="shrink-0 rounded-md bg-[#EEF1EA] px-2 py-1 text-[10px] font-black text-[#526058]">{item.tableName}</span> : null}
-                          </div>
-                          <p className="mt-1 line-clamp-2 text-[12px] font-bold text-[#66736B]">
-                            {priorityLabel(item.priority)} · {relativeTime(item.createdAt)} · {item.subtitle}
-                          </p>
-                        </div>
-                      </div>
-                      {item.action && item.actionLabel ? (
-                        <button
-                          type="button"
-                          onClick={() => runWorkItemAction(item)}
-                          disabled={isProcessing}
-                          className="mt-3 min-h-11 w-full rounded-lg bg-[#13231E] px-4 text-sm font-black text-white disabled:opacity-55"
-                        >
-                          {isProcessing ? "Đang xử lý..." : item.actionLabel}
-                        </button>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                {!sortedWorkItems.length ? (
-                  <div className="flex min-h-[72px] items-center gap-2 px-3 text-sm font-bold text-[#66736B]">
-                    <CheckCircle2 size={17} className="text-[#0F6A45]" />
-                    Chưa có việc cần xử lý ngay.
-                  </div>
-                ) : null}
-              </div>
-            </section>
-          </section>
-        ) : null}
-
-        {activeView === "requests" ? (
-          <section className="grid gap-3 px-3 pt-3">
-            <section className="rounded-lg border border-[#D9DED4] bg-white p-3">
-              <div className="grid grid-cols-3 gap-2">
-                {staffRequestKinds.map((item) => {
-                  const Icon = item.icon;
-                  const active = requestKind === item.key;
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      onClick={() => setRequestKind(item.key)}
-                      className={`grid min-h-14 place-items-center gap-1 rounded-lg border px-2 text-[11px] font-black ${
-                        active ? "border-[#13231E] bg-[#13231E] text-white" : "border-[#D9DED4] bg-[#EEF1EA] text-[#526058]"
-                      }`}
-                    >
-                      <Icon size={16} />
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-3 grid gap-2">
-                {requestKind === "shift_swap" ? (
-                  <div className="grid gap-2">
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Ca muốn đổi</span>
-                      <select value={requestShiftAssignmentId} onChange={(event) => setRequestShiftAssignmentId(event.target.value)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none">
-                        <option value="">Chọn ca sắp tới</option>
-                        {upcomingAssignments.map((assignment) => (
-                          <option key={assignment.id} value={assignment.id}>
-                            {assignment.shiftName} · {formatDate(assignment.scheduledDate)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Người nhận ca</span>
-                      <select value={requestTargetStaffMemberId} onChange={(event) => setRequestTargetStaffMemberId(event.target.value)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none">
-                        <option value="">Quản lý tự sắp xếp</option>
-                        {shiftSwapCandidates.map((candidate) => (
-                          <option key={candidate.id} value={candidate.id}>
-                            {candidate.fullName} · {candidate.roleTitle}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    {requestTargetStaffMemberId ? (
-                      <div className="flex items-center gap-2 rounded-lg border border-[#B8DDC0] bg-[#E8F5EC] px-3 py-2 text-xs font-bold text-[#0F5D3F]">
-                        <UserRound size={15} />
-                        Quản lý sẽ kiểm tra trùng lịch trước khi duyệt.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {requestKind === "leave_request" ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Từ ngày</span>
-                      <input type="date" value={requestFromDate} onChange={(event) => setRequestFromDate(event.target.value)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none" />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Đến ngày</span>
-                      <input type="date" value={requestToDate} onChange={(event) => setRequestToDate(event.target.value)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none" />
-                    </label>
-                    <label className="col-span-2 grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Loại nghỉ</span>
-                      <select value={requestLeaveType} onChange={(event) => setRequestLeaveType(event.target.value as typeof requestLeaveType)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none">
-                        <option value="unpaid">Nghỉ không lương</option>
-                        <option value="paid">Nghỉ phép có lương</option>
-                        <option value="sick">Nghỉ ốm</option>
-                        <option value="emergency">Nghỉ gấp</option>
-                        <option value="other">Khác</option>
-                      </select>
-                    </label>
-                  </div>
-                ) : null}
-
-                {requestKind === "overtime" ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Ngày OT</span>
-                      <input type="date" value={requestFromDate} onChange={(event) => setRequestFromDate(event.target.value)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none" />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-[10px] font-black uppercase tracking-[0.12em] text-[#66736B]">Số phút</span>
-                      <input type="number" min="15" max="720" step="15" value={requestOvertimeMinutes} onChange={(event) => setRequestOvertimeMinutes(Number(event.target.value) || 15)} onBlur={() => setRequestOvertimeMinutes(normalizedOvertimeMinutes)} className="h-12 rounded-lg border border-[#D9DED4] bg-white px-3 text-sm font-black outline-none" />
-                    </label>
-                    <div className="col-span-2 grid grid-cols-4 gap-2">
-                      {[30, 60, 90, 120].map((minutes) => (
-                        <button
-                          key={minutes}
-                          type="button"
-                          onClick={() => setRequestOvertimeMinutes(minutes)}
-                          className={`min-h-11 rounded-lg border px-2 text-xs font-black ${requestOvertimeMinutes === minutes ? "border-[#13231E] bg-[#13231E] text-white" : "border-[#D9DED4] bg-[#EEF1EA] text-[#526058]"}`}
-                        >
-                          {minutes}p
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
-                <textarea
-                  value={requestReason}
-                  onChange={(event) => setRequestReason(event.target.value)}
-                  rows={2}
-                  placeholder="Lý do ngắn gọn..."
-                  className="min-h-20 rounded-lg border border-[#D9DED4] bg-white px-3 py-2 text-sm font-bold outline-none"
-                />
-                {requestBlockedReason ? (
-                  <div className="rounded-lg border border-[#F0C38A] bg-[#FFF4E5] px-3 py-2 text-xs font-bold text-[#98530F]">
-                    {requestBlockedReason}
-                  </div>
-                ) : null}
-                <button type="button" onClick={runRequestAction} disabled={submittingRequest || Boolean(requestBlockedReason)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#13231E] px-4 text-sm font-black text-white disabled:opacity-55">
-                  <Send size={16} />
-                  {submittingRequest ? "Đang gửi..." : `Gửi ${staffRequestLabel(requestKind).toLowerCase()}`}
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-lg border border-[#D9DED4] bg-white">
-              <div className="flex min-h-12 items-center justify-between gap-3 border-b border-[#E6E9E2] px-3">
-                <h2 className="text-sm font-black">Yêu cầu gần đây</h2>
-                <span className="rounded-md bg-[#FFF4E5] px-2 py-1 text-[10px] font-black text-[#98530F]">{pendingRequestCount} chờ</span>
-              </div>
-              <div className="divide-y divide-[#E6E9E2]">
-                {recentRequests.map((request) => (
-                  <div key={request.id} className="flex min-h-[64px] items-start justify-between gap-3 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-black">{staffRequestLabel(request.requestType)}</p>
-                      <p className="mt-0.5 line-clamp-2 text-[12px] font-bold text-[#66736B]">{request.reason ?? "Đã gửi cho quản lý"}</p>
-                    </div>
-                    <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-black ${requestStatusTone(request.status)}`}>
-                      {requestStatusLabel(request.status)}
-                    </span>
-                  </div>
-                ))}
-                {!recentRequests.length ? (
-                  <div className="flex min-h-[64px] items-center gap-2 px-3 text-sm font-bold text-[#66736B]">
-                    <CheckCircle2 size={17} className="text-[#0F6A45]" />
-                    Chưa có yêu cầu gần đây.
-                  </div>
-                ) : null}
-              </div>
-            </section>
-          </section>
-        ) : null}
-
-        <section className="fixed inset-x-0 bottom-0 z-40 border-t border-[#C9D0C5] bg-white/96 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-18px_44px_rgba(23,32,27,0.16)] backdrop-blur">
-          <div className="mx-auto grid max-w-md gap-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-              <label className="min-w-0">
-                <span className="sr-only">Chi nhánh</span>
-                <select value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)} className="h-12 w-full rounded-lg border border-[#D9DED4] bg-[#EEF1EA] px-3 text-sm font-black text-[#17201B] outline-none">
-                  {!bundle.branches.length ? <option value="">Chưa có chi nhánh</option> : null}
-                  {bundle.branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span className={`inline-flex h-12 min-w-20 items-center justify-center rounded-lg border px-2 text-[10px] font-black ${
-                offlineQueue.queue.length > 0 || !offlineQueue.isOnline ? "border-[#F0C38A] bg-[#FFF4E5] text-[#98530F]" : "border-[#B8DDC0] bg-[#E8F5EC] text-[#0F5D3F]"
-              }`}>
-                {readinessItems[3]?.value ?? "Sẵn sàng"}
-              </span>
             </div>
 
-            <button
-              type="button"
-              onClick={() => runClockAction(primaryAction, primarySource)}
-              disabled={!canClock}
-              className={`flex min-h-14 items-center justify-center gap-2 rounded-lg px-4 text-[15px] font-black text-white shadow-[0_12px_28px_rgba(19,35,30,0.22)] disabled:opacity-55 ${
-                activeAttendance ? "bg-[#9A3412]" : "bg-[#13231E]"
-              }`}
-            >
-              <MapPin size={19} />
-              {isPending
-                ? "Đang xử lý..."
-                : canUseGps
-                  ? activeAttendance
-                    ? "Check-out GPS"
-                    : "Check-in GPS"
-                  : activeAttendance
-                    ? "Check-out tại quán"
-                    : "Check-in tại quán"}
-            </button>
-            <button
-              type="button"
-              onClick={() => runClockAction(primaryAction, "qr")}
-              disabled={!canUseQrClock}
-              className="flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[#D9DED4] bg-[#EEF1EA] px-4 text-sm font-black text-[#17201B] disabled:opacity-55"
-            >
-              <Fingerprint size={17} />
-              {activeAttendance ? "Check-out QR" : "QR tại quán"}
-            </button>
-          </div>
-        </section>
+            <nav className="mt-2 grid grid-cols-3 gap-1 rounded-lg border border-[#D7DFDA] bg-white p-1 shadow-[0_8px_20px_rgba(24,33,29,0.04)]">
+              {tabs.map((item) => {
+                const Icon = item.icon;
+                const active = activeView === item.key;
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setActiveView(item.key)}
+                    className={cn(
+                      "grid min-h-12 grid-cols-[18px_minmax(0,1fr)] items-center gap-1 rounded-md px-2 text-left transition active:scale-[0.99]",
+                      active ? "bg-[#16231D] text-white" : "bg-transparent text-[#526058]"
+                    )}
+                  >
+                    <Icon size={16} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[11px] font-black">{item.label}</span>
+                      <span className={cn("block truncate text-[10px] font-black", active ? "text-white/68" : "text-[#7B877F]")}>{item.value}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
+          </header>
+
+          <section className="grid gap-3 pt-3">
+            <section className="rounded-lg border border-[#152A22] bg-[#16231D] p-3 text-white shadow-[0_18px_42px_rgba(22,35,29,0.18)]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[10px] font-black uppercase text-white/50">{selectedBranchName}</p>
+                  <h1 className="mt-1 text-[25px] font-black leading-none">{activeStateLabel}</h1>
+                  <p className="mt-1 truncate text-[12px] font-bold text-white/62">
+                    {currentShift ? `${currentShift.shiftName} · ${formatDate(currentShift.scheduledDate)}` : staff.roleTitle}
+                  </p>
+                </div>
+                <span
+                  className={cn(
+                    "inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md border px-2.5 text-[11px] font-black",
+                    offlineQueue.isOnline ? "border-[#86D99E]/30 bg-[#14382A] text-[#BDF4CC]" : "border-[#F6B06A]/40 bg-[#4D2F18] text-[#FFD7A8]"
+                  )}
+                >
+                  {offlineQueue.isOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
+                  {offlineQueue.isOnline ? "Online" : "Offline"}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-[1.2fr_0.8fr] gap-2">
+                <div className="rounded-lg border border-white/10 bg-white/[0.075] p-3">
+                  <p className="text-[10px] font-black uppercase text-white/48">Thời lượng</p>
+                  <p className="mt-1 text-[22px] font-black leading-tight">{activeAttendance ? activeDuration : "--"}</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-white/[0.075] p-3">
+                  <p className="text-[10px] font-black uppercase text-white/48">Check-in</p>
+                  <p className="mt-1 text-[22px] font-black leading-tight">{formatTime(activeAttendance?.clockInAt ?? latestAttendance?.clockInAt)}</p>
+                </div>
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+                <StatusLine label="Ca" value={todayAssignments[0]?.shiftName ?? "Trống"} tone={todayAssignments.length ? "ready" : "neutral"} />
+                <StatusLine label="Vai trò" value={staff.roleTitle} tone="neutral" />
+                <StatusLine label="Muộn" value={`${staff.lateMinutesToday}p`} tone={staff.lateMinutesToday ? "warning" : "ready"} />
+                <StatusLine label="Risk" value={staff.suspiciousScore} tone={staff.suspiciousScore >= 40 ? "warning" : "ready"} />
+              </div>
+
+              <div className="mt-2 grid grid-cols-2 gap-1.5">
+                {readinessItems.map((item) => (
+                  <StatusLine key={item.label} label={item.label} value={item.value} tone={item.tone as "ready" | "warning" | "neutral"} />
+                ))}
+              </div>
+            </section>
+
+            {message ? (
+              <div
+                aria-live="polite"
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-[13px] font-bold",
+                  message.tone === "success"
+                    ? "border-[#B8DDC0] bg-[#E8F5EC] text-[#0F5D3F]"
+                    : message.tone === "neutral"
+                      ? "border-[#D7DFDA] bg-white text-[#526058]"
+                      : "border-[#F0C38A] bg-[#FFF4E5] text-[#98530F]"
+                )}
+              >
+                {message.text}
+              </div>
+            ) : null}
+
+            {activeView === "work" ? (
+              <section className="grid gap-3">
+                <section className="grid grid-cols-4 gap-2">
+                  <MetricTile label="Đơn" value={mobileOps.pendingOrders} icon={<ListChecks size={16} />} tone="blue" />
+                  <MetricTile label="Bếp" value={mobileOps.cookingOrders} icon={<ChefHat size={16} />} tone="green" />
+                  <MetricTile label="Tiền" value={mobileOps.waitingPayments} icon={<CreditCard size={16} />} tone="amber" />
+                  <MetricTile label="Gọi" value={mobileOps.serviceRequests} icon={<Bell size={16} />} tone="red" />
+                </section>
+
+                <AppCard>
+                  <SectionHeader
+                    title="Hàng việc"
+                    action={<span className="rounded-md bg-[#FFF3DE] px-2 py-1 text-[10px] font-black text-[#98530F]">{mobileOps.urgentCount} gấp</span>}
+                  />
+                  <div className="divide-y divide-[#E8ECE9]">
+                    {sortedWorkItems.map((item) => {
+                      const Icon = workItemIcon(item.kind);
+                      const key = workItemKey(item);
+                      const isProcessing = processingWorkItemKey === key;
+                      return (
+                        <article key={key} className="px-3.5 py-3">
+                          <div className="flex items-start gap-3">
+                            <span className={cn("grid h-11 w-11 shrink-0 place-items-center rounded-lg border", workItemTone(item.priority))}>
+                              <Icon size={17} />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className="line-clamp-1 text-[14px] font-black text-[#17201B]">{item.title}</p>
+                                {item.tableName ? <span className="shrink-0 rounded-md bg-[#EEF2EF] px-2 py-1 text-[10px] font-black text-[#526058]">{item.tableName}</span> : null}
+                              </div>
+                              <p className="mt-1 line-clamp-2 text-[12px] font-bold leading-5 text-[#65736B]">
+                                {priorityLabel(item.priority)} · {relativeTime(item.createdAt)} · {item.subtitle}
+                              </p>
+                            </div>
+                          </div>
+                          {item.action && item.actionLabel ? (
+                            <button
+                              type="button"
+                              onClick={() => runWorkItemAction(item)}
+                              disabled={isProcessing}
+                              className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#16231D] px-4 text-sm font-black text-white transition active:scale-[0.99] disabled:opacity-55"
+                            >
+                              {isProcessing ? "Đang xử lý…" : item.actionLabel}
+                              {!isProcessing ? <ChevronRight size={16} /> : null}
+                            </button>
+                          ) : null}
+                        </article>
+                      );
+                    })}
+                    {!sortedWorkItems.length ? <EmptyState icon={<CheckCircle2 size={17} />} text="Chưa có việc cần xử lý ngay." /> : null}
+                  </div>
+                </AppCard>
+              </section>
+            ) : null}
+
+            {activeView === "shift" ? (
+              <section className="grid gap-3">
+                <AppCard>
+                  <SectionHeader
+                    title="Lịch ca"
+                    action={<span className="rounded-md bg-[#EEF2EF] px-2 py-1 text-[10px] font-black text-[#65736B]">{upcomingAssignments.length} ca</span>}
+                  />
+                  <div className="divide-y divide-[#E8ECE9]">
+                    {upcomingAssignments.map((assignment) => (
+                      <div key={assignment.id} className="grid min-h-[68px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-2.5">
+                        <div className="min-w-0">
+                          <p className="truncate text-[14px] font-black text-[#17201B]">{assignment.shiftName}</p>
+                          <p className="mt-0.5 truncate text-[12px] font-bold text-[#65736B]">
+                            {formatDate(assignment.scheduledDate)} · {assignment.branchName ?? staff.primaryBranchName ?? "Toàn quán"}
+                          </p>
+                        </div>
+                        <span className={cn("rounded-md border px-2 py-1 text-[10px] font-black", shiftStatusTone(assignment.status))}>{shiftStatusLabel(assignment.status)}</span>
+                      </div>
+                    ))}
+                    {!upcomingAssignments.length ? <EmptyState icon={<CheckCircle2 size={17} />} text="Chưa có ca sắp tới." /> : null}
+                  </div>
+                </AppCard>
+
+                <AppCard>
+                  <SectionHeader
+                    title="Chấm công"
+                    action={<span className="rounded-md bg-[#EEF2EF] px-2 py-1 text-[10px] font-black text-[#65736B]">{attendanceStateLabel(activeAttendance?.state ?? latestAttendance?.state)}</span>}
+                  />
+                  <div className="grid grid-cols-3 divide-x divide-[#E8ECE9]">
+                    {recentAttendance.map((item) => (
+                      <div key={item.id} className="min-w-0 px-2 py-3 text-center">
+                        <p className="truncate text-[10px] font-black uppercase text-[#65736B]">{attendanceStateLabel(item.state)}</p>
+                        <p className="mt-1 text-[16px] font-black text-[#17201B]">{formatTime(item.clockInAt)}</p>
+                        <p className="mt-0.5 truncate text-[10px] font-bold text-[#7B877F]">{item.branchName ?? "Toàn quán"}</p>
+                      </div>
+                    ))}
+                    {!recentAttendance.length ? <div className="col-span-3"><EmptyState icon={<Clock3 size={17} />} text="Chưa có lượt chấm công." /></div> : null}
+                  </div>
+                </AppCard>
+
+                <AppCard className="p-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="text-[14px] font-black text-[#17201B]">Đồng bộ</h2>
+                      <p className="mt-0.5 truncate text-[12px] font-bold text-[#65736B]">
+                        {syncStatusText(offlineQueue.queue.length, offlineQueue.isOnline, offlineQueue.syncing)} · {offlineQueue.queue.length} hàng đợi
+                      </p>
+                    </div>
+                    <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-lg", offlineQueue.isOnline ? "bg-[#E8F5EC] text-[#0F6A45]" : "bg-[#FFF4E5] text-[#98530F]")}>
+                      {offlineQueue.isOnline ? <Wifi size={18} /> : <WifiOff size={18} />}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void offlineQueue.syncQueue({ force: true })}
+                      disabled={offlineQueue.syncing || offlineQueue.queue.length === 0}
+                      className="min-h-11 rounded-lg border border-[#D7DFDA] bg-[#EEF2EF] px-3 text-sm font-black text-[#17201B] transition active:scale-[0.99] disabled:opacity-50"
+                    >
+                      Đồng bộ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        startTransition(() => {
+                          void refreshBundle();
+                        })
+                      }
+                      className="min-h-11 rounded-lg border border-[#16231D] bg-white px-3 text-sm font-black text-[#16231D] transition active:scale-[0.99]"
+                    >
+                      Làm mới
+                    </button>
+                  </div>
+                </AppCard>
+              </section>
+            ) : null}
+
+            {activeView === "requests" ? (
+              <section className="grid gap-3">
+                <AppCard className="p-3.5">
+                  <div className="grid grid-cols-3 gap-2">
+                    {staffRequestKinds.map((item) => {
+                      const Icon = item.icon;
+                      const active = requestKind === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => setRequestKind(item.key)}
+                          className={cn(
+                            "grid min-h-14 place-items-center gap-1 rounded-lg border px-2 text-[11px] font-black transition active:scale-[0.99]",
+                            active ? "border-[#16231D] bg-[#16231D] text-white" : "border-[#D7DFDA] bg-[#EEF2EF] text-[#526058]"
+                          )}
+                        >
+                          <Icon size={16} />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 grid gap-2.5">
+                    {requestKind === "shift_swap" ? (
+                      <div className="grid gap-2">
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Ca muốn đổi</span>
+                          <select value={requestShiftAssignmentId} onChange={(event) => setRequestShiftAssignmentId(event.target.value)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none">
+                            <option value="">Chọn ca sắp tới</option>
+                            {upcomingAssignments.map((assignment) => (
+                              <option key={assignment.id} value={assignment.id}>
+                                {assignment.shiftName} · {formatDate(assignment.scheduledDate)}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Người nhận ca</span>
+                          <select value={requestTargetStaffMemberId} onChange={(event) => setRequestTargetStaffMemberId(event.target.value)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none">
+                            <option value="">Quản lý tự sắp xếp</option>
+                            {shiftSwapCandidates.map((candidate) => (
+                              <option key={candidate.id} value={candidate.id}>
+                                {candidate.fullName} · {candidate.roleTitle}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {requestTargetStaffMemberId ? (
+                          <div className="flex items-center gap-2 rounded-lg border border-[#B8DDC0] bg-[#E8F5EC] px-3 py-2 text-xs font-bold text-[#0F5D3F]">
+                            <UserRound size={15} />
+                            Chờ quản lý kiểm tra trùng lịch.
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {requestKind === "leave_request" ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Từ ngày</span>
+                          <input type="date" name="fromDate" autoComplete="off" value={requestFromDate} onChange={(event) => setRequestFromDate(event.target.value)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none" />
+                        </label>
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Đến ngày</span>
+                          <input type="date" name="toDate" autoComplete="off" value={requestToDate} onChange={(event) => setRequestToDate(event.target.value)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none" />
+                        </label>
+                        <label className="col-span-2 grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Loại nghỉ</span>
+                          <select value={requestLeaveType} onChange={(event) => setRequestLeaveType(event.target.value as typeof requestLeaveType)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none">
+                            <option value="unpaid">Nghỉ không lương</option>
+                            <option value="paid">Nghỉ phép có lương</option>
+                            <option value="sick">Nghỉ ốm</option>
+                            <option value="emergency">Nghỉ gấp</option>
+                            <option value="other">Khác</option>
+                          </select>
+                        </label>
+                      </div>
+                    ) : null}
+
+                    {requestKind === "overtime" ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Ngày OT</span>
+                          <input type="date" name="overtimeDate" autoComplete="off" value={requestFromDate} onChange={(event) => setRequestFromDate(event.target.value)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none" />
+                        </label>
+                        <label className="grid gap-1">
+                          <span className="text-[10px] font-black uppercase text-[#65736B]">Số phút</span>
+                          <input type="number" name="overtimeMinutes" inputMode="numeric" min="15" max="720" step="15" value={requestOvertimeMinutes} onChange={(event) => setRequestOvertimeMinutes(Number(event.target.value) || 15)} onBlur={() => setRequestOvertimeMinutes(normalizedOvertimeMinutes)} className="h-12 rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black outline-none" />
+                        </label>
+                        <div className="col-span-2 grid grid-cols-4 gap-2">
+                          {[30, 60, 90, 120].map((minutes) => (
+                            <button
+                              key={minutes}
+                              type="button"
+                              onClick={() => setRequestOvertimeMinutes(minutes)}
+                              className={cn(
+                                "min-h-11 rounded-lg border px-2 text-xs font-black transition active:scale-[0.99]",
+                                requestOvertimeMinutes === minutes ? "border-[#16231D] bg-[#16231D] text-white" : "border-[#D7DFDA] bg-[#EEF2EF] text-[#526058]"
+                              )}
+                            >
+                              {minutes}p
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <textarea
+                      name="reason"
+                      value={requestReason}
+                      onChange={(event) => setRequestReason(event.target.value)}
+                      rows={2}
+                      placeholder="Lý do ngắn gọn…"
+                      className="min-h-20 rounded-lg border border-[#D7DFDA] bg-white px-3 py-2 text-sm font-bold outline-none"
+                    />
+                    {requestBlockedReason ? <div aria-live="polite" className="rounded-lg border border-[#F0C38A] bg-[#FFF4E5] px-3 py-2 text-xs font-bold text-[#98530F]">{requestBlockedReason}</div> : null}
+                    <button
+                      type="button"
+                      onClick={runRequestAction}
+                      disabled={submittingRequest || Boolean(requestBlockedReason)}
+                      className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#16231D] px-4 text-sm font-black text-white transition active:scale-[0.99] disabled:opacity-55"
+                    >
+                      <Send size={16} />
+                      {requestSubmitLabel}
+                    </button>
+                  </div>
+                </AppCard>
+
+                <AppCard>
+                  <SectionHeader
+                    title="Yêu cầu gần đây"
+                    action={<span className="rounded-md bg-[#FFF3DE] px-2 py-1 text-[10px] font-black text-[#98530F]">{pendingRequestCount} chờ</span>}
+                  />
+                  <div className="divide-y divide-[#E8ECE9]">
+                    {recentRequests.map((request) => (
+                      <div key={request.id} className="flex min-h-[68px] items-start justify-between gap-3 px-3.5 py-2.5">
+                        <div className="min-w-0">
+                          <p className="truncate text-[14px] font-black text-[#17201B]">{staffRequestLabel(request.requestType)}</p>
+                          <p className="mt-0.5 line-clamp-2 text-[12px] font-bold text-[#65736B]">{request.reason ?? "Đã gửi cho quản lý"}</p>
+                        </div>
+                        <span className={cn("shrink-0 rounded-md border px-2 py-1 text-[10px] font-black", requestStatusTone(request.status))}>{requestStatusLabel(request.status)}</span>
+                      </div>
+                    ))}
+                    {!recentRequests.length ? <EmptyState icon={<CheckCircle2 size={17} />} text="Chưa có yêu cầu gần đây." /> : null}
+                  </div>
+                </AppCard>
+              </section>
+            ) : null}
+
+            <section className="sticky bottom-0 z-40 -mx-3 border-t border-[#D7DFDA] bg-[#F4F6F3]/96 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-14px_34px_rgba(24,33,29,0.12)] backdrop-blur sm:-mx-4 sm:px-4 lg:mx-0 lg:rounded-lg lg:border lg:px-3 lg:shadow-[0_12px_30px_rgba(24,33,29,0.08)]">
+              <div className="grid gap-2">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                  <label className="min-w-0">
+                    <span className="sr-only">Chi nhánh</span>
+                    <select value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)} className="h-12 w-full rounded-lg border border-[#D7DFDA] bg-white px-3 text-sm font-black text-[#17201B] outline-none">
+                      {!bundle.branches.length ? <option value="">Chưa có chi nhánh</option> : null}
+                      {bundle.branches.map((branch) => (
+                        <option key={branch.id} value={branch.id}>
+                          {branch.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <span
+                    className={cn(
+                      "inline-flex h-12 min-w-20 items-center justify-center rounded-lg border px-2 text-[10px] font-black",
+                      offlineQueue.queue.length > 0 || !offlineQueue.isOnline ? "border-[#F0C38A] bg-[#FFF4E5] text-[#98530F]" : "border-[#B8DDC0] bg-[#E8F5EC] text-[#0F5D3F]"
+                    )}
+                  >
+                    {clockSourceLabel}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => runClockAction(primaryAction, primarySource)}
+                  disabled={!canClock}
+                  className={cn(
+                    "flex min-h-14 items-center justify-center gap-2 rounded-lg px-4 text-[15px] font-black text-white shadow-[0_12px_28px_rgba(22,35,29,0.22)] transition active:scale-[0.99] disabled:opacity-55",
+                    activeAttendance ? "bg-[#9A3412]" : "bg-[#16231D]"
+                  )}
+                >
+                  <MapPin size={19} />
+                  {primaryClockLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runClockAction(primaryAction, "qr")}
+                  disabled={!canUseQrClock}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[#D7DFDA] bg-white px-4 text-sm font-black text-[#17201B] transition active:scale-[0.99] disabled:opacity-55"
+                >
+                  <Fingerprint size={17} />
+                  {activeAttendance ? "Check-out QR" : "QR tại quán"}
+                </button>
+              </div>
+            </section>
+          </section>
+        </div>
+
+        <aside className="hidden min-w-0 lg:grid lg:content-start lg:gap-4">
+          <section className="rounded-lg border border-[#DBE2DE] bg-white p-4 shadow-[0_12px_30px_rgba(24,33,29,0.05)]">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black uppercase text-[#65736B]">LogiVN Staff</p>
+                <h2 className="mt-1 text-[26px] font-black leading-tight text-[#17201B]">Màn hình làm việc của nhân viên</h2>
+              </div>
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-[#E8F5EC] text-[#0F6A45]">
+                <Store size={20} />
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-4 gap-2">
+              <MetricTile label="Hôm nay" value={todayAssignments.length} icon={<CalendarClock size={16} />} tone="green" />
+              <MetricTile label="Việc mở" value={sortedWorkItems.length} icon={<ListChecks size={16} />} tone="blue" />
+              <MetricTile label="Muộn" value={`${staff.lateMinutesToday}p`} icon={<Clock3 size={16} />} tone={staff.lateMinutesToday ? "amber" : "green"} />
+              <MetricTile label="Risk" value={staff.suspiciousScore} icon={<ShieldAlert size={16} />} tone={staff.suspiciousScore >= 40 ? "amber" : "neutral"} />
+            </div>
+          </section>
+
+          <AppCard>
+            <SectionHeader title="Thông báo" action={<span className="rounded-md bg-[#FFF3DE] px-2 py-1 text-[10px] font-black text-[#98530F]">{unreadNotifications.length} mới</span>} />
+            <div className="divide-y divide-[#E8ECE9]">
+              {visibleNotifications.map((notification) => (
+                <div key={notification.id} className={cn("flex min-h-[68px] items-start gap-3 px-3.5 py-3", notification.status === "unread" ? "bg-[#FFF9EF]" : "")}>
+                  <Bell className="mt-0.5 shrink-0 text-[#C76A1B]" size={16} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-[13px] font-black text-[#17201B]">{notification.title}</p>
+                      <span className="shrink-0 text-[10px] font-black text-[#7B877F]">{relativeTime(notification.createdAt)}</span>
+                    </div>
+                    {notification.body ? <p className="mt-0.5 line-clamp-2 text-[12px] font-semibold leading-5 text-[#65736B]">{notification.body}</p> : null}
+                  </div>
+                </div>
+              ))}
+              {!visibleNotifications.length ? <EmptyState icon={<CheckCircle2 size={17} />} text="Chưa có thông báo mới." /> : null}
+            </div>
+          </AppCard>
+
+          <AppCard>
+            <SectionHeader title="Sẵn sàng chấm công" />
+            <div className="grid grid-cols-2 gap-2 p-3.5">
+              {readinessItems.map((item) => (
+                <div key={item.label} className="rounded-lg border border-[#E0E6E1] bg-[#F8FAF7] p-3">
+                  <p className="truncate text-[10px] font-black uppercase text-[#65736B]">{item.label}</p>
+                  <p
+                    className={cn(
+                      "mt-1 truncate text-[13px] font-black",
+                      item.tone === "warning" ? "text-[#98530F]" : item.tone === "ready" ? "text-[#0F6A45]" : "text-[#526058]"
+                    )}
+                  >
+                    {item.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </AppCard>
+        </aside>
       </section>
     </main>
   );

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { Menu, Search, X } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
 import { prefetchKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
 import { cn } from "@/lib/utils";
@@ -68,18 +68,26 @@ const navGroups: NavGroup[] = [
 
 const allLinks = navGroups.flatMap((g) => g.links);
 const mobilePrimaryLinks = [
-  { href: "/dashboard", label: "Hôm nay", icon: "todayShift" },
-  { href: "/dashboard/orders", label: "Đơn", icon: "orders" },
-  { href: "/dashboard/kitchen", label: "Bếp", icon: "kitchen" },
-  { href: "/dashboard/tables", label: "Bàn", icon: "tablesQr" },
+  { href: "/dashboard", label: "Tổng quan", icon: "todayShift" },
+  { href: "/dashboard/orders", label: "Đơn hàng", icon: "orders" },
+  { href: "/dashboard/tables", label: "Bàn/Bếp", icon: "tablesQr" },
+  { href: "/dashboard/analytics", label: "Báo cáo", icon: "analytics" },
 ] satisfies NavLink[];
 const mobileMoreLinks = allLinks.filter(
   (link) => !mobilePrimaryLinks.some((primary) => primary.href === link.href)
 );
+const dashboardMobileMenuEvent = "logivn:dashboard-mobile-menu";
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === href;
   return pathname.startsWith(href);
+}
+
+function isMobilePrimaryActive(pathname: string, href: string) {
+  if (href === "/dashboard/tables") {
+    return isActive(pathname, "/dashboard/tables") || isActive(pathname, "/dashboard/kitchen");
+  }
+  return isActive(pathname, href);
 }
 
 export function AdminDesktopNav() {
@@ -105,12 +113,12 @@ export function AdminDesktopNav() {
                 key={link.href}
                 href={link.href}
                 onFocus={
-                  link.href === "/dashboard/kitchen"
+                  link.href === "/dashboard/tables"
                     ? prefetchKitchenOrders
                     : undefined
                 }
                 onPointerEnter={
-                  link.href === "/dashboard/kitchen"
+                  link.href === "/dashboard/tables"
                     ? prefetchKitchenOrders
                     : undefined
                 }
@@ -132,13 +140,28 @@ export function AdminDesktopNav() {
   );
 }
 
+export function AdminMobileMenuTrigger({ className }: { className?: string }) {
+  return (
+    <button
+      type="button"
+      className={className}
+      aria-label="Mở menu chức năng dashboard"
+      aria-controls="dashboard-mobile-more"
+      data-dashboard-mobile-menu-trigger="true"
+      onClick={() => window.dispatchEvent(new CustomEvent(dashboardMobileMenuEvent, { detail: { open: true } }))}
+    >
+      <Menu size={19} />
+    </button>
+  );
+}
+
 export function AdminMobileNav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const activeGroupId = useMemo(() => navGroups.find((group) => group.links.some((link) => isActive(pathname, link.href)))?.id ?? navGroups[0].id, [pathname]);
   const [selectedGroupId, setSelectedGroupId] = useState(activeGroupId);
   const [query, setQuery] = useState("");
-  const moreActive = useMemo(() => mobileMoreLinks.some((link) => isActive(pathname, link.href)), [pathname]);
+  const moreActive = useMemo(() => mobileMoreLinks.some((link) => link.href !== "/dashboard/kitchen" && isActive(pathname, link.href)), [pathname]);
   const normalizedQuery = query.trim().toLocaleLowerCase("vi-VN");
   const visibleGroups = useMemo(() => {
     if (!normalizedQuery) return navGroups;
@@ -176,15 +199,38 @@ export function AdminMobileNav() {
     };
   }, [open]);
 
+  useEffect(() => {
+    function handleOpenMenu(event: Event) {
+      const detail = event instanceof CustomEvent ? event.detail : null;
+      setOpen(detail?.open ?? true);
+    }
+
+    window.addEventListener(dashboardMobileMenuEvent, handleOpenMenu);
+    return () => window.removeEventListener(dashboardMobileMenuEvent, handleOpenMenu);
+  }, []);
+
+  useEffect(() => {
+    function handleDocumentClick(event: MouseEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest("[data-dashboard-mobile-menu-trigger]")) return;
+      event.preventDefault();
+      setOpen(true);
+    }
+
+    document.addEventListener("click", handleDocumentClick);
+    return () => document.removeEventListener("click", handleDocumentClick);
+  }, []);
+
   return (
     <>
       <nav
         className="dashboard-mobile-nav-shell fixed inset-x-0 bottom-0 z-[70] border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-2 pb-[calc(0.45rem+env(safe-area-inset-bottom))] pt-1.5 shadow-[0_-18px_44px_rgba(15,77,58,0.12)] backdrop-blur-xl lg:hidden"
         aria-label="Điều hướng chính trên di động"
       >
-        <div className="mx-auto grid max-w-md grid-cols-5 gap-1">
+        <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
           {mobilePrimaryLinks.map((link) => {
-            const active = isActive(pathname, link.href);
+            const active = isMobilePrimaryActive(pathname, link.href);
 
             return (
               <Link
@@ -192,19 +238,19 @@ export function AdminMobileNav() {
                 href={link.href}
                 onClick={() => setOpen(false)}
                 onFocus={
-                  link.href === "/dashboard/kitchen"
+                  link.href === "/dashboard/tables"
                     ? prefetchKitchenOrders
                     : undefined
                 }
                 onPointerEnter={
-                  link.href === "/dashboard/kitchen"
+                  link.href === "/dashboard/tables"
                     ? prefetchKitchenOrders
                     : undefined
                 }
                 className={cn(
-                  "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold transition",
+                  "dashboard-mobile-tab flex min-h-[54px] flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[10px] font-semibold transition",
                   active
-                    ? "bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.2)]"
+                    ? "is-active bg-transparent text-[var(--primary)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
                 )}
               >
@@ -217,9 +263,9 @@ export function AdminMobileNav() {
             type="button"
             onClick={() => setOpen((value) => !value)}
             className={cn(
-              "flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-xs font-semibold transition",
+              "dashboard-mobile-tab flex min-h-[54px] flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[10px] font-semibold transition",
               open || moreActive
-                ? "bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.2)]"
+                ? "is-active bg-transparent text-[var(--primary)]"
                 : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
             )}
             aria-expanded={open}
@@ -227,7 +273,7 @@ export function AdminMobileNav() {
             aria-label="Mở menu chức năng dashboard"
           >
             <DashboardAssetIcon icon="more" active={open || moreActive} size="sm" />
-            <span>Menu</span>
+            <span>Thêm</span>
           </button>
         </div>
       </nav>
@@ -250,8 +296,8 @@ export function AdminMobileNav() {
             <div className="shrink-0 border-b border-[var(--border)] px-3 py-2.5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="dashboard-eyebrow">Đi nhanh</p>
-                  <h2 className="dashboard-section-title">Chức năng</h2>
+                  <p className="dashboard-eyebrow">LogiVN mobile</p>
+                  <h2 className="dashboard-section-title">Thêm chức năng</h2>
                 </div>
                 <button
                   type="button"
@@ -264,7 +310,7 @@ export function AdminMobileNav() {
               </div>
               <div className="mt-2 grid grid-cols-4 gap-1">
                 {mobilePrimaryLinks.map((link) => {
-                  const active = isActive(pathname, link.href);
+                  const mobileActive = isMobilePrimaryActive(pathname, link.href);
 
                   return (
                     <Link
@@ -273,12 +319,12 @@ export function AdminMobileNav() {
                       onClick={() => setOpen(false)}
                       className={cn(
                         "flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center text-[10px] font-semibold transition",
-                        active
+                        mobileActive
                           ? "border-[var(--primary)] bg-[var(--primary)] text-white"
                           : "border-[var(--border)] bg-[var(--soft-surface)] text-[var(--foreground)]"
                       )}
                     >
-                      <DashboardAssetIcon icon={link.icon} active={active} size="sm" />
+                      <DashboardAssetIcon icon={link.icon} active={mobileActive} size="sm" />
                       <span className="max-w-full truncate">{link.label}</span>
                     </Link>
                   );

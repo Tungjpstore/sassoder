@@ -1630,49 +1630,7 @@ function SettingsHomeGrid({
   );
 }
 
-function SettingsDrawerSwitch({
-  activeSection,
-  sectionStates
-}: {
-  activeSection: SettingsSectionKey;
-  sectionStates: Record<SettingsSectionKey, SettingsSectionState>;
-}) {
-  return (
-    <nav
-      aria-label="Chuyển khu vực cài đặt"
-      className="mb-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-1.5"
-    >
-      <div className="dashboard-segmented-scroll flex gap-1.5 pb-1">
-        {settingsSectionGroups.map((group) => (
-          <div key={group.title} className="flex shrink-0 gap-1.5">
-            {group.keys.map((key) => {
-              const item = settingsSectionMap[key];
-              const Icon = item.icon;
-              const summary = sectionStates[key];
-              const active = key === activeSection;
 
-              return (
-                <Link
-                  key={key}
-                  href={`/dashboard/settings?section=${key}`}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    "inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold transition hover:border-[var(--primary)] hover:bg-[var(--primary-soft)]",
-                    active ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]" : "border-transparent bg-[var(--surface)] text-[var(--foreground)]"
-                  )}
-                >
-                  <Icon size={15} aria-hidden="true" />
-                  <span>{item.label}</span>
-                  <span className={cn("h-2 w-2 rounded-full", summary.tone === "warning" ? "bg-[var(--accent)]" : summary.tone === "success" ? "bg-[var(--primary)]" : "bg-[var(--outline)]")} />
-                </Link>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    </nav>
-  );
-}
 
 function renderActiveSection({
   activeSection,
@@ -1776,7 +1734,7 @@ export default async function AdminSettingsPage({
   const billingPaymentId = billingPaymentIdParam ? billingPaymentIdParam.slice(0, 80) : null;
   const billingErrorParam = Array.isArray(params?.billingError) ? params?.billingError[0] : params?.billingError;
   const billingError = billingErrorParam ? billingErrorParam.slice(0, 240) : null;
-  const { session, entitlement } = await getDashboardAccessForSettings();
+  const { session, entitlement } = await getDashboardAccessForSettings(activeSection);
   const dashboard = await getRestaurantDashboard(session.restaurantId);
   const restaurant = dashboard.restaurant;
   const billingPortal =
@@ -1890,48 +1848,50 @@ export default async function AdminSettingsPage({
         />
 
         {activeSection && activeMeta ? (
-          <div className="dashboard-settings-fullscreen fixed inset-y-0 left-0 right-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] lg:left-[216px]">
-            <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-3 py-2 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-4">
-              <div className="flex min-w-0 items-center gap-3">
-                <Link
-                  href="/dashboard/settings"
-                  className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
-                >
-                  <ArrowLeft size={16} aria-hidden="true" />
-                  Quay lại
-                </Link>
-                <span className="dashboard-stat-icon h-11 w-11 shrink-0">
-                  <ActiveIcon size={18} aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Màn hình cài đặt</p>
-                  <h1 id="settings-fullscreen-title" className="dashboard-section-title truncate">{activeMeta.label}</h1>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {activeSummary ? (
-                  <span className={cn("hidden rounded-full border px-2.5 py-1 text-xs font-semibold sm:inline-flex", sectionStateTone(activeSummary.tone))}>
-                    {activeSummary.label}
-                  </span>
-                ) : null}
-                <Link
-                  href="/dashboard/settings"
-                  aria-label="Thu nhỏ màn hình cài đặt"
-                  className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
-                >
-                  <X size={18} aria-hidden="true" />
-                </Link>
-              </div>
-            </header>
-
-            <main
+          <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain flex justify-end">
+            <Link
+              href="/dashboard/settings"
+              className="drawer-backdrop absolute inset-0 z-0 bg-black/40 backdrop-blur-[2px]"
+              aria-hidden="true"
+            />
+            <aside
               role="dialog"
               aria-modal="true"
-              aria-labelledby="settings-fullscreen-title"
-              className="dashboard-settings-dialog-body min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 pb-[calc(1rem+env(safe-area-inset-bottom))] md:px-4"
+              aria-labelledby="settings-drawer-title"
+              className={cn(
+                "drawer-panel relative z-10 flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-2xl",
+                activeSection === "billing" || activeSection === "online" || activeSection === "notifications"
+                  ? "max-w-[768px]"
+                  : "max-w-[540px]"
+              )}
             >
-              <div className="dashboard-settings-dialog-inner mx-auto w-full max-w-[1680px]">
-                {activeSection === "billing" ? null : <SettingsDrawerSwitch activeSection={activeSection} sectionStates={sectionStates} />}
+              <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-5 sm:py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="dashboard-stat-icon h-10 w-10 shrink-0">
+                    <ActiveIcon size={18} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Cài đặt vận hành</p>
+                    <h2 id="settings-drawer-title" className="dashboard-section-title mt-0.5 truncate">{activeMeta.label}</h2>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {activeSummary ? (
+                    <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", sectionStateTone(activeSummary.tone))}>
+                      {activeSummary.label}
+                    </span>
+                  ) : null}
+                  <Link
+                    href="/dashboard/settings"
+                    aria-label="Đóng cài đặt"
+                    className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-container-high)]"
+                  >
+                    <X size={18} aria-hidden="true" />
+                  </Link>
+                </div>
+              </header>
+
+              <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
                 {renderActiveSection({
                   activeSection,
                   restaurant,
@@ -1952,8 +1912,8 @@ export default async function AdminSettingsPage({
                   billingStep,
                   billingPaymentId
                 })}
-              </div>
-            </main>
+              </main>
+            </aside>
           </div>
         ) : null}
       </section>

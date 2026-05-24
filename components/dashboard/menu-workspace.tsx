@@ -789,7 +789,7 @@ export function MenuWorkspace({
 
   return (
     <div className="dashboard-menu-workspace grid gap-3">
-      <section className="admin-hero-panel rounded-[14px] p-4">
+      <section className="admin-hero-panel dashboard-mobile-hide rounded-[14px] p-4">
         <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

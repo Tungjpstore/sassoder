@@ -7,6 +7,7 @@ import { generateAiBranchOperationInsightsForRestaurant } from "@/services/ai-br
 import { persistAiAutomationRuns } from "@/services/ai-automation-run-service";
 import { createAiMorningBriefRun } from "@/services/ai-morning-brief-service";
 import { persistAiOperationInsightsDeck } from "@/services/ai-operation-insights-service";
+import { runDsxAirBatchCron, type DsxAirBatchJobKind } from "@/services/ai-dsx-air-batch-service";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import type { AiOperationInsightsDeck } from "@/lib/ai/operation-insights";
 import type { AiRestaurantContext, OwnerAiIntent } from "@/services/ai-prompt-router";
@@ -23,6 +24,8 @@ export type RunAiOpsCronInput = {
   emailMorningBrief?: boolean;
   branchInsights?: boolean;
   inventoryJobs?: boolean;
+  dsxBatch?: boolean;
+  dsxBatchJobs?: DsxAirBatchJobKind[];
   maxBranchesPerRestaurant?: number;
 };
 
@@ -55,6 +58,7 @@ export type RunAiOpsCronResult = {
     failed: number;
     schemaMissing: number;
   };
+  dsxBatch: Awaited<ReturnType<typeof runDsxAirBatchCron>>;
   primaryInsights: Array<{
     restaurantId: string;
     restaurantName: string;
@@ -98,6 +102,8 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
   const emailMorningBrief = input.emailMorningBrief;
   const shouldGenerateBranchInsights = input.branchInsights ?? intent === "overview";
   const shouldGenerateInventoryJobs = input.inventoryJobs ?? intent === "overview";
+  const shouldRunDsxBatch =
+    input.dsxBatch ?? (intent === "overview" && (process.env.NVIDIA_AI_BATCH_ENABLED === "true" || process.env.DSX_AIR_BATCH_ENABLED === "true"));
 
   const restaurantsResult = await supabase
     .from("restaurants")
@@ -137,6 +143,18 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
       skipped: 0,
       failed: 0,
       schemaMissing: 0
+    },
+    dsxBatch: {
+      enabled: false,
+      scanned: 0,
+      generated: 0,
+      persisted: 0,
+      skipped: 0,
+      failed: 0,
+      schemaMissing: 0,
+      provider: "nvidia",
+      jobs: [],
+      failures: []
     },
     primaryInsights: [],
     branchPrimaryInsights: [],
@@ -251,6 +269,12 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
     }
   }
 
+  result.dsxBatch = await runDsxAirBatchCron({
+    enabled: shouldRunDsxBatch,
+    maxRestaurants,
+    jobs: input.dsxBatchJobs
+  });
+
   writeOperationalEvent({
     area: "ai",
     event: "ai_ops_cron_completed",
@@ -265,7 +289,15 @@ export async function runAiOpsCron(input: RunAiOpsCronInput = {}): Promise<RunAi
       schemaMissing: result.schemaMissing,
       morningBriefs: result.morningBriefs,
       branchInsights: result.branchInsights,
-      inventoryJobs: result.inventoryJobs
+      inventoryJobs: result.inventoryJobs,
+      dsxBatch: {
+        enabled: result.dsxBatch.enabled,
+        scanned: result.dsxBatch.scanned,
+        generated: result.dsxBatch.generated,
+        persisted: result.dsxBatch.persisted,
+        failed: result.dsxBatch.failed,
+        schemaMissing: result.dsxBatch.schemaMissing
+      }
     }
   });
 

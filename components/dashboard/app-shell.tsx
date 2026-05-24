@@ -4,7 +4,7 @@ import { DashboardCopilotLayer } from "@/components/ai/dashboard-copilot-layer";
 import { CommandPalette, CommandPaletteTrigger } from "@/components/dashboard/command-palette";
 import { DashboardQuickActionsFab } from "@/components/dashboard/dashboard-quick-actions-fab";
 import { DashboardAssetIcon } from "@/components/dashboard/dashboard-icon-assets";
-import { AdminDesktopNav, AdminMobileNav } from "@/components/dashboard/dashboard-nav";
+import { AdminDesktopNav, AdminMobileMenuTrigger, AdminMobileNav } from "@/components/dashboard/dashboard-nav";
 import { DarkModeToggle } from "@/components/dashboard/dark-mode-toggle";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { LogoutButton } from "@/components/dashboard/logout-button";
@@ -56,7 +56,7 @@ export function AdminShell({
 
   return (
     <ToastProvider>
-      <main className="stitch-admin admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)]">
+      <main className="stitch-admin open-design-mobile admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)]">
         {/* ── Desktop sidebar ── */}
         <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "lg:hidden" : "lg:flex"}`}>
           {/* Subtle gradient overlay */}
@@ -108,11 +108,17 @@ export function AdminShell({
 
         {/* ── Main content ── */}
         <section className={`relative ${focusMode ? "" : "lg:pl-[216px]"}`}>
-          <header className="sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[rgba(255,247,235,0.9)] px-3 py-2 backdrop-blur-xl sm:px-4 md:px-5">
+          <header className="dashboard-mobile-topbar sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[rgba(255,247,235,0.9)] px-3 py-2 backdrop-blur-xl sm:px-4 md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className={focusMode ? "block" : "lg:hidden"}>
-                  <LogiVNLogo className="h-8" priority />
+                  <AdminMobileMenuTrigger className="dashboard-mobile-menu-trigger grid h-11 w-11 place-items-center rounded-xl text-[var(--foreground)]" />
+                </div>
+                <div className="min-w-0 lg:hidden">
+                  <p className="dashboard-mobile-restaurant-label truncate text-[11px] font-semibold uppercase text-[var(--muted-foreground)]">
+                    {restaurantName}
+                  </p>
+                  <p className="dashboard-mobile-title truncate text-sm font-semibold text-[var(--foreground)]">{title}</p>
                 </div>
                 {topbarVariant === "overview" ? (
                   <div className="hidden items-center gap-3 md:flex">
@@ -138,7 +144,18 @@ export function AdminShell({
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {restaurantId && showLiveActionCenter ? <AdminLiveActionCenter restaurantId={restaurantId} /> : null}
+                <Link
+                  href="/dashboard/analytics"
+                  className="dashboard-mobile-date-pill inline-flex min-h-10 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-[var(--foreground)] lg:hidden"
+                >
+                  Hôm nay
+                  <ChevronDown size={13} />
+                </Link>
+                {restaurantId && showLiveActionCenter ? (
+                  <div className="dashboard-mobile-live-action">
+                    <AdminLiveActionCenter restaurantId={restaurantId} />
+                  </div>
+                ) : null}
                 <div className="hidden sm:block">
                   <DarkModeToggle />
                 </div>
@@ -176,7 +193,7 @@ export function AdminShell({
                   <ChevronDown size={16} className="text-[var(--outline)]" />
                 </div>
               </div>
-              <div className="lg:hidden">
+              <div className="dashboard-mobile-logout lg:hidden">
                 <LogoutButton compact />
               </div>
             </div>
@@ -212,7 +229,7 @@ export function AdminShell({
               </section>
             ) : null}
             {!hideHeading && (
-              <section className="admin-hero-panel relative mb-4 overflow-hidden px-4 py-3.5">
+              <section className="admin-hero-panel relative mb-4 hidden overflow-hidden px-4 py-3.5 lg:block">
                 <div className="relative z-[1]">
                   <h1 className="dashboard-page-title">{title}</h1>
                   {subtitle && <p className="dashboard-body-copy mt-1 max-w-2xl md:truncate">{subtitle}</p>}

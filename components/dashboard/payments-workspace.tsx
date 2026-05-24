@@ -259,7 +259,7 @@ function TreasuryCommandCenter({
   ];
 
   return (
-    <section className="dashboard-panel p-3">
+    <section className="dashboard-panel dashboard-command-center p-3">
       <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-start justify-between gap-3">
@@ -636,7 +636,7 @@ export function PaymentsWorkspace({
         </div>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <section className="dashboard-mobile-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         {stats.map((stat) => {
           const Icon = statIcons[stat.icon];
           return (
@@ -674,7 +674,7 @@ export function PaymentsWorkspace({
         onSelect={setSelectedId}
       />
 
-      <section className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+      <section className="dashboard-mobile-hide grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
         <div className="dashboard-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>

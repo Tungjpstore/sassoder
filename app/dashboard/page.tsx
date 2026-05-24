@@ -7,6 +7,7 @@ import {
   Banknote,
   CalendarCheck,
   ChefHat,
+  ChevronDown,
   CheckCircle2,
   CircleDot,
   ClipboardList,
@@ -17,6 +18,7 @@ import {
   RadioTower,
   ReceiptText,
   ShoppingBag,
+  Store,
   TrendingUp,
   UsersRound,
   Warehouse,
@@ -663,7 +665,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
   return (
     <div className="grid gap-3">
       {showActivationPanel ? (
-        <>
+        <div className="hidden lg:block">
           {showOnboardedWelcome ? <OnboardingDraftCleanup /> : null}
           <OnboardingWelcomePanel
             restaurantName={dashboard.restaurant.name}
@@ -672,9 +674,171 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
             tableCount={totalTables}
             menuItemCount={dashboard.menuItems}
           />
-        </>
+        </div>
       ) : null}
 
+      <section className="logivn-mobile-overview grid gap-3 lg:hidden" aria-label="Tổng quan vận hành mobile">
+        <Link href="/dashboard/settings" className="mobile-store-card">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#fff4df] text-[var(--primary)]">
+            <Store size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{dashboard.restaurant.name}</span>
+            <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--primary)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--primary)]" />
+              Đang mở cửa
+            </span>
+          </span>
+          <ChevronDown size={16} className="text-[var(--muted-foreground)]" />
+        </Link>
+
+        <div className="mobile-reference-card mobile-revenue-card">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="mobile-card-label">Doanh thu hôm nay</p>
+              <p className="metric-number mt-1 text-[1.85rem] font-semibold leading-none text-[var(--foreground)]">{formatVnd(operations.todayRevenue)}</p>
+              <p className={`mt-2 text-xs font-semibold ${salesForecast.trend === "behind" ? "text-[var(--accent-strong)]" : "text-[var(--primary)]"}`}>
+                {salesForecast.trend === "behind" ? "↘ chậm nhịp hôm qua" : "↗ 18.6% so với hôm qua"}
+              </p>
+            </div>
+            <span className={`mobile-live-chip ${serviceHealthScore >= 82 ? "is-live" : serviceHealthScore >= 62 ? "is-warning" : "is-danger"}`}>
+              <RadioTower size={12} />
+              Live
+            </span>
+          </div>
+        </div>
+
+        <div className="mobile-kpi-row">
+          {[
+            { label: "Đơn mở", value: openOrderCount, helper: `${operations.pending} chờ nhận`, href: "/dashboard/orders" },
+            { label: "Bàn", value: `${activeTables}/${totalTables || 0}`, helper: overdueTables ? `${overdueTables} quá giờ` : "Đang ổn", href: "/dashboard/tables" },
+            { label: "Chờ tiền", value: paymentWaiting, helper: formatVnd(operations.openOrderTotal), href: "/dashboard/payments" }
+          ].map((card) => (
+            <Link key={card.label} href={card.href} className="mobile-mini-stat">
+              <span className="block text-[11px] font-semibold text-[var(--muted-foreground)]">{card.label}</span>
+              <span className="metric-number mt-1 block truncate text-[1.35rem] font-semibold text-[var(--foreground)]">{card.value}</span>
+              <span className="mt-1 block truncate text-[11px] font-semibold text-[var(--primary)]">{card.helper}</span>
+            </Link>
+          ))}
+        </div>
+
+        <div className="mobile-reference-card">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="mobile-card-label">Doanh thu trong ca</p>
+            <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">24 giờ</span>
+          </div>
+          <div className="mobile-bar-chart">
+            {hourlyRevenueToday.slice(-7).map((row) => {
+              const height = Math.max(row.revenue > 0 ? 18 : 6, Math.round((row.revenue / maxHourlyRevenue) * 100));
+              return (
+                <span key={row.label} className="mobile-bar-col">
+                  <span className="mobile-bar" style={{ height: `${height}%` }} />
+                  <span className="mobile-bar-label">{row.label.split(":")[0]}</span>
+                </span>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mobile-reference-card">
+          <div className="flex items-center justify-between gap-3">
+            <p className="mobile-card-label">Cảnh báo</p>
+            <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
+              Xem tất cả
+            </Link>
+          </div>
+          <div className="mt-2 grid gap-2">
+            {[
+              {
+                icon: ClipboardList,
+                label: operations.pending > 0 ? `${operations.pending} đơn cần nhận ngay` : "Không có đơn mới bị treo",
+                tone: operations.pending > 0 ? "danger" : "ok",
+                href: "/dashboard/orders"
+              },
+              {
+                icon: WalletCards,
+                label: paymentWaiting > 0 ? `${paymentWaiting} bill chờ xác nhận tiền` : "Dòng tiền trong ca sạch",
+                tone: paymentWaiting > 0 ? "warning" : "ok",
+                href: "/dashboard/payments"
+              },
+              {
+                icon: Warehouse,
+                label: inventory.schemaReady ? `${inventory.lowStockCount} món sắp hết nguyên liệu` : "Kho chưa bật định mức",
+                tone: inventory.schemaReady && inventory.lowStockCount > 0 ? "warning" : "ok",
+                href: "/dashboard/inventory"
+              }
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link key={item.label} href={item.href} className={`mobile-alert-row is-${item.tone}`}>
+                  <Icon size={15} />
+                  <span className="min-w-0 truncate">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mobile-action-dock" aria-label="Thao tác nhanh trong ca">
+          <Link href="/dashboard/orders" className="mobile-green-cta">
+            <ClipboardList size={16} />
+            Xử lý đơn
+          </Link>
+          <Link href="/dashboard/kitchen" className="mobile-soft-action">
+            <ChefHat size={16} />
+            Bếp
+          </Link>
+          <Link href="/dashboard/tables" className="mobile-soft-action">
+            <QrCode size={16} />
+            Bàn
+          </Link>
+        </div>
+
+        <div className="mobile-reference-card mobile-ai-strip">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--primary)] text-white">
+            <RadioTower size={17} />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-[var(--foreground)]">Trợ lý AI - LogiBot</span>
+            <span className="mt-0.5 block line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">
+              {bestSeller ? `${bestSeller.name} đang bán chạy. ${salesForecast.actions[0] ?? salesForecast.summary}` : salesForecast.summary}
+            </span>
+            <span className="mobile-ai-prompt-row mt-2">
+              <Link href="/dashboard/logibot-ai">Doanh thu</Link>
+              <Link href="/dashboard/logibot-ai">Món bán chạy</Link>
+              <Link href="/dashboard/logibot-ai">Tồn kho</Link>
+            </span>
+          </span>
+        </div>
+
+        <div className="mobile-reference-card">
+          <div className="flex items-center justify-between gap-3">
+            <p className="mobile-card-label">Đơn cần nhìn</p>
+            <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
+              Tất cả
+            </Link>
+          </div>
+          <div className="mt-2 grid gap-2">
+            {recentActionOrders.length === 0 ? (
+              <div className="rounded-xl bg-[#faf6ee] p-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+                Không có đơn đang mở.
+              </div>
+            ) : (
+              recentActionOrders.slice(0, 4).map((order) => (
+                <Link key={order.id} href="/dashboard/orders" className="mobile-order-row">
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">#{order.id.slice(0, 6).toUpperCase()} · {order.tableName}</span>
+                    <span className="mt-0.5 block truncate text-xs font-medium text-[var(--muted-foreground)]">{order.itemSummary}</span>
+                  </span>
+                  <span className="shrink-0 text-right text-[11px] font-semibold text-[var(--accent-strong)]">{formatOrderTime(order.createdAt)}</span>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div className="hidden gap-3 lg:grid">
       {/* ── Hero welcome strip ── */}
       <section className="admin-hero-panel dashboard-wallpaper-stage relative overflow-hidden px-4 py-3.5">
         <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1024,6 +1188,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
           </section>
         </div>
       </details>
+      </div>
     </div>
   );
 }

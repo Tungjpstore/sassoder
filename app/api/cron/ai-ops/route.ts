@@ -1,6 +1,7 @@
 import { assertCronSecret } from "@/lib/cron/auth";
 import { fail, ok } from "@/lib/response";
 import { runAiOpsCron } from "@/services/ai-operation-cron-service";
+import type { DsxAirBatchJobKind } from "@/services/ai-dsx-air-batch-service";
 import { normalizeOwnerAiIntent } from "@/services/ai-prompt-router";
 import { runLoggedCron } from "@/services/cron-run-log-service";
 
@@ -23,13 +24,16 @@ export async function GET(request: Request) {
     const branchInsights = branchesParam === "true" ? true : branchesParam === "false" ? false : undefined;
     const inventoryParam = url.searchParams.get("inventory");
     const inventoryJobs = inventoryParam === "true" ? true : inventoryParam === "false" ? false : undefined;
+    const dsxBatchParam = url.searchParams.get("dsxBatch") ?? url.searchParams.get("nvidiaBatch");
+    const dsxBatch = dsxBatchParam === "true" ? true : dsxBatchParam === "false" ? false : undefined;
+    const dsxBatchJobs = normalizeDsxBatchJobs(url.searchParams.get("dsxJobs") ?? url.searchParams.get("nvidiaJobs"));
     const maxBranchesPerRestaurant = Number(url.searchParams.get("branchLimit") ?? url.searchParams.get("maxBranches") ?? "8");
 
     return ok(
       await runLoggedCron({
         request,
         jobKey: "ai-ops",
-        metadata: { intent, maxRestaurants, morningBrief, emailMorningBrief, branchInsights, inventoryJobs, maxBranchesPerRestaurant },
+        metadata: { intent, maxRestaurants, morningBrief, emailMorningBrief, branchInsights, inventoryJobs, dsxBatch, dsxBatchJobs, maxBranchesPerRestaurant },
         run: () =>
           runAiOpsCron({
             maxRestaurants,
@@ -38,6 +42,8 @@ export async function GET(request: Request) {
             emailMorningBrief,
             branchInsights,
             inventoryJobs,
+            dsxBatch,
+            dsxBatchJobs,
             maxBranchesPerRestaurant
           }),
         statusFromResult: (result) =>
@@ -48,7 +54,9 @@ export async function GET(request: Request) {
           result.branchInsights.failed > 0 ||
           result.branchInsights.schemaMissing > 0 ||
           result.inventoryJobs.failed > 0 ||
-          result.inventoryJobs.schemaMissing > 0
+          result.inventoryJobs.schemaMissing > 0 ||
+          result.dsxBatch.failed > 0 ||
+          result.dsxBatch.schemaMissing > 0
             ? "warn"
             : "success",
         summaryFromResult: (result) => ({
@@ -73,11 +81,28 @@ export async function GET(request: Request) {
           inventoryJobsPersisted: result.inventoryJobs.persisted,
           inventoryJobsSkipped: result.inventoryJobs.skipped,
           inventoryJobsFailed: result.inventoryJobs.failed,
-          inventoryJobsSchemaMissing: result.inventoryJobs.schemaMissing
+          inventoryJobsSchemaMissing: result.inventoryJobs.schemaMissing,
+          dsxBatchEnabled: result.dsxBatch.enabled,
+          dsxBatchScanned: result.dsxBatch.scanned,
+          dsxBatchGenerated: result.dsxBatch.generated,
+          dsxBatchPersisted: result.dsxBatch.persisted,
+          dsxBatchSkipped: result.dsxBatch.skipped,
+          dsxBatchFailed: result.dsxBatch.failed,
+          dsxBatchSchemaMissing: result.dsxBatch.schemaMissing
         })
       })
     );
   } catch (error) {
     return fail(error);
   }
+}
+
+function normalizeDsxBatchJobs(value: string | null): DsxAirBatchJobKind[] | undefined {
+  if (!value) return undefined;
+  const allowed = new Set<DsxAirBatchJobKind>(["operations_report", "inventory_analysis", "marketing_seo", "memory_brief"]);
+  const jobs = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item): item is DsxAirBatchJobKind => allowed.has(item as DsxAirBatchJobKind));
+  return jobs.length ? jobs : undefined;
 }
