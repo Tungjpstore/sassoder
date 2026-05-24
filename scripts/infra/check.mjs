@@ -214,6 +214,48 @@ function validateMigrationVersions() {
   };
 }
 
+function validateVpsComposeImages() {
+  const composePath = path.join(rootDir, "infra", "vps", "docker-compose.yml");
+  if (!existsSync(composePath)) {
+    return {
+      imageCount: 0,
+      errors: [`Missing VPS Docker Compose file: ${path.relative(rootDir, composePath)}`]
+    };
+  }
+
+  const imageLines = readText(composePath)
+    .split("\n")
+    .map((line, index) => ({ line, lineNumber: index + 1 }))
+    .map(({ line, lineNumber }) => {
+      const match = line.match(/^\s*image:\s*([^#\s]+)/);
+      return match ? { image: match[1], lineNumber } : null;
+    })
+    .filter(Boolean);
+
+  const errors = imageLines.flatMap(({ image, lineNumber }) => {
+    if (image.includes("@sha256:")) return [];
+
+    const imageWithoutRegistryPort = image.replace(/^[^/]+:\d+\//, "");
+    const lastSegment = imageWithoutRegistryPort.split("/").at(-1) ?? imageWithoutRegistryPort;
+    const tagMatch = lastSegment.match(/:(.+)$/);
+    const tag = tagMatch?.[1];
+    const location = `${path.relative(rootDir, composePath)}:${lineNumber}`;
+
+    if (!tag) return [`${location} image must use an explicit immutable version tag or digest: ${image}`];
+    if (tag === "latest") return [`${location} image must not use latest: ${image}`];
+    if (!/^v?\d+\.\d+\.\d+(?:[-.][A-Za-z0-9][A-Za-z0-9._-]*)?$/.test(tag)) {
+      return [`${location} image tag must pin at least major.minor.patch: ${image}`];
+    }
+
+    return [];
+  });
+
+  return {
+    imageCount: imageLines.length,
+    errors
+  };
+}
+
 function printSection(title, lines) {
   console.log(`\n${title}`);
   for (const line of lines) {
@@ -226,6 +268,7 @@ const cronCheck = validateCronContract();
 const hygieneCheck = validateRepositoryHygiene();
 const serviceRoleCheck = validateServiceRoleBoundary();
 const migrationCheck = validateMigrationVersions();
+const composeImageCheck = validateVpsComposeImages();
 const failures = [
   ...envCheck.missingKeys.map((key) => `Missing ${key} in .env.example`),
   ...cronCheck.errors,
@@ -233,7 +276,8 @@ const failures = [
   ...migrationCheck.duplicateVersions.map((version) => `Duplicate Supabase migration version should be resolved: ${version}`),
   ...serviceRoleCheck.directAdminClientFiles.map(
     (filePath) => `Service-role admin client must stay behind a service boundary: ${filePath}`
-  )
+  ),
+  ...composeImageCheck.errors
 ];
 
 printSection("Infrastructure contract", [
@@ -242,7 +286,8 @@ printSection("Infrastructure contract", [
   `Validated ${cronCheck.cronCount} Vercel cron definitions`,
   `Scanned ${hygieneCheck.duplicateArtifacts.length} duplicate source artifacts`,
   `Validated ${migrationCheck.migrationCount} Supabase migration files with ${migrationCheck.duplicateVersions.length} duplicate versions`,
-  `Validated ${serviceRoleCheck.directAdminClientFiles.length} direct app service-role violations`
+  `Validated ${serviceRoleCheck.directAdminClientFiles.length} direct app service-role violations`,
+  `Validated ${composeImageCheck.imageCount} pinned VPS Docker images`
 ]);
 
 if (failures.length > 0) {

@@ -89,7 +89,7 @@ x-app-service: &app-service
 
 services:
   redis:
-    image: redis:7.4-alpine
+    image: redis:7.4.9-alpine
     restart: unless-stopped
     command:
       - sh
