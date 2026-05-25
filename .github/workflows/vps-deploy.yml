@@ -123,8 +123,25 @@ jobs:
           chmod +x infra/vps/scripts/*.sh
 
           APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh
+          REMOTE
+
+      - name: Post-deploy validation over SSH
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        run: |
+          ssh -i ~/.ssh/logivn_vps_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "APP_ROOT='$APP_ROOT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd "$APP_ROOT/app"
+          chmod +x infra/vps/scripts/*.sh
+
+          echo "[logivn-actions] Installing cron"
           sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh
+
+          echo "[logivn-actions] Running local VPS validation"
           APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only
+
+          echo "[logivn-actions] Running production readiness gate"
           APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only
           REMOTE
 
