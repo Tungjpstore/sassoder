@@ -122,7 +122,7 @@ jobs:
           git clean -fd
           chmod +x infra/vps/scripts/*.sh
 
-          APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh </dev/null
           REMOTE
 
       - name: Post-deploy validation over SSH
@@ -136,13 +136,13 @@ jobs:
           chmod +x infra/vps/scripts/*.sh
 
           echo "[logivn-actions] Installing cron"
-          sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh
+          sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh </dev/null
 
           echo "[logivn-actions] Running local VPS validation"
-          APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only </dev/null
 
           echo "[logivn-actions] Running production readiness gate"
-          APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only </dev/null
           REMOTE
 
       - name: Deployment summary
