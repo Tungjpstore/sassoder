@@ -109,7 +109,7 @@ reconcile_grafana_admin_password() {
   fi
 
   log "Reconciling Grafana admin password"
-  compose exec -T grafana grafana cli admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD" >/dev/null
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" exec -T grafana grafana cli admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD" >/dev/null
 }
 
 main() {
