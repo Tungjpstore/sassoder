@@ -7,8 +7,8 @@ APP_ROOT=${APP_ROOT:-/opt/logivn}
 ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
 COMPOSE_FILE="$VPS_DIR/docker-compose.yml"
 BACKUP_DIR="$APP_ROOT/backups/deploy/$(date -u +%Y%m%dT%H%M%SZ)"
-RUN_BACKUP=${LOGIVN_DEPLOY_BACKUP_ENABLED:-auto}
-BUILD_PULL=${LOGIVN_DOCKER_BUILD_PULL:-false}
+RUN_BACKUP=auto
+BUILD_PULL=false
 
 log() {
   printf '[logivn-deploy] %s\n' "$*"
@@ -22,6 +22,16 @@ require_env_file() {
     printf 'Created %s from template. Fill production secrets, then rerun deploy.\n' "$ENV_FILE" >&2
     exit 2
   fi
+}
+
+load_env() {
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+
+  RUN_BACKUP=${LOGIVN_DEPLOY_BACKUP_ENABLED:-auto}
+  BUILD_PULL=${LOGIVN_DOCKER_BUILD_PULL:-false}
 }
 
 backup_current_config() {
@@ -104,6 +114,7 @@ reconcile_grafana_admin_password() {
 
 main() {
   require_env_file
+  load_env
   backup_current_config
   backup_runtime_data
   validate_compose
