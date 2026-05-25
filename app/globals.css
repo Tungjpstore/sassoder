@@ -1358,13 +1358,15 @@ img {
 }
 
 .dashboard-settings-fullscreen {
-  width: 100dvw;
-  max-width: 100dvw;
-  background:
-    linear-gradient(180deg, rgba(255, 247, 235, 0.34), rgba(255, 247, 235, 0.2)),
-    transparent !important;
-  backdrop-filter: blur(4px) saturate(1.04);
-  -webkit-backdrop-filter: blur(4px) saturate(1.04);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  background: transparent !important;
+}
+
+.dashboard-settings-content,
+.dashboard-settings-content > * {
+  min-width: 0;
 }
 
 .dashboard-settings-dialog-body {
@@ -1374,6 +1376,40 @@ img {
 .dashboard-settings-dialog-inner,
 .dashboard-settings-dialog-inner > * {
   min-width: 0;
+}
+
+.dashboard-settings-drawer-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 254, 251, 0.91), rgba(255, 252, 246, 0.88)),
+    color-mix(in srgb, var(--surface) 88%, transparent) !important;
+  backdrop-filter: blur(22px) saturate(1.06);
+  -webkit-backdrop-filter: blur(22px) saturate(1.06);
+}
+
+.dashboard-settings-drawer-header {
+  background: rgba(255, 254, 251, 0.9) !important;
+  backdrop-filter: blur(18px) saturate(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+}
+
+.dashboard-settings-drawer-body {
+  background: linear-gradient(180deg, rgba(255, 254, 251, 0.1), rgba(255, 254, 251, 0.22));
+}
+
+.dashboard-settings-section-shell .dashboard-panel {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+}
+
+.dashboard-settings-toggle-card {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.44);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.dashboard-settings-toggle-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
 }
 
 .dashboard-data-header {

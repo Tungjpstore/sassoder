@@ -27,6 +27,8 @@
     "vps:deploy": "infra/vps/scripts/deploy.sh",
     "vps:validate": "infra/vps/scripts/validate.sh --local-only",
     "vps:backup": "infra/vps/scripts/backup.sh",
+    "telegram:vercel:sync": "node scripts/infra/sync-telegram-vercel-env.mjs",
+    "telegram:smoke:production": "node scripts/infra/telegram-production-smoke.mjs",
     "smoke:production": "node scripts/infra/production-smoke.mjs",
     "responsive:smoke": "node scripts/infra/responsive-smoke.mjs",
     "responsive:smoke:plan": "node scripts/infra/responsive-smoke.mjs --dry-run",

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Copy, RefreshCw, RotateCcw, Send, ShieldCheck, Unlink } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, BellRing, CalendarClock, CheckCircle2, Copy, CreditCard, PackageSearch, RefreshCw, RotateCcw, Send, ShieldCheck, TimerReset, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -70,6 +70,23 @@ type TelegramStatus = {
   connected: boolean;
   activeConnectionCount: number;
   failedNotificationCount: number;
+  bot: {
+    mode: "logivn_managed_bot";
+    configured: boolean;
+    username: string | null;
+    startUrl: string | null;
+    connectTtlSeconds: number;
+    canCreateBotAutomatically: boolean;
+  };
+  setup: {
+    state: "ready" | "connected" | "ready_to_connect" | "needs_attention";
+    steps: Array<{
+      key: string;
+      label: string;
+      status: "done" | "pending" | "warning";
+      detail: string;
+    }>;
+  };
   queue: TelegramQueueStatus;
   connections: TelegramConnectionView[];
   recentNotifications: TelegramNotificationView[];
@@ -79,9 +96,19 @@ type GeneratedToken = {
   token: string;
   expiresAt: string;
   startUrl: string | null;
+  startCommand: string;
 };
 
 type RequestState = "idle" | "loading" | "success" | "error";
+type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla";
+
+const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon: typeof BellRing }> = [
+  { kind: "order", label: "Đơn", Icon: BellRing },
+  { kind: "payment", label: "VietQR", Icon: CreditCard },
+  { kind: "reservation", label: "Đặt bàn", Icon: CalendarClock },
+  { kind: "inventory", label: "Kho", Icon: PackageSearch },
+  { kind: "sla", label: "SLA", Icon: TimerReset }
+];
 
 export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOption[] }) {
   const activeBranches = useMemo(() => branches.filter((branch) => branch.isActive), [branches]);
@@ -91,30 +118,60 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const [token, setToken] = useState<GeneratedToken | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("idle");
   const [retryState, setRetryState] = useState<RequestState>("idle");
+  const [testState, setTestState] = useState<RequestState>("idle");
+  const [testingKind, setTestingKind] = useState<TelegramTestKind | null>(null);
   const [retryingNotificationId, setRetryingNotificationId] = useState<string | null>(null);
   const [revokingConnectionId, setRevokingConnectionId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const tokenBaselineConnectionCount = useRef(0);
 
   useEffect(() => {
     refreshStatus();
   }, []);
 
-  async function refreshStatus({ clearNotice = true }: { clearNotice?: boolean } = {}) {
+  useEffect(() => {
+    if (!token) return;
+    const expiresAt = new Date(token.expiresAt).getTime();
+    let stopped = false;
+
+    const interval = window.setInterval(async () => {
+      if (Date.now() >= expiresAt) {
+        window.clearInterval(interval);
+        return;
+      }
+
+      const nextStatus = await refreshStatus({ clearNotice: false });
+      if (stopped || !nextStatus) return;
+      if (nextStatus.activeConnectionCount > tokenBaselineConnectionCount.current) {
+        setNotice("Đã kết nối Telegram.");
+        setToken(null);
+        window.clearInterval(interval);
+      }
+    }, 4000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [token]);
+
+  async function refreshStatus({ clearNotice = true }: { clearNotice?: boolean } = {}): Promise<TelegramStatus | null> {
     setError(null);
     if (clearNotice) setNotice(null);
     const response = await fetch("/api/admin/telegram/status", { credentials: "same-origin" }).catch(() => null);
     if (!response) {
       setError("Không đọc được trạng thái Telegram.");
-      return;
+      return null;
     }
     const body = await response.json().catch(() => null);
     if (!response.ok || body?.ok === false) {
       setError(body?.error ?? "Không đọc được trạng thái Telegram.");
-      return;
+      return null;
     }
     setStatus(body.data);
+    return body.data as TelegramStatus;
   }
 
   async function generateToken() {
@@ -143,8 +200,10 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
       return;
     }
 
+    tokenBaselineConnectionCount.current = status?.activeConnectionCount ?? 0;
     setToken(body.data);
     setRequestState("success");
+    setNotice("Link đã sẵn sàng. Mở Telegram rồi bấm Start để xác nhận kết nối.");
   }
 
   async function retryFailedNotifications(notificationId?: string) {
@@ -181,6 +240,40 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
     await refreshStatus({ clearNotice: false });
   }
 
+  async function sendTestNotification(kind: TelegramTestKind) {
+    setTestState("loading");
+    setTestingKind(kind);
+    setError(null);
+    setNotice(null);
+
+    const response = await fetch("/api/admin/telegram/test-notification", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ branchId: selectedBranchId || null, kind })
+    }).catch(() => null);
+
+    if (!response) {
+      setTestState("error");
+      setTestingKind(null);
+      setError("Không gửi được thông báo test Telegram.");
+      return;
+    }
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.ok === false) {
+      setTestState("error");
+      setTestingKind(null);
+      setError(body?.error ?? "Không gửi được thông báo test Telegram.");
+      return;
+    }
+
+    setTestState("success");
+    setTestingKind(null);
+    setNotice(`Đã đưa thông báo test ${testKindLabel(kind)} vào queue Telegram.`);
+    await refreshStatus({ clearNotice: false });
+  }
+
   async function revokeConnection(connectionId: string) {
     if (!window.confirm("Ngắt kết nối Telegram này?")) return;
     setRevokingConnectionId(connectionId);
@@ -212,8 +305,20 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
     await refreshStatus({ clearNotice: false });
   }
 
-  async function copyConnectValue() {
-    const value = token?.startUrl ?? token?.token;
+  async function copyConnectValue(value?: string | null) {
+    const copyValue = value ?? token?.startUrl ?? token?.startCommand ?? token?.token;
+    if (!copyValue) return;
+    try {
+      await navigator.clipboard.writeText(copyValue);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1800);
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  async function copyStartCommand() {
+    const value = token?.startCommand ?? (token ? `/start ${token.token}` : null);
     if (!value) return;
     try {
       await navigator.clipboard.writeText(value);
@@ -228,6 +333,8 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const failedCount = status?.failedNotificationCount ?? 0;
   const queue = status?.queue ?? null;
   const queueJobs = queue ? [...queue.deadLetterJobs, ...queue.failedJobs].slice(0, 3) : [];
+  const bot = status?.bot ?? null;
+  const setup = status?.setup ?? null;
 
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-4">
@@ -255,9 +362,53 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
         </div>
       </div>
 
+      <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn("inline-flex h-7 items-center rounded-md px-2 text-xs font-semibold", setupToneClass(setup?.state))}>
+                {setupLabel(setup?.state)}
+              </span>
+              <span className="text-xs font-semibold text-[var(--muted-foreground)]">
+                {bot?.username ?? "Bot chưa cấu hình"} · bot LogiVN
+              </span>
+            </div>
+            <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">Cấu hình tích hợp bot cho chủ quán</p>
+            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+              LogiVN cấp bot vận hành sẵn; chủ quán chỉ tạo link bảo mật, mở Telegram và xác thực tài khoản.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {bot?.startUrl ? (
+              <a href={bot.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+                <Send size={15} />
+                Mở bot
+              </a>
+            ) : null}
+            <Button type="button" onClick={generateToken} disabled={requestState === "loading" || bot?.configured === false} size="sm">
+              {requestState === "loading" ? <RefreshCw size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+              Tạo link tích hợp
+            </Button>
+          </div>
+        </div>
+        {setup?.steps?.length ? (
+          <div className="mt-3 grid gap-2 md:grid-cols-5">
+            {setup.steps.map((step) => (
+              <div key={step.key} className="rounded-md border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className={cn("h-2 w-2 rounded-full", stepDotClass(step.status))} />
+                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{step.label}</span>
+                </div>
+                <p className="mt-1 truncate text-[11px] font-medium text-[var(--muted-foreground)]">{step.detail}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
       <div className="mt-4 grid gap-3 md:grid-cols-5">
         <StatusTile label="Kết nối" value={activeConnections.length || "0"} tone={activeConnections.length > 0 ? "success" : "neutral"} />
-        <StatusTile label="Delivery lỗi" value={failedCount} tone={failedCount > 0 ? "warning" : "success"} />
+            <StatusTile label="Lỗi gửi" value={failedCount} tone={failedCount > 0 ? "warning" : "success"} />
         <StatusTile
           label="Queue"
           value={queue?.available ? queue.backlog : "off"}
@@ -287,9 +438,9 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
             ))}
           </select>
         </label>
-        <Button type="button" onClick={generateToken} disabled={requestState === "loading"} className="self-end">
+        <Button type="button" onClick={generateToken} disabled={requestState === "loading" || bot?.configured === false} className="self-end">
           {requestState === "loading" ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-          Tạo link
+          Tạo link tích hợp
         </Button>
       </div>
 
@@ -298,11 +449,16 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="truncate font-mono text-xs font-semibold text-[var(--foreground)]">{token.startUrl ?? `/start ${token.token}`}</p>
+              <p className="mt-1 break-all text-xs font-medium text-[var(--muted-foreground)]">Trong Telegram bấm Start. Nếu chưa phản hồi, dán lệnh: {token.startCommand}</p>
               <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Hết hạn {formatDateTime(token.expiresAt)}</p>
             </div>
             <div className="flex shrink-0 gap-2">
-              <Button type="button" variant="secondary" size="icon" aria-label="Copy link Telegram" onClick={copyConnectValue}>
+              <Button type="button" variant="secondary" size="icon" aria-label="Copy link Telegram" onClick={() => copyConnectValue()}>
                 <Copy size={16} />
+              </Button>
+              <Button type="button" variant="secondary" size="sm" onClick={copyStartCommand}>
+                <Copy size={15} />
+                Copy /start
               </Button>
               {token.startUrl ? (
                 <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-[#FFF7EB]">
@@ -316,6 +472,30 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
           {copyState === "failed" ? <p className="mt-2 text-xs font-semibold text-[var(--accent-strong)]">Không copy được, dùng chuỗi trên màn hình.</p> : null}
         </div>
       ) : null}
+
+      <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[var(--foreground)]">Kiểm thử nhanh</p>
+            <p className="text-xs font-medium text-[var(--muted-foreground)]">{activeConnections.length > 0 ? "Queue Telegram thật đã sẵn sàng" : "Chưa có kết nối hoạt động"}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+            {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
+              <Button
+                key={kind}
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => sendTestNotification(kind)}
+                disabled={activeConnections.length === 0 || testState === "loading"}
+              >
+                {testingKind === kind ? <RefreshCw size={15} className="animate-spin" /> : <Icon size={15} />}
+                {label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {error ? (
         <div className="mt-4 flex gap-2 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
@@ -416,6 +596,30 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
 
 function isRetryableStatus(status: string) {
   return status === "failed" || status === "rate_limited";
+}
+
+function testKindLabel(kind: TelegramTestKind) {
+  const action = TELEGRAM_TEST_ACTIONS.find((item) => item.kind === kind);
+  return action?.label ?? "Telegram";
+}
+
+function setupLabel(state?: TelegramStatus["setup"]["state"]) {
+  if (state === "ready") return "Sẵn sàng";
+  if (state === "connected") return "Đã kết nối";
+  if (state === "ready_to_connect") return "Chờ xác thực";
+  return "Cần cấu hình";
+}
+
+function setupToneClass(state?: TelegramStatus["setup"]["state"]) {
+  if (state === "ready" || state === "connected") return "bg-[var(--primary-soft)] text-[var(--primary)]";
+  if (state === "ready_to_connect") return "bg-[var(--soft-surface)] text-[var(--foreground)]";
+  return "bg-[var(--accent-soft)] text-[var(--accent-strong)]";
+}
+
+function stepDotClass(status: "done" | "pending" | "warning") {
+  if (status === "done") return "bg-[var(--primary)]";
+  if (status === "warning") return "bg-[var(--accent-strong)]";
+  return "bg-[var(--muted-foreground)]";
 }
 
 function StatusTile({ label, value, tone }: { label: string; value: string | number; tone: "success" | "warning" | "neutral" }) {

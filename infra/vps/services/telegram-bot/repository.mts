@@ -220,7 +220,9 @@ export async function claimTelegramSession(token: string, telegramUserId: number
     throw new Error("session_not_authorized");
   }
 
-  await deleteTelegramSession(session.id);
+  const consumed = await consumeTelegramSession(session.id);
+  if (!consumed) throw new Error("session_replayed");
+
   await recordTelegramAudit({
     restaurantId: session.restaurant_id,
     branchId: session.branch_id,
@@ -344,15 +346,21 @@ export async function claimCallbackAction(token: string, telegramUserId: number)
 
 export async function connectTelegramAccount(token: string, identity: TelegramIdentity) {
   assertSignedToken(token, connectSecret());
+  const now = new Date().toISOString();
   const { data: connectToken, error } = await db()
     .from("telegram_connection_tokens")
-    .select("*")
+    .update({
+      consumed_at: now,
+      consumed_by_telegram_user_id: identity.telegramUserId
+    })
     .eq("token_hash", tokenHash(token))
+    .is("consumed_at", null)
+    .is("revoked_at", null)
+    .gt("expires_at", now)
+    .select("*")
     .maybeSingle();
   if (error) throw error;
-  if (!connectToken) throw new Error("connect_token_not_found");
-  if (connectToken.consumed_at || connectToken.revoked_at) throw new Error("connect_token_used");
-  if (new Date(connectToken.expires_at).getTime() <= Date.now()) throw new Error("connect_token_expired");
+  if (!connectToken) throw new Error("connect_token_used_or_expired");
 
   const existing = await getConnectionForTelegramUser(connectToken.restaurant_id, identity.telegramUserId);
   if (existing && existing.user_id !== connectToken.user_id) throw new Error("telegram_user_already_connected");
@@ -369,8 +377,10 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
     role: connectToken.role ?? "STAFF",
     permissions: connectToken.permissions ?? [],
     status: "active",
-    connected_at: new Date().toISOString(),
-    last_seen_at: new Date().toISOString()
+    connected_at: now,
+    last_seen_at: now,
+    revoked_at: null,
+    updated_at: now
   };
 
   const { data: connection, error: upsertError } = await db()
@@ -379,13 +389,6 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
     .select("*")
     .single();
   if (upsertError) throw upsertError;
-
-  const { error: consumeError } = await db()
-    .from("telegram_connection_tokens")
-    .update({ consumed_at: new Date().toISOString(), consumed_by_telegram_user_id: identity.telegramUserId })
-    .eq("token_hash", tokenHash(token))
-    .is("consumed_at", null);
-  if (consumeError) throw consumeError;
 
   await recordTelegramAudit({
     restaurantId: connectToken.restaurant_id,
@@ -398,7 +401,8 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
     metadata: { username: identity.username ?? null }
   });
 
-  return normalizeConnection(connection);
+  const connected = await getConnectionByIdForTelegramUser(connectToken.restaurant_id, connection.id, identity.telegramUserId);
+  return connected ?? normalizeConnection(connection);
 }
 
 export async function touchConnection(restaurantId: string, telegramUserId: number) {
@@ -478,6 +482,12 @@ async function expireCallbackAction(id: string) {
 async function deleteTelegramSession(id: string) {
   const { error } = await db().from("telegram_sessions").delete().eq("id", id);
   if (error) throw error;
+}
+
+async function consumeTelegramSession(id: string) {
+  const { data, error } = await db().from("telegram_sessions").delete().eq("id", id).select("id").maybeSingle();
+  if (error) throw error;
+  return Boolean(data);
 }
 
 function normalizeConnection(row: Record<string, unknown>): TelegramConnection {

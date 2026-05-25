@@ -6,11 +6,13 @@ const SIGNATURE_LENGTH = 12;
 export function createSignedToken(secret: string) {
   const nonce = randomBytes(18).toString("base64url");
   const signature = signNonce(nonce, secret);
-  return `${TOKEN_PREFIX}_${nonce}.${signature}`;
+  return `${TOKEN_PREFIX}_${nonce}${signature}`;
 }
 
 export function assertSignedToken(token: string, secret: string) {
-  const match = token.match(/^lg1_([A-Za-z0-9_-]{20,32})\.([A-Za-z0-9_-]{8,24})$/);
+  const match =
+    token.match(/^lg1_([A-Za-z0-9_-]{24})([A-Za-z0-9_-]{12})$/) ??
+    token.match(/^lg1_([A-Za-z0-9_-]{20,32})\.([A-Za-z0-9_-]{8,24})$/);
   if (!match) throw new Error("invalid_token_format");
 
   const [, nonce, signature] = match;
