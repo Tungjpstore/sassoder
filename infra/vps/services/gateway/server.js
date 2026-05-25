@@ -56,6 +56,8 @@ const eventSchema = z
       "reservation.rescheduled",
       "inventory.low",
       "staff.checked_in",
+      "staff.request_created",
+      "staff.request_reviewed",
       "service_request.created",
       "service_request.resolved",
       "platform.alert",

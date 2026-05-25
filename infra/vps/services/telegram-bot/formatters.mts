@@ -102,6 +102,19 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     };
   }
 
+  if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") {
+    const reviewed = event.type === "staff.request_reviewed";
+    const title = reviewed ? staffReviewTitle(event.staffRequest.decision) : staffRequestTitle(event.staffRequest.requestType);
+    const staff = event.staffRequest.staffName ? `\n👤 ${escapeHtml(event.staffRequest.staffName)}` : "";
+    const reason = event.staffRequest.reason ? `\n💬 ${escapeHtml(event.staffRequest.reason)}` : "";
+    const detail = staffRequestDetail(event.staffRequest.requestType, event.staffRequest.requestedPayload ?? {});
+    return {
+      title: testTitle(test, title),
+      body: `${testPrefix(test)}${reviewed ? "✅" : "🧑‍🍳"} <b>${escapeHtml(title)}</b>${staff}${detail}${reason}`,
+      viewPath: viewPath(test, `/dashboard/staff?approvalId=${event.staffRequest.id}`)
+    };
+  }
+
   if (event.type === "platform.alert") {
     const title = `${alertIcon(event.alert.severity)} ${event.alert.title}`;
     const summary = event.alert.summary ? `\n${escapeHtml(event.alert.summary)}` : "";
@@ -180,6 +193,57 @@ function deliveryStatusLabel(value: string) {
     rejected: "từ chối giao"
   };
   return labels[value] ?? value;
+}
+
+function staffRequestTitle(value: string) {
+  if (value === "leave_request") return "Nhân sự xin nghỉ";
+  if (value === "shift_swap") return "Nhân sự xin đổi ca";
+  if (value === "overtime") return "Nhân sự xin tăng ca";
+  if (value === "outside_location") return "Cần duyệt chấm công GPS";
+  if (value === "shift_override") return "Cần duyệt ca đột xuất";
+  if (value === "manual_clock_in") return "Cần duyệt chấm công tay";
+  if (value === "device_restriction") return "Cần duyệt thiết bị";
+  return "Yêu cầu nhân sự";
+}
+
+function staffReviewTitle(decision?: string) {
+  if (decision === "approved") return "Yêu cầu nhân sự đã duyệt";
+  if (decision === "rejected") return "Yêu cầu nhân sự bị từ chối";
+  return "Yêu cầu nhân sự đã xử lý";
+}
+
+function staffRequestDetail(requestType: string, payload: Record<string, unknown>) {
+  if (requestType === "leave_request") {
+    const fromDate = payloadText(payload, "fromDate");
+    const toDate = payloadText(payload, "toDate") ?? fromDate;
+    const leaveTypeLabel = payloadText(payload, "leaveTypeLabel");
+    return fromDate ? `\n📅 ${escapeHtml(fromDate === toDate ? fromDate : `${fromDate} → ${toDate}`)}${leaveTypeLabel ? ` · ${escapeHtml(leaveTypeLabel)}` : ""}` : "";
+  }
+  if (requestType === "shift_swap") {
+    const shiftName = payloadText(payload, "shiftName");
+    const scheduledDate = payloadText(payload, "scheduledDate");
+    return shiftName || scheduledDate ? `\n🔁 ${escapeHtml([shiftName, scheduledDate].filter(Boolean).join(" · "))}` : "";
+  }
+  if (requestType === "overtime") {
+    const overtimeDate = payloadText(payload, "overtimeDate") ?? payloadText(payload, "fromDate");
+    const overtimeMinutes = payloadNumber(payload, "overtimeMinutes");
+    return overtimeDate || overtimeMinutes ? `\n⏱️ ${escapeHtml([overtimeDate, overtimeMinutes ? `${overtimeMinutes} phút` : null].filter(Boolean).join(" · "))}` : "";
+  }
+  const distanceMeters = payloadNumber(payload, "distanceMeters");
+  if (distanceMeters !== null) return `\n📍 Lệch ${distanceMeters}m`;
+  return "";
+}
+
+function payloadText(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function payloadNumber(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
 }
 
 function alertIcon(severity: string) {

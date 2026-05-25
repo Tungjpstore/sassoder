@@ -5,6 +5,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
+import { publishOperationalEvent } from "@/services/operational-event-bus";
 import type { z } from "zod";
 import type { staffOperationalRequestSchema } from "@/lib/validators";
 
@@ -497,6 +498,30 @@ export async function createStaffOperationalRequest({
       }
     })
   ]);
+
+  await publishOperationalEvent({
+    type: "staff.request_created",
+    eventId: `staff.request_created:${result.data.id}`,
+    restaurantId: session.restaurantId,
+    branchId: draft.branchId,
+    source: "staff",
+    actor: { type: session.role === "ADMIN" ? "merchant" : "staff", userId: session.userId, role: session.role },
+    staffRequest: {
+      id: result.data.id,
+      requestType: draft.requestType,
+      staffMemberId: staff.id,
+      staffName: staff.full_name,
+      status: "pending",
+      reason: draft.reason,
+      requestedPayload: draft.requestedPayload
+    }
+  }).catch((error) => {
+    console.error("[staff-request-service] telegram staff request event failed", {
+      restaurantId: session.restaurantId,
+      requestId: result.data.id,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  });
 
   return result.data as {
     id: string;

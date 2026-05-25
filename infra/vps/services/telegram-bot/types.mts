@@ -9,24 +9,30 @@ const baseEventSchema = z.object({
   occurredAt: z.string().datetime().optional(),
   actor: z
     .object({
-      type: z.enum(["customer", "merchant", "telegram", "system", "dev"]),
+      type: z.enum(["customer", "merchant", "staff", "telegram", "system", "dev"]),
       userId: z.string().uuid().nullable().optional(),
       role: z.string().max(80).nullable().optional(),
       permissions: z.array(z.string().max(120)).max(120).optional()
     })
     .optional(),
-  source: z.enum(["customer_qr", "online_ordering", "dashboard", "telegram", "system", "devops"]).optional()
+  source: z.enum(["customer_qr", "online_ordering", "dashboard", "staff", "telegram", "system", "devops"]).optional()
 });
 
 export const telegramActionSchema = z.enum([
   "order.confirm",
   "order.cancel",
   "order.done",
+  "delivery.accept",
+  "delivery.out_for_delivery",
+  "delivery.delivered",
+  "delivery.reject",
   "payment.confirm",
   "payment.amount_mismatch",
   "service_request.resolve",
   "reservation.confirm",
-  "reservation.reject"
+  "reservation.reject",
+  "staff_request.approve",
+  "staff_request.reject"
 ]);
 
 export type TelegramActionType = z.infer<typeof telegramActionSchema>;
@@ -35,11 +41,17 @@ export const requiredPermissionByAction: Record<TelegramActionType, string> = {
   "order.confirm": "orders.update",
   "order.cancel": "orders.cancel",
   "order.done": "orders.update",
+  "delivery.accept": "orders.update",
+  "delivery.out_for_delivery": "orders.update",
+  "delivery.delivered": "orders.update",
+  "delivery.reject": "orders.update",
   "payment.confirm": "payments.confirm",
   "payment.amount_mismatch": "payments.confirm",
   "service_request.resolve": "orders.update",
   "reservation.confirm": "reservations.manage",
-  "reservation.reject": "reservations.manage"
+  "reservation.reject": "reservations.manage",
+  "staff_request.approve": "approvals.review",
+  "staff_request.reject": "approvals.review"
 };
 
 export const orderCreatedEventSchema = baseEventSchema.extend({
@@ -182,6 +194,36 @@ export const serviceRequestResolvedEventSchema = serviceRequestCreatedEventSchem
   type: z.literal("service_request.resolved")
 });
 
+const staffRequestPayloadSchema = z.object({
+  id: z.string().uuid(),
+  requestType: z.enum([
+    "outside_location",
+    "attendance_edit",
+    "overtime",
+    "shift_override",
+    "manual_clock_in",
+    "leave_request",
+    "shift_swap",
+    "device_restriction"
+  ]),
+  staffMemberId: z.string().uuid(),
+  staffName: z.string().max(120).nullable().optional(),
+  status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
+  decision: z.enum(["approved", "rejected"]).optional(),
+  reason: z.string().max(500).nullable().optional(),
+  requestedPayload: z.record(z.string(), z.unknown()).nullable().optional()
+});
+
+export const staffRequestCreatedEventSchema = baseEventSchema.extend({
+  type: z.literal("staff.request_created"),
+  staffRequest: staffRequestPayloadSchema
+});
+
+export const staffRequestReviewedEventSchema = baseEventSchema.extend({
+  type: z.literal("staff.request_reviewed"),
+  staffRequest: staffRequestPayloadSchema
+});
+
 export const platformAlertEventSchema = baseEventSchema.extend({
   type: z.literal("platform.alert"),
   alert: z.object({
@@ -223,6 +265,8 @@ export const telegramNotificationJobSchema = z.discriminatedUnion("type", [
   slaWarningEventSchema,
   serviceRequestCreatedEventSchema,
   serviceRequestResolvedEventSchema,
+  staffRequestCreatedEventSchema,
+  staffRequestReviewedEventSchema,
   platformAlertEventSchema,
   directTelegramMessageSchema
 ]);

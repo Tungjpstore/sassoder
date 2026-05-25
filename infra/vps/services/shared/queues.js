@@ -103,6 +103,14 @@ export const eventRoutes = {
     route("staff.attendance", "staff.checked_in", "normal"),
     route("staff.notifications", "staff.checked_in", "low")
   ],
+  "staff.request_created": [
+    route("staff.requests", "staff.request_created", "high"),
+    route("telegram.notifications", "staff.request_created", "high")
+  ],
+  "staff.request_reviewed": [
+    route("staff.notifications", "staff.request_reviewed", "normal"),
+    route("telegram.notifications", "staff.request_reviewed", "low")
+  ],
   "sla.warning": [
     route("orders.sla", "sla.warning", "critical"),
     route("telegram.notifications", "sla.warning", "critical")

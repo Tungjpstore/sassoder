@@ -67,7 +67,8 @@ await check("Supabase telegram tables", async () => {
     ["telegram_notifications", "id"],
     ["telegram_callback_actions", "id"],
     ["telegram_audit_logs", "id"],
-    ["telegram_rate_limits", "id"]
+    ["telegram_rate_limits", "id"],
+    ["operational_event_outbox", "id"]
   ];
   for (const [table, column] of tables) {
     await checkSupabaseRestTable(table, column);

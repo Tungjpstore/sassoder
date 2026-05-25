@@ -16,7 +16,9 @@ import {
   Send,
   ShieldCheck,
   TimerReset,
-  Unlink
+  Truck,
+  Unlink,
+  Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -116,7 +118,7 @@ type GeneratedToken = {
 };
 
 type RequestState = "idle" | "loading" | "success" | "error";
-type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla" | "service";
+type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla" | "service" | "staff";
 
 const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon: typeof BellRing }> = [
   { kind: "order", label: "Đơn", Icon: BellRing },
@@ -124,7 +126,16 @@ const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon
   { kind: "reservation", label: "Đặt bàn", Icon: CalendarClock },
   { kind: "inventory", label: "Kho", Icon: PackageSearch },
   { kind: "sla", label: "SLA", Icon: TimerReset },
-  { kind: "service", label: "Gọi phục vụ", Icon: Send }
+  { kind: "service", label: "Gọi phục vụ", Icon: Send },
+  { kind: "staff", label: "Nhân sự", Icon: Users }
+];
+
+const TELEGRAM_AUTOMATION_RULES = [
+  { label: "Đơn mới", detail: "Gửi card xác nhận cho người có quyền xử lý đơn", Icon: BellRing },
+  { label: "VietQR", detail: "Nhắc thu ngân khi có thanh toán chờ đối soát", Icon: CreditCard },
+  { label: "Đặt bàn", detail: "Đẩy cọc, xác nhận, từ chối và no-show vào Telegram", Icon: CalendarClock },
+  { label: "Giao hàng", detail: "Theo dõi nhận giao, xuất phát và hoàn tất giao hàng", Icon: Truck },
+  { label: "Nhân sự", detail: "Duyệt nghỉ phép, đổi ca, tăng ca và chấm công lệch vị trí", Icon: Users }
 ];
 
 const TELEGRAM_SETUP_STEPS = [
@@ -539,39 +550,62 @@ function ConnectedFlow({
   testingKind: TelegramTestKind | null;
 }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-      <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-4">
-        <p className="text-sm font-semibold text-[var(--primary)]">Đang hoạt động</p>
-        <p className="mt-2 text-xl font-semibold text-[var(--foreground)]">{activeConnectionCount} kết nối Telegram</p>
-        <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
-          {primaryConnection ? `${primaryConnection.displayName}${primaryConnection.username ? ` @${primaryConnection.username}` : ""}` : "Sẵn sàng nhận cảnh báo"}
-        </p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {botStartUrl ? (
-            <a href={botStartUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
-              <ExternalLink size={15} />
-              Mở bot
-            </a>
-          ) : null}
+    <div className="grid gap-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-4">
+          <p className="text-sm font-semibold text-[var(--primary)]">Đang hoạt động</p>
+          <p className="mt-2 text-xl font-semibold text-[var(--foreground)]">{activeConnectionCount} kết nối Telegram</p>
+          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
+            {primaryConnection ? `${primaryConnection.displayName}${primaryConnection.username ? ` @${primaryConnection.username}` : ""}` : "Sẵn sàng nhận cảnh báo"}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {botStartUrl ? (
+              <a href={botStartUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+                <ExternalLink size={15} />
+                Mở bot
+              </a>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Gửi thử một tín hiệu</p>
+          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chọn một flow vận hành để kiểm tra card Telegram thật.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
+              <Button
+                key={kind}
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => sendTestNotification(kind)}
+                disabled={testState === "loading"}
+              >
+                {testingKind === kind ? <RefreshCw size={15} className="animate-spin" /> : <Icon size={15} />}
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-        <p className="text-sm font-semibold text-[var(--foreground)]">Gửi thử một tín hiệu</p>
-        <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chọn đúng loại cảnh báo mà chủ quán sẽ nhận trong giờ vận hành.</p>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-          {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
-            <Button
-              key={kind}
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => sendTestNotification(kind)}
-              disabled={testState === "loading"}
-            >
-              {testingKind === kind ? <RefreshCw size={15} className="animate-spin" /> : <Icon size={15} />}
-              {label}
-            </Button>
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm font-semibold text-[var(--foreground)]">Luồng tự động</p>
+          <span className="inline-flex h-8 items-center gap-2 rounded-lg bg-[var(--primary-soft)] px-3 text-xs font-semibold text-[var(--primary)]">
+            <CheckCircle2 size={14} />
+            Đang bảo vệ vận hành
+          </span>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-5">
+          {TELEGRAM_AUTOMATION_RULES.map(({ label, detail, Icon }) => (
+            <div key={label} className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+              <div className="flex items-center gap-2">
+                <Icon size={15} className="shrink-0 text-[var(--primary)]" />
+                <p className="truncate text-sm font-semibold text-[var(--foreground)]">{label}</p>
+              </div>
+              <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{detail}</p>
+            </div>
           ))}
         </div>
       </div>

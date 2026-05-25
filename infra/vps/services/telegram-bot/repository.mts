@@ -87,6 +87,81 @@ export async function getTelegramConnectionsForUser(telegramUserId: number): Pro
   return (data ?? []).map(normalizeConnection);
 }
 
+export async function getTelegramOpsBoard(connection: TelegramConnection) {
+  const restaurantId = connection.restaurant_id;
+  const branchId = connection.branch_id;
+  const today = vietnamDayWindow();
+  const now = new Date().toISOString();
+
+  const [
+    openOrders,
+    pendingOrders,
+    lateOrders,
+    waitingPayments,
+    openDeliveries,
+    todayReservations,
+    depositReservations,
+    openServiceRequests,
+    pendingStaffRequests,
+    failedTelegram
+  ] = await Promise.all([
+    countRows(branchScoped(db().from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["pending", "ordering", "completed"]), branchId)),
+    countRows(branchScoped(db().from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).eq("status", "pending"), branchId)),
+    countRows(branchScoped(db().from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["pending", "ordering"]).lt("service_due_at", now), branchId)),
+    countRows(branchScoped(db().from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("payment_status", ["waiting_payment", "waiting_confirm"]), branchId)),
+    countRows(
+      branchScoped(
+        db()
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("restaurant_id", restaurantId)
+          .eq("fulfillment_type", "DELIVERY")
+          .in("delivery_status", ["requested", "accepted", "out_for_delivery"]),
+        branchId
+      )
+    ),
+    countRows(
+      db()
+        .from("reservations")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .gte("starts_at", today.start)
+        .lt("starts_at", today.end)
+        .in("status", ["holding", "waiting_deposit_confirm", "confirmed", "checked_in", "seated"])
+    ),
+    countRows(
+      db()
+        .from("reservations")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .in("deposit_status", ["waiting_payment", "waiting_confirm"])
+        .in("status", ["holding", "waiting_deposit_confirm"])
+    ),
+    countRows(db().from("service_requests").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["open", "acknowledged"])),
+    countRows(branchScoped(db().from("attendance_approval_requests").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).eq("status", "pending"), branchId)),
+    countRows(db().from("telegram_notifications").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["failed", "rate_limited"]))
+  ]);
+
+  return {
+    restaurantName: connection.restaurant_name,
+    branchName: connection.branch_name,
+    scopeLabel: connection.branch_name ?? (branchId ? `CN ${shortId(branchId)}` : "Toàn quán"),
+    generatedAt: new Date().toISOString(),
+    counts: {
+      openOrders,
+      pendingOrders,
+      lateOrders,
+      waitingPayments,
+      openDeliveries,
+      todayReservations,
+      depositReservations,
+      openServiceRequests,
+      pendingStaffRequests,
+      failedTelegram
+    }
+  };
+}
+
 export async function getOrCreateNotification(input: NotificationInput) {
   const row = {
     event_id: input.eventId,
@@ -511,6 +586,38 @@ function normalizeConnection(row: Record<string, unknown>): TelegramConnection {
 
 function db() {
   return supabaseAdmin() as any;
+}
+
+function branchScoped(query: any, branchId?: string | null) {
+  return branchId ? query.eq("branch_id", branchId) : query;
+}
+
+async function countRows(query: any) {
+  const { count, error } = await query;
+  if (error) return 0;
+  return Number(count ?? 0);
+}
+
+function vietnamDayWindow() {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  const startMs = Date.parse(`${year}-${month}-${day}T00:00:00+07:00`);
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(startMs + 86_400_000).toISOString()
+  };
+}
+
+function shortId(id: string) {
+  return id.replaceAll("-", "").slice(0, 6).toUpperCase();
 }
 
 function callbackSecret() {

@@ -121,7 +121,7 @@ await request("/events", {
     eventId,
     tenantId,
     order: {
-      id: "order-smoke",
+      id: "00000000-0000-4000-8000-000000000102",
       displayCode: "SMOKE-01",
       itemCount: 2,
       total: 120000,

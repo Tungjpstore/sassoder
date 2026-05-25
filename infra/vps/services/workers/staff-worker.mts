@@ -10,7 +10,9 @@ export function createStaffWorkers(connection: Redis, logger: any) {
       processor: async (job) => {
         const serviceRequest =
           typeof job.data.serviceRequest === "object" && job.data.serviceRequest ? (job.data.serviceRequest as Record<string, unknown>) : {};
-        return withTenantResourceLock(connection, job, "staff", resourceId(job, serviceRequest.id, job.data.staffId, job.data.userId), async () => ({
+        const staffRequest =
+          typeof job.data.staffRequest === "object" && job.data.staffRequest ? (job.data.staffRequest as Record<string, unknown>) : {};
+        return withTenantResourceLock(connection, job, "staff", resourceId(job, staffRequest.id, serviceRequest.id, job.data.staffId, job.data.userId), async () => ({
           processed: true,
           queueName,
           tenantId: job.data.tenantId

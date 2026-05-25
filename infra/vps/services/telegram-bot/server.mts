@@ -22,6 +22,7 @@ import {
   createTelegramSession,
   getOrCreateNotification,
   getTelegramConnectionsForUser,
+  getTelegramOpsBoard,
   getTelegramRecipients,
   hasPermission,
   markNotificationFailed,
@@ -62,7 +63,7 @@ const AI_OPS_COMMANDS = {
     prompt: "Kiểm tra tồn kho hiện tại: nguyên liệu thấp, recipe coverage, cảnh báo kho và việc cần nhập trước. Chỉ dùng dữ liệu thật."
   }
 } as const;
-const TELEGRAM_MENU_ACTIONS = ["menu", "help", "status", "doanhthu", "tinhhinh", "tonkho"] as const;
+const TELEGRAM_MENU_ACTIONS = ["menu", "help", "status", "ops_board", "hot_orders", "payments", "reservations", "staff", "doanhthu", "tinhhinh", "tonkho"] as const;
 type AiOpsCommand = keyof typeof AI_OPS_COMMANDS | "chat";
 type TelegramMenuAction = (typeof TELEGRAM_MENU_ACTIONS)[number];
 type AiOpsRequestSpec = {
@@ -111,6 +112,10 @@ if (bot) {
 
   bot.command("status", async (ctx) => {
     await replyWithConnectionStatus(ctx);
+  });
+
+  bot.command("ops", async (ctx) => {
+    await replyWithOpsBoard(ctx);
   });
 
   for (const command of Object.keys(AI_OPS_COMMANDS) as Array<keyof typeof AI_OPS_COMMANDS>) {
@@ -525,6 +530,7 @@ async function configureTelegramCommands() {
   if (!bot) return;
   await bot.api.setMyCommands([
     { command: "menu", description: "Mở trung tâm vận hành" },
+    { command: "ops", description: "Xem bảng điều hành realtime" },
     { command: "status", description: "Xem kết nối và phạm vi quyền" },
     { command: "tinhhinh", description: "Tóm tắt vận hành hiện tại" },
     { command: "doanhthu", description: "Tóm tắt doanh thu" },
@@ -551,14 +557,19 @@ async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
   }
 
   keyboard
-    .text("Tình hình", await signedMenuCallback(connections[0], "tinhhinh"))
-    .text("Doanh thu", await signedMenuCallback(connections[0], "doanhthu"))
+    .text("Hôm nay", await signedMenuCallback(connections[0], "ops_board"))
+    .text("Đơn nóng", await signedMenuCallback(connections[0], "hot_orders"))
+    .row()
+    .text("Thanh toán", await signedMenuCallback(connections[0], "payments"))
+    .text("Đặt bàn", await signedMenuCallback(connections[0], "reservations"))
+    .row()
+    .text("Nhân sự", await signedMenuCallback(connections[0], "staff"))
+    .text("AI Ops", await signedMenuCallback(connections[0], "tinhhinh"))
     .row()
     .text("Tồn kho", await signedMenuCallback(connections[0], "tonkho"))
     .text("Kết nối", await signedMenuCallback(connections[0], "status"))
     .row()
-    .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"))
-    .text("Trợ giúp", await signedMenuCallback(connections[0], "help"));
+    .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"));
 
   const connectionSummary = connections
     .slice(0, 3)
@@ -566,7 +577,7 @@ async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
     .join("\n");
   const extra = connections.length > 3 ? `\n+${connections.length - 3} kết nối khác` : "";
 
-  await ctx.reply(compactTelegramText(`${headline}\n\n${connectionSummary}${extra}`), {
+  await ctx.reply(compactTelegramText(`${headline}\n\n${connectionSummary}${extra}\n\nChọn việc cần xử lý.`), {
     reply_markup: keyboard
   });
 }
@@ -582,6 +593,7 @@ async function replyWithHelp(ctx: Context) {
       "LogiVN Ops Bot",
       "",
       "/menu - thao tác nhanh",
+      "/ops - bảng điều hành realtime",
       "/status - kết nối hiện tại",
       "/tinhhinh - tình hình vận hành",
       "/doanhthu - doanh thu",
@@ -615,7 +627,7 @@ async function replyWithConnectionStatus(ctx: Context) {
   await ctx.reply(compactTelegramText(`Kết nối đang hoạt động\n\n${rows.join("\n")}`), { reply_markup: keyboard });
 }
 
-async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction) {
+async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction, connection?: TelegramConnection) {
   if (action === "menu") {
     await replyWithOpsMenu(ctx);
     return;
@@ -628,8 +640,129 @@ async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction
     await replyWithConnectionStatus(ctx);
     return;
   }
+  if (action === "ops_board") {
+    await replyWithOpsBoard(ctx, connection);
+    return;
+  }
+  if (action === "hot_orders" || action === "payments" || action === "reservations" || action === "staff") {
+    await replyWithOpsSlice(ctx, action, connection);
+    return;
+  }
 
   await handleAiOpsCommand(ctx, action, "");
+}
+
+async function replyWithOpsBoard(ctx: Context, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+
+  const board = await getTelegramOpsBoard(connection);
+  const counts = board.counts;
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedMenuCallback(connection, "ops_board"))
+    .text("AI tóm tắt", await signedMenuCallback(connection, "tinhhinh"))
+    .row()
+    .text("Đơn nóng", await signedMenuCallback(connection, "hot_orders"))
+    .text("Thanh toán", await signedMenuCallback(connection, "payments"))
+    .row()
+    .url("Mở Dashboard", absoluteAppUrl("/dashboard"));
+
+  await ctx.reply(
+    compactTelegramText(
+      [
+        `Hôm nay · ${board.scopeLabel}`,
+        "",
+        `Đơn mở: ${counts.openOrders}`,
+        `Cần xác nhận: ${counts.pendingOrders} · SLA trễ: ${counts.lateOrders}`,
+        `VietQR chờ: ${counts.waitingPayments}`,
+        `Giao hàng mở: ${counts.openDeliveries}`,
+        `Đặt bàn hôm nay: ${counts.todayReservations} · Chờ cọc: ${counts.depositReservations}`,
+        `Gọi phục vụ: ${counts.openServiceRequests}`,
+        `Nhân sự chờ duyệt: ${counts.pendingStaffRequests}`,
+        counts.failedTelegram > 0 ? `Telegram lỗi gửi: ${counts.failedTelegram}` : "Telegram ổn định"
+      ].join("\n")
+    ),
+    { reply_markup: keyboard }
+  );
+}
+
+async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+
+  const board = await getTelegramOpsBoard(connection);
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedMenuCallback(connection, action))
+    .text("Tổng quan", await signedMenuCallback(connection, "ops_board"))
+    .row()
+    .url("Mở Dashboard", absoluteAppUrl(routeForOpsSlice(action)));
+
+  await ctx.reply(formatOpsSlice(action, board), { reply_markup: keyboard });
+}
+
+async function firstConnectionForContext(ctx: Context) {
+  if (!ctx.from) return null;
+  const connections = await getTelegramConnectionsForUser(ctx.from.id);
+  return connections[0] ?? null;
+}
+
+function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">, board: Awaited<ReturnType<typeof getTelegramOpsBoard>>) {
+  const counts = board.counts;
+  if (action === "hot_orders") {
+    return compactTelegramText(
+      [
+        `Đơn nóng · ${board.scopeLabel}`,
+        "",
+        `Cần xác nhận: ${counts.pendingOrders}`,
+        `Trễ SLA: ${counts.lateOrders}`,
+        `Giao hàng mở: ${counts.openDeliveries}`,
+        "",
+        "Ưu tiên xử lý các card mới nhất trong chat hoặc mở Dashboard."
+      ].join("\n")
+    );
+  }
+  if (action === "payments") {
+    return compactTelegramText(
+      [
+        `Thanh toán · ${board.scopeLabel}`,
+        "",
+        `VietQR/chờ đối soát: ${counts.waitingPayments}`,
+        counts.waitingPayments > 0 ? "Mở từng card VietQR để xác nhận hoặc đánh dấu sai số tiền." : "Không có thanh toán cần xử lý."
+      ].join("\n")
+    );
+  }
+  if (action === "reservations") {
+    return compactTelegramText(
+      [
+        `Đặt bàn · ${board.scopeLabel}`,
+        "",
+        `Hôm nay: ${counts.todayReservations}`,
+        `Chờ cọc/xác nhận: ${counts.depositReservations}`,
+        counts.depositReservations > 0 ? "Ưu tiên xác nhận cọc hoặc từ chối nếu không giữ bàn." : "Luồng đặt bàn đang ổn."
+      ].join("\n")
+    );
+  }
+  return compactTelegramText(
+    [
+      `Nhân sự · ${board.scopeLabel}`,
+      "",
+      `Yêu cầu chờ duyệt: ${counts.pendingStaffRequests}`,
+      counts.pendingStaffRequests > 0 ? "Duyệt nghỉ phép, đổi ca, tăng ca hoặc chấm công ngay trên card Telegram." : "Không có yêu cầu nhân sự đang chờ."
+    ].join("\n")
+  );
+}
+
+function routeForOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">) {
+  if (action === "payments") return "/dashboard/payments";
+  if (action === "reservations") return "/dashboard/reservations";
+  if (action === "staff") return "/dashboard/staff";
+  return "/dashboard/orders";
 }
 
 async function handleAiOpsCommand(ctx: Context, command: AiOpsCommand, message: string) {
@@ -740,7 +873,7 @@ async function handleTelegramSessionCallback(ctx: Context, token: string) {
   const menuPayload = menuActionPayloadSchema.safeParse(claimed.session.payload);
   if (menuPayload.success) {
     await ctx.answerCallbackQuery({ text: "Đang xử lý..." });
-    await handleTelegramMenuAction(ctx, menuPayload.data.action);
+    await handleTelegramMenuAction(ctx, menuPayload.data.action, claimed.connection);
     return;
   }
 
@@ -864,11 +997,20 @@ function compactTelegramText(value: string, maxLength = 1800) {
 function actionsForEvent(event: OperationalTelegramEvent): TelegramActionType[] {
   if (isTestEvent(event)) return [];
   if (event.type === "order.created") return ["order.confirm", "order.cancel"];
-  if (event.type === "order.confirmed") return ["order.done"];
+  if (event.type === "order.confirmed") {
+    if (event.order.fulfillmentType === "DELIVERY" && event.order.deliveryStatus === "accepted") return ["delivery.out_for_delivery"];
+    return ["order.done"];
+  }
+  if (event.type === "order.delivery_status_changed") {
+    if (event.delivery.status === "requested") return ["delivery.accept", "delivery.reject"];
+    if (event.delivery.status === "accepted") return ["delivery.out_for_delivery"];
+    if (event.delivery.status === "out_for_delivery") return ["delivery.delivered"];
+  }
   if (event.type === "service_request.created") return ["service_request.resolve"];
   if (event.type === "payment.waiting_confirm") return ["payment.confirm", "payment.amount_mismatch"];
   if (event.type === "reservation.created") return ["reservation.reject"];
   if (event.type === "reservation.deposit_submitted") return ["reservation.confirm", "reservation.reject"];
+  if (event.type === "staff.request_created") return ["staff_request.approve", "staff_request.reject"];
   return [];
 }
 
@@ -899,6 +1041,7 @@ function requiredPermissionForEvent(event: OperationalTelegramEvent) {
   }
   if (event.type === "inventory.low") return "inventory.view";
   if (event.type === "service_request.created" || event.type === "service_request.resolved") return "orders.view";
+  if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") return "approvals.review";
   if (event.type === "platform.alert") return "notifications.manage";
   return "notifications.manage";
 }
@@ -928,6 +1071,7 @@ function resourceForEvent(event: OperationalTelegramEvent, actionType: TelegramA
     return { type: "reservation", id: event.reservation.id };
   }
   if (event.type === "service_request.created" || event.type === "service_request.resolved") return { type: "service_request", id: event.serviceRequest.id };
+  if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") return { type: "staff_request", id: event.staffRequest.id };
   if (event.type === "sla.warning") return { type: "order", id: event.sla.orderId };
   return { type: actionType.split(".")[0], id: event.eventId };
 }
@@ -937,11 +1081,17 @@ function labelForAction(actionType: TelegramActionType) {
     "order.confirm": "Xác nhận",
     "order.cancel": "Huỷ",
     "order.done": "Xong",
+    "delivery.accept": "Nhận giao",
+    "delivery.out_for_delivery": "Xuất phát",
+    "delivery.delivered": "Đã giao",
+    "delivery.reject": "Từ chối giao",
     "payment.confirm": "Xác nhận",
     "payment.amount_mismatch": "Sai số tiền",
     "service_request.resolve": "Đã xử lý",
     "reservation.confirm": "Đồng ý",
-    "reservation.reject": "Từ chối"
+    "reservation.reject": "Từ chối",
+    "staff_request.approve": "Duyệt",
+    "staff_request.reject": "Từ chối"
   };
   return labels[actionType];
 }

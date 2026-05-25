@@ -6,6 +6,7 @@ import { assessAttendanceDeviceTrust, type StaffAttendanceDeviceTrust } from "@/
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
+import { publishOperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
 
@@ -2046,6 +2047,31 @@ export async function reviewAttendanceApproval({
       }
     });
   }
+
+  await publishOperationalEvent({
+    type: "staff.request_reviewed",
+    eventId: `staff.request_reviewed:${approval.id}:${nextStatus}`,
+    restaurantId: session.restaurantId,
+    branchId: approval.branch_id,
+    source: "dashboard",
+    actor: { type: "merchant", userId: session.userId, role: session.role },
+    staffRequest: {
+      id: approval.id,
+      requestType: approval.request_type,
+      staffMemberId: approval.staff_member_id,
+      staffName: notificationTarget && "full_name" in notificationTarget ? notificationTarget.full_name : null,
+      status: nextStatus,
+      decision: nextStatus,
+      reason: input.note || approval.reason,
+      requestedPayload: approval.requested_payload ?? {}
+    }
+  }).catch((error) => {
+    console.error("[attendance-service] telegram staff review event failed", {
+      restaurantId: session.restaurantId,
+      approvalId: approval.id,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  });
 
   return {
     approval: updateApprovalResult.data as ApprovalRow,

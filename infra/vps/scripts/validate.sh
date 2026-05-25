@@ -6,6 +6,7 @@ VPS_DIR="$REPO_ROOT/infra/vps"
 APP_ROOT=${APP_ROOT:-/opt/logivn}
 ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
 LOCAL_ONLY=false
+CONFIG_ONLY=false
 
 if [ "${1:-}" = "--local-only" ]; then
   LOCAL_ONLY=true
@@ -46,18 +47,34 @@ check_domain_dns() {
 }
 
 main() {
+  if [ "$LOCAL_ONLY" = true ] && [ ! -f "$ENV_FILE" ]; then
+    ENV_FILE="$VPS_DIR/.env.example"
+    CONFIG_ONLY=true
+  fi
+
   load_env
   check_command docker
   check_command curl
 
   log "System"
   uname -a
-  free -h
+  if command -v free >/dev/null 2>&1; then
+    free -h
+  elif command -v vm_stat >/dev/null 2>&1; then
+    vm_stat | head -8
+  fi
   df -h /
-  ufw status || true
-  fail2ban-client status sshd || true
+  command -v ufw >/dev/null 2>&1 && ufw status || true
+  command -v fail2ban-client >/dev/null 2>&1 && fail2ban-client status sshd || true
 
   log "Docker services"
+  if [ "$CONFIG_ONLY" = true ]; then
+    docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" config >/dev/null
+    log "compose config OK"
+    log "Config-only validation complete"
+    return
+  fi
+
   docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" ps
   docker compose --env-file "$ENV_FILE" -f "$VPS_DIR/docker-compose.yml" exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
   log "redis OK"

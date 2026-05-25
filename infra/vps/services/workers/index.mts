@@ -12,6 +12,8 @@ import { createOrderWorkers } from "./order-worker.mjs";
 import { createPaymentWorkers } from "./payment-worker.mjs";
 import { createReservationWorkers } from "./reservation-worker.mjs";
 import { createStaffWorkers } from "./staff-worker.mjs";
+import { startOperationalOutboxRelay } from "./outbox-relay-worker.mjs";
+import { startSlaScanner } from "./sla-scanner.mjs";
 
 const logger = createLogger("worker");
 const connection = createRedisConnection("worker");
@@ -28,6 +30,8 @@ const workers = [
   ...createAnalyticsWorkers(connection, logger)
 ];
 const stopQueueMetrics = startQueueMetricsCollector({ logger });
+const stopOperationalOutboxRelay = startOperationalOutboxRelay({ logger });
+const stopSlaScanner = startSlaScanner({ logger });
 
 const app = createHttpApp({ logger, serviceName: "worker" });
 
@@ -67,6 +71,8 @@ app.get("/queues/failed", requireInternalApiKey, async (req, res, next) => {
 
 const shutdown = async () => {
   logger.info("closing workers");
+  stopOperationalOutboxRelay();
+  stopSlaScanner();
   stopQueueMetrics();
   await Promise.all(workers.map((worker) => worker.close()));
   await connection.quit();
