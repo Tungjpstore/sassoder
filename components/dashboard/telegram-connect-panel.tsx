@@ -1,7 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BellRing, CalendarClock, CheckCircle2, Copy, CreditCard, PackageSearch, RefreshCw, RotateCcw, Send, ShieldCheck, TimerReset, Unlink } from "lucide-react";
+import {
+  AlertTriangle,
+  BellRing,
+  CalendarClock,
+  CheckCircle2,
+  Copy,
+  CreditCard,
+  ExternalLink,
+  MoreHorizontal,
+  PackageSearch,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  ShieldCheck,
+  TimerReset,
+  Unlink
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -108,6 +124,27 @@ const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon
   { kind: "reservation", label: "Đặt bàn", Icon: CalendarClock },
   { kind: "inventory", label: "Kho", Icon: PackageSearch },
   { kind: "sla", label: "SLA", Icon: TimerReset }
+];
+
+const TELEGRAM_SETUP_STEPS = [
+  {
+    key: "secure-link",
+    title: "Tạo link",
+    description: "Chọn phạm vi nhận cảnh báo rồi tạo link riêng cho tài khoản của bạn.",
+    image: "/brand/logivn/telegram-setup/secure-link.png"
+  },
+  {
+    key: "telegram-start",
+    title: "Bấm Start",
+    description: "Mở Telegram, bấm Start hoặc dán lệnh dự phòng nếu máy không tự gửi.",
+    image: "/brand/logivn/telegram-setup/telegram-start.png"
+  },
+  {
+    key: "ops-command",
+    title: "Điều hành",
+    description: "Nhận đơn, VietQR, đặt bàn và cảnh báo quan trọng ngay trong Telegram.",
+    image: "/brand/logivn/telegram-setup/ops-command.png"
+  }
 ];
 
 export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOption[] }) {
@@ -270,7 +307,7 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
 
     setTestState("success");
     setTestingKind(null);
-    setNotice(`Đã đưa thông báo test ${testKindLabel(kind)} vào queue Telegram.`);
+    setNotice(`Đã gửi thử ${testKindLabel(kind)} qua Telegram.`);
     await refreshStatus({ clearNotice: false });
   }
 
@@ -320,13 +357,7 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   async function copyStartCommand() {
     const value = token?.startCommand ?? (token ? `/start ${token.token}` : null);
     if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopyState("copied");
-      window.setTimeout(() => setCopyState("idle"), 1800);
-    } catch {
-      setCopyState("failed");
-    }
+    await copyConnectValue(value);
   }
 
   const activeConnections = status?.connections.filter((connection) => connection.status === "active") ?? [];
@@ -334,97 +365,128 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const queue = status?.queue ?? null;
   const queueJobs = queue ? [...queue.deadLetterJobs, ...queue.failedJobs].slice(0, 3) : [];
   const bot = status?.bot ?? null;
-  const setup = status?.setup ?? null;
+  const connected = activeConnections.length > 0;
+  const primaryConnection = activeConnections[0] ?? null;
 
   return (
-    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div className="grid gap-4 border-b border-[var(--border)] p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
-              <Send size={17} aria-hidden="true" />
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
+              <Send size={18} aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Telegram Ops Center</p>
-              <p className="text-xs font-medium text-[var(--muted-foreground)]">{activeConnections.length} kết nối hoạt động</p>
+              <p className="text-base font-semibold text-[var(--foreground)]">Telegram cho chủ quán</p>
+              <p className="mt-0.5 text-sm font-medium text-[var(--muted-foreground)]">
+                {connected ? `${activeConnections.length} tài khoản đang nhận cảnh báo` : "Kết nối một lần, nhận cảnh báo và thao tác nhanh trên điện thoại."}
+              </p>
             </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={() => retryFailedNotifications()} disabled={failedCount === 0 || retryState === "loading"}>
-            {retryState === "loading" && !retryingNotificationId ? <RefreshCw size={15} className="animate-spin" /> : <RotateCcw size={15} />}
-            Retry lỗi
-          </Button>
-          <Button type="button" variant="secondary" size="sm" onClick={() => refreshStatus()}>
+          <span className={cn("inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold", connected ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)]")}>
+            {connected ? <CheckCircle2 size={15} /> : <ShieldCheck size={15} />}
+            {connected ? "Đã kết nối" : status ? "Chưa kết nối" : "Đang kiểm tra"}
+          </span>
+          <Button type="button" variant="secondary" size="icon" aria-label="Làm mới Telegram" onClick={() => refreshStatus()}>
             <RefreshCw size={15} />
-            Làm mới
           </Button>
         </div>
       </div>
 
-      <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={cn("inline-flex h-7 items-center rounded-md px-2 text-xs font-semibold", setupToneClass(setup?.state))}>
-                {setupLabel(setup?.state)}
-              </span>
-              <span className="text-xs font-semibold text-[var(--muted-foreground)]">
-                {bot?.username ?? "Bot chưa cấu hình"} · bot LogiVN
-              </span>
-            </div>
-            <p className="mt-2 text-sm font-semibold text-[var(--foreground)]">Cấu hình tích hợp bot cho chủ quán</p>
-            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
-              LogiVN cấp bot vận hành sẵn; chủ quán chỉ tạo link bảo mật, mở Telegram và xác thực tài khoản.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {bot?.startUrl ? (
-              <a href={bot.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
-                <Send size={15} />
-                Mở bot
-              </a>
-            ) : null}
-            <Button type="button" onClick={generateToken} disabled={requestState === "loading" || bot?.configured === false} size="sm">
-              {requestState === "loading" ? <RefreshCw size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
-              Tạo link tích hợp
-            </Button>
-          </div>
-        </div>
-        {setup?.steps?.length ? (
-          <div className="mt-3 grid gap-2 md:grid-cols-5">
-            {setup.steps.map((step) => (
-              <div key={step.key} className="rounded-md border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <span className={cn("h-2 w-2 rounded-full", stepDotClass(step.status))} />
-                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{step.label}</span>
-                </div>
-                <p className="mt-1 truncate text-[11px] font-medium text-[var(--muted-foreground)]">{step.detail}</p>
+      <div className="grid gap-4 p-4">
+        {!connected ? (
+          <SetupFlow
+            activeBranches={activeBranches}
+            selectedBranchId={selectedBranchId}
+            setSelectedBranchId={setSelectedBranchId}
+            generateToken={generateToken}
+            requestState={requestState}
+            botConfigured={bot?.configured !== false}
+          />
+        ) : (
+          <ConnectedFlow
+            botStartUrl={bot?.startUrl ?? null}
+            primaryConnection={primaryConnection}
+            activeConnectionCount={activeConnections.length}
+            sendTestNotification={sendTestNotification}
+            testState={testState}
+            testingKind={testingKind}
+          />
+        )}
+
+        {token ? (
+          <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[var(--primary)]">Link đã tạo</p>
+                <p className="mt-1 text-sm font-medium text-[var(--foreground)]">Mở Telegram rồi bấm Start. Nếu không thấy phản hồi, copy lệnh dự phòng và dán vào bot.</p>
+                <p className="mt-2 break-all font-mono text-xs font-semibold text-[var(--muted-foreground)]">{token.startCommand}</p>
+                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Hết hạn {formatDateTime(token.expiresAt)}</p>
               </div>
-            ))}
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="secondary" onClick={copyStartCommand}>
+                  <Copy size={15} />
+                  Copy /start
+                </Button>
+                {token.startUrl ? (
+                  <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-[#FFF7EB]">
+                    <Send size={16} />
+                    Mở Telegram
+                  </a>
+                ) : null}
+              </div>
+            </div>
           </div>
         ) : null}
-      </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-5">
-        <StatusTile label="Kết nối" value={activeConnections.length || "0"} tone={activeConnections.length > 0 ? "success" : "neutral"} />
-            <StatusTile label="Lỗi gửi" value={failedCount} tone={failedCount > 0 ? "warning" : "success"} />
-        <StatusTile
-          label="Queue"
-          value={queue?.available ? queue.backlog : "off"}
-          tone={!queue || !queue.available ? "warning" : queue.backlog > 25 ? "warning" : "success"}
-        />
-        <StatusTile
-          label="DLQ"
-          value={queue?.available ? queue.deadLetters : "off"}
-          tone={!queue || !queue.available ? "warning" : queue.deadLetters > 0 ? "warning" : "success"}
-        />
-        <StatusTile label="Callback" value="Signed" tone="success" />
-      </div>
+        <InlineMessage kind="error" message={error} />
+        <InlineMessage kind="success" message={notice} />
+        {copyState === "copied" ? <InlineMessage kind="success" message="Đã copy." /> : null}
+        {copyState === "failed" ? <InlineMessage kind="error" message="Không copy được. Hãy copy thủ công lệnh /start." /> : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+        <AdvancedTelegramPanel
+          activeConnections={activeConnections}
+          failedCount={failedCount}
+          queue={queue}
+          queueJobs={queueJobs}
+          recentNotifications={status?.recentNotifications ?? []}
+          retryState={retryState}
+          retryingNotificationId={retryingNotificationId}
+          revokeConnection={revokeConnection}
+          revokingConnectionId={revokingConnectionId}
+          retryFailedNotifications={retryFailedNotifications}
+        />
+      </div>
+    </section>
+  );
+}
+
+function SetupFlow({
+  activeBranches,
+  selectedBranchId,
+  setSelectedBranchId,
+  generateToken,
+  requestState,
+  botConfigured
+}: {
+  activeBranches: TelegramBranchOption[];
+  selectedBranchId: string;
+  setSelectedBranchId: (value: string) => void;
+  generateToken: () => void;
+  requestState: RequestState;
+  botConfigured: boolean;
+}) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto] lg:items-end">
+        <div>
+          <p className="text-sm font-semibold text-[var(--foreground)]">Bắt đầu trong 30 giây</p>
+          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Tạo link riêng cho tài khoản đang đăng nhập. Link có hạn và chỉ dùng một lần.</p>
+        </div>
         <label className="grid gap-2 text-sm font-semibold">
-          Phạm vi chi nhánh
+          Phạm vi
           <select
             value={selectedBranchId}
             onChange={(event) => setSelectedBranchId(event.target.value)}
@@ -438,159 +500,216 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
             ))}
           </select>
         </label>
-        <Button type="button" onClick={generateToken} disabled={requestState === "loading" || bot?.configured === false} className="self-end">
+        <Button type="button" onClick={generateToken} disabled={requestState === "loading" || !botConfigured} className="h-11">
           {requestState === "loading" ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-          Tạo link tích hợp
+          Tạo link
         </Button>
       </div>
 
-      {token ? (
-        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <p className="truncate font-mono text-xs font-semibold text-[var(--foreground)]">{token.startUrl ?? `/start ${token.token}`}</p>
-              <p className="mt-1 break-all text-xs font-medium text-[var(--muted-foreground)]">Trong Telegram bấm Start. Nếu chưa phản hồi, dán lệnh: {token.startCommand}</p>
-              <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Hết hạn {formatDateTime(token.expiresAt)}</p>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <Button type="button" variant="secondary" size="icon" aria-label="Copy link Telegram" onClick={() => copyConnectValue()}>
-                <Copy size={16} />
-              </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={copyStartCommand}>
-                <Copy size={15} />
-                Copy /start
-              </Button>
-              {token.startUrl ? (
-                <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-[#FFF7EB]">
-                  <Send size={16} />
-                  Mở
-                </a>
-              ) : null}
+      <div className="grid gap-3 md:grid-cols-3">
+        {TELEGRAM_SETUP_STEPS.map((step, index) => (
+          <div key={step.key} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--soft-surface)]">
+            <img src={step.image} alt="" className="aspect-[4/3] w-full object-cover" loading="lazy" />
+            <div className="p-3">
+              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Bước {index + 1}</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">{step.title}</p>
+              <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{step.description}</p>
             </div>
           </div>
-          {copyState === "copied" ? <p className="mt-2 text-xs font-semibold text-[var(--primary)]">Đã copy.</p> : null}
-          {copyState === "failed" ? <p className="mt-2 text-xs font-semibold text-[var(--accent-strong)]">Không copy được, dùng chuỗi trên màn hình.</p> : null}
-        </div>
-      ) : null}
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold text-[var(--foreground)]">Kiểm thử nhanh</p>
-            <p className="text-xs font-medium text-[var(--muted-foreground)]">{activeConnections.length > 0 ? "Queue Telegram thật đã sẵn sàng" : "Chưa có kết nối hoạt động"}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-            {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
-              <Button
-                key={kind}
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => sendTestNotification(kind)}
-                disabled={activeConnections.length === 0 || testState === "loading"}
-              >
-                {testingKind === kind ? <RefreshCw size={15} className="animate-spin" /> : <Icon size={15} />}
-                {label}
-              </Button>
-            ))}
-          </div>
+function ConnectedFlow({
+  botStartUrl,
+  primaryConnection,
+  activeConnectionCount,
+  sendTestNotification,
+  testState,
+  testingKind
+}: {
+  botStartUrl: string | null;
+  primaryConnection: TelegramConnectionView | null;
+  activeConnectionCount: number;
+  sendTestNotification: (kind: TelegramTestKind) => void;
+  testState: RequestState;
+  testingKind: TelegramTestKind | null;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-4">
+        <p className="text-sm font-semibold text-[var(--primary)]">Đang hoạt động</p>
+        <p className="mt-2 text-xl font-semibold text-[var(--foreground)]">{activeConnectionCount} kết nối Telegram</p>
+        <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
+          {primaryConnection ? `${primaryConnection.displayName}${primaryConnection.username ? ` @${primaryConnection.username}` : ""}` : "Sẵn sàng nhận cảnh báo"}
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {botStartUrl ? (
+            <a href={botStartUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+              <ExternalLink size={15} />
+              Mở bot
+            </a>
+          ) : null}
         </div>
       </div>
 
-      {error ? (
-        <div className="mt-4 flex gap-2 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-          <span>{error}</span>
+      <div className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-4">
+        <p className="text-sm font-semibold text-[var(--foreground)]">Gửi thử một tín hiệu</p>
+        <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chọn đúng loại cảnh báo mà chủ quán sẽ nhận trong giờ vận hành.</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
+            <Button
+              key={kind}
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => sendTestNotification(kind)}
+              disabled={testState === "loading"}
+            >
+              {testingKind === kind ? <RefreshCw size={15} className="animate-spin" /> : <Icon size={15} />}
+              {label}
+            </Button>
+          ))}
         </div>
-      ) : null}
+      </div>
+    </div>
+  );
+}
 
-      {notice ? (
-        <div className="mt-4 flex gap-2 rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3 text-sm font-semibold text-[var(--primary)]">
-          <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
-          <span>{notice}</span>
+function AdvancedTelegramPanel({
+  activeConnections,
+  failedCount,
+  queue,
+  queueJobs,
+  recentNotifications,
+  retryState,
+  retryingNotificationId,
+  revokeConnection,
+  revokingConnectionId,
+  retryFailedNotifications
+}: {
+  activeConnections: TelegramConnectionView[];
+  failedCount: number;
+  queue: TelegramQueueStatus | null;
+  queueJobs: TelegramQueueJobView[];
+  recentNotifications: TelegramNotificationView[];
+  retryState: RequestState;
+  retryingNotificationId: string | null;
+  revokeConnection: (connectionId: string) => void;
+  revokingConnectionId: string | null;
+  retryFailedNotifications: (notificationId?: string) => void;
+}) {
+  return (
+    <details className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm font-semibold text-[var(--foreground)]">
+        <span className="inline-flex items-center gap-2">
+          <MoreHorizontal size={16} />
+          Nâng cao
+        </span>
+        <span className="text-xs font-medium text-[var(--muted-foreground)]">Queue, retry, kết nối</span>
+      </summary>
+
+      <div className="grid gap-3 border-t border-[var(--border)] p-3">
+        <div className="grid gap-2 md:grid-cols-4">
+          <StatusTile label="Kết nối" value={activeConnections.length || "0"} tone={activeConnections.length > 0 ? "success" : "neutral"} />
+          <StatusTile label="Lỗi gửi" value={failedCount} tone={failedCount > 0 ? "warning" : "success"} />
+          <StatusTile label="Queue" value={queue?.available ? queue.backlog : "off"} tone={!queue || !queue.available ? "warning" : queue.backlog > 25 ? "warning" : "success"} />
+          <StatusTile label="DLQ" value={queue?.available ? queue.deadLetters : "off"} tone={!queue || !queue.available ? "warning" : queue.deadLetters > 0 ? "warning" : "success"} />
         </div>
-      ) : null}
 
-      {queue && !queue.available ? (
-        <div className="mt-4 flex gap-2 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-          <span>Gateway queue chưa sẵn sàng: {formatQueueReason(queue.reason)}</span>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={() => retryFailedNotifications()} disabled={failedCount === 0 || retryState === "loading"}>
+            {retryState === "loading" && !retryingNotificationId ? <RefreshCw size={15} className="animate-spin" /> : <RotateCcw size={15} />}
+            Retry lỗi
+          </Button>
         </div>
-      ) : null}
 
-      {activeConnections.length > 0 ? (
-        <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-          {activeConnections.map((connection) => (
-            <div key={connection.id} className="grid gap-1 border-b border-[var(--border)] px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center">
-              <span className="min-w-0">
-                <span className="block truncate font-semibold text-[var(--foreground)]">
-                  {connection.displayName}{connection.username ? ` @${connection.username}` : ""}
-                </span>
-                <span className="block text-xs font-medium text-[var(--muted-foreground)]">{connection.role} · {formatDateTime(connection.lastSeenAt ?? connection.connectedAt)}</span>
-              </span>
-              <span className="inline-flex items-center justify-end gap-2">
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-[var(--primary)]">
-                  <CheckCircle2 size={14} />
-                  active
+        {queue && !queue.available ? (
+          <InlineMessage kind="error" message={`Gateway queue chưa sẵn sàng: ${formatQueueReason(queue.reason)}`} />
+        ) : null}
+
+        {activeConnections.length > 0 ? (
+          <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+            {activeConnections.map((connection) => (
+              <div key={connection.id} className="grid gap-1 border-b border-[var(--border)] px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center">
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold text-[var(--foreground)]">
+                    {connection.displayName}
+                    {connection.username ? ` @${connection.username}` : ""}
+                  </span>
+                  <span className="block text-xs font-medium text-[var(--muted-foreground)]">{connection.role} · {formatDateTime(connection.lastSeenAt ?? connection.connectedAt)}</span>
                 </span>
                 <button
                   type="button"
                   aria-label="Ngắt kết nối Telegram"
                   onClick={() => revokeConnection(connection.id)}
                   disabled={revokingConnectionId === connection.id}
-                  className="inline-grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] disabled:opacity-50"
+                  className="inline-grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] disabled:opacity-50"
                 >
-                  {revokingConnectionId === connection.id ? <RefreshCw size={13} className="animate-spin" /> : <Unlink size={13} />}
+                  {revokingConnectionId === connection.id ? <RefreshCw size={14} className="animate-spin" /> : <Unlink size={14} />}
                 </button>
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
 
-      {status?.recentNotifications?.length ? (
-        <div className="mt-4 grid gap-2">
-          {status.recentNotifications.slice(0, 3).map((notification) => (
-            <div key={notification.id} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="truncate font-semibold text-[var(--foreground)]">{notification.title}</span>
-                <span className={cn("shrink-0 font-semibold", notification.status === "sent" ? "text-[var(--primary)]" : "text-[var(--accent-strong)]")}>{notification.status}</span>
+        {recentNotifications.length ? (
+          <div className="grid gap-2">
+            {recentNotifications.slice(0, 3).map((notification) => (
+              <div key={notification.id} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="truncate font-semibold text-[var(--foreground)]">{notification.title}</span>
+                  <span className={cn("shrink-0 font-semibold", notification.status === "sent" ? "text-[var(--primary)]" : "text-[var(--accent-strong)]")}>{notification.status}</span>
+                </div>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <span className="truncate text-[var(--muted-foreground)]">{notification.eventType} · {formatDateTime(notification.sentAt ?? notification.failedAt ?? notification.createdAt)}</span>
+                  {isRetryableStatus(notification.status) ? (
+                    <button
+                      type="button"
+                      aria-label="Retry Telegram notification"
+                      onClick={() => retryFailedNotifications(notification.id)}
+                      disabled={retryState === "loading"}
+                      className="inline-grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--border)] text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50"
+                    >
+                      {retryingNotificationId === notification.id ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
+                    </button>
+                  ) : null}
+                </div>
               </div>
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <span className="truncate text-[var(--muted-foreground)]">{notification.eventType} · {formatDateTime(notification.sentAt ?? notification.failedAt ?? notification.createdAt)}</span>
-                {isRetryableStatus(notification.status) ? (
-                  <button
-                    type="button"
-                    aria-label="Retry Telegram notification"
-                    onClick={() => retryFailedNotifications(notification.id)}
-                    disabled={retryState === "loading"}
-                    className="inline-grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--border)] text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50"
-                  >
-                    {retryingNotificationId === notification.id ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
+            ))}
+          </div>
+        ) : null}
 
-      {queueJobs.length > 0 ? (
-        <div className="mt-4 grid gap-2">
-          {queueJobs.map((job, index) => (
-            <div key={`${job.id ?? "job"}-${index}`} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
-              <div className="flex min-w-0 items-center justify-between gap-3">
-                <span className="truncate font-semibold text-[var(--foreground)]">{job.name ?? "telegram job"}</span>
-                <span className="shrink-0 font-semibold text-[var(--accent-strong)]">{job.attemptsMade} lần</span>
+        {queueJobs.length > 0 ? (
+          <div className="grid gap-2">
+            {queueJobs.map((job, index) => (
+              <div key={`${job.id ?? "job"}-${index}`} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <span className="truncate font-semibold text-[var(--foreground)]">{job.name ?? "telegram job"}</span>
+                  <span className="shrink-0 font-semibold text-[var(--accent-strong)]">{job.attemptsMade} lần</span>
+                </div>
+                <span className="truncate text-[var(--muted-foreground)]">
+                  {job.failedReason ?? "Không có lỗi chi tiết"} · {formatDateTime(job.failedAt ?? job.processedAt ?? job.createdAt)}
+                </span>
               </div>
-              <span className="truncate text-[var(--muted-foreground)]">
-                {job.failedReason ?? "Không có lỗi chi tiết"} · {formatDateTime(job.failedAt ?? job.processedAt ?? job.createdAt)}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </section>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function InlineMessage({ kind, message }: { kind: "success" | "error"; message: string | null }) {
+  if (!message) return null;
+  const success = kind === "success";
+  return (
+    <div className={cn("flex gap-2 rounded-lg border p-3 text-sm font-semibold", success ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]")}>
+      {success ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
+      <span>{message}</span>
+    </div>
   );
 }
 
@@ -603,28 +722,9 @@ function testKindLabel(kind: TelegramTestKind) {
   return action?.label ?? "Telegram";
 }
 
-function setupLabel(state?: TelegramStatus["setup"]["state"]) {
-  if (state === "ready") return "Sẵn sàng";
-  if (state === "connected") return "Đã kết nối";
-  if (state === "ready_to_connect") return "Chờ xác thực";
-  return "Cần cấu hình";
-}
-
-function setupToneClass(state?: TelegramStatus["setup"]["state"]) {
-  if (state === "ready" || state === "connected") return "bg-[var(--primary-soft)] text-[var(--primary)]";
-  if (state === "ready_to_connect") return "bg-[var(--soft-surface)] text-[var(--foreground)]";
-  return "bg-[var(--accent-soft)] text-[var(--accent-strong)]";
-}
-
-function stepDotClass(status: "done" | "pending" | "warning") {
-  if (status === "done") return "bg-[var(--primary)]";
-  if (status === "warning") return "bg-[var(--accent-strong)]";
-  return "bg-[var(--muted-foreground)]";
-}
-
 function StatusTile({ label, value, tone }: { label: string; value: string | number; tone: "success" | "warning" | "neutral" }) {
   return (
-    <div className={cn("rounded-lg border px-3 py-2", tone === "success" && "border-[var(--primary)]/20 bg-[var(--primary-soft)]", tone === "warning" && "border-[var(--accent)]/25 bg-[var(--accent-soft)]", tone === "neutral" && "border-[var(--border)] bg-[var(--soft-surface)]")}>
+    <div className={cn("rounded-lg border px-3 py-2", tone === "success" && "border-[var(--primary)]/20 bg-[var(--primary-soft)]", tone === "warning" && "border-[var(--accent)]/25 bg-[var(--accent-soft)]", tone === "neutral" && "border-[var(--border)] bg-[var(--surface)]")}>
       <p className="text-xs font-semibold text-[var(--muted-foreground)]">{label}</p>
       <p className="mt-1 metric-number text-xl font-semibold text-[var(--foreground)]">{value}</p>
     </div>

@@ -61,10 +61,12 @@ chmod 600 /opt/logivn/.env
 Fill `/opt/logivn/.env`, then run:
 
 ```bash
+infra/vps/scripts/doctor.sh
 infra/vps/scripts/deploy.sh
 infra/vps/scripts/issue-certs.sh
 infra/vps/scripts/install-cron.sh
 infra/vps/scripts/validate.sh
+infra/vps/scripts/production-readiness.sh
 ```
 
 ## Required DNS
@@ -268,6 +270,21 @@ Events:
 
 `install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries.
 
+Run a backup immediately after the first successful deploy:
+
+```bash
+infra/vps/scripts/backup.sh
+infra/vps/scripts/restore-redis-backup.sh --dry-run "$(ls -1t /opt/logivn/backups/*.tgz | head -1)"
+```
+
+`restore-redis-backup.sh` is safe by default and only inspects the archive. A real
+restore requires an explicit confirmation environment variable and creates a
+pre-restore Redis volume backup before replacing data:
+
+```bash
+CONFIRM_RESTORE=restore-logivn-redis infra/vps/scripts/restore-redis-backup.sh /opt/logivn/backups/20260101T000000Z.tgz
+```
+
 App cron handoff is intentionally disabled by default. Keep `LOGIVN_VPS_APP_CRONS_ENABLED=false` while Vercel Cron is still active, otherwise scheduled jobs can run twice. To move app crons to the VPS later:
 
 1. Set `CRON_SECRET` in `/opt/logivn/.env`.
@@ -301,6 +318,17 @@ Use full validation after DNS and SSL:
 
 ```bash
 infra/vps/scripts/validate.sh
+```
+
+Use production readiness after a deploy, after a Redis restore, or before handing
+the VPS to operations. It checks env readiness, Compose config, local service
+health, Redis AOF/noeviction/maxmemory, event ingress, queues, locks, rate
+limits, realtime state, Bull Board auth when enabled, Prometheus/Alertmanager
+config, Grafana provisioning, Prometheus scrape targets, latest backup
+restorability, and public HTTPS endpoints:
+
+```bash
+infra/vps/scripts/production-readiness.sh
 ```
 
 ## Production Notes

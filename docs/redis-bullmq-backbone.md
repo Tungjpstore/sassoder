@@ -137,6 +137,9 @@ Prometheus alert rules live in `infra/vps/monitoring/alerts.yml` and cover Redis
 VPS container images are pinned to explicit version tags in `infra/vps/docker-compose.yml`, and `npm run infra:check` rejects `latest`, major-only, or minor-only tags. Do not reintroduce dynamic tags for Redis, Grafana, Prometheus, Alertmanager, RedisInsight, Uptime Kuma, node-exporter, or cAdvisor; upgrades should be deliberate and validated with the monitoring smoke script.
 
 `infra/vps/scripts/backup.sh` triggers `BGSAVE` and `BGREWRITEAOF`, then archives the Redis Docker volume.
+`infra/vps/scripts/restore-redis-backup.sh --dry-run <backup.tgz>` verifies that a backup contains restorable Redis data. A real restore requires `CONFIRM_RESTORE=restore-logivn-redis`, stops Redis-dependent services, creates a pre-restore volume backup, replaces the Redis volume contents, restarts services, and runs local validation.
+
+`infra/vps/scripts/production-readiness.sh` is the post-deploy gate for the backbone. It verifies env readiness, local service health, Redis AOF/noeviction/maxmemory, gateway event/queue/lock/rate-limit/realtime flows, Bull Board auth when enabled, Prometheus/Alertmanager config, Grafana provisioning, Prometheus scrape targets, latest backup restorability, and public HTTPS endpoints.
 
 ## Scale Roadmap
 

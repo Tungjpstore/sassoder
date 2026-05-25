@@ -13,7 +13,7 @@ import { invalidateRestaurantDashboardCache } from "@/services/restaurant-servic
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
-import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
+import { buildPaymentEventId, buildPaymentSnapshot, enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import type { FulfillmentType, OrderDto, PaymentMethod, PaymentStatus, TableBillStatus } from "@/types/domain";
 
@@ -23,12 +23,14 @@ type ServiceSupabaseClient = ReturnType<typeof createAdminSupabaseClient>;
 type PaymentOrderRow = {
   id: string;
   restaurant_id: string;
+  branch_id?: string | null;
   status: OrderDto["status"];
   total: number;
   payment_method: PaymentMethod | null;
   payment_status?: PaymentStatus | null;
   fulfillment_type?: FulfillmentType;
   bill_id?: string | null;
+  customer_name?: string | null;
   customer_session_id?: string | null;
   bill:
     | {
@@ -108,7 +110,7 @@ async function getCustomerPaymentOrder(orderId: string, access: CustomerOrderAcc
   const restaurant = await getRestaurantAccessBySlug(access.restaurantSlug);
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,restaurant_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,customer_session_id,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
+    .select("id,restaurant_id,branch_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,customer_name,customer_session_id,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
     .eq("id", orderId)
     .eq("restaurant_id", restaurant.id)
     .eq("table_id", access.tableId)
@@ -158,7 +160,7 @@ async function getRemotePaymentOrder(orderId: string, access: RemoteOrderAccessI
   const restaurantId = await getRestaurantIdBySlug(access.restaurantSlug);
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,restaurant_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
+    .select("id,restaurant_id,branch_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,customer_name,bill:table_bills(id,status,total,payment_method,paid_at,customer_session_id)")
     .eq("id", orderId)
     .eq("restaurant_id", restaurantId)
     .is("table_id", null)
@@ -173,7 +175,7 @@ async function getRemotePaymentOrder(orderId: string, access: RemoteOrderAccessI
 async function getMerchantPaymentOrder(supabase: ServiceSupabaseClient, restaurantId: string, orderId: string) {
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id,restaurant_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,bill:table_bills(id,status,total,payment_method,paid_at)")
+    .select("id,restaurant_id,branch_id,status,total,payment_method,payment_status,fulfillment_type,bill_id,customer_name,bill:table_bills(id,status,total,payment_method,paid_at)")
     .eq("id", orderId)
     .eq("restaurant_id", restaurantId)
     .single();
@@ -521,9 +523,11 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       });
       await enqueuePaymentWaitingConfirmNotification({
         restaurantId: typedOrder.restaurant_id,
+        branchId: typedOrder.branch_id ?? null,
         orderId,
         billId: bill.id,
-        amount: bill.total
+        amount: bill.total,
+        customerName: typedOrder.customer_name ?? null
       });
       return getCustomerPaymentOrder(orderId, access);
     }
@@ -600,9 +604,11 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
     });
     await enqueuePaymentWaitingConfirmNotification({
       restaurantId: typedOrder.restaurant_id,
+      branchId: typedOrder.branch_id ?? null,
       orderId,
       billId: bill.id,
-      amount: bill.total
+      amount: bill.total,
+      customerName: typedOrder.customer_name ?? null
     });
 
     invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
@@ -623,9 +629,11 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
     });
     await enqueuePaymentWaitingConfirmNotification({
       restaurantId: typedOrder.restaurant_id,
+      branchId: typedOrder.branch_id ?? null,
       orderId,
       billId: typedOrder.bill_id ?? null,
-      amount: typedOrder.total
+      amount: typedOrder.total,
+      customerName: typedOrder.customer_name ?? null
     });
     return getCustomerPaymentOrder(orderId, access);
   }
@@ -662,9 +670,11 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
   });
   await enqueuePaymentWaitingConfirmNotification({
     restaurantId: typedOrder.restaurant_id,
+    branchId: typedOrder.branch_id ?? null,
     orderId,
     billId: typedOrder.bill_id ?? null,
-    amount: typedOrder.total
+    amount: typedOrder.total,
+    customerName: typedOrder.customer_name ?? null
   });
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
@@ -688,9 +698,11 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
     });
     await enqueuePaymentWaitingConfirmNotification({
       restaurantId: typedOrder.restaurant_id,
+      branchId: typedOrder.branch_id ?? null,
       orderId,
       billId: typedOrder.bill_id ?? null,
-      amount: typedOrder.total
+      amount: typedOrder.total,
+      customerName: typedOrder.customer_name ?? null
     });
     return getRemotePaymentOrder(orderId, access);
   }
@@ -727,9 +739,11 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
   });
   await enqueuePaymentWaitingConfirmNotification({
     restaurantId: typedOrder.restaurant_id,
+    branchId: typedOrder.branch_id ?? null,
     orderId,
     billId: typedOrder.bill_id ?? null,
-    amount: typedOrder.total
+    amount: typedOrder.total,
+    customerName: typedOrder.customer_name ?? null
   });
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getRemotePaymentOrder(orderId, access);
@@ -737,25 +751,59 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
 
 async function enqueuePaymentWaitingConfirmNotification(input: {
   restaurantId: string;
+  branchId?: string | null;
   orderId: string;
   billId?: string | null;
   amount: number;
+  customerName?: string | null;
 }) {
   await enqueueTelegramNotification({
     type: "payment.waiting_confirm",
-    eventId: `payment.waiting_confirm:${input.billId ?? input.orderId}`,
+    eventId: buildPaymentEventId("payment.waiting_confirm", input),
     restaurantId: input.restaurantId,
-    branchId: null,
-    payment: {
+    branchId: input.branchId ?? null,
+    source: "customer_qr",
+    actor: { type: "customer" },
+    payment: buildPaymentSnapshot({
       orderId: input.orderId,
       billId: input.billId ?? null,
       amount: input.amount,
-      method: "QR"
-    }
+      method: "QR",
+      customerName: input.customerName ?? null,
+      status: "waiting_confirm"
+    })
   });
 }
 
-export async function confirmPayment(restaurantId: string, orderId: string) {
+async function enqueuePaymentReceivedNotification(input: {
+  restaurantId: string;
+  branchId?: string | null;
+  orderId: string;
+  billId?: string | null;
+  amount: number;
+  method: PaymentMethod;
+  customerName?: string | null;
+  actorUserId?: string | null;
+}) {
+  await enqueueTelegramNotification({
+    type: "payment.received",
+    eventId: buildPaymentEventId("payment.received", input),
+    restaurantId: input.restaurantId,
+    branchId: input.branchId ?? null,
+    source: "dashboard",
+    actor: { type: "merchant", userId: input.actorUserId ?? null },
+    payment: buildPaymentSnapshot({
+      orderId: input.orderId,
+      billId: input.billId ?? null,
+      amount: input.amount,
+      method: input.method,
+      customerName: input.customerName ?? null,
+      status: "confirmed"
+    })
+  });
+}
+
+export async function confirmPayment(restaurantId: string, orderId: string, actorUserId?: string | null) {
   const supabase = createAdminSupabaseClient();
   const typedOrder = await getMerchantPaymentOrder(supabase, restaurantId, orderId);
   const bill = firstOrNull(typedOrder.bill);
@@ -781,6 +829,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         source: "merchant_bill_manual_confirm"
       });
       await completeReservationForBill(restaurantId, bill.id);
+      await enqueuePaymentReceivedNotification({
+        restaurantId,
+        branchId: typedOrder.branch_id ?? null,
+        orderId,
+        billId: bill.id,
+        amount: bill.total,
+        method: billPaymentMethod ?? "QR",
+        customerName: typedOrder.customer_name ?? null,
+        actorUserId
+      });
       invalidatePaymentDerivedCaches(restaurantId);
       return getMerchantPaymentOrder(supabase, restaurantId, orderId);
     }
@@ -825,6 +883,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
           source: "merchant_bill_manual_confirm"
         });
         await completeReservationForBill(restaurantId, currentBill.id);
+        await enqueuePaymentReceivedNotification({
+          restaurantId,
+          branchId: typedOrder.branch_id ?? null,
+          orderId,
+          billId: currentBill.id,
+          amount: currentBill.total,
+          method: currentBill.payment_method ?? bill.payment_method,
+          customerName: typedOrder.customer_name ?? null,
+          actorUserId
+        });
         invalidatePaymentDerivedCaches(restaurantId);
         return currentOrder;
       }
@@ -846,6 +914,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
       source: "merchant_bill_manual_confirm"
     });
     await completeReservationForBill(restaurantId, bill.id);
+    await enqueuePaymentReceivedNotification({
+      restaurantId,
+      branchId: typedOrder.branch_id ?? null,
+      orderId,
+      billId: bill.id,
+      amount: bill.total,
+      method: bill.payment_method,
+      customerName: typedOrder.customer_name ?? null,
+      actorUserId
+    });
 
     invalidatePaymentDerivedCaches(restaurantId);
     return getMerchantPaymentOrder(supabase, restaurantId, orderId);
@@ -859,6 +937,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         amount: typedOrder.total,
         method: typedOrder.payment_method,
         source: "merchant_manual_confirm"
+      });
+      await enqueuePaymentReceivedNotification({
+        restaurantId,
+        branchId: typedOrder.branch_id ?? null,
+        orderId,
+        billId: typedOrder.bill_id ?? null,
+        amount: typedOrder.total,
+        method: typedOrder.payment_method,
+        customerName: typedOrder.customer_name ?? null,
+        actorUserId
       });
     }
     invalidatePaymentDerivedCaches(restaurantId);
@@ -910,6 +998,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
         method: currentOrder.payment_method ?? typedOrder.payment_method,
         source: "merchant_manual_confirm"
       });
+      await enqueuePaymentReceivedNotification({
+        restaurantId,
+        branchId: currentOrder.branch_id ?? typedOrder.branch_id ?? null,
+        orderId,
+        billId: currentOrder.bill_id ?? typedOrder.bill_id ?? null,
+        amount: currentOrder.total,
+        method: currentOrder.payment_method ?? typedOrder.payment_method,
+        customerName: currentOrder.customer_name ?? typedOrder.customer_name ?? null,
+        actorUserId
+      });
       return currentOrder;
     }
     throw new AppError("Không thể xác nhận thanh toán cho đơn hàng này", 409);
@@ -920,6 +1018,16 @@ export async function confirmPayment(restaurantId: string, orderId: string) {
     amount: typedOrder.total,
     method: typedOrder.payment_method,
     source: "merchant_manual_confirm"
+  });
+  await enqueuePaymentReceivedNotification({
+    restaurantId,
+    branchId: typedOrder.branch_id ?? null,
+    orderId,
+    billId: typedOrder.bill_id ?? null,
+    amount: typedOrder.total,
+    method: typedOrder.payment_method,
+    customerName: typedOrder.customer_name ?? null,
+    actorUserId
   });
   invalidatePaymentDerivedCaches(restaurantId);
   return getMerchantPaymentOrder(supabase, restaurantId, orderId);

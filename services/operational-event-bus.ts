@@ -6,61 +6,124 @@ type BaseOperationalEvent = {
   tenantId?: string;
   branchId?: string | null;
   occurredAt?: string;
+  actor?: {
+    type: "customer" | "merchant" | "telegram" | "system" | "dev";
+    userId?: string | null;
+    role?: string | null;
+    permissions?: string[];
+  };
+  source?: "customer_qr" | "online_ordering" | "dashboard" | "telegram" | "system" | "devops";
+};
+
+type OperationalOrderSnapshot = {
+  id: string;
+  displayCode?: string;
+  itemCount: number;
+  total: number;
+  tableName?: string | null;
+  fulfillmentType?: "DINE_IN" | "PICKUP" | "DELIVERY";
+  customerName?: string | null;
+  customerPhone?: string | null;
+  status?: string;
+  paymentStatus?: string | null;
+  deliveryStatus?: string | null;
+  deliveryAddress?: string | null;
+  serviceDueAt?: string | null;
+};
+
+type OperationalPaymentSnapshot = {
+  orderId: string;
+  billId?: string | null;
+  amount: number;
+  method: "QR" | "CASH";
+  customerName?: string | null;
+  status?: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
+};
+
+type OperationalReservationSnapshot = {
+  id: string;
+  startsAt: string;
+  partySize: number;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  depositRequiredAmount?: number;
+  depositPaidAmount?: number;
+  status?: string;
+  depositStatus?: string | null;
+  tableNames?: string[];
 };
 
 export type OperationalEvent =
   | (BaseOperationalEvent & {
       type: "order.created";
-      order: {
-        id: string;
-        displayCode?: string;
-        itemCount: number;
-        total: number;
-        tableName?: string | null;
-        fulfillmentType?: "DINE_IN" | "PICKUP" | "DELIVERY";
-        customerName?: string | null;
-      };
+      order: OperationalOrderSnapshot;
     })
   | (BaseOperationalEvent & {
       type: "order.confirmed";
-      order: {
-        id: string;
-        displayCode?: string;
-        itemCount: number;
-        total: number;
-        tableName?: string | null;
-        fulfillmentType?: "DINE_IN" | "PICKUP" | "DELIVERY";
-        customerName?: string | null;
+      order: OperationalOrderSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "order.completed";
+      order: OperationalOrderSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "order.cancelled";
+      order: OperationalOrderSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "order.delivery_status_changed";
+      order: OperationalOrderSnapshot;
+      delivery: {
+        previousStatus?: string | null;
+        status: string;
+        courierId?: string | null;
+        courierName?: string | null;
       };
     })
   | (BaseOperationalEvent & {
       type: "payment.waiting_confirm";
-      payment: {
-        orderId: string;
-        billId?: string | null;
-        amount: number;
-        method: "QR" | "CASH";
-        customerName?: string | null;
-      };
+      payment: OperationalPaymentSnapshot;
     })
   | (BaseOperationalEvent & {
       type: "payment.received";
-      payment: {
-        orderId: string;
-        billId?: string | null;
-        amount: number;
-        method: "QR" | "CASH";
-        customerName?: string | null;
-      };
+      payment: OperationalPaymentSnapshot;
     })
   | (BaseOperationalEvent & {
       type: "reservation.created";
-      reservation: {
-        id: string;
-        startsAt: string;
-        partySize: number;
-        customerName?: string | null;
-        depositRequiredAmount?: number;
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.deposit_submitted";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.confirmed";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.rejected";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.cancelled";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.checked_in";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.seated";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.no_show";
+      reservation: OperationalReservationSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "reservation.rescheduled";
+      reservation: OperationalReservationSnapshot & {
+        previousStartsAt?: string | null;
       };
     })
   | (BaseOperationalEvent & {
@@ -75,6 +138,37 @@ export type OperationalEvent =
         userId: string;
         staffId?: string | null;
         displayName?: string | null;
+      };
+    })
+  | (BaseOperationalEvent & {
+      type: "service_request.created";
+      serviceRequest: {
+        id: string;
+        tableId?: string | null;
+        tableName?: string | null;
+        type: "CALL_STAFF";
+        message?: string | null;
+        status?: string;
+      };
+    })
+  | (BaseOperationalEvent & {
+      type: "service_request.resolved";
+      serviceRequest: {
+        id: string;
+        tableId?: string | null;
+        tableName?: string | null;
+        type: "CALL_STAFF";
+        message?: string | null;
+        status?: string;
+      };
+    })
+  | (BaseOperationalEvent & {
+      type: "platform.alert";
+      alert: {
+        severity: "critical" | "warning" | "info";
+        title: string;
+        summary?: string | null;
+        area?: "api" | "web" | "telegram" | "queue" | "database" | "ai" | "billing" | "security" | "other";
       };
     })
   | (BaseOperationalEvent & {

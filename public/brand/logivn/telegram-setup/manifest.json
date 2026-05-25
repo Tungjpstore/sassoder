@@ -1,0 +1,13 @@
+{
+  "assetSet": "logivn-telegram-setup",
+  "provider": "xai",
+  "model": "grok-imagine-image-quality",
+  "updatedAt": "2026-05-25",
+  "assets": [
+    {
+      "id": "ops-command",
+      "title": "Điều hành từ Telegram",
+      "src": "/brand/logivn/telegram-setup/ops-command.png"
+    }
+  ]
+}

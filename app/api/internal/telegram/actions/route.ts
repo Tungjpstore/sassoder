@@ -5,6 +5,7 @@ import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, cancelOrder, getOrderLifecycleSnapshot, markOrderCompleted } from "@/services/order-service";
 import { confirmPayment } from "@/services/payment-service";
 import { confirmReservationDeposit, rejectReservation } from "@/services/reservation-service";
+import { resolveServiceRequest } from "@/services/service-request-service";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import type { StaffPermissionKey } from "@/lib/staff-permissions";
 import type { SessionProfile } from "@/types/domain";
@@ -18,6 +19,7 @@ const telegramActionSchema = z.object({
     "order.cancel",
     "order.done",
     "payment.confirm",
+    "service_request.resolve",
     "reservation.confirm",
     "reservation.reject"
   ]),
@@ -25,7 +27,7 @@ const telegramActionSchema = z.object({
   branchId: z.string().uuid().nullable().optional(),
   actorUserId: z.string().uuid(),
   actorRole: z.enum(["ADMIN", "STAFF"]),
-  resourceType: z.enum(["order", "reservation"]),
+  resourceType: z.enum(["order", "reservation", "service_request"]),
   resourceId: z.string().uuid(),
   payload: z.record(z.unknown()).optional()
 });
@@ -35,6 +37,7 @@ const requiredPermissionByTelegramAction: Record<z.infer<typeof telegramActionSc
   "order.cancel": "orders.cancel",
   "order.done": "orders.update",
   "payment.confirm": "payments.confirm",
+  "service_request.resolve": "orders.update",
   "reservation.confirm": "reservations.manage",
   "reservation.reject": "reservations.manage"
 };
@@ -84,6 +87,22 @@ async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>
     return { message: "Đã cập nhật đơn.", result: data };
   }
 
+  if (input.resourceType === "service_request") {
+    const data = await resolveServiceRequest(input.restaurantId, input.resourceId);
+    await writeAuditLog({
+      restaurantId: input.restaurantId,
+      actorUserId: input.actorUserId,
+      actorRole: input.actorRole,
+      action: `telegram.${input.actionType}`,
+      entityType: "service_request",
+      entityId: input.resourceId,
+      afterData: data,
+      branchId: input.branchId ?? null,
+      metadata: { telegramActionId: input.actionId, payload: input.payload ?? {} }
+    });
+    return { message: "Đã xử lý yêu cầu.", result: data };
+  }
+
   const data = await executeReservationAction(input);
   await writeAuditLog({
     restaurantId: input.restaurantId,
@@ -101,9 +120,9 @@ async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>
 
 async function executeOrderAction(input: z.infer<typeof telegramActionSchema>) {
   if (input.actionType === "order.confirm") return acceptOrder(input.restaurantId, input.resourceId, 15, input.actorUserId);
-  if (input.actionType === "order.done") return markOrderCompleted(input.restaurantId, input.resourceId);
+  if (input.actionType === "order.done") return markOrderCompleted(input.restaurantId, input.resourceId, input.actorUserId);
   if (input.actionType === "order.cancel") return cancelOrder(input.restaurantId, input.resourceId, input.actorUserId);
-  if (input.actionType === "payment.confirm") return confirmPayment(input.restaurantId, input.resourceId);
+  if (input.actionType === "payment.confirm") return confirmPayment(input.restaurantId, input.resourceId, input.actorUserId);
   throw new Error("Unsupported Telegram order action.");
 }
 

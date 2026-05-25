@@ -31,7 +31,7 @@ import { invalidateRestaurantDashboardCache } from "@/services/restaurant-servic
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
-import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
+import { buildTelegramOrderSnapshot, enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
@@ -1330,15 +1330,9 @@ export async function createOrder(input: CreateOrderInput) {
     eventId: `order.created:${order.id}`,
     restaurantId: restaurant.id,
     branchId: order.branchId ?? null,
-    order: {
-      id: order.id,
-      displayCode: order.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
-      itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
-      total: order.total,
-      tableName: order.table?.name ?? null,
-      fulfillmentType: order.fulfillmentType,
-      customerName: order.customerName ?? null
-    }
+    source: "customer_qr",
+    actor: { type: "customer" },
+    order: buildTelegramOrderSnapshot(order)
   });
   await broadcastVpsRealtime({
     event: "new_order",
@@ -1587,15 +1581,9 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
     eventId: `order.created:${order.id}`,
     restaurantId: settings.id,
     branchId: order.branchId ?? null,
-    order: {
-      id: order.id,
-      displayCode: order.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
-      itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
-      total: order.total,
-      tableName: null,
-      fulfillmentType: order.fulfillmentType,
-      customerName: order.customerName ?? null
-    }
+    source: "online_ordering",
+    actor: { type: "customer" },
+    order: buildTelegramOrderSnapshot(order)
   });
   await broadcastVpsRealtime({
     event: "new_order",
@@ -1907,15 +1895,9 @@ export async function acceptOrder(restaurantId: string, orderId: string, minutes
     eventId: `order.confirmed:${orderId}`,
     restaurantId,
     branchId: confirmedOrder.branchId ?? null,
-    order: {
-      id: confirmedOrder.id,
-      displayCode: confirmedOrder.id.replaceAll("-", "").slice(0, 6).toUpperCase(),
-      itemCount: confirmedOrder.items.reduce((sum, item) => sum + item.quantity, 0),
-      total: confirmedOrder.total,
-      tableName: confirmedOrder.table?.name ?? null,
-      fulfillmentType: confirmedOrder.fulfillmentType,
-      customerName: confirmedOrder.customerName ?? null
-    }
+    source: "dashboard",
+    actor: { type: "merchant", userId: actorUserId ?? null },
+    order: buildTelegramOrderSnapshot(confirmedOrder)
   });
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
@@ -1940,7 +1922,7 @@ export async function updateOrderServiceTimer(restaurantId: string, orderId: str
   return data;
 }
 
-export async function markOrderCompleted(restaurantId: string, orderId: string) {
+export async function markOrderCompleted(restaurantId: string, orderId: string, actorUserId?: string | null) {
   const supabase = createAdminSupabaseClient();
   const { data: order, error } = await supabase
     .from("orders")
@@ -1978,6 +1960,16 @@ export async function markOrderCompleted(restaurantId: string, orderId: string) 
     if (latest?.status === "completed") return latest;
     throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
   }
+  const completedOrder = await getOrderDto(orderId, supabase);
+  await enqueueTelegramNotification({
+    type: "order.completed",
+    eventId: `order.completed:${orderId}`,
+    restaurantId,
+    branchId: completedOrder.branchId ?? null,
+    source: "dashboard",
+    actor: { type: "merchant", userId: actorUserId ?? null },
+    order: buildTelegramOrderSnapshot(completedOrder)
+  });
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
   return updated;
@@ -2052,6 +2044,20 @@ export async function updateOrderDeliveryStatus(
       error: error instanceof Error ? error.message : "unknown"
     });
   }
+  const deliveryOrder = await getOrderDto(orderId, supabase);
+  await enqueueTelegramNotification({
+    type: "order.delivery_status_changed",
+    eventId: `order.delivery_status_changed:${orderId}:${deliveryStatus}`,
+    restaurantId,
+    branchId: deliveryOrder.branchId ?? null,
+    source: "dashboard",
+    actor: { type: "merchant", userId: actorUserId ?? null },
+    order: buildTelegramOrderSnapshot(deliveryOrder),
+    delivery: {
+      previousStatus: order.delivery_status ?? null,
+      status: deliveryStatus
+    }
+  });
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
   return updated;
@@ -2095,6 +2101,18 @@ async function cancelOrderInternal(
     });
   }
   await closeBillIfNoActiveOrders(supabase, restaurantId, order.bill_id);
+  const cancelledOrder = await getOrderDto(orderId, supabase).catch(() => null);
+  if (cancelledOrder) {
+    await enqueueTelegramNotification({
+      type: "order.cancelled",
+      eventId: `order.cancelled:${orderId}`,
+      restaurantId,
+      branchId: cancelledOrder.branchId ?? null,
+      source: "dashboard",
+      actor: { type: "merchant", userId: actorUserId ?? null },
+      order: buildTelegramOrderSnapshot(cancelledOrder)
+    });
+  }
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
   return updated;

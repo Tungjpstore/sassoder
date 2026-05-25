@@ -125,6 +125,7 @@ jobs:
           APP_ROOT="$APP_ROOT" infra/vps/scripts/deploy.sh
           sudo -n APP_ROOT="$APP_ROOT" APP_REPO="$APP_ROOT/app" infra/vps/scripts/install-cron.sh
           APP_ROOT="$APP_ROOT" infra/vps/scripts/validate.sh --local-only
+          APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only
           REMOTE
 
       - name: Deployment summary
