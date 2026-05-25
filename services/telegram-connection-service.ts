@@ -12,7 +12,7 @@ const SIGNATURE_LENGTH = 12;
 const TELEGRAM_QUEUE_NAME = "telegram.notifications";
 const TELEGRAM_DLQ_NAME = `${TELEGRAM_QUEUE_NAME}.dlq`;
 const RETRYABLE_NOTIFICATION_STATUSES = ["failed", "rate_limited"] as const;
-const TELEGRAM_TEST_NOTIFICATION_KINDS = ["order", "payment", "reservation", "inventory", "sla"] as const;
+const TELEGRAM_TEST_NOTIFICATION_KINDS = ["order", "payment", "reservation", "inventory", "sla", "service"] as const;
 
 type QueueCounts = {
   waiting?: number;
@@ -719,6 +719,21 @@ function buildTelegramTestEvent(session: SessionProfile, branchId: string | null
         orderId: randomUUID(),
         displayCode: "TEST-SLA",
         lateMinutes: 15
+      }
+    };
+  }
+
+  if (kind === "service") {
+    return {
+      ...base,
+      type: "service_request.created",
+      serviceRequest: {
+        id: randomUUID(),
+        tableId: randomUUID(),
+        tableName: "Bàn test",
+        type: "CALL_STAFF",
+        message: "Khách cần hỗ trợ test",
+        status: "open"
       }
     };
   }

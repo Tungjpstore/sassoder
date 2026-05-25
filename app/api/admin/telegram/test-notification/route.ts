@@ -8,7 +8,7 @@ export const preferredRegion = "sin1";
 
 const telegramTestNotificationSchema = z.object({
   branchId: z.string().uuid().nullable().optional(),
-  kind: z.enum(["order", "payment", "reservation", "inventory", "sla"]).optional()
+  kind: z.enum(["order", "payment", "reservation", "inventory", "sla", "service"]).optional()
 });
 
 export async function POST(request: Request) {

@@ -161,7 +161,7 @@ const key = process.env.LOGIVN_INTERNAL_API_KEY;
 if (!key) throw new Error("LOGIVN_INTERNAL_API_KEY is required");
 
 const tenantId = "tenant-readiness";
-const eventId = `readiness-${Date.now()}`;
+const eventId = `order.confirmed:readiness:${Date.now()}`;
 const headers = { "content-type": "application/json", "x-logivn-internal-key": key };
 
 async function request(path, options = {}) {
@@ -179,7 +179,22 @@ async function request(path, options = {}) {
 await request("/redis/health");
 await request("/events", {
   method: "POST",
-  body: JSON.stringify({ type: "order.confirmed", eventId, tenantId, orderId: "order-readiness" })
+  body: JSON.stringify({
+    type: "order.confirmed",
+    eventId,
+    tenantId,
+    order: {
+      id: "order-readiness",
+      displayCode: "READY-01",
+      itemCount: 2,
+      total: 120000,
+      tableName: "Bàn readiness",
+      fulfillmentType: "DINE_IN",
+      customerName: "Readiness Ops",
+      status: "ordering",
+      paymentStatus: "pending"
+    }
+  })
 });
 await new Promise((resolve) => setTimeout(resolve, 1200));
 

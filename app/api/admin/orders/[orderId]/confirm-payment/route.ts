@@ -26,7 +26,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       },
       async () => {
         const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
-        const confirmed = await confirmPayment(session.restaurantId, orderId);
+        const confirmed = await confirmPayment(session.restaurantId, orderId, session.userId);
         const requestContext = auditRequestContext(request);
         await writeAuditLog({
           restaurantId: session.restaurantId,

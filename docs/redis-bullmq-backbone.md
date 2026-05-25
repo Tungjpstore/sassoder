@@ -43,12 +43,26 @@ Priority labels map to BullMQ numeric priority: `critical=1`, `high=5`, `normal=
 `POST /events` is the preferred ingress for operational flows. Events must include `eventId` and either `tenantId` or `restaurantId`.
 
 - `order.created` -> `orders.processing`, `telegram.notifications`
-- `order.confirmed` -> `orders.processing`
+- `order.confirmed` -> `orders.processing`, `telegram.notifications`
+- `order.completed` -> `orders.processing`, `telegram.notifications`
+- `order.cancelled` -> `orders.processing`, `telegram.notifications`
+- `order.delivery_status_changed` -> `orders.processing`, `telegram.notifications`
 - `payment.received` -> `payments.confirmation`, `telegram.notifications`
 - `payment.waiting_confirm` -> `payments.confirmation`, `telegram.notifications`
 - `reservation.created` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.deposit_submitted` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.confirmed` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.rejected` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.cancelled` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.checked_in` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.seated` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.no_show` -> `reservation.confirmation`, `telegram.notifications`
+- `reservation.rescheduled` -> `reservation.confirmation`, `telegram.notifications`
 - `inventory.low` -> `inventory.alerts`, `telegram.notifications`
 - `staff.checked_in` -> `staff.attendance`, `staff.notifications`
+- `service_request.created` -> `staff.requests`, `telegram.notifications`
+- `service_request.resolved` -> `staff.requests`, `telegram.notifications`
+- `platform.alert` -> `telegram.notifications`
 - `sla.warning` -> `orders.sla`, `telegram.notifications`
 
 The legacy Telegram producer now publishes to `/events`, so notification fan-out is event-driven instead of direct service coupling.

@@ -39,6 +39,18 @@ export const eventRoutes = {
     route("orders.processing", "order.confirmed", "high"),
     route("telegram.notifications", "order.confirmed", "high")
   ],
+  "order.completed": [
+    route("orders.processing", "order.completed", "normal"),
+    route("telegram.notifications", "order.completed", "normal")
+  ],
+  "order.cancelled": [
+    route("orders.processing", "order.cancelled", "high"),
+    route("telegram.notifications", "order.cancelled", "high")
+  ],
+  "order.delivery_status_changed": [
+    route("orders.processing", "order.delivery_status_changed", "high"),
+    route("telegram.notifications", "order.delivery_status_changed", "high")
+  ],
   "payment.received": [
     route("payments.confirmation", "payment.received", "critical"),
     route("telegram.notifications", "payment.received", "critical")
@@ -51,6 +63,38 @@ export const eventRoutes = {
     route("reservation.confirmation", "reservation.created", "high"),
     route("telegram.notifications", "reservation.created", "high")
   ],
+  "reservation.deposit_submitted": [
+    route("reservation.confirmation", "reservation.deposit_submitted", "critical"),
+    route("telegram.notifications", "reservation.deposit_submitted", "critical")
+  ],
+  "reservation.confirmed": [
+    route("reservation.confirmation", "reservation.confirmed", "high"),
+    route("telegram.notifications", "reservation.confirmed", "normal")
+  ],
+  "reservation.rejected": [
+    route("reservation.confirmation", "reservation.rejected", "high"),
+    route("telegram.notifications", "reservation.rejected", "normal")
+  ],
+  "reservation.cancelled": [
+    route("reservation.confirmation", "reservation.cancelled", "high"),
+    route("telegram.notifications", "reservation.cancelled", "normal")
+  ],
+  "reservation.checked_in": [
+    route("reservation.confirmation", "reservation.checked_in", "normal"),
+    route("telegram.notifications", "reservation.checked_in", "normal")
+  ],
+  "reservation.seated": [
+    route("reservation.confirmation", "reservation.seated", "normal"),
+    route("telegram.notifications", "reservation.seated", "normal")
+  ],
+  "reservation.no_show": [
+    route("reservation.confirmation", "reservation.no_show", "high"),
+    route("telegram.notifications", "reservation.no_show", "high")
+  ],
+  "reservation.rescheduled": [
+    route("reservation.confirmation", "reservation.rescheduled", "high"),
+    route("telegram.notifications", "reservation.rescheduled", "normal")
+  ],
   "inventory.low": [
     route("inventory.alerts", "inventory.low", "high"),
     route("telegram.notifications", "inventory.low", "high")
@@ -62,6 +106,17 @@ export const eventRoutes = {
   "sla.warning": [
     route("orders.sla", "sla.warning", "critical"),
     route("telegram.notifications", "sla.warning", "critical")
+  ],
+  "service_request.created": [
+    route("staff.requests", "service_request.created", "critical"),
+    route("telegram.notifications", "service_request.created", "critical")
+  ],
+  "service_request.resolved": [
+    route("staff.requests", "service_request.resolved", "normal"),
+    route("telegram.notifications", "service_request.resolved", "low")
+  ],
+  "platform.alert": [
+    route("telegram.notifications", "platform.alert", "critical")
   ]
 };
 
@@ -125,7 +180,7 @@ export async function enqueueJob({ queueName, name, data, opts = {}, priority })
   const queue = getQueue(resolvedQueueName);
   const definition = queueDefinition(resolvedQueueName);
   const jobPriority = normalizePriority(priority ?? opts.priorityLabel ?? definition.priority);
-  const jobId = opts.jobId ?? buildJobId({ queueName: resolvedQueueName, name, data: normalizedData });
+  const jobId = opts.jobId ? jobIdForParts(opts.jobId) : buildJobId({ queueName: resolvedQueueName, name, data: normalizedData });
 
   return queue.add(name, normalizedData, {
     ...opts,
@@ -160,7 +215,7 @@ export async function publishOperationalEvent(event) {
         data: eventRecord,
         priority: target.priority,
         opts: {
-          jobId: `${target.queueName}:${event.type}:${event.eventId ?? Date.now()}`
+          jobId: jobIdForParts(target.queueName, event.type, event.eventId ?? Date.now())
         }
       }).then((job) => ({
         queueName: target.queueName,
@@ -231,7 +286,7 @@ export async function enqueueDeadLetterJob({ failedQueueName, job, error }) {
       failedAt: new Date().toISOString()
     },
     {
-      jobId: `${queueName}:${job.id}`,
+      jobId: jobIdForParts(queueName, job.id ?? Date.now()),
       attempts: 1,
       priority: priorityValues.critical,
       removeOnComplete: false,
@@ -309,8 +364,20 @@ function normalizeJobData(queueName, data) {
 function buildJobId({ queueName, name, data }) {
   const tenantId = tenantIdFromJobData(data);
   const eventId = data.eventId || data.idempotencyKey || data.orderId || data.reservationId || data.invoiceId;
-  if (tenantId && eventId) return `${queueName}:${tenantId}:${eventId}`;
+  if (tenantId && eventId) return jobIdForParts(queueName, tenantId, eventId);
   return undefined;
+}
+
+function jobIdForParts(...parts) {
+  return parts
+    .map((part) =>
+      String(part ?? "")
+        .replace(/[^A-Za-z0-9._-]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 120)
+    )
+    .filter(Boolean)
+    .join("-");
 }
 
 function redactLargePayload(data) {

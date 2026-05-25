@@ -7,12 +7,15 @@ export function createStaffWorkers(connection: Redis, logger: any) {
       queueName,
       connection,
       logger,
-      processor: async (job) =>
-        withTenantResourceLock(connection, job, "staff", resourceId(job, job.data.staffId, job.data.userId), async () => ({
+      processor: async (job) => {
+        const serviceRequest =
+          typeof job.data.serviceRequest === "object" && job.data.serviceRequest ? (job.data.serviceRequest as Record<string, unknown>) : {};
+        return withTenantResourceLock(connection, job, "staff", resourceId(job, serviceRequest.id, job.data.staffId, job.data.userId), async () => ({
           processed: true,
           queueName,
           tenantId: job.data.tenantId
-        }))
+        }));
+      }
     })
   );
 }

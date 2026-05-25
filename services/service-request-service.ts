@@ -6,6 +6,7 @@ import { invalidateRestaurantDashboardCache } from "@/services/restaurant-servic
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { getPublicTable } from "@/services/table-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
+import { buildTelegramServiceRequestSnapshot, enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import type { ServiceRequestDto, ServiceRequestStatus } from "@/types/domain";
 
 type RawServiceRequest = {
@@ -101,8 +102,18 @@ export async function createCustomerServiceRequest(input: {
 
   throwIfSupabaseError(error);
   if (!data) throw new AppError("Không gửi được yêu cầu gọi nhân viên", 400);
+  const request = mapServiceRequest(data as unknown as RawServiceRequest);
+  await enqueueTelegramNotification({
+    type: "service_request.created",
+    eventId: `service_request.created:${request.id}`,
+    restaurantId: restaurant.id,
+    branchId: null,
+    source: "customer_qr",
+    actor: { type: "customer" },
+    serviceRequest: buildTelegramServiceRequestSnapshot(request)
+  });
   invalidateRestaurantDashboardCache(restaurant.id);
-  return mapServiceRequest(data as unknown as RawServiceRequest);
+  return request;
 }
 
 export async function listOpenServiceRequests(restaurantId: string) {
@@ -132,6 +143,16 @@ export async function resolveServiceRequest(restaurantId: string, requestId: str
 
   throwIfSupabaseError(error);
   if (!data) throw new AppError("Không tìm thấy yêu cầu hỗ trợ", 404);
+  const request = mapServiceRequest(data as unknown as RawServiceRequest);
+  await enqueueTelegramNotification({
+    type: "service_request.resolved",
+    eventId: `service_request.resolved:${requestId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    serviceRequest: buildTelegramServiceRequestSnapshot(request)
+  });
   invalidateRestaurantDashboardCache(restaurantId);
-  return mapServiceRequest(data as unknown as RawServiceRequest);
+  return request;
 }

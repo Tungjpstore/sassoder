@@ -438,6 +438,17 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
       amount: bill.total,
       source: "customer_bill_checkout"
     });
+    if (paymentMethod === "CASH") {
+      await enqueuePaymentWaitingConfirmNotification({
+        restaurantId: typedOrder.restaurant_id,
+        branchId: typedOrder.branch_id ?? null,
+        orderId,
+        billId: bill.id,
+        amount: bill.total,
+        method: "CASH",
+        customerName: typedOrder.customer_name ?? null
+      });
+    }
 
     invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
@@ -491,6 +502,17 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
     amount: typedOrder.total,
     source: "customer_checkout"
   });
+  if (paymentMethod === "CASH") {
+    await enqueuePaymentWaitingConfirmNotification({
+      restaurantId: typedOrder.restaurant_id,
+      branchId: typedOrder.branch_id ?? null,
+      orderId,
+      billId: typedOrder.bill_id ?? null,
+      amount: typedOrder.total,
+      method: "CASH",
+      customerName: typedOrder.customer_name ?? null
+    });
+  }
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
   return getCustomerPaymentOrder(orderId, access);
 }
@@ -755,6 +777,7 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
   orderId: string;
   billId?: string | null;
   amount: number;
+  method?: PaymentMethod;
   customerName?: string | null;
 }) {
   await enqueueTelegramNotification({
@@ -768,7 +791,7 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
       orderId: input.orderId,
       billId: input.billId ?? null,
       amount: input.amount,
-      method: "QR",
+      method: input.method ?? "QR",
       customerName: input.customerName ?? null,
       status: "waiting_confirm"
     })

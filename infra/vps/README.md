@@ -160,7 +160,8 @@ workers for orders, payments, AI, reservations, inventory, staff, and non-Telegr
 notifications.
 
 `POST /events` is the preferred event-driven ingress. It routes operational events
-such as `order.created`, `payment.waiting_confirm`, `reservation.created`,
+such as `order.created`, `order.completed`, `payment.waiting_confirm`,
+`payment.received`, `reservation.deposit_submitted`, `service_request.created`,
 `inventory.low`, `staff.checked_in`, and `sla.warning` into the correct BullMQ
 queues with tenant-aware payloads.
 
@@ -213,10 +214,17 @@ Supported Phase 1/2 cards:
 
 - `order.created`: order notification with confirm/cancel/view actions
 - `order.confirmed`: kitchen/service notification with done/view actions
+- `order.completed`, `order.cancelled`, `order.delivery_status_changed`: compact lifecycle cards
 - `payment.waiting_confirm`: VietQR confirmation and amount mismatch actions
-- `reservation.created`: approve/reject reservation actions
+- `payment.received`: payment confirmation receipt
+- `reservation.created`: new reservation card with reject/view actions
+- `reservation.deposit_submitted`: deposit confirmation/reject actions
+- `reservation.confirmed`, `reservation.rejected`, `reservation.cancelled`, `reservation.checked_in`, `reservation.seated`, `reservation.no_show`, `reservation.rescheduled`: reservation lifecycle cards
+- `service_request.created`: call-staff card with resolve action
+- `service_request.resolved`: service request closure card
 - `inventory.low`: compact low-stock alert
 - `sla.warning`: late order alert
+- `platform.alert`: owner/dev operations alert
 
 AI Ops commands use the app internal API and real tenant snapshots:
 

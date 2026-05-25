@@ -116,14 +116,15 @@ type GeneratedToken = {
 };
 
 type RequestState = "idle" | "loading" | "success" | "error";
-type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla";
+type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla" | "service";
 
 const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon: typeof BellRing }> = [
   { kind: "order", label: "Đơn", Icon: BellRing },
   { kind: "payment", label: "VietQR", Icon: CreditCard },
   { kind: "reservation", label: "Đặt bàn", Icon: CalendarClock },
   { kind: "inventory", label: "Kho", Icon: PackageSearch },
-  { kind: "sla", label: "SLA", Icon: TimerReset }
+  { kind: "sla", label: "SLA", Icon: TimerReset },
+  { kind: "service", label: "Gọi phục vụ", Icon: Send }
 ];
 
 const TELEGRAM_SETUP_STEPS = [

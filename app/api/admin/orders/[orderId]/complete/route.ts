@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     });
     const { orderId } = adminOrderIdSchema.parse(await params);
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
-    const data = await markOrderCompleted(session.restaurantId, orderId);
+    const data = await markOrderCompleted(session.restaurantId, orderId, session.userId);
     await writeAuditLog({
       restaurantId: session.restaurantId,
       actorUserId: session.userId,

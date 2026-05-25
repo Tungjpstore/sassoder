@@ -86,7 +86,7 @@ main() {
   compose config --quiet
 
   log "Starting Redis, gateway, and worker"
-  compose up -d redis gateway worker
+  compose up -d --build redis gateway worker
 
   local gateway_url="http://127.0.0.1:$GATEWAY_PORT"
   wait_for_url "$gateway_url/health" gateway
@@ -99,7 +99,7 @@ main() {
 const base = process.env.SMOKE_BASE_URL;
 const key = process.env.LOGIVN_INTERNAL_API_KEY;
 const tenantId = "tenant-smoke";
-const eventId = `smoke-${Date.now()}`;
+const eventId = `order.confirmed:smoke:${Date.now()}`;
 const headers = { "content-type": "application/json", "x-logivn-internal-key": key };
 
 async function request(path, options = {}) {
@@ -116,7 +116,22 @@ async function request(path, options = {}) {
 
 await request("/events", {
   method: "POST",
-  body: JSON.stringify({ type: "order.confirmed", eventId, tenantId, orderId: "order-smoke" })
+  body: JSON.stringify({
+    type: "order.confirmed",
+    eventId,
+    tenantId,
+    order: {
+      id: "order-smoke",
+      displayCode: "SMOKE-01",
+      itemCount: 2,
+      total: 120000,
+      tableName: "Bàn smoke",
+      fulfillmentType: "DINE_IN",
+      customerName: "Smoke Ops",
+      status: "ordering",
+      paymentStatus: "pending"
+    }
+  })
 });
 
 await new Promise((resolve) => setTimeout(resolve, 1200));

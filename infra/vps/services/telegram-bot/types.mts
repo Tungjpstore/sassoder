@@ -6,7 +6,16 @@ const baseEventSchema = z.object({
   eventId: z.string().min(8).max(160),
   restaurantId: z.string().uuid(),
   branchId: branchIdSchema,
-  occurredAt: z.string().datetime().optional()
+  occurredAt: z.string().datetime().optional(),
+  actor: z
+    .object({
+      type: z.enum(["customer", "merchant", "telegram", "system", "dev"]),
+      userId: z.string().uuid().nullable().optional(),
+      role: z.string().max(80).nullable().optional(),
+      permissions: z.array(z.string().max(120)).max(120).optional()
+    })
+    .optional(),
+  source: z.enum(["customer_qr", "online_ordering", "dashboard", "telegram", "system", "devops"]).optional()
 });
 
 export const telegramActionSchema = z.enum([
@@ -15,6 +24,7 @@ export const telegramActionSchema = z.enum([
   "order.done",
   "payment.confirm",
   "payment.amount_mismatch",
+  "service_request.resolve",
   "reservation.confirm",
   "reservation.reject"
 ]);
@@ -27,6 +37,7 @@ export const requiredPermissionByAction: Record<TelegramActionType, string> = {
   "order.done": "orders.update",
   "payment.confirm": "payments.confirm",
   "payment.amount_mismatch": "payments.confirm",
+  "service_request.resolve": "orders.update",
   "reservation.confirm": "reservations.manage",
   "reservation.reject": "reservations.manage"
 };
@@ -40,12 +51,36 @@ export const orderCreatedEventSchema = baseEventSchema.extend({
     total: z.number().nonnegative(),
     tableName: z.string().max(80).nullable().optional(),
     fulfillmentType: z.enum(["DINE_IN", "PICKUP", "DELIVERY"]).optional(),
-    customerName: z.string().max(120).nullable().optional()
+    customerName: z.string().max(120).nullable().optional(),
+    customerPhone: z.string().max(40).nullable().optional(),
+    status: z.string().max(40).optional(),
+    paymentStatus: z.string().max(40).nullable().optional(),
+    deliveryStatus: z.string().max(40).nullable().optional(),
+    deliveryAddress: z.string().max(240).nullable().optional(),
+    serviceDueAt: z.string().datetime().nullable().optional()
   })
 });
 
 export const orderConfirmedEventSchema = orderCreatedEventSchema.extend({
   type: z.literal("order.confirmed")
+});
+
+export const orderCompletedEventSchema = orderCreatedEventSchema.extend({
+  type: z.literal("order.completed")
+});
+
+export const orderCancelledEventSchema = orderCreatedEventSchema.extend({
+  type: z.literal("order.cancelled")
+});
+
+export const orderDeliveryStatusChangedEventSchema = orderCreatedEventSchema.extend({
+  type: z.literal("order.delivery_status_changed"),
+  delivery: z.object({
+    previousStatus: z.string().max(40).nullable().optional(),
+    status: z.string().min(1).max(40),
+    courierId: z.string().uuid().nullable().optional(),
+    courierName: z.string().max(120).nullable().optional()
+  })
 });
 
 export const paymentWaitingConfirmEventSchema = baseEventSchema.extend({
@@ -55,7 +90,8 @@ export const paymentWaitingConfirmEventSchema = baseEventSchema.extend({
     billId: z.string().uuid().nullable().optional(),
     amount: z.number().nonnegative(),
     method: z.enum(["QR", "CASH"]).default("QR"),
-    customerName: z.string().max(120).nullable().optional()
+    customerName: z.string().max(120).nullable().optional(),
+    status: z.enum(["pending", "waiting_confirm", "confirmed", "failed", "cancelled", "refunded"]).optional()
   })
 });
 
@@ -70,7 +106,47 @@ export const reservationCreatedEventSchema = baseEventSchema.extend({
     startsAt: z.string().datetime(),
     partySize: z.number().int().positive(),
     customerName: z.string().max(120).nullable().optional(),
-    depositRequiredAmount: z.number().nonnegative().optional()
+    customerPhone: z.string().max(40).nullable().optional(),
+    depositRequiredAmount: z.number().nonnegative().optional(),
+    depositPaidAmount: z.number().nonnegative().optional(),
+    status: z.string().max(40).optional(),
+    depositStatus: z.string().max(40).nullable().optional(),
+    tableNames: z.array(z.string().min(1).max(80)).max(10).optional()
+  })
+});
+
+export const reservationDepositSubmittedEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.deposit_submitted")
+});
+
+export const reservationConfirmedEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.confirmed")
+});
+
+export const reservationRejectedEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.rejected")
+});
+
+export const reservationCancelledEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.cancelled")
+});
+
+export const reservationCheckedInEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.checked_in")
+});
+
+export const reservationSeatedEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.seated")
+});
+
+export const reservationNoShowEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.no_show")
+});
+
+export const reservationRescheduledEventSchema = reservationCreatedEventSchema.extend({
+  type: z.literal("reservation.rescheduled"),
+  reservation: reservationCreatedEventSchema.shape.reservation.extend({
+    previousStartsAt: z.string().datetime().nullable().optional()
   })
 });
 
@@ -90,6 +166,32 @@ export const slaWarningEventSchema = baseEventSchema.extend({
   })
 });
 
+export const serviceRequestCreatedEventSchema = baseEventSchema.extend({
+  type: z.literal("service_request.created"),
+  serviceRequest: z.object({
+    id: z.string().uuid(),
+    tableId: z.string().uuid().nullable().optional(),
+    tableName: z.string().max(80).nullable().optional(),
+    type: z.literal("CALL_STAFF"),
+    message: z.string().max(500).nullable().optional(),
+    status: z.string().max(40).optional()
+  })
+});
+
+export const serviceRequestResolvedEventSchema = serviceRequestCreatedEventSchema.extend({
+  type: z.literal("service_request.resolved")
+});
+
+export const platformAlertEventSchema = baseEventSchema.extend({
+  type: z.literal("platform.alert"),
+  alert: z.object({
+    severity: z.enum(["critical", "warning", "info"]),
+    title: z.string().min(1).max(120),
+    summary: z.string().max(500).nullable().optional(),
+    area: z.enum(["api", "web", "telegram", "queue", "database", "ai", "billing", "security", "other"]).optional()
+  })
+});
+
 export const directTelegramMessageSchema = z.object({
   type: z.literal("telegram.send_message"),
   eventId: z.string().min(8).max(160),
@@ -103,11 +205,25 @@ export const directTelegramMessageSchema = z.object({
 export const telegramNotificationJobSchema = z.discriminatedUnion("type", [
   orderCreatedEventSchema,
   orderConfirmedEventSchema,
+  orderCompletedEventSchema,
+  orderCancelledEventSchema,
+  orderDeliveryStatusChangedEventSchema,
   paymentReceivedEventSchema,
   paymentWaitingConfirmEventSchema,
   reservationCreatedEventSchema,
+  reservationDepositSubmittedEventSchema,
+  reservationConfirmedEventSchema,
+  reservationRejectedEventSchema,
+  reservationCancelledEventSchema,
+  reservationCheckedInEventSchema,
+  reservationSeatedEventSchema,
+  reservationNoShowEventSchema,
+  reservationRescheduledEventSchema,
   inventoryLowEventSchema,
   slaWarningEventSchema,
+  serviceRequestCreatedEventSchema,
+  serviceRequestResolvedEventSchema,
+  platformAlertEventSchema,
   directTelegramMessageSchema
 ]);
 

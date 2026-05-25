@@ -865,23 +865,69 @@ function actionsForEvent(event: OperationalTelegramEvent): TelegramActionType[] 
   if (isTestEvent(event)) return [];
   if (event.type === "order.created") return ["order.confirm", "order.cancel"];
   if (event.type === "order.confirmed") return ["order.done"];
+  if (event.type === "service_request.created") return ["service_request.resolve"];
   if (event.type === "payment.waiting_confirm") return ["payment.confirm", "payment.amount_mismatch"];
-  if (event.type === "reservation.created") return ["reservation.confirm", "reservation.reject"];
+  if (event.type === "reservation.created") return ["reservation.reject"];
+  if (event.type === "reservation.deposit_submitted") return ["reservation.confirm", "reservation.reject"];
   return [];
 }
 
 function requiredPermissionForEvent(event: OperationalTelegramEvent) {
-  if (event.type === "order.created" || event.type === "order.confirmed" || event.type === "sla.warning") return "orders.view";
+  if (
+    event.type === "order.created" ||
+    event.type === "order.confirmed" ||
+    event.type === "order.completed" ||
+    event.type === "order.cancelled" ||
+    event.type === "order.delivery_status_changed" ||
+    event.type === "sla.warning"
+  ) {
+    return "orders.view";
+  }
   if (event.type === "payment.waiting_confirm" || event.type === "payment.received") return "payments.view";
-  if (event.type === "reservation.created") return "reservations.manage";
+  if (
+    event.type === "reservation.created" ||
+    event.type === "reservation.deposit_submitted" ||
+    event.type === "reservation.confirmed" ||
+    event.type === "reservation.rejected" ||
+    event.type === "reservation.cancelled" ||
+    event.type === "reservation.checked_in" ||
+    event.type === "reservation.seated" ||
+    event.type === "reservation.no_show" ||
+    event.type === "reservation.rescheduled"
+  ) {
+    return "reservations.manage";
+  }
   if (event.type === "inventory.low") return "inventory.view";
+  if (event.type === "service_request.created" || event.type === "service_request.resolved") return "orders.view";
+  if (event.type === "platform.alert") return "notifications.manage";
   return "notifications.manage";
 }
 
 function resourceForEvent(event: OperationalTelegramEvent, actionType: TelegramActionType) {
-  if (event.type === "order.created" || event.type === "order.confirmed") return { type: "order", id: event.order.id };
+  if (
+    event.type === "order.created" ||
+    event.type === "order.confirmed" ||
+    event.type === "order.completed" ||
+    event.type === "order.cancelled" ||
+    event.type === "order.delivery_status_changed"
+  ) {
+    return { type: "order", id: event.order.id };
+  }
   if (event.type === "payment.waiting_confirm" || event.type === "payment.received") return { type: "order", id: event.payment.orderId };
-  if (event.type === "reservation.created") return { type: "reservation", id: event.reservation.id };
+  if (
+    event.type === "reservation.created" ||
+    event.type === "reservation.deposit_submitted" ||
+    event.type === "reservation.confirmed" ||
+    event.type === "reservation.rejected" ||
+    event.type === "reservation.cancelled" ||
+    event.type === "reservation.checked_in" ||
+    event.type === "reservation.seated" ||
+    event.type === "reservation.no_show" ||
+    event.type === "reservation.rescheduled"
+  ) {
+    return { type: "reservation", id: event.reservation.id };
+  }
+  if (event.type === "service_request.created" || event.type === "service_request.resolved") return { type: "service_request", id: event.serviceRequest.id };
   if (event.type === "sla.warning") return { type: "order", id: event.sla.orderId };
   return { type: actionType.split(".")[0], id: event.eventId };
 }
@@ -893,6 +939,7 @@ function labelForAction(actionType: TelegramActionType) {
     "order.done": "Xong",
     "payment.confirm": "Xác nhận",
     "payment.amount_mismatch": "Sai số tiền",
+    "service_request.resolve": "Đã xử lý",
     "reservation.confirm": "Đồng ý",
     "reservation.reject": "Từ chối"
   };

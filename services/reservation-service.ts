@@ -23,7 +23,7 @@ import { isReservationPastNoShowGrace, reservationNoShowAvailableAt, roundUpToSl
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { assertPublicTenantActive, isPublicTenantActive } from "@/services/tenant-status-guard";
-import { enqueueTelegramNotification } from "@/services/telegram-event-queue";
+import { buildTelegramReservationSnapshot, enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import type { PaymentMethod, ReservationDepositStatus, ReservationDepositType, ReservationDto, ReservationStatus } from "@/types/domain";
 import type { Database, Json } from "@/types/supabase";
 
@@ -2020,13 +2020,9 @@ export async function createReservation(input: {
     eventId: `reservation.created:${nextReservation.id}`,
     restaurantId: settings.id,
     branchId: null,
-    reservation: {
-      id: nextReservation.id,
-      startsAt: nextReservation.startsAt,
-      partySize: nextReservation.partySize,
-      customerName: nextReservation.customerName,
-      depositRequiredAmount: nextReservation.depositRequiredAmount
-    }
+    source: "online_ordering",
+    actor: { type: "customer" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
   });
   invalidateRestaurantDashboardCache(settings.id);
   return {
@@ -2185,6 +2181,16 @@ export async function markReservationDepositPaid(reservationId: string, token: s
       source: "reservation_customer_paid_button",
       transitionKey: waitingConfirmKey
     });
+    const nextReservation = await getReservationById(reservationId, restaurantId);
+    await enqueueTelegramNotification({
+      type: "reservation.deposit_submitted",
+      eventId: `reservation.deposit_submitted:${reservationId}`,
+      restaurantId,
+      branchId: null,
+      source: "online_ordering",
+      actor: { type: "customer" },
+      reservation: buildTelegramReservationSnapshot(nextReservation)
+    });
     return getPublicReservation(reservationId, token);
   }
   if (reservation.status !== "holding" || reservation.depositStatus !== "waiting_payment") {
@@ -2213,6 +2219,15 @@ export async function markReservationDepositPaid(reservationId: string, token: s
         source: "reservation_customer_paid_button",
         transitionKey: waitingConfirmKey
       });
+      await enqueueTelegramNotification({
+        type: "reservation.deposit_submitted",
+        eventId: `reservation.deposit_submitted:${reservationId}`,
+        restaurantId,
+        branchId: null,
+        source: "online_ordering",
+        actor: { type: "customer" },
+        reservation: buildTelegramReservationSnapshot(currentReservation)
+      });
       return getPublicReservation(reservationId, token);
     }
     throw new AppError("Không thể ghi nhận cọc VietQR cho đặt bàn này.", 409);
@@ -2237,6 +2252,16 @@ export async function markReservationDepositPaid(reservationId: string, token: s
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.deposit_submitted",
+    eventId: `reservation.deposit_submitted:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "online_ordering",
+    actor: { type: "customer" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
   return getPublicReservation(reservationId, token);
 }
 
@@ -2443,6 +2468,15 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
       source: "merchant_reservation_deposit_confirm",
       transitionKey: confirmKey
     });
+    await enqueueTelegramNotification({
+      type: "reservation.confirmed",
+      eventId: `reservation.confirmed:${reservationId}`,
+      restaurantId,
+      branchId: null,
+      source: "dashboard",
+      actor: { type: "merchant" },
+      reservation: buildTelegramReservationSnapshot(reservation)
+    });
     return reservation;
   }
   if (isClosedReservationStatus(reservation.status)) {
@@ -2512,7 +2546,17 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.confirmed",
+    eventId: `reservation.confirmed:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function markReservationDepositRefunded(restaurantId: string, reservationId: string) {
@@ -2622,7 +2666,17 @@ export async function cancelReservation(restaurantId: string, reservationId: str
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.cancelled",
+    eventId: `reservation.cancelled:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function rejectReservation(restaurantId: string, reservationId: string) {
@@ -2679,7 +2733,17 @@ export async function rejectReservation(restaurantId: string, reservationId: str
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.rejected",
+    eventId: `reservation.rejected:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function checkInReservation(restaurantId: string, reservationId: string) {
@@ -2722,7 +2786,17 @@ export async function checkInReservation(restaurantId: string, reservationId: st
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.checked_in",
+    eventId: `reservation.checked_in:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function setReservationTables(restaurantId: string, reservationId: string, tableIds: string[]) {
@@ -3247,7 +3321,17 @@ export async function rescheduleReservation(
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.rescheduled",
+    eventId: `reservation.rescheduled:${reservationId}:${startsAt.toISOString()}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation, { previousStartsAt: reservation.startsAt })
+  });
+  return nextReservation;
 }
 
 export async function seatReservation(restaurantId: string, reservationId: string) {
@@ -3311,7 +3395,17 @@ export async function seatReservation(restaurantId: string, reservationId: strin
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.seated",
+    eventId: `reservation.seated:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function markReservationNoShow(restaurantId: string, reservationId: string) {
@@ -3377,7 +3471,17 @@ export async function markReservationNoShow(restaurantId: string, reservationId:
   });
 
   invalidateRestaurantDashboardCache(restaurantId);
-  return getReservationById(reservationId, restaurantId);
+  const nextReservation = await getReservationById(reservationId, restaurantId);
+  await enqueueTelegramNotification({
+    type: "reservation.no_show",
+    eventId: `reservation.no_show:${reservationId}`,
+    restaurantId,
+    branchId: null,
+    source: "dashboard",
+    actor: { type: "merchant" },
+    reservation: buildTelegramReservationSnapshot(nextReservation)
+  });
+  return nextReservation;
 }
 
 export async function completeReservationForBill(

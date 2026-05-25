@@ -9,31 +9,30 @@ export type FormattedTelegramCard = {
 export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTelegramCard {
   const test = isTestEvent(event);
 
-  if (event.type === "order.created") {
+  if (
+    event.type === "order.created" ||
+    event.type === "order.confirmed" ||
+    event.type === "order.completed" ||
+    event.type === "order.cancelled" ||
+    event.type === "order.delivery_status_changed"
+  ) {
     const code = event.order.displayCode ?? shortId(event.order.id);
     const location = event.order.tableName ? `\n📍 ${escapeHtml(event.order.tableName)}` : "";
+    const deliveryAddress =
+      event.order.fulfillmentType === "DELIVERY" && event.order.deliveryAddress ? `\n📍 ${escapeHtml(event.order.deliveryAddress)}` : "";
     const customer = event.order.customerName ? `\n👤 ${escapeHtml(event.order.customerName)}` : "";
+    const channel = event.order.fulfillmentType ? `\n🚦 ${fulfillmentLabel(event.order.fulfillmentType)}` : "";
+    const headline = orderHeadline(event);
     return {
-      title: testTitle(test, `Đơn mới #${code}`),
-      body: `${testPrefix(test)}🔔 <b>Đơn mới #${escapeHtml(code)}</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
-      viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
-    };
-  }
-
-  if (event.type === "order.confirmed") {
-    const code = event.order.displayCode ?? shortId(event.order.id);
-    const location = event.order.tableName ? `\n📍 ${escapeHtml(event.order.tableName)}` : "";
-    const customer = event.order.customerName ? `\n👤 ${escapeHtml(event.order.customerName)}` : "";
-    return {
-      title: testTitle(test, `Đơn #${code} đã xác nhận`),
-      body: `${testPrefix(test)}👨‍🍳 <b>Đơn #${escapeHtml(code)} đã xác nhận</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
+      title: testTitle(test, headline.title(code)),
+      body: `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title(code))}</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${channel}${location}${deliveryAddress}${customer}`,
       viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
     };
   }
 
   if (event.type === "payment.waiting_confirm" || event.type === "payment.received") {
     const customer = event.payment.customerName ? `\n👤 ${escapeHtml(event.payment.customerName)}` : "";
-    const title = event.type === "payment.received" ? "Đã nhận thanh toán" : "VietQR cần xác nhận";
+    const title = event.type === "payment.received" ? "Đã xác nhận thanh toán" : "VietQR cần xác nhận";
     return {
       title: testTitle(test, title),
       body: `${testPrefix(test)}💳 <b>${escapeHtml(title)}</b>\n\n💰 ${money(event.payment.amount)}${customer}`,
@@ -41,7 +40,17 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     };
   }
 
-  if (event.type === "reservation.created") {
+  if (
+    event.type === "reservation.created" ||
+    event.type === "reservation.deposit_submitted" ||
+    event.type === "reservation.confirmed" ||
+    event.type === "reservation.rejected" ||
+    event.type === "reservation.cancelled" ||
+    event.type === "reservation.checked_in" ||
+    event.type === "reservation.seated" ||
+    event.type === "reservation.no_show" ||
+    event.type === "reservation.rescheduled"
+  ) {
     const startsAt = new Intl.DateTimeFormat("vi-VN", {
       hour: "2-digit",
       minute: "2-digit",
@@ -49,10 +58,26 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
       month: "2-digit",
       timeZone: "Asia/Ho_Chi_Minh"
     }).format(new Date(event.reservation.startsAt));
+    const previousStartsAt =
+      event.type === "reservation.rescheduled" && event.reservation.previousStartsAt
+        ? new Intl.DateTimeFormat("vi-VN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            day: "2-digit",
+            month: "2-digit",
+            timeZone: "Asia/Ho_Chi_Minh"
+          }).format(new Date(event.reservation.previousStartsAt))
+        : null;
     const customer = event.reservation.customerName ? `\n👤 ${escapeHtml(event.reservation.customerName)}` : "";
+    const requiredDeposit = Number(event.reservation.depositRequiredAmount ?? 0);
+    const paidDeposit = Number(event.reservation.depositPaidAmount ?? 0);
+    const deposit = requiredDeposit > 0 ? `\n💳 Cọc ${money(paidDeposit > 0 ? paidDeposit : requiredDeposit)}` : "";
+    const tables = event.reservation.tableNames?.length ? `\n📍 ${event.reservation.tableNames.map(escapeHtml).join(", ")}` : "";
+    const headline = reservationHeadline(event);
+    const previous = previousStartsAt ? `\n↪️ Từ ${previousStartsAt}` : "";
     return {
-      title: testTitle(test, "Đặt bàn mới"),
-      body: `${testPrefix(test)}📅 <b>Đặt bàn mới</b>\n\n🕖 ${startsAt}\n👥 ${event.reservation.partySize} khách${customer}`,
+      title: testTitle(test, headline.title),
+      body: `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title)}</b>\n\n🕖 ${startsAt}${previous}\n👥 ${event.reservation.partySize} khách${deposit}${tables}${customer}`,
       viewPath: viewPath(test, `/dashboard/reservations?reservationId=${event.reservation.id}`)
     };
   }
@@ -66,12 +91,101 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     };
   }
 
+  if (event.type === "service_request.created" || event.type === "service_request.resolved") {
+    const title = event.type === "service_request.resolved" ? "Đã xử lý gọi phục vụ" : "Khách gọi phục vụ";
+    const table = event.serviceRequest.tableName ? `\n📍 ${escapeHtml(event.serviceRequest.tableName)}` : "";
+    const message = event.serviceRequest.message ? `\n💬 ${escapeHtml(event.serviceRequest.message)}` : "";
+    return {
+      title: testTitle(test, title),
+      body: `${testPrefix(test)}🛎️ <b>${escapeHtml(title)}</b>${table}${message}`,
+      viewPath: viewPath(test, "/dashboard")
+    };
+  }
+
+  if (event.type === "platform.alert") {
+    const title = `${alertIcon(event.alert.severity)} ${event.alert.title}`;
+    const summary = event.alert.summary ? `\n${escapeHtml(event.alert.summary)}` : "";
+    return {
+      title: testTitle(test, event.alert.title),
+      body: `${testPrefix(test)}<b>${escapeHtml(title)}</b>${summary}`,
+      viewPath: viewPath(test, "/dashboard/settings?section=notifications")
+    };
+  }
+
   const code = event.sla.displayCode ?? shortId(event.sla.orderId);
   return {
     title: testTitle(test, `Đơn #${code} trễ SLA`),
     body: `${testPrefix(test)}🚨 <b>Đơn #${escapeHtml(code)} trễ SLA ${event.sla.lateMinutes} phút</b>`,
     viewPath: viewPath(test, `/dashboard/orders?orderId=${event.sla.orderId}`)
   };
+}
+
+function orderHeadline(
+  event: Extract<
+    OperationalTelegramEvent,
+    { type: "order.created" | "order.confirmed" | "order.completed" | "order.cancelled" | "order.delivery_status_changed" }
+  >
+) {
+  if (event.type === "order.confirmed") return { icon: "👨‍🍳", title: (code: string) => `Đơn #${code} đã nhận` };
+  if (event.type === "order.completed") return { icon: "✅", title: (code: string) => `Đơn #${code} đã xong` };
+  if (event.type === "order.cancelled") return { icon: "🛑", title: (code: string) => `Đơn #${code} đã huỷ` };
+  if (event.type === "order.delivery_status_changed") {
+    return { icon: "🛵", title: (code: string) => `Đơn #${code}: ${deliveryStatusLabel(event.delivery.status)}` };
+  }
+  return { icon: "🔔", title: (code: string) => `Đơn mới #${code}` };
+}
+
+function reservationHeadline(
+  event: Extract<
+    OperationalTelegramEvent,
+    {
+      type:
+        | "reservation.created"
+        | "reservation.deposit_submitted"
+        | "reservation.confirmed"
+        | "reservation.rejected"
+        | "reservation.cancelled"
+        | "reservation.checked_in"
+        | "reservation.seated"
+        | "reservation.no_show"
+        | "reservation.rescheduled";
+    }
+  >
+) {
+  if (event.type === "reservation.deposit_submitted") return { icon: "💳", title: "Khách báo đã chuyển cọc" };
+  if (event.type === "reservation.confirmed") return { icon: "✅", title: "Đặt bàn đã xác nhận" };
+  if (event.type === "reservation.rejected") return { icon: "🛑", title: "Đặt bàn đã từ chối" };
+  if (event.type === "reservation.cancelled") return { icon: "🛑", title: "Đặt bàn đã huỷ" };
+  if (event.type === "reservation.checked_in") return { icon: "📍", title: "Khách đã check-in" };
+  if (event.type === "reservation.seated") return { icon: "🪑", title: "Khách đã vào bàn" };
+  if (event.type === "reservation.no_show") return { icon: "⚠️", title: "Đặt bàn no-show" };
+  if (event.type === "reservation.rescheduled") return { icon: "🔁", title: "Đặt bàn đổi giờ" };
+  if (Number(event.reservation.depositRequiredAmount ?? 0) > 0) return { icon: "📅", title: "Đặt bàn mới · chờ cọc" };
+  return { icon: "📅", title: "Đặt bàn mới" };
+}
+
+function fulfillmentLabel(value: string) {
+  if (value === "DINE_IN") return "Tại bàn";
+  if (value === "PICKUP") return "Mang đi";
+  if (value === "DELIVERY") return "Giao hàng";
+  return value;
+}
+
+function deliveryStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    requested: "chờ nhận giao",
+    accepted: "đã nhận giao",
+    out_for_delivery: "đang giao",
+    delivered: "đã giao",
+    rejected: "từ chối giao"
+  };
+  return labels[value] ?? value;
+}
+
+function alertIcon(severity: string) {
+  if (severity === "critical") return "🚨";
+  if (severity === "warning") return "⚠️";
+  return "ℹ️";
 }
 
 export function money(amount: number) {
