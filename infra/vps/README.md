@@ -99,6 +99,8 @@ The deploy workflow is built to recover from the manual bootstrap state. If `/op
 
 `LOGIVN_DEPLOY_BACKUP_ENABLED=auto` runs a runtime backup when Redis is already deployed and skips it during first bootstrap. Set it to `true` to force a backup before every deploy, or `false` to rely only on scheduled backups.
 
+`LOGIVN_DOCKER_BUILD_PULL=true` forces Docker to refresh base image layers during deploy. The default uses the VPS cache so routine deploys are not blocked by transient Docker Hub auth or TLS failures.
+
 ## Runtime Secrets Checklist
 
 Minimum required in `/opt/logivn/.env`:
@@ -140,6 +142,14 @@ TELEGRAM_AI_OPS_RATE_LIMIT_MAX
 TELEGRAM_AI_OPS_RATE_LIMIT_WINDOW_MS
 TELEGRAM_SEND_INTERVAL_MS
 TELEGRAM_AI_OPS_TIMEOUT_MS
+OPERATIONAL_OUTBOX_RELAY_ENABLED
+OPERATIONAL_OUTBOX_RELAY_INTERVAL_MS
+OPERATIONAL_OUTBOX_RELAY_BATCH_SIZE
+OPERATIONAL_OUTBOX_RELAY_MAX_ATTEMPTS
+ORDERS_SLA_SCANNER_ENABLED
+ORDERS_SLA_SCANNER_INTERVAL_MS
+ORDERS_SLA_WARNING_MINUTES
+ORDERS_SLA_WARNING_REPEAT_MINUTES
 ```
 
 ## Queue Inventory

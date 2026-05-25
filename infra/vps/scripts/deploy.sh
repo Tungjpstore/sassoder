@@ -8,6 +8,7 @@ ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
 COMPOSE_FILE="$VPS_DIR/docker-compose.yml"
 BACKUP_DIR="$APP_ROOT/backups/deploy/$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_BACKUP=${LOGIVN_DEPLOY_BACKUP_ENABLED:-auto}
+BUILD_PULL=${LOGIVN_DOCKER_BUILD_PULL:-false}
 
 log() {
   printf '[logivn-deploy] %s\n' "$*"
@@ -53,8 +54,13 @@ validate_compose() {
 }
 
 deploy_compose() {
-  log "Building images"
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull
+  if [ "$BUILD_PULL" = "true" ]; then
+    log "Building images with pull"
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build --pull
+  else
+    log "Building images"
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build
+  fi
 
   log "Starting services"
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
