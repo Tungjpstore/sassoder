@@ -7,7 +7,6 @@ export function createRedisConnection(serviceName) {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
     connectionName: serviceName,
-    commandTimeout: 10_000,
     keepAlive: 60_000,
     retryStrategy(times) {
       return Math.min(times * 200, 3000);
