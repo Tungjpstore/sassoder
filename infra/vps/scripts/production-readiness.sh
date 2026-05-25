@@ -71,6 +71,31 @@ check_http_status() {
   log "$label HTTP $actual"
 }
 
+check_grafana_api_status() {
+  local label="$1"
+  local path="$2"
+  local configured_user="${GF_SECURITY_ADMIN_USER:-logivn-admin}"
+  local users=("$configured_user")
+  if [ "$configured_user" != "admin" ]; then
+    users+=("admin")
+  fi
+
+  local user actual
+  for user in "${users[@]}"; do
+    actual="$(curl -sS -o /tmp/logivn-readiness-http.out -w '%{http_code}' --max-time 10 \
+      -u "$user:$GF_SECURITY_ADMIN_PASSWORD" \
+      "http://127.0.0.1:3002$path")"
+    if [ "$actual" = "200" ]; then
+      log "$label HTTP 200"
+      return
+    fi
+  done
+
+  printf '%s expected HTTP 200, got %s\n' "$label" "$actual" >&2
+  sed -n '1,120p' /tmp/logivn-readiness-http.out >&2 || true
+  exit 1
+}
+
 check_redis_runtime() {
   log "Checking Redis durability and memory policy"
 
@@ -107,12 +132,8 @@ check_prometheus_and_grafana() {
   wait_for_url "http://127.0.0.1:9093/-/ready" alertmanager
   wait_for_url "http://127.0.0.1:3002/grafana/api/health" grafana
 
-  check_http_status 200 "Grafana Prometheus datasource" \
-    -u "${GF_SECURITY_ADMIN_USER:-logivn-admin}:$GF_SECURITY_ADMIN_PASSWORD" \
-    "http://127.0.0.1:3002/grafana/api/datasources/uid/logivn-prometheus"
-  check_http_status 200 "Grafana Redis/BullMQ dashboard" \
-    -u "${GF_SECURITY_ADMIN_USER:-logivn-admin}:$GF_SECURITY_ADMIN_PASSWORD" \
-    "http://127.0.0.1:3002/grafana/api/dashboards/uid/logivn-redis-bullmq"
+  check_grafana_api_status "Grafana Prometheus datasource" "/grafana/api/datasources/uid/logivn-prometheus"
+  check_grafana_api_status "Grafana Redis/BullMQ dashboard" "/grafana/api/dashboards/uid/logivn-redis-bullmq"
 
   for _ in $(seq 1 20); do
     if node <<'NODE'

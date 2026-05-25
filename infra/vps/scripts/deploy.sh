@@ -87,6 +87,15 @@ post_deploy_checks() {
   wait_for_health "http://127.0.0.1:3600/health" "telegram-bot"
 }
 
+reconcile_grafana_admin_password() {
+  if [ -z "${GF_SECURITY_ADMIN_PASSWORD:-}" ]; then
+    return
+  fi
+
+  log "Reconciling Grafana admin password"
+  compose exec -T grafana grafana cli admin reset-admin-password "$GF_SECURITY_ADMIN_PASSWORD" >/dev/null
+}
+
 main() {
   require_env_file
   backup_current_config
@@ -94,6 +103,7 @@ main() {
   validate_compose
   deploy_compose
   post_deploy_checks
+  reconcile_grafana_admin_password
   docker image prune -f --filter "until=168h" >/dev/null || true
   log "Deployment complete. Config backup: $BACKUP_DIR"
 }
