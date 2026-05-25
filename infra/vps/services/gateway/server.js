@@ -65,14 +65,11 @@ const eventSchema = z
     ]),
     eventId: z.string().min(8).max(180),
     tenantId: z.string().min(1).optional(),
-    restaurantId: z.string().min(1).optional(),
+    restaurantId: z.string().uuid(),
     branchId: z.string().min(1).nullable().optional(),
     occurredAt: z.string().datetime().optional()
   })
-  .passthrough()
-  .refine((value) => value.tenantId || value.restaurantId, {
-    message: "tenantId or restaurantId is required"
-  });
+  .passthrough();
 
 const lockAcquireSchema = z.object({
   key: z.string().min(8).max(240).regex(/^lock:/),

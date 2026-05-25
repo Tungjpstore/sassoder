@@ -181,7 +181,8 @@ const base = process.env.SMOKE_BASE_URL;
 const key = process.env.LOGIVN_INTERNAL_API_KEY;
 if (!key) throw new Error("LOGIVN_INTERNAL_API_KEY is required");
 
-const tenantId = "tenant-readiness";
+const tenantId = "00000000-0000-4000-8000-000000000201";
+const restaurantId = tenantId;
 const eventId = `order.confirmed:readiness:${Date.now()}`;
 const headers = { "content-type": "application/json", "x-logivn-internal-key": key };
 
@@ -204,6 +205,7 @@ await request("/events", {
     type: "order.confirmed",
     eventId,
     tenantId,
+    restaurantId,
     order: {
       id: "00000000-0000-4000-8000-000000000101",
       displayCode: "READY-01",

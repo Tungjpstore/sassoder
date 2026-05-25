@@ -98,7 +98,8 @@ main() {
   SMOKE_BASE_URL="$gateway_url" node <<'NODE'
 const base = process.env.SMOKE_BASE_URL;
 const key = process.env.LOGIVN_INTERNAL_API_KEY;
-const tenantId = "tenant-smoke";
+const tenantId = "00000000-0000-4000-8000-000000000202";
+const restaurantId = tenantId;
 const eventId = `order.confirmed:smoke:${Date.now()}`;
 const headers = { "content-type": "application/json", "x-logivn-internal-key": key };
 
@@ -120,6 +121,7 @@ await request("/events", {
     type: "order.confirmed",
     eventId,
     tenantId,
+    restaurantId,
     order: {
       id: "00000000-0000-4000-8000-000000000102",
       displayCode: "SMOKE-01",
