@@ -7,14 +7,16 @@ export type FormattedTelegramCard = {
 };
 
 export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTelegramCard {
+  const test = isTestEvent(event);
+
   if (event.type === "order.created") {
     const code = event.order.displayCode ?? shortId(event.order.id);
     const location = event.order.tableName ? `\n📍 ${escapeHtml(event.order.tableName)}` : "";
     const customer = event.order.customerName ? `\n👤 ${escapeHtml(event.order.customerName)}` : "";
     return {
-      title: `Đơn mới #${code}`,
-      body: `🔔 <b>Đơn mới #${escapeHtml(code)}</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
-      viewPath: `/dashboard/orders?orderId=${event.order.id}`
+      title: testTitle(test, `Đơn mới #${code}`),
+      body: `${testPrefix(test)}🔔 <b>Đơn mới #${escapeHtml(code)}</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
+      viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
     };
   }
 
@@ -23,9 +25,9 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     const location = event.order.tableName ? `\n📍 ${escapeHtml(event.order.tableName)}` : "";
     const customer = event.order.customerName ? `\n👤 ${escapeHtml(event.order.customerName)}` : "";
     return {
-      title: `Đơn #${code} đã xác nhận`,
-      body: `👨‍🍳 <b>Đơn #${escapeHtml(code)} đã xác nhận</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
-      viewPath: `/dashboard/orders?orderId=${event.order.id}`
+      title: testTitle(test, `Đơn #${code} đã xác nhận`),
+      body: `${testPrefix(test)}👨‍🍳 <b>Đơn #${escapeHtml(code)} đã xác nhận</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${location}${customer}`,
+      viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
     };
   }
 
@@ -33,9 +35,9 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     const customer = event.payment.customerName ? `\n👤 ${escapeHtml(event.payment.customerName)}` : "";
     const title = event.type === "payment.received" ? "Đã nhận thanh toán" : "VietQR cần xác nhận";
     return {
-      title,
-      body: `💳 <b>${escapeHtml(title)}</b>\n\n💰 ${money(event.payment.amount)}${customer}`,
-      viewPath: `/dashboard/orders?orderId=${event.payment.orderId}`
+      title: testTitle(test, title),
+      body: `${testPrefix(test)}💳 <b>${escapeHtml(title)}</b>\n\n💰 ${money(event.payment.amount)}${customer}`,
+      viewPath: viewPath(test, `/dashboard/orders?orderId=${event.payment.orderId}`)
     };
   }
 
@@ -49,26 +51,26 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     }).format(new Date(event.reservation.startsAt));
     const customer = event.reservation.customerName ? `\n👤 ${escapeHtml(event.reservation.customerName)}` : "";
     return {
-      title: "Đặt bàn mới",
-      body: `📅 <b>Đặt bàn mới</b>\n\n🕖 ${startsAt}\n👥 ${event.reservation.partySize} khách${customer}`,
-      viewPath: `/dashboard/reservations?reservationId=${event.reservation.id}`
+      title: testTitle(test, "Đặt bàn mới"),
+      body: `${testPrefix(test)}📅 <b>Đặt bàn mới</b>\n\n🕖 ${startsAt}\n👥 ${event.reservation.partySize} khách${customer}`,
+      viewPath: viewPath(test, `/dashboard/reservations?reservationId=${event.reservation.id}`)
     };
   }
 
   if (event.type === "inventory.low") {
     const items = event.inventory.items.map((item) => `- ${escapeHtml(item)}`).join("\n");
     return {
-      title: "Tồn kho thấp",
-      body: `⚠️ <b>Tồn kho thấp</b>\n\n${items}`,
-      viewPath: "/dashboard/inventory"
+      title: testTitle(test, "Tồn kho thấp"),
+      body: `${testPrefix(test)}⚠️ <b>Tồn kho thấp</b>\n\n${items}`,
+      viewPath: viewPath(test, "/dashboard/inventory")
     };
   }
 
   const code = event.sla.displayCode ?? shortId(event.sla.orderId);
   return {
-    title: `Đơn #${code} trễ SLA`,
-    body: `🚨 <b>Đơn #${escapeHtml(code)} trễ SLA ${event.sla.lateMinutes} phút</b>`,
-    viewPath: `/dashboard/orders?orderId=${event.sla.orderId}`
+    title: testTitle(test, `Đơn #${code} trễ SLA`),
+    body: `${testPrefix(test)}🚨 <b>Đơn #${escapeHtml(code)} trễ SLA ${event.sla.lateMinutes} phút</b>`,
+    viewPath: viewPath(test, `/dashboard/orders?orderId=${event.sla.orderId}`)
   };
 }
 
@@ -86,4 +88,20 @@ export function escapeHtml(value: string) {
 
 function shortId(id: string) {
   return id.replaceAll("-", "").slice(0, 6).toUpperCase();
+}
+
+function isTestEvent(event: OperationalTelegramEvent) {
+  return event.eventId.startsWith("telegram.test:");
+}
+
+function testTitle(test: boolean, title: string) {
+  return test ? `TEST · ${title}` : title;
+}
+
+function testPrefix(test: boolean) {
+  return test ? "🧪 <b>Thông báo test</b>\n\n" : "";
+}
+
+function viewPath(test: boolean, path: string) {
+  return test ? "/dashboard/settings?section=notifications" : path;
 }

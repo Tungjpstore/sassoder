@@ -5,6 +5,9 @@ import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, cancelOrder, getOrderLifecycleSnapshot, markOrderCompleted } from "@/services/order-service";
 import { confirmPayment } from "@/services/payment-service";
 import { confirmReservationDeposit, rejectReservation } from "@/services/reservation-service";
+import { assertStaffActionPermission } from "@/services/staff-permission-service";
+import type { StaffPermissionKey } from "@/lib/staff-permissions";
+import type { SessionProfile } from "@/types/domain";
 
 export const preferredRegion = "sin1";
 
@@ -27,15 +30,39 @@ const telegramActionSchema = z.object({
   payload: z.record(z.unknown()).optional()
 });
 
+const requiredPermissionByTelegramAction: Record<z.infer<typeof telegramActionSchema>["actionType"], StaffPermissionKey> = {
+  "order.confirm": "orders.update",
+  "order.cancel": "orders.cancel",
+  "order.done": "orders.update",
+  "payment.confirm": "payments.confirm",
+  "reservation.confirm": "reservations.manage",
+  "reservation.reject": "reservations.manage"
+};
+
 export async function POST(request: Request) {
   try {
     assertInternalApiKey(request);
     const input = telegramActionSchema.parse(await request.json());
+    await assertStaffActionPermission(telegramActionSession(input), requiredPermissionByTelegramAction[input.actionType]);
     const data = await executeTelegramAction(input);
     return ok(data);
   } catch (error) {
     return fail(error);
   }
+}
+
+function telegramActionSession(input: z.infer<typeof telegramActionSchema>): SessionProfile {
+  return {
+    userId: input.actorUserId,
+    email: "telegram@internal.logivn",
+    role: input.actorRole,
+    restaurantId: input.restaurantId,
+    restaurant: {
+      id: input.restaurantId,
+      name: "LogiVN",
+      slug: "telegram"
+    }
+  };
 }
 
 async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>) {

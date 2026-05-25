@@ -26,7 +26,6 @@ import {
   TimerReset,
   Users,
   WalletCards,
-  X,
   type LucideIcon
 } from "lucide-react";
 import { requestSubscriptionPaymentAction, updateReportScheduleAction, updateRestaurantSettingsAction } from "@/app/dashboard/actions";
@@ -331,6 +330,36 @@ function formatDateTime(value: string | null) {
   }).format(new Date(value));
 }
 
+function NotificationToggleCard({
+  label,
+  description,
+  name,
+  defaultChecked,
+  icon: Icon
+}: {
+  label: string;
+  description: string;
+  name: string;
+  defaultChecked: boolean;
+  icon: LucideIcon;
+}) {
+  return (
+    <label className="dashboard-settings-toggle-card group flex min-h-[76px] cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] px-3 py-3 text-sm transition">
+      <span className="dashboard-stat-icon h-10 w-10 shrink-0">
+        <Icon size={17} aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold text-[var(--foreground)]">{label}</span>
+        <span className="mt-0.5 block text-xs font-medium leading-5 text-[var(--muted-foreground)]">{description}</span>
+      </span>
+      <span className="relative grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+        <input type="checkbox" name={name} value="true" defaultChecked={defaultChecked} className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+        <Check className="scale-90 text-[var(--accent)] opacity-0 transition peer-checked:opacity-100" size={20} aria-hidden="true" />
+      </span>
+    </label>
+  );
+}
+
 function NotificationSettingsForm({
   restaurant,
   branches,
@@ -342,32 +371,85 @@ function NotificationSettingsForm({
   reportSchedule: ReportScheduleSettings | null;
   reportLogs: Awaited<ReturnType<typeof listRecentReportLogs>>;
 }) {
+  const enabledNotificationCount = [
+    restaurant.notify_new_order,
+    restaurant.notify_payment_waiting,
+    restaurant.show_promotions_on_menu
+  ].filter(Boolean).length;
+
   return (
-    <div className="grid gap-4">
-      <form action={updateRestaurantSettingsAction}>
+    <div className="dashboard-settings-section-shell grid gap-3">
+      <section className="dashboard-panel overflow-hidden p-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+              <p className="dashboard-eyebrow text-[var(--primary)]">Trung tâm thông báo</p>
+            <h3 className="dashboard-section-title mt-1">Thông báo & báo cáo</h3>
+            <p className="dashboard-body-copy mt-1 max-w-2xl">
+              Gom cảnh báo đơn, kênh Telegram và lịch email vào một vùng vận hành thống nhất.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 md:min-w-[300px]">
+            <div className="dashboard-subpanel px-3 py-2">
+              <p className="dashboard-eyebrow">Cảnh báo</p>
+              <p className="metric-number mt-1 text-xl font-semibold">{enabledNotificationCount}/3</p>
+            </div>
+            <div className="dashboard-subpanel px-3 py-2">
+              <p className="dashboard-eyebrow">Email</p>
+              <p className="mt-1 truncate text-sm font-semibold text-[var(--foreground)]">{reportSchedule?.enabled ? "Đang bật" : "Đang tắt"}</p>
+            </div>
+            <div className="dashboard-subpanel px-3 py-2">
+              <p className="dashboard-eyebrow">Log</p>
+              <p className="metric-number mt-1 text-xl font-semibold">{reportLogs.length}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <form action={updateRestaurantSettingsAction} className="dashboard-panel p-4">
         <input type="hidden" name="settingsSection" value="notifications" />
-        <FieldGroup title="Thông báo vận hành">
-          <div className="grid gap-3">
-            <label className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 text-sm font-semibold">
-              Báo đơn mới
-              <input type="checkbox" name="notifyNewOrder" value="true" defaultChecked={restaurant.notify_new_order} className="h-5 w-5 accent-[var(--accent)]" />
-            </label>
-            <label className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 text-sm font-semibold">
-              Báo đơn chờ thanh toán
-              <input type="checkbox" name="notifyPaymentWaiting" value="true" defaultChecked={restaurant.notify_payment_waiting} className="h-5 w-5 accent-[var(--accent)]" />
-            </label>
-            <label className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 text-sm font-semibold">
-              Hiển thị mã khuyến mãi trên menu khách
-              <input type="checkbox" name="showPromotionsOnMenu" value="true" defaultChecked={restaurant.show_promotions_on_menu} className="h-5 w-5 accent-[var(--accent)]" />
-            </label>
+        <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="dashboard-eyebrow">Cảnh báo vận hành</p>
+            <h3 className="dashboard-section-title mt-1">Tín hiệu cần báo ngay</h3>
           </div>
-          <div className="mt-5 flex justify-end">
-            <Button>Lưu thông báo</Button>
-          </div>
-        </FieldGroup>
+          <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tối ưu cho giờ cao điểm, tránh bỏ sót đơn và thanh toán.</p>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <NotificationToggleCard
+            label="Báo đơn mới"
+            description="Nhắc ngay khi khách tạo đơn mới."
+            name="notifyNewOrder"
+            defaultChecked={restaurant.notify_new_order}
+            icon={Bell}
+          />
+          <NotificationToggleCard
+            label="Đơn chờ thanh toán"
+            description="Theo dõi bill chưa hoàn tất."
+            name="notifyPaymentWaiting"
+            defaultChecked={restaurant.notify_payment_waiting}
+            icon={CreditCard}
+          />
+          <NotificationToggleCard
+            label="Mã khuyến mãi"
+            description="Hiển thị ưu đãi trên menu khách."
+            name="showPromotionsOnMenu"
+            defaultChecked={restaurant.show_promotions_on_menu}
+            icon={Sparkles}
+          />
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button>Lưu thông báo</Button>
+        </div>
       </form>
 
-      <FieldGroup title="Kết nối Telegram">
+      <section className="dashboard-panel p-4">
+        <div className="mb-3 flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="dashboard-eyebrow">Kênh realtime</p>
+            <h3 className="dashboard-section-title mt-1">Kết nối Telegram</h3>
+          </div>
+          <p className="text-xs font-semibold text-[var(--muted-foreground)]">Gửi tín hiệu vận hành ra nhóm quản lý khi cần.</p>
+        </div>
         <TelegramConnectPanel
           branches={branches.map((branch) => ({
             id: branch.id,
@@ -376,110 +458,114 @@ function NotificationSettingsForm({
             isActive: branch.is_active
           }))}
         />
-      </FieldGroup>
+      </section>
 
       {reportSchedule ? (
-        <form action={updateReportScheduleAction}>
-          <FieldGroup title="Báo cáo tự động qua email">
-            <div className="grid gap-4">
-              <label className="flex min-h-12 items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 text-sm font-semibold">
-                Bật gửi báo cáo định kỳ
-                <input type="checkbox" name="enabled" value="true" defaultChecked={reportSchedule.enabled} className="h-5 w-5 accent-[var(--accent)]" />
-              </label>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm">
-                  <div className="flex justify-between gap-4">
-                    <span className="text-[var(--muted-foreground)]">Lần gửi gần nhất</span>
-                    <strong>{formatDateTime(reportSchedule.lastSentAt)}</strong>
-                  </div>
-                  <div className="mt-2 flex justify-between gap-4">
-                    <span className="text-[var(--muted-foreground)]">Lần gửi tiếp theo</span>
-                    <strong>{formatDateTime(reportSchedule.nextRunAt)}</strong>
-                  </div>
-                </div>
+        <form action={updateReportScheduleAction} className="dashboard-panel p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <p className="dashboard-eyebrow">Báo cáo email</p>
+              <h3 className="dashboard-section-title mt-1">Báo cáo tự động qua email</h3>
+              <p className="dashboard-body-copy mt-1">Tập trung vào người nhận và lần gửi tiếp theo; cấu hình nâng cao đóng riêng.</p>
+            </div>
+            <label className="dashboard-settings-toggle-card flex min-h-11 shrink-0 cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] px-3 text-sm font-semibold">
+              <input type="checkbox" name="enabled" value="true" defaultChecked={reportSchedule.enabled} className="h-5 w-5 accent-[var(--accent)]" />
+              Bật gửi định kỳ
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+            <div className="dashboard-subpanel p-4 text-sm">
+              <div className="flex justify-between gap-4">
+                <span className="text-[var(--muted-foreground)]">Lần gửi gần nhất</span>
+                <strong className="text-right">{formatDateTime(reportSchedule.lastSentAt)}</strong>
+              </div>
+              <div className="mt-3 flex justify-between gap-4">
+                <span className="text-[var(--muted-foreground)]">Lần gửi tiếp theo</span>
+                <strong className="text-right">{formatDateTime(reportSchedule.nextRunAt)}</strong>
+              </div>
+            </div>
+            <label className="grid gap-2 text-sm font-semibold">
+              Email nhận báo cáo
+              <textarea
+                name="recipients"
+                defaultValue={reportSchedule.recipients.join("\n")}
+                placeholder="chuquan@quan.vn&#10;ketoan@quan.vn"
+                className="min-h-28 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-sm font-medium outline-none transition focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+              />
+              <span className="text-xs font-medium text-[var(--muted-foreground)]">Tối đa 10 email, cách nhau bằng xuống dòng hoặc dấu phẩy.</span>
+            </label>
+          </div>
+
+          <details className="dashboard-subpanel group mt-3 p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-base font-semibold text-[var(--foreground)]">Lịch gửi & file đính kèm</p>
+                <p className="mt-1 text-sm text-[var(--muted-foreground)]">Chỉ mở khi cần đổi chu kỳ hoặc loại file gửi kèm.</p>
+              </div>
+              <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                {reportSchedule.frequency}
+              </span>
+            </summary>
+            <div className="mt-4 grid gap-4">
+              <div className="grid gap-3 md:grid-cols-4">
                 <label className="grid gap-2 text-sm font-semibold">
-                  Email nhận báo cáo
-                  <textarea
-                    name="recipients"
-                    defaultValue={reportSchedule.recipients.join("\n")}
-                    placeholder="chuquan@quan.vn&#10;ketoan@quan.vn"
-                    className="min-h-24 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-sm font-medium outline-none transition focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
-                  />
-                  <span className="text-xs font-medium text-[var(--muted-foreground)]">Tối đa 10 email, cách nhau bằng xuống dòng hoặc dấu phẩy.</span>
+                  Chu kỳ
+                  <select name="frequency" defaultValue={reportSchedule.frequency} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
+                    <option value="weekly">Hàng tuần</option>
+                    <option value="monthly">Hàng tháng</option>
+                    <option value="yearly">Hàng năm</option>
+                  </select>
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  Giờ gửi
+                  <Input name="sendHour" type="number" min={0} max={23} defaultValue={reportSchedule.sendHour} />
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  Thứ gửi
+                  <select name="sendDayOfWeek" defaultValue={reportSchedule.sendDayOfWeek} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
+                    <option value={1}>Thứ 2</option>
+                    <option value={2}>Thứ 3</option>
+                    <option value={3}>Thứ 4</option>
+                    <option value={4}>Thứ 5</option>
+                    <option value={5}>Thứ 6</option>
+                    <option value={6}>Thứ 7</option>
+                    <option value={7}>Chủ nhật</option>
+                  </select>
+                </label>
+                <label className="grid gap-2 text-sm font-semibold">
+                  Ngày gửi
+                  <Input name="sendDayOfMonth" type="number" min={1} max={31} defaultValue={reportSchedule.sendDayOfMonth} />
                 </label>
               </div>
-              <details className="group rounded-2xl border border-[var(--border)] bg-[var(--surface-container)] p-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-base font-semibold text-[var(--foreground)]">Lịch gửi & file đính kèm</p>
-                    <p className="mt-1 text-sm text-[var(--muted-foreground)]">Chỉ mở phần này khi cần đổi chu kỳ hoặc loại file gửi kèm.</p>
-                  </div>
-                  <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
-                    {reportSchedule.frequency}
-                  </span>
-                </summary>
-                <div className="mt-4 grid gap-4">
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <label className="grid gap-2 text-sm font-semibold">
-                      Chu kỳ
-                      <select name="frequency" defaultValue={reportSchedule.frequency} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
-                        <option value="weekly">Hàng tuần</option>
-                        <option value="monthly">Hàng tháng</option>
-                        <option value="yearly">Hàng năm</option>
-                      </select>
-                    </label>
-                    <label className="grid gap-2 text-sm font-semibold">
-                      Giờ gửi
-                      <Input name="sendHour" type="number" min={0} max={23} defaultValue={reportSchedule.sendHour} />
-                    </label>
-                    <label className="grid gap-2 text-sm font-semibold">
-                      Thứ gửi
-                      <select name="sendDayOfWeek" defaultValue={reportSchedule.sendDayOfWeek} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none">
-                        <option value={1}>Thứ 2</option>
-                        <option value={2}>Thứ 3</option>
-                        <option value={3}>Thứ 4</option>
-                        <option value={4}>Thứ 5</option>
-                        <option value={5}>Thứ 6</option>
-                        <option value={6}>Thứ 7</option>
-                        <option value={7}>Chủ nhật</option>
-                      </select>
-                    </label>
-                    <label className="grid gap-2 text-sm font-semibold">
-                      Ngày gửi
-                      <Input name="sendDayOfMonth" type="number" min={1} max={31} defaultValue={reportSchedule.sendDayOfMonth} />
-                    </label>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-[160px_1fr_1fr]">
-                    <label className="grid gap-2 text-sm font-semibold">
-                      Tháng gửi
-                      <Input name="sendMonth" type="number" min={1} max={12} defaultValue={reportSchedule.sendMonth} />
-                    </label>
-                    <label className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold">
-                      <input type="checkbox" name="includeCsv" value="true" defaultChecked={reportSchedule.includeCsv} className="h-5 w-5 accent-[var(--accent)]" />
-                      Đính kèm CSV
-                    </label>
-                    <label className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold">
-                      <input type="checkbox" name="includeJson" value="true" defaultChecked={reportSchedule.includeJson} className="h-5 w-5 accent-[var(--accent)]" />
-                      Đính kèm dữ liệu chi tiết
-                    </label>
-                  </div>
-                </div>
-              </details>
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-container)] px-4 py-3 text-sm text-[var(--muted-foreground)]">
-                Giữ vùng này gọn để chủ quán chỉ tập trung vào email nhận báo cáo và lịch gửi tiếp theo.
+              <div className="grid gap-3 md:grid-cols-[160px_1fr_1fr]">
+                <label className="grid gap-2 text-sm font-semibold">
+                  Tháng gửi
+                  <Input name="sendMonth" type="number" min={1} max={12} defaultValue={reportSchedule.sendMonth} />
+                </label>
+                <label className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold">
+                  <input type="checkbox" name="includeCsv" value="true" defaultChecked={reportSchedule.includeCsv} className="h-5 w-5 accent-[var(--accent)]" />
+                  Đính kèm CSV
+                </label>
+                <label className="flex min-h-11 items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold">
+                  <input type="checkbox" name="includeJson" value="true" defaultChecked={reportSchedule.includeJson} className="h-5 w-5 accent-[var(--accent)]" />
+                  Đính kèm dữ liệu chi tiết
+                </label>
               </div>
             </div>
-            <div className="mt-5 flex justify-end">
-              <Button>Lưu lịch gửi báo cáo</Button>
-            </div>
-          </FieldGroup>
+          </details>
+
+          <div className="mt-4 flex justify-end">
+            <Button>Lưu lịch gửi báo cáo</Button>
+          </div>
         </form>
       ) : null}
 
-      <details className="dashboard-panel group overflow-hidden p-5 md:p-6">
+      <details className="dashboard-panel group overflow-hidden p-4">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xl font-semibold text-[var(--foreground)]">Lịch sử gửi báo cáo</p>
+            <p className="dashboard-eyebrow">Audit trail</p>
+            <p className="dashboard-section-title mt-1">Lịch sử gửi báo cáo</p>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">Mở khi cần kiểm tra lịch sử gửi hoặc lỗi email.</p>
           </div>
           <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-semibold text-[var(--muted-foreground)]">
@@ -1852,44 +1938,21 @@ export default async function AdminSettingsPage({
       subtitle="Chỉnh nhanh theo từng vùng vận hành"
     >
       <section className="dashboard-operations-stack min-h-[calc(100vh-128px)]">
-        <SettingsHomeGrid
-          activeSection={activeSection}
-          sectionStates={sectionStates}
-          readiness={setupReadiness}
-          tableCount={dashboard.tables}
-          menuItemCount={dashboard.menuItems}
-          entitlementWarning={entitlement.warning?.message ?? null}
-        />
-
         {activeSection && activeMeta ? (
-          <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain flex justify-end">
-            <Link
-              href="/dashboard/settings"
-              className="drawer-backdrop absolute inset-0 z-0 bg-black/40 backdrop-blur-[2px]"
-              aria-hidden="true"
-            />
-            <aside
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="settings-drawer-title"
-              className={cn(
-                "drawer-panel relative z-10 flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] shadow-2xl",
-                activeSection === "billing" || activeSection === "online" || activeSection === "notifications"
-                  ? "max-w-[768px]"
-                  : "max-w-[540px]"
-              )}
-            >
-              <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:px-5 sm:py-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="dashboard-stat-icon h-10 w-10 shrink-0">
-                    <ActiveIcon size={18} aria-hidden="true" />
+          <div className="dashboard-settings-fullscreen dashboard-operations-stack grid gap-3">
+            <section className="admin-hero-panel px-4 py-3.5 md:px-5">
+              <div className="relative z-[1] flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 gap-3">
+                  <span className="dashboard-stat-icon h-11 w-11 shrink-0">
+                    <ActiveIcon size={19} aria-hidden="true" />
                   </span>
                   <div className="min-w-0">
                     <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Cài đặt vận hành</p>
-                    <h2 id="settings-drawer-title" className="dashboard-section-title mt-0.5 truncate">{activeMeta.label}</h2>
+                    <h2 className="dashboard-page-title mt-1">{activeMeta.label}</h2>
+                    <p className="dashboard-body-copy mt-1 max-w-2xl">{activeMeta.description}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {activeSummary ? (
                     <span className={cn("rounded-full border px-2.5 py-1 text-xs font-semibold", sectionStateTone(activeSummary.tone))}>
                       {activeSummary.label}
@@ -1897,39 +1960,47 @@ export default async function AdminSettingsPage({
                   ) : null}
                   <Link
                     href="/dashboard/settings"
-                    aria-label="Đóng cài đặt"
-                    className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--surface-container-high)]"
+                    className="dashboard-secondary-action min-h-10 px-3"
                   >
-                    <X size={18} aria-hidden="true" />
+                    <ArrowLeft size={16} aria-hidden="true" />
+                    Tổng quan cài đặt
                   </Link>
                 </div>
-              </header>
-
-              <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
-                {renderActiveSection({
-                  activeSection,
-                  restaurant,
-                  branchSettings,
-                  branchDeliverySettings,
-                  mapOperationalMetrics,
-                  sessionEmail: session.email,
-                  tableCount: dashboard.tables,
-                  menuItemCount: dashboard.menuItems,
-                  staffCount: restaurantUsers.length,
-                  qrMenuUrl,
-                  onlineOrderUrl,
-                  reportSchedule,
-                  reportLogs,
-                  billingPortal,
-                  setupReadiness,
-                  billingError,
-                  billingStep,
-                  billingPaymentId
-                })}
-              </main>
-            </aside>
+              </div>
+            </section>
+            <section className="dashboard-settings-content min-w-0">
+              {renderActiveSection({
+                activeSection,
+                restaurant,
+                branchSettings,
+                branchDeliverySettings,
+                mapOperationalMetrics,
+                sessionEmail: session.email,
+                tableCount: dashboard.tables,
+                menuItemCount: dashboard.menuItems,
+                staffCount: restaurantUsers.length,
+                qrMenuUrl,
+                onlineOrderUrl,
+                reportSchedule,
+                reportLogs,
+                billingPortal,
+                setupReadiness,
+                billingError,
+                billingStep,
+                billingPaymentId
+              })}
+            </section>
           </div>
-        ) : null}
+        ) : (
+          <SettingsHomeGrid
+            activeSection={activeSection}
+            sectionStates={sectionStates}
+            readiness={setupReadiness}
+            tableCount={dashboard.tables}
+            menuItemCount={dashboard.menuItems}
+            entitlementWarning={entitlement.warning?.message ?? null}
+          />
+        )}
       </section>
     </AdminShell>
   );

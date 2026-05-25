@@ -1,5 +1,6 @@
 import { Worker } from "bullmq";
 import type { Job } from "bullmq";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import { Bot, GrammyError, HttpError, InlineKeyboard, webhookCallback } from "grammy";
 import type { Context } from "grammy";
@@ -61,7 +62,9 @@ const AI_OPS_COMMANDS = {
     prompt: "Kiểm tra tồn kho hiện tại: nguyên liệu thấp, recipe coverage, cảnh báo kho và việc cần nhập trước. Chỉ dùng dữ liệu thật."
   }
 } as const;
+const TELEGRAM_MENU_ACTIONS = ["menu", "help", "status", "doanhthu", "tinhhinh", "tonkho"] as const;
 type AiOpsCommand = keyof typeof AI_OPS_COMMANDS | "chat";
+type TelegramMenuAction = (typeof TELEGRAM_MENU_ACTIONS)[number];
 type AiOpsRequestSpec = {
   intent?: string;
   permission: string;
@@ -98,6 +101,18 @@ const deliveryLatency = createHistogram({
 });
 
 if (bot) {
+  bot.command("menu", async (ctx) => {
+    await replyWithOpsMenu(ctx);
+  });
+
+  bot.command("help", async (ctx) => {
+    await replyWithHelp(ctx);
+  });
+
+  bot.command("status", async (ctx) => {
+    await replyWithConnectionStatus(ctx);
+  });
+
   for (const command of Object.keys(AI_OPS_COMMANDS) as Array<keyof typeof AI_OPS_COMMANDS>) {
     bot.command(command, async (ctx) => {
       const extra = typeof ctx.match === "string" ? ctx.match.trim() : "";
@@ -108,7 +123,7 @@ if (bot) {
   bot.command("start", async (ctx) => {
     const token = typeof ctx.match === "string" ? ctx.match.trim() : "";
     if (!token) {
-      await ctx.reply("LogiVN Ops Bot đã sẵn sàng. Hãy kết nối từ Dashboard > Settings > Connect Telegram.");
+      await replyWithOpsMenu(ctx, "LogiVN Ops Bot đã sẵn sàng.");
       return;
     }
     if (!ctx.from || !ctx.chat) {
@@ -129,9 +144,16 @@ if (bot) {
         lastName: ctx.from.last_name ?? null
       });
 
-      await ctx.reply(`Đã kết nối Telegram cho LogiVN.\nVai trò: ${account.role}\nNhận cảnh báo realtime từ bây giờ.`);
+      await ctx.reply(
+        [
+          `Đã kết nối Telegram cho ${connectionLabel(account)}.`,
+          `Vai trò: ${account.role}`,
+          "Nhận cảnh báo realtime từ bây giờ."
+        ].join("\n")
+      );
+      await replyWithOpsMenu(ctx, "Chọn thao tác vận hành nhanh.");
     } catch (error) {
-      logger.warn({ error, telegramUserId: ctx.from.id }, "telegram connect rejected");
+      logger.warn({ error: safeLogError(error), telegramUserId: ctx.from.id }, "telegram connect rejected");
       await ctx.reply(friendlyConnectError(error));
     }
   });
@@ -150,7 +172,7 @@ if (bot) {
       const claimed = await claimCallbackAction(ctx.callbackQuery.data, ctx.from.id);
       actionType = claimed.action.action_type;
       await touchConnection(claimed.connection.restaurant_id, ctx.from.id).catch((error) => {
-        logger.warn({ error, telegramUserId: ctx.from?.id }, "telegram connection touch failed");
+        logger.warn({ error: safeLogError(error), telegramUserId: ctx.from?.id }, "telegram connection touch failed");
       });
       const result = await executeInternalAction(claimed.action, claimed.connection);
       callbackCounter.inc({ action_type: claimed.action.action_type, status: "accepted" });
@@ -158,7 +180,7 @@ if (bot) {
       await ctx.editMessageReplyMarkup().catch(() => undefined);
     } catch (error) {
       callbackCounter.inc({ action_type: actionType, status: "failed" });
-      logger.warn({ error }, "telegram callback rejected");
+      logger.warn({ error: safeLogError(error) }, "telegram callback rejected");
       await ctx.answerCallbackQuery({
         text: friendlyCallbackError(error),
         show_alert: true
@@ -174,7 +196,7 @@ if (bot) {
 
   bot.catch((error) => {
     const ctx = error.ctx;
-    logger.error({ error: error.error, updateId: ctx.update.update_id }, "telegram update failed");
+    logger.error({ error: safeLogError(error.error), updateId: ctx.update.update_id }, "telegram update failed");
   });
 }
 
@@ -209,15 +231,15 @@ if (bot && connection) {
   worker.on("failed", (job, error) => {
     const attempts = Number(job?.opts.attempts ?? 1);
     const final = Boolean(job && job.attemptsMade >= attempts);
-    logger.error({ jobId: job?.id, name: job?.name, attemptsMade: job?.attemptsMade, final, error }, "telegram job failed");
+    logger.error({ jobId: job?.id, name: job?.name, attemptsMade: job?.attemptsMade, final, error: safeLogError(error) }, "telegram job failed");
 
     if (job && final) {
       enqueueDeadLetterJob({ failedQueueName: TELEGRAM_QUEUE, job, error }).catch((dlqError) => {
-        logger.error({ jobId: job.id, error: dlqError }, "telegram dead-letter enqueue failed");
+        logger.error({ jobId: job.id, error: safeLogError(dlqError) }, "telegram dead-letter enqueue failed");
       });
     }
   });
-  worker.on("error", (error) => logger.error({ error }, "telegram worker error"));
+  worker.on("error", (error) => logger.error({ error: safeLogError(error) }, "telegram worker error"));
 } else {
   logger.warn("Telegram bot token is missing; Telegram service is running in disabled mode");
 }
@@ -275,6 +297,7 @@ app.post("/webhook/set", requireInternalApiKey, async (_req, res, next) => {
       secret_token: telegramWebhookSecret,
       allowed_updates: ["message", "callback_query"]
     });
+    await configureTelegramCommands();
     res.json({ ok: true, webhookUrl });
   } catch (error) {
     next(error);
@@ -282,19 +305,22 @@ app.post("/webhook/set", requireInternalApiKey, async (_req, res, next) => {
 });
 
 app.get("/ready", async (_req, res) => {
-  res.json({
-    ok: true,
-    configured: Boolean(bot && telegramWebhookSecret),
+  const configured = Boolean(bot && telegramWebhookSecret);
+  const workerRunning = worker?.isRunning() ?? false;
+  const ready = configured && workerRunning;
+  res.status(ready ? 200 : 503).json({
+    ok: ready,
+    configured,
     queue: TELEGRAM_QUEUE,
     worker: {
-      running: worker?.isRunning() ?? false,
+      running: workerRunning,
       concurrency: numberEnv("TELEGRAM_WORKER_CONCURRENCY", 4)
     }
   });
 });
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  logger.error({ error }, "telegram service request failed");
+  logger.error({ error: safeLogError(error) }, "telegram service request failed");
   res.status(400).json({ ok: false, error: error instanceof Error ? error.message : "telegram_request_failed" });
 });
 
@@ -495,6 +521,117 @@ async function executeInternalAction(action: CallbackActionRecord, connection: T
   return { ok: true, message: json?.data?.message ?? "Đã thực hiện." };
 }
 
+async function configureTelegramCommands() {
+  if (!bot) return;
+  await bot.api.setMyCommands([
+    { command: "menu", description: "Mở trung tâm vận hành" },
+    { command: "status", description: "Xem kết nối và phạm vi quyền" },
+    { command: "tinhhinh", description: "Tóm tắt vận hành hiện tại" },
+    { command: "doanhthu", description: "Tóm tắt doanh thu" },
+    { command: "tonkho", description: "Cảnh báo tồn kho" },
+    { command: "help", description: "Hướng dẫn thao tác nhanh" }
+  ]);
+}
+
+async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
+  if (!ctx.from) {
+    await ctx.reply("Không xác định được tài khoản Telegram.");
+    return;
+  }
+
+  const connections = await getTelegramConnectionsForUser(ctx.from.id);
+  const keyboard = new InlineKeyboard();
+
+  if (connections.length === 0) {
+    keyboard.url("Mở Dashboard", absoluteAppUrl("/dashboard/settings?section=notifications"));
+    await ctx.reply(`${headline}\n\nTelegram này chưa nối với quán. Hãy tạo link kết nối trong Dashboard.`, {
+      reply_markup: keyboard
+    });
+    return;
+  }
+
+  keyboard
+    .text("Tình hình", await signedMenuCallback(connections[0], "tinhhinh"))
+    .text("Doanh thu", await signedMenuCallback(connections[0], "doanhthu"))
+    .row()
+    .text("Tồn kho", await signedMenuCallback(connections[0], "tonkho"))
+    .text("Kết nối", await signedMenuCallback(connections[0], "status"))
+    .row()
+    .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"))
+    .text("Trợ giúp", await signedMenuCallback(connections[0], "help"));
+
+  const connectionSummary = connections
+    .slice(0, 3)
+    .map((connection) => `- ${connectionLabel(connection)} · ${connection.role}`)
+    .join("\n");
+  const extra = connections.length > 3 ? `\n+${connections.length - 3} kết nối khác` : "";
+
+  await ctx.reply(compactTelegramText(`${headline}\n\n${connectionSummary}${extra}`), {
+    reply_markup: keyboard
+  });
+}
+
+async function replyWithHelp(ctx: Context) {
+  const keyboard = new InlineKeyboard();
+  const connections = ctx.from ? await getTelegramConnectionsForUser(ctx.from.id) : [];
+  if (connections.length > 0) keyboard.text("Mở menu", await signedMenuCallback(connections[0], "menu")).row();
+  keyboard.url("Dashboard", absoluteAppUrl("/dashboard/settings?section=notifications"));
+
+  await ctx.reply(
+    [
+      "LogiVN Ops Bot",
+      "",
+      "/menu - thao tác nhanh",
+      "/status - kết nối hiện tại",
+      "/tinhhinh - tình hình vận hành",
+      "/doanhthu - doanh thu",
+      "/tonkho - tồn kho"
+    ].join("\n"),
+    { reply_markup: keyboard }
+  );
+}
+
+async function replyWithConnectionStatus(ctx: Context) {
+  if (!ctx.from) {
+    await ctx.reply("Không xác định được tài khoản Telegram.");
+    return;
+  }
+
+  const connections = await getTelegramConnectionsForUser(ctx.from.id);
+  if (connections.length === 0) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+
+  const rows = connections.map((connection) => {
+    const permissions = connection.role === "ADMIN" ? "toàn quyền" : `${connection.permissions.length} quyền`;
+    return `- ${connectionLabel(connection)} · ${connection.role} · ${permissions}`;
+  });
+
+  const keyboard = new InlineKeyboard()
+    .text("Mở menu", await signedMenuCallback(connections[0], "menu"))
+    .row()
+    .url("Quản lý kết nối", absoluteAppUrl("/dashboard/settings?section=notifications"));
+  await ctx.reply(compactTelegramText(`Kết nối đang hoạt động\n\n${rows.join("\n")}`), { reply_markup: keyboard });
+}
+
+async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction) {
+  if (action === "menu") {
+    await replyWithOpsMenu(ctx);
+    return;
+  }
+  if (action === "help") {
+    await replyWithHelp(ctx);
+    return;
+  }
+  if (action === "status") {
+    await replyWithConnectionStatus(ctx);
+    return;
+  }
+
+  await handleAiOpsCommand(ctx, action, "");
+}
+
 async function handleAiOpsCommand(ctx: Context, command: AiOpsCommand, message: string) {
   if (!ctx.from) {
     await ctx.reply("Không xác định được tài khoản Telegram.");
@@ -534,7 +671,7 @@ async function runAiOpsForConnection(
   spec: AiOpsRequestSpec
 ) {
   await touchConnection(connection.restaurant_id, connection.telegram_user_id).catch((error) => {
-    logger.warn({ error, telegramUserId: connection.telegram_user_id }, "telegram connection touch failed");
+    logger.warn({ error: safeLogError(error), telegramUserId: connection.telegram_user_id }, "telegram connection touch failed");
   });
 
   await ctx.api.sendChatAction(ctx.chat!.id, "typing").catch(() => undefined);
@@ -599,6 +736,14 @@ async function promptAiOpsTenantSelection(
 async function handleTelegramSessionCallback(ctx: Context, token: string) {
   if (!ctx.from) throw new Error("telegram_user_missing");
   const claimed = await claimTelegramSession(token, ctx.from.id);
+
+  const menuPayload = menuActionPayloadSchema.safeParse(claimed.session.payload);
+  if (menuPayload.success) {
+    await ctx.answerCallbackQuery({ text: "Đang xử lý..." });
+    await handleTelegramMenuAction(ctx, menuPayload.data.action);
+    return;
+  }
+
   const payload = aiOpsSessionPayloadSchema.parse(claimed.session.payload);
   await ctx.answerCallbackQuery({ text: "Đang đọc dữ liệu..." });
   await ctx.editMessageReplyMarkup().catch(() => undefined);
@@ -658,6 +803,11 @@ const aiOpsSessionPayloadSchema = z.object({
   actionLabel: z.string().min(1).max(80)
 });
 
+const menuActionPayloadSchema = z.object({
+  purpose: z.literal("menu_action"),
+  action: z.enum(TELEGRAM_MENU_ACTIONS)
+});
+
 function aiOpsSessionPayload(command: AiOpsCommand, spec: AiOpsRequestSpec) {
   return {
     purpose: "ai_ops_select",
@@ -712,6 +862,7 @@ function compactTelegramText(value: string, maxLength = 1800) {
 }
 
 function actionsForEvent(event: OperationalTelegramEvent): TelegramActionType[] {
+  if (isTestEvent(event)) return [];
   if (event.type === "order.created") return ["order.confirm", "order.cancel"];
   if (event.type === "order.confirmed") return ["order.done"];
   if (event.type === "payment.waiting_confirm") return ["payment.confirm", "payment.amount_mismatch"];
@@ -754,6 +905,20 @@ function connectionLabel(connection: TelegramConnection) {
   return compactTelegramText(`${restaurant} · ${branch}`, 64);
 }
 
+function isTestEvent(event: OperationalTelegramEvent) {
+  return event.eventId.startsWith("telegram.test:");
+}
+
+async function signedMenuCallback(connection: TelegramConnection, action: TelegramMenuAction) {
+  const token = await createTelegramSession({
+    connection,
+    state: "idle",
+    payload: { purpose: "menu_action", action },
+    ttlSeconds: numberEnv("TELEGRAM_MENU_SESSION_TTL_SECONDS", 300)
+  });
+  return `${TELEGRAM_SESSION_CALLBACK_PREFIX}${token}`;
+}
+
 function absoluteAppUrl(path: string) {
   return new URL(path, readEnv("NEXT_PUBLIC_APP_URL", "https://logivn.com")).toString();
 }
@@ -783,6 +948,47 @@ function friendlyAiOpsError(error: unknown) {
   if (message.includes("quota") || message.includes("gói") || message.includes("Premium")) return message;
   if (message.includes("429") || message.includes("quá nhanh")) return "AI Ops đang bị gọi quá nhanh. Vui lòng thử lại sau ít phút.";
   return "Chưa chạy được AI Ops lúc này. Dashboard sẽ có log chi tiết.";
+}
+
+function safeLogError(error: unknown): Record<string, unknown> {
+  if (error instanceof TelegramRateLimitError) {
+    return {
+      name: error.name,
+      message: error.message,
+      retryAfterMs: error.retryAfterMs,
+      cause: safeLogError(error.cause)
+    };
+  }
+
+  if (error instanceof GrammyError) {
+    return {
+      name: error.name,
+      message: error.message,
+      errorCode: error.error_code,
+      description: error.description,
+      method: error.method,
+      retryAfter: error.parameters?.retry_after ?? null
+    };
+  }
+
+  if (error instanceof HttpError) {
+    return {
+      name: error.name,
+      message: error.message
+    };
+  }
+
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message
+    };
+  }
+
+  return {
+    name: "NonError",
+    message: typeof error === "string" ? error : "unknown_error"
+  };
 }
 
 function telegramErrorMessage(error: unknown) {
@@ -897,10 +1103,16 @@ class TelegramRateLimitError extends Error {
 
 function verifyTelegramWebhookSecret(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-telegram-bot-api-secret-token");
-  if (!telegramWebhookSecret || provided !== telegramWebhookSecret) {
+  if (!telegramWebhookSecret || !provided || !secureEqual(provided, telegramWebhookSecret)) {
     return res.status(401).json({ ok: false, error: "invalid_telegram_webhook_secret" });
   }
   return next();
+}
+
+function secureEqual(left: string, right: string) {
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
 }
 
 function numberEnv(name: string, fallback: number) {

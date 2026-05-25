@@ -2,6 +2,9 @@ import { z } from "zod";
 import { fail, ok } from "@/lib/response";
 import { assertInternalApiKey } from "@/services/telegram-connection-service";
 import { runOwnerAssistant } from "@/services/ai-service";
+import { assertStaffActionPermission } from "@/services/staff-permission-service";
+import type { StaffPermissionKey } from "@/lib/staff-permissions";
+import type { SessionProfile } from "@/types/domain";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
@@ -16,10 +19,18 @@ const aiOpsCommandSchema = z.object({
   actorRole: z.enum(["ADMIN", "STAFF"])
 });
 
+const requiredPermissionByAiOpsCommand: Record<z.infer<typeof aiOpsCommandSchema>["command"], StaffPermissionKey> = {
+  doanhthu: "reports.view",
+  tinhhinh: "dashboard.view",
+  tonkho: "inventory.view",
+  chat: "dashboard.view"
+};
+
 export async function POST(request: Request) {
   try {
     assertInternalApiKey(request);
     const input = aiOpsCommandSchema.parse(await request.json());
+    await assertStaffActionPermission(telegramAiOpsSession(input), requiredPermissionByAiOpsCommand[input.command]);
     const result = await runOwnerAssistant({
       restaurantId: input.restaurantId,
       userId: input.actorUserId,
@@ -43,4 +54,18 @@ export async function POST(request: Request) {
   } catch (error) {
     return fail(error);
   }
+}
+
+function telegramAiOpsSession(input: z.infer<typeof aiOpsCommandSchema>): SessionProfile {
+  return {
+    userId: input.actorUserId,
+    email: "telegram@internal.logivn",
+    role: input.actorRole,
+    restaurantId: input.restaurantId,
+    restaurant: {
+      id: input.restaurantId,
+      name: "LogiVN",
+      slug: "telegram"
+    }
+  };
 }

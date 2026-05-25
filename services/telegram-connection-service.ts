@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getStaffEffectivePermissions } from "@/services/staff-permission-service";
@@ -12,6 +12,7 @@ const SIGNATURE_LENGTH = 12;
 const TELEGRAM_QUEUE_NAME = "telegram.notifications";
 const TELEGRAM_DLQ_NAME = `${TELEGRAM_QUEUE_NAME}.dlq`;
 const RETRYABLE_NOTIFICATION_STATUSES = ["failed", "rate_limited"] as const;
+const TELEGRAM_TEST_NOTIFICATION_KINDS = ["order", "payment", "reservation", "inventory", "sla"] as const;
 
 type QueueCounts = {
   waiting?: number;
@@ -32,21 +33,31 @@ type GatewayFailedJob = {
   finishedOn?: number | null;
 };
 
+type TelegramTestNotificationKind = (typeof TELEGRAM_TEST_NOTIFICATION_KINDS)[number];
+
+type TelegramTestNotificationInput = {
+  branchId?: string | null;
+  kind?: TelegramTestNotificationKind;
+};
+
 export async function createTelegramConnectionToken(session: SessionProfile, input: { branchId?: string | null } = {}) {
   const supabase = createAdminSupabaseClient() as any;
   const permissionContext = await getStaffEffectivePermissions(session);
   const branchId = input.branchId?.trim() || null;
 
-  if (branchId) {
-    const { data: branch, error } = await supabase
-      .from("store_branches")
-      .select("id")
-      .eq("id", branchId)
-      .eq("restaurant_id", session.restaurantId)
-      .maybeSingle();
-    if (error) throw error;
-    if (!branch) throw new AppError("Chi nhánh Telegram không thuộc quán hiện tại.", 403);
-  }
+  await assertTelegramBranchScope(supabase, session, branchId);
+
+  const now = new Date().toISOString();
+  let revokeQuery = supabase
+    .from("telegram_connection_tokens")
+    .update({ revoked_at: now })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("user_id", session.userId)
+    .is("consumed_at", null)
+    .is("revoked_at", null);
+  revokeQuery = branchId ? revokeQuery.eq("branch_id", branchId) : revokeQuery.is("branch_id", null);
+  const revokeResult = await revokeQuery;
+  if (revokeResult.error) throw revokeResult.error;
 
   const token = createSignedToken(connectSecret());
   const expiresAt = new Date(Date.now() + tokenTtlSeconds() * 1000).toISOString();
@@ -71,7 +82,50 @@ export async function createTelegramConnectionToken(session: SessionProfile, inp
   return {
     token,
     expiresAt,
-    startUrl: botUsername ? `https://t.me/${botUsername}?start=${encodeURIComponent(token)}` : null
+    startUrl: botUsername ? `https://t.me/${botUsername}?start=${encodeURIComponent(token)}` : null,
+    startCommand: `/start ${token}`
+  };
+}
+
+export async function sendTelegramTestNotification(session: SessionProfile, input: TelegramTestNotificationInput = {}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const branchId = input.branchId?.trim() || null;
+  const kind = normalizeTelegramTestKind(input.kind);
+
+  await assertTelegramBranchScope(supabase, session, branchId);
+
+  const activeConnectionCount = await countActiveTelegramConnections(supabase, session.restaurantId, branchId);
+  if (activeConnectionCount === 0) {
+    throw new AppError("Chưa có kết nối Telegram hoạt động cho phạm vi này.", 409);
+  }
+
+  const event = buildTelegramTestEvent(session, branchId, kind);
+  const job = await enqueueTelegramQueueJob(event, {
+    jobId: `${TELEGRAM_QUEUE_NAME}:test:${session.restaurantId}:${kind}:${Date.now()}`,
+    attempts: 3
+  });
+
+  await supabase.from("telegram_audit_logs").insert({
+    restaurant_id: session.restaurantId,
+    branch_id: branchId,
+    user_id: session.userId,
+    action: "telegram.test_notification.send",
+    entity_type: "telegram_notification",
+    outcome: "accepted",
+    metadata: {
+      eventId: event.eventId,
+      eventType: event.type,
+      kind,
+      job
+    }
+  });
+
+  return {
+    queued: true,
+    kind,
+    eventId: event.eventId,
+    eventType: event.type,
+    job
   };
 }
 
@@ -142,11 +196,21 @@ export async function getTelegramOperationsStatus(session: SessionProfile) {
     entityId: row.entity_id ? String(row.entity_id) : null,
     createdAt: String(row.created_at)
   }));
+  const activeConnectionCount = connections.filter((connection: { status: string }) => connection.status === "active").length;
+  const bot = getTelegramBotIntegrationStatus();
+  const failedNotificationCount = failedCountResult.count ?? 0;
 
   return {
     connected: connections.some((connection: { status: string }) => connection.status === "active"),
-    activeConnectionCount: connections.filter((connection: { status: string }) => connection.status === "active").length,
-    failedNotificationCount: failedCountResult.count ?? 0,
+    activeConnectionCount,
+    failedNotificationCount,
+    bot,
+    setup: buildTelegramSetupStatus({
+      activeConnectionCount,
+      botConfigured: bot.configured,
+      queueAvailable: queueHealth.available,
+      failedNotificationCount
+    }),
     queue: queueHealth,
     connections,
     recentNotifications,
@@ -250,7 +314,7 @@ export function assertInternalApiKey(request: Request) {
 function createSignedToken(secret: string) {
   const nonce = randomBytes(18).toString("base64url");
   const signature = createHmac("sha256", secret).update(nonce).digest("base64url").slice(0, SIGNATURE_LENGTH);
-  return `${TOKEN_PREFIX}_${nonce}.${signature}`;
+  return `${TOKEN_PREFIX}_${nonce}${signature}`;
 }
 
 function tokenHash(token: string) {
@@ -269,9 +333,9 @@ function tokenTtlSeconds() {
 }
 
 function safeEqual(a: string, b: string) {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
+  const left = createHash("sha256").update(a).digest();
+  const right = createHash("sha256").update(b).digest();
+  return timingSafeEqual(left, right);
 }
 
 async function getRetryableTelegramNotifications(
@@ -310,10 +374,21 @@ function normalizeNotificationPayload(row: any): OperationalEvent | null {
 }
 
 async function enqueueTelegramRetryJob(notificationId: string, event: OperationalEvent) {
+  return enqueueTelegramQueueJob(event, {
+    jobId: `${TELEGRAM_QUEUE_NAME}:retry:${notificationId}:${Date.now()}`,
+    attempts: 5,
+    notificationId
+  });
+}
+
+async function enqueueTelegramQueueJob(
+  event: OperationalEvent,
+  input: { jobId: string; attempts: number; notificationId?: string | null }
+) {
   const gatewayUrl = internalGatewayUrl();
   const internalKey = process.env.LOGIVN_INTERNAL_API_KEY;
   if (!gatewayUrl || !internalKey) {
-    throw new AppError("Thiếu LOGIVN_API_INTERNAL_URL hoặc LOGIVN_INTERNAL_API_KEY để retry Telegram.", 500);
+    throw new AppError("Thiếu LOGIVN_API_INTERNAL_URL hoặc LOGIVN_INTERNAL_API_KEY cho Telegram queue.", 500);
   }
 
   const response = await fetch(new URL("/queues/jobs", gatewayUrl), {
@@ -328,8 +403,8 @@ async function enqueueTelegramRetryJob(notificationId: string, event: Operationa
       data: event,
       priority: "high",
       opts: {
-        jobId: `${TELEGRAM_QUEUE_NAME}:retry:${notificationId}:${Date.now()}`,
-        attempts: 5
+        jobId: input.jobId,
+        attempts: input.attempts
       }
     }),
     signal: AbortSignal.timeout(1500)
@@ -339,7 +414,13 @@ async function enqueueTelegramRetryJob(notificationId: string, event: Operationa
 
   const body = (await response.json().catch(() => ({}))) as { jobId?: string; queueName?: string; error?: string };
   if (!response.ok) throw new AppError(body.error ?? "Gateway từ chối retry job Telegram.", response.status);
-  return { queueName: body.queueName ?? TELEGRAM_QUEUE_NAME, jobId: body.jobId ?? null, notificationId };
+  return {
+    queueName: body.queueName ?? TELEGRAM_QUEUE_NAME,
+    jobId: body.jobId ?? null,
+    notificationId: input.notificationId ?? null,
+    eventId: event.eventId,
+    eventType: event.type
+  };
 }
 
 async function getTelegramQueueHealth() {
@@ -480,4 +561,179 @@ async function recordTelegramRetryAudit(
 
 function internalGatewayUrl() {
   return process.env.LOGIVN_API_INTERNAL_URL || process.env.LOGIVN_API_PUBLIC_URL || "";
+}
+
+function getTelegramBotIntegrationStatus() {
+  const username = process.env.TELEGRAM_BOT_USERNAME?.replace(/^@/, "") || null;
+  const connectSecretConfigured = Boolean(process.env.TELEGRAM_CONNECT_TOKEN_SECRET || process.env.TELEGRAM_CALLBACK_SECRET);
+  const callbackSecretConfigured = Boolean(process.env.TELEGRAM_CALLBACK_SECRET);
+  const connectTtlSecondsValue = tokenTtlSeconds();
+  return {
+    mode: "logivn_managed_bot",
+    configured: Boolean(username && connectSecretConfigured && callbackSecretConfigured),
+    username: username ? `@${username}` : null,
+    startUrl: username ? `https://t.me/${username}` : null,
+    connectTtlSeconds: connectTtlSecondsValue,
+    canCreateBotAutomatically: false,
+    diagnostics: {
+      usernameConfigured: Boolean(username),
+      connectSecretConfigured,
+      callbackSecretConfigured
+    }
+  };
+}
+
+function buildTelegramSetupStatus({
+  activeConnectionCount,
+  botConfigured,
+  queueAvailable,
+  failedNotificationCount
+}: {
+  activeConnectionCount: number;
+  botConfigured: boolean;
+  queueAvailable: boolean;
+  failedNotificationCount: number;
+}) {
+  const connected = activeConnectionCount > 0;
+  const ready = botConfigured && queueAvailable && connected && failedNotificationCount === 0;
+  return {
+    state: ready ? "ready" : connected ? "connected" : botConfigured && queueAvailable ? "ready_to_connect" : "needs_attention",
+    steps: [
+      {
+        key: "managed_bot",
+        label: "Bot LogiVN",
+        status: botConfigured ? "done" : "warning",
+        detail: botConfigured ? "Đã provision" : "Thiếu username/secret"
+      },
+      {
+        key: "secure_link",
+        label: "Link tích hợp",
+        status: connected ? "done" : "pending",
+        detail: "Token có hạn"
+      },
+      {
+        key: "account_mapping",
+        label: "Tài khoản Telegram",
+        status: connected ? "done" : "pending",
+        detail: connected ? `${activeConnectionCount} đang hoạt động` : "Chưa nối"
+      },
+      {
+        key: "delivery_pipeline",
+        label: "Luồng gửi tin",
+        status: queueAvailable ? "done" : "warning",
+        detail: queueAvailable ? "BullMQ online" : "Gateway lỗi"
+      },
+      {
+        key: "test_delivery",
+        label: "Kiểm thử",
+        status: failedNotificationCount > 0 ? "warning" : connected ? "done" : "pending",
+        detail: failedNotificationCount > 0 ? `${failedNotificationCount} lỗi` : connected ? "Sẵn sàng" : "Chờ kết nối"
+      }
+    ]
+  };
+}
+
+async function assertTelegramBranchScope(supabase: any, session: SessionProfile, branchId: string | null) {
+  if (!branchId) return;
+  const { data: branch, error } = await supabase
+    .from("store_branches")
+    .select("id")
+    .eq("id", branchId)
+    .eq("restaurant_id", session.restaurantId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!branch) throw new AppError("Chi nhánh Telegram không thuộc quán hiện tại.", 403);
+}
+
+async function countActiveTelegramConnections(supabase: any, restaurantId: string, branchId: string | null) {
+  let query = supabase
+    .from("telegram_connections")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "active");
+
+  if (branchId) query = query.or(`branch_id.is.null,branch_id.eq.${branchId}`);
+
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
+
+function normalizeTelegramTestKind(kind: TelegramTestNotificationInput["kind"]): TelegramTestNotificationKind {
+  return kind && TELEGRAM_TEST_NOTIFICATION_KINDS.includes(kind) ? kind : "order";
+}
+
+function buildTelegramTestEvent(session: SessionProfile, branchId: string | null, kind: TelegramTestNotificationKind): OperationalEvent {
+  const now = new Date();
+  const base = {
+    eventId: `telegram.test:${kind}:${randomUUID()}`,
+    restaurantId: session.restaurantId,
+    tenantId: session.restaurantId,
+    branchId,
+    occurredAt: now.toISOString()
+  };
+
+  if (kind === "payment") {
+    return {
+      ...base,
+      type: "payment.waiting_confirm",
+      payment: {
+        orderId: randomUUID(),
+        billId: randomUUID(),
+        amount: 245000,
+        method: "QR",
+        customerName: "Khách test LogiVN"
+      }
+    };
+  }
+
+  if (kind === "reservation") {
+    return {
+      ...base,
+      type: "reservation.created",
+      reservation: {
+        id: randomUUID(),
+        startsAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
+        partySize: 4,
+        customerName: "Khách đặt bàn test",
+        depositRequiredAmount: 100000
+      }
+    };
+  }
+
+  if (kind === "inventory") {
+    return {
+      ...base,
+      type: "inventory.low",
+      inventory: {
+        items: ["Matcha test", "Sữa tươi test", "Trân châu test"]
+      }
+    };
+  }
+
+  if (kind === "sla") {
+    return {
+      ...base,
+      type: "sla.warning",
+      sla: {
+        orderId: randomUUID(),
+        displayCode: "TEST-SLA",
+        lateMinutes: 15
+      }
+    };
+  }
+
+  return {
+    ...base,
+    type: "order.created",
+    order: {
+      id: randomUUID(),
+      displayCode: "TEST-1025",
+      itemCount: 3,
+      total: 245000,
+      tableName: "Bàn test",
+      fulfillmentType: "DINE_IN",
+      customerName: "Khách test LogiVN"
+    }
+  };
 }
