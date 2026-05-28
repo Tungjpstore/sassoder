@@ -29,7 +29,7 @@ import {
   type AiGrowthCampaignStatus
 } from "@/lib/ai/growth-studio";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import { listRecentAiAutomationRuns } from "@/services/ai-automation-run-service";
@@ -154,7 +154,7 @@ function CampaignCard({ campaign }: { campaign: AiGrowthCampaign }) {
 export default async function AiGrowthPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
   const [providers, schemas, memoriesResult, recommendationsResult, workflowRunsResult, activePromotions] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: false, limit: 20 }),
     listRecentAiRecommendations(session.restaurantId, 30),

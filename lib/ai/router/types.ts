@@ -97,6 +97,8 @@ export type AiProviderConfig = {
 export type AiProviderReadiness = {
   provider: AiProvider;
   configured: boolean;
+  managedByAdmin?: boolean;
+  keySource?: "database" | "environment" | "missing";
   protocol: AiProviderProtocol;
   envNames: string[];
   missingEnvNames: string[];

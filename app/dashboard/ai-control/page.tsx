@@ -34,7 +34,7 @@ import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-
 import { Badge } from "@/components/ui/badge";
 import { getAiFutureCapabilities, type AiFutureCapability } from "@/lib/ai/future-capabilities";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness, type AiSchemaKey } from "@/lib/ai/schema-readiness";
 import type { AiProviderReadiness } from "@/lib/ai/router/types";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
@@ -512,7 +512,7 @@ function FutureCapabilitiesPanel({ capabilities }: { capabilities: AiFutureCapab
 export default async function AiControlPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
   const [providers, schemas, futureCapabilities, memoriesResult, recommendationsResult, workflowRunsResult] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     Promise.resolve(getAiFutureCapabilities()),
     listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: true, limit: 20 }),

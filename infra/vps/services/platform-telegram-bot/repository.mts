@@ -18,6 +18,13 @@ type PlatformSessionInput = {
   ttlSeconds?: number;
 };
 
+type PlatformTelegramAuditEntry = {
+  action: string;
+  outcome: string;
+  targetType: string;
+  createdAt: string;
+};
+
 export async function getPlatformConnectionForTelegramUser(telegramUserId: number) {
   const { data, error } = await db()
     .from("platform_telegram_connections")
@@ -41,7 +48,65 @@ export async function getPlatformAlertRecipients(requiredScope = "incidents.read
   return (data ?? []).map(normalizeConnection).filter((connection: PlatformTelegramConnection) => hasPlatformScope(connection, requiredScope));
 }
 
-export async function connectPlatformTelegramAccount(identity: TelegramIdentity, input: { role?: PlatformTelegramRole; scopes?: string[] } = {}) {
+export async function claimPlatformConnectionToken(token: string, identity: TelegramIdentity) {
+  assertSignedToken(token, connectTokenSecret());
+  const now = new Date().toISOString();
+  const { data, error } = await db()
+    .from("platform_telegram_connection_tokens")
+    .update({
+      consumed_at: now,
+      consumed_by_telegram_user_id: identity.telegramUserId
+    })
+    .eq("token_hash", tokenHash(token))
+    .is("consumed_at", null)
+    .is("revoked_at", null)
+    .gt("expires_at", now)
+    .select("id,platform_admin_user_id,platform_admin_session_id,actor,admin_role,telegram_role,scopes,expires_at")
+    .maybeSingle();
+
+  if (isMissingPlatformTelegramSchema(error)) throw new Error("platform_connect_token_schema_missing");
+  if (error) throw error;
+  if (!data) {
+    await recordPlatformTelegramAudit({
+      telegramUserId: identity.telegramUserId,
+      action: "platform.telegram.connect_token.claim",
+      outcome: "denied",
+      metadata: { reason: "invalid_expired_or_consumed" }
+    });
+    throw new Error("platform_connect_token_invalid");
+  }
+
+  const role = normalizeRole(data.telegram_role);
+  const scopes = Array.isArray(data.scopes) ? data.scopes.map(String).filter(Boolean).slice(0, 80) : defaultScopes(role);
+  const connection = await connectPlatformTelegramAccount(identity, {
+    role,
+    scopes,
+    metadata: {
+      source: "platform_admin_connect_link",
+      tokenId: String(data.id),
+      actor: String(data.actor),
+      adminRole: String(data.admin_role),
+      platformAdminUserId: data.platform_admin_user_id ? String(data.platform_admin_user_id) : null,
+      platformAdminSessionId: data.platform_admin_session_id ? String(data.platform_admin_session_id) : null
+    }
+  });
+
+  await recordPlatformTelegramAudit({
+    connection,
+    action: "platform.telegram.connect_token.claim",
+    outcome: "accepted",
+    targetType: "platform_telegram_connection_token",
+    targetId: String(data.id),
+    metadata: { actor: String(data.actor), adminRole: String(data.admin_role), expiresAt: String(data.expires_at) }
+  });
+
+  return connection;
+}
+
+export async function connectPlatformTelegramAccount(
+  identity: TelegramIdentity,
+  input: { role?: PlatformTelegramRole; scopes?: string[]; metadata?: Record<string, unknown> } = {}
+) {
   const role = input.role ?? "ADMIN";
   const scopes = input.scopes?.length ? input.scopes : defaultScopes(role);
   const now = new Date().toISOString();
@@ -61,7 +126,7 @@ export async function connectPlatformTelegramAccount(identity: TelegramIdentity,
         connected_at: now,
         last_seen_at: now,
         revoked_at: null,
-        metadata: { source: "platform_telegram_bootstrap" }
+        metadata: input.metadata ?? { source: "platform_telegram_bootstrap" }
       },
       { onConflict: "telegram_user_id" }
     )
@@ -80,6 +145,49 @@ export async function touchPlatformConnection(connection: PlatformTelegramConnec
     .eq("id", connection.id)
     .eq("status", "active");
   if (error) throw error;
+}
+
+export async function revokePlatformConnectionById(connection: PlatformTelegramConnection, reason = "telegram_self_disconnect") {
+  const now = new Date().toISOString();
+  const { data, error } = await db()
+    .from("platform_telegram_connections")
+    .update({
+      status: "revoked",
+      revoked_at: now,
+      metadata: { revokedBy: "telegram", revokedReason: reason, revokedFrom: "platform_devops_bot" }
+    })
+    .eq("id", connection.id)
+    .eq("telegram_user_id", connection.telegram_user_id)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_connection_revoke_failed");
+  await recordPlatformTelegramAudit({
+    connection,
+    action: "platform.telegram.connection.self_revoked",
+    outcome: "accepted",
+    targetType: "platform_telegram_connection",
+    targetId: connection.id,
+    metadata: { reason, revokedAt: now }
+  });
+}
+
+export async function getPlatformConnectionRecentAudit(connection: PlatformTelegramConnection, limit = 5): Promise<PlatformTelegramAuditEntry[]> {
+  const { data, error } = await db()
+    .from("platform_telegram_audit_logs")
+    .select("action,outcome,target_type,created_at")
+    .or(`connection_id.eq.${connection.id},telegram_user_id.eq.${connection.telegram_user_id}`)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (isMissingPlatformTelegramSchema(error)) return [];
+  if (error) throw error;
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    action: String(row.action ?? "platform.telegram.unknown"),
+    outcome: String(row.outcome ?? "unknown"),
+    targetType: row.target_type ? String(row.target_type) : "system",
+    createdAt: String(row.created_at)
+  }));
 }
 
 export async function createPlatformSession(input: PlatformSessionInput) {
@@ -215,6 +323,16 @@ function db() {
 
 function sessionSecret() {
   return requiredEnv("PLATFORM_TELEGRAM_SESSION_SECRET");
+}
+
+function connectTokenSecret() {
+  const explicit = readEnv("PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET");
+  if (explicit) return explicit;
+  if (readEnv("NODE_ENV") !== "production") {
+    const fallback = readEnv("PLATFORM_TELEGRAM_SESSION_SECRET");
+    if (fallback) return fallback;
+  }
+  return requiredEnv("PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET");
 }
 
 function sessionTtlSeconds(input?: number) {

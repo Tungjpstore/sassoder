@@ -1,7 +1,7 @@
 import "server-only";
 
 import { runAiCompletion } from "@/lib/ai/router/model-router";
-import { normalizeAiProviderId } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderConfig, normalizeAiProviderId } from "@/lib/ai/providers/registry";
 import { getScopedRestaurantMemoryContext, persistAiConversationMessage } from "@/lib/ai/memory/restaurant-memory";
 import { sanitizeOcrText, sanitizeOcrTextList } from "@/lib/ai/ocr/sanitizer";
 import type { AiCompletionOptions, AiCompletionResult, AiProvider, AiProviderConfig, AiTaskType } from "@/lib/ai/router/types";
@@ -58,7 +58,7 @@ type RestaurantAiContext = AiRestaurantContext;
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 type LegacyAiCompletionResult = Omit<AiCompletionResult, "attempts">;
 type NativeAiProvider = Extract<AiProvider, "qwen" | "xai">;
-type NativeAiProviderConfig = Pick<AiProviderConfig, "baseUrl" | "apiKey"> & { provider: NativeAiProvider };
+type NativeAiProviderConfig = Pick<AiProviderConfig, "baseUrl" | "apiKey" | "chatModel" | "fastModel" | "imageModel" | "ocrModel"> & { provider: NativeAiProvider };
 type ExecutedAiToolCall = {
   id: string;
   name: string;
@@ -145,15 +145,6 @@ type AiImageResult = {
 const qwenNativeBaseUrl = "https://dashscope-intl.aliyuncs.com";
 const xaiNativeBaseUrl = "https://api.x.ai";
 
-const providerDefaults = {
-  qwenChatModel: process.env.QWEN_MODEL || process.env.QWEN_CHAT_MODEL || "qwen-plus",
-  qwenFastModel: process.env.QWEN_FAST_MODEL || process.env.QWEN_MODEL || "qwen-plus",
-  qwenOcrModel: process.env.QWEN_OCR_MODEL || "qwen-vl-ocr-2025-11-20",
-  qwenImageModel: process.env.QWEN_IMAGE_MODEL || "qwen-image-2.0-pro",
-  xaiChatModel: process.env.XAI_MODEL || process.env.XAI_CHAT_MODEL || "grok-3-mini-beta",
-  xaiImageModel: process.env.XAI_IMAGE_MODEL || "grok-imagine-image"
-};
-
 function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   return (
@@ -194,58 +185,42 @@ function billingAccessErrorMessage(label: string, state: "locked_plan" | "quota_
   return `${label} chỉ khả dụng trên gói Premium.`;
 }
 
-function getProviderConfig(preferred?: NativeAiProvider): NativeAiProviderConfig {
-  const qwenKey = (process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || "").trim();
-  const xaiKey = process.env.XAI_API_KEY?.trim();
-  const qwenBaseUrl = (
-    process.env.QWEN_NATIVE_BASE_URL ||
-    process.env.DASHSCOPE_NATIVE_BASE_URL ||
-    process.env.DASHSCOPE_BASE_URL ||
-    qwenNativeBaseUrl
-  )
-    .replace(/\/compatible-mode\/v1\/?$/, "")
-    .replace(/\/$/, "");
-  const xaiBaseUrl = (process.env.XAI_NATIVE_BASE_URL || process.env.XAI_BASE_URL || xaiNativeBaseUrl)
-    .replace(/\/v1\/?$/, "")
-    .replace(/\/$/, "");
-
-  if (preferred === "qwen" && qwenKey) {
-    return {
-      provider: "qwen",
-      baseUrl: qwenBaseUrl,
-      apiKey: qwenKey
-    };
+function normalizeNativeProviderBaseUrl(provider: NativeAiProvider, baseUrl: string) {
+  if (provider === "qwen") {
+    return (baseUrl || qwenNativeBaseUrl)
+      .replace(/\/compatible-mode\/v1\/?$/, "")
+      .replace(/\/$/, "");
   }
+  return (baseUrl || xaiNativeBaseUrl).replace(/\/v1\/?$/, "").replace(/\/$/, "");
+}
 
-  if (preferred === "xai" && xaiKey) {
-    return {
-      provider: "xai",
-      baseUrl: xaiBaseUrl,
-      apiKey: xaiKey
-    };
-  }
+async function getProviderConfig(preferred?: NativeAiProvider): Promise<NativeAiProviderConfig> {
+  const candidates: NativeAiProvider[] = preferred
+    ? [preferred, ...(preferred === "qwen" ? ["xai" as const] : ["qwen" as const])]
+    : ["qwen", "xai"];
 
-  if (qwenKey) {
-    return {
-      provider: "qwen",
-      baseUrl: qwenBaseUrl,
-      apiKey: qwenKey
-    };
-  }
-
-  if (xaiKey) {
-    return {
-      provider: "xai",
-      baseUrl: xaiBaseUrl,
-      apiKey: xaiKey
-    };
+  for (const provider of candidates) {
+    try {
+      const config = await getResolvedAiProviderConfig(provider);
+      return {
+        provider,
+        baseUrl: normalizeNativeProviderBaseUrl(provider, config.baseUrl),
+        apiKey: config.apiKey,
+        chatModel: config.chatModel,
+        fastModel: config.fastModel,
+        imageModel: config.imageModel,
+        ocrModel: config.ocrModel
+      };
+    } catch {
+      // Try the fallback native provider before surfacing the generic config error.
+    }
   }
 
   throw new AppError("Chưa cấu hình QWEN_API_KEY/DASHSCOPE_API_KEY hoặc XAI_API_KEY cho tính năng AI.", 500);
 }
 
-function getRequiredQwenProviderConfig(featureLabel: string): NativeAiProviderConfig {
-  const config = getProviderConfig("qwen");
+async function getRequiredQwenProviderConfig(featureLabel: string): Promise<NativeAiProviderConfig> {
+  const config = await getProviderConfig("qwen");
   if (config.provider === "qwen") return config;
   throw new AppError(`${featureLabel} yêu cầu QWEN_API_KEY hoặc DASHSCOPE_API_KEY. Không thể dùng xAI cho OCR menu.`, 500);
 }
@@ -2186,7 +2161,7 @@ async function qwenMultimodalOcr({
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: providerDefaults.qwenOcrModel,
+        model: config.ocrModel,
         messages: [
           {
             role: "user",
@@ -2223,7 +2198,7 @@ async function qwenMultimodalOcr({
   return {
     text,
     provider: "qwen",
-    model: providerDefaults.qwenOcrModel,
+    model: config.ocrModel,
     inputTokens: json?.usage?.prompt_tokens ?? json?.usage?.input_tokens ?? null,
     outputTokens: json?.usage?.completion_tokens ?? json?.usage?.output_tokens ?? null,
     raw: json
@@ -2754,7 +2729,7 @@ export async function generateStoreSetupDraft(input: {
     const result = await runChat(
       messages,
       normalizeAiProvider(process.env.AI_OWNER_PROVIDER),
-      providerDefaults.qwenFastModel,
+      undefined,
       {
         jsonMode: true,
         cacheTtlMs: 8_000
@@ -2898,7 +2873,7 @@ export async function runCustomerAssistant(input: {
       surface: "customer",
       messages,
       preferredProvider: normalizeAiProvider(process.env.AI_CUSTOMER_PROVIDER),
-      modelOverride: providerDefaults.qwenFastModel,
+      modelOverride: undefined,
       maxTokens: 180,
       taskType: "customer_ordering",
       toolContext: {
@@ -3165,7 +3140,7 @@ async function runAiImageGeneration(input: {
   const canFallbackToPromptOnly = allowPromptOnlyImageFallback();
 
   try {
-    const config = getProviderConfig(normalizeNativeAiProvider(process.env.AI_IMAGE_PROVIDER) || "qwen");
+    const config = await getProviderConfig(normalizeNativeAiProvider(process.env.AI_IMAGE_PROVIDER) || "qwen");
     if (config.provider === "qwen") {
       const size = input.kind === "logo" ? "1024*1024" : input.kind === "menu_preview" ? "1536*1024" : "1024*1024";
       const response = await fetchAiWithTimeout(
@@ -3177,7 +3152,7 @@ async function runAiImageGeneration(input: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model: providerDefaults.qwenImageModel,
+            model: config.imageModel,
             input: {
               messages: [
                 {
@@ -3217,7 +3192,7 @@ async function runAiImageGeneration(input: {
         imageUrl,
         prompt,
         provider: "qwen",
-        model: providerDefaults.qwenImageModel,
+        model: config.imageModel,
         raw: json
       } satisfies AiImageResult;
     }
@@ -3232,7 +3207,7 @@ async function runAiImageGeneration(input: {
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            model: providerDefaults.xaiImageModel,
+            model: config.imageModel,
             prompt,
             n: 1,
             response_format: "url"
@@ -3253,7 +3228,7 @@ async function runAiImageGeneration(input: {
         imageUrl,
         prompt,
         provider: "xai",
-        model: providerDefaults.xaiImageModel,
+        model: config.imageModel,
         raw: json
       } satisfies AiImageResult;
     }
@@ -3381,7 +3356,7 @@ export async function generateOnboardingBranding(input: {
       ].join("\n")
     }
   ];
-  const result = await runChat(messages, "qwen", providerDefaults.qwenChatModel, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
+  const result = await runChat(messages, "qwen", undefined, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
 
   const data = normalizeBrandBoard(extractJsonObject(result.text));
   const replyContract = normalizeAiReply({
@@ -3445,7 +3420,7 @@ function hasInventoryOcrRows(draft: InventoryOcrDraft) {
 
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const prompt = buildMenuOcrPrompt(input);
-  const qwenConfig = getRequiredQwenProviderConfig("AI OCR menu");
+  const qwenConfig = await getRequiredQwenProviderConfig("AI OCR menu");
   const result =
     input.imageUrl || input.imageBase64
       ? await qwenMultimodalOcr({
@@ -3456,7 +3431,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
         })
       : await qwenChat(
           qwenConfig,
-          providerDefaults.qwenChatModel,
+          qwenConfig.chatModel,
           [
             { role: "system", content: "Bạn chuyên OCR và chuẩn hóa menu F&B Việt Nam. Trả JSON thuần." },
             { role: "user", content: prompt }
@@ -3469,7 +3444,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
   if (!hasMenuOcrItems(data) && result.text.trim()) {
     const repairResult = await qwenChat(
       qwenConfig,
-      providerDefaults.qwenChatModel,
+      qwenConfig.chatModel,
       [
         {
           role: "system",
@@ -3498,7 +3473,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
 
 async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const prompt = buildInventoryOcrPrompt(input);
-  const qwenConfig = getRequiredQwenProviderConfig("AI OCR nhập kho");
+  const qwenConfig = await getRequiredQwenProviderConfig("AI OCR nhập kho");
   const result =
     input.imageUrl || input.imageBase64
       ? await qwenMultimodalOcr({
@@ -3509,7 +3484,7 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
         })
       : await qwenChat(
           qwenConfig,
-          providerDefaults.qwenChatModel,
+          qwenConfig.chatModel,
           [
             { role: "system", content: "Bạn chuyên OCR hóa đơn và chuẩn hóa nhập kho F&B Việt Nam. Trả JSON thuần." },
             { role: "user", content: prompt }
@@ -3522,7 +3497,7 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
   if (!hasInventoryOcrRows(data) && result.text.trim()) {
     const repairResult = await qwenChat(
       qwenConfig,
-      providerDefaults.qwenChatModel,
+      qwenConfig.chatModel,
       [
         {
           role: "system",

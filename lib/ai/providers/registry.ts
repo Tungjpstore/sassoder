@@ -1,6 +1,7 @@
 import "server-only";
 
 import { AppError } from "@/lib/response";
+import { getManagedAiProviderRuntimeOverride, type ManagedAiProviderRuntimeOverride } from "@/services/platform-ai-provider-config-service";
 import type { AiProvider, AiProviderConfig, AiProviderProtocol, AiProviderReadiness } from "@/lib/ai/router/types";
 
 const qwenIntlBaseUrl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
@@ -220,16 +221,19 @@ function findProviderDefinition(provider: AiProvider) {
   return providerDefinitions().find((definition) => definition.provider === provider);
 }
 
-function buildProviderConfig(definition: ProviderDefinition): AiProviderConfig {
+function buildProviderConfig(definition: ProviderDefinition, override?: ManagedAiProviderRuntimeOverride | null): AiProviderConfig {
+  const enabled = override?.enabled ?? true;
+  const apiKey = enabled ? override?.apiKey || readEnv(definition.keyEnvNames) : "";
+
   return {
     provider: definition.provider,
     protocol: definition.protocol,
-    apiKey: readEnv(definition.keyEnvNames),
-    baseUrl: normalizeProviderBaseUrl(definition.provider, readEnv(definition.baseUrlEnvNames) || definition.baseUrl),
-    chatModel: readEnv(definition.chatModelEnvNames) || definition.chatModel,
-    fastModel: readEnv(definition.fastModelEnvNames) || definition.fastModel,
-    imageModel: readEnv(definition.imageModelEnvNames) || definition.imageModel,
-    ocrModel: readEnv(definition.ocrModelEnvNames) || definition.ocrModel,
+    apiKey,
+    baseUrl: normalizeProviderBaseUrl(definition.provider, override?.baseUrl || readEnv(definition.baseUrlEnvNames) || definition.baseUrl),
+    chatModel: override?.chatModel || readEnv(definition.chatModelEnvNames) || definition.chatModel,
+    fastModel: override?.fastModel || readEnv(definition.fastModelEnvNames) || definition.fastModel,
+    imageModel: override?.imageModel || readEnv(definition.imageModelEnvNames) || definition.imageModel,
+    ocrModel: override?.ocrModel || readEnv(definition.ocrModelEnvNames) || definition.ocrModel,
     supportsJsonMode: definition.supportsJsonMode,
     supportsToolCalling: definition.supportsToolCalling,
     supportsImageGeneration: definition.supportsImageGeneration,
@@ -240,6 +244,11 @@ function buildProviderConfig(definition: ProviderDefinition): AiProviderConfig {
   };
 }
 
+async function buildResolvedProviderConfig(definition: ProviderDefinition) {
+  const override = await getManagedAiProviderRuntimeOverride(definition.provider);
+  return { config: buildProviderConfig(definition, override), override };
+}
+
 export function getAiProviderConfig(provider: AiProvider): AiProviderConfig {
   const definition = findProviderDefinition(provider);
   if (!definition) throw new AppError(`AI provider ${provider} không được hỗ trợ.`, 500);
@@ -248,8 +257,26 @@ export function getAiProviderConfig(provider: AiProvider): AiProviderConfig {
   return config;
 }
 
+export async function getResolvedAiProviderConfig(provider: AiProvider): Promise<AiProviderConfig> {
+  const definition = findProviderDefinition(provider);
+  if (!definition) throw new AppError(`AI provider ${provider} không được hỗ trợ.`, 500);
+  const { config, override } = await buildResolvedProviderConfig(definition);
+  if (!config.apiKey) {
+    if (override?.enabled === false) throw new AppError(`Provider AI ${provider} đang bị tắt trong admin.logivn.com.`, 500);
+    throw new AppError(`Chưa cấu hình ${definition.keyEnvNames.join(" hoặc ")}.`, 500);
+  }
+  return config;
+}
+
 export function availableAiProviders() {
   return getAiProviderReadiness()
+    .filter((provider) => provider.configured)
+    .sort((a, b) => providerOrder.indexOf(a.provider) - providerOrder.indexOf(b.provider))
+    .map((provider) => provider.provider);
+}
+
+export async function availableResolvedAiProviders() {
+  return (await getResolvedAiProviderReadiness())
     .filter((provider) => provider.configured)
     .sort((a, b) => providerOrder.indexOf(a.provider) - providerOrder.indexOf(b.provider))
     .map((provider) => provider.provider);
@@ -262,6 +289,8 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
     return {
       provider: definition.provider,
       configured,
+      managedByAdmin: false,
+      keySource: configured ? "environment" : "missing",
       protocol: definition.protocol,
       envNames: [...definition.keyEnvNames, ...definition.baseUrlEnvNames],
       missingEnvNames: configured ? [] : definition.keyEnvNames,
@@ -276,6 +305,34 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
       priority: config.priority
     };
   });
+}
+
+export async function getResolvedAiProviderReadiness(): Promise<AiProviderReadiness[]> {
+  return Promise.all(
+    providerDefinitions().map(async (definition) => {
+      const { config, override } = await buildResolvedProviderConfig(definition);
+      const configured = Boolean(config.apiKey);
+      const envConfigured = Boolean(readEnv(definition.keyEnvNames));
+      return {
+        provider: definition.provider,
+        configured,
+        managedByAdmin: Boolean(override),
+        keySource: override?.keySource === "database" ? "database" : envConfigured ? "environment" : "missing",
+        protocol: definition.protocol,
+        envNames: [...definition.keyEnvNames, ...definition.baseUrlEnvNames],
+        missingEnvNames: configured ? [] : definition.keyEnvNames,
+        chatModel: config.chatModel,
+        fastModel: config.fastModel,
+        imageModel: config.imageModel,
+        ocrModel: config.ocrModel,
+        supportsJsonMode: config.supportsJsonMode,
+        supportsToolCalling: config.supportsToolCalling,
+        supportsImageGeneration: config.supportsImageGeneration,
+        supportsOcr: config.supportsOcr,
+        priority: config.priority
+      };
+    })
+  );
 }
 
 export function normalizeAiProviderId(value?: string | null): AiProvider | undefined {

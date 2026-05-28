@@ -1,6 +1,6 @@
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { buildAiSupportStudioDeck } from "@/lib/ai/support-studio";
 import { fail, ok } from "@/lib/response";
@@ -20,7 +20,7 @@ export async function GET() {
   try {
     const session = await requireOperationalDashboardApiSession({ feature: "ai_owner_assistant" });
     const [providers, schemas, memoriesResult, recommendationsResult] = await Promise.all([
-      Promise.resolve(getAiProviderReadiness()),
+      getResolvedAiProviderReadiness(),
       getAiSchemaReadiness(),
       listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: false, limit: 40 }),
       listRecentAiRecommendations(session.restaurantId, 30)

@@ -23,7 +23,7 @@ import { AiOperatingLoop } from "@/components/dashboard/ai-operating-loop";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import {
   buildAiSupportStudioDeck,
@@ -154,7 +154,7 @@ function ScenarioCard({ scenario }: { scenario: AiSupportScenario }) {
 export default async function AiSupportPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
   const [providers, schemas, memoriesResult, recommendationsResult] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: false, limit: 40 }),
     listRecentAiRecommendations(session.restaurantId, 30)

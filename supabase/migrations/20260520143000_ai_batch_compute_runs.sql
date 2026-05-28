@@ -49,7 +49,7 @@ drop policy if exists "restaurant users read own ai batch compute runs" on publi
 create policy "restaurant users read own ai batch compute runs"
 on public.ai_batch_compute_runs for select
 to authenticated
-using (public.user_can_access_restaurant(restaurant_id));
+using (restaurant_id = app_private.current_restaurant_id());
 
 drop trigger if exists ai_batch_compute_runs_set_updated_at on public.ai_batch_compute_runs;
 create trigger ai_batch_compute_runs_set_updated_at

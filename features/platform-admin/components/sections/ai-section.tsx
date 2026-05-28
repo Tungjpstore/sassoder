@@ -1,7 +1,10 @@
-import { Activity, AlertTriangle, Bot, KeyRound, Store } from "lucide-react";
+import { Activity, AlertTriangle, Bot, Database, KeyRound, LockKeyhole, Store } from "lucide-react";
+import { updateAiProviderConfigAction } from "@/features/platform-admin/actions";
 import { IntegrationGrid } from "@/features/platform-admin/components/integration-grid";
 import {
+  Field,
   MetricCard,
+  PrimaryButton,
   SectionCard,
   badgeTone,
   formatDateTime,
@@ -17,28 +20,40 @@ function severityTone(severity: string): Parameters<typeof badgeTone>[0] {
   return "info";
 }
 
+function keySourceLabel(source: string) {
+  if (source === "database") return "CSDL mã hoá";
+  if (source === "environment") return "ENV server";
+  return "Chưa có";
+}
+
+function keySourceTone(source: string): Parameters<typeof badgeTone>[0] {
+  if (source === "database") return "good";
+  if (source === "environment") return "info";
+  return "warning";
+}
+
 export function AiControl({ snapshot }: { snapshot: Snapshot }) {
   const aiIntegrations = snapshot.integrations.filter((item) => item.category === "ai");
 
   return (
     <div className="grid gap-4">
       <div className="grid gap-3 md:grid-cols-5">
-        <MetricCard label="AI requests 24h" value={formatNumber(snapshot.aiControl.requests)} detail={`${snapshot.aiControl.successRate}% success`} icon={Bot} tone={snapshot.aiControl.failures ? "warning" : "good"} />
-        <MetricCard label="Tokens 24h" value={formatNumber(snapshot.aiControl.tokens)} detail={`${snapshot.aiControl.imageCount} image requests`} icon={Activity} tone="info" />
-        <MetricCard label="Blocked/failed" value={formatNumber(snapshot.aiControl.blocked + snapshot.aiControl.failures)} detail="Theo ai_usage_logs gần nhất" icon={AlertTriangle} tone={snapshot.aiControl.blocked + snapshot.aiControl.failures ? "warning" : "neutral"} />
-        <MetricCard label="Morning briefs" value={formatNumber(snapshot.aiControl.morningBriefs.generated)} detail={`${snapshot.aiControl.morningBriefs.sent} sent · ${snapshot.aiControl.morningBriefs.failed} failed`} icon={KeyRound} tone={snapshot.aiControl.morningBriefs.failed ? "warning" : "info"} />
-        <MetricCard label="Branch insights" value={formatNumber(snapshot.aiControl.branchInsights.active)} detail={`${snapshot.aiControl.branchInsights.critical} critical · ${snapshot.aiControl.branchInsights.warning} warning`} icon={Store} tone={snapshot.aiControl.branchInsights.critical ? "danger" : snapshot.aiControl.branchInsights.warning ? "warning" : "good"} />
+        <MetricCard label="Yêu cầu AI 24h" value={formatNumber(snapshot.aiControl.requests)} detail={`${snapshot.aiControl.successRate}% thành công`} icon={Bot} tone={snapshot.aiControl.failures ? "warning" : "good"} />
+        <MetricCard label="Token 24h" value={formatNumber(snapshot.aiControl.tokens)} detail={`${snapshot.aiControl.imageCount} yêu cầu ảnh`} icon={Activity} tone="info" />
+        <MetricCard label="Chặn/lỗi" value={formatNumber(snapshot.aiControl.blocked + snapshot.aiControl.failures)} detail="Theo ai_usage_logs gần nhất" icon={AlertTriangle} tone={snapshot.aiControl.blocked + snapshot.aiControl.failures ? "warning" : "neutral"} />
+        <MetricCard label="Khoá runtime" value={formatNumber(snapshot.aiControl.runtimeConfig.databaseKeys)} detail={`${snapshot.aiControl.runtimeConfig.configuredProviders} provider sẵn sàng · ${snapshot.aiControl.runtimeConfig.disabledProviders} đã tắt`} icon={LockKeyhole} tone={snapshot.aiControl.runtimeConfig.databaseKeys ? "good" : "info"} />
+        <MetricCard label="Tín hiệu chi nhánh" value={formatNumber(snapshot.aiControl.branchInsights.active)} detail={`${snapshot.aiControl.branchInsights.critical} nghiêm trọng · ${snapshot.aiControl.branchInsights.warning} cảnh báo`} icon={Store} tone={snapshot.aiControl.branchInsights.critical ? "danger" : snapshot.aiControl.branchInsights.warning ? "warning" : "good"} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <SectionCard title="AI routing">
+        <SectionCard title="Định tuyến AI">
           <dl className="grid gap-3 text-sm">
             {[
-              ["Owner provider", snapshot.aiControl.routing.ownerProvider],
-              ["Customer provider", snapshot.aiControl.routing.customerProvider],
-              ["Image provider", snapshot.aiControl.routing.imageProvider],
-              ["Owner model", snapshot.aiControl.routing.ownerModel],
-              ["Image model", snapshot.aiControl.routing.imageModel]
+              ["Provider chủ quán", snapshot.aiControl.routing.ownerProvider],
+              ["Provider khách hàng", snapshot.aiControl.routing.customerProvider],
+              ["Provider ảnh", snapshot.aiControl.routing.imageProvider],
+              ["Model chủ quán", snapshot.aiControl.routing.ownerModel],
+              ["Model ảnh", snapshot.aiControl.routing.imageModel]
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                 <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
@@ -48,7 +63,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
           </dl>
         </SectionCard>
 
-        <SectionCard title="Provider usage 24h">
+        <SectionCard title="Sử dụng provider 24h">
           <div className="grid gap-2">
             {snapshot.aiControl.providers.map((provider) => (
               <div key={provider.provider} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -57,7 +72,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
                   <span className={badgeTone(provider.failureRate > 10 ? "warning" : "good")}>{provider.failureRate}% lỗi</span>
                 </div>
                 <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-3">
-                  <span>{provider.requests} requests</span>
+                  <span>{provider.requests} yêu cầu</span>
                   <span>{formatNumber(provider.tokens)} tokens</span>
                   <span>{provider.models.join(", ") || "Chưa có model log"}</span>
                 </div>
@@ -68,7 +83,62 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </SectionCard>
       </div>
 
-      <SectionCard title="AI Ops Morning Briefs">
+      <SectionCard title="Khoá API AI & runtime routing">
+        <div className="grid gap-3 xl:grid-cols-2">
+          {snapshot.aiControl.providerConfigs.map((provider) => (
+            <form key={provider.provider} action={updateAiProviderConfigAction} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <input type="hidden" name="provider" value={provider.provider} />
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Database size={16} className="text-slate-500" />
+                    <p className="text-sm font-semibold text-slate-950">{provider.label}</p>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className={badgeTone(provider.configured ? "good" : "warning")}>{provider.configured ? "Sẵn sàng" : "Thiếu khoá"}</span>
+                    <span className={badgeTone(keySourceTone(provider.keySource))}>{keySourceLabel(provider.keySource)}</span>
+                    <span className={badgeTone(provider.enabled ? "neutral" : "danger")}>{provider.enabled ? "Đang bật" : "Đã tắt"}</span>
+                  </div>
+                </div>
+                <p className="font-mono text-xs font-semibold text-slate-500">{provider.keyPreview}</p>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                  Trạng thái
+                  <select name="enabled" defaultValue={provider.enabled ? "true" : "false"} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                    <option value="true">Bật provider</option>
+                    <option value="false">Tắt provider</option>
+                  </select>
+                </label>
+                <Field label="Khoá API mới" name="apiKey" type="password" required={false} placeholder="sk-..." />
+                <Field label="Base URL" name="baseUrl" required={false} defaultValue={provider.baseUrl} placeholder="https://..." />
+                <Field label="Model chat" name="chatModel" required={false} defaultValue={provider.chatModel} />
+                <Field label="Model nhanh" name="fastModel" required={false} defaultValue={provider.fastModel} />
+                <Field label="Model ảnh" name="imageModel" required={false} defaultValue={provider.imageModel} />
+                <Field label="Model OCR" name="ocrModel" required={false} defaultValue={provider.ocrModel} />
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                  <input type="checkbox" name="clearApiKey" value="true" className="h-4 w-4 rounded border-slate-300" />
+                  Xoá khoá DB
+                </label>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span>{provider.keyFingerprint ? `fp:${provider.keyFingerprint}` : "fp:--"}</span>
+                  <span>{formatDateTime(provider.lastRotatedAt ?? provider.updatedAt)}</span>
+                  <PrimaryButton tone="soft">
+                    <KeyRound size={15} />
+                    Lưu cấu hình
+                  </PrimaryButton>
+                </div>
+              </div>
+            </form>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="Bản tin vận hành AI">
         <div className="grid gap-2">
           {snapshot.aiControl.morningBriefs.recent.map((brief) => (
             <div key={`${brief.restaurantId}-${brief.channel}-${brief.createdAt}`} className="rounded-xl border border-slate-200 bg-white p-3">
@@ -81,16 +151,16 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
               </div>
               <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-4">
                 <span>{brief.briefDate}</span>
-                <span>Health {brief.healthScore}/100</span>
-                <span>{brief.insights} insights</span>
+                <span>Sức khoẻ {brief.healthScore}/100</span>
+                <span>{brief.insights} tín hiệu</span>
                 <span>{formatDateTime(brief.sentAt ?? brief.createdAt)}</span>
               </div>
               <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{brief.summary}</p>
               <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                <span className={badgeTone("neutral")}>{brief.critical} critical</span>
-                <span className={badgeTone("neutral")}>{brief.warning} warning</span>
-                <span className={badgeTone("neutral")}>{brief.opportunity} opportunity</span>
-                <span className={badgeTone("neutral")}>{brief.recipients.length} recipients</span>
+                <span className={badgeTone("neutral")}>{brief.critical} nghiêm trọng</span>
+                <span className={badgeTone("neutral")}>{brief.warning} cảnh báo</span>
+                <span className={badgeTone("neutral")}>{brief.opportunity} cơ hội</span>
+                <span className={badgeTone("neutral")}>{brief.recipients.length} người nhận</span>
               </div>
               {brief.actions.length ? (
                 <div className="mt-2 grid gap-1.5">
@@ -112,7 +182,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="AI Ops Branch Insights">
+      <SectionCard title="Tín hiệu vận hành chi nhánh">
         <div className="grid gap-2">
           <div className="grid gap-2 text-xs text-slate-500 md:grid-cols-4">
             <span>{snapshot.aiControl.branchInsights.windowDays} ngày gần nhất</span>
@@ -142,7 +212,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </SectionCard>
 
-      <IntegrationGrid title="AI secrets & config" integrations={aiIntegrations} />
+      <IntegrationGrid title="Bí mật & cấu hình AI" integrations={aiIntegrations} />
     </div>
   );
 }

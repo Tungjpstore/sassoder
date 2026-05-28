@@ -1,5 +1,6 @@
 import { Activity, AlertTriangle, Clock3, ServerCog } from "lucide-react";
 import { IntegrationGrid } from "@/features/platform-admin/components/integration-grid";
+import { PlatformTelegramCommandCenter } from "@/features/platform-admin/components/platform-telegram-command-center";
 import {
   MetricCard,
   SectionCard,
@@ -10,6 +11,7 @@ import {
 } from "@/features/platform-admin/components/primitives";
 import { moduleStatusLabel } from "@/features/platform-admin/labels";
 import type { Snapshot } from "@/features/platform-admin/types";
+import type { PlatformAdminSession } from "@/lib/platform-admin-auth";
 
 function runStatusLabel(status: string | null | undefined) {
   if (status === "success") return "success";
@@ -39,7 +41,7 @@ function summaryLine(summary: Record<string, unknown> | undefined) {
   return entries.map(([key, value]) => `${key}: ${String(value)}`).join(" · ");
 }
 
-export function OpsControl({ snapshot }: { snapshot: Snapshot }) {
+export function OpsControl({ snapshot, session }: { snapshot: Snapshot; session: PlatformAdminSession }) {
   const cronAttention = snapshot.cronJobs.filter((job) => (job.failureStreak ?? 0) > 0 || (job.lastRunAgeHours ?? 0) > 36).length;
 
   return (
@@ -50,6 +52,10 @@ export function OpsControl({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Cron attention" value={formatNumber(cronAttention)} detail="Lỗi liên tiếp hoặc quá 36 giờ chưa chạy" icon={Activity} tone={cronAttention ? "danger" : "good"} />
         <MetricCard label="Env warnings" value={formatNumber(snapshot.metrics.integrationWarnings)} detail="Thiếu hoặc mới cấu hình một phần" icon={AlertTriangle} tone={snapshot.metrics.integrationWarnings ? "warning" : "good"} />
       </div>
+
+      <SectionCard title="Kết nối Telegram DevOps">
+        <PlatformTelegramCommandCenter session={session} />
+      </SectionCard>
 
       <SectionCard title="Cron jobs">
         <div className="grid gap-3 md:grid-cols-3">

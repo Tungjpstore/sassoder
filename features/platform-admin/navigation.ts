@@ -27,18 +27,18 @@ export type PlatformAdminSection = {
 export const platformAdminSections: PlatformAdminSection[] = [
   { key: "overview", label: "Tổng quan", href: "/", icon: SlidersHorizontal },
   { key: "site", label: "Website", href: "/site", icon: FileSliders },
-  { key: "content", label: "Content", href: "/content", icon: FileText },
+  { key: "content", label: "Nội dung", href: "/content", icon: FileText },
   { key: "plans", label: "Gói dịch vụ", href: "/plans", icon: PackageCheck },
   { key: "billing", label: "Thanh toán gói", href: "/billing", icon: CreditCard },
   { key: "tenants", label: "Cửa hàng", href: "/tenants", icon: Store },
-  { key: "users", label: "User", href: "/users", icon: UsersRound },
-  { key: "ai", label: "AI", href: "/ai", icon: Bot },
-  { key: "maps", label: "Maps", href: "/maps", icon: MapPinned },
-  { key: "atlas", label: "Atlas", href: "/atlas", icon: Globe2 },
-  { key: "ops", label: "Ops", href: "/ops", icon: ServerCog },
-  { key: "governance", label: "Governance", href: "/governance", icon: ClipboardCheck },
+  { key: "users", label: "Người dùng", href: "/users", icon: UsersRound },
+  { key: "ai", label: "Vận hành AI", href: "/ai", icon: Bot },
+  { key: "maps", label: "Bản đồ", href: "/maps", icon: MapPinned },
+  { key: "atlas", label: "Bản đồ hệ thống", href: "/atlas", icon: Globe2 },
+  { key: "ops", label: "Hạ tầng", href: "/ops", icon: ServerCog },
+  { key: "governance", label: "Quản trị thay đổi", href: "/governance", icon: ClipboardCheck },
   { key: "security", label: "Bảo mật", href: "/security", icon: ShieldCheck },
-  { key: "release", label: "Release", href: "/release", icon: GitBranch }
+  { key: "release", label: "Phát hành", href: "/release", icon: GitBranch }
 ];
 
 export const activePlatformAdminSections = new Set<ActiveSection>(

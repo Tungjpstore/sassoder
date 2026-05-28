@@ -24,7 +24,7 @@ import { AdminShell } from "@/components/dashboard/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { buildAiMenuStudioDeck, type AiMenuOpportunity, type AiMenuOpportunityStatus, type AiMenuStudioChannel } from "@/lib/ai/menu-studio";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import { getAdminReport } from "@/services/dashboard-report-service";
@@ -146,7 +146,7 @@ function OpportunityCard({ opportunity }: { opportunity: AiMenuOpportunity }) {
 export default async function AiMenuPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
   const [providers, schemas, memoriesResult, recommendationsResult, categories, report] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: false, limit: 40 }),
     listRecentAiRecommendations(session.restaurantId, 30),

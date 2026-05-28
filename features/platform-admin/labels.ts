@@ -1,18 +1,18 @@
 import type { ProjectSurface, Tenant } from "@/features/platform-admin/types";
 
 export const projectSurfaceKindLabel: Record<ProjectSurface["kind"], string> = {
-  frontend: "Frontend",
-  backend: "Backend",
-  data: "Data",
-  automation: "Automation",
-  integration: "Integration"
+  frontend: "Giao diện",
+  backend: "Dịch vụ backend",
+  data: "Dữ liệu",
+  automation: "Tự động hoá",
+  integration: "Tích hợp ngoài"
 };
 
 export const moduleStatusLabel: Record<string, string> = {
   live: "Đang chạy",
   configured: "Đã cấu hình",
   partial: "Một phần",
-  static: "Code-managed",
+  static: "Quản lý bằng code",
   planned: "Đã lên kế hoạch",
   blocked: "Chưa mở",
   needs_config: "Cần cấu hình",
@@ -43,8 +43,8 @@ export const paymentStatusLabel: Record<string, string> = {
 };
 
 export const cutoverSourceLabel: Record<string, string> = {
-  legacy: "Legacy fallback",
-  mixed: "Mixed bridge",
+  legacy: "Fallback cũ",
+  mixed: "Cầu nối chuyển tiếp",
   v2: "Billing v2"
 };
 

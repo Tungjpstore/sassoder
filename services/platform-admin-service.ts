@@ -8,6 +8,7 @@ import { getPlatformAdminAuthStatus } from "@/lib/platform-admin-auth";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
+import { listPlatformAiProviderConfigs, type PlatformAiProviderConfigSummary } from "@/services/platform-ai-provider-config-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 
 type PlatformStatus = "active" | "suspended" | "deleted";
@@ -783,7 +784,8 @@ function buildContentSurfaces({
 function summarizeAiControl(
   rows: AiUsageSnapshotRow[],
   morningBriefRows: AiMorningBriefSnapshotRow[] = [],
-  branchInsightRows: AiBranchInsightSnapshotRow[] = []
+  branchInsightRows: AiBranchInsightSnapshotRow[] = [],
+  providerConfigs: PlatformAiProviderConfigSummary[] = []
 ) {
   const successes = rows.filter((row) => row.status === "success").length;
   const failures = rows.filter((row) => row.status === "failed").length;
@@ -886,12 +888,24 @@ function summarizeAiControl(
         };
       })
     },
+    providerConfigs,
+    runtimeConfig: {
+      configuredProviders: providerConfigs.filter((provider) => provider.configured).length,
+      managedProviders: providerConfigs.filter((provider) => provider.managed).length,
+      databaseKeys: providerConfigs.filter((provider) => provider.keySource === "database").length,
+      disabledProviders: providerConfigs.filter((provider) => !provider.enabled).length
+    },
     routing: {
       ownerProvider: process.env.AI_OWNER_PROVIDER || process.env.COPILOTKIT_PROVIDER || "qwen",
       customerProvider: process.env.AI_CUSTOMER_PROVIDER || "qwen",
       imageProvider: process.env.AI_IMAGE_PROVIDER || "xai",
-      ownerModel: process.env.QWEN_CHAT_MODEL || process.env.QWEN_MODEL || process.env.COPILOTKIT_MODEL || "qwen-plus",
-      imageModel: process.env.XAI_IMAGE_MODEL || process.env.QWEN_IMAGE_MODEL || "provider-default"
+      ownerModel: providerConfigs.find((provider) => provider.provider === "qwen")?.chatModel || process.env.QWEN_CHAT_MODEL || process.env.QWEN_MODEL || process.env.COPILOTKIT_MODEL || "qwen-plus",
+      imageModel:
+        providerConfigs.find((provider) => provider.provider === "xai")?.imageModel ||
+        providerConfigs.find((provider) => provider.provider === "qwen")?.imageModel ||
+        process.env.XAI_IMAGE_MODEL ||
+        process.env.QWEN_IMAGE_MODEL ||
+        "provider-default"
     }
   };
 }
@@ -969,7 +983,25 @@ function summarizeMapControl({
   };
 }
 
-function buildIntegrationHealthList(platformAuthConfigured: boolean): IntegrationHealth[] {
+function applyManagedProviderHealth(base: IntegrationHealth, providerConfig?: PlatformAiProviderConfigSummary): IntegrationHealth {
+  if (!providerConfig) return base;
+  const configured = providerConfig.configured ? base.total : base.configured;
+  return {
+    ...base,
+    configured,
+    status: providerConfig.configured ? "configured" : providerConfig.enabled ? base.status : "needs_config",
+    secretHandling:
+      providerConfig.keySource === "database"
+        ? "Key đang mã hoá trong platform_ai_provider_configs; UI chỉ thấy fingerprint và 4 ký tự cuối."
+        : base.secretHandling,
+    note:
+      providerConfig.keySource === "database"
+        ? `${base.note} Runtime ưu tiên key đã lưu trong admin.logivn.com, fallback env khi xoá key DB.`
+        : base.note
+  };
+}
+
+function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderConfigs: PlatformAiProviderConfigSummary[] = []): IntegrationHealth[] {
   const platformAdmin = buildIntegrationHealth({
     key: "platform-admin",
     name: "Platform admin session",
@@ -979,6 +1011,9 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean): Integratio
     secretHandling: "Mật khẩu bootstrap ở Vercel env, sau lần đổi đầu hash vào platform_admin_credentials.",
     note: "Nên nâng lên multi-admin RBAC trước khi cho chỉnh content/ops sâu."
   });
+
+  const qwenConfig = aiProviderConfigs.find((provider) => provider.provider === "qwen");
+  const xaiConfig = aiProviderConfigs.find((provider) => provider.provider === "xai");
 
   return [
     buildIntegrationHealth({
@@ -1013,24 +1048,30 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean): Integratio
       secretHandling: "Cron routes bắt buộc Authorization Bearer CRON_SECRET.",
       note: "Không có secret thì cron bị chặn chủ động."
     }),
-    buildIntegrationHealth({
-      key: "ai-qwen",
-      name: "Qwen/DashScope AI",
-      category: "ai",
-      envNames: ["QWEN_API_KEY", "QWEN_BASE_URL", "QWEN_MODEL"],
-      required: false,
-      secretHandling: "Key chỉ server-side; model routing đọc từ env.",
-      note: "Provider chính cho owner/customer assistant theo cấu hình hiện tại."
-    }),
-    buildIntegrationHealth({
-      key: "ai-xai",
-      name: "xAI image/voice",
-      category: "ai",
-      envNames: ["XAI_API_KEY", "XAI_BASE_URL", "XAI_MODEL"],
-      required: false,
-      secretHandling: "Key chỉ server-side; không đưa vào NEXT_PUBLIC_*.",
-      note: "Provider dự phòng/ảnh theo AI_IMAGE_PROVIDER."
-    }),
+    applyManagedProviderHealth(
+      buildIntegrationHealth({
+        key: "ai-qwen",
+        name: "Qwen/DashScope AI",
+        category: "ai",
+        envNames: ["QWEN_API_KEY", "QWEN_BASE_URL", "QWEN_MODEL"],
+        required: false,
+        secretHandling: "Key chỉ server-side; model routing đọc từ env hoặc cấu hình admin mã hoá.",
+        note: "Provider chính cho owner/customer assistant theo cấu hình hiện tại."
+      }),
+      qwenConfig
+    ),
+    applyManagedProviderHealth(
+      buildIntegrationHealth({
+        key: "ai-xai",
+        name: "xAI image/voice",
+        category: "ai",
+        envNames: ["XAI_API_KEY", "XAI_BASE_URL", "XAI_MODEL"],
+        required: false,
+        secretHandling: "Key chỉ server-side; không đưa vào NEXT_PUBLIC_*.",
+        note: "Provider dự phòng/ảnh theo AI_IMAGE_PROVIDER."
+      }),
+      xaiConfig
+    ),
     buildIntegrationHealth({
       key: "maps",
       name: "Maps providers",
@@ -2213,7 +2254,8 @@ async function readPlatformAdminSnapshot() {
     settingRows,
     auditLogs,
     usersCount,
-    platformAuthStatus
+    platformAuthStatus,
+    aiProviderConfigs
   ] =
     await Promise.all([
       readRestaurants(supabase, warnings),
@@ -2273,7 +2315,8 @@ async function readPlatformAdminSnapshot() {
         warnings
       ),
       countRows(supabase, "users", warnings),
-      getPlatformAdminAuthStatus()
+      getPlatformAdminAuthStatus(),
+      listPlatformAiProviderConfigs()
     ]);
 
   const [v2PlansResult, v2SubscriptionsResult, v2PaymentsResult] = await Promise.all([
@@ -2463,9 +2506,9 @@ async function readPlatformAdminSnapshot() {
 
   const settings = normalizeSettingRows(settingRows);
   const contentSurfaces = buildContentSurfaces({ settings, effectivePlans, billingV2Available, appUrl });
-  const aiControl = summarizeAiControl(aiUsageRows, morningBriefRows, branchInsightRows);
+  const aiControl = summarizeAiControl(aiUsageRows, morningBriefRows, branchInsightRows, aiProviderConfigs);
   const mapControl = summarizeMapControl({ providerLogs: mapProviderLogs, cacheLogs: mapCacheLogs, quoteLogs: deliveryQuoteLogs });
-  const integrations = buildIntegrationHealthList(platformAuthStatus.configured);
+  const integrations = buildIntegrationHealthList(platformAuthStatus.configured, aiProviderConfigs);
   const latestCronRuns = latestCronRunMap(cronRunRows);
   const cronRunGroups = cronRunsByJob(cronRunRows);
   const cronJobs = missionControlCronJobs.map((job) => ({
@@ -2687,14 +2730,22 @@ async function readPlatformAdminSnapshot() {
           : "Tuỳ chọn"
     },
     envStatus("PLATFORM_ADMIN_SESSION_SECRET", "Session secret admin.logivn.com", false),
+    envStatus("PLATFORM_TELEGRAM_BOT_USERNAME", "DevOps Telegram username", false),
+    envStatus("PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET", "DevOps Telegram connect secret", process.env.NODE_ENV === "production"),
+    envStatus("PLATFORM_AI_SECRET_KEY", "Khoá mã hoá AI trong admin.logivn.com", false),
     envStatus("RESEND_API_KEY", "Resend email", false),
     envStatus("CRON_SECRET", "Cron secret", false),
     envStatus("MAPBOX_ACCESS_TOKEN", "Mapbox ship/route", false),
     {
       ...envStatus("QWEN_API_KEY", "Alibaba Qwen AI", false),
-      configured: Boolean(process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY)
+      configured: Boolean(process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "qwen")?.configured),
+      status: process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "qwen")?.configured ? "OK" : "Tuỳ chọn"
     },
-    envStatus("XAI_API_KEY", "xAI Grok/Voice/Image", false)
+    {
+      ...envStatus("XAI_API_KEY", "xAI Grok/Voice/Image", false),
+      configured: Boolean(process.env.XAI_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "xai")?.configured),
+      status: process.env.XAI_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "xai")?.configured ? "OK" : "Tuỳ chọn"
+    }
   ];
   const securityControls = [
     {

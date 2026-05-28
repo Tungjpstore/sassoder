@@ -37,7 +37,7 @@ export function PlatformAdminConsole({
       {activeSection === "ai" ? <AiControl snapshot={snapshot} /> : null}
       {activeSection === "maps" ? <MapsControl snapshot={snapshot} /> : null}
       {activeSection === "atlas" ? <ProjectAtlas snapshot={snapshot} /> : null}
-      {activeSection === "ops" ? <OpsControl snapshot={snapshot} /> : null}
+      {activeSection === "ops" ? <OpsControl snapshot={snapshot} session={session} /> : null}
       {activeSection === "governance" ? <GovernanceControl snapshot={snapshot} /> : null}
       {activeSection === "security" ? <Security snapshot={snapshot} /> : null}
       {activeSection === "release" ? <Release snapshot={snapshot} /> : null}

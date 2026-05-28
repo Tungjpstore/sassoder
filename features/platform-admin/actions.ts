@@ -22,6 +22,12 @@ import {
   updateTenantPlatformStatus,
   uploadPlatformAsset
 } from "@/services/platform-admin-service";
+import { updatePlatformAiProviderConfig } from "@/services/platform-ai-provider-config-service";
+import {
+  createPlatformTelegramConnectionToken,
+  revokePlatformTelegramConnection,
+  revokePlatformTelegramToken
+} from "@/services/platform-telegram-connection-service";
 import { confirmSubscriptionPayment, rejectSubscriptionPayment } from "@/services/subscription-service";
 
 const DEFAULT_LANDING_BANNER_URL = "/brand/logivn/01-banner-overview-hero-v2.png";
@@ -151,6 +157,46 @@ const billingAnomalySchema = z.object({
   paymentId: z.string().uuid().optional()
 });
 
+const aiProviderConfigSchema = z.object({
+  provider: z.enum(["qwen", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"]),
+  enabled: z.enum(["true", "false"]),
+  apiKey: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+    z.string().min(8).max(3000).optional()
+  ),
+  clearApiKey: z.enum(["true", "false"]).default("false"),
+  baseUrl: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+    z.string().url().max(500).optional()
+  ),
+  chatModel: z.preprocess((value) => (typeof value === "string" ? value.trim() || undefined : undefined), z.string().max(180).optional()),
+  fastModel: z.preprocess((value) => (typeof value === "string" ? value.trim() || undefined : undefined), z.string().max(180).optional()),
+  imageModel: z.preprocess((value) => (typeof value === "string" ? value.trim() || undefined : undefined), z.string().max(180).optional()),
+  ocrModel: z.preprocess((value) => (typeof value === "string" ? value.trim() || undefined : undefined), z.string().max(180).optional())
+});
+
+const platformTelegramConnectionRevokeSchema = z.object({
+  connectionId: z.string().uuid(),
+  reason: actionReasonSchema
+});
+
+const platformTelegramTokenRevokeSchema = z.object({
+  tokenId: z.string().uuid().optional(),
+  revokeAll: z.enum(["true", "false"]).default("false")
+});
+
+export type PlatformTelegramConnectActionState = {
+  error?: string;
+  token?: {
+    expiresAt: string;
+    startUrl: string | null;
+    startCommand: string;
+    scopes: string[];
+    role: "DEV" | "SUPPORT" | "SRE" | "ADMIN";
+    ttlSeconds: number;
+  };
+};
+
 async function requirePlatformAdmin(permission: PlatformAdminPermission = "platform.read") {
   return requirePlatformAdminPermission(permission);
 }
@@ -171,7 +217,7 @@ function revalidateAdmin() {
   revalidateTag("public-active-plans", "max");
   revalidatePath("/");
   revalidatePath("/pricing");
-  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/security"].forEach((path) => {
+  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security"].forEach((path) => {
     revalidatePath(platformAdminInternalPath(path));
   });
 }
@@ -255,6 +301,55 @@ export async function platformAdminLogoutAction() {
 export async function refreshPlatformAdminAction() {
   await requirePlatformAdmin("platform.refresh");
   revalidateAdmin();
+}
+
+export async function createPlatformTelegramConnectTokenAction(
+  _prevState?: PlatformTelegramConnectActionState,
+  _formData?: FormData
+): Promise<PlatformTelegramConnectActionState> {
+  const session = await requirePlatformAdmin("security.read");
+  try {
+    const token = await createPlatformTelegramConnectionToken(session);
+    revalidatePath(platformAdminInternalPath("/ops"));
+    revalidatePath(platformAdminInternalPath("/security"));
+    return {
+      token: {
+        expiresAt: token.expiresAt,
+        startUrl: token.startUrl,
+        startCommand: token.startCommand,
+        scopes: token.scopes,
+        role: token.role,
+        ttlSeconds: token.ttlSeconds
+      }
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không tạo được link kết nối Telegram DevOps." };
+  }
+}
+
+export async function revokePlatformTelegramConnectionAction(formData: FormData) {
+  const parsed = platformTelegramConnectionRevokeSchema.parse({
+    connectionId: formData.get("connectionId"),
+    reason: formData.get("reason")
+  });
+  const session = await requirePlatformAdmin("security.read");
+  await revokePlatformTelegramConnection(session, parsed);
+  revalidatePath(platformAdminInternalPath("/ops"));
+  revalidatePath(platformAdminInternalPath("/security"));
+}
+
+export async function revokePlatformTelegramTokenAction(formData: FormData) {
+  const parsed = platformTelegramTokenRevokeSchema.parse({
+    tokenId: formData.get("tokenId") || undefined,
+    revokeAll: formData.get("revokeAll") || "false"
+  });
+  if (parsed.revokeAll !== "true" && !parsed.tokenId) {
+    throw new Error("Thiếu token cần thu hồi.");
+  }
+  const session = await requirePlatformAdmin("security.read");
+  await revokePlatformTelegramToken(session, { tokenId: parsed.tokenId, revokeAll: parsed.revokeAll === "true" });
+  revalidatePath(platformAdminInternalPath("/ops"));
+  revalidatePath(platformAdminInternalPath("/security"));
 }
 
 export async function updateBrandSettingAction(formData: FormData) {
@@ -347,6 +442,35 @@ export async function updateSaasPlanAction(formData: FormData) {
       .map((feature) => feature.trim())
       .filter(Boolean),
     isActive: parsed.isActive === "true",
+    updatedBy: session.actor
+  });
+  revalidateAdmin();
+}
+
+export async function updateAiProviderConfigAction(formData: FormData) {
+  const session = await requirePlatformAdmin("admins.manage");
+  const parsed = aiProviderConfigSchema.parse({
+    provider: formData.get("provider"),
+    enabled: formData.get("enabled"),
+    apiKey: formData.get("apiKey"),
+    clearApiKey: formData.get("clearApiKey") === "true" ? "true" : "false",
+    baseUrl: formData.get("baseUrl"),
+    chatModel: formData.get("chatModel"),
+    fastModel: formData.get("fastModel"),
+    imageModel: formData.get("imageModel"),
+    ocrModel: formData.get("ocrModel")
+  });
+
+  await updatePlatformAiProviderConfig({
+    provider: parsed.provider,
+    enabled: parsed.enabled === "true",
+    apiKey: parsed.apiKey,
+    clearApiKey: parsed.clearApiKey === "true",
+    baseUrl: parsed.baseUrl,
+    chatModel: parsed.chatModel,
+    fastModel: parsed.fastModel,
+    imageModel: parsed.imageModel,
+    ocrModel: parsed.ocrModel,
     updatedBy: session.actor
   });
   revalidateAdmin();

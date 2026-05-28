@@ -20,7 +20,7 @@ alter table public.orders
 
 update public.orders
 set promotion_customer_key_hash = encode(
-  digest(concat_ws('|', 'v1', restaurant_id::text, 'QR_MENU', 'table', table_id::text), 'sha256'),
+  extensions.digest(concat_ws('|', 'v1', restaurant_id::text, 'QR_MENU', 'table', table_id::text), 'sha256'),
   'hex'
 )
 where promotion_id is not null
@@ -29,7 +29,7 @@ where promotion_id is not null
 
 update public.orders
 set promotion_customer_key_hash = encode(
-  digest(
+  extensions.digest(
     concat_ws('|', 'v1', restaurant_id::text, 'WEBSITE', 'phone', regexp_replace(coalesce(customer_phone, ''), '\D', '', 'g')),
     'sha256'
   ),

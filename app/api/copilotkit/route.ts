@@ -1,7 +1,7 @@
 import { CopilotRuntime, OpenAIAdapter, copilotRuntimeNextJSAppRouterEndpoint } from "@copilotkit/runtime";
 import OpenAI from "openai";
 import { NextResponse, type NextRequest } from "next/server";
-import { availableAiProviders, getAiProviderConfig, normalizeAiProviderId } from "@/lib/ai/providers/registry";
+import { availableResolvedAiProviders, getResolvedAiProviderConfig, normalizeAiProviderId } from "@/lib/ai/providers/registry";
 import { checkPersistentRateLimit } from "@/lib/persistent-rate-limit";
 import { AppError, fail } from "@/lib/response";
 import { getRequestIpKey } from "@/lib/security/request-ip";
@@ -14,13 +14,20 @@ export const preferredRegion = "sin1";
 const copilotRuntime = new CopilotRuntime();
 const copilotProviderTimeoutMs = Number(process.env.COPILOTKIT_TIMEOUT_MS || 18_000);
 
-function pickCopilotProvider() {
-  const providers = availableAiProviders().filter((provider) => getAiProviderConfig(provider).protocol === "openai-compatible");
+async function pickCopilotProvider() {
+  const providers = await availableResolvedAiProviders();
+  const openAiCompatibleProviders: AiProvider[] = [];
+
+  for (const provider of providers) {
+    const config = await getResolvedAiProviderConfig(provider);
+    if (config.protocol === "openai-compatible") openAiCompatibleProviders.push(provider);
+  }
+
   const preferred = normalizeAiProviderId(process.env.COPILOTKIT_PROVIDER);
-  if (preferred && providers.includes(preferred)) {
+  if (preferred && openAiCompatibleProviders.includes(preferred)) {
     return preferred;
   }
-  return providers[0] ?? "qwen";
+  return openAiCompatibleProviders[0] ?? "qwen";
 }
 
 function isModelCompatibleWithProvider(model: string, provider: AiProviderConfig["provider"]) {
@@ -46,9 +53,9 @@ function pickCopilotModel(aiProvider: AiProviderConfig) {
   return aiProvider.fastModel || aiProvider.chatModel;
 }
 
-function createServiceAdapter() {
-  const provider = pickCopilotProvider() as AiProvider;
-  const aiProvider = getAiProviderConfig(provider);
+async function createServiceAdapter() {
+  const provider = await pickCopilotProvider();
+  const aiProvider = await getResolvedAiProviderConfig(provider);
   const openai = new OpenAI({
     apiKey: aiProvider.apiKey,
     baseURL: aiProvider.baseUrl,
@@ -81,7 +88,7 @@ export async function POST(req: NextRequest) {
 
     const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
       runtime: copilotRuntime,
-      serviceAdapter: createServiceAdapter(),
+      serviceAdapter: await createServiceAdapter(),
       endpoint: "/api/copilotkit"
     });
 

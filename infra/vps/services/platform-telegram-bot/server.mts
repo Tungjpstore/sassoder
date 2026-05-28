@@ -13,20 +13,23 @@ import { checkRedisRateLimit } from "../shared/rate-limit.js";
 import { createRedisConnection } from "../shared/redis.js";
 import { tenantRateLimitKey } from "../shared/redis-keys.js";
 import {
+  claimPlatformConnectionToken,
   claimPlatformSession,
   connectPlatformTelegramAccount,
   createPlatformSession,
   getPlatformAlertRecipients,
+  getPlatformConnectionRecentAudit,
   getPlatformConnectionForTelegramUser,
   hasPlatformScope,
   recordPlatformTelegramAudit,
+  revokePlatformConnectionById,
   touchPlatformConnection
 } from "./repository.mjs";
 import { platformTelegramJobSchema, type PlatformAlertJob, type PlatformTelegramConnection } from "./types.mjs";
 
 const PLATFORM_TELEGRAM_QUEUE = "platform.telegram.notifications";
 const PLATFORM_CALLBACK_PREFIX = "p:";
-const PLATFORM_MENU_ACTIONS = ["menu", "health", "queues", "webhook", "incidents", "help"] as const;
+const PLATFORM_MENU_ACTIONS = ["menu", "health", "queues", "webhook", "incidents", "security", "disconnect", "disconnect.confirm", "help"] as const;
 type PlatformMenuAction = (typeof PLATFORM_MENU_ACTIONS)[number];
 
 const logger = createLogger("platform-telegram-bot");
@@ -58,6 +61,9 @@ if (bot) {
   bot.command("queues", (ctx) => replyWithQueues(ctx));
   bot.command("webhook", (ctx) => replyWithWebhook(ctx));
   bot.command("incidents", (ctx) => replyWithIncidents(ctx));
+  bot.command("whoami", (ctx) => replyWithWhoami(ctx));
+  bot.command("security", (ctx) => replyWithSecurity(ctx));
+  bot.command("disconnect", (ctx) => replyWithDisconnectPrompt(ctx));
   bot.command("help", replyWithHelp);
 
   bot.on("callback_query:data", async (ctx) => {
@@ -208,6 +214,27 @@ async function handleStart(ctx: Context, token: string) {
     return;
   }
 
+  if (token) {
+    try {
+      const connection = await claimPlatformConnectionToken(token, {
+        telegramUserId: ctx.from.id,
+        chatId: ctx.chat.id,
+        username: ctx.from.username ?? null,
+        firstName: ctx.from.first_name ?? null,
+        lastName: ctx.from.last_name ?? null
+      });
+      await ctx.reply(`Đã kết nối LogiVN DevOps Bot cho ${connectionLabel(connection)}.`);
+      await replyWithPlatformMenu(ctx, connection);
+      return;
+    } catch (error) {
+      if (isLikelySignedConnectToken(token)) {
+        logger.warn({ telegramUserId: ctx.from.id, error: safeLogError(error) }, "platform connect token rejected");
+        await ctx.reply("Link kết nối DevOps đã hết hạn hoặc đã được dùng. Vui lòng tạo link mới trong admin.logivn.com/ops.");
+        return;
+      }
+    }
+  }
+
   const existing = await getPlatformConnectionForTelegramUser(ctx.from.id);
   if (existing) {
     await touchPlatformConnection(existing).catch(() => undefined);
@@ -217,7 +244,7 @@ async function handleStart(ctx: Context, token: string) {
 
   if (!isBootstrapAllowed(ctx.from.id, token)) {
     await recordPlatformTelegramAudit({ telegramUserId: ctx.from.id, action: "platform.telegram.connect", outcome: "denied" });
-    await ctx.reply("Tài khoản này chưa được cấp quyền DevOps Bot.");
+    await ctx.reply("Tài khoản này chưa được cấp quyền DevOps Bot. Hãy tạo link kết nối trong admin.logivn.com/ops.");
     return;
   }
 
@@ -235,7 +262,7 @@ async function handleStart(ctx: Context, token: string) {
 async function replyWithPlatformMenu(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
   const connection = preferredConnection ?? (await connectionForContext(ctx));
   if (!connection) {
-    await ctx.reply("DevOps Bot chưa kết nối. Dùng /start với bootstrap token nội bộ.");
+    await ctx.reply("DevOps Bot chưa kết nối. Hãy tạo link trong admin.logivn.com/ops rồi mở lại Telegram.");
     return;
   }
   const keyboard = new InlineKeyboard()
@@ -245,13 +272,31 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Webhook", await signedPlatformCallback(connection, "webhook"))
     .text("Incidents", await signedPlatformCallback(connection, "incidents"))
     .row()
+    .text("Security", await signedPlatformCallback(connection, "security"))
+    .text("Disconnect", await signedPlatformCallback(connection, "disconnect"))
+    .row()
     .url("Grafana", readEnv("PLATFORM_GRAFANA_URL", "https://monitor.logivn.com/grafana/"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
   await ctx.reply(`LogiVN DevOps\n\n${connectionLabel(connection)} · ${connection.scopes.length} scopes\n\nChọn vùng cần kiểm tra.`, { reply_markup: keyboard });
 }
 
 async function replyWithHelp(ctx: Context) {
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm DevOps", "/health - service health", "/queues - BullMQ backlog", "/webhook - webhook bot", "/incidents - incident/action gần đây"].join("\n"));
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm DevOps", "/health - service health", "/queues - BullMQ backlog", "/webhook - webhook bot", "/incidents - incident/action gần đây", "/whoami - tài khoản và scope", "/security - audit bảo mật", "/disconnect - ngắt Telegram khỏi DevOps bot"].join("\n"));
+}
+
+async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "infra.read");
+  if (!connection) return;
+  const lines = [
+    "Whoami · LogiVN DevOps",
+    "",
+    `${connectionLabel(connection)}`,
+    `Telegram ID: ${connection.telegram_user_id}`,
+    `Username: ${connection.telegram_username ? `@${connection.telegram_username}` : "none"}`,
+    `Scopes: ${compactScopes(connection.scopes)}`
+  ];
+  const keyboard = new InlineKeyboard().text("Security", await signedPlatformCallback(connection, "security")).text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithHealth(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -306,12 +351,49 @@ async function replyWithIncidents(ctx: Context, preferredConnection?: PlatformTe
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
+async function replyWithSecurity(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "infra.read");
+  if (!connection) return;
+  const audit = await getPlatformConnectionRecentAudit(connection, 5);
+  const lines = [
+    "Security · DevOps Bot",
+    "",
+    `${connectionLabel(connection)}`,
+    `Scopes: ${compactScopes(connection.scopes)}`,
+    "",
+    ...(audit.length ? audit.map((item) => `- ${item.outcome} · ${item.action} · ${formatShortDate(item.createdAt)}`) : ["Chưa có audit gần đây."])
+  ];
+  const keyboard = new InlineKeyboard()
+    .text("Refresh", await signedPlatformCallback(connection, "security"))
+    .text("Disconnect", await signedPlatformCallback(connection, "disconnect"))
+    .row()
+    .text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithDisconnectPrompt(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "infra.read");
+  if (!connection) return;
+  const keyboard = new InlineKeyboard()
+    .text("Ngắt kết nối", await signedPlatformCallback(connection, "disconnect.confirm"))
+    .text("Giữ lại", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply("Ngắt tài khoản Telegram này khỏi LogiVN DevOps Bot? Sau đó cần tạo link mới từ admin.logivn.com/ops để kết nối lại.", { reply_markup: keyboard });
+}
+
+async function confirmDisconnect(ctx: Context, connection: PlatformTelegramConnection) {
+  await revokePlatformConnectionById(connection);
+  await ctx.reply("Đã ngắt kết nối DevOps Bot cho tài khoản Telegram này. Tạo link mới trong admin.logivn.com/ops nếu cần kết nối lại.");
+}
+
 async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction, connection: PlatformTelegramConnection) {
   if (action === "menu") return replyWithPlatformMenu(ctx, connection);
   if (action === "health") return replyWithHealth(ctx, connection);
   if (action === "queues") return replyWithQueues(ctx, connection);
   if (action === "webhook") return replyWithWebhook(ctx, connection);
   if (action === "incidents") return replyWithIncidents(ctx, connection);
+  if (action === "security") return replyWithSecurity(ctx, connection);
+  if (action === "disconnect") return replyWithDisconnectPrompt(ctx, connection);
+  if (action === "disconnect.confirm") return confirmDisconnect(ctx, connection);
   return replyWithHelp(ctx);
 }
 
@@ -353,6 +435,9 @@ async function configurePlatformCommands() {
     { command: "queues", description: "Kiểm tra queue/DLQ" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
     { command: "incidents", description: "Xem sự cố queue/infra" },
+    { command: "whoami", description: "Xem tài khoản và scope" },
+    { command: "security", description: "Xem audit bảo mật" },
+    { command: "disconnect", description: "Ngắt tài khoản DevOps" },
     { command: "help", description: "Hướng dẫn DevOps Bot" }
   ]);
 }
@@ -394,6 +479,10 @@ function isBootstrapAllowed(telegramUserId: number, token: string) {
   return Boolean(expected && token && token === expected);
 }
 
+function isLikelySignedConnectToken(token: string) {
+  return /^lg1_[A-Za-z0-9_-]{32,44}$/.test(token) || /^lg1_[A-Za-z0-9_-]{20,32}\.[A-Za-z0-9_-]{8,24}$/.test(token);
+}
+
 async function isPlatformUserRateLimited(scope: string, telegramUserId: number) {
   if (!redis) return false;
   const result = await checkRedisRateLimit(redis, {
@@ -422,6 +511,18 @@ function scopeForAlert(event: PlatformAlertJob) {
 
 function connectionLabel(connection: PlatformTelegramConnection) {
   return `${connection.display_name ?? connection.telegram_username ?? connection.telegram_user_id} · ${connection.role}`;
+}
+
+function compactScopes(scopes: string[]) {
+  if (!scopes.length) return "none";
+  if (scopes.includes("platform.admin")) return "platform.admin";
+  return scopes.slice(0, 5).join(", ") + (scopes.length > 5 ? ` +${scopes.length - 5}` : "");
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  return date.toISOString().slice(5, 16).replace("T", " ");
 }
 
 function alertIcon(severity: string) {

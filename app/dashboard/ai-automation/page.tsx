@@ -32,7 +32,7 @@ import {
   type AiAutomationPlaybookStatus
 } from "@/lib/ai/automation-playbooks";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import {
@@ -291,7 +291,7 @@ function LiveWorkflowQueue({
 export default async function AiAutomationPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
   const [providers, schemas, memoriesResult, recommendationsResult, workflowRunsResult] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     listRestaurantAiMemories({ restaurantId: session.restaurantId, includeSensitive: false, limit: 20 }),
     listRecentAiRecommendations(session.restaurantId, 30),

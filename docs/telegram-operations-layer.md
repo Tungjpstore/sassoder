@@ -69,7 +69,13 @@ The DevOps bot uses `/menu`, `/health`, `/queues`, `/webhook`, and `/incidents` 
 - Webhook: Telegram webhook status without exposing the webhook secret
 - Incidents: failed queues and platform alerts
 
-Access is bootstrapped through `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` or `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. Every inline button uses a one-time signed session stored in `platform_telegram_sessions`, and every callback re-checks the Telegram user, connection status, scope, expiry, and replay state.
+Access is normally connected from `admin.logivn.com/ops` with the DevOps Telegram Command Center. That surface creates one-time signed `/start` tokens, stores only hashes in `platform_telegram_connection_tokens`, shows active/revoked connections, token lifecycle, recent security audit logs, and lets a platform admin revoke stale tokens or Telegram accounts without touching the database. `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` and `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>` remain emergency bootstrap paths only. Every inline button uses a one-time signed session stored in `platform_telegram_sessions`, and every callback re-checks the Telegram user, connection status, scope, expiry, and replay state.
+
+DevOps users can also self-audit directly inside Telegram:
+
+- `/whoami` shows the mapped Telegram account, role, and compact scope list.
+- `/security` shows recent accepted/denied/sent audit events for that Telegram account.
+- `/disconnect` revokes the current Telegram account through a signed confirmation callback, requiring a fresh `admin.logivn.com/ops` link to reconnect.
 
 ## Automation
 

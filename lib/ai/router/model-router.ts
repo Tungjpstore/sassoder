@@ -2,28 +2,29 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { createStableAiCacheKey, getAiCache, setAiCache } from "@/lib/ai/services/cache";
-import { availableAiProviders, estimateAiCostVnd, getAiProviderConfig } from "@/lib/ai/providers/registry";
+import { availableResolvedAiProviders, estimateAiCostVnd, getResolvedAiProviderConfig } from "@/lib/ai/providers/registry";
 import { runAnthropicMessagesChat } from "@/lib/ai/providers/anthropic-messages";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
 import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
 
-export function chooseAiProviderOrder(request: Pick<AiCompletionRequest, "taskType" | "preferredProvider" | "options">) {
-  const available = availableAiProviders();
+export async function chooseAiProviderOrder(request: Pick<AiCompletionRequest, "taskType" | "preferredProvider" | "options">) {
+  const available = await availableResolvedAiProviders();
   if (available.length === 0) throw new AppError("Chưa cấu hình provider AI server-side.", 500);
+  const candidates = await Promise.all(available.map((provider) => getResolvedAiProviderConfig(provider)));
 
   const ordered = buildAiProviderOrder({
     taskType: request.taskType,
     preferredProvider: request.preferredProvider,
     options: request.options,
-    candidates: available.map((provider) => getAiProviderConfig(provider))
+    candidates
   });
   if (ordered.length === 0) throw new AppError(`Chưa có provider AI phù hợp cho task ${request.taskType}.`, 500);
   return ordered;
 }
 
-function pickModel(provider: AiProvider, taskType: AiTaskType, modelOverride?: string) {
-  const config = getAiProviderConfig(provider);
+async function pickModel(provider: AiProvider, taskType: AiTaskType, modelOverride?: string) {
+  const config = await getResolvedAiProviderConfig(provider);
   if (modelOverride) return modelOverride;
   if (taskType === "customer_ordering" || taskType === "upsell" || taskType === "tool") return config.fastModel;
   if (taskType === "ocr") return config.ocrModel;
@@ -52,9 +53,9 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
   const attempts: AiCompletionResult["attempts"] = [];
   let lastError: unknown = null;
 
-  for (const provider of chooseAiProviderOrder(request)) {
-    const config = getAiProviderConfig(provider);
-    const model = pickModel(provider, request.taskType, request.modelOverride);
+  for (const provider of await chooseAiProviderOrder(request)) {
+    const config = await getResolvedAiProviderConfig(provider);
+    const model = await pickModel(provider, request.taskType, request.modelOverride);
     const startedAt = Date.now();
     try {
       const result = await runProviderChat({

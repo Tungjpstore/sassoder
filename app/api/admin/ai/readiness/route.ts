@@ -1,14 +1,14 @@
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { getAiFutureCapabilities } from "@/lib/ai/future-capabilities";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { fail, ok } from "@/lib/response";
 
 export const runtime = "nodejs";
 export const preferredRegion = "sin1";
 
-function publicProviderReadiness() {
-  return getAiProviderReadiness().map((provider) => ({
+async function publicProviderReadiness() {
+  return (await getResolvedAiProviderReadiness()).map((provider) => ({
     provider: provider.provider,
     configured: provider.configured,
     protocol: provider.protocol,
@@ -28,7 +28,7 @@ function publicProviderReadiness() {
 export async function GET() {
   try {
     await requireOperationalDashboardApiSession({ adminOnly: true, feature: "ai_owner_assistant" });
-    const providers = publicProviderReadiness();
+    const providers = await publicProviderReadiness();
     const configuredProviders = providers.filter((provider) => provider.configured);
     const futureCapabilities = getAiFutureCapabilities();
     const schemas = await getAiSchemaReadiness();

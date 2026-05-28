@@ -148,6 +148,9 @@ PLATFORM_TELEGRAM_BOT_USERNAME
 PLATFORM_TELEGRAM_WEBHOOK_SECRET
 PLATFORM_TELEGRAM_WEBHOOK_URL
 PLATFORM_TELEGRAM_SESSION_SECRET
+PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET
+PLATFORM_TELEGRAM_CONNECT_TOKEN_TTL_SECONDS
+PLATFORM_AI_SECRET_KEY
 PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN
 PLATFORM_TELEGRAM_ALLOWED_USER_IDS
 PLATFORM_TELEGRAM_WORKER_CONCURRENCY
@@ -279,10 +282,17 @@ infra/vps/scripts/doctor.sh
 infra/vps/scripts/configure-platform-telegram-webhook.sh
 ```
 
-Initial DevOps account bootstrap uses either `PLATFORM_TELEGRAM_ALLOWED_USER_IDS`
-or `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. After bootstrap, all buttons are
+Normal DevOps account setup starts in `admin.logivn.com/ops`. The DevOps
+Telegram Command Center creates the `https://t.me/$PLATFORM_TELEGRAM_BOT_USERNAME?start=...`
+link, shows active/revoked connections, token lifecycle, and recent audit logs,
+and can revoke stale tokens or connected Telegram accounts. The connect token is
+signed with `PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET`, stored only as a hash in
+`platform_telegram_connection_tokens`, expires quickly, and can be consumed once.
+Emergency bootstrap still supports `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` or
+`/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. After connection, all buttons are
 one-time signed sessions with scope checks such as `infra.read`, `queues.read`,
-`incidents.read`, and `platform.admin`.
+`incidents.read`, and `platform.admin`. Telegram-side self-service commands are
+`/whoami`, `/security`, and `/disconnect`.
 
 AI Ops commands use the app internal API and real tenant snapshots:
 

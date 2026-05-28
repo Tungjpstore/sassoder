@@ -5,7 +5,7 @@ import { buildAiExecutionCenter, type AiStudioExecutionSignal } from "@/lib/ai/e
 import { buildAiGrowthStudioDeck } from "@/lib/ai/growth-studio";
 import { buildAiMenuStudioDeck } from "@/lib/ai/menu-studio";
 import { listRestaurantAiMemories } from "@/lib/ai/memory/restaurant-memory";
-import { getAiProviderReadiness } from "@/lib/ai/providers/registry";
+import { getResolvedAiProviderReadiness } from "@/lib/ai/providers/registry";
 import { getAiSchemaReadiness } from "@/lib/ai/schema-readiness";
 import { buildAiSupportStudioDeck } from "@/lib/ai/support-studio";
 import { listRecentAiAutomationRuns } from "@/services/ai-automation-run-service";
@@ -69,7 +69,7 @@ function studioSignals(input: {
 
 export async function getAiExecutionCenterDeck(restaurantId: string) {
   const [providers, schemas, memoriesResult, recommendationsResult, workflowRunsResult, categories, report, activePromotions] = await Promise.all([
-    Promise.resolve(getAiProviderReadiness()),
+    getResolvedAiProviderReadiness(),
     getAiSchemaReadiness(),
     listRestaurantAiMemories({ restaurantId, includeSensitive: false, limit: 40 }),
     listRecentAiRecommendations(restaurantId, 30),
