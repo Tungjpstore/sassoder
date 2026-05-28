@@ -4,12 +4,23 @@ import { PlatformAdminLogin } from "@/components/admin/platform-admin-login";
 import { PlatformAdminPasswordChange } from "@/components/admin/platform-admin-password-change";
 import { getActivePlatformAdminSection } from "@/features/platform-admin/navigation";
 import { getPlatformAdminAuthStatus, getPlatformAdminSession } from "@/lib/platform-admin-auth";
+import { PLATFORM_ADMIN_ORIGIN } from "@/lib/platform-admin-url";
 import { getPlatformAdminSnapshot } from "@/services/platform-admin-service";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "LogiVN DevOps Control Center",
+  description: "Nền tảng vận hành nội bộ admin.logivn.com cho DevOps, AI Ops, realtime operations, queue, deploy, logs, alerts và tenant control của LogiVN.",
+  alternates: {
+    canonical: PLATFORM_ADMIN_ORIGIN
+  },
+  openGraph: {
+    title: "LogiVN DevOps Control Center",
+    description: "Realtime AI Operations Platform cho hệ sinh thái LogiVN.",
+    url: PLATFORM_ADMIN_ORIGIN,
+    siteName: "LogiVN DevOps Control Center"
+  },
   robots: {
     index: false,
     follow: false

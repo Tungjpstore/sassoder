@@ -6,7 +6,6 @@ import {
   CreditCard,
   Flag,
   GitBranch,
-  Globe2,
   ListTree,
   RadioTower,
   Rows3,

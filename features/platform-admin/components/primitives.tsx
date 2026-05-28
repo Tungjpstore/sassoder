@@ -68,7 +68,7 @@ export function Field({
   placeholder?: string;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+    <label className="grid gap-2 text-sm font-semibold text-slate-200">
       {label}
       <input
         name={name}
@@ -76,7 +76,7 @@ export function Field({
         defaultValue={defaultValue ?? ""}
         required={required}
         placeholder={placeholder}
-        className="h-10 rounded-lg border border-white/10 bg-[#0B1224]/80 px-3 text-sm font-medium text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-500/10"
+        className="h-10 rounded-lg border border-white/10 bg-[#0A1020] px-3 text-sm font-medium text-white outline-none transition placeholder:text-slate-600 focus:border-sky-400/60 focus:ring-2 focus:ring-sky-400/10"
       />
     </label>
   );
@@ -94,13 +94,13 @@ export function TextArea({
   rows?: number;
 }) {
   return (
-    <label className="grid gap-2 text-sm font-semibold text-slate-700">
+    <label className="grid gap-2 text-sm font-semibold text-slate-200">
       {label}
       <textarea
         name={name}
         defaultValue={defaultValue ?? ""}
         rows={rows}
-        className="resize-none rounded-lg border border-white/10 bg-[#0B1224]/80 px-3 py-2 text-sm font-medium leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-500/10"
+        className="resize-none rounded-lg border border-white/10 bg-[#0A1020] px-3 py-2 text-sm font-medium leading-6 text-white outline-none transition placeholder:text-slate-600 focus:border-sky-400/60 focus:ring-2 focus:ring-sky-400/10"
       />
     </label>
   );
@@ -110,11 +110,11 @@ export function PrimaryButton({ children, tone = "dark" }: { children: ReactNode
   return (
     <button
       className={cn(
-        "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50",
-        tone === "dark" && "border border-sky-400/30 bg-sky-500/90 text-white shadow-[0_0_28px_rgba(14,165,233,0.18)] hover:bg-sky-400",
-        tone === "orange" && "border border-amber-400/30 bg-amber-500/90 text-slate-950 shadow-[0_0_24px_rgba(245,158,11,0.16)] hover:bg-amber-400",
-        tone === "danger" && "border border-red-400/30 bg-red-500/90 text-white shadow-[0_0_24px_rgba(248,113,113,0.16)] hover:bg-red-400",
-        tone === "soft" && "border border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-400/30 hover:bg-sky-400/10"
+        "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
+        tone === "dark" && "bg-white text-[#080C16] hover:bg-slate-200",
+        tone === "orange" && "bg-amber-300 text-[#080C16] hover:bg-amber-200",
+        tone === "danger" && "bg-red-400 text-white hover:bg-red-300",
+        tone === "soft" && "border border-white/10 bg-white/[0.05] text-slate-100 hover:bg-white/[0.09]"
       )}
     >
       {children}
@@ -136,11 +136,10 @@ export function MetricCard({
   tone?: BadgeTone;
 }) {
   return (
-    <div className="group relative overflow-hidden rounded-lg border border-white/10 bg-[#111827]/72 p-4 shadow-[0_18px_46px_rgba(0,0,0,0.18)] backdrop-blur-xl transition hover:border-sky-400/30 hover:bg-[#151B2E]/86">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/35 to-transparent" />
+    <div className="rounded-lg border border-white/10 bg-[#0F1629] p-4 shadow-[0_14px_42px_rgba(0,0,0,0.2)] transition hover:border-white/20">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</p>
           <p className="metric-number mt-3 text-2xl font-semibold tracking-tight text-slate-50">{value}</p>
         </div>
         <span
@@ -156,7 +155,7 @@ export function MetricCard({
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-4 text-sm leading-6 text-slate-400">{detail}</p>
+      <p className="mt-4 text-sm leading-6 text-slate-300">{detail}</p>
     </div>
   );
 }
@@ -173,9 +172,9 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <section className={cn("overflow-hidden rounded-lg border border-white/10 bg-[#111827]/72 shadow-[0_18px_46px_rgba(0,0,0,0.18)] backdrop-blur-xl", className)}>
+    <section className={cn("overflow-hidden rounded-lg border border-white/10 bg-[#0F1629] shadow-[0_14px_42px_rgba(0,0,0,0.2)]", className)}>
       <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-        <h2 className="text-base font-semibold tracking-tight text-slate-50">{title}</h2>
+        <h2 className="text-base font-semibold tracking-tight text-white">{title}</h2>
         {action}
       </header>
       <div className="p-4">{children}</div>

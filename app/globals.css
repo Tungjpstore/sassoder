@@ -10080,3 +10080,155 @@ img {
     page-break-inside: avoid;
   }
 }
+
+/* LogiVN DevOps Control Center: dark-first internal platform shell. */
+.stitch-devops {
+  --background: #0B1020;
+  --foreground: #E5E7EB;
+  --surface: #111827;
+  --surface-strong: #151B2E;
+  --surface-container: #1A2238;
+  --surface-container-high: #202A44;
+  --surface-container-highest: #26324F;
+  --muted: #111827;
+  --muted-foreground: #94A3B8;
+  --text-secondary: #CBD5E1;
+  --text-muted: #64748B;
+  --border: rgba(255, 255, 255, 0.1);
+  --outline: rgba(56, 189, 248, 0.35);
+  --primary: #38BDF8;
+  --primary-hover: #0EA5E9;
+  --primary-strong: #7DD3FC;
+  --primary-soft: rgba(56, 189, 248, 0.1);
+  --primary-soft-strong: rgba(56, 189, 248, 0.16);
+  --secondary: #A78BFA;
+  --secondary-soft: rgba(124, 58, 237, 0.1);
+  --accent: #F59E0B;
+  --accent-hover: #FBBF24;
+  --accent-strong: #FCD34D;
+  --accent-soft: rgba(245, 158, 11, 0.1);
+  --tertiary: #F87171;
+  --tertiary-soft: rgba(248, 113, 113, 0.12);
+  --success: #34D399;
+  --success-soft: rgba(52, 211, 153, 0.1);
+  --warning: #F59E0B;
+  --warning-soft: rgba(245, 158, 11, 0.1);
+  --danger: #F87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --soft-surface: #111827;
+  --ring: rgba(56, 189, 248, 0.18);
+  --shadow-soft: 0 18px 46px rgba(0, 0, 0, 0.22);
+  --shadow-lift: 0 28px 80px rgba(0, 0, 0, 0.34);
+  --glow-primary: 0 0 28px rgba(14, 165, 233, 0.2);
+  --glow-accent: 0 0 24px rgba(245, 158, 11, 0.16);
+  --dashboard-glass-surface: rgba(17, 24, 39, 0.72);
+  --dashboard-glass-strong: rgba(21, 27, 46, 0.84);
+  --dashboard-glass-muted: rgba(26, 34, 56, 0.58);
+  --dashboard-glass-tint: rgba(56, 189, 248, 0.08);
+  --dashboard-glass-border: rgba(255, 255, 255, 0.1);
+  --dashboard-glass-blur: 18px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(14, 165, 233, 0.12), transparent 34%),
+    radial-gradient(circle at 82% 8%, rgba(124, 58, 237, 0.1), transparent 30%),
+    linear-gradient(180deg, #0B1020 0%, #111827 52%, #0B1020 100%);
+  color: var(--foreground);
+}
+
+.stitch-devops .font-mono,
+.stitch-devops code,
+.stitch-devops kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0;
+}
+
+.stitch-devops input:not([type="checkbox"]):not([type="radio"]),
+.stitch-devops select,
+.stitch-devops textarea {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(11, 18, 36, 0.78) !important;
+  color: #E5E7EB !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
+}
+
+.stitch-devops input:not([type="checkbox"]):not([type="radio"]):focus,
+.stitch-devops select:focus,
+.stitch-devops textarea:focus {
+  border-color: rgba(56, 189, 248, 0.58) !important;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12) !important;
+}
+
+.stitch-devops .dashboard-mobile-nav-shell {
+  background: rgba(11, 16, 32, 0.9) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.stitch-devops .bg-white,
+.stitch-devops .bg-slate-50,
+.stitch-devops .bg-white\/90,
+.stitch-devops .bg-emerald-50,
+.stitch-devops .bg-blue-50,
+.stitch-devops .bg-orange-50,
+.stitch-devops .bg-red-50 {
+  background-color: rgba(17, 24, 39, 0.72) !important;
+}
+
+.stitch-devops .border-slate-100,
+.stitch-devops .border-slate-200,
+.stitch-devops .border-slate-300,
+.stitch-devops .border-orange-100,
+.stitch-devops .border-orange-200,
+.stitch-devops .border-emerald-200,
+.stitch-devops .border-blue-200,
+.stitch-devops .border-red-100,
+.stitch-devops .border-red-200 {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.stitch-devops .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.stitch-devops .text-slate-950,
+.stitch-devops .text-slate-900,
+.stitch-devops .text-slate-800 {
+  color: #F8FAFC !important;
+}
+
+.stitch-devops .text-slate-700,
+.stitch-devops .text-slate-600,
+.stitch-devops .text-slate-500 {
+  color: #94A3B8 !important;
+}
+
+.stitch-devops .text-orange-700,
+.stitch-devops .text-orange-800 {
+  color: #FCD34D !important;
+}
+
+.stitch-devops .text-emerald-700,
+.stitch-devops .text-blue-700 {
+  color: #7DD3FC !important;
+}
+
+.stitch-devops .text-red-700 {
+  color: #FCA5A5 !important;
+}
+
+.stitch-devops table {
+  color: #CBD5E1;
+}
+
+.stitch-devops thead,
+.stitch-devops .sticky.top-0 {
+  background-color: rgba(11, 16, 32, 0.92) !important;
+}
+
+.stitch-devops a,
+.stitch-devops button {
+  cursor: pointer;
+}
+
+.stitch-devops ::selection {
+  background: rgba(56, 189, 248, 0.28);
+  color: #FFFFFF;
+}
