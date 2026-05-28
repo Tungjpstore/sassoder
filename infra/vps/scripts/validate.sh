@@ -46,6 +46,37 @@ check_domain_dns() {
   fi
 }
 
+check_nginx_routes() {
+  if ! command -v nginx >/dev/null 2>&1 || [ ! -d /etc/nginx ]; then
+    log "NGINX route check skipped"
+    return
+  fi
+
+  local config
+  if [ "$(id -u)" -eq 0 ]; then
+    config="$(nginx -T 2>/dev/null)"
+  elif sudo -n true >/dev/null 2>&1; then
+    config="$(sudo -n nginx -T 2>/dev/null)"
+  else
+    log "NGINX route check skipped; sudo is not available"
+    return
+  fi
+
+  printf '%s\n' "$config" | grep -q 'location /webhooks/telegram/' || {
+    printf 'NGINX is missing /webhooks/telegram/ route\n' >&2
+    exit 1
+  }
+
+  if [ -n "${PLATFORM_TELEGRAM_BOT_TOKEN:-}" ]; then
+    printf '%s\n' "$config" | grep -q 'location /webhooks/platform-telegram/' || {
+      printf 'NGINX is missing /webhooks/platform-telegram/ route\n' >&2
+      exit 1
+    }
+  fi
+
+  log "NGINX Telegram routes OK"
+}
+
 main() {
   if [ "$LOCAL_ONLY" = true ] && [ ! -f "$ENV_FILE" ]; then
     ENV_FILE="$VPS_DIR/.env.example"
@@ -91,6 +122,7 @@ main() {
   check_url http://127.0.0.1:9090/-/ready prometheus
   check_url http://127.0.0.1:5540 redisinsight
   check_url http://127.0.0.1:9093/-/ready alertmanager
+  check_nginx_routes
 
   if [ "$LOCAL_ONLY" = false ]; then
     for host in api.logivn.com ws.logivn.com worker.logivn.com monitor.logivn.com; do

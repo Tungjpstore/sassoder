@@ -44,7 +44,7 @@ function Sidebar({ activeSection, snapshot }: { activeSection: ActiveSection; sn
                 href={section.href}
                 className={cn(
                   "group flex h-9 items-center gap-3 rounded-lg px-2.5 text-sm font-medium transition-colors",
-                  active ? "bg-white text-[#080C16]" : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
+                  active ? "bg-[#F8FAFC] text-[#080C16]" : "text-slate-400 hover:bg-white/[0.06] hover:text-white"
                 )}
               >
                 <Icon size={16} className={active ? "text-[#080C16]" : "text-slate-500 group-hover:text-slate-200"} />
@@ -113,7 +113,7 @@ function MobileNav({ activeSection }: { activeSection: ActiveSection }) {
             href={section.href}
             className={cn(
               "inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-semibold",
-              active ? "border-white bg-white text-[#080C16]" : "border-white/10 bg-white/[0.04] text-slate-300"
+              active ? "border-white bg-[#F8FAFC] text-[#080C16]" : "border-white/10 bg-white/[0.04] text-slate-300"
             )}
           >
             <Icon size={15} />

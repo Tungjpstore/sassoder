@@ -21,6 +21,11 @@ export const metadata: Metadata = {
     url: PLATFORM_ADMIN_ORIGIN,
     siteName: "LogiVN DevOps Control Center"
   },
+  twitter: {
+    card: "summary",
+    title: "LogiVN DevOps Control Center",
+    description: "Realtime AI Operations Platform cho hệ sinh thái LogiVN."
+  },
   robots: {
     index: false,
     follow: false

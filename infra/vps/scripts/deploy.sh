@@ -76,6 +76,36 @@ deploy_compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 }
 
+sync_nginx_config() {
+  if [ "${LOGIVN_DEPLOY_MANAGE_NGINX:-true}" != "true" ]; then
+    log "Skipping NGINX config sync"
+    return
+  fi
+
+  if [ ! -d /etc/nginx/sites-available ] || ! command -v nginx >/dev/null 2>&1; then
+    log "Skipping NGINX config sync; NGINX is not installed on this host"
+    return
+  fi
+
+  if ! sudo -n true >/dev/null 2>&1; then
+    log "Skipping NGINX config sync; passwordless sudo is not available"
+    return
+  fi
+
+  local source="$VPS_DIR/nginx/logivn-ssl.conf.template"
+  local target="/etc/nginx/sites-available/logivn-vps.conf"
+
+  log "Syncing NGINX reverse-proxy routes"
+  sudo -n cp "$source" "$target"
+  sudo -n ln -sf "$target" /etc/nginx/sites-enabled/logivn-vps.conf
+  sudo -n nginx -t
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo -n systemctl reload nginx
+  else
+    sudo -n nginx -s reload
+  fi
+}
+
 reload_monitoring_configs() {
   log "Reloading monitoring services"
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart prometheus alertmanager >/dev/null
@@ -125,6 +155,7 @@ main() {
   backup_runtime_data
   validate_compose
   deploy_compose
+  sync_nginx_config
   reload_monitoring_configs
   post_deploy_checks
   reconcile_grafana_admin_password

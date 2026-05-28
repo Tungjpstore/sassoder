@@ -39,6 +39,37 @@ check_command() {
   }
 }
 
+check_nginx_routes() {
+  if ! command -v nginx >/dev/null 2>&1 || [ ! -d /etc/nginx ]; then
+    log "NGINX route check skipped"
+    return
+  fi
+
+  local config
+  if [ "$(id -u)" -eq 0 ]; then
+    config="$(nginx -T 2>/dev/null)"
+  elif sudo -n true >/dev/null 2>&1; then
+    config="$(sudo -n nginx -T 2>/dev/null)"
+  else
+    printf 'Cannot inspect NGINX routes without passwordless sudo\n' >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$config" | grep -q 'location /webhooks/telegram/' || {
+    printf 'NGINX is missing /webhooks/telegram/ route\n' >&2
+    exit 1
+  }
+
+  if [ -n "${PLATFORM_TELEGRAM_BOT_TOKEN:-}" ]; then
+    printf '%s\n' "$config" | grep -q 'location /webhooks/platform-telegram/' || {
+      printf 'NGINX is missing /webhooks/platform-telegram/ route\n' >&2
+      exit 1
+    }
+  fi
+
+  log "NGINX Telegram routes OK"
+}
+
 wait_for_url() {
   local url="$1"
   local label="$2"
@@ -330,6 +361,7 @@ main() {
   wait_for_url "http://127.0.0.1:${WORKER_PORT:-3500}/health" worker
   wait_for_url "http://127.0.0.1:${TELEGRAM_BOT_PORT:-3600}/health" telegram-bot
   wait_for_url "http://127.0.0.1:${PLATFORM_TELEGRAM_BOT_PORT:-3650}/health" platform-telegram-bot
+  check_nginx_routes
 
   compose exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
   check_redis_runtime

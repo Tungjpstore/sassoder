@@ -41,6 +41,7 @@ await check("env contract", async () => {
     const platformRequired = [
       "PLATFORM_TELEGRAM_BOT_TOKEN",
       "PLATFORM_TELEGRAM_BOT_USERNAME",
+      "PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET",
       "PLATFORM_TELEGRAM_WEBHOOK_SECRET",
       "PLATFORM_TELEGRAM_WEBHOOK_URL",
       "PLATFORM_TELEGRAM_SESSION_SECRET"
@@ -86,6 +87,16 @@ await check("telegram webhook", async () => {
   );
 });
 
+await check("telegram public ingress", async () => {
+  const response = await fetch(required("TELEGRAM_WEBHOOK_URL"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+    signal: AbortSignal.timeout(10_000)
+  });
+  assert(response.status === 401, `telegram public ingress expected 401, got ${response.status}`);
+});
+
 if (hasPlatformTelegram) {
   await check("platform telegram webhook", async () => {
     const data = await telegramApi("getWebhookInfo", "PLATFORM_TELEGRAM_BOT_TOKEN");
@@ -96,6 +107,16 @@ if (hasPlatformTelegram) {
     assert(result.allowed_updates.includes("message"), "platform message updates not enabled");
     assert(result.allowed_updates.includes("callback_query"), "platform callback_query updates not enabled");
     assert(Number(result.pending_update_count ?? 0) < 25, "Platform Telegram webhook backlog is too high");
+  });
+
+  await check("platform telegram public ingress", async () => {
+    const response = await fetch(required("PLATFORM_TELEGRAM_WEBHOOK_URL"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(10_000)
+    });
+    assert(response.status === 401, `platform telegram public ingress expected 401, got ${response.status}`);
   });
 }
 
@@ -134,6 +155,9 @@ if (!skipVercel) {
       "TELEGRAM_CALLBACK_SECRET",
       "SUPABASE_SERVICE_ROLE_KEY"
     ];
+    if (hasPlatformTelegram) {
+      requiredNames.push("PLATFORM_TELEGRAM_BOT_USERNAME", "PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET");
+    }
     const missing = requiredNames.filter((key) => !names.has(key));
     assert(missing.length === 0, `missing ${missing.join(", ")}`);
   });

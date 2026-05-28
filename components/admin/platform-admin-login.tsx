@@ -90,7 +90,7 @@ export function PlatformAdminLogin({
         {devFallbackEnabled ? <p className="mt-3 text-xs text-slate-500">Local: local-dev-admin</p> : null}
 
         <button
-          className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-semibold text-[#080C16] transition hover:bg-slate-200 disabled:pointer-events-none disabled:opacity-50"
+          className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#F8FAFC] px-4 text-sm font-semibold text-[#080C16] transition hover:bg-slate-200 disabled:pointer-events-none disabled:opacity-50"
           disabled={!configured || pending}
         >
           {pending ? "Đang kiểm tra" : "Đăng nhập"}

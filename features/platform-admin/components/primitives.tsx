@@ -111,7 +111,7 @@ export function PrimaryButton({ children, tone = "dark" }: { children: ReactNode
     <button
       className={cn(
         "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40",
-        tone === "dark" && "bg-white text-[#080C16] hover:bg-slate-200",
+        tone === "dark" && "bg-[#F8FAFC] text-[#080C16] hover:bg-slate-200",
         tone === "orange" && "bg-amber-300 text-[#080C16] hover:bg-amber-200",
         tone === "danger" && "bg-red-400 text-white hover:bg-red-300",
         tone === "soft" && "border border-white/10 bg-white/[0.05] text-slate-100 hover:bg-white/[0.09]"

@@ -34,11 +34,11 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="hidden h-10 min-w-[18rem] items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-slate-500 transition hover:border-sky-400/30 hover:bg-sky-400/10 xl:flex"
+        className="hidden h-10 w-[9.5rem] items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-slate-300 transition hover:bg-white/[0.08] xl:flex"
       >
         <span className="flex items-center gap-2">
           <Search size={15} />
-          Tìm kiếm hoặc chạy lệnh...
+          Lệnh
         </span>
         <kbd className="rounded-md border border-white/10 bg-black/20 px-1.5 py-1 text-[10px] font-semibold text-slate-400">⌘K</kbd>
       </button>
@@ -61,7 +61,7 @@ export function CommandPalette() {
                 autoFocus
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Nhập lệnh: retry failed jobs, rollback deploy, mở tenant..."
+                placeholder="Nhập lệnh"
                 className="h-10 flex-1 border-0 bg-transparent text-sm font-medium text-slate-100 outline-none placeholder:text-slate-600"
               />
               <button type="button" onClick={() => setOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-slate-400 hover:bg-white/10" aria-label="Đóng">
