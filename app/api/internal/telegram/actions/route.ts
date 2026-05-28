@@ -6,6 +6,7 @@ import { acceptOrder, cancelOrder, getOrderLifecycleSnapshot, markOrderCompleted
 import { confirmPayment } from "@/services/payment-service";
 import { confirmReservationDeposit, rejectReservation } from "@/services/reservation-service";
 import { resolveServiceRequest } from "@/services/service-request-service";
+import { updateMenuItemAvailability } from "@/services/menu-service";
 import { reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import type { StaffPermissionKey } from "@/lib/staff-permissions";
@@ -24,6 +25,8 @@ const telegramActionSchema = z.object({
     "delivery.delivered",
     "delivery.reject",
     "payment.confirm",
+    "menu_item.disable",
+    "menu_item.enable",
     "service_request.resolve",
     "reservation.confirm",
     "reservation.reject",
@@ -34,7 +37,7 @@ const telegramActionSchema = z.object({
   branchId: z.string().uuid().nullable().optional(),
   actorUserId: z.string().uuid(),
   actorRole: z.enum(["ADMIN", "STAFF"]),
-  resourceType: z.enum(["order", "reservation", "service_request", "staff_request"]),
+  resourceType: z.enum(["order", "reservation", "service_request", "staff_request", "menu_item"]),
   resourceId: z.string().uuid(),
   payload: z.record(z.unknown()).optional()
 });
@@ -48,6 +51,8 @@ const requiredPermissionByTelegramAction: Record<z.infer<typeof telegramActionSc
   "delivery.delivered": "orders.update",
   "delivery.reject": "orders.update",
   "payment.confirm": "payments.confirm",
+  "menu_item.disable": "menu.edit",
+  "menu_item.enable": "menu.edit",
   "service_request.resolve": "orders.update",
   "reservation.confirm": "reservations.manage",
   "reservation.reject": "reservations.manage",
@@ -114,6 +119,23 @@ async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>
       metadata: { telegramActionId: input.actionId, payload: input.payload ?? {} }
     });
     return { message: "Đã xử lý yêu cầu.", result: data };
+  }
+
+  if (input.resourceType === "menu_item") {
+    const enabled = input.actionType === "menu_item.enable";
+    const data = await updateMenuItemAvailability(input.restaurantId, input.resourceId, enabled);
+    await writeAuditLog({
+      restaurantId: input.restaurantId,
+      actorUserId: input.actorUserId,
+      actorRole: input.actorRole,
+      action: `telegram.${input.actionType}`,
+      entityType: "menu_item",
+      entityId: input.resourceId,
+      afterData: data,
+      branchId: input.branchId ?? null,
+      metadata: { telegramActionId: input.actionId, payload: input.payload ?? {} }
+    });
+    return { message: enabled ? "Đã mở bán món." : "Đã tạm ẩn món.", result: data };
   }
 
   if (input.resourceType === "staff_request") {

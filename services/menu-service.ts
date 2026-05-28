@@ -26,6 +26,26 @@ export type AdminMenuCategory = {
   items: AdminMenuItem[];
 };
 
+const adminMenuCache = new Map<string, { expiresAt: number; value: AdminMenuCategory[] }>();
+const adminMenuCacheTtlMs = 10_000;
+
+function readCachedAdminMenu(restaurantId: string) {
+  const cached = adminMenuCache.get(restaurantId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    adminMenuCache.delete(restaurantId);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeCachedAdminMenu(restaurantId: string, value: AdminMenuCategory[]) {
+  adminMenuCache.set(restaurantId, {
+    value,
+    expiresAt: Date.now() + adminMenuCacheTtlMs
+  });
+}
+
 export type PublicMenuRestaurant = {
   id: string;
   name: string;
@@ -69,6 +89,9 @@ export type PublicMenuRestaurant = {
 };
 
 export async function listMenuForAdmin(restaurantId: string) {
+  const cached = readCachedAdminMenu(restaurantId);
+  if (cached) return cached;
+
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("menu_categories")
@@ -81,7 +104,9 @@ export async function listMenuForAdmin(restaurantId: string) {
   const categories = (data ?? []) as unknown as AdminMenuCategory[];
   const itemIds = categories.flatMap((category) => category.items.map((item) => item.id));
   const modifierGroupsByItemId = await listAdminMenuModifierGroups(supabase, restaurantId, itemIds);
-  return attachPublicMenuModifiers(categories, modifierGroupsByItemId);
+  const menu = attachPublicMenuModifiers(categories, modifierGroupsByItemId);
+  writeCachedAdminMenu(restaurantId, menu);
+  return menu;
 }
 
 type MenuModifierGroupRow = {
@@ -294,6 +319,7 @@ export const getCachedPublicMenu = unstable_cache(
 );
 
 export function invalidateMenuCache() {
+  adminMenuCache.clear();
   revalidateTag("public-menu", "max");
 }
 

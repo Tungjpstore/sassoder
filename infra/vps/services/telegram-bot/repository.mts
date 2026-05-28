@@ -7,6 +7,7 @@ type RecipientQuery = {
   restaurantId: string;
   branchId?: string | null;
   requiredPermission?: string;
+  recipientScope?: "permission" | "admins" | "branch" | "silent";
 };
 
 type NotificationInput = {
@@ -46,6 +47,47 @@ type TelegramSessionInput = {
   ttlSeconds?: number;
 };
 
+export type TelegramOpsInboxSlice = "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops";
+
+export type TelegramOpsInboxItem = {
+  id: string;
+  branchId: string | null;
+  kind: "order" | "payment" | "reservation" | "service_request" | "staff_request" | "menu_item";
+  title: string;
+  detail: string;
+  priority: number;
+  resourceType: "order" | "reservation" | "service_request" | "staff_request" | "menu_item";
+  createdAt: string | null;
+  state: Record<string, unknown>;
+};
+
+export type TelegramOpsIncidentView = {
+  id: string;
+  severity: "critical" | "warning" | "info";
+  area: string;
+  title: string;
+  summary: string | null;
+  lastSeenAt: string | null;
+};
+
+export type TelegramOwnerBriefingView = {
+  id: string;
+  title: string;
+  summary: string;
+  status: string;
+  periodStart: string;
+  periodEnd: string;
+  provider: string | null;
+  model: string | null;
+  createdAt: string;
+  actions: Array<{
+    label: string;
+    description: string | null;
+    href: string | null;
+    safety: string | null;
+  }>;
+};
+
 const legacyPermissionFallbacks: Record<string, string[]> = {
   "dashboard.view": ["orders.manage", "settings.manage"],
   "orders.view": ["orders.manage"],
@@ -56,10 +98,15 @@ const legacyPermissionFallbacks: Record<string, string[]> = {
   "reports.view": ["orders.manage", "payments.manage", "settings.manage"],
   "reservations.manage": ["settings.manage"],
   "inventory.view": ["inventory.manage"],
+  "menu.view": ["menu.edit", "menu.manage"],
+  "menu.edit": ["menu.manage"],
+  "attendance.view": ["attendance.edit", "attendance.approve"],
   "notifications.manage": ["settings.manage"]
 };
 
 export async function getTelegramRecipients(input: RecipientQuery): Promise<TelegramConnection[]> {
+  if (input.recipientScope === "silent") return [];
+
   let query = db()
     .from("telegram_connections")
     .select("id,restaurant_id,branch_id,user_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)")
@@ -73,7 +120,39 @@ export async function getTelegramRecipients(input: RecipientQuery): Promise<Tele
 
   return (data ?? [])
     .map(normalizeConnection)
+    .filter((connection: TelegramConnection) => recipientScopeAllows(connection, input))
     .filter((connection: TelegramConnection) => !input.requiredPermission || hasPermission(connection, input.requiredPermission));
+}
+
+export async function getTelegramEventPolicy(input: { restaurantId: string; branchId?: string | null; eventType: string }) {
+  const result = await db()
+    .from("telegram_notification_policies")
+    .select("id,event_type,branch_id,enabled,recipient_scope,required_permission,priority,escalation_after_seconds,escalate_to_admin,digest_enabled")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("event_type", input.eventType)
+    .order("branch_id", { ascending: false, nullsFirst: false })
+    .limit(10);
+
+  if (isMissingTelegramOpsPolicySchema(result.error)) return null;
+  if (result.error) throw result.error;
+
+  const rows = result.data ?? [];
+  const matched =
+    (input.branchId ? rows.find((row: any) => row.branch_id === input.branchId) : null) ??
+    rows.find((row: any) => row.branch_id == null) ??
+    null;
+  if (!matched) return null;
+
+  return {
+    id: String(matched.id),
+    enabled: matched.enabled !== false,
+    recipientScope: normalizeRecipientScope(matched.recipient_scope),
+    requiredPermission: matched.required_permission ? String(matched.required_permission) : null,
+    priority: Number(matched.priority ?? 5),
+    escalationAfterSeconds: matched.escalation_after_seconds == null ? null : Number(matched.escalation_after_seconds),
+    escalateToAdmin: matched.escalate_to_admin !== false,
+    digestEnabled: Boolean(matched.digest_enabled)
+  };
 }
 
 export async function getTelegramConnectionsForUser(telegramUserId: number): Promise<TelegramConnection[]> {
@@ -160,6 +239,67 @@ export async function getTelegramOpsBoard(connection: TelegramConnection) {
       failedTelegram
     }
   };
+}
+
+export async function getTelegramOpsInbox(connection: TelegramConnection, slice: TelegramOpsInboxSlice): Promise<TelegramOpsInboxItem[]> {
+  if (slice === "payments") return getPaymentInbox(connection);
+  if (slice === "reservations") return getReservationInbox(connection);
+  if (slice === "staff") return getStaffInbox(connection);
+  if (slice === "menu_ops") return getMenuInbox(connection);
+  return getHotOrderInbox(connection);
+}
+
+export async function getTelegramOpenIncidents(connection: TelegramConnection, limit = 5): Promise<TelegramOpsIncidentView[]> {
+  let query = db()
+    .from("telegram_ops_incidents")
+    .select("id,severity,area,title,summary,last_seen_at,branch_id")
+    .eq("restaurant_id", connection.restaurant_id)
+    .in("status", ["open", "acknowledged"])
+    .order("last_seen_at", { ascending: false })
+    .limit(Math.max(1, Math.min(limit, 10)));
+
+  if (connection.branch_id) query = query.or(`branch_id.is.null,branch_id.eq.${connection.branch_id}`);
+
+  const result = await query;
+  if (isMissingTelegramOpsPolicySchema(result.error)) return [];
+  if (result.error) throw result.error;
+
+  return (result.data ?? []).map((row: any) => ({
+    id: String(row.id),
+    severity: normalizeIncidentSeverity(row.severity),
+    area: String(row.area ?? "system"),
+    title: String(row.title ?? "Sự cố vận hành"),
+    summary: row.summary ? String(row.summary) : null,
+    lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null
+  }));
+}
+
+export async function getTelegramOwnerBriefings(connection: TelegramConnection, limit = 5): Promise<TelegramOwnerBriefingView[]> {
+  let query = db()
+    .from("telegram_owner_briefings")
+    .select("id,title,summary,status,period_start,period_end,provider,model,actions,created_at,branch_id")
+    .eq("restaurant_id", connection.restaurant_id)
+    .order("created_at", { ascending: false })
+    .limit(Math.max(1, Math.min(limit, 10)));
+
+  if (connection.branch_id) query = query.or(`branch_id.is.null,branch_id.eq.${connection.branch_id}`);
+
+  const result = await query;
+  if (isMissingTelegramOpsPolicySchema(result.error)) return [];
+  if (result.error) throw result.error;
+
+  return (result.data ?? []).map((row: any) => ({
+    id: String(row.id),
+    title: String(row.title ?? "AI Ops brief"),
+    summary: String(row.summary ?? ""),
+    status: String(row.status ?? "generated"),
+    periodStart: String(row.period_start),
+    periodEnd: String(row.period_end),
+    provider: row.provider ? String(row.provider) : null,
+    model: row.model ? String(row.model) : null,
+    createdAt: String(row.created_at),
+    actions: normalizeBriefingActions(row.actions)
+  }));
 }
 
 export async function getOrCreateNotification(input: NotificationInput) {
@@ -517,6 +657,36 @@ export async function recordTelegramAudit(input: {
   if (error) throw error;
 }
 
+export async function upsertTelegramOpsIncident(input: {
+  restaurantId: string;
+  branchId?: string | null;
+  incidentKey: string;
+  severity: "critical" | "warning" | "info";
+  area: "orders" | "payments" | "reservations" | "delivery" | "staff" | "inventory" | "menu" | "telegram" | "ai" | "system";
+  title: string;
+  summary?: string | null;
+  sourceEventId?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const row = {
+    restaurant_id: input.restaurantId,
+    branch_id: input.branchId ?? null,
+    incident_key: input.incidentKey,
+    severity: input.severity,
+    area: input.area,
+    status: "open",
+    title: input.title,
+    summary: input.summary ?? null,
+    source_event_id: input.sourceEventId ?? null,
+    last_seen_at: new Date().toISOString(),
+    metadata: input.metadata ?? {}
+  };
+
+  const result = await db().from("telegram_ops_incidents").upsert(row, { onConflict: "restaurant_id,incident_key" });
+  if (isMissingTelegramOpsPolicySchema(result.error)) return;
+  if (result.error) throw result.error;
+}
+
 export function hasPermission(connection: TelegramConnection, permission: string) {
   if (connection.role === "ADMIN") return true;
   const permissions = new Set(connection.permissions);
@@ -584,6 +754,31 @@ function normalizeConnection(row: Record<string, unknown>): TelegramConnection {
   };
 }
 
+function recipientScopeAllows(connection: TelegramConnection, input: RecipientQuery) {
+  if (input.recipientScope === "admins") return connection.role === "ADMIN";
+  if (input.recipientScope === "branch" && input.branchId) {
+    return connection.branch_id === input.branchId || (connection.role === "ADMIN" && connection.branch_id === null);
+  }
+  return true;
+}
+
+function normalizeRecipientScope(value: unknown): "permission" | "admins" | "branch" | "silent" {
+  if (value === "admins" || value === "branch" || value === "silent") return value;
+  return "permission";
+}
+
+function isMissingTelegramOpsPolicySchema(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return (
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST202" ||
+    error.code === "PGRST204" ||
+    error.code === "PGRST205" ||
+    /telegram_(notification_policies|ops_incidents|owner_briefings)/i.test(error.message ?? "")
+  );
+}
+
 function db() {
   return supabaseAdmin() as any;
 }
@@ -596,6 +791,228 @@ async function countRows(query: any) {
   const { count, error } = await query;
   if (error) return 0;
   return Number(count ?? 0);
+}
+
+async function getHotOrderInbox(connection: TelegramConnection) {
+  const now = new Date().toISOString();
+  const query = branchScoped(
+    db()
+      .from("orders")
+      .select("id,branch_id,total,status,payment_status,fulfillment_type,delivery_status,customer_name,delivery_address,service_due_at,created_at,table:tables(name)")
+      .eq("restaurant_id", connection.restaurant_id)
+      .in("status", ["pending", "ordering"])
+      .order("service_due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .limit(5),
+    connection.branch_id
+  );
+  const { data, error } = await query;
+  if (error) return [];
+
+  return (data ?? []).map((row: any) => {
+    const code = shortId(String(row.id));
+    const late = row.service_due_at && new Date(row.service_due_at).getTime() < Date.now();
+    const tableName = normalizeNestedName(row.table);
+    return {
+      id: String(row.id),
+      branchId: row.branch_id ? String(row.branch_id) : null,
+      kind: "order",
+      title: `${late ? "Trễ SLA" : row.status === "pending" ? "Đơn cần nhận" : "Đơn đang xử lý"} #${code}`,
+      detail: [tableName, row.fulfillment_type, money(Number(row.total ?? 0))].filter(Boolean).join(" · "),
+      priority: late ? 1 : row.status === "pending" ? 2 : 4,
+      resourceType: "order",
+      createdAt: row.created_at ? String(row.created_at) : null,
+      state: {
+        status: row.status,
+        paymentStatus: row.payment_status,
+        fulfillmentType: row.fulfillment_type,
+        deliveryStatus: row.delivery_status,
+        late
+      }
+    } satisfies TelegramOpsInboxItem;
+  });
+}
+
+async function getPaymentInbox(connection: TelegramConnection) {
+  const query = branchScoped(
+    db()
+      .from("orders")
+      .select("id,branch_id,total,status,payment_status,payment_method,customer_name,created_at,table:tables(name)")
+      .eq("restaurant_id", connection.restaurant_id)
+      .or("status.in.(waiting_confirm,waiting_payment),payment_status.in.(waiting_confirm,waiting_payment)")
+      .order("updated_at", { ascending: true })
+      .limit(5),
+    connection.branch_id
+  );
+  const { data, error } = await query;
+  if (error) return [];
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    branchId: row.branch_id ? String(row.branch_id) : null,
+    kind: "payment",
+    title: `VietQR chờ xác nhận #${shortId(String(row.id))}`,
+    detail: [normalizeNestedName(row.table), row.customer_name, money(Number(row.total ?? 0))].filter(Boolean).join(" · "),
+    priority: 1,
+    resourceType: "order",
+    createdAt: row.created_at ? String(row.created_at) : null,
+    state: {
+      status: row.status,
+      paymentStatus: row.payment_status,
+      paymentMethod: row.payment_method
+    }
+  }));
+}
+
+async function getReservationInbox(connection: TelegramConnection) {
+  const today = vietnamDayWindow();
+  const { data, error } = await db()
+    .from("reservations")
+    .select("id,status,deposit_status,deposit_required_amount,deposit_paid_amount,customer_name,party_size,starts_at,created_at")
+    .eq("restaurant_id", connection.restaurant_id)
+    .gte("starts_at", today.start)
+    .lt("starts_at", new Date(Date.parse(today.end) + 2 * 86_400_000).toISOString())
+    .in("status", ["holding", "waiting_deposit_confirm", "confirmed"])
+    .order("starts_at", { ascending: true })
+    .limit(5);
+  if (error) return [];
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    branchId: null,
+    kind: "reservation",
+    title: `Đặt bàn ${formatVietnamTime(row.starts_at)}`,
+    detail: [row.customer_name, `${row.party_size} khách`, row.deposit_status === "waiting_confirm" ? "chờ cọc" : row.status].filter(Boolean).join(" · "),
+    priority: row.deposit_status === "waiting_confirm" ? 1 : 3,
+    resourceType: "reservation",
+    createdAt: row.created_at ? String(row.created_at) : null,
+    state: {
+      status: row.status,
+      depositStatus: row.deposit_status,
+      startsAt: row.starts_at,
+      depositRequiredAmount: row.deposit_required_amount,
+      depositPaidAmount: row.deposit_paid_amount
+    }
+  }));
+}
+
+async function getStaffInbox(connection: TelegramConnection) {
+  const [serviceRequests, approvals] = await Promise.all([
+    db()
+      .from("service_requests")
+      .select("id,table_id,type,status,message,created_at,table:tables(name)")
+      .eq("restaurant_id", connection.restaurant_id)
+      .in("status", ["open", "acknowledged"])
+      .order("created_at", { ascending: true })
+      .limit(3),
+    branchScoped(
+      db()
+        .from("attendance_approval_requests")
+        .select("id,branch_id,request_type,status,reason,created_at,staff_member:staff_members(display_name)")
+        .eq("restaurant_id", connection.restaurant_id)
+        .eq("status", "pending")
+        .order("created_at", { ascending: true })
+        .limit(3),
+      connection.branch_id
+    )
+  ]);
+
+  const serviceItems = serviceRequests.error
+    ? []
+    : (serviceRequests.data ?? []).map((row: any) => ({
+        id: String(row.id),
+        branchId: connection.branch_id,
+        kind: "service_request" as const,
+        title: "Khách gọi phục vụ",
+        detail: [normalizeNestedName(row.table), row.message].filter(Boolean).join(" · "),
+        priority: 1,
+        resourceType: "service_request" as const,
+        createdAt: row.created_at ? String(row.created_at) : null,
+        state: { status: row.status, type: row.type }
+      }));
+
+  const approvalItems = approvals.error
+    ? []
+    : (approvals.data ?? []).map((row: any) => ({
+        id: String(row.id),
+        branchId: row.branch_id ? String(row.branch_id) : null,
+        kind: "staff_request" as const,
+        title: staffRequestLabel(row.request_type),
+        detail: [normalizeNestedName(row.staff_member), row.reason].filter(Boolean).join(" · "),
+        priority: 2,
+        resourceType: "staff_request" as const,
+        createdAt: row.created_at ? String(row.created_at) : null,
+        state: { status: row.status, requestType: row.request_type }
+      }));
+
+  return [...serviceItems, ...approvalItems].sort((a, b) => a.priority - b.priority).slice(0, 5);
+}
+
+async function getMenuInbox(connection: TelegramConnection) {
+  const { data, error } = await db()
+    .from("menu_items")
+    .select("id,name,is_available,updated_at,created_at")
+    .eq("restaurant_id", connection.restaurant_id)
+    .order("updated_at", { ascending: false, nullsFirst: false })
+    .limit(5);
+  if (error) return [];
+  return (data ?? []).map((row: any) => ({
+    id: String(row.id),
+    branchId: connection.branch_id,
+    kind: "menu_item" as const,
+    title: row.is_available ? "Đang bán" : "Đang ẩn",
+    detail: String(row.name ?? "Món"),
+    priority: row.is_available ? 4 : 2,
+    resourceType: "menu_item" as const,
+    createdAt: row.updated_at ? String(row.updated_at) : row.created_at ? String(row.created_at) : null,
+    state: {
+      available: Boolean(row.is_available)
+    }
+  }));
+}
+
+function money(amount: number) {
+  return `${Math.round(amount).toLocaleString("vi-VN")}đ`;
+}
+
+function formatVietnamTime(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Ho_Chi_Minh"
+  }).format(new Date(value));
+}
+
+function staffRequestLabel(value: string) {
+  if (value === "leave_request") return "Xin nghỉ";
+  if (value === "shift_swap") return "Đổi ca";
+  if (value === "overtime") return "Tăng ca";
+  if (value === "outside_location") return "Chấm công lệch vị trí";
+  return "Duyệt nhân sự";
+}
+
+function normalizeIncidentSeverity(value: unknown): TelegramOpsIncidentView["severity"] {
+  if (value === "critical" || value === "info") return value;
+  return "warning";
+}
+
+function normalizeBriefingActions(value: unknown): TelegramOwnerBriefingView["actions"] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const label = typeof record.label === "string" ? record.label.trim() : "";
+      if (!label) return null;
+      return {
+        label: label.slice(0, 80),
+        description: typeof record.description === "string" && record.description.trim() ? record.description.trim().slice(0, 180) : null,
+        href: typeof record.href === "string" && record.href.startsWith("/dashboard") ? record.href.slice(0, 180) : null,
+        safety: typeof record.safety === "string" ? record.safety.slice(0, 40) : null
+      };
+    })
+    .filter((item): item is TelegramOwnerBriefingView["actions"][number] => Boolean(item))
+    .slice(0, 5);
 }
 
 function vietnamDayWindow() {

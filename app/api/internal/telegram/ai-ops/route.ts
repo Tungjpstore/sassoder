@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { fail, ok } from "@/lib/response";
-import { assertInternalApiKey } from "@/services/telegram-connection-service";
+import { assertInternalApiKey, recordTelegramOwnerBriefing } from "@/services/telegram-connection-service";
 import { runOwnerAssistant } from "@/services/ai-service";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import type { StaffPermissionKey } from "@/lib/staff-permissions";
@@ -43,13 +43,26 @@ export async function POST(request: Request) {
         actorRole: input.actorRole
       }
     });
+    const briefing = await recordTelegramOwnerBriefing({
+      restaurantId: input.restaurantId,
+      branchId: input.branchId ?? null,
+      command: input.command,
+      actorRole: input.actorRole,
+      reply: result.reply,
+      intent: result.intent,
+      intentLabel: result.intentLabel,
+      provider: result.provider,
+      model: result.model,
+      actions: result.actions?.slice(0, 5) ?? []
+    });
     return ok({
       reply: result.reply,
       intent: result.intent,
       intentLabel: result.intentLabel,
       provider: result.provider,
       model: result.model,
-      actions: result.actions?.slice(0, 3) ?? []
+      actions: result.actions?.slice(0, 3) ?? [],
+      briefing
     });
   } catch (error) {
     return fail(error);

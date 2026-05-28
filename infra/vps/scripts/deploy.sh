@@ -101,6 +101,7 @@ post_deploy_checks() {
   wait_for_health "http://127.0.0.1:3400/health" "image-service"
   wait_for_health "http://127.0.0.1:3500/health" "worker"
   wait_for_health "http://127.0.0.1:3600/health" "telegram-bot"
+  wait_for_health "http://127.0.0.1:3650/health" "platform-telegram-bot"
 }
 
 reconcile_grafana_admin_password() {

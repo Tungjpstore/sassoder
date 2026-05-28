@@ -99,7 +99,7 @@ type DashboardSnapshotRow = {
 };
 
 const dashboardBundleCache = new Map<string, { expiresAt: number; value: RestaurantDashboardBundle }>();
-const dashboardBundleTtlMs = 2_000;
+const dashboardBundleTtlMs = 8_000;
 
 function readCachedDashboardBundle(restaurantId: string) {
   const cached = dashboardBundleCache.get(restaurantId);

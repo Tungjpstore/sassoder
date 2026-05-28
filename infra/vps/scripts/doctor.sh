@@ -82,6 +82,22 @@ check_telegram_webhook_url() {
   esac
 }
 
+check_platform_telegram_webhook_url() {
+  if ! is_set PLATFORM_TELEGRAM_WEBHOOK_URL || ! is_set PLATFORM_TELEGRAM_WEBHOOK_SECRET; then
+    return 0
+  fi
+
+  case "$PLATFORM_TELEGRAM_WEBHOOK_URL" in
+    *"/webhooks/platform-telegram/$PLATFORM_TELEGRAM_WEBHOOK_SECRET")
+      return 0
+      ;;
+    *)
+      printf '[logivn-doctor] platform telegram warning: PLATFORM_TELEGRAM_WEBHOOK_URL should end with /webhooks/platform-telegram/$PLATFORM_TELEGRAM_WEBHOOK_SECRET\n'
+      return 1
+      ;;
+  esac
+}
+
 main() {
   if [ ! -f "$ENV_FILE" ]; then
     printf 'Env file not found: %s\n' "$ENV_FILE" >&2
@@ -103,11 +119,15 @@ main() {
   check_group telegram optional \
     TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET TELEGRAM_WEBHOOK_URL TELEGRAM_CALLBACK_SECRET TELEGRAM_CONNECT_TOKEN_SECRET || failed=1
 
+  check_group platform-telegram optional \
+    PLATFORM_TELEGRAM_BOT_TOKEN PLATFORM_TELEGRAM_WEBHOOK_SECRET PLATFORM_TELEGRAM_WEBHOOK_URL PLATFORM_TELEGRAM_SESSION_SECRET || failed=1
+
   check_group notifications optional \
     PUSH_NOTIFICATION_WEBHOOK_URL EMAIL_NOTIFICATION_WEBHOOK_URL || failed=1
 
   check_app_cron_mode || failed=1
   check_telegram_webhook_url || failed=1
+  check_platform_telegram_webhook_url || failed=1
 
   if [ "$failed" -eq 0 ]; then
     printf '[logivn-doctor] OK\n'

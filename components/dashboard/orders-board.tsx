@@ -950,7 +950,7 @@ export function OrdersBoard({
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/orders?history=true", { cache: "no-store" });
+      const response = await fetch(filter === "history" ? "/api/admin/orders?history=true" : "/api/admin/orders", { cache: "no-store" });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không tải được đơn hàng");
       const nextOrders = json.data as OrderDto[];

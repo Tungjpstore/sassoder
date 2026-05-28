@@ -91,6 +91,25 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     };
   }
 
+  if (event.type === "menu.item_availability_suggested") {
+    const title = event.menuItem.suggestedAvailable ? "Đề xuất mở bán lại món" : "Đề xuất tạm ẩn món";
+    const reason = event.menuItem.reason ? `\n💬 ${escapeHtml(event.menuItem.reason)}` : "";
+    return {
+      title: testTitle(test, title),
+      body: `${testPrefix(test)}🍽️ <b>${escapeHtml(title)}</b>\n\n${escapeHtml(event.menuItem.name)}${reason}`,
+      viewPath: viewPath(test, `/dashboard/menu?itemId=${event.menuItem.id}`)
+    };
+  }
+
+  if (event.type === "staff.checked_in") {
+    const staff = event.staff.displayName ? escapeHtml(event.staff.displayName) : "Nhân sự";
+    return {
+      title: testTitle(test, "Nhân sự check-in"),
+      body: `${testPrefix(test)}📍 <b>${staff} đã check-in</b>`,
+      viewPath: viewPath(test, "/dashboard/staff")
+    };
+  }
+
   if (event.type === "service_request.created" || event.type === "service_request.resolved") {
     const title = event.type === "service_request.resolved" ? "Đã xử lý gọi phục vụ" : "Khách gọi phục vụ";
     const table = event.serviceRequest.tableName ? `\n📍 ${escapeHtml(event.serviceRequest.tableName)}` : "";

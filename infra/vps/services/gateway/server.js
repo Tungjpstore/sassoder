@@ -55,6 +55,7 @@ const eventSchema = z
       "reservation.no_show",
       "reservation.rescheduled",
       "inventory.low",
+      "menu.item_availability_suggested",
       "staff.checked_in",
       "staff.request_created",
       "staff.request_reviewed",
@@ -65,11 +66,20 @@ const eventSchema = z
     ]),
     eventId: z.string().min(8).max(180),
     tenantId: z.string().min(1).optional(),
-    restaurantId: z.string().uuid(),
+    restaurantId: z.string().uuid().optional(),
     branchId: z.string().min(1).nullable().optional(),
     occurredAt: z.string().datetime().optional()
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((payload, ctx) => {
+    if (payload.type !== "platform.alert" && !payload.restaurantId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["restaurantId"], message: "restaurantId is required for tenant operational events" });
+    }
+  })
+  .transform((payload) => {
+    if (payload.type !== "platform.alert") return payload;
+    return { ...payload, tenantId: payload.tenantId ?? payload.restaurantId ?? "platform" };
+  });
 
 const lockAcquireSchema = z.object({
   key: z.string().min(8).max(240).regex(/^lock:/),

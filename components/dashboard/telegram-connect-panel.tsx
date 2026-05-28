@@ -84,6 +84,30 @@ type TelegramQueueStatus = {
   deadLetterJobs: TelegramQueueJobView[];
 };
 
+type TelegramPolicyView = {
+  id: string | null;
+  eventType: string;
+  label: string;
+  branchId: string | null;
+  enabled: boolean;
+  recipientScope: "permission" | "admins" | "branch" | "silent";
+  requiredPermission: string | null;
+  priority: number;
+  escalationAfterSeconds: number | null;
+  digestEnabled: boolean;
+  updatedAt: string | null;
+};
+
+type TelegramIncidentView = {
+  id: string;
+  severity: string;
+  area: string;
+  status: string;
+  title: string;
+  summary: string | null;
+  lastSeenAt: string | null;
+};
+
 type TelegramStatus = {
   connected: boolean;
   activeConnectionCount: number;
@@ -105,6 +129,20 @@ type TelegramStatus = {
       detail: string;
     }>;
   };
+  policies?: {
+    schemaReady: boolean;
+    total: number;
+    enabledCount: number;
+    criticalCount: number;
+    disabledCount: number;
+    policies: TelegramPolicyView[];
+  };
+  incidents?: {
+    schemaReady: boolean;
+    openCount: number;
+    criticalCount: number;
+    incidents: TelegramIncidentView[];
+  };
   queue: TelegramQueueStatus;
   connections: TelegramConnectionView[];
   recentNotifications: TelegramNotificationView[];
@@ -118,13 +156,14 @@ type GeneratedToken = {
 };
 
 type RequestState = "idle" | "loading" | "success" | "error";
-type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "sla" | "service" | "staff";
+type TelegramTestKind = "order" | "payment" | "reservation" | "inventory" | "menu" | "sla" | "service" | "staff";
 
 const TELEGRAM_TEST_ACTIONS: Array<{ kind: TelegramTestKind; label: string; Icon: typeof BellRing }> = [
   { kind: "order", label: "Đơn", Icon: BellRing },
   { kind: "payment", label: "VietQR", Icon: CreditCard },
   { kind: "reservation", label: "Đặt bàn", Icon: CalendarClock },
   { kind: "inventory", label: "Kho", Icon: PackageSearch },
+  { kind: "menu", label: "Menu", Icon: PackageSearch },
   { kind: "sla", label: "SLA", Icon: TimerReset },
   { kind: "service", label: "Gọi phục vụ", Icon: Send },
   { kind: "staff", label: "Nhân sự", Icon: Users }
@@ -169,6 +208,7 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const [retryState, setRetryState] = useState<RequestState>("idle");
   const [testState, setTestState] = useState<RequestState>("idle");
   const [testingKind, setTestingKind] = useState<TelegramTestKind | null>(null);
+  const [policyUpdatingEvent, setPolicyUpdatingEvent] = useState<string | null>(null);
   const [retryingNotificationId, setRetryingNotificationId] = useState<string | null>(null);
   const [revokingConnectionId, setRevokingConnectionId] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -323,6 +363,40 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
     await refreshStatus({ clearNotice: false });
   }
 
+  async function updatePolicy(policy: TelegramPolicyView, enabled: boolean) {
+    setPolicyUpdatingEvent(policy.eventType);
+    setError(null);
+    setNotice(null);
+
+    const response = await fetch("/api/admin/telegram/policies", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({
+        eventType: policy.eventType,
+        branchId: policy.branchId,
+        enabled
+      })
+    }).catch(() => null);
+
+    if (!response) {
+      setPolicyUpdatingEvent(null);
+      setError("Không cập nhật được rule Telegram.");
+      return;
+    }
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.ok === false) {
+      setPolicyUpdatingEvent(null);
+      setError(body?.error ?? "Không cập nhật được rule Telegram.");
+      return;
+    }
+
+    setNotice(enabled ? "Đã bật rule Telegram." : "Đã tắt rule Telegram.");
+    setPolicyUpdatingEvent(null);
+    await refreshStatus({ clearNotice: false });
+  }
+
   async function revokeConnection(connectionId: string) {
     if (!window.confirm("Ngắt kết nối Telegram này?")) return;
     setRevokingConnectionId(connectionId);
@@ -425,6 +499,11 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
             sendTestNotification={sendTestNotification}
             testState={testState}
             testingKind={testingKind}
+            policies={status?.policies?.policies ?? []}
+            incidents={status?.incidents?.incidents ?? []}
+            policySchemaReady={status?.policies?.schemaReady !== false}
+            policyUpdatingEvent={policyUpdatingEvent}
+            updatePolicy={updatePolicy}
           />
         )}
 
@@ -540,7 +619,12 @@ function ConnectedFlow({
   activeConnectionCount,
   sendTestNotification,
   testState,
-  testingKind
+  testingKind,
+  policies,
+  incidents,
+  policySchemaReady,
+  policyUpdatingEvent,
+  updatePolicy
 }: {
   botStartUrl: string | null;
   primaryConnection: TelegramConnectionView | null;
@@ -548,7 +632,14 @@ function ConnectedFlow({
   sendTestNotification: (kind: TelegramTestKind) => void;
   testState: RequestState;
   testingKind: TelegramTestKind | null;
+  policies: TelegramPolicyView[];
+  incidents: TelegramIncidentView[];
+  policySchemaReady: boolean;
+  policyUpdatingEvent: string | null;
+  updatePolicy: (policy: TelegramPolicyView, enabled: boolean) => void;
 }) {
+  const visiblePolicies = policies.slice(0, 8);
+
   return (
     <div className="grid gap-4">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
@@ -608,6 +699,51 @@ function ConnectedFlow({
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-semibold text-[var(--foreground)]">Rule nhận cảnh báo</p>
+            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Bật/tắt nhanh các tín hiệu chính. Rule nâng cao nằm trong phần Nâng cao.</p>
+          </div>
+          <span className={cn("inline-flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-semibold", policySchemaReady ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]")}>
+            {policySchemaReady ? <ShieldCheck size={14} /> : <AlertTriangle size={14} />}
+            {policySchemaReady ? `${policies.filter((policy) => policy.enabled).length} đang bật` : "Cần migration"}
+          </span>
+        </div>
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {visiblePolicies.map((policy) => (
+            <button
+              key={`${policy.eventType}:${policy.branchId ?? "all"}`}
+              type="button"
+              onClick={() => updatePolicy(policy, !policy.enabled)}
+              disabled={!policySchemaReady || policyUpdatingEvent === policy.eventType}
+              aria-pressed={policy.enabled}
+              className={cn(
+                "flex min-h-[72px] items-start justify-between gap-3 rounded-lg border p-3 text-left transition disabled:opacity-60",
+                policy.enabled ? "border-[var(--primary)]/25 bg-[var(--primary-soft)]" : "border-[var(--border)] bg-[var(--soft-surface)] hover:bg-[var(--surface)]"
+              )}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{policy.label}</span>
+                <span className="mt-1 block text-xs font-medium text-[var(--muted-foreground)]">
+                  P{policy.priority}
+                  {policy.escalationAfterSeconds ? ` · leo thang ${Math.round(policy.escalationAfterSeconds / 60)}p` : ""}
+                </span>
+              </span>
+              <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-md", policy.enabled ? "bg-[var(--surface)] text-[var(--primary)]" : "bg-[var(--surface)] text-[var(--muted-foreground)]")}>
+                {policyUpdatingEvent === policy.eventType ? <RefreshCw size={14} className="animate-spin" /> : policy.enabled ? <CheckCircle2 size={14} /> : <BellRing size={14} />}
+              </span>
+            </button>
+          ))}
+        </div>
+        {incidents.length > 0 ? (
+          <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent-strong)]">
+            {incidents[0].title}
+            {incidents.length > 1 ? ` · +${incidents.length - 1} incident` : ""}
+          </div>
+        ) : null}
       </div>
     </div>
   );

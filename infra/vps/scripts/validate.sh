@@ -85,6 +85,7 @@ main() {
   check_url http://127.0.0.1:3400/health image-service
   check_url http://127.0.0.1:3500/health worker
   check_url http://127.0.0.1:3600/health telegram-bot
+  check_url http://127.0.0.1:3650/health platform-telegram-bot
   check_url http://127.0.0.1:3001 uptime-kuma
   check_url http://127.0.0.1:3002/grafana/api/health grafana
   check_url http://127.0.0.1:9090/-/ready prometheus

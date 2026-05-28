@@ -54,7 +54,7 @@ type RestaurantFeatureOverrideRow = PlanCapabilityRow & {
 };
 
 const entitlementCache = new Map<string, { expiresAt: number; value: Awaited<ReturnType<typeof readRestaurantEntitlement>> }>();
-const entitlementCacheTtlMs = 5_000;
+const entitlementCacheTtlMs = 15_000;
 
 async function getEffectiveCapabilities({
   planId,

@@ -8,6 +8,7 @@ const EVENT_STREAM_MAXLEN = 10_000;
 
 export const queueDefinitions = {
   "telegram.notifications": queueConfig("notifications", { attempts: 8, delay: 3000, priority: "high", timeoutMs: 20_000 }),
+  "platform.telegram.notifications": queueConfig("notifications", { attempts: 8, delay: 3000, priority: "critical", timeoutMs: 20_000 }),
   "push.notifications": queueConfig("notifications", { attempts: 5, delay: 2000, priority: "normal", timeoutMs: 10_000 }),
   "email.notifications": queueConfig("notifications", { attempts: 5, delay: 5000, priority: "low", timeoutMs: 30_000 }),
   "orders.processing": queueConfig("orders", { attempts: 5, delay: 2000, priority: "high", timeoutMs: 20_000 }),
@@ -99,9 +100,14 @@ export const eventRoutes = {
     route("inventory.alerts", "inventory.low", "high"),
     route("telegram.notifications", "inventory.low", "high")
   ],
+  "menu.item_availability_suggested": [
+    route("inventory.alerts", "menu.item_availability_suggested", "high"),
+    route("telegram.notifications", "menu.item_availability_suggested", "high")
+  ],
   "staff.checked_in": [
     route("staff.attendance", "staff.checked_in", "normal"),
-    route("staff.notifications", "staff.checked_in", "low")
+    route("staff.notifications", "staff.checked_in", "low"),
+    route("telegram.notifications", "staff.checked_in", "low")
   ],
   "staff.request_created": [
     route("staff.requests", "staff.request_created", "high"),
@@ -124,7 +130,7 @@ export const eventRoutes = {
     route("telegram.notifications", "service_request.resolved", "low")
   ],
   "platform.alert": [
-    route("telegram.notifications", "platform.alert", "critical")
+    route("platform.telegram.notifications", "platform.alert", "critical")
   ]
 };
 
@@ -205,7 +211,7 @@ export async function publishOperationalEvent(event) {
   const routes = eventRoutes[event.type];
   if (!routes?.length) throw new Error(`Unsupported operational event: ${event.type}`);
 
-  const tenantId = tenantIdFromJobData(event);
+  const tenantId = operationalTenantId(event);
   if (!tenantId) throw new Error("Operational events must include tenantId or restaurantId");
   const eventRecord = {
     ...event,
@@ -235,7 +241,7 @@ export async function publishOperationalEvent(event) {
 }
 
 export async function recordOperationalEvent(event) {
-  const tenantId = tenantIdFromJobData(event);
+  const tenantId = operationalTenantId(event);
   if (!tenantId) throw new Error("Operational events must include tenantId or restaurantId");
 
   const payload = JSON.stringify(event);
@@ -350,7 +356,7 @@ function normalizePriority(priority) {
 }
 
 function backoffForQueue(queueName, definition) {
-  if (queueName === "telegram.notifications") {
+  if (queueName === "telegram.notifications" || queueName === "platform.telegram.notifications") {
     return { type: "telegram-rate-limit", delay: definition.backoffDelayMs };
   }
   return { type: "exponential", delay: definition.backoffDelayMs };
@@ -358,7 +364,7 @@ function backoffForQueue(queueName, definition) {
 
 function normalizeJobData(queueName, data) {
   const input = data && typeof data === "object" ? data : {};
-  const tenantId = tenantIdFromJobData(input);
+  const tenantId = operationalTenantId(input);
   if (!tenantId && !queueName.endsWith(".dlq")) {
     throw new Error(`Queue jobs must include tenantId or restaurantId: ${queueName}`);
   }
@@ -370,10 +376,16 @@ function normalizeJobData(queueName, data) {
 }
 
 function buildJobId({ queueName, name, data }) {
-  const tenantId = tenantIdFromJobData(data);
+  const tenantId = operationalTenantId(data);
   const eventId = data.eventId || data.idempotencyKey || data.orderId || data.reservationId || data.invoiceId;
   if (tenantId && eventId) return jobIdForParts(queueName, tenantId, eventId);
   return undefined;
+}
+
+function operationalTenantId(data) {
+  const tenantId = tenantIdFromJobData(data);
+  if (tenantId) return tenantId;
+  return data?.type === "platform.alert" ? "platform" : "";
 }
 
 function jobIdForParts(...parts) {

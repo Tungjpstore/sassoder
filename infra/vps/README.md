@@ -22,6 +22,7 @@ Internal-only services:
 - `ai-service`: OpenAI/xAI/Qwen/Claude provider routing and async AI jobs
 - `image-service`: image optimization and PDF invoice generation
 - `telegram-bot`: grammY webhook and BullMQ Telegram operations worker
+- `platform-telegram-bot`: separate grammY DevOps bot for LogiVN internal alerts, queue checks, and support operations
 - `prometheus`, `node-exporter`, `cadvisor`: lightweight metrics collection
 - `redisinsight`: Redis dashboard bound to `127.0.0.1:5540` for SSH-tunneled access
 - `alertmanager`: Prometheus alert routing, bound to `127.0.0.1:9093`
@@ -142,6 +143,21 @@ TELEGRAM_AI_OPS_RATE_LIMIT_MAX
 TELEGRAM_AI_OPS_RATE_LIMIT_WINDOW_MS
 TELEGRAM_SEND_INTERVAL_MS
 TELEGRAM_AI_OPS_TIMEOUT_MS
+PLATFORM_TELEGRAM_BOT_TOKEN
+PLATFORM_TELEGRAM_BOT_USERNAME
+PLATFORM_TELEGRAM_WEBHOOK_SECRET
+PLATFORM_TELEGRAM_WEBHOOK_URL
+PLATFORM_TELEGRAM_SESSION_SECRET
+PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN
+PLATFORM_TELEGRAM_ALLOWED_USER_IDS
+PLATFORM_TELEGRAM_WORKER_CONCURRENCY
+PLATFORM_TELEGRAM_RATE_LIMIT_MAX
+PLATFORM_TELEGRAM_RATE_LIMIT_DURATION_MS
+PLATFORM_TELEGRAM_CALLBACK_RATE_LIMIT_MAX
+PLATFORM_TELEGRAM_CALLBACK_RATE_LIMIT_WINDOW_MS
+PLATFORM_TELEGRAM_CONNECT_RATE_LIMIT_MAX
+PLATFORM_TELEGRAM_CONNECT_RATE_LIMIT_WINDOW_MS
+PLATFORM_TELEGRAM_SEND_INTERVAL_MS
 OPERATIONAL_OUTBOX_RELAY_ENABLED
 OPERATIONAL_OUTBOX_RELAY_INTERVAL_MS
 OPERATIONAL_OUTBOX_RELAY_BATCH_SIZE
@@ -160,7 +176,7 @@ ORDERS_SLA_WARNING_REPEAT_MINUTES
 
 BullMQ canonical queues:
 
-- `telegram.notifications`, `push.notifications`, `email.notifications`
+- `telegram.notifications`, `platform.telegram.notifications`, `push.notifications`, `email.notifications`
 - `orders.processing`, `orders.sla`, `orders.retry`
 - `payments.confirmation`, `payments.retry`, `payments.reconciliation`
 - `ai.analytics`, `ai.summary`, `ai.reports`, `ai.chat`
@@ -168,8 +184,9 @@ BullMQ canonical queues:
 - `inventory.sync`, `inventory.alerts`
 - `staff.attendance`, `staff.notifications`, `staff.requests`
 
-Every queue has a matching `<queue>.dlq` dead-letter queue. Telegram delivery is
-owned by the `telegram-bot` service, while `workers/index.mts` starts domain
+Every queue has a matching `<queue>.dlq` dead-letter queue. Tenant Telegram
+delivery is owned by the `telegram-bot` service. LogiVN internal DevOps Telegram
+delivery is owned by `platform-telegram-bot`. `workers/index.mts` starts domain
 workers for orders, payments, AI, reservations, inventory, staff, and non-Telegram
 notifications.
 
@@ -181,10 +198,10 @@ queues with tenant-aware payloads.
 
 ## Telegram Operations
 
-Telegram is isolated in the `telegram-bot` service. Next.js never sends Telegram
-messages directly from request handlers. Business flows publish operational events
-to the gateway, the gateway routes them into `telegram.notifications`, and the
-Telegram worker performs fan-out with grammY.
+Tenant Telegram is isolated in the `telegram-bot` service. Next.js never sends
+Telegram messages directly from request handlers. Business flows publish
+operational events to the gateway, the gateway routes tenant events into
+`telegram.notifications`, and the Telegram worker performs fan-out with grammY.
 
 Core runtime paths:
 
@@ -238,14 +255,48 @@ Supported Phase 1/2 cards:
 - `service_request.resolved`: service request closure card
 - `inventory.low`: compact low-stock alert
 - `sla.warning`: late order alert
-- `platform.alert`: owner/dev operations alert
+- `menu.item_availability_suggested`: AI/menu availability card with hide/show actions
+- `staff.checked_in`: attendance visibility card for owner/manager scope
+
+## Platform Telegram DevOps Bot
+
+The DevOps bot is intentionally separate from the tenant owner/staff bot. It uses
+`platform_telegram_*` tables, `platform.telegram.notifications`, and
+`/webhooks/platform-telegram/$PLATFORM_TELEGRAM_WEBHOOK_SECRET`. Tenant owners and
+staff never share callback/session state with LogiVN developers.
+
+Runtime paths:
+
+- `POST /events` on `gateway` accepts `platform.alert` without `restaurantId` and normalizes it to `tenantId=platform`
+- `platform.alert` routes to `platform.telegram.notifications`, not `telegram.notifications`
+- `POST /webhook/set` on `platform-telegram-bot` configures the DevOps bot webhook
+- `GET /ready` on `platform-telegram-bot` verifies token, webhook secret, and worker readiness
+
+When `PLATFORM_TELEGRAM_*` secrets are ready, deploy the service and run:
+
+```bash
+infra/vps/scripts/doctor.sh
+infra/vps/scripts/configure-platform-telegram-webhook.sh
+```
+
+Initial DevOps account bootstrap uses either `PLATFORM_TELEGRAM_ALLOWED_USER_IDS`
+or `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. After bootstrap, all buttons are
+one-time signed sessions with scope checks such as `infra.read`, `queues.read`,
+`incidents.read`, and `platform.admin`.
 
 AI Ops commands use the app internal API and real tenant snapshots:
 
 - `/doanhthu` opens revenue/report context
 - `/tinhhinh` opens live operations context
 - `/tonkho` opens inventory context
+- `/brief` shows the recent Telegram-generated AI Ops briefings persisted in `telegram_owner_briefings`
+- `/suco` shows open Telegram/Ops incidents from `telegram_ops_incidents`
 - free text is treated as AI Ops chat
+
+Each AI Ops command writes a branch-aware owner briefing with the model/provider,
+compact summary, and top safe actions. This gives owners a durable Telegram
+operations memory and gives support/admins a table-backed audit surface instead
+of relying on Telegram chat history.
 
 If one Telegram account maps to multiple active tenant connections, the bot sends
 a compact signed tenant picker. Each option is backed by a one-time

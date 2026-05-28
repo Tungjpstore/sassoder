@@ -26,7 +26,7 @@ type CategoryRow = {
 };
 
 const adminReportCache = new Map<string, { expiresAt: number; value: AdminReport }>();
-const adminReportCacheTtlMs = 2_000;
+const adminReportCacheTtlMs = 15_000;
 
 type ReportPeriod = "weekly" | "monthly" | "yearly";
 type AdminReportOptions = {

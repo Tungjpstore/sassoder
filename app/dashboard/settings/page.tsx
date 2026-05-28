@@ -1835,31 +1835,42 @@ export default async function AdminSettingsPage({
   const billingErrorParam = Array.isArray(params?.billingError) ? params?.billingError[0] : params?.billingError;
   const billingError = billingErrorParam ? billingErrorParam.slice(0, 240) : null;
   const { session, entitlement } = await getDashboardAccessForSettings(activeSection);
-  const dashboard = await getRestaurantDashboard(session.restaurantId);
-  const restaurant = dashboard.restaurant;
-  const billingPortal =
+  const dashboardPromise = getRestaurantDashboard(session.restaurantId);
+  const branchSettingsPromise = listStoreBranchesForManagement(session.restaurantId);
+  const billingPortalPromise =
     activeSection === "billing"
-      ? await getRestaurantBillingPortal({
+      ? getRestaurantBillingPortal({
           restaurantId: session.restaurantId,
           ownerEmail: session.email
         })
-      : null;
-  const restaurantUsers = activeSection === "billing" ? await listRestaurantUsers(session.restaurantId) : [];
-  const branchSettings = await listStoreBranchesForManagement(session.restaurantId);
-  const [branchDeliverySettings, mapOperationalMetrics] =
+      : Promise.resolve(null);
+  const restaurantUsersPromise = activeSection === "billing" ? listRestaurantUsers(session.restaurantId) : Promise.resolve([] as Awaited<ReturnType<typeof listRestaurantUsers>>);
+  const onlineDataPromise =
     activeSection === "online"
-      ? await Promise.all([
+      ? Promise.all([
           listDeliveryBranchSettings(session.restaurantId),
           getMapOperationalMetrics(session.restaurantId, 24)
         ])
-      : [[], null];
-  const [reportSchedule, reportLogs] =
+      : Promise.resolve([[], null] as [BranchDeliverySettings[], Awaited<ReturnType<typeof getMapOperationalMetrics>> | null]);
+  const reportDataPromise =
     activeSection === "notifications"
-      ? await Promise.all([
-          getReportScheduleForRestaurant(session.restaurantId, restaurant.contact_email ?? session.email),
-          listRecentReportLogs(session.restaurantId)
-        ])
-      : [null, []];
+      ? dashboardPromise.then((dashboard) =>
+          Promise.all([
+            getReportScheduleForRestaurant(session.restaurantId, dashboard.restaurant.contact_email ?? session.email),
+            listRecentReportLogs(session.restaurantId)
+          ])
+        )
+      : Promise.resolve([null, []] as [ReportScheduleSettings | null, Awaited<ReturnType<typeof listRecentReportLogs>>]);
+
+  const [dashboard, branchSettings, billingPortal, restaurantUsers, [branchDeliverySettings, mapOperationalMetrics], [reportSchedule, reportLogs]] = await Promise.all([
+    dashboardPromise,
+    branchSettingsPromise,
+    billingPortalPromise,
+    restaurantUsersPromise,
+    onlineDataPromise,
+    reportDataPromise
+  ]);
+  const restaurant = dashboard.restaurant;
   const setupReadiness = buildStoreSetupReadiness(restaurant, {
     tableCount: dashboard.tables,
     menuItemCount: dashboard.menuItems

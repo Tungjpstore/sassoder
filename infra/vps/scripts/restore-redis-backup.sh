@@ -108,7 +108,7 @@ restore_archive() {
 
   mkdir -p "$BACKUP_ROOT"
   log "Stopping Redis-dependent services"
-  compose stop gateway socket ai-service image-service worker telegram-bot redis-exporter redis >/dev/null
+  compose stop gateway socket ai-service image-service worker telegram-bot platform-telegram-bot redis-exporter redis >/dev/null
 
   log "Creating pre-restore Redis volume backup: $pre_restore"
   docker run --rm \
@@ -130,7 +130,7 @@ restore_archive() {
     tar xzf "/restore/$(basename "$redis_archive")" -C /data
 
   log "Starting stack after restore"
-  compose up -d redis redis-exporter gateway socket ai-service image-service worker telegram-bot >/dev/null
+  compose up -d redis redis-exporter gateway socket ai-service image-service worker telegram-bot platform-telegram-bot >/dev/null
 
   APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$VPS_DIR/scripts/validate.sh" --local-only
   log "Redis restore complete. Pre-restore backup: $pre_restore"

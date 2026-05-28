@@ -14,6 +14,7 @@ const skipSsh = args.has("--skip-ssh");
 const skipVercel = args.has("--skip-vercel");
 
 const env = parseEnvFile(envFile);
+const hasPlatformTelegram = Boolean(env.get("PLATFORM_TELEGRAM_BOT_TOKEN"));
 const checks = [];
 
 await check("env contract", async () => {
@@ -35,16 +36,43 @@ await check("env contract", async () => {
     (env.get("TELEGRAM_WEBHOOK_URL") || "").endsWith(`/webhooks/telegram/${env.get("TELEGRAM_WEBHOOK_SECRET")}`),
     "TELEGRAM_WEBHOOK_URL does not end with the configured webhook secret"
   );
+
+  if (hasPlatformTelegram) {
+    const platformRequired = [
+      "PLATFORM_TELEGRAM_BOT_TOKEN",
+      "PLATFORM_TELEGRAM_BOT_USERNAME",
+      "PLATFORM_TELEGRAM_WEBHOOK_SECRET",
+      "PLATFORM_TELEGRAM_WEBHOOK_URL",
+      "PLATFORM_TELEGRAM_SESSION_SECRET"
+    ];
+    const platformMissing = platformRequired.filter((key) => !env.get(key));
+    assert(platformMissing.length === 0, `missing ${platformMissing.join(", ")}`);
+    assert(
+      (env.get("PLATFORM_TELEGRAM_WEBHOOK_URL") || "").endsWith(`/webhooks/platform-telegram/${env.get("PLATFORM_TELEGRAM_WEBHOOK_SECRET")}`),
+      "PLATFORM_TELEGRAM_WEBHOOK_URL does not end with the configured webhook secret"
+    );
+  }
 });
 
 await check("telegram getMe", async () => {
-  const data = await telegramApi("getMe");
+  const data = await telegramApi("getMe", "TELEGRAM_BOT_TOKEN");
   const username = String(data.result?.username || "");
   assert(username.toLowerCase() === String(env.get("TELEGRAM_BOT_USERNAME")).replace(/^@/, "").toLowerCase(), "bot username mismatch");
 });
 
+if (hasPlatformTelegram) {
+  await check("platform telegram getMe", async () => {
+    const data = await telegramApi("getMe", "PLATFORM_TELEGRAM_BOT_TOKEN");
+    const username = String(data.result?.username || "");
+    assert(
+      username.toLowerCase() === String(env.get("PLATFORM_TELEGRAM_BOT_USERNAME")).replace(/^@/, "").toLowerCase(),
+      "platform bot username mismatch"
+    );
+  });
+}
+
 await check("telegram webhook", async () => {
-  const data = await telegramApi("getWebhookInfo");
+  const data = await telegramApi("getWebhookInfo", "TELEGRAM_BOT_TOKEN");
   const result = data.result || {};
   const url = String(result.url || "");
   assert(url.endsWith(`/webhooks/telegram/${env.get("TELEGRAM_WEBHOOK_SECRET")}`), "webhook URL is not the configured LogiVN webhook");
@@ -58,6 +86,19 @@ await check("telegram webhook", async () => {
   );
 });
 
+if (hasPlatformTelegram) {
+  await check("platform telegram webhook", async () => {
+    const data = await telegramApi("getWebhookInfo", "PLATFORM_TELEGRAM_BOT_TOKEN");
+    const result = data.result || {};
+    const url = String(result.url || "");
+    assert(url.endsWith(`/webhooks/platform-telegram/${env.get("PLATFORM_TELEGRAM_WEBHOOK_SECRET")}`), "platform webhook URL is not configured");
+    assert(Array.isArray(result.allowed_updates), "platform allowed_updates missing");
+    assert(result.allowed_updates.includes("message"), "platform message updates not enabled");
+    assert(result.allowed_updates.includes("callback_query"), "platform callback_query updates not enabled");
+    assert(Number(result.pending_update_count ?? 0) < 25, "Platform Telegram webhook backlog is too high");
+  });
+}
+
 await check("Supabase telegram tables", async () => {
   const tables = [
     ["telegram_connection_tokens", "token_hash"],
@@ -68,7 +109,14 @@ await check("Supabase telegram tables", async () => {
     ["telegram_callback_actions", "id"],
     ["telegram_audit_logs", "id"],
     ["telegram_rate_limits", "id"],
-    ["operational_event_outbox", "id"]
+    ["operational_event_outbox", "id"],
+    ["telegram_notification_policies", "id"],
+    ["telegram_ops_incidents", "id"],
+    ["telegram_owner_briefings", "id"],
+    ["platform_telegram_connections", "id"],
+    ["platform_telegram_sessions", "id"],
+    ["platform_telegram_audit_logs", "id"],
+    ["platform_support_access_grants", "id"]
   ];
   for (const [table, column] of tables) {
     await checkSupabaseRestTable(table, column);
@@ -107,7 +155,18 @@ if (!skipSsh) {
     assert(ready.ok === true, "telegram ready did not return ok=true");
     assert(ready.configured === true, "telegram service is not configured");
     assert(ready.worker?.running === true, "telegram worker is not running");
+    assert(ready.aiOps?.internalApiConfigured === true, "telegram AI Ops internal API is not configured");
   });
+
+  if (hasPlatformTelegram) {
+    await check("VPS platform telegram readiness", async () => {
+      const result = runSsh("curl -fsS http://127.0.0.1:3650/ready");
+      const ready = JSON.parse(result.stdout);
+      assert(ready.ok === true, "platform telegram ready did not return ok=true");
+      assert(ready.configured === true, "platform telegram service is not configured");
+      assert(ready.worker?.running === true, "platform telegram worker is not running");
+    });
+  }
 }
 
 const failed = checks.filter((item) => !item.ok);
@@ -118,8 +177,8 @@ if (failed.length > 0) {
 }
 console.log("[logivn-telegram-smoke] all checks passed.");
 
-async function telegramApi(method) {
-  const response = await fetch(`https://api.telegram.org/bot${required("TELEGRAM_BOT_TOKEN")}/${method}`, {
+async function telegramApi(method, tokenKey) {
+  const response = await fetch(`https://api.telegram.org/bot${required(tokenKey)}/${method}`, {
     signal: AbortSignal.timeout(10_000)
   });
   const body = await response.json().catch(() => ({}));
@@ -211,5 +270,6 @@ function expandHome(value) {
 function sanitizeOutput(value) {
   return String(value)
     .replace(/(bot\d+:)[A-Za-z0-9_-]+/g, "$1[redacted]")
-    .replace(/\/webhooks\/telegram\/[^/?#\s]+/g, "/webhooks/telegram/[redacted]");
+    .replace(/\/webhooks\/telegram\/[^/?#\s]+/g, "/webhooks/telegram/[redacted]")
+    .replace(/\/webhooks\/platform-telegram\/[^/?#\s]+/g, "/webhooks/platform-telegram/[redacted]");
 }

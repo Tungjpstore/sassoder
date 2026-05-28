@@ -81,6 +81,31 @@ const legacyPublicPromotionSelect = publicPromotionSelect
   .replace("discount_scope,", "")
   .replace("total_usage_limit,per_customer_usage_limit,", "")
   .replace("reward_type,free_item_menu_item_id,free_item_quantity,", "");
+const promotionDashboardCacheTtlMs = 10_000;
+const promotionsCache = new Map<string, { expiresAt: number; value: Promotion[] }>();
+const promotionUsageCache = new Map<string, { expiresAt: number; value: PromotionUsageSummary[] }>();
+
+function readCachedPromotionValue<T>(cache: Map<string, { expiresAt: number; value: T }>, restaurantId: string) {
+  const cached = cache.get(restaurantId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    cache.delete(restaurantId);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeCachedPromotionValue<T>(cache: Map<string, { expiresAt: number; value: T }>, restaurantId: string, value: T) {
+  cache.set(restaurantId, {
+    value,
+    expiresAt: Date.now() + promotionDashboardCacheTtlMs
+  });
+}
+
+function invalidatePromotionDashboardCache(restaurantId: string) {
+  promotionsCache.delete(restaurantId);
+  promotionUsageCache.delete(restaurantId);
+}
 
 function isMissingPromotionDiscountScope(error: PostgrestError | null | undefined) {
   if (!error) return false;
@@ -209,6 +234,9 @@ export function promotionStatusLabel(status: PromotionStatus) {
 }
 
 export async function listPromotions(restaurantId: string) {
+  const cached = readCachedPromotionValue(promotionsCache, restaurantId);
+  if (cached) return cached;
+
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("promotions")
@@ -217,10 +245,15 @@ export async function listPromotions(restaurantId: string) {
     .order("created_at", { ascending: false });
 
   throwIfSupabaseError(error);
-  return (data ?? []).map((promotion) => withDefaultDiscountScope(promotion)) as Promotion[];
+  const promotions = (data ?? []).map((promotion) => withDefaultDiscountScope(promotion)) as Promotion[];
+  writeCachedPromotionValue(promotionsCache, restaurantId, promotions);
+  return promotions;
 }
 
 export async function listPromotionUsageSummary(restaurantId: string) {
+  const cached = readCachedPromotionValue(promotionUsageCache, restaurantId);
+  if (cached) return cached;
+
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("orders")
@@ -245,7 +278,9 @@ export async function listPromotionUsageSummary(restaurantId: string) {
     byPromotion.set(order.promotion_id, current);
   }
 
-  return [...byPromotion.values()];
+  const usage = [...byPromotion.values()];
+  writeCachedPromotionValue(promotionUsageCache, restaurantId, usage);
+  return usage;
 }
 
 export function calculatePromotionDiscount(input: {
@@ -495,6 +530,7 @@ export async function createPromotion(
   }
 
   throwPromotionWriteError(error, input.code);
+  invalidatePromotionDashboardCache(restaurantId);
   return withDefaultDiscountScope(data as Promotion);
 }
 
@@ -571,6 +607,7 @@ export async function updatePromotion(
   }
 
   throwPromotionWriteError(error, input.code);
+  invalidatePromotionDashboardCache(restaurantId);
   return withDefaultDiscountScope(data as Promotion);
 }
 
@@ -591,6 +628,7 @@ export async function updatePromotionCustomerVisibility(
     .single();
 
   throwIfSupabaseError(error);
+  invalidatePromotionDashboardCache(restaurantId);
   return withDefaultDiscountScope(data as Promotion);
 }
 
@@ -611,6 +649,7 @@ export async function updatePromotionActiveStatus(
     .single();
 
   throwIfSupabaseError(error);
+  invalidatePromotionDashboardCache(restaurantId);
   return withDefaultDiscountScope(data as Promotion);
 }
 
@@ -623,4 +662,5 @@ export async function deletePromotion(restaurantId: string, promotionId: string)
     .eq("restaurant_id", restaurantId);
 
   throwIfSupabaseError(error);
+  invalidatePromotionDashboardCache(restaurantId);
 }

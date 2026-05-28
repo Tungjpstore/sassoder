@@ -29,7 +29,7 @@ export default async function AdminOrdersPage() {
 
 async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { restaurantId: string; canManageTestOrders: boolean }) {
   const [orders, serviceRequests] = await Promise.all([
-    listOrdersForRestaurant(restaurantId, { includeHistory: true }),
+    listOrdersForRestaurant(restaurantId),
     listOpenServiceRequests(restaurantId)
   ]);
   const initialOrders = JSON.parse(JSON.stringify(orders));

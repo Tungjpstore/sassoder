@@ -17,6 +17,13 @@ type BaseOperationalEvent = {
   source?: "customer_qr" | "online_ordering" | "dashboard" | "staff" | "telegram" | "system" | "devops";
 };
 
+type PlatformOperationalEvent = Omit<BaseOperationalEvent, "restaurantId" | "tenantId" | "branchId" | "source"> & {
+  restaurantId?: string;
+  tenantId?: string;
+  branchId?: string | null;
+  source?: "system" | "devops" | "telegram" | "dashboard";
+};
+
 type OperationalOrderSnapshot = {
   id: string;
   displayCode?: string;
@@ -154,6 +161,16 @@ export type OperationalEvent =
       };
     })
   | (BaseOperationalEvent & {
+      type: "menu.item_availability_suggested";
+      menuItem: {
+        id: string;
+        name: string;
+        currentAvailable: boolean;
+        suggestedAvailable: boolean;
+        reason?: string | null;
+      };
+    })
+  | (BaseOperationalEvent & {
       type: "staff.checked_in";
       staff: {
         userId: string;
@@ -191,7 +208,7 @@ export type OperationalEvent =
         status?: string;
       };
     })
-  | (BaseOperationalEvent & {
+  | (PlatformOperationalEvent & {
       type: "platform.alert";
       alert: {
         severity: "critical" | "warning" | "info";
@@ -222,7 +239,7 @@ type PublishOperationalEventResult =
 export async function publishOperationalEvent(event: OperationalEvent): Promise<PublishOperationalEventResult> {
   const eventRecord = {
     ...event,
-    tenantId: event.tenantId ?? event.restaurantId,
+    tenantId: event.tenantId ?? event.restaurantId ?? platformTenantId(event),
     occurredAt: event.occurredAt ?? new Date().toISOString()
   };
   const outbox = await recordOperationalOutbox(eventRecord);
@@ -278,19 +295,20 @@ function internalGatewayUrl() {
 type OperationalOutboxRef =
   | {
       id: string;
-      restaurantId: string;
+      restaurantId: string | null;
       eventId: string;
     }
   | null;
 
 async function recordOperationalOutbox(event: OperationalEvent): Promise<OperationalOutboxRef> {
   const supabase = createAdminSupabaseClient() as any;
+  const tenantId = event.tenantId ?? event.restaurantId ?? platformTenantId(event);
   const row = {
     event_id: event.eventId,
     event_type: event.type,
-    restaurant_id: event.restaurantId,
+    restaurant_id: event.restaurantId ?? null,
     branch_id: event.branchId ?? null,
-    tenant_id: event.tenantId ?? event.restaurantId,
+    tenant_id: tenantId,
     source: event.source ?? null,
     priority: eventPriority(event.type),
     status: "pending",
@@ -305,7 +323,7 @@ async function recordOperationalOutbox(event: OperationalEvent): Promise<Operati
     return {
       id: String(inserted.data.id),
       eventId: String(inserted.data.event_id),
-      restaurantId: String(inserted.data.restaurant_id)
+      restaurantId: inserted.data.restaurant_id ? String(inserted.data.restaurant_id) : null
     };
   }
 
@@ -313,14 +331,14 @@ async function recordOperationalOutbox(event: OperationalEvent): Promise<Operati
     const existing = await supabase
       .from("operational_event_outbox")
       .select("id,event_id,restaurant_id")
-      .eq("restaurant_id", event.restaurantId)
+      .eq("tenant_id", tenantId)
       .eq("event_id", event.eventId)
       .maybeSingle();
     if (!existing.error && existing.data) {
       return {
         id: String(existing.data.id),
         eventId: String(existing.data.event_id),
-        restaurantId: String(existing.data.restaurant_id)
+        restaurantId: existing.data.restaurant_id ? String(existing.data.restaurant_id) : null
       };
     }
   }
@@ -400,11 +418,16 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "order.cancelled" ||
     type === "reservation.created" ||
     type === "staff.checked_in" ||
-    type === "inventory.low"
+    type === "inventory.low" ||
+    type === "menu.item_availability_suggested"
   ) {
     return 2;
   }
   return 5;
+}
+
+function platformTenantId(event: OperationalEvent) {
+  return event.type === "platform.alert" ? "platform" : "";
 }
 
 function isMissingOutboxSchema(error: { code?: string; message?: string } | null | undefined) {

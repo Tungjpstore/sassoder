@@ -22,13 +22,18 @@ import {
   createTelegramSession,
   getOrCreateNotification,
   getTelegramConnectionsForUser,
+  getTelegramEventPolicy,
+  getTelegramOpenIncidents,
+  getTelegramOpsInbox,
   getTelegramOpsBoard,
+  getTelegramOwnerBriefings,
   getTelegramRecipients,
   hasPermission,
   markNotificationFailed,
   markNotificationSent,
   recordTelegramAudit,
-  touchConnection
+  touchConnection,
+  upsertTelegramOpsIncident
 } from "./repository.mjs";
 import {
   branchIdSchema,
@@ -40,6 +45,7 @@ import {
   type TelegramConnection,
   type TelegramNotificationJob
 } from "./types.mjs";
+import type { TelegramOpsInboxItem } from "./repository.mjs";
 
 const TELEGRAM_QUEUE = "telegram.notifications";
 const TELEGRAM_SESSION_CALLBACK_PREFIX = "s:";
@@ -63,9 +69,41 @@ const AI_OPS_COMMANDS = {
     prompt: "Kiểm tra tồn kho hiện tại: nguyên liệu thấp, recipe coverage, cảnh báo kho và việc cần nhập trước. Chỉ dùng dữ liệu thật."
   }
 } as const;
-const TELEGRAM_MENU_ACTIONS = ["menu", "help", "status", "ops_board", "hot_orders", "payments", "reservations", "staff", "doanhthu", "tinhhinh", "tonkho"] as const;
+const TELEGRAM_MENU_ACTIONS = [
+  "menu",
+  "help",
+  "status",
+  "ops_board",
+  "hot_orders",
+  "payments",
+  "reservations",
+  "staff",
+  "staff_shift",
+  "menu_ops",
+  "briefings",
+  "incidents",
+  "doanhthu",
+  "tinhhinh",
+  "tonkho"
+] as const;
 type AiOpsCommand = keyof typeof AI_OPS_COMMANDS | "chat";
 type TelegramMenuAction = (typeof TELEGRAM_MENU_ACTIONS)[number];
+type AiOpsResult = {
+  reply: string;
+  intent: string;
+  intentLabel?: string;
+  provider: string;
+  model: string;
+  actions?: AiOpsAction[];
+};
+type AiOpsAction = {
+  label?: string;
+  description?: string;
+  href?: string;
+  endpoint?: string;
+  safety?: string;
+  priority?: string;
+};
 type AiOpsRequestSpec = {
   intent?: string;
   permission: string;
@@ -94,6 +132,12 @@ const callbackCounter = createCounter({
   labelNames: ["action_type", "status"] as const
 });
 
+const aiOpsCounter = createCounter({
+  name: "logivn_telegram_ai_ops_total",
+  help: "Telegram AI Ops command attempts",
+  labelNames: ["command", "status"] as const
+});
+
 const deliveryLatency = createHistogram({
   name: "logivn_telegram_delivery_seconds",
   help: "Telegram notification delivery latency",
@@ -116,6 +160,30 @@ if (bot) {
 
   bot.command("ops", async (ctx) => {
     await replyWithOpsBoard(ctx);
+  });
+
+  bot.command("ca", async (ctx) => {
+    await replyWithStaffShift(ctx);
+  });
+
+  bot.command("don", async (ctx) => {
+    await replyWithOpsSlice(ctx, "hot_orders");
+  });
+
+  bot.command("ban", async (ctx) => {
+    await replyWithOpsSlice(ctx, "staff");
+  });
+
+  bot.command("yeucau", async (ctx) => {
+    await replyWithOpsSlice(ctx, "staff");
+  });
+
+  bot.command("brief", async (ctx) => {
+    await replyWithOwnerBriefings(ctx);
+  });
+
+  bot.command("suco", async (ctx) => {
+    await replyWithOpenIncidents(ctx);
   });
 
   for (const command of Object.keys(AI_OPS_COMMANDS) as Array<keyof typeof AI_OPS_COMMANDS>) {
@@ -303,7 +371,7 @@ app.post("/webhook/set", requireInternalApiKey, async (_req, res, next) => {
       allowed_updates: ["message", "callback_query"]
     });
     await configureTelegramCommands();
-    res.json({ ok: true, webhookUrl });
+    res.json({ ok: true, configured: true });
   } catch (error) {
     next(error);
   }
@@ -317,6 +385,10 @@ app.get("/ready", async (_req, res) => {
     ok: ready,
     configured,
     queue: TELEGRAM_QUEUE,
+    aiOps: {
+      internalApiConfigured: Boolean(readEnv("LOGIVN_APP_INTERNAL_URL", readEnv("NEXT_PUBLIC_APP_URL")) && readEnv("LOGIVN_INTERNAL_API_KEY")),
+      timeoutMs: numberEnv("TELEGRAM_AI_OPS_TIMEOUT_MS", 45_000)
+    },
     worker: {
       running: workerRunning,
       concurrency: numberEnv("TELEGRAM_WORKER_CONCURRENCY", 4)
@@ -363,11 +435,28 @@ async function processTelegramJob(job: Job) {
 
 async function deliverOperationalEvent(event: OperationalTelegramEvent) {
   const card = formatTelegramCard(event);
-  const requiredPermission = requiredPermissionForEvent(event);
+  const policy = await getTelegramEventPolicy({
+    restaurantId: event.restaurantId,
+    branchId: event.branchId ?? null,
+    eventType: event.type
+  });
+  if (policy?.enabled === false || policy?.recipientScope === "silent") {
+    await recordTelegramAudit({
+      restaurantId: event.restaurantId,
+      branchId: event.branchId ?? null,
+      action: event.type,
+      outcome: "skipped",
+      metadata: { reason: "notification_policy_disabled", policyId: policy.id }
+    });
+    return { delivered: false, sent: 0, skipped: 1, failed: 0, recipients: 0 };
+  }
+
+  const requiredPermission = policy?.requiredPermission ?? requiredPermissionForEvent(event);
   const recipients = await getTelegramRecipients({
     restaurantId: event.restaurantId,
     branchId: event.branchId ?? null,
-    requiredPermission
+    requiredPermission,
+    recipientScope: policy?.recipientScope
   });
 
   let sent = 0;
@@ -423,6 +512,23 @@ async function deliverOperationalEvent(event: OperationalTelegramEvent) {
         action: event.type,
         outcome: "failed",
         metadata: { notificationId: notification.id, error: message, status }
+      });
+      await upsertTelegramOpsIncident({
+        restaurantId: event.restaurantId,
+        branchId: event.branchId ?? null,
+        incidentKey: `telegram.delivery:${recipient.id}:${event.eventId}`,
+        severity: status === "rate_limited" ? "warning" : "critical",
+        area: "telegram",
+        title: "Telegram gửi tin thất bại",
+        summary: `${event.type}: ${message}`.slice(0, 500),
+        sourceEventId: event.eventId,
+        metadata: {
+          notificationId: notification.id,
+          connectionId: recipient.id,
+          status
+        }
+      }).catch((incidentError) => {
+        logger.warn({ error: safeLogError(incidentError), eventId: event.eventId }, "telegram incident upsert failed");
       });
       errors.push(message);
     }
@@ -483,6 +589,21 @@ async function executeInternalAction(action: CallbackActionRecord, connection: T
       outcome: "accepted",
       metadata: { manualReview: true }
     });
+    await upsertTelegramOpsIncident({
+      restaurantId: action.restaurant_id,
+      branchId: action.branch_id,
+      incidentKey: `payment.mismatch:${action.resource_id}`,
+      severity: "critical",
+      area: "payments",
+      title: "Thanh toán lệch số tiền",
+      summary: "Thu ngân/chủ quán đã đánh dấu VietQR sai số tiền từ Telegram.",
+      sourceEventId: typeof action.payload?.eventId === "string" ? action.payload.eventId : null,
+      metadata: {
+        actionId: action.id,
+        resourceType: action.resource_type,
+        resourceId: action.resource_id
+      }
+    });
     return { ok: true, message: "Đã ghi nhận lệch tiền." };
   }
 
@@ -531,6 +652,12 @@ async function configureTelegramCommands() {
   await bot.api.setMyCommands([
     { command: "menu", description: "Mở trung tâm vận hành" },
     { command: "ops", description: "Xem bảng điều hành realtime" },
+    { command: "ca", description: "Ca làm và việc của nhân viên" },
+    { command: "don", description: "Đơn cần xử lý" },
+    { command: "ban", description: "Bàn gọi phục vụ" },
+    { command: "yeucau", description: "Yêu cầu nhân sự" },
+    { command: "brief", description: "Xem AI Ops brief gần đây" },
+    { command: "suco", description: "Xem sự cố vận hành mở" },
     { command: "status", description: "Xem kết nối và phạm vi quyền" },
     { command: "tinhhinh", description: "Tóm tắt vận hành hiện tại" },
     { command: "doanhthu", description: "Tóm tắt doanh thu" },
@@ -556,20 +683,7 @@ async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
     return;
   }
 
-  keyboard
-    .text("Hôm nay", await signedMenuCallback(connections[0], "ops_board"))
-    .text("Đơn nóng", await signedMenuCallback(connections[0], "hot_orders"))
-    .row()
-    .text("Thanh toán", await signedMenuCallback(connections[0], "payments"))
-    .text("Đặt bàn", await signedMenuCallback(connections[0], "reservations"))
-    .row()
-    .text("Nhân sự", await signedMenuCallback(connections[0], "staff"))
-    .text("AI Ops", await signedMenuCallback(connections[0], "tinhhinh"))
-    .row()
-    .text("Tồn kho", await signedMenuCallback(connections[0], "tonkho"))
-    .text("Kết nối", await signedMenuCallback(connections[0], "status"))
-    .row()
-    .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"));
+  await buildTenantOpsMenuKeyboard(keyboard, connections[0]);
 
   const connectionSummary = connections
     .slice(0, 3)
@@ -593,7 +707,13 @@ async function replyWithHelp(ctx: Context) {
       "LogiVN Ops Bot",
       "",
       "/menu - thao tác nhanh",
+      "/ca - ca làm và việc của nhân viên",
+      "/don - đơn cần xử lý",
+      "/ban - bàn gọi phục vụ",
+      "/yeucau - yêu cầu nhân sự",
       "/ops - bảng điều hành realtime",
+      "/brief - AI Ops brief gần đây",
+      "/suco - sự cố vận hành mở",
       "/status - kết nối hiện tại",
       "/tinhhinh - tình hình vận hành",
       "/doanhthu - doanh thu",
@@ -644,7 +764,19 @@ async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction
     await replyWithOpsBoard(ctx, connection);
     return;
   }
-  if (action === "hot_orders" || action === "payments" || action === "reservations" || action === "staff") {
+  if (action === "staff_shift") {
+    await replyWithStaffShift(ctx, connection);
+    return;
+  }
+  if (action === "briefings") {
+    await replyWithOwnerBriefings(ctx, connection);
+    return;
+  }
+  if (action === "incidents") {
+    await replyWithOpenIncidents(ctx, connection);
+    return;
+  }
+  if (action === "hot_orders" || action === "payments" || action === "reservations" || action === "staff" || action === "menu_ops") {
     await replyWithOpsSlice(ctx, action, connection);
     return;
   }
@@ -689,7 +821,7 @@ async function replyWithOpsBoard(ctx: Context, preferredConnection?: TelegramCon
   );
 }
 
-async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">, preferredConnection?: TelegramConnection) {
+async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops">, preferredConnection?: TelegramConnection) {
   const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
   if (!connection) {
     await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
@@ -697,13 +829,22 @@ async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuActio
   }
 
   const board = await getTelegramOpsBoard(connection);
+  const inbox = await getTelegramOpsInbox(connection, action);
   const keyboard = new InlineKeyboard()
     .text("Làm mới", await signedMenuCallback(connection, action))
     .text("Tổng quan", await signedMenuCallback(connection, "ops_board"))
-    .row()
-    .url("Mở Dashboard", absoluteAppUrl(routeForOpsSlice(action)));
+    .row();
 
-  await ctx.reply(formatOpsSlice(action, board), { reply_markup: keyboard });
+  for (const item of inbox.slice(0, 4)) {
+    const actions = actionsForInboxItem(item).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType]));
+    for (const actionType of actions.slice(0, 2)) {
+      keyboard.text(`${labelForAction(actionType)} ${shortId(item.id)}`, await createCallbackTokenForInboxItem(item, actionType, connection));
+    }
+    if (actions.length > 0) keyboard.row();
+  }
+  keyboard.url("Mở Dashboard", absoluteAppUrl(routeForOpsSlice(action)));
+
+  await ctx.reply(formatOpsSlice(action, board, inbox), { reply_markup: keyboard });
 }
 
 async function firstConnectionForContext(ctx: Context) {
@@ -712,8 +853,149 @@ async function firstConnectionForContext(ctx: Context) {
   return connections[0] ?? null;
 }
 
-function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">, board: Awaited<ReturnType<typeof getTelegramOpsBoard>>) {
+async function buildTenantOpsMenuKeyboard(keyboard: InlineKeyboard, connection: TelegramConnection) {
+  if (connection.role === "ADMIN") {
+    keyboard
+      .text("Hôm nay", await signedMenuCallback(connection, "ops_board"))
+      .text("Đơn nóng", await signedMenuCallback(connection, "hot_orders"))
+      .row()
+      .text("Thanh toán", await signedMenuCallback(connection, "payments"))
+      .text("Đặt bàn", await signedMenuCallback(connection, "reservations"))
+      .row()
+      .text("Nhân sự", await signedMenuCallback(connection, "staff"))
+      .text("Menu", await signedMenuCallback(connection, "menu_ops"))
+      .row()
+      .text("AI Ops", await signedMenuCallback(connection, "tinhhinh"))
+      .text("Tồn kho", await signedMenuCallback(connection, "tonkho"))
+      .row()
+      .text("Brief", await signedMenuCallback(connection, "briefings"))
+      .text("Sự cố", await signedMenuCallback(connection, "incidents"))
+      .row()
+      .text("Kết nối", await signedMenuCallback(connection, "status"))
+      .row()
+      .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"));
+    return;
+  }
+
+  keyboard
+    .text("Ca", await signedMenuCallback(connection, "staff_shift"))
+    .text("Đơn", await signedMenuCallback(connection, "hot_orders"))
+    .row()
+    .text("Bàn gọi", await signedMenuCallback(connection, "staff"))
+    .text("Yêu cầu", await signedMenuCallback(connection, "staff"))
+    .row();
+
+  if (hasPermission(connection, "payments.view")) keyboard.text("Thanh toán", await signedMenuCallback(connection, "payments"));
+  if (hasPermission(connection, "inventory.view")) keyboard.text("Tồn kho", await signedMenuCallback(connection, "tonkho"));
+  keyboard.row().text("Kết nối", await signedMenuCallback(connection, "status")).row().url("Màn nhân viên", absoluteAppUrl("/dashboard/staff/mobile"));
+}
+
+async function replyWithStaffShift(ctx: Context, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+
+  const board = await getTelegramOpsBoard(connection);
+  const inbox = await getTelegramOpsInbox(connection, "staff");
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedMenuCallback(connection, "staff_shift"))
+    .text("Đơn", await signedMenuCallback(connection, "hot_orders"))
+    .row()
+    .url("Màn nhân viên", absoluteAppUrl("/dashboard/staff/mobile"));
+
+  const lines = [
+    `Ca làm · ${board.scopeLabel}`,
+    "",
+    `Đơn cần nhận: ${board.counts.pendingOrders}`,
+    `Bàn gọi phục vụ: ${board.counts.openServiceRequests}`,
+    `Yêu cầu chờ duyệt: ${board.counts.pendingStaffRequests}`,
+    "",
+    ...(inbox.length ? inbox.slice(0, 4).map((item) => `- ${item.title}${item.detail ? ` · ${item.detail}` : ""}`) : ["Không có việc nóng trong ca này."])
+  ];
+
+  await ctx.reply(compactTelegramText(lines.join("\n")), { reply_markup: keyboard });
+}
+
+async function replyWithOwnerBriefings(ctx: Context, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+  if (!hasPermission(connection, "dashboard.view")) {
+    await ctx.reply("Bạn chưa có quyền xem AI Ops brief.");
+    return;
+  }
+
+  const briefings = await getTelegramOwnerBriefings(connection, 5);
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedMenuCallback(connection, "briefings"))
+    .text("AI Ops mới", await signedMenuCallback(connection, "tinhhinh"))
+    .row()
+    .url("Mở AI Ops", absoluteAppUrl("/dashboard/ai-ops"));
+
+  if (briefings.length === 0) {
+    await ctx.reply("Chưa có AI Ops brief nào từ Telegram. Bấm AI Ops để tạo brief đầu tiên.", { reply_markup: keyboard });
+    return;
+  }
+
+  const lines = [
+    `AI Ops brief · ${connectionLabel(connection)}`,
+    "",
+    ...briefings.slice(0, 4).map((briefing) => {
+      const action = briefing.actions[0]?.label ? ` · ${briefing.actions[0].label}` : "";
+      return `- ${briefing.title}: ${briefing.summary}${action}`;
+    })
+  ];
+
+  await ctx.reply(compactTelegramText(lines.join("\n"), 1600), { reply_markup: keyboard });
+}
+
+async function replyWithOpenIncidents(ctx: Context, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+  if (!hasPermission(connection, "dashboard.view")) {
+    await ctx.reply("Bạn chưa có quyền xem sự cố vận hành.");
+    return;
+  }
+
+  const incidents = await getTelegramOpenIncidents(connection, 5);
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedMenuCallback(connection, "incidents"))
+    .text("Tổng quan", await signedMenuCallback(connection, "ops_board"))
+    .row()
+    .url("Mở Dashboard", absoluteAppUrl("/dashboard/settings?section=notifications"));
+
+  if (incidents.length === 0) {
+    await ctx.reply(`Sự cố · ${connectionLabel(connection)}\n\nKhông có incident Telegram/Ops đang mở.`, { reply_markup: keyboard });
+    return;
+  }
+
+  const lines = [
+    `Sự cố · ${connectionLabel(connection)}`,
+    "",
+    ...incidents.map((incident) => {
+      const summary = incident.summary ? ` · ${incident.summary}` : "";
+      return `- ${incident.severity.toUpperCase()} · ${incident.area}: ${incident.title}${summary}`;
+    })
+  ];
+  await ctx.reply(compactTelegramText(lines.join("\n"), 1600), { reply_markup: keyboard });
+}
+
+function formatOpsSlice(
+  action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops">,
+  board: Awaited<ReturnType<typeof getTelegramOpsBoard>>,
+  inbox: TelegramOpsInboxItem[]
+) {
   const counts = board.counts;
+  const inboxLines = inbox.length
+    ? ["", "Cần xử lý:", ...inbox.slice(0, 5).map((item) => `- ${item.title}${item.detail ? ` · ${item.detail}` : ""}`)]
+    : ["", "Không có việc nóng trong phạm vi này."];
   if (action === "hot_orders") {
     return compactTelegramText(
       [
@@ -722,8 +1004,7 @@ function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "paym
         `Cần xác nhận: ${counts.pendingOrders}`,
         `Trễ SLA: ${counts.lateOrders}`,
         `Giao hàng mở: ${counts.openDeliveries}`,
-        "",
-        "Ưu tiên xử lý các card mới nhất trong chat hoặc mở Dashboard."
+        ...inboxLines
       ].join("\n")
     );
   }
@@ -733,7 +1014,7 @@ function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "paym
         `Thanh toán · ${board.scopeLabel}`,
         "",
         `VietQR/chờ đối soát: ${counts.waitingPayments}`,
-        counts.waitingPayments > 0 ? "Mở từng card VietQR để xác nhận hoặc đánh dấu sai số tiền." : "Không có thanh toán cần xử lý."
+        ...inboxLines
       ].join("\n")
     );
   }
@@ -744,7 +1025,17 @@ function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "paym
         "",
         `Hôm nay: ${counts.todayReservations}`,
         `Chờ cọc/xác nhận: ${counts.depositReservations}`,
-        counts.depositReservations > 0 ? "Ưu tiên xác nhận cọc hoặc từ chối nếu không giữ bàn." : "Luồng đặt bàn đang ổn."
+        ...inboxLines
+      ].join("\n")
+    );
+  }
+  if (action === "menu_ops") {
+    return compactTelegramText(
+      [
+        `Menu · ${board.scopeLabel}`,
+        "",
+        "Ẩn/mở món nhanh khi bếp báo hết hàng hoặc AI đề xuất dọn menu.",
+        ...inboxLines
       ].join("\n")
     );
   }
@@ -753,12 +1044,13 @@ function formatOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "paym
       `Nhân sự · ${board.scopeLabel}`,
       "",
       `Yêu cầu chờ duyệt: ${counts.pendingStaffRequests}`,
-      counts.pendingStaffRequests > 0 ? "Duyệt nghỉ phép, đổi ca, tăng ca hoặc chấm công ngay trên card Telegram." : "Không có yêu cầu nhân sự đang chờ."
+      ...inboxLines
     ].join("\n")
   );
 }
 
-function routeForOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff">) {
+function routeForOpsSlice(action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops">) {
+  if (action === "menu_ops") return "/dashboard/menu";
   if (action === "payments") return "/dashboard/payments";
   if (action === "reservations") return "/dashboard/reservations";
   if (action === "staff") return "/dashboard/staff";
@@ -771,6 +1063,7 @@ async function handleAiOpsCommand(ctx: Context, command: AiOpsCommand, message: 
     return;
   }
   if (await isTelegramUserRateLimited("ai-ops", ctx.from.id)) {
+    aiOpsCounter.inc({ command, status: "rate_limited" });
     await ctx.reply("AI Ops đang nhận quá nhiều yêu cầu từ tài khoản này. Vui lòng thử lại sau ít phút.");
     return;
   }
@@ -784,6 +1077,7 @@ async function handleAiOpsCommand(ctx: Context, command: AiOpsCommand, message: 
 
   const eligibleConnections = connections.filter((connection) => hasPermission(connection, spec.permission));
   if (eligibleConnections.length === 0) {
+    aiOpsCounter.inc({ command, status: "denied" });
     await ctx.reply("Bạn chưa có quyền xem dữ liệu vận hành này.");
     await recordAiOpsDenied(connections, command, spec.permission);
     return;
@@ -817,9 +1111,10 @@ async function runAiOpsForConnection(
       intent: spec.intent,
       connection
     });
-    const keyboard = new InlineKeyboard().url(spec.actionLabel, absoluteAppUrl(spec.route));
+    const keyboard = await buildAiOpsKeyboard(connection, spec, result);
     await ctx.reply(formatAiOpsReply(result), { reply_markup: keyboard });
     await ctx.api.deleteMessage(loading.chat.id, loading.message_id).catch(() => undefined);
+    aiOpsCounter.inc({ command, status: "accepted" });
     await recordTelegramAudit({
       restaurantId: connection.restaurant_id,
       branchId: connection.branch_id,
@@ -832,6 +1127,22 @@ async function runAiOpsForConnection(
     });
   } catch (error) {
     await ctx.reply(friendlyAiOpsError(error));
+    aiOpsCounter.inc({ command, status: "failed" });
+    await upsertTelegramOpsIncident({
+      restaurantId: connection.restaurant_id,
+      branchId: connection.branch_id,
+      incidentKey: `telegram.ai_ops:${connection.id}:${command}`,
+      severity: "warning",
+      area: "ai",
+      title: "AI Ops Telegram chưa chạy được",
+      summary: friendlyAiOpsError(error),
+      metadata: {
+        command,
+        error: error instanceof Error ? error.message : "ai_ops_failed"
+      }
+    }).catch((incidentError) => {
+      logger.warn({ error: safeLogError(incidentError), command }, "telegram ai ops incident upsert failed");
+    });
     await recordTelegramAudit({
       restaurantId: connection.restaurant_id,
       branchId: connection.branch_id,
@@ -980,12 +1291,34 @@ async function executeAiOpsCommand(input: {
 
   const json = await response.json().catch(() => ({}));
   if (!response.ok || json?.ok === false) throw new Error(json?.error ?? "ai_ops_failed");
-  return json.data as { reply: string; intent: string; intentLabel: string; provider: string; model: string };
+  return json.data as AiOpsResult;
 }
 
-function formatAiOpsReply(result: { reply: string; intentLabel?: string }) {
+async function buildAiOpsKeyboard(connection: TelegramConnection, spec: AiOpsRequestSpec, result: AiOpsResult) {
+  const keyboard = new InlineKeyboard();
+  const linkedActions = (result.actions ?? []).filter((action) => typeof action.href === "string" && action.href.startsWith("/dashboard")).slice(0, 2);
+
+  for (const action of linkedActions) {
+    keyboard.url(compactTelegramText(action.label ?? "Mở action", 32), absoluteAppUrl(action.href!));
+  }
+  if (linkedActions.length > 0) keyboard.row();
+
+  keyboard.url(spec.actionLabel, absoluteAppUrl(spec.route));
+  keyboard.text("Brief", await signedMenuCallback(connection, "briefings")).row();
+  keyboard.text("Tổng quan", await signedMenuCallback(connection, "ops_board"));
+  return keyboard;
+}
+
+function formatAiOpsReply(result: AiOpsResult) {
   const prefix = result.intentLabel ? `${result.intentLabel}\n` : "";
-  return compactTelegramText(`${prefix}${result.reply}`);
+  const actionLines = (result.actions ?? [])
+    .slice(0, 3)
+    .map((action) => {
+      const safety = action.safety === "confirm" ? "cần xác nhận" : action.safety === "manual_only" ? "thủ công" : "";
+      return `- ${action.label ?? "Action"}${safety ? ` · ${safety}` : ""}`;
+    });
+  const actions = actionLines.length ? `\n\nTiếp theo:\n${actionLines.join("\n")}` : "";
+  return compactTelegramText(`${prefix}${result.reply}${actions}`);
 }
 
 function compactTelegramText(value: string, maxLength = 1800) {
@@ -1008,10 +1341,39 @@ function actionsForEvent(event: OperationalTelegramEvent): TelegramActionType[] 
   }
   if (event.type === "service_request.created") return ["service_request.resolve"];
   if (event.type === "payment.waiting_confirm") return ["payment.confirm", "payment.amount_mismatch"];
+  if (event.type === "menu.item_availability_suggested") return event.menuItem.suggestedAvailable ? ["menu_item.enable"] : ["menu_item.disable"];
   if (event.type === "reservation.created") return ["reservation.reject"];
   if (event.type === "reservation.deposit_submitted") return ["reservation.confirm", "reservation.reject"];
   if (event.type === "staff.request_created") return ["staff_request.approve", "staff_request.reject"];
   return [];
+}
+
+function actionsForInboxItem(item: TelegramOpsInboxItem): TelegramActionType[] {
+  if (item.kind === "payment") return ["payment.confirm", "payment.amount_mismatch"];
+  if (item.kind === "reservation") {
+    return item.state.depositStatus === "waiting_confirm" ? ["reservation.confirm", "reservation.reject"] : ["reservation.reject"];
+  }
+  if (item.kind === "menu_item") return item.state.available === true ? ["menu_item.disable"] : ["menu_item.enable"];
+  if (item.kind === "service_request") return ["service_request.resolve"];
+  if (item.kind === "staff_request") return ["staff_request.approve", "staff_request.reject"];
+  if (item.state.fulfillmentType === "DELIVERY") {
+    if (item.state.deliveryStatus === "requested") return ["delivery.accept", "delivery.reject"];
+    if (item.state.deliveryStatus === "accepted") return ["delivery.out_for_delivery"];
+    if (item.state.deliveryStatus === "out_for_delivery") return ["delivery.delivered"];
+  }
+  return item.state.status === "pending" ? ["order.confirm", "order.cancel"] : ["order.done"];
+}
+
+async function createCallbackTokenForInboxItem(item: TelegramOpsInboxItem, actionType: TelegramActionType, connection: TelegramConnection) {
+  return createCallbackAction({
+    actionType,
+    restaurantId: connection.restaurant_id,
+    branchId: item.branchId ?? connection.branch_id,
+    connectionId: connection.id,
+    resourceType: item.resourceType,
+    resourceId: item.id,
+    payload: { source: "ops_inbox", state: item.state }
+  });
 }
 
 function requiredPermissionForEvent(event: OperationalTelegramEvent) {
@@ -1040,6 +1402,8 @@ function requiredPermissionForEvent(event: OperationalTelegramEvent) {
     return "reservations.manage";
   }
   if (event.type === "inventory.low") return "inventory.view";
+  if (event.type === "menu.item_availability_suggested") return "menu.view";
+  if (event.type === "staff.checked_in") return "attendance.view";
   if (event.type === "service_request.created" || event.type === "service_request.resolved") return "orders.view";
   if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") return "approvals.review";
   if (event.type === "platform.alert") return "notifications.manage";
@@ -1057,6 +1421,7 @@ function resourceForEvent(event: OperationalTelegramEvent, actionType: TelegramA
     return { type: "order", id: event.order.id };
   }
   if (event.type === "payment.waiting_confirm" || event.type === "payment.received") return { type: "order", id: event.payment.orderId };
+  if (event.type === "menu.item_availability_suggested") return { type: "menu_item", id: event.menuItem.id };
   if (
     event.type === "reservation.created" ||
     event.type === "reservation.deposit_submitted" ||
@@ -1087,6 +1452,8 @@ function labelForAction(actionType: TelegramActionType) {
     "delivery.reject": "Từ chối giao",
     "payment.confirm": "Xác nhận",
     "payment.amount_mismatch": "Sai số tiền",
+    "menu_item.disable": "Ẩn món",
+    "menu_item.enable": "Mở bán",
     "service_request.resolve": "Đã xử lý",
     "reservation.confirm": "Đồng ý",
     "reservation.reject": "Từ chối",

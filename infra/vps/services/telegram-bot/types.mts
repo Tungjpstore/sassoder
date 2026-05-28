@@ -28,6 +28,8 @@ export const telegramActionSchema = z.enum([
   "delivery.reject",
   "payment.confirm",
   "payment.amount_mismatch",
+  "menu_item.disable",
+  "menu_item.enable",
   "service_request.resolve",
   "reservation.confirm",
   "reservation.reject",
@@ -47,6 +49,8 @@ export const requiredPermissionByAction: Record<TelegramActionType, string> = {
   "delivery.reject": "orders.update",
   "payment.confirm": "payments.confirm",
   "payment.amount_mismatch": "payments.confirm",
+  "menu_item.disable": "menu.edit",
+  "menu_item.enable": "menu.edit",
   "service_request.resolve": "orders.update",
   "reservation.confirm": "reservations.manage",
   "reservation.reject": "reservations.manage",
@@ -169,6 +173,26 @@ export const inventoryLowEventSchema = baseEventSchema.extend({
   })
 });
 
+export const menuItemAvailabilitySuggestedEventSchema = baseEventSchema.extend({
+  type: z.literal("menu.item_availability_suggested"),
+  menuItem: z.object({
+    id: z.string().uuid(),
+    name: z.string().min(1).max(160),
+    currentAvailable: z.boolean(),
+    suggestedAvailable: z.boolean(),
+    reason: z.string().max(500).nullable().optional()
+  })
+});
+
+export const staffCheckedInEventSchema = baseEventSchema.extend({
+  type: z.literal("staff.checked_in"),
+  staff: z.object({
+    userId: z.string().uuid(),
+    staffId: z.string().uuid().nullable().optional(),
+    displayName: z.string().max(120).nullable().optional()
+  })
+});
+
 export const slaWarningEventSchema = baseEventSchema.extend({
   type: z.literal("sla.warning"),
   sla: z.object({
@@ -262,6 +286,8 @@ export const telegramNotificationJobSchema = z.discriminatedUnion("type", [
   reservationNoShowEventSchema,
   reservationRescheduledEventSchema,
   inventoryLowEventSchema,
+  menuItemAvailabilitySuggestedEventSchema,
+  staffCheckedInEventSchema,
   slaWarningEventSchema,
   serviceRequestCreatedEventSchema,
   serviceRequestResolvedEventSchema,

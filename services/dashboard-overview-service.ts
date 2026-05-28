@@ -75,7 +75,7 @@ type AdminOverview = Awaited<ReturnType<typeof getRestaurantAdminDashboard>> & {
 };
 
 const overviewCache = new Map<string, { expiresAt: number; value: AdminOverview }>();
-const overviewCacheTtlMs = 1_200;
+const overviewCacheTtlMs = 8_000;
 
 function readCachedOverview(restaurantId: string) {
   const cached = overviewCache.get(restaurantId);

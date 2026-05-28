@@ -42,10 +42,34 @@ type OnlineOrderRow = OnlineOrderStatsRow & {
 const onlineRecentOrderLimit = 80;
 const onlineActiveOrderLimit = 1000;
 const onlineTodayOrderLimit = 2000;
+const onlineDashboardCacheTtlMs = 8_000;
 const activeOnlineStatuses: OrderStatus[] = ["pending", "ordering", "waiting_payment", "waiting_confirm"];
 const onlineStatsSelect = "id,status,payment_status,paid_at,total,fulfillment_type,delivery_status,created_at";
 const onlineRecentOrderSelect =
   "id,status,payment_status,paid_at,total,fulfillment_type,customer_name,customer_phone,delivery_address,delivery_distance_km,delivery_fee,delivery_status,delivery_route_duration_minutes,delivery_quote_snapshot,created_at,accepted_at,service_due_at,items:order_items(quantity,menuItem:menu_items(name))";
+
+const onlineDashboardCache = new Map<string, { expiresAt: number; value: OnlineOrderingDashboard }>();
+
+function readCachedOnlineDashboard(restaurantId: string) {
+  const cached = onlineDashboardCache.get(restaurantId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    onlineDashboardCache.delete(restaurantId);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeCachedOnlineDashboard(restaurantId: string, value: OnlineOrderingDashboard) {
+  onlineDashboardCache.set(restaurantId, {
+    value,
+    expiresAt: Date.now() + onlineDashboardCacheTtlMs
+  });
+}
+
+export function invalidateOnlineOrderingDashboardCache(restaurantId: string) {
+  onlineDashboardCache.delete(restaurantId);
+}
 
 export type OnlineOrderingDashboard = {
   restaurant: RestaurantRow;
@@ -126,6 +150,9 @@ function toNumber(value: number | string | null) {
 }
 
 export async function getOnlineOrderingDashboard(restaurantId: string): Promise<OnlineOrderingDashboard> {
+  const cached = readCachedOnlineDashboard(restaurantId);
+  if (cached) return cached;
+
   const supabase = await createServerSupabaseClient();
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
@@ -179,7 +206,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
   });
   const todayRevenue = paidToday.reduce((sum, order) => sum + order.total, 0);
 
-  return {
+  const dashboard = {
     restaurant,
     menuItems: menuCountResult.count ?? 0,
     categories: categoryCountResult.count ?? 0,
@@ -215,4 +242,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
       itemSummary: summarizeItems(order.items)
     }))
   };
+
+  writeCachedOnlineDashboard(restaurantId, dashboard);
+  return dashboard;
 }

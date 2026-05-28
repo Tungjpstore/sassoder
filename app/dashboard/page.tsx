@@ -1,6 +1,7 @@
 import { Suspense, type ElementType } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import {
   Activity,
   ArrowRight,
@@ -34,6 +35,7 @@ import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
+import { buildAiRecommendationDeck } from "@/lib/ai/recommendation-engine";
 import { buildAiSalesForecast } from "@/lib/ai/sales-forecast";
 import { buildActivationRunway } from "@/lib/dashboard-activation-runway";
 import { buildTenantUrl } from "@/lib/tenant-domain";
@@ -554,14 +556,24 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       }))
     }
   });
-  const { deck: operationInsights } = await persistAiOperationInsightsDeck({
-    restaurantId,
-    deck: generatedOperationInsights
-  });
-  const { deck: aiRecommendationDeck, schemaReady: aiRecommendationsSchemaReady } = await persistAiRecommendationsFromOperationDeck({
-    restaurantId,
-    operationInsights,
-    limit: 6
+  const operationInsights = generatedOperationInsights;
+  const aiRecommendationDeck = buildAiRecommendationDeck({ operationInsights, limit: 6 });
+  const aiRecommendationsSchemaReady = true;
+
+  after(async () => {
+    try {
+      const persistedInsights = await persistAiOperationInsightsDeck({
+        restaurantId,
+        deck: generatedOperationInsights
+      });
+      await persistAiRecommendationsFromOperationDeck({
+        restaurantId,
+        operationInsights: persistedInsights.deck,
+        limit: 6
+      });
+    } catch (error) {
+      console.error("[dashboard-ai-persistence] failed", error);
+    }
   });
   const dailyTarget = monthRevenue > 0 ? Math.max(operations.todayRevenue, Math.round(monthRevenue / Math.max(1, new Date().getDate()))) : null;
   const salesForecast = buildAiSalesForecast({

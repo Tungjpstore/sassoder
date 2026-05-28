@@ -27,6 +27,11 @@ upstream logivn_telegram {
   keepalive 16;
 }
 
+upstream logivn_platform_telegram {
+  server 127.0.0.1:3650;
+  keepalive 16;
+}
+
 upstream logivn_uptime_kuma {
   server 127.0.0.1:3001;
   keepalive 16;
@@ -87,6 +92,17 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_read_timeout 75s;
     proxy_pass http://logivn_telegram;
+  }
+
+  location /webhooks/platform-telegram/ {
+    limit_req zone=logivn_api burst=20 nodelay;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 75s;
+    proxy_pass http://logivn_platform_telegram;
   }
 
   location / {

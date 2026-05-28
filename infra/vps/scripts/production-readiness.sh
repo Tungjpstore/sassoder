@@ -147,6 +147,7 @@ const required = new Set([
   "image-service:3400",
   "worker:3500",
   "telegram-bot:3600",
+  "platform-telegram-bot:3650",
   "redis-exporter:9121"
 ]);
 const unhealthy = [];
@@ -328,6 +329,7 @@ main() {
   wait_for_url "http://127.0.0.1:${IMAGE_SERVICE_PORT:-3400}/health" image-service
   wait_for_url "http://127.0.0.1:${WORKER_PORT:-3500}/health" worker
   wait_for_url "http://127.0.0.1:${TELEGRAM_BOT_PORT:-3600}/health" telegram-bot
+  wait_for_url "http://127.0.0.1:${PLATFORM_TELEGRAM_BOT_PORT:-3650}/health" platform-telegram-bot
 
   compose exec -T redis redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q PONG
   check_redis_runtime

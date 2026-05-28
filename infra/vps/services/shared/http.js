@@ -63,6 +63,7 @@ function redactSensitiveUrl(url) {
   if (typeof url !== "string") return url;
   return url
     .replace(/\/webhooks\/telegram\/[^/?#]+/g, "/webhooks/telegram/[redacted]")
+    .replace(/\/webhooks\/platform-telegram\/[^/?#]+/g, "/webhooks/platform-telegram/[redacted]")
     .replace(/([?&](?:api[_-]?key|secret|token)=)[^&#]+/gi, "$1[redacted]");
 }
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Menu, Search, X } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
 import { prefetchKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
@@ -67,6 +67,15 @@ const navGroups: NavGroup[] = [
 ];
 
 const allLinks = navGroups.flatMap((g) => g.links);
+const warmDashboardRoutes = [
+  "/dashboard/orders",
+  "/dashboard/kitchen",
+  "/dashboard/tables",
+  "/dashboard/online",
+  "/dashboard/analytics"
+];
+const dashboardRoutePrefetches = new Map<string, number>();
+const dashboardRoutePrefetchTtlMs = 30_000;
 const mobilePrimaryLinks = [
   { href: "/dashboard", label: "Tổng quan", icon: "todayShift" },
   { href: "/dashboard/orders", label: "Đơn hàng", icon: "orders" },
@@ -77,6 +86,24 @@ const mobileMoreLinks = allLinks.filter(
   (link) => !mobilePrimaryLinks.some((primary) => primary.href === link.href)
 );
 const dashboardMobileMenuEvent = "logivn:dashboard-mobile-menu";
+
+type DashboardRouter = {
+  prefetch: (href: string) => void;
+};
+
+function prefetchDashboardRoute(router: DashboardRouter, href: string) {
+  const lastPrefetchedAt = dashboardRoutePrefetches.get(href) ?? 0;
+  if (Date.now() - lastPrefetchedAt < dashboardRoutePrefetchTtlMs) return;
+  dashboardRoutePrefetches.set(href, Date.now());
+  router.prefetch(href);
+}
+
+function prefetchDashboardNavTarget(router: DashboardRouter, href: string) {
+  prefetchDashboardRoute(router, href);
+  if (href === "/dashboard/tables" || href === "/dashboard/kitchen") {
+    prefetchKitchenOrders();
+  }
+}
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === href;
@@ -92,12 +119,21 @@ function isMobilePrimaryActive(pathname: string, href: string) {
 
 export function AdminDesktopNav() {
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
-    if (pathname === "/dashboard/kitchen") return;
-    const timer = window.setTimeout(prefetchKitchenOrders, 700);
-    return () => window.clearTimeout(timer);
-  }, [pathname]);
+    const warmTimer = window.setTimeout(() => {
+      for (const href of warmDashboardRoutes) {
+        if (href !== pathname) prefetchDashboardRoute(router, href);
+      }
+    }, 650);
+    const kitchenTimer = pathname === "/dashboard/kitchen" ? undefined : window.setTimeout(prefetchKitchenOrders, 850);
+
+    return () => {
+      window.clearTimeout(warmTimer);
+      if (kitchenTimer) window.clearTimeout(kitchenTimer);
+    };
+  }, [pathname, router]);
 
   return (
     <nav className="dashboard-sidebar-scroll relative z-[1] mx-3 mt-4 grid min-h-0 flex-1 gap-1 overflow-y-auto pr-1">
@@ -108,20 +144,13 @@ export function AdminDesktopNav() {
           </p>
           {group.links.map((link) => {
             const active = isActive(pathname, link.href);
+            const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                onFocus={
-                  link.href === "/dashboard/tables"
-                    ? prefetchKitchenOrders
-                    : undefined
-                }
-                onPointerEnter={
-                  link.href === "/dashboard/tables"
-                    ? prefetchKitchenOrders
-                    : undefined
-                }
+                onFocus={prefetchLink}
+                onPointerEnter={prefetchLink}
                 className={cn(
                   "admin-nav-link group relative flex min-h-11 items-center gap-2.5 rounded-xl px-3 text-sm font-semibold transition duration-150",
                   active
@@ -157,6 +186,7 @@ export function AdminMobileMenuTrigger({ className }: { className?: string }) {
 
 export function AdminMobileNav() {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const activeGroupId = useMemo(() => navGroups.find((group) => group.links.some((link) => isActive(pathname, link.href)))?.id ?? navGroups[0].id, [pathname]);
   const [selectedGroupId, setSelectedGroupId] = useState(activeGroupId);
@@ -231,22 +261,15 @@ export function AdminMobileNav() {
         <div className="mx-auto grid max-w-md grid-cols-5 gap-0.5">
           {mobilePrimaryLinks.map((link) => {
             const active = isMobilePrimaryActive(pathname, link.href);
+            const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
 
             return (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setOpen(false)}
-                onFocus={
-                  link.href === "/dashboard/tables"
-                    ? prefetchKitchenOrders
-                    : undefined
-                }
-                onPointerEnter={
-                  link.href === "/dashboard/tables"
-                    ? prefetchKitchenOrders
-                    : undefined
-                }
+                onFocus={prefetchLink}
+                onPointerEnter={prefetchLink}
                 className={cn(
                   "dashboard-mobile-tab flex min-h-[54px] flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[10px] font-semibold transition",
                   active
@@ -311,12 +334,15 @@ export function AdminMobileNav() {
               <div className="mt-2 grid grid-cols-4 gap-1">
                 {mobilePrimaryLinks.map((link) => {
                   const mobileActive = isMobilePrimaryActive(pathname, link.href);
+                  const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
 
                   return (
                     <Link
                       key={link.href}
                       href={link.href}
                       onClick={() => setOpen(false)}
+                      onFocus={prefetchLink}
+                      onPointerEnter={prefetchLink}
                       className={cn(
                         "flex min-h-11 flex-col items-center justify-center gap-1 rounded-xl border px-1 text-center text-[10px] font-semibold transition",
                         mobileActive
@@ -386,12 +412,15 @@ export function AdminMobileNav() {
                   <div className="grid grid-cols-2 gap-1.5">
                     {group.links.map((link) => {
                       const active = isActive(pathname, link.href);
+                      const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
 
                       return (
                         <Link
                           key={link.href}
                           href={link.href}
                           onClick={() => setOpen(false)}
+                          onFocus={prefetchLink}
+                          onPointerEnter={prefetchLink}
                           className={cn(
                             "flex min-h-12 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition",
                             active

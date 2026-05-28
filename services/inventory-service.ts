@@ -791,6 +791,30 @@ const emptyInventorySnapshot: InventorySnapshot = {
   recentMovements: []
 };
 
+const inventorySnapshotCache = new Map<string, { expiresAt: number; value: InventorySnapshot }>();
+const inventorySnapshotCacheTtlMs = 8_000;
+
+function readCachedInventorySnapshot(restaurantId: string) {
+  const cached = inventorySnapshotCache.get(restaurantId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    inventorySnapshotCache.delete(restaurantId);
+    return null;
+  }
+  return cached.value;
+}
+
+function writeCachedInventorySnapshot(restaurantId: string, value: InventorySnapshot) {
+  inventorySnapshotCache.set(restaurantId, {
+    value,
+    expiresAt: Date.now() + inventorySnapshotCacheTtlMs
+  });
+}
+
+export function invalidateInventorySnapshotCache(restaurantId: string) {
+  inventorySnapshotCache.delete(restaurantId);
+}
+
 const emptyInventoryAiEconomicsSignal: InventoryAiEconomicsSignal = {
   schemaReady: false,
   projectedPurchaseValue: 0,
@@ -1163,6 +1187,9 @@ function formatInventoryShortageMessage(shortages: Array<{ ingredientId: string;
 }
 
 export async function getInventorySnapshot(restaurantId: string): Promise<InventorySnapshot> {
+  const cached = readCachedInventorySnapshot(restaurantId);
+  if (cached) return cached;
+
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
   const expiryCutoff = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -1243,7 +1270,10 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     openPurchaseOrderCountResult
   ];
   const missingSchema = results.some((result) => isMissingInventorySchemaError(result.error));
-  if (missingSchema) return emptyInventorySnapshot;
+  if (missingSchema) {
+    writeCachedInventorySnapshot(restaurantId, emptyInventorySnapshot);
+    return emptyInventorySnapshot;
+  }
 
   for (const result of results) {
     throwIfSupabaseError(result.error);
@@ -1285,7 +1315,7 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
   );
   const openAlerts = (openAlertsResult.data ?? []) as Array<{ alert_type?: string | null }>;
 
-  return {
+  const snapshot = {
     schemaReady: true,
     ingredientCount: ingredientCountResult.count ?? 0,
     activeIngredientCount: activeIngredientCountResult.count ?? 0,
@@ -1304,6 +1334,9 @@ export async function getInventorySnapshot(restaurantId: string): Promise<Invent
     lowStockIngredients,
     recentMovements
   };
+
+  writeCachedInventorySnapshot(restaurantId, snapshot);
+  return snapshot;
 }
 
 export async function listInventoryCategories(restaurantId: string): Promise<InventoryCategory[]> {

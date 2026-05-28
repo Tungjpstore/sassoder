@@ -22,6 +22,7 @@ scrape_configs:
           - image-service:3400
           - worker:3500
           - telegram-bot:3600
+          - platform-telegram-bot:3650
 
   - job_name: node-exporter
     static_configs:

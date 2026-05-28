@@ -10,6 +10,7 @@ export const priorityValues = {
 
 export const queueNames = [
   "telegram.notifications",
+  "platform.telegram.notifications",
   "push.notifications",
   "email.notifications",
   "orders.processing",
@@ -34,6 +35,7 @@ export const queueNames = [
 
 export const legacyQueueAliases = {
   "telegram-notifications": "telegram.notifications",
+  "platform-telegram-notifications": "platform.telegram.notifications",
   notifications: "push.notifications",
   invoices: "payments.reconciliation",
   "ai-jobs": "ai.chat",

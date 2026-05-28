@@ -17,6 +17,7 @@ import { createStoreBranch, updateStoreBranch } from "@/services/branch-service"
 import { updateRestaurantOrderingSettings } from "@/services/delivery-service";
 import { updateDeliveryBranchAvailability } from "@/services/delivery/branch-delivery-settings-service";
 import { invalidateMenuCache } from "@/services/menu-service";
+import { invalidateOnlineOrderingDashboardCache } from "@/services/online-ordering-service";
 import { updateReportSchedule } from "@/services/report-schedule-service";
 import { updateReservationSettings } from "@/services/reservation-service";
 import {
@@ -60,6 +61,7 @@ function branchFormData(formData: FormData) {
 
 function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<typeof requireOperationalAdminSession>>) {
   invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateOnlineOrderingDashboardCache(session.restaurantId);
   invalidateMenuCache();
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/settings");
@@ -93,6 +95,7 @@ export async function updatePaymentSettingsAction(
   }
 
   invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateOnlineOrderingDashboardCache(session.restaurantId);
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard");
   return { success: "Đã lưu thông tin ngân hàng. VietQR sẽ dùng thông tin này cho đơn mới." };
@@ -157,6 +160,7 @@ export async function applyAiSetupBrandAction(
   }
 
   invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateOnlineOrderingDashboardCache(session.restaurantId);
   invalidateMenuCache();
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard");
@@ -335,6 +339,7 @@ export async function updateBranchDeliveryAvailabilityAction(
   }
 
   invalidateRestaurantDashboardCache(session.restaurantId);
+  invalidateOnlineOrderingDashboardCache(session.restaurantId);
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard/orders");
   revalidatePath(`/r/${session.restaurant.slug}`);

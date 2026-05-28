@@ -184,7 +184,7 @@ EOF
 
 create_layout() {
   log "Creating /opt/logivn directory layout"
-  mkdir -p "$APP_ROOT"/{services,gateway,socket,worker,ai-service,telegram-bot,image-service,infra,nginx,redis,monitoring,logs,scripts,backups,app}
+  mkdir -p "$APP_ROOT"/{services,gateway,socket,worker,ai-service,telegram-bot,platform-telegram-bot,image-service,infra,nginx,redis,monitoring,logs,scripts,backups,app}
   chown -R "$APP_USER:$APP_USER" "$APP_ROOT"
   chmod 750 "$APP_ROOT"
 }

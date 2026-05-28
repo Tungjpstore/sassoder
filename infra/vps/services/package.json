@@ -12,6 +12,7 @@
     "start:worker": "tsx workers/index.mts",
     "start:ai": "node ai-service/server.js",
     "start:telegram": "tsx telegram-bot/server.mts",
+    "start:platform-telegram": "tsx platform-telegram-bot/server.mts",
     "start:image": "node image-service/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
