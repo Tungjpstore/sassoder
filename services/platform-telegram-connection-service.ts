@@ -6,7 +6,7 @@ import type { PlatformAdminRole, PlatformAdminSession } from "@/lib/platform-adm
 
 const TOKEN_PREFIX = "lg1";
 const SIGNATURE_LENGTH = 12;
-const DEFAULT_TOKEN_TTL_SECONDS = 600;
+const PERSISTENT_CONNECT_EXPIRES_AT = "2126-01-01T00:00:00.000Z";
 
 type PlatformTelegramRole = "DEV" | "SUPPORT" | "SRE" | "ADMIN";
 
@@ -18,6 +18,7 @@ type PlatformTelegramConnectToken = {
   scopes: string[];
   role: PlatformTelegramRole;
   ttlSeconds: number;
+  persistent: boolean;
 };
 
 export type PlatformTelegramConnectionView = {
@@ -67,6 +68,7 @@ export type PlatformTelegramOpsState = {
     connectSecretConfigured: boolean;
     webhookConfigured: boolean;
     ttlSeconds: number;
+    persistentConnectLink: boolean;
   };
   summary: {
     activeConnections: number;
@@ -104,7 +106,7 @@ export async function createPlatformTelegramConnectionToken(session: PlatformAdm
 
   const token = createSignedToken(connectSecret());
   const ttlSeconds = tokenTtlSeconds();
-  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+  const expiresAt = persistentConnectExpiresAt();
 
   const { error } = await supabase.from("platform_telegram_connection_tokens").insert({
     token_hash: tokenHash(token),
@@ -131,6 +133,7 @@ export async function createPlatformTelegramConnectionToken(session: PlatformAdm
       adminRole: session.role,
       telegramRole,
       expiresAt,
+      persistent: true,
       scopes
     }
   });
@@ -143,7 +146,8 @@ export async function createPlatformTelegramConnectionToken(session: PlatformAdm
     startCommand: `/start ${token}`,
     scopes,
     role: telegramRole,
-    ttlSeconds
+    ttlSeconds,
+    persistent: true
   };
 }
 
@@ -156,7 +160,8 @@ export async function getPlatformTelegramOpsState(): Promise<PlatformTelegramOps
     startUrl: botUsername ? `https://t.me/${botUsername}` : null,
     connectSecretConfigured: Boolean(process.env.PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET?.trim()),
     webhookConfigured: Boolean(process.env.PLATFORM_TELEGRAM_WEBHOOK_SECRET?.trim() && process.env.PLATFORM_TELEGRAM_WEBHOOK_URL?.trim()),
-    ttlSeconds: tokenTtlSeconds()
+    ttlSeconds: tokenTtlSeconds(),
+    persistentConnectLink: true
   };
 
   const [connectionsResult, tokensResult, auditResult] = await Promise.all([
@@ -263,27 +268,34 @@ function platformTelegramAccessForRole(role: PlatformAdminRole): { telegramRole:
   if (role === "owner") {
     return {
       telegramRole: "ADMIN",
-      scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read"]
+      scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"]
     };
   }
 
   if (role === "ops") {
     return {
       telegramRole: "SRE",
-      scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read"]
+      scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"]
+    };
+  }
+
+  if (role === "billing") {
+    return {
+      telegramRole: "DEV",
+      scopes: ["billing.approve", "tenants.read"]
     };
   }
 
   if (role === "support") {
     return {
       telegramRole: "SUPPORT",
-      scopes: ["infra.read", "queues.read", "incidents.read", "support.grants.request"]
+      scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"]
     };
   }
 
   return {
     telegramRole: "DEV",
-    scopes: ["infra.read", "queues.read", "incidents.read"]
+    scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read"]
   };
 }
 
@@ -424,9 +436,11 @@ function connectSecret() {
 }
 
 function tokenTtlSeconds() {
-  const parsed = Number(process.env.PLATFORM_TELEGRAM_CONNECT_TOKEN_TTL_SECONDS ?? DEFAULT_TOKEN_TTL_SECONDS);
-  if (!Number.isFinite(parsed)) return DEFAULT_TOKEN_TTL_SECONDS;
-  return Math.min(Math.max(Math.floor(parsed), 120), 1800);
+  return 0;
+}
+
+function persistentConnectExpiresAt() {
+  return PERSISTENT_CONNECT_EXPIRES_AT;
 }
 
 function friendlyTokenSchemaError(error: { code?: string; message?: string }) {

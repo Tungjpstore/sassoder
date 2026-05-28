@@ -1664,7 +1664,7 @@ function buildProjectAtlas({
   };
 }
 
-async function writePlatformAuditLog({
+export async function writePlatformAuditLog({
   actor = "platform-admin",
   action,
   targetType,

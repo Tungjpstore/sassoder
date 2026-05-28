@@ -25,6 +25,63 @@ type PlatformTelegramAuditEntry = {
   createdAt: string;
 };
 
+export type PlatformSubscriptionPayment = {
+  id: string;
+  restaurantId: string;
+  restaurantName: string;
+  restaurantSlug: string;
+  planName: string;
+  amount: number;
+  months: number;
+  transferContent: string;
+  createdAt: string;
+};
+
+export type PlatformTenantAction = {
+  id: string;
+  name: string;
+  slug: string;
+  platformStatus: "active" | "suspended" | "deleted";
+  subscriptionStatus: string | null;
+  planName: string;
+  riskFlags: string[];
+  createdAt: string;
+};
+
+type LegacySubscriptionStatus = "trialing" | "pending_payment" | "active" | "past_due" | "suspended" | "cancelled" | "expired";
+
+type LegacyPlanSnapshot = {
+  id: string;
+  code: string;
+  name: string;
+  monthly_price: number;
+};
+
+type LegacySubscriptionSnapshot = {
+  id: string;
+  restaurant_id: string;
+  plan_id: string;
+  status: LegacySubscriptionStatus;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  trial_started_at?: string | null;
+  trial_ends_at: string | null;
+  created_at?: string;
+  metadata?: Record<string, unknown> | null;
+};
+
+type LegacyPaymentSnapshot = {
+  id: string;
+  restaurant_id: string;
+  subscription_id: string | null;
+  plan_id: string | null;
+  months: number;
+  status: string;
+  transfer_content: string;
+  amount?: number;
+  confirmed_at?: string | null;
+};
+
 export async function getPlatformConnectionForTelegramUser(telegramUserId: number) {
   const { data, error } = await db()
     .from("platform_telegram_connections")
@@ -190,6 +247,189 @@ export async function getPlatformConnectionRecentAudit(connection: PlatformTeleg
   }));
 }
 
+export async function listPendingSubscriptionPayments(limit = 5): Promise<PlatformSubscriptionPayment[]> {
+  const { data, error } = await db()
+    .from("subscription_payment_logs")
+    .select("id,restaurant_id,plan_id,amount,months,transfer_content,created_at,restaurant:restaurants(name,slug),plan:saas_plans(name,code,monthly_price)")
+    .eq("status", "waiting_confirm")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (isMissingOperationalSchema(error)) return [];
+  if (error) throw error;
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const restaurant = firstOrNull(row.restaurant as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+    const plan = firstOrNull(row.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+    return {
+      id: String(row.id),
+      restaurantId: String(row.restaurant_id),
+      restaurantName: restaurant?.name ? String(restaurant.name) : "Không rõ quán",
+      restaurantSlug: restaurant?.slug ? String(restaurant.slug) : "",
+      planName: plan?.name ? String(plan.name) : "Gói SaaS",
+      amount: Number(row.amount ?? 0),
+      months: Number(row.months ?? 1),
+      transferContent: String(row.transfer_content ?? ""),
+      createdAt: String(row.created_at)
+    };
+  });
+}
+
+export async function listPlatformTenantActions(limit = 6): Promise<PlatformTenantAction[]> {
+  const [restaurantsResult, subscriptionsResult] = await Promise.all([
+    db()
+      .from("restaurants")
+      .select("id,name,slug,platform_status,suspended_reason,deleted_at,created_at")
+      .order("created_at", { ascending: false })
+      .limit(60),
+    db()
+      .from("restaurant_subscriptions")
+      .select("id,restaurant_id,plan_id,status,current_period_end,trial_ends_at,created_at,plan:saas_plans(name,code,monthly_price)")
+      .order("created_at", { ascending: false })
+      .limit(200)
+  ]);
+
+  if (isMissingOperationalSchema(restaurantsResult.error) || isMissingOperationalSchema(subscriptionsResult.error)) return [];
+  if (restaurantsResult.error) throw restaurantsResult.error;
+  if (subscriptionsResult.error) throw subscriptionsResult.error;
+
+  const subscriptionsByRestaurant = new Map<string, Record<string, unknown>>();
+  for (const subscription of subscriptionsResult.data ?? []) {
+    const restaurantId = String((subscription as Record<string, unknown>).restaurant_id ?? "");
+    if (restaurantId && !subscriptionsByRestaurant.has(restaurantId)) subscriptionsByRestaurant.set(restaurantId, subscription as Record<string, unknown>);
+  }
+
+  return (restaurantsResult.data ?? [])
+    .map((restaurant: Record<string, unknown>) => {
+      const subscription = subscriptionsByRestaurant.get(String(restaurant.id));
+      const plan = firstOrNull(subscription?.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+      const platformStatus = normalizePlatformStatus(restaurant.platform_status);
+      const subscriptionStatus = subscription?.status ? String(subscription.status) : null;
+      const riskFlags = [
+        !subscription ? "chưa có gói" : null,
+        subscriptionStatus === "pending_payment" || subscriptionStatus === "past_due" ? "cần thanh toán" : null,
+        subscriptionStatus === "trialing" && daysUntil(subscription?.trial_ends_at) <= 3 ? "trial sắp hết" : null,
+        platformStatus !== "active" ? "đang bị hạn chế" : null
+      ].filter(Boolean) as string[];
+      return {
+        id: String(restaurant.id),
+        name: String(restaurant.name ?? "Không rõ quán"),
+        slug: String(restaurant.slug ?? ""),
+        platformStatus,
+        subscriptionStatus,
+        planName: plan?.name ? String(plan.name) : "Chưa có gói",
+        riskFlags,
+        createdAt: String(restaurant.created_at)
+      };
+    })
+    .sort((a: PlatformTenantAction, b: PlatformTenantAction) => tenantPriority(b) - tenantPriority(a))
+    .slice(0, limit);
+}
+
+export async function confirmPlatformSubscriptionPayment(paymentId: string, actor: string) {
+  const payment = await getLegacyPayment(paymentId);
+  if (payment.status !== "waiting_confirm") throw new Error("platform_payment_not_waiting_confirm");
+  if (!payment.subscription_id) throw new Error("platform_payment_subscription_missing");
+
+  const subscription = await getLegacySubscription(payment.subscription_id);
+  const currentPlan = await getLegacyPlan(subscription.plan_id);
+  const targetPlan = await getLegacyPlan(payment.plan_id ?? subscription.plan_id);
+  const transition = computeConfirmedSubscriptionTransition({ subscription, payment, currentPlan, targetPlan });
+
+  const { error } = await db().rpc("apply_subscription_payment_confirmation", {
+    p_payment_id: payment.id,
+    p_confirmed_by: actor,
+    p_next_plan_id: transition.planId,
+    p_current_period_start: transition.currentPeriodStart,
+    p_current_period_end: transition.currentPeriodEnd,
+    p_subscription_metadata: transition.metadata
+  });
+  if (error) throw error;
+
+  await writePlatformAuditLog({
+    actor,
+    action: "subscription_payment_confirmed_telegram",
+    targetType: "subscription_payment",
+    targetId: payment.id,
+    metadata: {
+      restaurantId: payment.restaurant_id,
+      subscriptionId: subscription.id,
+      previousPlanId: subscription.plan_id,
+      nextPlanId: transition.planId,
+      currentPeriodEnd: transition.currentPeriodEnd
+    }
+  });
+  await mirrorLegacyPaymentFinalStateToBillingV2(payment.id);
+  return { paymentId: payment.id, restaurantId: payment.restaurant_id, currentPeriodEnd: transition.currentPeriodEnd };
+}
+
+export async function rejectPlatformSubscriptionPayment(paymentId: string, actor: string, reason = "Từ chối từ LogiVN DevOps Bot") {
+  const { data, error } = await db()
+    .from("subscription_payment_logs")
+    .update({
+      status: "rejected",
+      rejected_at: new Date().toISOString(),
+      rejected_reason: reason
+    })
+    .eq("id", paymentId)
+    .eq("status", "waiting_confirm")
+    .select("id,restaurant_id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_payment_not_waiting_confirm");
+
+  await writePlatformAuditLog({
+    actor,
+    action: "subscription_payment_rejected_telegram",
+    targetType: "subscription_payment",
+    targetId: paymentId,
+    metadata: { restaurantId: data.restaurant_id, reason }
+  });
+  await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
+  return { paymentId, restaurantId: String(data.restaurant_id) };
+}
+
+export async function updatePlatformTenantStatusFromTelegram({
+  restaurantId,
+  status,
+  reason,
+  actor
+}: {
+  restaurantId: string;
+  status: "active" | "suspended" | "deleted";
+  reason?: string;
+  actor: string;
+}) {
+  const now = new Date().toISOString();
+  const update =
+    status === "active"
+      ? { platform_status: "active", suspended_at: null, suspended_reason: null, deleted_at: null }
+      : status === "suspended"
+        ? { platform_status: "suspended", suspended_at: now, suspended_reason: reason || "Tạm dừng từ LogiVN DevOps Bot" }
+        : { platform_status: "deleted", deleted_at: now, suspended_reason: reason || "Xóa mềm từ LogiVN DevOps Bot" };
+
+  const { data, error } = await db().from("restaurants").update(update).eq("id", restaurantId).select("id,name,slug").maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_tenant_not_found");
+
+  if (status === "suspended") {
+    const { error: subscriptionError } = await db()
+      .from("restaurant_subscriptions")
+      .update({ status: "suspended", suspended_at: now, updated_at: now })
+      .eq("restaurant_id", restaurantId)
+      .in("status", ["trialing", "pending_payment", "active", "past_due"]);
+    if (subscriptionError && !isMissingOperationalSchema(subscriptionError)) throw subscriptionError;
+  }
+
+  await writePlatformAuditLog({
+    actor,
+    action: "tenant_status_updated_telegram",
+    targetType: "restaurant",
+    targetId: restaurantId,
+    metadata: { status, reason: reason || null }
+  });
+  return { id: String(data.id), name: String(data.name ?? "Không rõ quán"), slug: String(data.slug ?? "") };
+}
+
 export async function createPlatformSession(input: PlatformSessionInput) {
   const token = createSignedToken(sessionSecret());
   const expiresAt = new Date(Date.now() + sessionTtlSeconds(input.ttlSeconds) * 1000).toISOString();
@@ -299,10 +539,270 @@ async function consumePlatformSession(id: string) {
 }
 
 function defaultScopes(role: PlatformTelegramRole) {
-  if (role === "SUPPORT") return ["infra.read", "queues.read", "incidents.read", "support.grants.request"];
-  if (role === "SRE") return ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read"];
-  if (role === "ADMIN") return ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read"];
+  if (role === "SUPPORT") return ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"];
+  if (role === "SRE") return ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.manage"];
+  if (role === "ADMIN") return ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.manage"];
   return ["infra.read", "queues.read", "incidents.read", "deploy.read"];
+}
+
+async function getLegacyPayment(paymentId: string): Promise<LegacyPaymentSnapshot> {
+  const { data, error } = await db().from("subscription_payment_logs").select("*").eq("id", paymentId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_payment_not_found");
+  return normalizeLegacyPayment(data as Record<string, unknown>);
+}
+
+async function getLegacySubscription(subscriptionId: string): Promise<LegacySubscriptionSnapshot> {
+  const { data, error } = await db().from("restaurant_subscriptions").select("*").eq("id", subscriptionId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_subscription_not_found");
+  return normalizeLegacySubscription(data as Record<string, unknown>);
+}
+
+async function getLegacyPlan(planId: string): Promise<LegacyPlanSnapshot> {
+  const { data, error } = await db().from("saas_plans").select("id,code,name,monthly_price").eq("id", planId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("platform_plan_not_found");
+  return {
+    id: String(data.id),
+    code: String(data.code ?? "pro"),
+    name: String(data.name ?? "LogiVN"),
+    monthly_price: Number(data.monthly_price ?? 0)
+  };
+}
+
+function normalizeLegacyPayment(row: Record<string, unknown>): LegacyPaymentSnapshot {
+  return {
+    id: String(row.id),
+    restaurant_id: String(row.restaurant_id),
+    subscription_id: row.subscription_id ? String(row.subscription_id) : null,
+    plan_id: row.plan_id ? String(row.plan_id) : null,
+    months: Number(row.months ?? 1),
+    status: String(row.status ?? "unknown"),
+    transfer_content: String(row.transfer_content ?? ""),
+    amount: Number(row.amount ?? 0),
+    confirmed_at: row.confirmed_at ? String(row.confirmed_at) : null
+  };
+}
+
+function normalizeLegacySubscription(row: Record<string, unknown>): LegacySubscriptionSnapshot {
+  return {
+    id: String(row.id),
+    restaurant_id: String(row.restaurant_id),
+    plan_id: String(row.plan_id),
+    status: normalizeSubscriptionStatus(row.status),
+    current_period_start: row.current_period_start ? String(row.current_period_start) : null,
+    current_period_end: row.current_period_end ? String(row.current_period_end) : null,
+    trial_started_at: row.trial_started_at ? String(row.trial_started_at) : null,
+    trial_ends_at: row.trial_ends_at ? String(row.trial_ends_at) : null,
+    created_at: row.created_at ? String(row.created_at) : undefined,
+    metadata: row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? (row.metadata as Record<string, unknown>) : {}
+  };
+}
+
+function normalizeSubscriptionStatus(value: unknown): LegacySubscriptionStatus {
+  if (value === "trialing" || value === "pending_payment" || value === "active" || value === "past_due" || value === "suspended" || value === "cancelled" || value === "expired") return value;
+  return "expired";
+}
+
+function normalizePlatformStatus(value: unknown): "active" | "suspended" | "deleted" {
+  if (value === "suspended" || value === "deleted") return value;
+  return "active";
+}
+
+function tenantPriority(tenant: PlatformTenantAction) {
+  let score = tenant.riskFlags.length * 10;
+  if (tenant.platformStatus !== "active") score += 8;
+  if (tenant.subscriptionStatus === "pending_payment" || tenant.subscriptionStatus === "past_due") score += 6;
+  if (!tenant.subscriptionStatus) score += 4;
+  return score;
+}
+
+function daysUntil(value: unknown) {
+  if (!value) return 999;
+  const time = new Date(String(value)).getTime();
+  if (!Number.isFinite(time)) return 999;
+  return Math.ceil((time - Date.now()) / 86_400_000);
+}
+
+function addPreciseDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 86_400_000);
+}
+
+function addMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+}
+
+function getSubscriptionWindowEnd(subscription: Pick<LegacySubscriptionSnapshot, "current_period_end" | "trial_ends_at">) {
+  return subscription.current_period_end || subscription.trial_ends_at;
+}
+
+function isSubscriptionUsable(subscription: Pick<LegacySubscriptionSnapshot, "status" | "current_period_end" | "trial_ends_at">, now = new Date()) {
+  const accessEnd = getSubscriptionWindowEnd(subscription);
+  const hasCurrentWindow = accessEnd ? new Date(accessEnd).getTime() >= now.getTime() : true;
+  if (subscription.status === "active" || subscription.status === "trialing" || subscription.status === "cancelled") return hasCurrentWindow;
+  if (subscription.status === "pending_payment") return accessEnd ? new Date(accessEnd).getTime() >= now.getTime() : false;
+  if (subscription.status !== "past_due" || !subscription.current_period_end) return false;
+  const periodEnd = new Date(subscription.current_period_end).getTime();
+  const graceEnd = addPreciseDays(new Date(subscription.current_period_end), 7).getTime();
+  const nowTime = now.getTime();
+  return periodEnd < nowTime && nowTime <= graceEnd;
+}
+
+function computeConfirmedSubscriptionTransition({
+  subscription,
+  payment,
+  currentPlan,
+  targetPlan,
+  now = new Date()
+}: {
+  subscription: LegacySubscriptionSnapshot;
+  payment: LegacyPaymentSnapshot;
+  currentPlan: LegacyPlanSnapshot;
+  targetPlan: LegacyPlanSnapshot;
+  now?: Date;
+}) {
+  const billingAction = targetPlan.id === currentPlan.id ? "renew" : targetPlan.monthly_price > currentPlan.monthly_price ? "upgrade" : "downgrade";
+  const nowIso = now.toISOString();
+  const currentWindowEnd = subscription.current_period_end ? new Date(subscription.current_period_end) : null;
+  const hasCurrentWindow = Boolean(currentWindowEnd && currentWindowEnd.getTime() > now.getTime());
+  const months = Math.max(1, Number(payment.months) || 1);
+  const metadata = subscription.metadata ?? {};
+
+  if (billingAction === "downgrade" && isSubscriptionUsable(subscription, now)) {
+    throw new Error("platform_downgrade_requires_end_of_cycle");
+  }
+
+  if (billingAction === "renew") {
+    const basePeriod = hasCurrentWindow && currentWindowEnd ? currentWindowEnd : now;
+    return {
+      planId: currentPlan.id,
+      currentPeriodStart: subscription.current_period_start ?? nowIso,
+      currentPeriodEnd: addMonths(basePeriod, months).toISOString(),
+      metadata: { ...metadata, billingAction, lastPaymentId: payment.id, lastPaymentConfirmedAt: nowIso }
+    };
+  }
+
+  if (!isSubscriptionUsable(subscription, now) || subscription.status === "trialing") {
+    return {
+      planId: targetPlan.id,
+      currentPeriodStart: nowIso,
+      currentPeriodEnd: addMonths(now, months).toISOString(),
+      metadata: {
+        ...metadata,
+        billingAction,
+        lastPaymentId: payment.id,
+        lastPaymentConfirmedAt: nowIso,
+        switchedFromPlanId: subscription.plan_id,
+        switchedToPlanId: targetPlan.id,
+        ...(subscription.status === "trialing" ? { trialConvertedAt: nowIso } : {})
+      }
+    };
+  }
+
+  const activeWindowEnd = currentWindowEnd ?? now;
+  const remainingDays = Math.max(0, (activeWindowEnd.getTime() - now.getTime()) / 86_400_000);
+  const convertedCreditDays = currentPlan.monthly_price > 0 && targetPlan.monthly_price > 0
+    ? Math.max(0, Math.floor((remainingDays * currentPlan.monthly_price) / targetPlan.monthly_price))
+    : 0;
+  return {
+    planId: targetPlan.id,
+    currentPeriodStart: nowIso,
+    currentPeriodEnd: addPreciseDays(addMonths(now, months), convertedCreditDays).toISOString(),
+    metadata: {
+      ...metadata,
+      billingAction,
+      lastPaymentId: payment.id,
+      lastPaymentConfirmedAt: nowIso,
+      switchedFromPlanId: subscription.plan_id,
+      switchedToPlanId: targetPlan.id,
+      convertedCreditDays,
+      convertedFromRemainingDays: Math.ceil(remainingDays)
+    }
+  };
+}
+
+async function mirrorLegacyPaymentFinalStateToBillingV2(paymentId: string) {
+  try {
+    const payment = await getLegacyPayment(paymentId);
+    if (!payment.subscription_id) return;
+    const subscription = await getLegacySubscription(payment.subscription_id);
+    const legacyPlan = await getLegacyPlan(subscription.plan_id);
+    const { data: v2Subscription, error: v2SubscriptionError } = await db()
+      .from("subscriptions")
+      .select("id")
+      .eq("restaurant_id", payment.restaurant_id)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (isMissingOperationalSchema(v2SubscriptionError) || !v2Subscription?.id) return;
+    if (v2SubscriptionError) throw v2SubscriptionError;
+
+    const { data: v2Plan, error: v2PlanError } = await db()
+      .from("subscription_plans")
+      .select("id")
+      .eq("code", normalizeBillingPlanCode(legacyPlan.code))
+      .maybeSingle();
+    if (isMissingOperationalSchema(v2PlanError)) return;
+    if (v2PlanError) throw v2PlanError;
+
+    const { data: v2Payment, error: v2PaymentError } = await db()
+      .from("payments")
+      .select("id,invoice_id")
+      .eq("transfer_code", payment.transfer_content)
+      .maybeSingle();
+    if (isMissingOperationalSchema(v2PaymentError) || !v2Payment?.id) return;
+    if (v2PaymentError) throw v2PaymentError;
+
+    const paymentStatus = payment.status === "confirmed" ? "confirmed" : payment.status === "rejected" ? "failed" : payment.status === "expired" ? "expired" : "waiting_confirmation";
+    const now = new Date().toISOString();
+
+    await db().from("payments").update({ status: paymentStatus, confirmed_at: payment.confirmed_at ?? null, updated_at: now }).eq("id", v2Payment.id);
+    await db().from("billing_payment_logs").insert({
+      payment_id: v2Payment.id,
+      event_type: paymentStatus === "confirmed" ? "payment_confirmed" : "payment_closed",
+      actor_type: "system",
+      payload: { source: "platform_telegram_bridge", legacyPaymentId: payment.id, status: payment.status }
+    });
+    if (v2Payment.invoice_id) {
+      await db().from("invoices").update({ status: paymentStatus === "confirmed" ? "paid" : "failed", paid_at: payment.confirmed_at ?? null, updated_at: now }).eq("id", v2Payment.invoice_id);
+    }
+    await db()
+      .from("subscriptions")
+      .update({
+        plan_id: v2Plan?.id ?? undefined,
+        status: paymentStatus === "confirmed" ? "active" : undefined,
+        current_period_start: subscription.current_period_start,
+        current_period_end: subscription.current_period_end,
+        updated_at: now
+      })
+      .eq("id", v2Subscription.id);
+  } catch (error) {
+    if (readEnv("NODE_ENV") === "production") throw error;
+  }
+}
+
+async function writePlatformAuditLog(input: { actor: string; action: string; targetType: string; targetId?: string | null; metadata?: Record<string, unknown> }) {
+  const { error } = await db().from("platform_audit_logs").insert({
+    actor: input.actor,
+    action: input.action,
+    target_type: input.targetType,
+    target_id: input.targetId ?? null,
+    metadata: input.metadata ?? {}
+  });
+  if (error && !isMissingOperationalSchema(error)) throw error;
+}
+
+function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+function normalizeBillingPlanCode(value: string) {
+  return value === "premium" ? "premium" : "pro";
 }
 
 function isMissingPlatformTelegramSchema(error: { code?: string; message?: string } | null | undefined) {
@@ -314,6 +814,19 @@ function isMissingPlatformTelegramSchema(error: { code?: string; message?: strin
     error.code === "PGRST204" ||
     error.code === "PGRST205" ||
     /platform_telegram|platform_support_access_grants/i.test(error.message ?? "")
+  );
+}
+
+function isMissingOperationalSchema(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return (
+    isMissingPlatformTelegramSchema(error) ||
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST202" ||
+    error.code === "PGRST204" ||
+    error.code === "PGRST205" ||
+    /subscription_|restaurant|payment|invoice|billing_|saas_plans|platform_audit_logs/i.test(error.message ?? "")
   );
 }
 

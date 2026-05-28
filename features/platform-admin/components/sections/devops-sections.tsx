@@ -42,6 +42,7 @@ import {
   Zap
 } from "lucide-react";
 import { Billing } from "@/features/platform-admin/components/sections/billing-section";
+import { refreshPlatformAdminAction, requestPlatformOperationAction, runPlatformCronJobAction } from "@/features/platform-admin/actions";
 import { ContentControl } from "@/features/platform-admin/components/sections/content-section";
 import { GovernanceControl } from "@/features/platform-admin/components/sections/governance-section";
 import { MapsControl } from "@/features/platform-admin/components/sections/maps-section";
@@ -124,10 +125,24 @@ function ProgressTrack({ value, tone = "info" }: { value: number; tone?: Tone })
   );
 }
 
-function ControlButton({ icon: Icon, label, danger = false }: { icon: typeof Activity; label: string; danger?: boolean }) {
+type PlatformOperation =
+  | "ack_alert"
+  | "clear_cache"
+  | "create_ai_summary"
+  | "create_feature_flag_draft"
+  | "pause_queue"
+  | "replay_queue"
+  | "request_rollback"
+  | "resolve_incident"
+  | "restart_workers"
+  | "run_smoke_check";
+
+type PlatformCronJob = "reports" | "ai-ops" | "reservations-expire" | "subscriptions";
+
+function ControlButton({ icon: Icon, label, danger = false, type = "button" }: { icon: typeof Activity; label: string; danger?: boolean; type?: "button" | "submit" }) {
   return (
     <button
-      type="button"
+      type={type}
       className={cn(
         "inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition",
         danger
@@ -138,6 +153,51 @@ function ControlButton({ icon: Icon, label, danger = false }: { icon: typeof Act
       <Icon size={14} />
       {label}
     </button>
+  );
+}
+
+function OperationForm({
+  operation,
+  targetType,
+  targetId,
+  label,
+  icon,
+  danger = false,
+  reason
+}: {
+  operation: PlatformOperation;
+  targetType: string;
+  targetId?: string | null;
+  label: string;
+  icon: typeof Activity;
+  danger?: boolean;
+  reason?: string;
+}) {
+  return (
+    <form action={requestPlatformOperationAction}>
+      <input type="hidden" name="operation" value={operation} />
+      <input type="hidden" name="targetType" value={targetType} />
+      {targetId ? <input type="hidden" name="targetId" value={targetId} /> : null}
+      {reason ? <input type="hidden" name="reason" value={reason} /> : null}
+      <ControlButton icon={icon} label={label} danger={danger} type="submit" />
+    </form>
+  );
+}
+
+function CronRunForm({ jobKey, label, icon = PlayCircle }: { jobKey: PlatformCronJob; label: string; icon?: typeof Activity }) {
+  return (
+    <form action={runPlatformCronJobAction}>
+      <input type="hidden" name="jobKey" value={jobKey} />
+      <ControlButton icon={icon} label={label} type="submit" />
+    </form>
+  );
+}
+
+function RefreshForm({ label = "Làm mới", icon = RefreshCw }: { label?: string; icon?: typeof Activity }) {
+  return (
+    <form action={refreshPlatformAdminAction}>
+      <ControlButton icon={icon} label={label} type="submit" />
+    </form>
   );
 }
 
@@ -222,7 +282,7 @@ export function SystemMap({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Degraded nodes" value={formatNumber(warningCount)} detail="Cần cấu hình hoặc đang attention" icon={AlertTriangle} tone={warningCount ? "warning" : "good"} />
       </div>
 
-      <SectionCard title="Topology realtime">
+      <SectionCard title="Topology realtime" action={<div className="flex flex-wrap gap-2"><RefreshForm label="Đọc lại" /><OperationForm operation="run_smoke_check" targetType="system_map" targetId="admin.logivn.com" label="Smoke" icon={CheckCircle2} /></div>}>
         <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
           <div className="relative overflow-hidden rounded-lg border border-white/10 bg-[#0B1224]/78 p-4">
             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:42px_42px]" />
@@ -241,6 +301,14 @@ export function SystemMap({ snapshot }: { snapshot: Snapshot }) {
                     <div className="mt-3 flex flex-wrap gap-1">
                       {node.deps.map((dep) => <span key={dep} className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] font-semibold text-slate-400">{dep}</span>)}
                     </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {node.key === "workers" ? <CronRunForm jobKey="ai-ops" label="Chạy" icon={PlayCircle} /> : null}
+                      {node.key === "ai" ? <Link href="/ai" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-sky-400/30 hover:bg-sky-400/10 hover:text-white"><KeyRound size={14} />Key</Link> : null}
+                      {node.key === "payments" ? <Link href="/payments" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-sky-400/30 hover:bg-sky-400/10 hover:text-white"><CreditCard size={14} />Xử lý</Link> : null}
+                      {node.key === "redis" ? <OperationForm operation="clear_cache" targetType="redis" targetId="platform:snapshot" label="Clear" icon={RotateCcw} /> : null}
+                      {node.key === "telegram" ? <Link href="/telegram" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-sky-400/30 hover:bg-sky-400/10 hover:text-white"><RadioTower size={14} />Ops</Link> : null}
+                      {node.key === "api" || node.key === "frontend" ? <Link href="/logs" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-sky-400/30 hover:bg-sky-400/10 hover:text-white"><TerminalSquare size={14} />Logs</Link> : null}
+                    </div>
                   </div>
                 );
               })}
@@ -253,7 +321,12 @@ export function SystemMap({ snapshot }: { snapshot: Snapshot }) {
                   <p className="text-sm font-semibold text-amber-100">{node.name}</p>
                   <StatusPill label={node.detail} tone={node.tone} />
                 </div>
-                <p className="mt-2 text-xs leading-5 text-amber-200/80">Cần bổ sung telemetry hoặc cấu hình để node đạt trạng thái operational.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link href={node.key === "ai" ? "/ai" : node.key === "payments" ? "/payments" : node.key === "redis" ? "/redis" : "/services"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-amber-300/25 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 hover:bg-amber-300/15">
+                    <ArrowRight size={14} />Mở
+                  </Link>
+                  <OperationForm operation="ack_alert" targetType="system_node" targetId={node.key} label="Ack" icon={CheckCircle2} />
+                </div>
               </div>
             ))}
             {!warningCount ? <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm font-semibold text-emerald-100">Tất cả node chính đang ổn định.</div> : null}
@@ -305,7 +378,7 @@ export function DeploymentCenter({ snapshot }: { snapshot: Snapshot }) {
           </div>
         </SectionCard>
 
-        <SectionCard title="Release checks" action={<div className="flex gap-2"><ControlButton icon={RefreshCw} label="Smoke" /><ControlButton icon={RotateCcw} label="Rollback" danger /></div>}>
+        <SectionCard title="Release checks" action={<div className="flex flex-wrap gap-2"><OperationForm operation="run_smoke_check" targetType="deployment" targetId={snapshot.environment.commit} label="Smoke" icon={RefreshCw} /><OperationForm operation="request_rollback" targetType="deployment" targetId={snapshot.environment.commit} label="Yêu cầu rollback" icon={RotateCcw} danger /></div>}>
           <div className="grid gap-3 md:grid-cols-2">
             {checks.map((check) => (
               <div key={check.label} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
@@ -314,6 +387,12 @@ export function DeploymentCenter({ snapshot }: { snapshot: Snapshot }) {
                   <StatusPill label={moduleStatusLabel[check.status] ?? check.status} tone={moduleTone(check.status)} />
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-400">{check.detail}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {check.label === "Migration drift" ? <Link href="/logs" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.08]"><TerminalSquare size={14} />Logs</Link> : null}
+                  {check.label === "Billing cutover" ? <Link href="/payments" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.08]"><CreditCard size={14} />Reconcile</Link> : null}
+                  {check.label === "Smoke admin domain" ? <OperationForm operation="run_smoke_check" targetType="deployment_check" targetId="admin-domain" label="Chạy" icon={PlayCircle} /> : null}
+                  {check.label === "Typecheck" ? <OperationForm operation="run_smoke_check" targetType="deployment_check" targetId="typecheck" label="Ghi check" icon={CheckCircle2} /> : null}
+                </div>
               </div>
             ))}
           </div>
@@ -335,7 +414,7 @@ export function ServicesCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Cron duration" value={duration(avgCronDuration)} detail="Trung bình lần chạy gần nhất" icon={Clock3} tone="neutral" />
         <MetricCard label="Warnings" value={formatNumber(snapshot.metrics.integrationWarnings)} detail="Secret hoặc provider chưa đủ" icon={AlertTriangle} tone={snapshot.metrics.integrationWarnings ? "warning" : "good"} />
       </div>
-      <SectionCard title="Service health grid">
+      <SectionCard title="Service health grid" action={<div className="flex flex-wrap gap-2"><OperationForm operation="restart_workers" targetType="worker_pool" targetId="platform" label="Restart workers" icon={RefreshCw} danger /><Link href="/logs" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.08]"><TerminalSquare size={14} />Logs</Link></div>}>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {services.map((service) => (
             <div key={service.key} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
@@ -352,6 +431,11 @@ export function ServicesCenter({ snapshot }: { snapshot: Snapshot }) {
                 <div className="rounded-lg bg-white/[0.04] p-2"><p className="text-slate-500">Audit</p><p className="mt-1 font-semibold text-slate-200">{service.audit}</p></div>
               </div>
               <p className="mt-3 line-clamp-2 text-sm leading-6 text-slate-400">{service.nextStep}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <OperationForm operation="run_smoke_check" targetType="service" targetId={service.key} label="Check" icon={CheckCircle2} />
+                {service.kind === "automation" ? <CronRunForm jobKey={service.key === "ai-ops" ? "ai-ops" : service.key === "billing" ? "subscriptions" : "reports"} label="Run" icon={PlayCircle} /> : null}
+                <Link href="/logs" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 transition hover:border-sky-400/30 hover:bg-sky-400/10 hover:text-white"><TerminalSquare size={14} />Trace</Link>
+              </div>
             </div>
           ))}
         </div>
@@ -383,7 +467,7 @@ export function QueueCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Retrying" value={formatNumber(totals.retrying)} detail="Đang retry" icon={ListRestart} tone={attentionTone(totals.retrying)} />
       </div>
 
-      <SectionCard title="BullMQ operations" action={<div className="flex flex-wrap gap-2"><ControlButton icon={ListRestart} label="Retry failed" /><ControlButton icon={PauseCircle} label="Pause queue" /><ControlButton icon={RotateCcw} label="Replay events" /></div>}>
+      <SectionCard title="BullMQ operations" action={<div className="flex flex-wrap gap-2"><CronRunForm jobKey="ai-ops" label="Chạy AI Ops" icon={Bot} /><CronRunForm jobKey="subscriptions" label="Chạy billing" icon={CreditCard} /><OperationForm operation="pause_queue" targetType="queue" targetId="all" label="Pause" icon={PauseCircle} danger /></div>}>
         <div className="grid gap-3 xl:grid-cols-3">
           {queues.map((queue) => (
             <div key={queue.key} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
@@ -399,6 +483,12 @@ export function QueueCenter({ snapshot }: { snapshot: Snapshot }) {
                 <span>delayed {formatNumber(queue.delayed)}</span>
                 <span>done {formatNumber(queue.completed)}</span>
                 <span>retry {formatNumber(queue.retrying)}</span>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {queue.key === "ai-ops" ? <CronRunForm jobKey="ai-ops" label="Run" icon={PlayCircle} /> : null}
+                {queue.key === "billing" ? <CronRunForm jobKey="subscriptions" label="Reconcile" icon={CreditCard} /> : null}
+                {queue.key === "cron" ? <CronRunForm jobKey="reports" label="Reports" icon={RefreshCw} /> : null}
+                <OperationForm operation="replay_queue" targetType="queue" targetId={queue.key} label="Replay" icon={RotateCcw} />
               </div>
             </div>
           ))}
@@ -426,12 +516,12 @@ export function RedisCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Ops/sec" value={formatNumber(snapshot.mapControl.cache.events + snapshot.aiControl.requests)} detail="Tín hiệu cache + AI 24h" icon={Activity} tone="info" />
         <MetricCard label="Connections" value={redis?.configured ? `${redis.configured}/${redis.total}` : "0"} detail="Env Redis server-side" icon={Wifi} tone={moduleTone(redis?.status ?? "needs_config")} />
       </div>
-      <SectionCard title="Keyspace & slow query monitor">
+      <SectionCard title="Keyspace & slow query monitor" action={<div className="flex flex-wrap gap-2"><OperationForm operation="clear_cache" targetType="redis" targetId="platform:snapshot" label="Clear cache" icon={RotateCcw} /><RefreshForm label="Ping" icon={Wifi} /></div>}>
         <div className="grid gap-3 xl:grid-cols-[1fr_320px]">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-left text-sm">
               <thead className="sticky top-0 border-b border-white/10 bg-[#0B1020] text-xs uppercase tracking-[0.12em] text-slate-500">
-                <tr><th className="px-3 py-3">Namespace</th><th className="px-3 py-3">Keys/events</th><th className="px-3 py-3">TTL</th><th className="px-3 py-3">Hit ratio</th><th className="px-3 py-3">Trạng thái</th></tr>
+                <tr><th className="px-3 py-3">Namespace</th><th className="px-3 py-3">Keys/events</th><th className="px-3 py-3">TTL</th><th className="px-3 py-3">Hit ratio</th><th className="px-3 py-3">Trạng thái</th><th className="px-3 py-3 text-right">Thao tác</th></tr>
               </thead>
               <tbody className="divide-y divide-white/10">
                 {keyspaces.map((space) => (
@@ -441,6 +531,7 @@ export function RedisCenter({ snapshot }: { snapshot: Snapshot }) {
                     <td className="px-3 py-3 text-slate-400">{space.ttl}</td>
                     <td className="px-3 py-3"><ProgressTrack value={space.hit} tone={space.hit > 60 ? "good" : "warning"} /></td>
                     <td className="px-3 py-3"><StatusPill label={space.hit > 0 ? "quan sát" : "cần telemetry"} tone={space.hit > 0 ? "good" : "warning"} /></td>
+                    <td className="px-3 py-3"><div className="flex justify-end"><OperationForm operation="clear_cache" targetType="redis_namespace" targetId={space.name} label="Clear" icon={RotateCcw} /></div></td>
                   </tr>
                 ))}
               </tbody>
@@ -490,18 +581,19 @@ export function LogsPlatform({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Audit trail" value={formatNumber(snapshot.auditLogs.length)} detail="Hành động platform gần nhất" icon={ShieldCheck} tone="good" />
         <MetricCard label="Stream state" value="Live" detail="No-store + snapshot refresh" icon={Wifi} tone="good" />
       </div>
-      <SectionCard title="Streaming logs" action={<div className="flex gap-2"><ControlButton icon={SlidersHorizontal} label="Filter" /><ControlButton icon={RefreshCw} label="Tail" /></div>}>
+      <SectionCard title="Streaming logs" action={<div className="flex flex-wrap gap-2"><RefreshForm label="Tail" icon={RefreshCw} /><OperationForm operation="ack_alert" targetType="log_stream" targetId="current" label="Ack lỗi" icon={CheckCircle2} /></div>}>
         <div className="overflow-hidden rounded-lg border border-white/10 bg-black/40 font-mono text-xs">
           <div className="flex items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-2 text-slate-500">
             <LiveDot tone="good" /> log stream · production · structured
           </div>
           <div className="max-h-[520px] overflow-y-auto p-3">
             {logs.map((log) => (
-              <div key={log.id} className="grid gap-2 border-b border-white/5 py-2 md:grid-cols-[156px_70px_210px_1fr]">
+              <div key={log.id} className="grid gap-2 border-b border-white/5 py-2 md:grid-cols-[156px_70px_210px_1fr_88px]">
                 <span className="text-slate-600">{formatDateTime(log.time)}</span>
                 <span className={cn("font-semibold", log.level === "error" ? "text-red-300" : log.level === "warn" ? "text-amber-300" : "text-sky-300")}>{log.level}</span>
                 <span className="truncate text-slate-500">{log.source}</span>
                 <span className="break-words text-slate-300">{log.message}</span>
+                <OperationForm operation="ack_alert" targetType="log" targetId={log.id} label="Ack" icon={CheckCircle2} />
               </div>
             ))}
             {!logs.length ? <p className="py-8 text-center text-slate-500">Chưa có log trong snapshot hiện tại.</p> : null}
@@ -527,7 +619,7 @@ export function AlertCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Acknowledged" value="0" detail="Chưa nối ack workflow" icon={CheckCircle2} tone="neutral" />
         <MetricCard label="AI summaries" value={formatNumber(snapshot.aiControl.morningBriefs.runs)} detail="Morning Brief 7 ngày" icon={Bot} tone="info" />
       </div>
-      <SectionCard title="Operational alerts">
+      <SectionCard title="Operational alerts" action={<div className="flex flex-wrap gap-2"><OperationForm operation="create_ai_summary" targetType="alerts" targetId="open" label="AI summary" icon={Bot} /><RefreshForm label="Recheck" icon={RefreshCw} /></div>}>
         <div className="grid gap-3">
           {alerts.slice(0, 16).map((alert) => (
             <div key={alert.id} className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.035] p-4 xl:grid-cols-[180px_1fr_220px]">
@@ -538,7 +630,7 @@ export function AlertCenter({ snapshot }: { snapshot: Snapshot }) {
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <StatusPill label={alert.source} tone="neutral" />
-                <ControlButton icon={CheckCircle2} label="Ack" />
+                <OperationForm operation="ack_alert" targetType="alert" targetId={alert.id} label="Ack" icon={CheckCircle2} />
               </div>
             </div>
           ))}
@@ -563,15 +655,14 @@ export function IncidentCenter({ snapshot }: { snapshot: Snapshot }) {
       <div className="grid gap-3 md:grid-cols-4">
         {impact.map((item) => <MetricCard key={item.label} label={item.label} value={formatNumber(item.value)} detail="Service impact" icon={Siren} tone={item.tone} />)}
       </div>
-      <SectionCard title="War-room sự cố realtime" action={<ControlButton icon={Bot} label="Tạo AI summary" />}>
+      <SectionCard title="War-room sự cố realtime" action={<OperationForm operation="create_ai_summary" targetType="incident" targetId="current" label="Tạo AI summary" icon={Bot} />}>
         <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
           <div className={cn("rounded-lg border p-4", incidentOpen ? "border-amber-400/25 bg-amber-400/10" : "border-emerald-400/25 bg-emerald-400/10")}>
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-semibold text-slate-100">{incidentOpen ? "Sự cố/attention đang mở" : "Không có sự cố đang mở"}</p>
               <StatusPill label={incidentOpen ? "investigating" : "resolved"} tone={incidentOpen ? "warning" : "good"} />
             </div>
-            <p className="mt-3 text-sm leading-6 text-slate-300">AI incident summary sẽ gom migration warning, cron error, billing anomaly và AI insight để đề xuất mitigation.</p>
-            <div className="mt-4 flex flex-wrap gap-2"><ControlButton icon={Wrench} label="Mitigate" /><ControlButton icon={RefreshCw} label="Recheck" /><ControlButton icon={CheckCircle2} label="Resolve" /></div>
+            <div className="mt-4 flex flex-wrap gap-2"><OperationForm operation="restart_workers" targetType="incident" targetId="current" label="Mitigate" icon={Wrench} /><RefreshForm label="Recheck" icon={RefreshCw} /><OperationForm operation="resolve_incident" targetType="incident" targetId="current" label="Resolve" icon={CheckCircle2} /></div>
           </div>
           <div className="grid gap-3">
             {[
@@ -608,7 +699,7 @@ export function FeatureFlagsCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Needs review" value={formatNumber(flags.filter((flag) => flag.status === "needs_review" || flag.status === "needs_config").length)} detail="Cần cấu hình trước khi rollout" icon={AlertTriangle} tone={flags.some((flag) => flag.status === "needs_review" || flag.status === "needs_config") ? "warning" : "good"} />
         <MetricCard label="Tenant scope" value={formatNumber(snapshot.metrics.activeTenants)} detail="Sẵn sàng rollout theo quán" icon={Store} tone="neutral" />
       </div>
-      <SectionCard title="Rollout matrix" action={<ControlButton icon={SlidersHorizontal} label="Tạo flag" />}>
+      <SectionCard title="Rollout matrix" action={<OperationForm operation="create_feature_flag_draft" targetType="feature_flag" targetId="new" label="Tạo flag" icon={SlidersHorizontal} />}>
         <div className="grid gap-3">
           {flags.map((flag) => (
             <div key={flag.key} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
@@ -622,6 +713,10 @@ export function FeatureFlagsCenter({ snapshot }: { snapshot: Snapshot }) {
               <div className="mt-4 grid gap-2 md:grid-cols-[1fr_180px] md:items-center">
                 <ProgressTrack value={flag.rollout} tone={flag.status === "live" ? "good" : "info"} />
                 <p className="text-right text-xs font-semibold text-slate-400">{percent(flag.rollout)} · {flag.owner}</p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <OperationForm operation="create_feature_flag_draft" targetType="feature_flag" targetId={flag.key} label="Chỉnh rollout" icon={SlidersHorizontal} />
+                <Link href="/tenants" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.08]"><Store size={14} />Tenant</Link>
               </div>
             </div>
           ))}

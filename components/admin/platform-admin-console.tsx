@@ -1,6 +1,7 @@
 import { PlatformAdminShell } from "@/features/platform-admin/components/admin-shell";
 import { AiControl } from "@/features/platform-admin/components/sections/ai-section";
 import { Billing } from "@/features/platform-admin/components/sections/billing-section";
+import { Overview } from "@/features/platform-admin/components/sections/overview-section";
 import {
   AlertCenter,
   DeploymentCenter,
@@ -30,7 +31,7 @@ export function PlatformAdminConsole({
 }) {
   return (
     <PlatformAdminShell activeSection={activeSection} snapshot={snapshot} session={session}>
-      {activeSection === "overview" ? <SystemMap snapshot={snapshot} /> : null}
+      {activeSection === "overview" ? <Overview snapshot={snapshot} /> : null}
       {activeSection === "system-map" ? <SystemMap snapshot={snapshot} /> : null}
       {activeSection === "deployments" ? <DeploymentCenter snapshot={snapshot} /> : null}
       {activeSection === "payments" ? (

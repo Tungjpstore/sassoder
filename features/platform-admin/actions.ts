@@ -1,8 +1,10 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { getAppUrl } from "@/lib/app-url";
 import {
   changePlatformAdminPassword,
   clearPlatformAdminSession,
@@ -15,6 +17,7 @@ import {
 import { platformAdminInternalPath } from "@/lib/platform-admin-url";
 import {
   invalidatePlatformAdminSnapshotCache,
+  writePlatformAuditLog,
   resolveBillingAnomaly,
   updatePlatformSetting,
   updatePlatformUserStatus,
@@ -185,6 +188,41 @@ const platformTelegramTokenRevokeSchema = z.object({
   revokeAll: z.enum(["true", "false"]).default("false")
 });
 
+const platformCronJobSchema = z.object({
+  jobKey: z.enum(["reports", "ai-ops", "reservations-expire", "subscriptions"])
+});
+
+const platformOperationSchema = z.object({
+  operation: z.enum([
+    "ack_alert",
+    "clear_cache",
+    "create_ai_summary",
+    "create_feature_flag_draft",
+    "pause_queue",
+    "replay_queue",
+    "request_rollback",
+    "resolve_incident",
+    "restart_workers",
+    "run_smoke_check"
+  ]),
+  targetType: z.string().trim().min(2).max(80),
+  targetId: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+    z.string().max(180).optional()
+  ),
+  reason: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+    z.string().max(300).optional()
+  )
+});
+
+const cronJobPaths: Record<z.infer<typeof platformCronJobSchema>["jobKey"], string> = {
+  reports: "/api/cron/reports",
+  "ai-ops": "/api/cron/ai-ops?limit=25&branches=true&inventory=true",
+  "reservations-expire": "/api/cron/reservations/expire",
+  subscriptions: "/api/cron/subscriptions"
+};
+
 export type PlatformTelegramConnectActionState = {
   error?: string;
   token?: {
@@ -194,6 +232,7 @@ export type PlatformTelegramConnectActionState = {
     scopes: string[];
     role: "DEV" | "SUPPORT" | "SRE" | "ADMIN";
     ttlSeconds: number;
+    persistent: boolean;
   };
 };
 
@@ -220,6 +259,19 @@ function revalidateAdmin() {
   ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security"].forEach((path) => {
     revalidatePath(platformAdminInternalPath(path));
   });
+}
+
+async function currentRequestOrigin() {
+  const requestHeaders = await headers();
+  const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
+  if (!host) return getAppUrl();
+  const proto = requestHeaders.get("x-forwarded-proto") ?? (process.env.VERCEL_ENV ? "https" : "http");
+  return `${proto}://${host}`;
+}
+
+function compactOperationResponse(value: unknown) {
+  const text = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
+  return text.length > 1200 ? `${text.slice(0, 1200)}...` : text;
 }
 
 export async function platformAdminLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
@@ -303,6 +355,64 @@ export async function refreshPlatformAdminAction() {
   revalidateAdmin();
 }
 
+export async function runPlatformCronJobAction(formData: FormData) {
+  const parsed = platformCronJobSchema.parse({ jobKey: formData.get("jobKey") });
+  const session = await requirePlatformAdmin("platform.refresh");
+  const path = cronJobPaths[parsed.jobKey];
+  const origin = await currentRequestOrigin();
+  const url = new URL(path, origin);
+  const headers: HeadersInit = { accept: "application/json" };
+  if (process.env.CRON_SECRET) headers.authorization = `Bearer ${process.env.CRON_SECRET}`;
+
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: "platform_cron_run_requested",
+    targetType: "cron_job",
+    targetId: parsed.jobKey,
+    metadata: { path: `${url.pathname}${url.search}` },
+    required: true
+  });
+
+  const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
+  const bodyText = await response.text();
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: response.ok ? "platform_cron_run_completed" : "platform_cron_run_failed",
+    targetType: "cron_job",
+    targetId: parsed.jobKey,
+    metadata: {
+      status: response.status,
+      response: compactOperationResponse(bodyText)
+    },
+    required: true
+  });
+
+  revalidateAdmin();
+  if (!response.ok) {
+    throw new Error(`Không chạy được ${parsed.jobKey}: HTTP ${response.status}`);
+  }
+}
+
+export async function requestPlatformOperationAction(formData: FormData) {
+  const parsed = platformOperationSchema.parse({
+    operation: formData.get("operation"),
+    targetType: formData.get("targetType"),
+    targetId: formData.get("targetId"),
+    reason: formData.get("reason")
+  });
+  const session = await requirePlatformAdmin("platform.refresh");
+
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: `platform_operation_${parsed.operation}`,
+    targetType: parsed.targetType,
+    targetId: parsed.targetId,
+    metadata: { reason: parsed.reason ?? null, source: "admin.logivn.com" },
+    required: true
+  });
+  revalidateAdmin();
+}
+
 export async function createPlatformTelegramConnectTokenAction(
   _prevState?: PlatformTelegramConnectActionState,
   _formData?: FormData
@@ -319,7 +429,8 @@ export async function createPlatformTelegramConnectTokenAction(
         startCommand: token.startCommand,
         scopes: token.scopes,
         role: token.role,
-        ttlSeconds: token.ttlSeconds
+        ttlSeconds: token.ttlSeconds,
+        persistent: token.persistent
       }
     };
   } catch (error) {

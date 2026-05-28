@@ -2,6 +2,7 @@ import { Banknote, CircleDot, CreditCard } from "lucide-react";
 import {
   confirmSubscriptionPaymentAction,
   rejectSubscriptionPaymentAction,
+  runPlatformCronJobAction,
   resolveBillingAnomalyAction
 } from "@/features/platform-admin/actions";
 import {
@@ -22,6 +23,15 @@ import { billingAnomalyActionLabel, canResolveBillingAnomaly } from "@/features/
 import type { Snapshot } from "@/features/platform-admin/types";
 import { formatVnd } from "@/lib/money";
 
+function RunBillingButton() {
+  return (
+    <form action={runPlatformCronJobAction}>
+      <input type="hidden" name="jobKey" value="subscriptions" />
+      <PrimaryButton tone="soft">Đối soát</PrimaryButton>
+    </form>
+  );
+}
+
 export function Billing({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="grid gap-4">
@@ -31,10 +41,10 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Trial" value={formatNumber(snapshot.metrics.trialingSubscriptions)} detail="Cần chuyển đổi sau 30 ngày" icon={CircleDot} tone="info" />
       </div>
 
-      <SectionCard title="Billing v2 cutover health">
+      <SectionCard title="Billing v2 cutover health" action={<RunBillingButton />}>
         <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Trạng thái</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className={badgeTone(statusTone(snapshot.billingCutover.status === "healthy" ? "live" : snapshot.billingCutover.status === "partial" ? "needs_review" : "needs_config"))}>
@@ -44,14 +54,11 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
                   {cutoverSourceLabel[snapshot.billingCutover.source]}
                 </span>
               </div>
-              <p className="mt-3 text-sm leading-6 text-slate-600">
-                Màn này giúp nhìn nhanh coverage giữa legacy billing và billing v2 sau migration/backfill.
-              </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Legacy</p>
-              <div className="mt-3 grid gap-2 text-sm text-slate-700">
+              <div className="mt-3 grid gap-2 text-sm text-slate-300">
                 <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.legacy.subscriptions)}</strong></div>
                 <div className="flex items-center justify-between gap-3"><span>Payments</span><strong>{formatNumber(snapshot.billingCutover.legacy.payments)}</strong></div>
                 <div className="flex items-center justify-between gap-3"><span>Pending</span><strong>{formatNumber(snapshot.billingCutover.legacy.pendingPayments)}</strong></div>
@@ -59,9 +66,9 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:col-span-2">
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4 sm:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Billing v2</p>
-              <div className="mt-3 grid gap-2 text-sm text-slate-700 md:grid-cols-2">
+              <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
                 <div className="flex items-center justify-between gap-3"><span>Plans</span><strong>{formatNumber(snapshot.billingCutover.v2.plans)}</strong></div>
                 <div className="flex items-center justify-between gap-3"><span>Entitlements</span><strong>{formatNumber(snapshot.billingCutover.v2.entitlements)}</strong></div>
                 <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.v2.subscriptions)}</strong></div>
@@ -78,48 +85,42 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
 
           <div className="grid gap-2">
             {snapshot.billingCutover.checks.map((check) => (
-              <div key={check.key} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div key={check.key} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-950">{check.label}</p>
+                  <p className="text-sm font-semibold text-slate-100">{check.label}</p>
                   <span className={badgeTone(check.status === "pass" ? "good" : check.status === "warn" ? "warning" : "danger")}>
                     {check.status === "pass" ? "PASS" : check.status === "warn" ? "WARN" : "FAIL"}
                   </span>
                 </div>
-                <p className="mt-2 text-sm leading-6 text-slate-600">{check.detail}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-400">{check.detail}</p>
               </div>
             ))}
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-              CLI check: <code className="rounded bg-white px-1.5 py-0.5 text-slate-950">npm run billing:verify</code>
-            </div>
           </div>
         </div>
       </SectionCard>
 
-      <SectionCard title="Billing anomalies cần xử lý">
+      <SectionCard title="Billing anomalies cần xử lý" action={<RunBillingButton />}>
         <div className="grid gap-3">
           {snapshot.billingCutover.anomalies.length ? (
             snapshot.billingCutover.anomalies.map((anomaly) => (
-              <div key={`${anomaly.key}-${anomaly.subscriptionId ?? anomaly.paymentId ?? anomaly.restaurantId}`} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div key={`${anomaly.key}-${anomaly.subscriptionId ?? anomaly.paymentId ?? anomaly.restaurantId}`} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-slate-950">{anomaly.restaurantName}</p>
+                    <p className="text-sm font-semibold text-slate-100">{anomaly.restaurantName}</p>
                     <p className="mt-1 text-xs text-slate-500">{anomaly.restaurantSlug}.logivn.com</p>
                   </div>
                   <span className={badgeTone(anomaly.severity === "danger" ? "danger" : "warning")}>
                     {anomaly.severity === "danger" ? "Cần xử lý gấp" : "Cần rà soát"}
                   </span>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-slate-600">{anomaly.detail}</p>
+                <p className="mt-3 text-sm leading-6 text-slate-300">{anomaly.detail}</p>
                 <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
-                  {anomaly.subscriptionId ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">subscription {anomaly.subscriptionId.slice(0, 8)}</span> : null}
-                  {anomaly.paymentId ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1">payment {anomaly.paymentId.slice(0, 8)}</span> : null}
+                  {anomaly.subscriptionId ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1">subscription {anomaly.subscriptionId.slice(0, 8)}</span> : null}
+                  {anomaly.paymentId ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1">payment {anomaly.paymentId.slice(0, 8)}</span> : null}
                 </div>
                 {canResolveBillingAnomaly(anomaly) ? (
-                  <form action={resolveBillingAnomalyAction} className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs leading-5 text-slate-500">
-                      <p className="font-semibold text-slate-700">Safe reconcile</p>
-                      <p>Chỉ cập nhật trạng thái/metadata đã được guard server-side và ghi audit log.</p>
-                    </div>
+                  <form action={resolveBillingAnomalyAction} className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#0A1020] p-3">
+                    <p className="text-xs font-semibold text-slate-400">Guarded server action + audit</p>
                     <input type="hidden" name="key" value={anomaly.key} />
                     {anomaly.subscriptionId ? <input type="hidden" name="subscriptionId" value={anomaly.subscriptionId} /> : null}
                     {anomaly.paymentId ? <input type="hidden" name="paymentId" value={anomaly.paymentId} /> : null}
@@ -128,27 +129,22 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
                     </PrimaryButton>
                   </form>
                 ) : (
-                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-700">
-                    Thiếu định danh để tự động xử lý. Cần rà soát thủ công bằng CLI audit.
-                  </div>
+                  <RunBillingButton />
                 )}
               </div>
             ))
           ) : (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
+            <div className="rounded-lg border border-emerald-400/25 bg-emerald-400/10 p-4 text-sm font-semibold text-emerald-100">
               Chưa phát hiện anomaly billing rõ ràng trong snapshot hiện tại.
             </div>
           )}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-            Audit sâu hơn bằng CLI: <code className="rounded bg-white px-1.5 py-0.5 text-slate-950">npm run billing:audit</code>
-          </div>
         </div>
       </SectionCard>
 
       <SectionCard title="Giao dịch mua/gia hạn gói">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-[0.1em] text-slate-500">
+            <thead className="border-b border-white/10 bg-[#0A1020] text-xs uppercase tracking-[0.1em] text-slate-500">
               <tr>
                 <th className="px-3 py-3">Quán</th>
                 <th className="px-3 py-3">Gói</th>
@@ -159,16 +155,16 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
                 <th className="px-3 py-3 text-right">Thao tác</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-white/10">
               {snapshot.payments.map((payment) => (
-                <tr key={payment.id} className="bg-white align-top">
+                <tr key={payment.id} className="bg-white/[0.025] align-top">
                   <td className="px-3 py-3">
-                    <p className="font-semibold text-slate-950">{payment.restaurantName}</p>
+                    <p className="font-semibold text-slate-100">{payment.restaurantName}</p>
                     <p className="mt-1 text-xs text-slate-500">{payment.restaurantSlug}.logivn.com</p>
                   </td>
-                  <td className="px-3 py-3 text-slate-600">{payment.planName} · {payment.months} tháng</td>
-                  <td className="px-3 py-3 font-mono text-xs text-slate-600">{payment.transferContent}</td>
-                  <td className="px-3 py-3 text-right font-semibold text-slate-950">{formatVnd(payment.amount)}</td>
+                  <td className="px-3 py-3 text-slate-300">{payment.planName} · {payment.months} tháng</td>
+                  <td className="px-3 py-3 font-mono text-xs text-slate-300">{payment.transferContent}</td>
+                  <td className="px-3 py-3 text-right font-semibold text-slate-100">{formatVnd(payment.amount)}</td>
                   <td className="px-3 py-3"><span className={badgeTone(statusTone(payment.status))}>{paymentStatusLabel[payment.status] ?? payment.status}</span></td>
                   <td className="px-3 py-3 text-slate-500">{formatDateTime(payment.createdAt)}</td>
                   <td className="px-3 py-3">

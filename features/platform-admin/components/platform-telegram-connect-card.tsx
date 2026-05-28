@@ -62,7 +62,9 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
             <Clock3 size={18} className="text-slate-500" />
           </div>
           <p className="mt-3 text-2xl font-semibold text-slate-950">{formatNumber(initialState.summary.pendingTokens)}</p>
-          <p className="mt-2 text-sm text-slate-600">TTL {initialState.bot.ttlSeconds}s</p>
+          <p className="mt-2 text-sm text-slate-600">
+            {initialState.bot.persistentConnectLink ? "Đến khi thu hồi hoặc đã dùng" : `TTL ${initialState.bot.ttlSeconds}s`}
+          </p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between gap-3">
@@ -93,7 +95,7 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-950">Tạo link kết nối DevOps</p>
-              <p className="mt-1 text-sm leading-6 text-slate-600">Link chỉ dùng ngắn hạn để nối tài khoản Telegram vận hành với bot platform.</p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">Link dùng tới khi được thu hồi hoặc đã nối tài khoản Telegram vận hành với bot platform.</p>
             </div>
             <form action={createAction}>
               <PrimaryButton tone="dark">
@@ -108,7 +110,9 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
             <div className="mt-4 grid gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={badgeTone("good")}>{createState.token.role}</span>
-                <span className={badgeTone("neutral")}>Hết hạn {formatDateTime(createState.token.expiresAt)}</span>
+                <span className={badgeTone("neutral")}>
+                  {createState.token.persistent ? "Đến khi thu hồi hoặc đã dùng" : `Hết hạn ${formatDateTime(createState.token.expiresAt)}`}
+                </span>
               </div>
               {createState.token.startUrl ? (
                 <a href={createState.token.startUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-2 break-all rounded-xl bg-white px-3 font-semibold text-emerald-800 ring-1 ring-emerald-200">

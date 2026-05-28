@@ -222,7 +222,13 @@ export async function proxy(request: NextRequest) {
   if (platformAdminHost && !pathname.startsWith("/api") && !pathname.startsWith("/auth")) {
     const url = request.nextUrl.clone();
     url.pathname = platformAdminInternalPath(pathname);
-    return NextResponse.rewrite(url);
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-logivn-platform-admin-host", "1");
+    return NextResponse.rewrite(url, {
+      request: {
+        headers: requestHeaders
+      }
+    });
   }
 
   if (process.env.VERCEL_ENV === "production" && host === ROOT_DOMAIN && (pathname === deprecatedPlatformAdminPath || pathname.startsWith(`${deprecatedPlatformAdminPath}/`))) {

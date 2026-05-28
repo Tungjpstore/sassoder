@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Activity, AlertTriangle, Bot, Building2, CheckCircle2, CreditCard, Database, GitBranch, ListTree, RadioTower, ServerCog, Store, Wifi } from "lucide-react";
-import { confirmSubscriptionPaymentAction } from "@/features/platform-admin/actions";
+import { confirmSubscriptionPaymentAction, refreshPlatformAdminAction, runPlatformCronJobAction } from "@/features/platform-admin/actions";
 import { MetricCard, PrimaryButton, SectionCard, badgeTone, formatNumber } from "@/features/platform-admin/components/primitives";
 import type { Snapshot } from "@/features/platform-admin/types";
 import { formatVnd } from "@/lib/money";
@@ -11,6 +11,15 @@ function countTone(value: number): Tone {
   if (value > 5) return "danger";
   if (value > 0) return "warning";
   return "good";
+}
+
+function CronButton({ jobKey, label }: { jobKey: "ai-ops" | "subscriptions" | "reports" | "reservations-expire"; label: string }) {
+  return (
+    <form action={runPlatformCronJobAction}>
+      <input type="hidden" name="jobKey" value={jobKey} />
+      <PrimaryButton tone="soft">{label}</PrimaryButton>
+    </form>
+  );
 }
 
 export function Overview({ snapshot }: { snapshot: Snapshot }) {
@@ -29,6 +38,24 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <div className="grid gap-4">
+      <SectionCard
+        title="Bảng điều khiển"
+        action={
+          <div className="flex flex-wrap gap-2">
+            <form action={refreshPlatformAdminAction}><PrimaryButton tone="soft">Làm mới</PrimaryButton></form>
+            <CronButton jobKey="ai-ops" label="Chạy AI Ops" />
+            <CronButton jobKey="subscriptions" label="Đối soát billing" />
+          </div>
+        }
+      >
+        <div className="grid gap-2 md:grid-cols-4">
+          <Link href="/queues" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Hàng đợi</Link>
+          <Link href="/logs" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Logs</Link>
+          <Link href="/ai" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">AI API key</Link>
+          <Link href="/payments" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Thanh toán</Link>
+        </div>
+      </SectionCard>
+
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <MetricCard label="Tenant" value={formatNumber(snapshot.metrics.activeTenants)} detail={`${snapshot.metrics.tenants} tổng`} icon={Building2} tone="info" />
         <MetricCard label="Users" value={formatNumber(snapshot.metrics.users)} detail="Tài khoản" icon={Activity} tone="neutral" />

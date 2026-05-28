@@ -29,9 +29,9 @@ function PlanForm({ plan }: { plan: Plan }) {
           <Field label="Tên gói" name="name" defaultValue={plan.name} />
           <Field label="Giá tháng" name="monthlyPrice" type="number" defaultValue={plan.monthly_price} />
           <Field label="Số ngày dùng thử" name="trialDays" type="number" defaultValue={plan.trial_days} />
-          <label className="grid gap-2 text-sm font-semibold text-slate-700">
+          <label className="grid gap-2 text-sm font-semibold text-slate-200">
             Trạng thái
-            <select name="isActive" defaultValue={plan.is_active ? "true" : "false"} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold">
+            <select name="isActive" defaultValue={plan.is_active ? "true" : "false"} className="h-10 rounded-lg border border-white/10 bg-[#0A1020] px-3 text-sm font-semibold text-white outline-none focus:border-sky-400/60">
               <option value="true">Đang bán</option>
               <option value="false">Ẩn gói</option>
             </select>
@@ -40,7 +40,7 @@ function PlanForm({ plan }: { plan: Plan }) {
         <TextArea label="Mô tả" name="description" defaultValue={plan.description ?? ""} rows={2} />
         <TextArea label="Tính năng, mỗi dòng một mục" name="features" defaultValue={plan.features.join("\n")} rows={5} />
         {schemaPending ? (
-          <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm font-semibold text-orange-800">
+          <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-sm font-semibold text-amber-100">
             Cần chạy migration billing trước khi chỉnh gói này.
           </div>
         ) : (

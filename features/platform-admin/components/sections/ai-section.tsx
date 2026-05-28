@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, Bot, Database, KeyRound, LockKeyhole, Store } from "lucide-react";
-import { updateAiProviderConfigAction } from "@/features/platform-admin/actions";
+import { runPlatformCronJobAction, updateAiProviderConfigAction } from "@/features/platform-admin/actions";
 import { IntegrationGrid } from "@/features/platform-admin/components/integration-grid";
 import {
   Field,
@@ -32,6 +32,15 @@ function keySourceTone(source: string): Parameters<typeof badgeTone>[0] {
   return "warning";
 }
 
+function RunAiOpsButton() {
+  return (
+    <form action={runPlatformCronJobAction}>
+      <input type="hidden" name="jobKey" value="ai-ops" />
+      <PrimaryButton tone="soft">Chạy AI Ops</PrimaryButton>
+    </form>
+  );
+}
+
 export function AiControl({ snapshot }: { snapshot: Snapshot }) {
   const aiIntegrations = snapshot.integrations.filter((item) => item.category === "ai");
 
@@ -55,9 +64,9 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
               ["Model chủ quán", snapshot.aiControl.routing.ownerModel],
               ["Model ảnh", snapshot.aiControl.routing.imageModel]
             ].map(([label, value]) => (
-              <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div key={label} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
                 <dt className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</dt>
-                <dd className="mt-2 break-all font-mono text-sm text-slate-950">{value}</dd>
+                <dd className="mt-2 break-all font-mono text-sm text-slate-100">{value}</dd>
               </div>
             ))}
           </dl>
@@ -66,12 +75,12 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         <SectionCard title="Sử dụng provider 24h">
           <div className="grid gap-2">
             {snapshot.aiControl.providers.map((provider) => (
-              <div key={provider.provider} className="rounded-xl border border-slate-200 bg-white p-3">
+              <div key={provider.provider} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-950">{provider.provider}</p>
+                  <p className="text-sm font-semibold text-slate-100">{provider.provider}</p>
                   <span className={badgeTone(provider.failureRate > 10 ? "warning" : "good")}>{provider.failureRate}% lỗi</span>
                 </div>
-                <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-3">
+                <div className="mt-2 grid gap-2 text-xs text-slate-400 md:grid-cols-3">
                   <span>{provider.requests} yêu cầu</span>
                   <span>{formatNumber(provider.tokens)} tokens</span>
                   <span>{provider.models.join(", ") || "Chưa có model log"}</span>
@@ -86,13 +95,13 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
       <SectionCard title="Khoá API AI & runtime routing">
         <div className="grid gap-3 xl:grid-cols-2">
           {snapshot.aiControl.providerConfigs.map((provider) => (
-            <form key={provider.provider} action={updateAiProviderConfigAction} className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <form key={provider.provider} action={updateAiProviderConfigAction} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
               <input type="hidden" name="provider" value={provider.provider} />
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Database size={16} className="text-slate-500" />
-                    <p className="text-sm font-semibold text-slate-950">{provider.label}</p>
+                    <Database size={16} className="text-slate-400" />
+                    <p className="text-sm font-semibold text-slate-100">{provider.label}</p>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <span className={badgeTone(provider.configured ? "good" : "warning")}>{provider.configured ? "Sẵn sàng" : "Thiếu khoá"}</span>
@@ -100,13 +109,13 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
                     <span className={badgeTone(provider.enabled ? "neutral" : "danger")}>{provider.enabled ? "Đang bật" : "Đã tắt"}</span>
                   </div>
                 </div>
-                <p className="font-mono text-xs font-semibold text-slate-500">{provider.keyPreview}</p>
+                <p className="font-mono text-xs font-semibold text-slate-400">{provider.keyPreview}</p>
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                <label className="grid gap-2 text-sm font-semibold text-slate-200">
                   Trạng thái
-                  <select name="enabled" defaultValue={provider.enabled ? "true" : "false"} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100">
+                  <select name="enabled" defaultValue={provider.enabled ? "true" : "false"} className="h-10 rounded-lg border border-white/10 bg-[#0A1020] px-3 text-sm font-medium text-white outline-none transition focus:border-sky-400/60 focus:ring-2 focus:ring-sky-400/10">
                     <option value="true">Bật provider</option>
                     <option value="false">Tắt provider</option>
                   </select>
@@ -119,12 +128,12 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
                 <Field label="Model OCR" name="ocrModel" required={false} defaultValue={provider.ocrModel} />
               </div>
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3">
-                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
-                  <input type="checkbox" name="clearApiKey" value="true" className="h-4 w-4 rounded border-slate-300" />
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
+                <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-300">
+                  <input type="checkbox" name="clearApiKey" value="true" className="h-4 w-4 rounded border-white/10 bg-[#0A1020]" />
                   Xoá khoá DB
                 </label>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
                   <span>{provider.keyFingerprint ? `fp:${provider.keyFingerprint}` : "fp:--"}</span>
                   <span>{formatDateTime(provider.lastRotatedAt ?? provider.updatedAt)}</span>
                   <PrimaryButton tone="soft">
@@ -138,25 +147,25 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Bản tin vận hành AI">
+      <SectionCard title="Bản tin vận hành AI" action={<RunAiOpsButton />}>
         <div className="grid gap-2">
           {snapshot.aiControl.morningBriefs.recent.map((brief) => (
-            <div key={`${brief.restaurantId}-${brief.channel}-${brief.createdAt}`} className="rounded-xl border border-slate-200 bg-white p-3">
+            <div key={`${brief.restaurantId}-${brief.channel}-${brief.createdAt}`} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-950">{brief.restaurantName}</p>
+                <p className="text-sm font-semibold text-slate-100">{brief.restaurantName}</p>
                 <div className="flex flex-wrap gap-2">
                   <span className={badgeTone(statusTone(brief.status))}>{brief.status}</span>
                   <span className={badgeTone("neutral")}>{brief.channel}</span>
                 </div>
               </div>
-              <div className="mt-2 grid gap-2 text-xs text-slate-500 md:grid-cols-4">
+              <div className="mt-2 grid gap-2 text-xs text-slate-400 md:grid-cols-4">
                 <span>{brief.briefDate}</span>
                 <span>Sức khoẻ {brief.healthScore}/100</span>
                 <span>{brief.insights} tín hiệu</span>
                 <span>{formatDateTime(brief.sentAt ?? brief.createdAt)}</span>
               </div>
-              <p className="mt-2 text-sm font-medium leading-6 text-slate-700">{brief.summary}</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+              <p className="mt-2 text-sm font-medium leading-6 text-slate-300">{brief.summary}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-400">
                 <span className={badgeTone("neutral")}>{brief.critical} nghiêm trọng</span>
                 <span className={badgeTone("neutral")}>{brief.warning} cảnh báo</span>
                 <span className={badgeTone("neutral")}>{brief.opportunity} cơ hội</span>
@@ -165,12 +174,12 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
               {brief.actions.length ? (
                 <div className="mt-2 grid gap-1.5">
                   {brief.actions.map((action, index) => (
-                    <div key={`${brief.restaurantId}-${brief.createdAt}-${index}`} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                    <div key={`${brief.restaurantId}-${brief.createdAt}-${index}`} className="rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={badgeTone(action.severity === "critical" ? "danger" : action.severity === "warning" ? "warning" : "neutral")}>{action.severity}</span>
-                        <p className="text-xs font-semibold text-slate-950">{action.title}</p>
+                        <p className="text-xs font-semibold text-slate-100">{action.title}</p>
                       </div>
-                      {action.action ? <p className="mt-1 text-xs leading-5 text-slate-500">{action.action}</p> : null}
+                      {action.action ? <p className="mt-1 text-xs leading-5 text-slate-400">{action.action}</p> : null}
                     </div>
                   ))}
                 </div>
@@ -182,16 +191,16 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Tín hiệu vận hành chi nhánh">
+      <SectionCard title="Tín hiệu vận hành chi nhánh" action={<RunAiOpsButton />}>
         <div className="grid gap-2">
-          <div className="grid gap-2 text-xs text-slate-500 md:grid-cols-4">
+          <div className="grid gap-2 text-xs text-slate-400 md:grid-cols-4">
             <span>{snapshot.aiControl.branchInsights.windowDays} ngày gần nhất</span>
             <span>{snapshot.aiControl.branchInsights.restaurants} quán có tín hiệu</span>
             <span>{snapshot.aiControl.branchInsights.branches} chi nhánh</span>
             <span>Mới nhất {formatDateTime(snapshot.aiControl.branchInsights.latestAt)}</span>
           </div>
           {snapshot.aiControl.branchInsights.recent.map((insight) => (
-            <div key={insight.id} className="rounded-xl border border-slate-200 bg-white p-3">
+            <div key={insight.id} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="flex flex-wrap gap-2">
@@ -199,12 +208,12 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
                     <span className={badgeTone(statusTone(insight.status))}>{insight.status}</span>
                     <span className={badgeTone("neutral")}>{insight.branchName}</span>
                   </div>
-                  <p className="mt-2 text-sm font-semibold text-slate-950">{insight.title}</p>
-                  <p className="mt-1 text-xs font-medium text-slate-500">{insight.restaurantName}</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-100">{insight.title}</p>
+                  <p className="mt-1 text-xs font-medium text-slate-400">{insight.restaurantName}</p>
                 </div>
-                <span className="text-xs text-slate-500">{formatDateTime(insight.lastSeenAt)}</span>
+                <span className="text-xs text-slate-400">{formatDateTime(insight.lastSeenAt)}</span>
               </div>
-              <p className="mt-2 text-sm leading-6 text-slate-700">{insight.action}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-300">{insight.action}</p>
               {insight.metric ? <span className={badgeTone("neutral")}>{insight.metric}</span> : null}
             </div>
           ))}

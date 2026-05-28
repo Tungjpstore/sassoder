@@ -16,20 +16,47 @@ import {
   claimPlatformConnectionToken,
   claimPlatformSession,
   connectPlatformTelegramAccount,
+  confirmPlatformSubscriptionPayment,
   createPlatformSession,
   getPlatformAlertRecipients,
   getPlatformConnectionRecentAudit,
   getPlatformConnectionForTelegramUser,
   hasPlatformScope,
+  listPendingSubscriptionPayments,
+  listPlatformTenantActions,
   recordPlatformTelegramAudit,
+  rejectPlatformSubscriptionPayment,
   revokePlatformConnectionById,
-  touchPlatformConnection
+  touchPlatformConnection,
+  updatePlatformTenantStatusFromTelegram
 } from "./repository.mjs";
 import { platformTelegramJobSchema, type PlatformAlertJob, type PlatformTelegramConnection } from "./types.mjs";
 
 const PLATFORM_TELEGRAM_QUEUE = "platform.telegram.notifications";
 const PLATFORM_CALLBACK_PREFIX = "p:";
-const PLATFORM_MENU_ACTIONS = ["menu", "health", "queues", "webhook", "incidents", "security", "disconnect", "disconnect.confirm", "help"] as const;
+const PLATFORM_MENU_ACTIONS = [
+  "menu",
+  "payments",
+  "payment.confirm.prompt",
+  "payment.confirm",
+  "payment.reject.prompt",
+  "payment.reject",
+  "tenants",
+  "tenant.suspend.prompt",
+  "tenant.suspend",
+  "tenant.restore.prompt",
+  "tenant.restore",
+  "tenant.delete.prompt",
+  "tenant.delete",
+  "health",
+  "queues",
+  "webhook",
+  "incidents",
+  "security",
+  "disconnect",
+  "disconnect.confirm",
+  "help"
+] as const;
 type PlatformMenuAction = (typeof PLATFORM_MENU_ACTIONS)[number];
 
 const logger = createLogger("platform-telegram-bot");
@@ -57,6 +84,8 @@ if (bot) {
     await handleStart(ctx, typeof ctx.match === "string" ? ctx.match.trim() : "");
   });
   bot.command("menu", (ctx) => replyWithPlatformMenu(ctx));
+  bot.command("payments", (ctx) => replyWithPayments(ctx));
+  bot.command("tenants", (ctx) => replyWithTenants(ctx));
   bot.command("health", (ctx) => replyWithHealth(ctx));
   bot.command("queues", (ctx) => replyWithQueues(ctx));
   bot.command("webhook", (ctx) => replyWithWebhook(ctx));
@@ -75,7 +104,7 @@ if (bot) {
       const claimed = await claimPlatformSession(ctx.callbackQuery.data.slice(PLATFORM_CALLBACK_PREFIX.length), ctx.from.id);
       action = claimed.session.action;
       await ctx.answerCallbackQuery({ text: "Đang xử lý..." });
-      await handlePlatformMenuAction(ctx, action as PlatformMenuAction, claimed.connection);
+      await handlePlatformMenuAction(ctx, action as PlatformMenuAction, claimed.connection, claimed.session.payload);
       callbackCounter.inc({ action, status: "accepted" });
     } catch (error) {
       callbackCounter.inc({ action, status: "failed" });
@@ -266,6 +295,9 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     return;
   }
   const keyboard = new InlineKeyboard()
+    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+    .row()
     .text("Health", await signedPlatformCallback(connection, "health"))
     .text("Queues", await signedPlatformCallback(connection, "queues"))
     .row()
@@ -275,13 +307,25 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Security", await signedPlatformCallback(connection, "security"))
     .text("Disconnect", await signedPlatformCallback(connection, "disconnect"))
     .row()
+    .url("Admin Ops", platformAdminUrl("/ops"))
+    .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
+    .row()
     .url("Grafana", readEnv("PLATFORM_GRAFANA_URL", "https://monitor.logivn.com/grafana/"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
-  await ctx.reply(`LogiVN DevOps\n\n${connectionLabel(connection)} · ${connection.scopes.length} scopes\n\nChọn vùng cần kiểm tra.`, { reply_markup: keyboard });
+  const pendingPayments = await listPendingSubscriptionPayments(1).catch(() => []);
+  const tenantActions = await listPlatformTenantActions(1).catch(() => []);
+  await ctx.reply([
+    "LogiVN DevOps Command Center",
+    "",
+    connectionLabel(connection),
+    `Cần xử lý: ${pendingPayments.length ? "có gói chờ duyệt" : "không có gói chờ"} · ${tenantActions.length ? "có tenant cần rà soát" : "tenant ổn"}`,
+    "",
+    "Chọn thao tác nhanh bên dưới."
+  ].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithHelp(ctx: Context) {
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm DevOps", "/health - service health", "/queues - BullMQ backlog", "/webhook - webhook bot", "/incidents - incident/action gần đây", "/whoami - tài khoản và scope", "/security - audit bảo mật", "/disconnect - ngắt Telegram khỏi DevOps bot"].join("\n"));
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói subscription", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra service", "/queues - queue/DLQ", "/webhook - webhook bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"));
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -297,6 +341,160 @@ async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTeleg
   ];
   const keyboard = new InlineKeyboard().text("Security", await signedPlatformCallback(connection, "security")).text("Menu", await signedPlatformCallback(connection, "menu"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithPayments(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "billing.approve");
+  if (!connection) return;
+  const payments = await listPendingSubscriptionPayments(6);
+  const keyboard = new InlineKeyboard();
+
+  for (const payment of payments.slice(0, 4)) {
+    keyboard
+      .text(`Duyệt ${shortId(payment.id)}`, await signedPlatformCallback(connection, "payment.confirm.prompt", { paymentId: payment.id }))
+      .text("Từ chối", await signedPlatformCallback(connection, "payment.reject.prompt", { paymentId: payment.id }))
+      .row();
+  }
+
+  keyboard
+    .text("Refresh", await signedPlatformCallback(connection, "payments"))
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+    .row()
+    .url("Mở Billing", platformAdminUrl("/payments"));
+
+  const lines = [
+    "Duyệt gói subscription",
+    "",
+    payments.length ? `${payments.length} giao dịch đang chờ xác minh.` : "Không có giao dịch chờ xác minh.",
+    "",
+    ...payments.slice(0, 5).map((payment, index) => `${index + 1}. ${payment.restaurantName} · ${payment.planName} · ${formatVnd(payment.amount)} · ${payment.months} tháng\n   CK: ${payment.transferContent || shortId(payment.id)}`)
+  ];
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithPaymentConfirmPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "billing.approve");
+  if (!approvedConnection) return;
+  const paymentId = payloadString(payload, "paymentId");
+  if (!paymentId) {
+    await ctx.reply("Thiếu giao dịch cần duyệt. Bấm /payments để tải lại danh sách.");
+    return;
+  }
+  const keyboard = new InlineKeyboard()
+    .text("Xác nhận duyệt", await signedPlatformCallback(approvedConnection, "payment.confirm", { paymentId }))
+    .text("Quay lại", await signedPlatformCallback(approvedConnection, "payments"));
+  await ctx.reply(`Duyệt giao dịch ${shortId(paymentId)} và kích hoạt/gia hạn gói cho quán?`, { reply_markup: keyboard });
+}
+
+async function confirmPaymentFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "billing.approve");
+  if (!approvedConnection) return;
+  const paymentId = payloadString(payload, "paymentId");
+  if (!paymentId) {
+    await ctx.reply("Thiếu giao dịch cần duyệt. Bấm /payments để tải lại danh sách.");
+    return;
+  }
+  const result = await confirmPlatformSubscriptionPayment(paymentId, actorForConnection(approvedConnection));
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.billing.payment.confirm", outcome: "accepted", targetType: "subscription_payment", targetId: paymentId, metadata: result });
+  const keyboard = new InlineKeyboard().text("Duyệt tiếp", await signedPlatformCallback(approvedConnection, "payments")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(`Đã duyệt gói. Kỳ mới tới ${formatShortDate(result.currentPeriodEnd)}.`, { reply_markup: keyboard });
+}
+
+async function replyWithPaymentRejectPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "billing.approve");
+  if (!approvedConnection) return;
+  const paymentId = payloadString(payload, "paymentId");
+  if (!paymentId) {
+    await ctx.reply("Thiếu giao dịch cần từ chối. Bấm /payments để tải lại danh sách.");
+    return;
+  }
+  const keyboard = new InlineKeyboard()
+    .text("Từ chối giao dịch", await signedPlatformCallback(approvedConnection, "payment.reject", { paymentId }))
+    .text("Quay lại", await signedPlatformCallback(approvedConnection, "payments"));
+  await ctx.reply(`Từ chối giao dịch ${shortId(paymentId)} với lý do mặc định: không khớp giao dịch ngân hàng?`, { reply_markup: keyboard });
+}
+
+async function rejectPaymentFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "billing.approve");
+  if (!approvedConnection) return;
+  const paymentId = payloadString(payload, "paymentId");
+  if (!paymentId) {
+    await ctx.reply("Thiếu giao dịch cần từ chối. Bấm /payments để tải lại danh sách.");
+    return;
+  }
+  const result = await rejectPlatformSubscriptionPayment(paymentId, actorForConnection(approvedConnection), "Không khớp giao dịch ngân hàng");
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.billing.payment.reject", outcome: "accepted", targetType: "subscription_payment", targetId: paymentId, metadata: result });
+  const keyboard = new InlineKeyboard().text("Duyệt tiếp", await signedPlatformCallback(approvedConnection, "payments")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply("Đã từ chối giao dịch và ghi audit.", { reply_markup: keyboard });
+}
+
+async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "tenants.read");
+  if (!connection) return;
+  const tenants = await listPlatformTenantActions(6);
+  const canManage = hasPlatformScope(connection, "tenants.manage");
+  const keyboard = new InlineKeyboard();
+
+  for (const tenant of tenants.slice(0, 4)) {
+    keyboard.url(`Mở ${tenant.slug || shortId(tenant.id)}`, tenantDashboardUrl(tenant.slug)).row();
+    if (canManage) {
+      if (tenant.platformStatus === "active") {
+        keyboard
+          .text("Tạm dừng", await signedPlatformCallback(connection, "tenant.suspend.prompt", { restaurantId: tenant.id, restaurantName: tenant.name }))
+          .text("Xóa mềm", await signedPlatformCallback(connection, "tenant.delete.prompt", { restaurantId: tenant.id, restaurantName: tenant.name }))
+          .row();
+      } else {
+        keyboard.text("Mở lại", await signedPlatformCallback(connection, "tenant.restore.prompt", { restaurantId: tenant.id, restaurantName: tenant.name })).row();
+      }
+    }
+  }
+
+  keyboard
+    .text("Refresh", await signedPlatformCallback(connection, "tenants"))
+    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+    .row()
+    .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
+    .url("Mở Tenants", platformAdminUrl("/tenants"));
+
+  const lines = [
+    "Quản lý quán",
+    "",
+    tenants.length ? "Các quán cần thao tác nhanh:" : "Chưa có tenant cần xử lý.",
+    "",
+    ...tenants.slice(0, 5).map((tenant, index) => `${index + 1}. ${tenant.name} · ${tenant.platformStatus} · ${tenant.planName}\n   ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "ổn"}`)
+  ];
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithTenantStatusPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>, status: "active" | "suspended" | "deleted") {
+  const approvedConnection = await requireConnection(ctx, connection, "tenants.manage");
+  if (!approvedConnection) return;
+  const restaurantId = payloadString(payload, "restaurantId");
+  const restaurantName = payloadString(payload, "restaurantName") || shortId(restaurantId);
+  if (!restaurantId) {
+    await ctx.reply("Thiếu quán cần xử lý. Bấm /tenants để tải lại danh sách.");
+    return;
+  }
+  const action = status === "active" ? "tenant.restore" : status === "suspended" ? "tenant.suspend" : "tenant.delete";
+  const label = status === "active" ? "Mở lại" : status === "suspended" ? "Tạm dừng" : "Xóa mềm";
+  const keyboard = new InlineKeyboard()
+    .text(label, await signedPlatformCallback(approvedConnection, action, { restaurantId }))
+    .text("Quay lại", await signedPlatformCallback(approvedConnection, "tenants"));
+  await ctx.reply(`${label} quán ${restaurantName}? Thao tác này ghi audit và đổi trạng thái platform.`, { reply_markup: keyboard });
+}
+
+async function updateTenantFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>, status: "active" | "suspended" | "deleted") {
+  const approvedConnection = await requireConnection(ctx, connection, "tenants.manage");
+  if (!approvedConnection) return;
+  const restaurantId = payloadString(payload, "restaurantId");
+  if (!restaurantId) {
+    await ctx.reply("Thiếu quán cần xử lý. Bấm /tenants để tải lại danh sách.");
+    return;
+  }
+  const result = await updatePlatformTenantStatusFromTelegram({ restaurantId, status, actor: actorForConnection(approvedConnection), reason: tenantStatusReason(status) });
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: `platform.tenant.${status}`, outcome: "accepted", targetType: "restaurant", targetId: restaurantId, metadata: result });
+  const keyboard = new InlineKeyboard().text("Quản lý tiếp", await signedPlatformCallback(approvedConnection, "tenants")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(`Đã cập nhật ${result.name}: ${status}.`, { reply_markup: keyboard });
 }
 
 async function replyWithHealth(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -385,8 +583,20 @@ async function confirmDisconnect(ctx: Context, connection: PlatformTelegramConne
   await ctx.reply("Đã ngắt kết nối DevOps Bot cho tài khoản Telegram này. Tạo link mới trong admin.logivn.com/ops nếu cần kết nối lại.");
 }
 
-async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction, connection: PlatformTelegramConnection) {
+async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction, connection: PlatformTelegramConnection, payload: Record<string, unknown> = {}) {
   if (action === "menu") return replyWithPlatformMenu(ctx, connection);
+  if (action === "payments") return replyWithPayments(ctx, connection);
+  if (action === "payment.confirm.prompt") return replyWithPaymentConfirmPrompt(ctx, connection, payload);
+  if (action === "payment.confirm") return confirmPaymentFromTelegram(ctx, connection, payload);
+  if (action === "payment.reject.prompt") return replyWithPaymentRejectPrompt(ctx, connection, payload);
+  if (action === "payment.reject") return rejectPaymentFromTelegram(ctx, connection, payload);
+  if (action === "tenants") return replyWithTenants(ctx, connection);
+  if (action === "tenant.suspend.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "suspended");
+  if (action === "tenant.suspend") return updateTenantFromTelegram(ctx, connection, payload, "suspended");
+  if (action === "tenant.restore.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "active");
+  if (action === "tenant.restore") return updateTenantFromTelegram(ctx, connection, payload, "active");
+  if (action === "tenant.delete.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "deleted");
+  if (action === "tenant.delete") return updateTenantFromTelegram(ctx, connection, payload, "deleted");
   if (action === "health") return replyWithHealth(ctx, connection);
   if (action === "queues") return replyWithQueues(ctx, connection);
   if (action === "webhook") return replyWithWebhook(ctx, connection);
@@ -416,8 +626,8 @@ async function connectionForContext(ctx: Context) {
   return ctx.from ? getPlatformConnectionForTelegramUser(ctx.from.id) : null;
 }
 
-async function signedPlatformCallback(connection: PlatformTelegramConnection, action: PlatformMenuAction) {
-  const token = await createPlatformSession({ connection, action, ttlSeconds: numberEnv("PLATFORM_TELEGRAM_SESSION_TTL_SECONDS", 300) });
+async function signedPlatformCallback(connection: PlatformTelegramConnection, action: PlatformMenuAction, payload: Record<string, unknown> = {}) {
+  const token = await createPlatformSession({ connection, action, payload, ttlSeconds: numberEnv("PLATFORM_TELEGRAM_SESSION_TTL_SECONDS", 900) });
   return `${PLATFORM_CALLBACK_PREFIX}${token}`;
 }
 
@@ -430,7 +640,9 @@ async function platformIncidentKeyboard(connection: PlatformTelegramConnection) 
 async function configurePlatformCommands() {
   if (!bot) return;
   await bot.api.setMyCommands([
-    { command: "menu", description: "Mở DevOps center" },
+    { command: "menu", description: "Mở trung tâm thao tác" },
+    { command: "payments", description: "Duyệt gói subscription" },
+    { command: "tenants", description: "Quản lý tenant nhanh" },
     { command: "health", description: "Kiểm tra service health" },
     { command: "queues", description: "Kiểm tra queue/DLQ" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
@@ -513,6 +725,44 @@ function connectionLabel(connection: PlatformTelegramConnection) {
   return `${connection.display_name ?? connection.telegram_username ?? connection.telegram_user_id} · ${connection.role}`;
 }
 
+function actorForConnection(connection: PlatformTelegramConnection) {
+  return `telegram:${connection.telegram_username ?? connection.telegram_user_id}`;
+}
+
+function payloadString(payload: Record<string, unknown>, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value : "";
+}
+
+function shortId(value: string) {
+  return value ? value.slice(0, 8) : "unknown";
+}
+
+function formatVnd(value: number) {
+  return `${Math.round(Number(value) || 0).toLocaleString("vi-VN")}đ`;
+}
+
+function appUrl(path = "/") {
+  const base = readEnv("NEXT_PUBLIC_APP_URL", "https://logivn.com").replace(/\/$/, "");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function platformAdminUrl(path = "/") {
+  const base = readEnv("PLATFORM_ADMIN_PUBLIC_URL", "https://admin.logivn.com").replace(/\/$/, "");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function tenantDashboardUrl(slug: string) {
+  const rootDomain = readEnv("LOGIVN_ROOT_DOMAIN", "logivn.com");
+  return slug ? `https://${slug}.${rootDomain}/dashboard` : platformAdminUrl("/tenants");
+}
+
+function tenantStatusReason(status: "active" | "suspended" | "deleted") {
+  if (status === "active") return "Mở lại từ LogiVN DevOps Bot";
+  if (status === "suspended") return "Tạm dừng từ LogiVN DevOps Bot";
+  return "Xóa mềm từ LogiVN DevOps Bot";
+}
+
 function compactScopes(scopes: string[]) {
   if (!scopes.length) return "none";
   if (scopes.includes("platform.admin")) return "platform.admin";
@@ -541,6 +791,9 @@ function friendlyPlatformError(error: unknown) {
   if (message.includes("expired")) return "Nút này đã hết hạn.";
   if (message.includes("authorized")) return "Tài khoản chưa được cấp quyền DevOps Bot.";
   if (message.includes("scope")) return "Bạn chưa có scope cho thao tác này.";
+  if (message.includes("payment")) return "Giao dịch không còn ở trạng thái chờ xử lý.";
+  if (message.includes("tenant")) return "Không xử lý được tenant này.";
+  if (message.includes("downgrade")) return "Downgrade cần xử lý trong Admin Billing.";
   return "Không thể thực hiện thao tác DevOps.";
 }
 
