@@ -76,6 +76,11 @@ deploy_compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
 }
 
+reload_monitoring_configs() {
+  log "Reloading monitoring services"
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" restart prometheus alertmanager >/dev/null
+}
+
 wait_for_health() {
   local path="$1"
   local label="$2"
@@ -120,6 +125,7 @@ main() {
   backup_runtime_data
   validate_compose
   deploy_compose
+  reload_monitoring_configs
   post_deploy_checks
   reconcile_grafana_admin_password
   docker image prune -f --filter "until=168h" >/dev/null || true
