@@ -10,8 +10,8 @@ module.exports = {
   generateRobotsTxt: true,
   generateIndexSitemap: false,
   exclude: [
-    "/admin",
-    "/admin/*",
+    "/platform-control",
+    "/platform-control/*",
     "/api/*",
     "/auth/*",
     "/dashboard",
@@ -20,7 +20,7 @@ module.exports = {
     "/r/*/reserve"
   ],
   transform: async (config, path) => {
-    if (path.startsWith("/dashboard") || path.startsWith("/admin") || path.startsWith("/api") || path.startsWith("/auth")) {
+    if (path.startsWith("/dashboard") || path.startsWith("/platform-control") || path.startsWith("/api") || path.startsWith("/auth")) {
       return null;
     }
 
@@ -36,7 +36,7 @@ module.exports = {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/admin/", "/api/", "/auth/", "/dashboard/", "/r/*/table/", "/r/*/reserve/"]
+        disallow: ["/platform-control/", "/api/", "/auth/", "/dashboard/", "/r/*/table/", "/r/*/reserve/"]
       }
     ],
     additionalSitemaps: [`${siteUrl}/sitemap.xml`]

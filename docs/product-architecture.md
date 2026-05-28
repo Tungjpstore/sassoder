@@ -20,7 +20,7 @@ Primary architecture goals:
 flowchart TD
   Customer["Customer mobile web"] --> PublicRoutes["/r tenant routes"]
   Owner["Restaurant owner"] --> Dashboard["/dashboard"]
-  Platform["LogiVN platform admin"] --> Admin["/admin"]
+  Platform["LogiVN platform admin"] --> Admin["admin.logivn.com"]
 
   PublicRoutes --> PublicApi["Public tenant APIs"]
   Dashboard --> AdminApi["Owner dashboard APIs"]

@@ -1,4 +1,4 @@
-import { updateSaasPlanAction } from "@/app/admin/actions";
+import { updateSaasPlanAction } from "@/features/platform-admin/actions";
 import {
   Field,
   PrimaryButton,

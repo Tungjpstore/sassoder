@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { ArrowRight, KeyRound, LockKeyhole, Mail, ShieldAlert, ShieldCheck, UserRoundCog } from "lucide-react";
-import { platformAdminLoginAction } from "@/app/admin/actions";
+import { platformAdminLoginAction } from "@/features/platform-admin/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
 type PlatformAdminLoginProps = {
@@ -35,10 +35,10 @@ export function PlatformAdminLogin({
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[var(--primary)]/15 bg-[var(--surface-strong)] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--primary)]">
               <ShieldCheck className="h-4 w-4 text-[var(--accent)]" />
-              Dev control plane
+              admin.logivn.com
             </div>
             <h1 className="text-4xl font-semibold tracking-tight text-[var(--foreground)] md:text-6xl">
-              /admin dành riêng cho đội phát triển LogiVN.
+              Trung tâm điều hành nội bộ của LogiVN.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--muted-foreground)]">
               Theo dõi toàn bộ tenant, cấu hình vận hành, trạng thái auth, báo cáo, tính năng đặt online, đặt bàn và các cảnh báo
@@ -88,7 +88,7 @@ export function PlatformAdminLogin({
                 <ShieldAlert className="h-4 w-4" />
                 Chưa cấu hình bảo vệ production
               </div>
-              Thêm `PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` vào Vercel trước khi mở `/admin`.
+              Thêm `PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` vào Vercel trước khi mở admin.logivn.com.
             </div>
           ) : null}
 
@@ -134,7 +134,7 @@ export function PlatformAdminLogin({
                 type="password"
                 autoComplete="current-password"
                 className="h-12 w-full rounded-xl border border-[var(--border)] bg-[var(--surface-strong)] pl-11 pr-4 text-base outline-none transition focus:border-[var(--primary)] focus:ring-4 focus:ring-[var(--primary)]/10 disabled:bg-[var(--surface-container)]"
-                placeholder="Nhập mật khẩu /admin"
+                placeholder="Nhập mật khẩu admin.logivn.com"
                 disabled={!configured || pending}
                 required
               />
@@ -149,7 +149,7 @@ export function PlatformAdminLogin({
             className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-5 text-sm font-semibold uppercase tracking-[0.12em] text-[#FFF7EB] transition hover:bg-[var(--accent-hover)] disabled:pointer-events-none disabled:opacity-50"
             disabled={!configured || pending}
           >
-            {pending ? "Đang kiểm tra..." : "Vào /admin"}
+            {pending ? "Đang kiểm tra..." : "Vào Control Center"}
             <ArrowRight className="h-4 w-4" />
           </button>
         </form>

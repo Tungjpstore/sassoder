@@ -364,7 +364,7 @@ App cron handoff is intentionally disabled by default. Keep `LOGIVN_VPS_APP_CRON
 2. Set `LOGIVN_VPS_APP_CRONS_ENABLED=true`.
 3. Disable or remove the matching `vercel.json` crons in the deployed frontend.
 4. Re-run `infra/vps/scripts/install-cron.sh`.
-5. Watch `/opt/logivn/logs/app-crons.log` and `/admin/ops` after the next run window.
+5. Watch `/opt/logivn/logs/app-crons.log` and `admin.logivn.com/ops` after the next run window.
 
 ## Validation
 

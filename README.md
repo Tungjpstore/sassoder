@@ -52,7 +52,7 @@ MAPBOX_ACCESS_TOKEN
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` chỉ dùng ở server/API routes. Không đưa key này ra client.
-`PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` bảo vệ dev console `/admin`.
+`PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` bảo vệ DevOps Control Center tại `admin.logivn.com`.
 `RESEND_API_KEY` dùng để gửi OTP xác thực, báo cáo tự động và email hệ thống. `AUTH_EMAIL_FROM` là sender riêng cho OTP đăng ký/xác thực. `CRON_SECRET` bảo vệ các endpoint cron như `/api/cron/reports`, `/api/cron/ai-ops`, `/api/cron/reservations/expire` (expire giữ bàn + auto no-show) và `/api/cron/subscriptions`.
 `MAPBOX_ACCESS_TOKEN` dùng ở server để định vị địa chỉ giao hàng và đo quãng đường lái xe bằng Mapbox. Không cần đặt `NEXT_PUBLIC_` cho token này.
 Danh sách biến đầy đủ, scope theo môi trường và checklist rollout/rollback nằm ở `docs/infrastructure-runbook.md`.
@@ -86,7 +86,7 @@ npm run dev
 Các đường dẫn chính:
 
 - Trang quản trị: `/dashboard`
-- Dev/platform admin của LogiVN: `/admin`
+- DevOps Control Center của LogiVN: `https://admin.logivn.com`
 - Đăng ký tài khoản: `/dashboard/register`
 - Onboarding tạo quán: `/dashboard/onboarding`
 - Cài đặt VietQR: `/dashboard/settings`
@@ -105,9 +105,9 @@ Các đường dẫn chính:
 - Khi hoàn tất, hệ thống tự tạo hồ sơ ADMIN, quán, bàn, danh mục mẫu và món mẫu theo loại hình.
 - Khi tạo quán, hệ thống tự cấp subscription mặc định `LogiVN Pro` với 30 ngày dùng thử.
 
-## Platform Admin `/admin`
+## DevOps Control Center `admin.logivn.com`
 
-`/admin` là control plane nội bộ của LogiVN, tách biệt với dashboard vận hành của từng quán:
+`admin.logivn.com` là control plane nội bộ của LogiVN, tách biệt với dashboard vận hành của từng quán:
 
 - Quản lý nội dung website, landing page, logo, banner và thông tin công ty.
 - Quản lý gói dịch vụ SaaS, mặc định `LogiVN Pro` giá `99.000đ/tháng`, trial 30 ngày.
@@ -116,7 +116,7 @@ Các đường dẫn chính:
 - Quản lý user ở mức nền tảng: chặn/mở chặn tài khoản khi có lạm dụng.
 - Theo dõi tín hiệu lạm dụng trial, đăng ký chờ OTP và tình trạng cấu hình bảo mật.
 
-`/admin` không hiển thị đơn hàng, bill hay doanh thu riêng tư của quán. Các dữ liệu vận hành đó chỉ nằm trong `/dashboard` của tenant.
+`admin.logivn.com` không hiển thị đơn hàng, bill hay doanh thu riêng tư của quán. Các dữ liệu vận hành đó chỉ nằm trong `/dashboard` của tenant.
 
 Để bật đầy đủ tính năng này trên Supabase, chạy migration:
 
@@ -183,7 +183,7 @@ https://img.vietqr.io/image/{BANK}-{ACCOUNT}-compact2.png?amount={amount}&addInf
 - Thao tác thanh toán của khách phải gửi kèm `restaurantSlug`, `tableId` và `customerSessionId` để giảm rủi ro lạm dụng order id.
 - App redirect canonical các domain `*.vercel.app` về `https://logivn.com` trong production.
 - Header bảo mật cơ bản được cấu hình trong `next.config.ts`.
-- `/admin` dùng cookie HTTP-only riêng và chỉ gọi service-role ở server; dữ liệu trả về đã loại bỏ đơn hàng/doanh thu riêng tư của tenant.
+- `admin.logivn.com` dùng cookie HTTP-only riêng và chỉ gọi service-role ở server; dữ liệu trả về đã loại bỏ đơn hàng/doanh thu riêng tư của tenant.
 - Billing SaaS có bảng `restaurant_subscriptions`, `subscription_payment_logs` và `trial_claims` để audit gia hạn, xác minh VietQR và phát hiện lạm dụng dùng thử.
 
 ## Kiểm Tra

@@ -79,12 +79,12 @@ Implemented first slice:
 - AI Ops Morning Brief ledger: daily dashboard brief, optional email delivery, delivery status, action items and Platform Admin visibility
 - Owner Morning Brief inbox at `/dashboard/ai-ops`: latest brief, recent history, action item preview, preference form and email retry
 - Per-restaurant `ai_morning_brief_preferences` with RLS, recipient list, send hour, timezone and admin-only owner dashboard mutation
-- Platform Admin `/admin/ai` drill-down for Morning Brief summary, recipients, severity counts and top action items
+- Platform Admin `admin.logivn.com/ai` drill-down for Morning Brief summary, recipients, severity counts and top action items
 - Branch-scoped AI Ops insights using existing `ai_operation_insights.branch_id` and `scope_key=branch:<branch_id>`
 - Deterministic branch signals for delivery pause, payment queue, local low stock, inventory alerts, staff coverage, long-distance delivery and branch promotion opportunities
 - `/api/cron/ai-ops` branch insight refresh with `branches=false` opt-out and `branchLimit` / `maxBranches` slicing per restaurant
 - Owner `/dashboard/ai-ops` branch panel with per-branch actions, resolve and dismiss controls
-- Platform Admin `/admin/ai` branch insight overview across restaurants, branches, severity and recent action items
+- Platform Admin `admin.logivn.com/ai` branch insight overview across restaurants, branches, severity and recent action items
 - Durable order branch attribution: `orders.branch_id` plus `branch_assignment_source` for delivery quote, single branch and primary branch fallbacks
 - Branch AI now prefers `orders.branch_id` before falling back to legacy `delivery_quote_snapshot.nearestStore.id`
 - Branch picker for pickup orders: public ordering now lets guests choose the active pickup branch and stores explicit attribution as `manual`

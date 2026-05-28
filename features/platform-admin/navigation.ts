@@ -25,20 +25,20 @@ export type PlatformAdminSection = {
 };
 
 export const platformAdminSections: PlatformAdminSection[] = [
-  { key: "overview", label: "Tổng quan", href: "/admin", icon: SlidersHorizontal },
-  { key: "site", label: "Website", href: "/admin/site", icon: FileSliders },
-  { key: "content", label: "Content", href: "/admin/content", icon: FileText },
-  { key: "plans", label: "Gói dịch vụ", href: "/admin/plans", icon: PackageCheck },
-  { key: "billing", label: "Thanh toán gói", href: "/admin/billing", icon: CreditCard },
-  { key: "tenants", label: "Cửa hàng", href: "/admin/tenants", icon: Store },
-  { key: "users", label: "User", href: "/admin/users", icon: UsersRound },
-  { key: "ai", label: "AI", href: "/admin/ai", icon: Bot },
-  { key: "maps", label: "Maps", href: "/admin/maps", icon: MapPinned },
-  { key: "atlas", label: "Atlas", href: "/admin/atlas", icon: Globe2 },
-  { key: "ops", label: "Ops", href: "/admin/ops", icon: ServerCog },
-  { key: "governance", label: "Governance", href: "/admin/governance", icon: ClipboardCheck },
-  { key: "security", label: "Bảo mật", href: "/admin/security", icon: ShieldCheck },
-  { key: "release", label: "Release", href: "/admin/release", icon: GitBranch }
+  { key: "overview", label: "Tổng quan", href: "/", icon: SlidersHorizontal },
+  { key: "site", label: "Website", href: "/site", icon: FileSliders },
+  { key: "content", label: "Content", href: "/content", icon: FileText },
+  { key: "plans", label: "Gói dịch vụ", href: "/plans", icon: PackageCheck },
+  { key: "billing", label: "Thanh toán gói", href: "/billing", icon: CreditCard },
+  { key: "tenants", label: "Cửa hàng", href: "/tenants", icon: Store },
+  { key: "users", label: "User", href: "/users", icon: UsersRound },
+  { key: "ai", label: "AI", href: "/ai", icon: Bot },
+  { key: "maps", label: "Maps", href: "/maps", icon: MapPinned },
+  { key: "atlas", label: "Atlas", href: "/atlas", icon: Globe2 },
+  { key: "ops", label: "Ops", href: "/ops", icon: ServerCog },
+  { key: "governance", label: "Governance", href: "/governance", icon: ClipboardCheck },
+  { key: "security", label: "Bảo mật", href: "/security", icon: ShieldCheck },
+  { key: "release", label: "Release", href: "/release", icon: GitBranch }
 ];
 
 export const activePlatformAdminSections = new Set<ActiveSection>(

@@ -1,5 +1,5 @@
 import { CircleDot } from "lucide-react";
-import { updateTenantPlatformStatusAction } from "@/app/admin/actions";
+import { updateTenantPlatformStatusAction } from "@/features/platform-admin/actions";
 import {
   PrimaryButton,
   SectionCard,

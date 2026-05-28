@@ -123,7 +123,7 @@
 - Chủ quán quản lý inbox, người nhận và retry email tại `/dashboard/ai-ops`. Nếu schema chưa migrate, trang vẫn load ở trạng thái cảnh báo và cron chỉ ghi phần đã sẵn sàng.
 - `/api/cron/reservations/expire` cũng xử lý nhiều batch trong cùng một invocation, tránh bỏ sót reservation hết hạn khi volume tăng.
 - Cả 4 cron routes đều có `maxDuration = 60` để ràng buộc runtime và giảm runaway executions.
-- Mỗi cron route ghi `cron_run_logs` bằng service-role sau khi vượt qua `CRON_SECRET`. `/admin/ops` dùng bảng này để hiển thị lần chạy gần nhất, next-run ETA, age, duration, failure streak, recent history, summary và lỗi cuối cùng.
+- Mỗi cron route ghi `cron_run_logs` bằng service-role sau khi vượt qua `CRON_SECRET`. `admin.logivn.com/ops` dùng bảng này để hiển thị lần chạy gần nhất, next-run ETA, age, duration, failure streak, recent history, summary và lỗi cuối cùng.
 
 ### Kiểm thử thủ công
 

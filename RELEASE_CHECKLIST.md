@@ -84,7 +84,7 @@ Current result: CONDITIONAL GO for local artifact
 | Item | Status | Required Action |
 | --- | --- | --- |
 | Health endpoint | Pass | Production smoke confirmed Supabase connected. |
-| Monitoring dashboard | Conditional | `/admin/ops` and cron logs exist, but dashboard ownership not verified. |
+| Monitoring dashboard | Conditional | `admin.logivn.com/ops` and cron logs exist, but dashboard ownership not verified. |
 | Alerting | Missing | No proof of alert destinations or thresholds. |
 | Logging coverage | Conditional | Cron and audit logs exist; log drain/export not proven. |
 | Analytics integrity | Conditional | SEO audits pass; billing/AI analytics depend on parity fix. |

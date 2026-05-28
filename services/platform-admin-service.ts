@@ -411,7 +411,7 @@ const fallbackPlan: PlanRow = {
   id: "schema-pending-pro",
   code: "pro",
   name: "LogiVN Pro",
-  description: "Gói thương mại mặc định. Cần chạy migration để chỉnh sửa trong /admin.",
+  description: "Gói thương mại mặc định. Cần chạy migration để chỉnh sửa trong Control Center.",
   monthly_price: 99000,
   trial_days: 30,
   features: ["QR menu theo bàn", "Quản lý đơn realtime", "VietQR thủ công", "Báo cáo email"],
@@ -724,7 +724,7 @@ function buildContentSurfaces({
       items: 1,
       lastUpdated: settings.landing.updatedAt,
       owner: "Growth",
-      note: "Headline, CTA, trust block, dashboard section, final CTA và hero banner đang chỉnh trực tiếp trong /admin/site."
+      note: "Headline, CTA, trust block, dashboard section, final CTA và hero banner đang chỉnh trực tiếp trên admin.logivn.com/site."
     },
     {
       key: "pricing",
@@ -736,7 +736,7 @@ function buildContentSurfaces({
       items: effectivePlans.length,
       lastUpdated: null,
       owner: "Billing",
-      note: "Giá/gói chỉnh từ /admin/plans; nội dung FAQ và layout pricing vẫn ở code để giảm rủi ro SEO."
+      note: "Giá/gói chỉnh từ admin.logivn.com/plans; nội dung FAQ và layout pricing vẫn ở code để giảm rủi ro SEO."
     },
     {
       key: "blog",
@@ -775,7 +775,7 @@ function buildContentSurfaces({
       items: 3,
       lastUpdated: null,
       owner: "SEO",
-      note: "Nên thêm SEO checks trong /admin để phát hiện indexability, canonical, schema và internal link trước khi publish."
+      note: "Nên thêm SEO checks trên admin.logivn.com để phát hiện indexability, canonical, schema và internal link trước khi publish."
     }
   ];
 }
@@ -1055,7 +1055,7 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean): Integratio
       category: "storage",
       envNames: ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
       required: false,
-      secretHandling: "Secret nằm ở Vercel/Cloudflare; /admin chỉ hiển thị masked metadata và trạng thái.",
+      secretHandling: "Secret nằm ở Vercel/Cloudflare; admin.logivn.com chỉ hiển thị masked metadata và trạng thái.",
       note: "Hiện platform assets vẫn dùng Supabase Storage; R2 nên là bước chuyển có migration/rollback riêng."
     })
   ];
@@ -1079,7 +1079,7 @@ function buildAdminCapabilities({
     {
       key: "overview",
       name: "Platform overview",
-      section: "/admin",
+      section: "/",
       owner: "Platform",
       status: "live",
       observe: "live",
@@ -1092,7 +1092,7 @@ function buildAdminCapabilities({
     {
       key: "site-settings",
       name: "Brand & landing settings",
-      section: "/admin/site",
+      section: "/site",
       owner: "Growth",
       status: directContent > 0 ? "live" : "needs_config",
       observe: "live",
@@ -1105,7 +1105,7 @@ function buildAdminCapabilities({
     {
       key: "content-cms",
       name: "Content CMS",
-      section: "/admin/content",
+      section: "/content",
       owner: "SEO",
       status: contentSurfaces.some((surface) => surface.editable === "code_only") ? "needs_review" : "live",
       observe: "live",
@@ -1118,7 +1118,7 @@ function buildAdminCapabilities({
     {
       key: "plans-billing",
       name: "Plans & billing",
-      section: "/admin/billing",
+      section: "/billing",
       owner: "Finance",
       status: "live",
       observe: "live",
@@ -1131,7 +1131,7 @@ function buildAdminCapabilities({
     {
       key: "tenant-lifecycle",
       name: "Tenant lifecycle",
-      section: "/admin/tenants",
+      section: "/tenants",
       owner: "Support",
       status: "live",
       observe: "live",
@@ -1144,7 +1144,7 @@ function buildAdminCapabilities({
     {
       key: "ai-ops",
       name: "AI operations",
-      section: "/admin/ai",
+      section: "/ai",
       owner: "AI Ops",
       status: hasConfiguredAi ? "live" : "needs_config",
       observe: "live",
@@ -1157,7 +1157,7 @@ function buildAdminCapabilities({
     {
       key: "maps-delivery",
       name: "Maps & delivery ops",
-      section: "/admin/maps",
+      section: "/maps",
       owner: "Delivery Ops",
       status: hasConfiguredMaps ? "live" : "needs_config",
       observe: "live",
@@ -1170,7 +1170,7 @@ function buildAdminCapabilities({
     {
       key: "infra-ops",
       name: "Infra, cron & storage",
-      section: "/admin/ops",
+      section: "/ops",
       owner: "DevOps",
       status: allCronConfigured ? "live" : "needs_config",
       observe: "live",
@@ -1183,7 +1183,7 @@ function buildAdminCapabilities({
     {
       key: "security-governance",
       name: "Security governance",
-      section: "/admin/governance",
+      section: "/governance",
       owner: "Security",
       status: "needs_review",
       observe: "live",
@@ -1201,7 +1201,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_brand_setting",
       name: "Cập nhật brand",
-      surface: "/admin/site",
+      surface: "/site",
       risk: "medium",
       status: "live",
       guard: "platform auth + zod validation + image mime/size checks",
@@ -1211,7 +1211,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_landing_setting",
       name: "Cập nhật landing",
-      surface: "/admin/site",
+      surface: "/site",
       risk: "medium",
       status: "live",
       guard: "platform auth + zod validation + cache revalidation",
@@ -1221,7 +1221,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_billing_setting",
       name: "Cập nhật tài khoản thu phí",
-      surface: "/admin/site",
+      surface: "/site",
       risk: "high",
       status: "live",
       guard: "platform auth + strict bank/account schema",
@@ -1231,7 +1231,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_saas_plan",
       name: "Cập nhật gói SaaS",
-      surface: "/admin/plans",
+      surface: "/plans",
       risk: "high",
       status: "live",
       guard: "platform auth + numeric bounds + active flag",
@@ -1241,7 +1241,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "confirm_subscription_payment",
       name: "Xác minh thanh toán gói",
-      surface: "/admin/billing",
+      surface: "/billing",
       risk: "high",
       status: "live",
       guard: "platform auth + subscription service state machine",
@@ -1251,7 +1251,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "reject_subscription_payment",
       name: "Từ chối thanh toán gói",
-      surface: "/admin/billing",
+      surface: "/billing",
       risk: "high",
       status: "live",
       guard: "platform auth + reason field + service state machine",
@@ -1261,7 +1261,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "resolve_billing_anomaly",
       name: "Reconcile billing anomaly",
-      surface: "/admin/billing",
+      surface: "/billing",
       risk: "high",
       status: "live",
       guard: "server-side anomaly key whitelist + conflict checks",
@@ -1271,7 +1271,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_tenant_status",
       name: "Tạm dừng/mở/xoá mềm quán",
-      surface: "/admin/tenants",
+      surface: "/tenants",
       risk: "high",
       status: "live",
       guard: "platform auth + UUID/status whitelist + optional reason",
@@ -1281,7 +1281,7 @@ function buildAdminMutations(): AdminMutation[] {
     {
       key: "update_platform_user_status",
       name: "Chặn/mở user quán",
-      surface: "/admin/users",
+      surface: "/users",
       risk: "medium",
       status: "live",
       guard: "platform auth + UUID/status whitelist",
@@ -1290,8 +1290,8 @@ function buildAdminMutations(): AdminMutation[] {
     },
     {
       key: "platform_admin_password_change",
-      name: "Đổi mật khẩu /admin",
-      surface: "/admin/security",
+      name: "Đổi mật khẩu Control Center",
+      surface: "/security",
       risk: "high",
       status: "live",
       guard: "current password verify + scrypt hash + HTTP-only session",
@@ -1308,7 +1308,7 @@ function buildAdminRoleReadiness(): AdminRoleReadiness[] {
       role: "Owner",
       scope: "Toàn quyền platform, approval cuối cùng",
       status: "planned",
-      note: "Chưa có runtime RBAC; hiện mọi authenticated /admin session tương đương owner."
+      note: "Chưa có runtime RBAC đầy đủ; hiện mọi authenticated session trên admin.logivn.com tương đương owner."
     },
     {
       key: "devops",
@@ -1412,7 +1412,7 @@ function buildProjectAtlas({
       audit: "partial",
       routes: ["/dashboard", "/dashboard/menu", "/dashboard/orders", "/dashboard/kitchen", "/dashboard/online", "/dashboard/payments", "/dashboard/reservations", "/dashboard/settings", "/dashboard/staff", "/dashboard/tables"],
       dependencies: ["Supabase Auth", "restaurant entitlement", "RLS", "dashboard API session"],
-      note: "Dashboard quán là control plane của owner/staff, tách quyền với platform /admin.",
+      note: "Dashboard quán là control plane của owner/staff, tách quyền với admin.logivn.com.",
       nextStep: "Thêm support-mode read-only từ platform với reason, expiry và audit."
     },
     {
@@ -1428,7 +1428,7 @@ function buildProjectAtlas({
       routes: ["/dashboard/login", "/dashboard/register", "/dashboard/forgot-password", "/dashboard/reset-password", "/dashboard/onboarding", "/dashboard/setup", "/auth/callback", "/auth/google", "/verify-email"],
       dependencies: ["Supabase Auth", "registration_intents", "trial_claims", "email provider"],
       note: "Registration, OTP/email confirm, Google OAuth và trial onboarding quyết định activation.",
-      nextStep: "Hiển thị funnel conversion và auth error buckets trong /admin."
+      nextStep: "Hiển thị funnel conversion và auth error buckets trên admin.logivn.com."
     },
     {
       key: "platform-admin-backend",
@@ -1440,7 +1440,7 @@ function buildProjectAtlas({
       observe: "live",
       control: "live",
       audit: "live",
-      routes: ["/admin/[[...path]]", "app/admin/actions.ts", "services/platform-admin-service.ts"],
+      routes: ["admin.logivn.com/*", "app/platform-control/[[...path]]/page.tsx", "features/platform-admin/actions.ts", "services/platform-admin-service.ts"],
       dependencies: ["platform_admin_credentials", "platform_settings", "platform_audit_logs", "service role"],
       note: "Internal control plane cho LogiVN, server-only snapshot và mutation guardrails.",
       nextStep: "Nâng singleton password thành RBAC runtime với revoke sessions."
@@ -1457,7 +1457,7 @@ function buildProjectAtlas({
       audit: "partial",
       routes: ["/api/admin/orders/*", "/api/admin/kitchen", "/api/admin/reservations/*", "/api/admin/service-requests/*", "/api/admin/delivery/couriers"],
       dependencies: ["requireOperationalDashboardApiSession", "entitlements", "orders", "reservations", "delivery_couriers"],
-      note: "APIs vận hành quán dùng dashboard session, không dùng platform /admin session.",
+      note: "APIs vận hành quán dùng dashboard session, không dùng platform admin session.",
       nextStep: "Thêm per-route latency/error dashboard và operation audit coverage."
     },
     {
@@ -1518,7 +1518,7 @@ function buildProjectAtlas({
       routes: ["supabase/migrations/*", "supabase/schema.sql", "types/supabase.ts"],
       dependencies: ["Postgres", "RLS", "service role", "Supabase Auth", "Storage"],
       note: "Core tables cover tenants, menu, orders, bills, reservations, billing, maps, AI logs.",
-      nextStep: "Show migration drift, RLS policy health and table growth/cost in /admin."
+      nextStep: "Show migration drift, RLS policy health and table growth/cost trên admin.logivn.com."
     },
     {
       key: "billing-data-plane",
@@ -1532,7 +1532,7 @@ function buildProjectAtlas({
       audit: "live",
       routes: ["saas_plans", "restaurant_subscriptions", "subscription_plans", "subscriptions", "invoices", "payments", "usage_quotas"],
       dependencies: ["billing v2 bridge", "payment logs", "feature usage", "trial usage"],
-      note: "Billing v2 cutover, anomalies và usage ledger đang hiển thị trong /admin/billing.",
+      note: "Billing v2 cutover, anomalies và usage ledger đang hiển thị trên admin.logivn.com/billing.",
       nextStep: "Thêm billing rollback/reversal workflow và finance approval."
     },
     {
@@ -1577,8 +1577,8 @@ function buildProjectAtlas({
       audit: "partial",
       routes: ["Vercel production", "GitHub Actions SEO CI", "scripts/infra/check.mjs", "npm test", "npm run build"],
       dependencies: ["Vercel", "GitHub", "env contract", "source hygiene"],
-      note: "Build/test/infra checks đã chạy được; /admin chưa có deploy history UI.",
-      nextStep: "Thêm deployment ledger, rollback link và smoke check history trong /admin/release."
+      note: "Build/test/infra checks đã chạy được; admin.logivn.com chưa có deploy history UI đầy đủ.",
+      nextStep: "Thêm deployment ledger, rollback link và smoke check history trong admin.logivn.com/release."
     },
     {
       key: "external-integrations-plane",
@@ -2676,7 +2676,7 @@ async function readPlatformAdminSnapshot() {
     envStatus("SUPABASE_SERVICE_ROLE_KEY", "Supabase service role"),
     envStatus("NEXT_PUBLIC_APP_URL", "App URL"),
     {
-      ...envStatus("PLATFORM_ADMIN_PASSWORD", "Mật khẩu /admin", process.env.NODE_ENV === "production"),
+      ...envStatus("PLATFORM_ADMIN_PASSWORD", "Mật khẩu admin.logivn.com", process.env.NODE_ENV === "production"),
       configured: platformAuthStatus.configured,
       status: platformAuthStatus.configured
         ? platformAuthStatus.requiresFirstPasswordChange
@@ -2686,7 +2686,7 @@ async function readPlatformAdminSnapshot() {
           ? "Thiếu"
           : "Tuỳ chọn"
     },
-    envStatus("PLATFORM_ADMIN_SESSION_SECRET", "Session secret /admin", false),
+    envStatus("PLATFORM_ADMIN_SESSION_SECRET", "Session secret admin.logivn.com", false),
     envStatus("RESEND_API_KEY", "Resend email", false),
     envStatus("CRON_SECRET", "Cron secret", false),
     envStatus("MAPBOX_ACCESS_TOKEN", "Mapbox ship/route", false),
@@ -2700,7 +2700,7 @@ async function readPlatformAdminSnapshot() {
     {
       layer: "Auth / session",
       status: platformAuthStatus.configured ? (platformAuthStatus.requiresFirstPasswordChange ? "Cần đổi lần đầu" : "OK") : "Cần cấu hình",
-      note: "Dashboard quán dùng Supabase Auth; /admin dùng cookie HTTP-only ký HMAC và mật khẩu được hash sau lần đổi đầu tiên."
+      note: "Dashboard quán dùng Supabase Auth; admin.logivn.com dùng cookie HTTP-only ký HMAC và mật khẩu được hash sau lần đổi đầu tiên."
     },
     {
       layer: "Tenant isolation",
@@ -2877,7 +2877,7 @@ async function readPlatformAdminSnapshot() {
     env,
     securityControls,
     modules: [
-      { key: "cms", name: "CMS landing & brand", status: "live", owner: "Platform", note: "Sửa nội dung website, logo, banner và thông tin công ty tại /admin." },
+      { key: "cms", name: "CMS landing & brand", status: "live", owner: "Platform", note: "Sửa nội dung website, logo, banner và thông tin công ty tại admin.logivn.com." },
       {
         key: "content",
         name: "Content surfaces",
@@ -2933,7 +2933,7 @@ async function readPlatformAdminSnapshot() {
         owner: "Security",
         note: `${adminMutations.length} mutations mapped, ${adminMutations.filter((item) => item.risk === "high").length} high-risk actions need approval path.`
       },
-      { key: "security", name: "Security guardrails", status: env.some((item) => item.required && !item.configured) ? "needs_config" : "live", owner: "Security", note: "HTTP-only /admin session, service-role chỉ ở server, RLS cho tenant data." },
+      { key: "security", name: "Security guardrails", status: env.some((item) => item.required && !item.configured) ? "needs_config" : "live", owner: "Security", note: "HTTP-only admin.logivn.com session, service-role chỉ ở server, RLS cho tenant data." },
       { key: "growth", name: "Trial governance", status: abuseSignals.length ? "needs_review" : "live", owner: "Growth", note: "Theo dõi email trial trùng để giảm spam/lạm dụng ưu đãi." }
     ]
   };

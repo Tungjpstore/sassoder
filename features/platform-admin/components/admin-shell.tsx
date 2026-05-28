@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { LogOut, RefreshCw } from "lucide-react";
-import { platformAdminLogoutAction, refreshPlatformAdminAction } from "@/app/admin/actions";
+import { platformAdminLogoutAction, refreshPlatformAdminAction } from "@/features/platform-admin/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { formatDateTime } from "@/features/platform-admin/components/primitives";
 import { platformAdminSections } from "@/features/platform-admin/navigation";
@@ -14,9 +14,9 @@ function Sidebar({ activeSection, snapshot }: { activeSection: ActiveSection; sn
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-[252px] border-r border-slate-200 bg-white lg:block">
       <div className="flex h-full flex-col">
         <div className="border-b border-slate-200 p-4">
-          <LogiVNLogo href="/admin" className="h-9" priority />
+          <LogiVNLogo href="/" className="h-9" priority />
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Platform admin</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">admin.logivn.com</p>
             <p className="mt-2 text-sm font-semibold text-slate-950">{snapshot.environment.vercelEnv}</p>
             <p className="mt-1 truncate text-xs text-slate-500">Không hiển thị doanh thu/đơn riêng tư của quán</p>
           </div>
@@ -44,7 +44,7 @@ function Sidebar({ activeSection, snapshot }: { activeSection: ActiveSection; sn
           <form action={platformAdminLogoutAction}>
             <button className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
               <LogOut size={16} />
-              Đăng xuất /admin
+              Đăng xuất Control Center
             </button>
           </form>
         </div>

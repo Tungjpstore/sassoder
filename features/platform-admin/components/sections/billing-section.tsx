@@ -3,7 +3,7 @@ import {
   confirmSubscriptionPaymentAction,
   rejectSubscriptionPaymentAction,
   resolveBillingAnomalyAction
-} from "@/app/admin/actions";
+} from "@/features/platform-admin/actions";
 import {
   MetricCard,
   PrimaryButton,

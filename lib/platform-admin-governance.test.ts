@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const authSource = readFileSync("lib/platform-admin-auth.ts", "utf8");
-const adminActionsSource = readFileSync("app/admin/actions.ts", "utf8");
-const adminPageSource = readFileSync("app/admin/[[...path]]/page.tsx", "utf8");
+const adminActionsSource = readFileSync("features/platform-admin/actions.ts", "utf8");
+const adminPageSource = readFileSync("app/platform-control/[[...path]]/page.tsx", "utf8");
 const adminConsoleSource = readFileSync("components/admin/platform-admin-console.tsx", "utf8");
 const tenantSectionSource = readFileSync("features/platform-admin/components/sections/tenants-section.tsx", "utf8");
 const userSectionSource = readFileSync("features/platform-admin/components/sections/users-section.tsx", "utf8");

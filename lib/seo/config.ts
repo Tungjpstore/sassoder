@@ -83,7 +83,7 @@ export const SEO_PUBLIC_ROUTES = [
 ];
 
 export const SEO_PRIVATE_ROUTE_PREFIXES = [
-  "/admin",
+  "/platform-control",
   "/api",
   "/auth",
   "/dashboard",

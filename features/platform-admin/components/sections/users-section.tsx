@@ -1,4 +1,4 @@
-import { updatePlatformUserStatusAction } from "@/app/admin/actions";
+import { updatePlatformUserStatusAction } from "@/features/platform-admin/actions";
 import {
   PrimaryButton,
   SectionCard,

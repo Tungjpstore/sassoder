@@ -16,7 +16,7 @@ export function ContentControl({ snapshot }: { snapshot: Snapshot }) {
       <div className="grid gap-3 md:grid-cols-3">
         <MetricCard label="Surfaces" value={formatNumber(snapshot.contentSurfaces.length)} detail="Landing, pricing, blog, QR menu và SEO feed" icon={FileText} tone="info" />
         <MetricCard label="Blog posts" value={formatNumber(snapshot.contentSurfaces.find((item) => item.key === "blog")?.items ?? 0)} detail="Hiện là content-as-code, chưa có draft CMS" icon={Globe2} tone="warning" />
-        <MetricCard label="Editable trực tiếp" value={formatNumber(snapshot.contentSurfaces.filter((item) => item.editable === "direct").length)} detail="Các vùng có server action an toàn trong /admin" icon={CheckCircle2} tone="good" />
+        <MetricCard label="Editable trực tiếp" value={formatNumber(snapshot.contentSurfaces.filter((item) => item.editable === "direct").length)} detail="Các vùng có server action an toàn trên admin.logivn.com" icon={CheckCircle2} tone="good" />
       </div>
 
       <SectionCard title="Bề mặt public đang quản lý">

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Banknote, Building2, CreditCard, Database, KeyRound, PackageCheck, ShieldCheck } from "lucide-react";
-import { confirmSubscriptionPaymentAction } from "@/app/admin/actions";
+import { confirmSubscriptionPaymentAction } from "@/features/platform-admin/actions";
 import { ModuleMap } from "@/features/platform-admin/components/module-map";
 import {
   MetricCard,
@@ -41,7 +41,7 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
                     <input type="hidden" name="paymentId" value={payment.id} />
                     <PrimaryButton tone="orange">Xác minh</PrimaryButton>
                   </form>
-                  <Link href="/admin/billing" className="inline-flex h-10 items-center rounded-xl border border-orange-200 bg-white px-3 text-sm font-semibold text-orange-700">
+                  <Link href="/billing" className="inline-flex h-10 items-center rounded-xl border border-orange-200 bg-white px-3 text-sm font-semibold text-orange-700">
                     Chi tiết
                   </Link>
                 </div>
@@ -59,7 +59,7 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
           <div className="grid gap-3 text-sm leading-6 text-slate-600">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="mb-1 flex items-center gap-2 font-semibold text-slate-950"><ShieldCheck size={16} /> Tách quyền rõ ràng</div>
-              `/admin` chỉ là control plane nền tảng; không đọc danh sách đơn, bill hay doanh thu riêng của quán.
+              admin.logivn.com là control plane nền tảng; không đọc danh sách đơn, bill hay doanh thu riêng của quán.
             </div>
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               <div className="mb-1 flex items-center gap-2 font-semibold text-slate-950"><KeyRound size={16} /> Trial abuse</div>

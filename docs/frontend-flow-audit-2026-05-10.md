@@ -55,7 +55,7 @@ Dashboard:
 
 Platform admin:
 
-- `app/admin/[[...path]]/page.tsx`
+- `app/platform-control/[[...path]]/page.tsx`
 
 ## What Is Working Well
 
@@ -65,7 +65,7 @@ Platform admin:
 - Settings uses URL-backed `section` navigation, which is the right direction for deep-linkable operational flows.
 - Map-heavy JavaScript is dynamically imported in the map components, reducing immediate JS pressure.
 - Global CSS already includes focus-visible, reduced-motion, safe-area, and mobile touch handling foundations.
-- Production smoke checks after deploy returned HTTP 200 for `/`, `/pricing`, `/dashboard/login`, `/admin`, and the health endpoint.
+- Production smoke checks after deploy returned HTTP 200 for `/`, `/pricing`, `/dashboard/login`, `admin.logivn.com`, and the health endpoint.
 
 ## Principal Findings
 

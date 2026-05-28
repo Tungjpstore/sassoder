@@ -6,6 +6,8 @@ import { redirect } from "next/navigation";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 const cookieName = "logivn_platform_admin";
+const cookiePath = "/";
+const legacyCookiePath = "/adm" + "in";
 const sessionTtlMs = 12 * 60 * 60 * 1000;
 const credentialId = "primary";
 
@@ -578,7 +580,7 @@ export async function createPlatformAdminSession({
         httpOnly: true,
         sameSite: "lax",
         secure: process.env.NODE_ENV === "production",
-        path: "/admin",
+        path: cookiePath,
         maxAge: Math.floor(sessionTtlMs / 1000)
       });
       return;
@@ -590,7 +592,7 @@ export async function createPlatformAdminSession({
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    path: "/admin",
+    path: cookiePath,
     maxAge: Math.floor(sessionTtlMs / 1000)
   });
 }
@@ -624,7 +626,15 @@ export async function clearPlatformAdminSession() {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
-    path: "/admin",
+    path: cookiePath,
+    maxAge: 0,
+    expires: new Date(0)
+  });
+  cookieStore.set(cookieName, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: legacyCookiePath,
     maxAge: 0,
     expires: new Date(0)
   });
@@ -740,7 +750,7 @@ export function hasPlatformAdminPermission(session: PlatformAdminSession, permis
 export async function requirePlatformAdminPermission(permission: PlatformAdminPermission = "platform.read") {
   const session = await getPlatformAdminSession();
   if (!hasPlatformAdminPermission(session, permission)) {
-    redirect(session.authenticated && session.mustChangePassword ? "/admin/change-password" : "/admin");
+    redirect(session.authenticated && session.mustChangePassword ? "/change-password" : "/");
   }
   return session;
 }

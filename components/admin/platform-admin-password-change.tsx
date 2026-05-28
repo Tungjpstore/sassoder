@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import { ArrowRight, KeyRound, LockKeyhole, ShieldCheck } from "lucide-react";
-import { platformAdminChangePasswordAction } from "@/app/admin/actions";
+import { platformAdminChangePasswordAction } from "@/features/platform-admin/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 
 type PlatformAdminPasswordChangeProps = {
@@ -29,7 +29,7 @@ export function PlatformAdminPasswordChange({ forced = false, sessionTtlHours }:
             <p className="mt-5 max-w-2xl text-base leading-8 text-[var(--muted-foreground)]">
               {forced
                 ? "Mật khẩu tạm chỉ dùng để mở khoá lần đầu. Sau khi đổi, LogiVN lưu hash theo admin user hoặc credential bootstrap trong Supabase."
-                : "Cập nhật mật khẩu cho phiên /admin hiện tại. Phiên sẽ được làm mới sau khi lưu thành công."}
+                : "Cập nhật mật khẩu cho phiên admin.logivn.com hiện tại. Phiên sẽ được làm mới sau khi lưu thành công."}
             </p>
           </div>
           <div className="grid max-w-3xl gap-3 sm:grid-cols-3">
@@ -50,7 +50,7 @@ export function PlatformAdminPasswordChange({ forced = false, sessionTtlHours }:
           <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--primary)] text-[#FFF7EB]">
             <LockKeyhole className="h-6 w-6" />
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight">{forced ? "Đổi mật khẩu lần đầu" : "Đổi mật khẩu /admin"}</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{forced ? "Đổi mật khẩu lần đầu" : "Đổi mật khẩu Control Center"}</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
             Mật khẩu mới cần tối thiểu 12 ký tự, có chữ, số và ký tự đặc biệt.
           </p>

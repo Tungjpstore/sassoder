@@ -9,7 +9,7 @@ import { getPlatformAdminSnapshot } from "@/services/platform-admin-service";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Dev Admin | LogiVN",
+  title: "LogiVN DevOps Control Center",
   robots: {
     index: false,
     follow: false

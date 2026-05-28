@@ -38,20 +38,20 @@ export type PlatformCopilotSnapshot = {
 
 const logibotLogo = "/brand/logivn/logibot-badge.png";
 const adminRoutes = [
-  "/admin",
-  "/admin/site",
-  "/admin/content",
-  "/admin/plans",
-  "/admin/billing",
-  "/admin/tenants",
-  "/admin/users",
-  "/admin/ai",
-  "/admin/maps",
-  "/admin/atlas",
-  "/admin/ops",
-  "/admin/governance",
-  "/admin/security",
-  "/admin/release"
+  "/",
+  "/site",
+  "/content",
+  "/plans",
+  "/billing",
+  "/tenants",
+  "/users",
+  "/ai",
+  "/maps",
+  "/atlas",
+  "/ops",
+  "/governance",
+  "/security",
+  "/release"
 ] as const;
 
 type AdminRoute = (typeof adminRoutes)[number];
@@ -72,7 +72,7 @@ type PlatformAiResult = {
 };
 
 function normalizeAdminRoute(route: string) {
-  return adminRoutes.find((item) => item === route) ?? "/admin";
+  return adminRoutes.find((item) => item === route) ?? "/";
 }
 
 function foldPlatformText(value: string) {
@@ -84,39 +84,39 @@ function foldPlatformText(value: string) {
 
 function adminRouteLabel(route: AdminRoute) {
   const labels: Record<AdminRoute, string> = {
-    "/admin": "Tổng quan platform",
-    "/admin/site": "Website/Landing",
-    "/admin/content": "Content surfaces",
-    "/admin/plans": "Gói dịch vụ",
-    "/admin/billing": "Billing",
-    "/admin/tenants": "Tenant",
-    "/admin/users": "User",
-    "/admin/ai": "AI Control Center",
-    "/admin/maps": "Maps/Delivery",
-    "/admin/atlas": "Project Atlas",
-    "/admin/ops": "Ops/Infra",
-    "/admin/governance": "Governance",
-    "/admin/security": "Bảo mật",
-    "/admin/release": "Release"
+    "/": "Tổng quan platform",
+    "/site": "Website/Landing",
+    "/content": "Content surfaces",
+    "/plans": "Gói dịch vụ",
+    "/billing": "Billing",
+    "/tenants": "Tenant",
+    "/users": "User",
+    "/ai": "AI Control Center",
+    "/maps": "Maps/Delivery",
+    "/atlas": "Project Atlas",
+    "/ops": "Ops/Infra",
+    "/governance": "Governance",
+    "/security": "Bảo mật",
+    "/release": "Release"
   };
   return labels[route];
 }
 
 function inferPlatformRoute(message: string, activeSection: string): AdminRoute {
   const text = foldPlatformText(`${message} ${activeSection}`);
-  if (/bao mat|security|rls|tenant scope|audit|spam/.test(text)) return "/admin/security";
-  if (/billing|thanh toan|payment|hoa don|goi dang cho|subscription/.test(text)) return "/admin/billing";
-  if (/goi|plan|pricing|premium|pro|trial|entitlement/.test(text)) return "/admin/plans";
-  if (/tenant|quan|restaurant|suspended|kich hoat|tam dung/.test(text)) return "/admin/tenants";
-  if (/user|nguoi dung|admin|staff|role|quyen/.test(text)) return "/admin/users";
-  if (/ai|qwen|xai|model|token|prompt|ocr|image/.test(text)) return "/admin/ai";
-  if (/api map|atlas|project|du an|frontend|backend|surface|coverage|bao quat|fullstack/.test(text)) return "/admin/atlas";
-  if (/map|maps|goong|vietmap|mapbox|route|geocode|delivery|ship/.test(text)) return "/admin/maps";
-  if (/cron|r2|cloudflare|env|secret|cache|storage|ops|infra/.test(text)) return "/admin/ops";
-  if (/governance|approval|rbac|role|permission|change control|mutation|rollback/.test(text)) return "/admin/governance";
-  if (/blog|content|sitemap|feed|llms|seo/.test(text)) return "/admin/content";
-  if (/landing|website|home|pricing page/.test(text)) return "/admin/site";
-  if (/release|deploy|rollback|prod|production|ci/.test(text)) return "/admin/release";
+  if (/bao mat|security|rls|tenant scope|audit|spam/.test(text)) return "/security";
+  if (/billing|thanh toan|payment|hoa don|goi dang cho|subscription/.test(text)) return "/billing";
+  if (/goi|plan|pricing|premium|pro|trial|entitlement/.test(text)) return "/plans";
+  if (/tenant|quan|restaurant|suspended|kich hoat|tam dung/.test(text)) return "/tenants";
+  if (/user|nguoi dung|admin|staff|role|quyen/.test(text)) return "/users";
+  if (/ai|qwen|xai|model|token|prompt|ocr|image/.test(text)) return "/ai";
+  if (/api map|atlas|project|du an|frontend|backend|surface|coverage|bao quat|fullstack/.test(text)) return "/atlas";
+  if (/map|maps|goong|vietmap|mapbox|route|geocode|delivery|ship/.test(text)) return "/maps";
+  if (/cron|r2|cloudflare|env|secret|cache|storage|ops|infra/.test(text)) return "/ops";
+  if (/governance|approval|rbac|role|permission|change control|mutation|rollback/.test(text)) return "/governance";
+  if (/blog|content|sitemap|feed|llms|seo/.test(text)) return "/content";
+  if (/landing|website|home|pricing page/.test(text)) return "/site";
+  if (/release|deploy|rollback|prod|production|ci/.test(text)) return "/release";
   return normalizeAdminRoute(activeSection);
 }
 
@@ -142,37 +142,37 @@ function buildPlatformAgentResult(message: string, snapshot: PlatformCopilotSnap
     })
   ];
 
-  if (failedControls.length && route !== "/admin/security") {
+  if (failedControls.length && route !== "/security") {
     actions.push(
       platformAction({
         id: "open-security-audit",
         label: "Mở bảo mật",
         description: `${failedControls.length} lớp cần kiểm tra.`,
-        route: "/admin/security",
+        route: "/security",
         safety: "manual_only"
       })
     );
   }
 
-  if (snapshot.metrics.pendingPayments > 0 && route !== "/admin/billing") {
+  if (snapshot.metrics.pendingPayments > 0 && route !== "/billing") {
     actions.push(
       platformAction({
         id: "open-pending-billing",
         label: "Xác minh billing",
         description: `${snapshot.metrics.pendingPayments} thanh toán gói đang chờ.`,
-        route: "/admin/billing",
+        route: "/billing",
         safety: "manual_only"
       })
     );
   }
 
-  if (degradedModules.length && route !== "/admin/release") {
+  if (degradedModules.length && route !== "/release") {
     actions.push(
       platformAction({
         id: "open-release-checklist",
         label: "Kiểm release",
         description: `${degradedModules.length} module không OK.`,
-        route: "/admin/release"
+        route: "/release"
       })
     );
   }
@@ -337,7 +337,7 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
   useCopilotAdditionalInstructions({ instructions: buildCopilotSystemInstructions("admin") }, []);
   useCopilotReadable(
     {
-      description: "State control plane /admin của LogiVN: landing, plans, billing, tenant status, security và release readiness.",
+      description: "State control plane admin.logivn.com của LogiVN: landing, plans, billing, tenant status, security và release readiness.",
       value: readable
     },
     [operationalPassport, readable]
@@ -359,14 +359,14 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
     {
       name: "navigate_platform_admin",
       followUp: false,
-      description: "Mở đúng vùng /admin để dev chỉnh website, gói, billing, tenant, user, bảo mật hoặc release.",
+      description: "Mở đúng vùng admin.logivn.com để dev chỉnh website, gói, billing, tenant, user, bảo mật hoặc release.",
       parameters: [
         {
           name: "route",
           type: "string",
           required: true,
           enum: adminRoutes as unknown as string[],
-          description: "Route /admin được phép mở."
+          description: "Route admin.logivn.com được phép mở."
         },
         {
           name: "reason",
@@ -409,7 +409,7 @@ function PlatformCopilotExperience({ snapshot }: { snapshot: PlatformCopilotSnap
     {
       name: "summarize_platform_risk",
       followUp: false,
-      description: "Tóm tắt nhanh rủi ro nền tảng dựa trên state /admin hiện tại, không truy cập dữ liệu riêng tư của quán.",
+      description: "Tóm tắt nhanh rủi ro nền tảng dựa trên state admin.logivn.com hiện tại, không truy cập dữ liệu riêng tư của quán.",
       handler: async () => {
         const result = buildPlatformAgentResult("Tóm tắt rủi ro bảo mật billing release", snapshot);
         return {

@@ -37,7 +37,7 @@ export function Security({ snapshot }: { snapshot: Snapshot }) {
       </SectionCard>
 
       <div className="grid gap-4">
-        <SectionCard title="Nhật ký /admin gần đây">
+        <SectionCard title="Nhật ký Control Center gần đây">
           <div className="grid max-h-[360px] gap-2 overflow-auto pr-1">
             {snapshot.auditLogs.slice(0, 12).map((log) => (
               <div key={log.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">

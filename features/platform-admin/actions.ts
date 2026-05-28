@@ -12,6 +12,7 @@ import {
   type PlatformAdminPermission,
   verifyPlatformAdminPassword
 } from "@/lib/platform-admin-auth";
+import { platformAdminInternalPath } from "@/lib/platform-admin-url";
 import {
   invalidatePlatformAdminSnapshotCache,
   resolveBillingAnomaly,
@@ -170,13 +171,9 @@ function revalidateAdmin() {
   revalidateTag("public-active-plans", "max");
   revalidatePath("/");
   revalidatePath("/pricing");
-  revalidatePath("/admin");
-  revalidatePath("/admin/site");
-  revalidatePath("/admin/plans");
-  revalidatePath("/admin/billing");
-  revalidatePath("/admin/tenants");
-  revalidatePath("/admin/users");
-  revalidatePath("/admin/security");
+  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/security"].forEach((path) => {
+    revalidatePath(platformAdminInternalPath(path));
+  });
 }
 
 export async function platformAdminLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
@@ -196,7 +193,7 @@ export async function platformAdminLoginAction(_prevState: { error?: string } | 
   );
 
   if (!verification.ok) {
-    return { error: "Email hoặc mật khẩu /admin không đúng." };
+    return { error: "Email hoặc mật khẩu admin.logivn.com không đúng." };
   }
 
   await createPlatformAdminSession({
@@ -204,7 +201,7 @@ export async function platformAdminLoginAction(_prevState: { error?: string } | 
     user: verification.user,
     permissions: verification.permissions
   });
-  redirect(verification.mustChangePassword ? "/admin/change-password" : "/admin");
+  redirect(verification.mustChangePassword ? "/change-password" : "/");
 }
 
 export async function platformAdminChangePasswordAction(
@@ -213,7 +210,7 @@ export async function platformAdminChangePasswordAction(
 ) {
   const session = await getPlatformAdminSession();
   if (!session.authenticated) {
-    redirect("/admin");
+    redirect("/");
   }
 
   const parsed = passwordChangeSchema.safeParse({
@@ -247,12 +244,12 @@ export async function platformAdminChangePasswordAction(
       : undefined,
     permissions: session.permissions
   });
-  redirect("/admin");
+  redirect("/");
 }
 
 export async function platformAdminLogoutAction() {
   await clearPlatformAdminSession();
-  redirect("/admin");
+  redirect("/");
 }
 
 export async function refreshPlatformAdminAction() {

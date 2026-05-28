@@ -14,7 +14,7 @@ Core product scope:
 - Reservations with deposits
 - VietQR and cash hybrid payments
 - Owner dashboard at `/dashboard`
-- Platform/dev admin at `/admin`
+- DevOps Control Center at `admin.logivn.com`
 - AI-native assistant layer via CopilotKit, Qwen and xAI
 - Supabase PostgreSQL/Auth/Realtime
 - Vercel deployment
@@ -32,7 +32,7 @@ Latest engineering update:
 
 - 2026-05-17: Git worktree hygiene pass completed. Stale `/private/tmp` worktree metadata was pruned, the active worktree is clean, and branch/worktree tracking docs were added: `WORKTREE_MAP.md`, `ACTIVE_BRANCHES.md`, `MIGRATION_LOG.md`, and `RELEASE_NOTES.md`.
 - 2026-05-17: Current release commit is `531a181 chore: consolidate LogiVN production release`; branch is ahead of `origin/codex/p0-production-clean` by 1 commit and `git push --dry-run origin codex/p0-production-clean` succeeded during audit.
-- 2026-05-16: `/admin` P1 RBAC foundation completed locally, not deployed.
+- 2026-05-16: platform RBAC foundation completed locally, not deployed.
 - Migration added: `supabase/migrations/20260516165000_platform_admin_rbac_foundation.sql`.
 - Build hardening added: root layout no longer fetches Google Fonts at build time; it uses CSS font stacks to avoid CI/build network flakiness.
 - Latest local validation passed: `git diff --check`, `npm run lint`, `npx tsc --noEmit --pretty false --incremental false`, `npm test`, `NEXT_PRIVATE_BUILD_WORKER=0 npm run build`.
@@ -73,7 +73,7 @@ Important route groups:
 - `/dashboard/orders`: restaurant order operations
 - `/dashboard/online`: online ordering management
 - `/dashboard/reservations`: reservation management
-- `/admin`: platform/dev control plane
+- `admin.logivn.com`: platform/dev control plane
 - `/r/[restaurantSlug]`: customer online ordering
 - `/r/[restaurantSlug]/table/[tableId]`: customer table QR ordering
 
@@ -82,8 +82,8 @@ Important route groups:
 - Multi-tenant database schema with restaurants, users, tables, menu categories, menu items, orders, order items, payment logs, promotions, reservations and subscription foundations.
 - Dashboard route split from admin:
   - `/dashboard` is for restaurant owners.
-  - `/admin` is for LogiVN platform/dev management.
-- Platform `/admin` RBAC foundation:
+  - `admin.logivn.com` is for LogiVN platform/dev management.
+- Platform RBAC foundation:
   - roles: owner, ops, billing, content, support, readonly
   - server-side permission guards for platform refresh, content, billing, tenant and user mutations
   - user-scoped sessions, session events, revocation-ready table design and actor-aware audit logs

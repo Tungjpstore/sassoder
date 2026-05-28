@@ -1,14 +1,14 @@
 # LogiVN Security Audit 8 Lớp - 2026-05-05
 
-Phạm vi: 4 luồng chính của hệ thống LogiVN gồm landing/CMS nền tảng, `/admin` control plane, `/dashboard` của quán và luồng khách gọi món/đặt online/đặt bàn.
+Phạm vi: 4 luồng chính của hệ thống LogiVN gồm landing/CMS nền tảng, `admin.logivn.com` control plane, `/dashboard` của quán và luồng khách gọi món/đặt online/đặt bàn.
 
 ## 1. Auth Và Phiên Đăng Nhập
 
 - `/dashboard` dùng Supabase Auth, đọc session server-side bằng `getClaims()` rồi fallback `getUser()`.
-- `/admin` dùng cookie HTTP-only, ký HMAC, path giới hạn `/admin`.
+- `admin.logivn.com` dùng cookie HTTP-only, ký HMAC và host-only cookie.
 - User bị `blocked` hoặc quán bị `deleted` không còn nhận session hợp lệ.
 - Cần giữ `PLATFORM_ADMIN_PASSWORD` và `PLATFORM_ADMIN_SESSION_SECRET` mạnh trên Vercel.
-- Landing CMS dùng cache tag `platform-site-config`; khi `/admin` lưu setting sẽ revalidate tag + route `/` để nội dung cập nhật mà không hit DB mỗi request.
+- Landing CMS dùng cache tag `platform-site-config`; khi `admin.logivn.com` lưu setting sẽ revalidate tag + route `/` để nội dung cập nhật mà không hit DB mỗi request.
 
 ## 2. Tenant Isolation Và RLS
 
@@ -32,7 +32,7 @@ Phạm vi: 4 luồng chính của hệ thống LogiVN gồm landing/CMS nền t�
 - Migration `20260505123000_subscription_entitlement_hardening.sql` thêm RPC `confirm_subscription_payment_atomic()`.
 - Xác minh thanh toán gói khóa row payment + subscription trong một transaction SQL để tránh double confirm/double extend.
 - Backfill trial Pro cho các quán cũ chưa có subscription để tránh khóa oan sau migration.
-- Platform audit log ghi các action nhạy cảm của `/admin`.
+- Platform audit log ghi các action nhạy cảm của `admin.logivn.com`.
 - Cron `/api/cron/subscriptions` tự chuyển trial quá hạn sang `expired` và subscription quá hạn sang `past_due`.
 
 ## 5. Input Validation Và Abuse Control
@@ -55,7 +55,7 @@ Phạm vi: 4 luồng chính của hệ thống LogiVN gồm landing/CMS nền t�
 
 ## 8. Observability, Audit Và Vận Hành
 
-- `/admin/security` hiển thị audit 8 lớp, env status, lạm dụng trial, đăng ký gần đây và audit log.
+- `admin.logivn.com/security` hiển thị audit 8 lớp, env status, lạm dụng trial, đăng ký gần đây và audit log.
 - Bảng `platform_audit_logs` ghi thay đổi setting, plan, tenant/user status và xác minh thanh toán subscription.
 - Báo cáo định kỳ có log gửi báo cáo riêng cho dashboard quán.
 
@@ -79,6 +79,6 @@ Phạm vi: 4 luồng chính của hệ thống LogiVN gồm landing/CMS nền t�
 ## Việc Cần Theo Dõi Tiếp
 
 - Rotate key nếu nghi ngờ `.env.local` từng được gửi cho bên thứ ba.
-- Tách `/admin` thành 2 lớp quyền nếu có nhiều dev nội bộ: owner, operator, support.
+- Hoàn thiện RBAC cho `admin.logivn.com` nếu có nhiều dev nội bộ: owner, operator, support.
 - Thêm IP/device risk scoring cho trial abuse.
 - Thêm báo cáo bảo mật định kỳ gửi email platform owner.

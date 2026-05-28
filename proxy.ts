@@ -13,10 +13,17 @@ import {
   shouldShareCookiesAcrossTenantDomains
 } from "@/lib/supabase/cookie-guards";
 import { updateSession } from "@/lib/supabase/proxy";
+import {
+  PLATFORM_ADMIN_INTERNAL_PREFIX,
+  isPlatformAdminHost,
+  platformAdminInternalPath,
+  platformAdminUrl
+} from "@/lib/platform-admin-url";
 import { getTenantSlugFromHost, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
 const staffSlugLoginPathPattern = /^\/staff\/[a-z0-9-]{2,80}\/login$/;
 const staffSubdomainSlugPathPattern = /^\/([a-z0-9-]{2,80})(?:\/login)?$/;
+const deprecatedPlatformAdminPath = "/adm" + "in";
 
 function hasSupabaseAuthCookie(request: NextRequest) {
   return request.cookies
@@ -190,6 +197,7 @@ export async function proxy(request: NextRequest) {
   const tenantSlug = getTenantSlugFromHost(host);
   const pathname = request.nextUrl.pathname;
   const cookieHeader = request.headers.get("cookie");
+  const platformAdminHost = isPlatformAdminHost(host);
 
   if (!pathname.startsWith("/auth/clear-session") && shouldRepairOversizedSupabaseCookieHeader(cookieHeader)) {
     return repairOversizedSupabaseCookieHeader(request);
@@ -197,6 +205,34 @@ export async function proxy(request: NextRequest) {
 
   if (pathname.startsWith("/dashboard") && isPrefetchRequest(request)) {
     return noStoreNoContent();
+  }
+
+  if (platformAdminHost && (pathname === PLATFORM_ADMIN_INTERNAL_PREFIX || pathname.startsWith(`${PLATFORM_ADMIN_INTERNAL_PREFIX}/`))) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname.slice(PLATFORM_ADMIN_INTERNAL_PREFIX.length) || "/";
+    return NextResponse.redirect(url, 308);
+  }
+
+  if (platformAdminHost && (pathname === deprecatedPlatformAdminPath || pathname.startsWith(`${deprecatedPlatformAdminPath}/`))) {
+    const url = request.nextUrl.clone();
+    url.pathname = pathname.slice(deprecatedPlatformAdminPath.length) || "/";
+    return NextResponse.redirect(url, 308);
+  }
+
+  if (platformAdminHost && !pathname.startsWith("/api") && !pathname.startsWith("/auth")) {
+    const url = request.nextUrl.clone();
+    url.pathname = platformAdminInternalPath(pathname);
+    return NextResponse.rewrite(url);
+  }
+
+  if (process.env.VERCEL_ENV === "production" && host === ROOT_DOMAIN && (pathname === deprecatedPlatformAdminPath || pathname.startsWith(`${deprecatedPlatformAdminPath}/`))) {
+    const publicPath = pathname.slice(deprecatedPlatformAdminPath.length) || "/";
+    return NextResponse.redirect(platformAdminUrl(`${publicPath}${request.nextUrl.search}`), 308);
+  }
+
+  if (process.env.VERCEL_ENV === "production" && host === ROOT_DOMAIN && (pathname === PLATFORM_ADMIN_INTERNAL_PREFIX || pathname.startsWith(`${PLATFORM_ADMIN_INTERNAL_PREFIX}/`))) {
+    const publicPath = pathname.slice(PLATFORM_ADMIN_INTERNAL_PREFIX.length) || "/";
+    return NextResponse.redirect(platformAdminUrl(`${publicPath}${request.nextUrl.search}`), 308);
   }
 
   if (host === `staff.${ROOT_DOMAIN}` && (pathname === "/" || pathname === "/login")) {

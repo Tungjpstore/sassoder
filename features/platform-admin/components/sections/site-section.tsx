@@ -3,7 +3,7 @@ import {
   updateBillingSettingAction,
   updateBrandSettingAction,
   updateLandingSettingAction
-} from "@/app/admin/actions";
+} from "@/features/platform-admin/actions";
 import {
   Field,
   PrimaryButton,

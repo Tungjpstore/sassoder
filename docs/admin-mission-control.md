@@ -1,54 +1,54 @@
-# LogiVN Admin Mission Control
+# LogiVN DevOps Control Center
 
-This document describes the `/admin` control-plane direction after the first Mission Control pass.
+Tài liệu này mô tả hướng control plane nội bộ sau khi chuyển nền tảng vận hành sang `admin.logivn.com`.
 
-## Scope
+## Phạm Vi
 
-`/admin` is the internal LogiVN platform control plane. It is separate from restaurant owner/staff dashboard APIs under `app/api/admin/*`.
+`admin.logivn.com` là control plane nội bộ của LogiVN. Nó tách biệt với dashboard vận hành của từng quán và tách biệt với namespace API dashboard hiện hữu dưới `app/api/admin/*`.
 
-The current Mission Control scope is:
+Phạm vi hiện tại:
 
-- Observe platform health across tenants, billing, content, AI, maps, integrations, cron, and deployment runtime.
-- Keep secret handling safe by showing only configured/missing state and environment variable names.
-- Preserve tenant privacy by avoiding private order/revenue drilldown from platform admin.
-- Prefer read-only observability first, then add write actions behind permissions, audit, confirmation, and rollback.
+- Quan sát sức khoẻ platform theo tenant, billing, content, AI, maps, integrations, cron và deployment runtime.
+- Chỉ hiển thị trạng thái configured/missing và tên biến môi trường, không hiển thị raw secret.
+- Bảo vệ quyền riêng tư tenant bằng cách không drill-down đơn hàng, bill hoặc doanh thu riêng từ control plane nền tảng.
+- Ưu tiên observability read-only trước, sau đó thêm write action qua permission, audit, confirmation và rollback.
 
-## Implemented Surfaces
+## Bề Mặt Đã Có
 
-- `/admin/content` tracks landing, pricing, blog, customer QR menu, sitemap/feed/llms surfaces.
-- `/admin/ai` tracks AI routing, provider readiness, 24h usage, tokens, failures, and model names.
-- `/admin/ai` tracks AI Ops Morning Brief generation, email delivery status, health scores, recent failed/skipped deliveries, severity counts, recipients, summaries, and top action items.
-- `/admin/ai` tracks branch-scoped AI Ops insights across restaurants, including open count, critical/warning split, affected branch count, latest signal time, and recent action items without exposing private order/revenue drilldown.
-- `/admin/maps` tracks map provider calls, failures, estimated cost, cache hit rate, delivery quote acceptance, and routing fallback config.
-- `/admin/atlas` maps the full project surface across frontend, backend, data, automation, and external integrations.
-- `/admin/ops` tracks Vercel Cron jobs, next-run ETA, recent run history, failure streaks, integration readiness, cache readiness, and env/secret guardrails.
-- `/admin/governance` tracks capability coverage, mutation risk, audit/rollback readiness, and RBAC role readiness.
+- `admin.logivn.com/content` theo dõi landing, pricing, blog, customer QR menu, sitemap/feed/llms.
+- `admin.logivn.com/ai` theo dõi AI routing, provider readiness, usage 24h, token, failure và model name.
+- `admin.logivn.com/ai` theo dõi AI Ops Morning Brief, email delivery, health score, failed/skipped delivery, severity, recipients, summaries và action items.
+- `admin.logivn.com/ai` theo dõi branch-scoped AI Ops insights mà không lộ order/revenue riêng tư.
+- `admin.logivn.com/maps` theo dõi map provider calls, failure, estimated cost, cache hit, delivery quote acceptance và fallback config.
+- `admin.logivn.com/atlas` map toàn bộ project surface qua frontend, backend, data, automation và external integrations.
+- `admin.logivn.com/ops` theo dõi Vercel Cron, next-run ETA, run history, failure streak, integration readiness, cache readiness và env guardrails.
+- `admin.logivn.com/governance` theo dõi capability coverage, mutation risk, audit/rollback readiness và RBAC role readiness.
 
-## Safety Rules
+## Quy Tắc An Toàn
 
-- Do not store raw API keys in Supabase tables.
-- Do not expose service-role, AI, map, email, R2, or cron secrets to the browser.
-- Platform `/admin` mutations must go through server actions or server-only APIs.
-- Every mutation must write an audit log with actor, action, target, metadata, timestamp, and reason where possible.
-- Destructive tenant/content/billing actions should require explicit confirmation and, for production-critical changes, approval.
-- High-risk mutations should be listed in the mutation registry before they become available to non-owner roles.
-- Any support mode for tenant data must be reason-scoped, time-limited, read-only by default, and audit logged.
+- Không lưu raw API key trong Supabase tables.
+- Không expose service-role, AI, map, email, R2 hoặc cron secret ra browser.
+- Mutation của platform control plane phải đi qua server actions hoặc server-only APIs.
+- Mọi mutation phải ghi audit log với actor, action, target, metadata, timestamp và reason khi có thể.
+- Hành động tenant/content/billing có rủi ro cần confirmation rõ ràng; production-critical change cần approval.
+- High-risk mutations phải nằm trong mutation registry trước khi mở cho role không phải owner.
+- Support mode cho tenant data phải có reason, thời hạn, mặc định read-only và audit log.
 
-## Next Upgrade Sequence
+## Chuỗi Nâng Cấp Tiếp Theo
 
-1. Add `platform_admin_users`, roles, permissions, session revocation, and optional 2FA.
-2. Add immutable `platform_content_revisions` for landing/pricing/blog with draft, preview, publish, and rollback.
-3. Add synthetic checks for critical Atlas flows: QR order, checkout, reservation, dashboard login, billing, and cron.
-4. Add `platform_change_requests` for approval on dangerous changes.
-5. Extend platform-wide cron execution logs with push/email alerts and drill-down details per execution.
-6. Add R2 migration plan for platform assets with dual-read fallback to Supabase Storage.
+1. Thêm `platform_admin_users`, roles, permissions, session revocation và optional 2FA.
+2. Thêm immutable `platform_content_revisions` cho landing/pricing/blog với draft, preview, publish và rollback.
+3. Thêm synthetic checks cho Atlas flows: QR order, checkout, reservation, dashboard login, billing và cron.
+4. Thêm `platform_change_requests` cho approval trên dangerous changes.
+5. Mở rộng cron execution logs bằng push/email alerts và drill-down theo execution id.
+6. Thêm R2 migration plan cho platform assets với dual-read fallback về Supabase Storage.
 
-## Governance Model
+## Mô Hình Governance
 
-The governance screen intentionally separates three concerns:
+Màn hình governance tách rõ ba nhóm:
 
-- Capability matrix: what `/admin` can observe, adjust, audit, and roll back.
-- Mutation registry: which server actions are live, how they are guarded, and which actions are high risk.
-- Role readiness: which future roles should exist before more people can operate production.
+- Capability matrix: control plane quan sát, điều chỉnh, audit và rollback được gì.
+- Mutation registry: server actions nào đang live, guard ra sao, action nào high-risk.
+- Role readiness: role nào cần có trước khi nhiều người cùng vận hành production.
 
-Current limitation: runtime `/admin` auth is still a single platform admin credential. Treat all logged-in platform admin sessions as owner-level until RBAC is implemented.
+Giới hạn hiện tại: runtime auth vẫn cần hoàn thiện RBAC đầy đủ. Cho tới khi xong, mọi session hợp lệ trên `admin.logivn.com` phải được xem như owner-level.

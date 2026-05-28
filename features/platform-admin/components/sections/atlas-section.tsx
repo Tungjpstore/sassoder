@@ -25,7 +25,7 @@ export function ProjectAtlas({ snapshot }: { snapshot: Snapshot }) {
       <div className="grid gap-3 md:grid-cols-4">
         <MetricCard label="Project surfaces" value={formatNumber(summary.surfaces)} detail="Frontend, backend, data, automation, integrations" icon={Globe2} tone="info" />
         <MetricCard label="Critical surfaces" value={formatNumber(summary.critical)} detail="Luồng ảnh hưởng trực tiếp production" icon={AlertTriangle} tone="warning" />
-        <MetricCard label="Observe live" value={`${summary.liveObserve}/${summary.surfaces}`} detail="Đã có dữ liệu quan sát trong /admin" icon={Activity} tone="good" />
+        <MetricCard label="Observe live" value={`${summary.liveObserve}/${summary.surfaces}`} detail="Đã có dữ liệu quan sát trên admin.logivn.com" icon={Activity} tone="good" />
         <MetricCard label="Control gaps" value={formatNumber(summary.plannedControl)} detail="Planned hoặc blocked, cần nâng cấp dần" icon={ClipboardCheck} tone={summary.plannedControl ? "warning" : "good"} />
       </div>
 
