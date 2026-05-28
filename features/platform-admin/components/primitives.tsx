@@ -22,12 +22,12 @@ export function formatDateTime(value: string | null) {
 
 export function badgeTone(kind: BadgeTone) {
   return cn(
-    "inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-semibold",
-    kind === "good" && "border-emerald-200 bg-emerald-50 text-emerald-700",
-    kind === "warning" && "border-orange-200 bg-orange-50 text-orange-700",
-    kind === "danger" && "border-red-200 bg-red-50 text-red-700",
-    kind === "info" && "border-blue-200 bg-blue-50 text-blue-700",
-    kind === "neutral" && "border-slate-200 bg-slate-50 text-slate-600"
+    "inline-flex h-6 items-center rounded-full border px-2.5 text-[11px] font-semibold leading-none backdrop-blur",
+    kind === "good" && "border-emerald-400/30 bg-emerald-400/10 text-emerald-200 shadow-[0_0_18px_rgba(16,185,129,0.12)]",
+    kind === "warning" && "border-amber-400/30 bg-amber-400/10 text-amber-200 shadow-[0_0_18px_rgba(245,158,11,0.1)]",
+    kind === "danger" && "border-red-400/30 bg-red-400/10 text-red-200 shadow-[0_0_18px_rgba(248,113,113,0.1)]",
+    kind === "info" && "border-sky-400/30 bg-sky-400/10 text-sky-200 shadow-[0_0_18px_rgba(56,189,248,0.1)]",
+    kind === "neutral" && "border-white/10 bg-white/[0.05] text-slate-300"
   );
 }
 
@@ -76,7 +76,7 @@ export function Field({
         defaultValue={defaultValue ?? ""}
         required={required}
         placeholder={placeholder}
-        className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+        className="h-10 rounded-lg border border-white/10 bg-[#0B1224]/80 px-3 text-sm font-medium text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-500/10"
       />
     </label>
   );
@@ -100,7 +100,7 @@ export function TextArea({
         name={name}
         defaultValue={defaultValue ?? ""}
         rows={rows}
-        className="resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium leading-6 text-slate-950 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+        className="resize-none rounded-lg border border-white/10 bg-[#0B1224]/80 px-3 py-2 text-sm font-medium leading-6 text-slate-100 outline-none transition placeholder:text-slate-600 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-500/10"
       />
     </label>
   );
@@ -110,11 +110,11 @@ export function PrimaryButton({ children, tone = "dark" }: { children: ReactNode
   return (
     <button
       className={cn(
-        "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition",
-        tone === "dark" && "bg-[var(--primary)] text-[#FFF7EB] hover:bg-[var(--primary-hover)]",
-        tone === "orange" && "bg-[var(--accent)] text-[#FFF7EB] hover:bg-[var(--accent-hover)]",
-        tone === "danger" && "bg-[var(--accent-strong)] text-[#FFF7EB] hover:bg-[var(--accent)]",
-        tone === "soft" && "border border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:bg-[var(--soft-surface)]"
+        "inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50",
+        tone === "dark" && "border border-sky-400/30 bg-sky-500/90 text-white shadow-[0_0_28px_rgba(14,165,233,0.18)] hover:bg-sky-400",
+        tone === "orange" && "border border-amber-400/30 bg-amber-500/90 text-slate-950 shadow-[0_0_24px_rgba(245,158,11,0.16)] hover:bg-amber-400",
+        tone === "danger" && "border border-red-400/30 bg-red-500/90 text-white shadow-[0_0_24px_rgba(248,113,113,0.16)] hover:bg-red-400",
+        tone === "soft" && "border border-white/10 bg-white/[0.06] text-slate-100 hover:border-sky-400/30 hover:bg-sky-400/10"
       )}
     >
       {children}
@@ -136,26 +136,27 @@ export function MetricCard({
   tone?: BadgeTone;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="group relative overflow-hidden rounded-lg border border-white/10 bg-[#111827]/72 p-4 shadow-[0_18px_46px_rgba(0,0,0,0.18)] backdrop-blur-xl transition hover:border-sky-400/30 hover:bg-[#151B2E]/86">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-sky-300/35 to-transparent" />
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
-          <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">{value}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</p>
+          <p className="metric-number mt-3 text-2xl font-semibold tracking-tight text-slate-50">{value}</p>
         </div>
         <span
           className={cn(
-            "grid h-10 w-10 place-items-center rounded-xl border",
-            tone === "good" && "border-emerald-200 bg-emerald-50 text-emerald-700",
-            tone === "warning" && "border-orange-200 bg-orange-50 text-orange-700",
-            tone === "danger" && "border-red-200 bg-red-50 text-red-700",
-            tone === "info" && "border-blue-200 bg-blue-50 text-blue-700",
-            tone === "neutral" && "border-slate-200 bg-slate-50 text-slate-600"
+            "grid h-10 w-10 place-items-center rounded-lg border",
+            tone === "good" && "border-emerald-400/25 bg-emerald-400/10 text-emerald-200",
+            tone === "warning" && "border-amber-400/25 bg-amber-400/10 text-amber-200",
+            tone === "danger" && "border-red-400/25 bg-red-400/10 text-red-200",
+            tone === "info" && "border-sky-400/25 bg-sky-400/10 text-sky-200",
+            tone === "neutral" && "border-white/10 bg-white/[0.04] text-slate-300"
           )}
         >
           <Icon size={18} />
         </span>
       </div>
-      <p className="mt-4 text-sm leading-6 text-slate-600">{detail}</p>
+      <p className="mt-4 text-sm leading-6 text-slate-400">{detail}</p>
     </div>
   );
 }
@@ -172,12 +173,21 @@ export function SectionCard({
   className?: string;
 }) {
   return (
-    <section className={cn("rounded-2xl border border-slate-200 bg-white", className)}>
-      <header className="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-        <h2 className="text-base font-semibold tracking-tight text-slate-950">{title}</h2>
+    <section className={cn("overflow-hidden rounded-lg border border-white/10 bg-[#111827]/72 shadow-[0_18px_46px_rgba(0,0,0,0.18)] backdrop-blur-xl", className)}>
+      <header className="flex min-h-14 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+        <h2 className="text-base font-semibold tracking-tight text-slate-50">{title}</h2>
         {action}
       </header>
       <div className="p-4">{children}</div>
     </section>
+  );
+}
+
+export function LiveDot({ tone = "good" }: { tone?: BadgeTone }) {
+  return (
+    <span className="relative inline-flex h-2.5 w-2.5">
+      <span className={cn("absolute inline-flex h-full w-full rounded-full opacity-60 motion-safe:animate-ping", tone === "good" && "bg-emerald-400", tone === "warning" && "bg-amber-400", tone === "danger" && "bg-red-400", tone === "info" && "bg-sky-400", tone === "neutral" && "bg-slate-400")} />
+      <span className={cn("relative inline-flex h-2.5 w-2.5 rounded-full", tone === "good" && "bg-emerald-300", tone === "warning" && "bg-amber-300", tone === "danger" && "bg-red-300", tone === "info" && "bg-sky-300", tone === "neutral" && "bg-slate-300")} />
+    </span>
   );
 }

@@ -28,19 +28,34 @@ export function PlatformAdminConsole({
   return (
     <PlatformAdminShell activeSection={activeSection} snapshot={snapshot} session={session}>
       {activeSection === "overview" ? <Overview snapshot={snapshot} /> : null}
-      {activeSection === "site" ? <SiteSettings snapshot={snapshot} /> : null}
-      {activeSection === "content" ? <ContentControl snapshot={snapshot} /> : null}
-      {activeSection === "plans" ? <Plans snapshot={snapshot} /> : null}
-      {activeSection === "billing" ? <Billing snapshot={snapshot} /> : null}
+      {activeSection === "system-map" ? <ProjectAtlas snapshot={snapshot} /> : null}
+      {activeSection === "deployments" ? <Release snapshot={snapshot} /> : null}
+      {activeSection === "payments" ? (
+        <div className="grid gap-4">
+          <Plans snapshot={snapshot} />
+          <Billing snapshot={snapshot} />
+        </div>
+      ) : null}
       {activeSection === "tenants" ? <Tenants snapshot={snapshot} session={session} /> : null}
-      {activeSection === "users" ? <Users snapshot={snapshot} session={session} /> : null}
       {activeSection === "ai" ? <AiControl snapshot={snapshot} /> : null}
-      {activeSection === "maps" ? <MapsControl snapshot={snapshot} /> : null}
-      {activeSection === "atlas" ? <ProjectAtlas snapshot={snapshot} /> : null}
-      {activeSection === "ops" ? <OpsControl snapshot={snapshot} session={session} /> : null}
-      {activeSection === "governance" ? <GovernanceControl snapshot={snapshot} /> : null}
-      {activeSection === "security" ? <Security snapshot={snapshot} /> : null}
-      {activeSection === "release" ? <Release snapshot={snapshot} /> : null}
+      {activeSection === "services" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "queues" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "redis" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "telegram" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "logs" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "alerts" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "incidents" ? <OpsControl snapshot={snapshot} session={session} /> : null}
+      {activeSection === "flags" ? <GovernanceControl snapshot={snapshot} /> : null}
+      {activeSection === "settings" ? (
+        <div className="grid gap-4">
+          <SiteSettings snapshot={snapshot} />
+          <ContentControl snapshot={snapshot} />
+          <MapsControl snapshot={snapshot} />
+          <Users snapshot={snapshot} session={session} />
+          <Security snapshot={snapshot} />
+          <GovernanceControl snapshot={snapshot} />
+        </div>
+      ) : null}
     </PlatformAdminShell>
   );
 }

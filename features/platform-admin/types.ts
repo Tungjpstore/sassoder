@@ -2,19 +2,20 @@ import type { getPlatformAdminSnapshot } from "@/services/platform-admin-service
 
 export type ActiveSection =
   | "overview"
-  | "site"
-  | "content"
-  | "plans"
-  | "billing"
+  | "system-map"
+  | "deployments"
+  | "services"
+  | "queues"
+  | "redis"
+  | "telegram"
   | "tenants"
-  | "users"
   | "ai"
-  | "maps"
-  | "atlas"
-  | "ops"
-  | "governance"
-  | "security"
-  | "release";
+  | "payments"
+  | "logs"
+  | "alerts"
+  | "incidents"
+  | "flags"
+  | "settings";
 
 export type Snapshot = Awaited<ReturnType<typeof getPlatformAdminSnapshot>>;
 export type Tenant = Snapshot["tenants"][number];
