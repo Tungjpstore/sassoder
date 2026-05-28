@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, CheckCircle2, ChevronRight, RadioTower } from "lucide-react";
+import { Bell, CheckCircle2, ChevronRight } from "lucide-react";
 import type { StaffOpsNotification, StaffOpsRealtimeState } from "@/features/staff/types";
 import { cn } from "@/lib/utils";
 import { StaffMobileEmptyState, StaffMobilePanel, StaffMobileSectionHeader, StaffSecondaryButton, StaffStatusPill } from "./staff-mobile-primitives";
@@ -32,19 +32,9 @@ export function StaffInboxPanel({
     <>
       <StaffMobilePanel>
         <StaffMobileSectionHeader
-          title="Inbox nhân viên"
-          eyebrow="Notifications"
-          action={<StaffStatusPill tone={unreadCount ? "warning" : "success"}>{unreadCount} mới</StaffStatusPill>}
+          title="Thông báo"
+          action={<StaffStatusPill tone={unreadCount ? "warning" : "success"}>{unreadCount ? `${unreadCount} mới` : realtimeLabel(realtimeState)}</StaffStatusPill>}
         />
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl border border-[var(--primary)]/15 bg-[var(--primary-soft)] text-[var(--primary)]">
-            <RadioTower size={17} aria-hidden="true" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-[var(--foreground)]">{realtimeLabel(realtimeState)}</p>
-            <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">Thông báo ca, duyệt yêu cầu và cảnh báo thiết bị sẽ cập nhật trực tiếp khi quản lý thay đổi.</p>
-          </div>
-        </div>
         {unreadCount ? (
           <StaffSecondaryButton onClick={onMarkAllRead} disabled={markingRead} className="mt-3 w-full">
             <CheckCircle2 size={16} aria-hidden="true" />
@@ -54,7 +44,7 @@ export function StaffInboxPanel({
       </StaffMobilePanel>
 
       <StaffMobilePanel>
-        <StaffMobileSectionHeader title="Thông báo" eyebrow="Latest" />
+        <StaffMobileSectionHeader title="Mới nhất" />
         <div className="grid gap-2">
           {notifications.map((notification) => {
             const unread = notification.status === "unread";
@@ -82,7 +72,7 @@ export function StaffInboxPanel({
               </article>
             );
           })}
-          {!notifications.length ? <StaffMobileEmptyState icon={<Bell size={18} aria-hidden="true" />} title="Inbox trống" text="Khi có thay đổi ca, yêu cầu được duyệt hoặc cảnh báo mới, LogiVN sẽ báo tại đây." /> : null}
+          {!notifications.length ? <StaffMobileEmptyState icon={<Bell size={18} aria-hidden="true" />} title="Chưa có thông báo" /> : null}
         </div>
       </StaffMobilePanel>
     </>

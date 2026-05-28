@@ -36,7 +36,7 @@ function RunAiOpsButton() {
   return (
     <form action={runPlatformCronJobAction}>
       <input type="hidden" name="jobKey" value="ai-ops" />
-      <PrimaryButton tone="soft">Chạy AI Ops</PrimaryButton>
+      <PrimaryButton tone="soft">Chạy AI</PrimaryButton>
     </form>
   );
 }
@@ -58,9 +58,9 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         <SectionCard title="Định tuyến AI">
           <dl className="grid gap-3 text-sm">
             {[
-              ["Provider chủ quán", snapshot.aiControl.routing.ownerProvider],
-              ["Provider khách hàng", snapshot.aiControl.routing.customerProvider],
-              ["Provider ảnh", snapshot.aiControl.routing.imageProvider],
+              ["Nhà cung cấp chủ quán", snapshot.aiControl.routing.ownerProvider],
+              ["Nhà cung cấp khách hàng", snapshot.aiControl.routing.customerProvider],
+              ["Nhà cung cấp ảnh", snapshot.aiControl.routing.imageProvider],
               ["Model chủ quán", snapshot.aiControl.routing.ownerModel],
               ["Model ảnh", snapshot.aiControl.routing.imageModel]
             ].map(([label, value]) => (
@@ -72,7 +72,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
           </dl>
         </SectionCard>
 
-        <SectionCard title="Sử dụng provider 24h">
+        <SectionCard title="Sử dụng nhà cung cấp 24h">
           <div className="grid gap-2">
             {snapshot.aiControl.providers.map((provider) => (
               <div key={provider.provider} className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
@@ -92,7 +92,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
         </SectionCard>
       </div>
 
-      <SectionCard title="Khoá API AI & runtime routing">
+      <SectionCard title="Khoá API AI & định tuyến runtime">
         <div className="grid gap-3 xl:grid-cols-2">
           {snapshot.aiControl.providerConfigs.map((provider) => (
             <form key={provider.provider} action={updateAiProviderConfigAction} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
@@ -184,7 +184,7 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
                   ))}
                 </div>
               ) : null}
-              {brief.error ? <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{brief.error}</p> : null}
+              {brief.error ? <p className="mt-2 rounded-lg border border-red-400/25 bg-red-400/10 px-3 py-2 text-xs font-semibold text-red-100">{brief.error}</p> : null}
             </div>
           ))}
           {!snapshot.aiControl.morningBriefs.recent.length ? <p className="text-sm text-slate-500">Chưa có Morning Brief trong 7 ngày gần nhất.</p> : null}

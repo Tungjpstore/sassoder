@@ -3,7 +3,7 @@ import type { StaffOpsAttendanceFeedItem } from "@/features/staff/types";
 import { syncStatusText } from "./staff-mobile-utils";
 
 export type StaffAttendanceAction = "clock_in" | "clock_out";
-export type StaffAttendanceSource = "gps" | "qr";
+export type StaffAttendanceSource = "gps" | "qr" | "wifi";
 export type StaffAttendanceMachineState =
   | "needs_branch"
   | "needs_location_or_qr"
@@ -68,10 +68,10 @@ export function buildStaffAttendanceMachine({
   processing: boolean;
 }): StaffAttendanceMachine {
   const action: StaffAttendanceAction = activeAttendance ? "clock_out" : "clock_in";
-  const source: StaffAttendanceSource = canUseGps ? "gps" : "qr";
+  const source: StaffAttendanceSource = canUseGps ? "gps" : qrReady ? "qr" : "wifi";
   const deviceBlocked = Boolean(deviceTrust?.blocked || deviceTrust?.status === "blocked");
   const deviceNeedsApproval = Boolean(deviceTrust?.approvalRequired && !deviceTrust.trustedForAttendance);
-  const shortSourceLabel = canUseGps ? "GPS" : qrReady ? "QR" : "Cần QR";
+  const shortSourceLabel = canUseGps ? "GPS" : qrReady ? "QR" : "WiFi";
   const readiness: StaffReadinessItem[] = [
     {
       label: "Chi nhánh",
@@ -80,8 +80,8 @@ export function buildStaffAttendanceMachine({
     },
     {
       label: "Nguồn chấm",
-      value: canUseGps ? "GPS Premium" : qrReady ? "QR đã quét" : "Cần quét QR",
-      tone: canUseGps || qrReady ? "success" : "warning"
+      value: canUseGps ? "GPS" : qrReady ? "QR" : "WiFi quán",
+      tone: canUseGps || qrReady || isOnline ? "success" : "warning"
     },
     {
       label: "Thiết bị",
@@ -140,17 +140,17 @@ export function buildStaffAttendanceMachine({
     };
   }
 
-  if (!canUseGps && !qrReady) {
+  if (!canUseGps && !qrReady && !isOnline) {
     return {
       state: "needs_location_or_qr",
       action,
       source,
       canSubmit: false,
-      primaryLabel: "Quét QR tại quán",
+      primaryLabel: "Cần mạng quán",
       shortSourceLabel,
-      title: "Cần QR chấm công",
-      detail: "Tài khoản hiện chưa bật GPS Premium, hãy quét QR tại chi nhánh.",
-      recoveryLabel: "Mở camera và quét QR chấm công",
+      title: "Cần WiFi hoặc QR",
+      detail: "Kết nối WiFi quán hoặc quét QR tại chi nhánh.",
+      recoveryLabel: "Kết nối lại mạng quán",
       readiness
     };
   }
@@ -175,10 +175,10 @@ export function buildStaffAttendanceMachine({
     action,
     source,
     canSubmit: true,
-    primaryLabel: activeAttendance ? (canUseGps ? "Check-out GPS" : "Check-out QR") : canUseGps ? "Check-in GPS" : "Check-in QR",
+    primaryLabel: activeAttendance ? "Kết ca" : "Vào ca",
     shortSourceLabel,
-    title: activeAttendance ? "Đang trong ca" : "Sẵn sàng vào ca",
-    detail: activeAttendance ? "Kết ca khi bàn giao xong và rời vị trí làm." : "Mọi điều kiện đã sẵn sàng để bắt đầu ca.",
+    title: activeAttendance ? "Đang trong ca" : "Vào ca",
+    detail: activeAttendance ? "Bàn giao xong thì kết ca." : "Chọn đúng chi nhánh rồi bắt đầu.",
     recoveryLabel: activeAttendance ? "Kết ca cuối ca làm" : "Bấm để vào ca",
     readiness
   };

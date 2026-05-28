@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { AlertTriangle, Bot, Clock3, KeyRound, Link2, ShieldCheck, Trash2, Users } from "lucide-react";
+import { AlertTriangle, Bot, ExternalLink, KeyRound, Link2, ShieldCheck, Trash2, Users } from "lucide-react";
 import {
   createPlatformTelegramConnectTokenAction,
   revokePlatformTelegramConnectionAction,
@@ -31,6 +31,21 @@ function tokenStateTone(state: string) {
   return "warning";
 }
 
+function tokenStateLabel(state: string) {
+  if (state === "pending") return "Đang dùng được";
+  if (state === "consumed") return "Đã kết nối";
+  if (state === "revoked") return "Đã thu hồi";
+  if (state === "expired") return "Đã hết hạn";
+  return state;
+}
+
+function tokenTimelineLabel(token: { state: string; expiresAt: string; consumedAt: string | null; revokedAt: string | null }) {
+  if (token.state === "pending") return "Có hiệu lực tới khi admin thu hồi hoặc link được dùng";
+  if (token.state === "consumed") return token.consumedAt ? `Đã dùng ${formatDateTime(token.consumedAt)}` : "Đã dùng";
+  if (token.state === "revoked") return token.revokedAt ? `Thu hồi ${formatDateTime(token.revokedAt)}` : "Đã thu hồi";
+  return `Hết hiệu lực ${formatDateTime(token.expiresAt)}`;
+}
+
 export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramConnectCardProps) {
   const [createState, createAction, createPending] = useActionState<PlatformTelegramConnectActionState | undefined, FormData>(createPlatformTelegramConnectTokenAction, undefined);
 
@@ -47,6 +62,12 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
             <span className={badgeTone(boolTone(initialState.bot.configured))}>{boolLabel(initialState.bot.configured)}</span>
             <span className={badgeTone(boolTone(initialState.bot.webhookConfigured))}>Webhook</span>
           </div>
+          {initialState.bot.startUrl ? (
+            <a href={initialState.bot.startUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex h-9 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700">
+              <ExternalLink size={14} />
+              Mở bot
+            </a>
+          ) : null}
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between gap-3">
@@ -58,8 +79,8 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Token chờ</p>
-            <Clock3 size={18} className="text-slate-500" />
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Link mời</p>
+            <KeyRound size={18} className="text-slate-500" />
           </div>
           <p className="mt-3 text-2xl font-semibold text-slate-950">{formatNumber(initialState.summary.pendingTokens)}</p>
           <p className="mt-2 text-sm text-slate-600">
@@ -95,7 +116,7 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-950">Tạo link kết nối DevOps</p>
-              <p className="mt-1 text-sm leading-6 text-slate-600">Link dùng tới khi được thu hồi hoặc đã nối tài khoản Telegram vận hành với bot platform.</p>
+              <p className="mt-1 text-sm leading-6 text-slate-600">Tạo link mời cho người vận hành. Link không tự hết hạn, chỉ dùng một lần hoặc bị admin thu hồi.</p>
             </div>
             <form action={createAction}>
               <PrimaryButton tone="dark">
@@ -121,19 +142,19 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
                 </a>
               ) : null}
               <code className="rounded-xl bg-white px-3 py-2 font-mono text-xs text-emerald-900 ring-1 ring-emerald-200">{createState.token.startCommand}</code>
-              <p className="text-xs font-semibold text-emerald-800">Scope: {createState.token.scopes.join(", ")}</p>
+              <p className="text-xs font-semibold text-emerald-800">Nếu gửi nhầm người, thu hồi link ở danh sách bên phải trước khi họ bấm Start.</p>
             </div>
           ) : null}
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm font-semibold text-slate-950">Token gần đây</p>
+            <p className="text-sm font-semibold text-slate-950">Link mời gần đây</p>
             <form action={revokePlatformTelegramTokenAction}>
               <input type="hidden" name="revokeAll" value="true" />
               <PrimaryButton tone="soft">
                 <Trash2 size={15} />
-                Thu hồi token chờ
+                Thu hồi link chưa dùng
               </PrimaryButton>
             </form>
           </div>
@@ -142,7 +163,7 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
               <div key={token.id} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap gap-2">
-                    <span className={badgeTone(tokenStateTone(token.state))}>{token.state}</span>
+                    <span className={badgeTone(tokenStateTone(token.state))}>{tokenStateLabel(token.state)}</span>
                     <span className={badgeTone("neutral")}>{token.telegramRole}</span>
                   </div>
                   {token.state === "pending" ? (
@@ -157,11 +178,11 @@ export function PlatformTelegramConnectCard({ initialState }: PlatformTelegramCo
                 </div>
                 <div className="grid gap-1 font-mono text-xs text-slate-500 md:grid-cols-2">
                   <span>{token.actor}</span>
-                  <span>Expires: {formatDateTime(token.expiresAt)}</span>
+                  <span>{tokenTimelineLabel(token)}</span>
                 </div>
               </div>
             ))}
-            {!initialState.tokens.length ? <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Chưa có token kết nối.</p> : null}
+            {!initialState.tokens.length ? <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">Chưa có link mời DevOps.</p> : null}
           </div>
         </div>
       </div>

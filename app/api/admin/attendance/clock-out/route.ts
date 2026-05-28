@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { attendanceClockOutSchema } from "@/lib/validators";
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
+import { firstForwardedIp } from "@/lib/attendance-network";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { clockOutStaffAttendance } from "@/features/attendance/services/attendance-service";
 
@@ -61,6 +62,16 @@ function failure(error: unknown) {
   );
 }
 
+function requestNetwork(request: Request) {
+  return {
+    ipAddress:
+      request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-real-ip") ||
+      firstForwardedIp(request.headers.get("x-forwarded-for")),
+    userAgent: request.headers.get("user-agent")?.slice(0, 500) || null
+  };
+}
+
 export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
@@ -70,7 +81,7 @@ export async function POST(request: Request) {
       feature: "staff_management",
       permission: input.source === "manual" ? ["attendance.clock", "attendance.edit"] : "attendance.clock"
     });
-    return success(await clockOutStaffAttendance({ session, input }));
+    return success(await clockOutStaffAttendance({ session, input: { ...input, network: requestNetwork(request) } }));
   } catch (error) {
     return failure(error);
   }

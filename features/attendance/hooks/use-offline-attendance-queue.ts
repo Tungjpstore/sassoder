@@ -5,7 +5,7 @@ import { clockInAttendance, clockOutAttendance, isStaffOperationsNetworkError } 
 
 type OfflineAttendanceAction = "clock_in" | "clock_out";
 type OfflineAttendanceSource = "gps";
-type AttendanceQueueAttemptSource = OfflineAttendanceSource | "qr";
+type AttendanceQueueAttemptSource = OfflineAttendanceSource | "qr" | "wifi";
 
 export type OfflineAttendanceQueueItem = {
   id: string;

@@ -26,14 +26,14 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
   const alerts = snapshot.warnings.length + snapshot.billingCutover.anomalies.length + snapshot.aiControl.failures;
   const pendingPayments = snapshot.payments.filter((payment) => payment.status === "waiting_confirm").slice(0, 5);
   const services = [
-    { label: "API", value: `${snapshot.projectAtlas.summary.backend}`, icon: ServerCog, tone: "good" as Tone },
-    { label: "Redis", value: snapshot.integrations.find((item) => item.key === "persistent-cache")?.status ?? "thiếu", icon: Database, tone: snapshot.integrations.find((item) => item.key === "persistent-cache")?.status === "configured" ? "good" as Tone : "warning" as Tone },
-    { label: "Workers", value: `${snapshot.cronJobs.filter((job) => job.status === "configured").length}/${snapshot.cronJobs.length}`, icon: ListTree, tone: snapshot.cronJobs.every((job) => job.status === "configured") ? "good" as Tone : "warning" as Tone },
-    { label: "Telegram", value: "Ops", icon: RadioTower, tone: "info" as Tone },
-    { label: "AI", value: `${snapshot.aiControl.runtimeConfig.configuredProviders}`, icon: Bot, tone: snapshot.aiControl.runtimeConfig.configuredProviders ? "good" as Tone : "warning" as Tone },
-    { label: "Payments", value: `${snapshot.metrics.pendingPayments}`, icon: CreditCard, tone: snapshot.metrics.pendingPayments ? "warning" as Tone : "good" as Tone },
-    { label: "Realtime", value: "Live", icon: Wifi, tone: "good" as Tone },
-    { label: "Deploy", value: snapshot.environment.vercelEnv, icon: GitBranch, tone: "info" as Tone }
+    { label: "API", value: `${snapshot.projectAtlas.summary.backend}`, icon: ServerCog, tone: "good" as Tone, href: "/services" },
+    { label: "Redis", value: snapshot.integrations.find((item) => item.key === "persistent-cache")?.status ?? "thiếu", icon: Database, tone: snapshot.integrations.find((item) => item.key === "persistent-cache")?.status === "configured" ? "good" as Tone : "warning" as Tone, href: "/redis" },
+    { label: "Workers", value: `${snapshot.cronJobs.filter((job) => job.status === "configured").length}/${snapshot.cronJobs.length}`, icon: ListTree, tone: snapshot.cronJobs.every((job) => job.status === "configured") ? "good" as Tone : "warning" as Tone, href: "/queues" },
+    { label: "Telegram", value: "Ops", icon: RadioTower, tone: "info" as Tone, href: "/telegram" },
+    { label: "AI", value: `${snapshot.aiControl.runtimeConfig.configuredProviders}`, icon: Bot, tone: snapshot.aiControl.runtimeConfig.configuredProviders ? "good" as Tone : "warning" as Tone, href: "/ai" },
+    { label: "Thanh toán", value: `${snapshot.metrics.pendingPayments}`, icon: CreditCard, tone: snapshot.metrics.pendingPayments ? "warning" as Tone : "good" as Tone, href: "/payments" },
+    { label: "Realtime", value: "Live", icon: Wifi, tone: "good" as Tone, href: "/system-map" },
+    { label: "Triển khai", value: snapshot.environment.vercelEnv, icon: GitBranch, tone: "info" as Tone, href: "/deployments" }
   ];
 
   return (
@@ -43,27 +43,27 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
         action={
           <div className="flex flex-wrap gap-2">
             <form action={refreshPlatformAdminAction}><PrimaryButton tone="soft">Làm mới</PrimaryButton></form>
-            <CronButton jobKey="ai-ops" label="Chạy AI Ops" />
+            <CronButton jobKey="ai-ops" label="Chạy AI" />
             <CronButton jobKey="subscriptions" label="Đối soát billing" />
           </div>
         }
       >
         <div className="grid gap-2 md:grid-cols-4">
           <Link href="/queues" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Hàng đợi</Link>
-          <Link href="/logs" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Logs</Link>
-          <Link href="/ai" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">AI API key</Link>
+          <Link href="/logs" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Nhật ký</Link>
+          <Link href="/ai" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Khoá API AI</Link>
           <Link href="/payments" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm font-semibold text-slate-200 hover:bg-white/[0.07]">Thanh toán</Link>
         </div>
       </SectionCard>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-8">
         <MetricCard label="Tenant" value={formatNumber(snapshot.metrics.activeTenants)} detail={`${snapshot.metrics.tenants} tổng`} icon={Building2} tone="info" />
-        <MetricCard label="Users" value={formatNumber(snapshot.metrics.users)} detail="Tài khoản" icon={Activity} tone="neutral" />
-        <MetricCard label="AI requests" value={formatNumber(snapshot.aiControl.requests)} detail={`${snapshot.aiControl.successRate}% OK`} icon={Bot} tone={snapshot.aiControl.failures ? "warning" : "good"} />
-        <MetricCard label="Queue" value={snapshot.aiControl.failures + snapshot.metrics.pendingPayments ? "Watch" : "OK"} detail={`${snapshot.aiControl.failures} lỗi`} icon={ListTree} tone={snapshot.aiControl.failures ? "warning" : "good"} />
-        <MetricCard label="Payments" value={formatNumber(snapshot.metrics.pendingPayments)} detail="Chờ xác minh" icon={CreditCard} tone={snapshot.metrics.pendingPayments ? "warning" : "good"} />
-        <MetricCard label="Deploy" value={snapshot.environment.commit} detail={snapshot.environment.region} icon={GitBranch} tone="info" />
-        <MetricCard label="SLA" value={alerts ? "Watch" : "OK"} detail={`${alerts} cảnh báo`} icon={AlertTriangle} tone={countTone(alerts)} />
+        <MetricCard label="Người dùng" value={formatNumber(snapshot.metrics.users)} detail="Tài khoản" icon={Activity} tone="neutral" />
+        <MetricCard label="Yêu cầu AI" value={formatNumber(snapshot.aiControl.requests)} detail={`${snapshot.aiControl.successRate}% ổn`} icon={Bot} tone={snapshot.aiControl.failures ? "warning" : "good"} />
+        <MetricCard label="Hàng đợi" value={snapshot.aiControl.failures + snapshot.metrics.pendingPayments ? "Cần xem" : "Ổn"} detail={`${snapshot.aiControl.failures} lỗi`} icon={ListTree} tone={snapshot.aiControl.failures ? "warning" : "good"} />
+        <MetricCard label="Thanh toán" value={formatNumber(snapshot.metrics.pendingPayments)} detail="Chờ xác minh" icon={CreditCard} tone={snapshot.metrics.pendingPayments ? "warning" : "good"} />
+        <MetricCard label="Triển khai" value={snapshot.environment.commit} detail={snapshot.environment.region} icon={GitBranch} tone="info" />
+        <MetricCard label="SLA" value={alerts ? "Cần xem" : "Ổn"} detail={`${alerts} cảnh báo`} icon={AlertTriangle} tone={countTone(alerts)} />
         <MetricCard label="MRR" value={formatVnd(snapshot.metrics.mrr)} detail="SaaS" icon={Store} tone="good" />
       </div>
 
@@ -73,13 +73,13 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
             {services.map((service) => {
               const Icon = service.icon;
               return (
-                <div key={service.label} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                <Link key={service.label} href={service.href} className="rounded-lg border border-white/10 bg-white/[0.03] p-3 transition hover:bg-white/[0.07]">
                   <div className="flex items-center justify-between gap-3">
                     <Icon size={17} className="text-slate-300" />
                     <span className={badgeTone(service.tone)}>{service.value}</span>
                   </div>
                   <p className="mt-3 text-sm font-semibold text-white">{service.label}</p>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -111,37 +111,37 @@ export function Overview({ snapshot }: { snapshot: Snapshot }) {
         <SectionCard title="Tenant">
           <div className="grid gap-2">
             {snapshot.tenants.slice(0, 6).map((tenant) => (
-              <div key={tenant.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <Link key={tenant.id} href="/tenants" className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-3 transition hover:bg-white/[0.07]">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-white">{tenant.name}</p>
                   <p className="mt-1 text-xs text-slate-500">{tenant.planName}</p>
                 </div>
                 <span className={badgeTone(tenant.platformStatus === "active" ? "good" : "warning")}>{tenant.platformStatus}</span>
-              </div>
+              </Link>
             ))}
           </div>
         </SectionCard>
 
-        <SectionCard title="AI Ops">
+        <SectionCard title="Vận hành AI">
           <div className="grid gap-2">
             {snapshot.aiControl.branchInsights.recent.slice(0, 5).map((insight) => (
-              <div key={insight.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <Link key={insight.id} href="/ai" className="rounded-lg border border-white/10 bg-white/[0.03] p-3 transition hover:bg-white/[0.07]">
                 <div className="flex items-center justify-between gap-2">
                   <p className="truncate text-sm font-semibold text-white">{insight.title}</p>
-                  <span className={badgeTone(insight.severity === "critical" ? "danger" : insight.severity === "warning" ? "warning" : "info")}>{insight.severity}</span>
+                  <span className={badgeTone(insight.severity === "critical" ? "danger" : insight.severity === "warning" ? "warning" : "info")}>{insight.severity === "critical" ? "nghiêm trọng" : insight.severity === "warning" ? "cảnh báo" : "tín hiệu"}</span>
                 </div>
                 <p className="mt-1 truncate text-xs text-slate-500">{insight.restaurantName}</p>
-              </div>
+              </Link>
             ))}
             {!snapshot.aiControl.branchInsights.recent.length ? <p className="text-sm text-slate-500">Không có insight.</p> : null}
           </div>
         </SectionCard>
 
-        <SectionCard title="Release">
+        <SectionCard title="Triển khai">
           <div className="grid gap-2">
             {[
-              ["Env", snapshot.environment.vercelEnv],
-              ["Region", snapshot.environment.region],
+              ["Môi trường", snapshot.environment.vercelEnv],
+              ["Vùng", snapshot.environment.region],
               ["Commit", snapshot.environment.commit],
               ["Snapshot", `${snapshot.queryLatencyMs}ms`]
             ].map(([label, value]) => (

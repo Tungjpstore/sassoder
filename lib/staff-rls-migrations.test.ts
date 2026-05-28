@@ -8,6 +8,7 @@ const requestWorkflowSql = readFileSync("supabase/migrations/20260516113906_staf
 const adminWorkflowSql = readFileSync("supabase/migrations/20260516103000_staff_admin_workflows.sql", "utf8");
 const qrDeviceTrustSql = readFileSync("supabase/migrations/20260518190204_staff_attendance_qr_device_trust.sql", "utf8");
 const hardeningSql = readFileSync("supabase/migrations/20260519103000_staff_operations_security_hardening.sql", "utf8");
+const dailyQrWifiSql = readFileSync("supabase/migrations/20260529105500_staff_attendance_daily_qr_wifi.sql", "utf8");
 
 const coreHrTables = [
   "staff_members",
@@ -107,6 +108,18 @@ test("staff operations hardening makes QR attendance one-time use", () => {
   assert.match(hardeningSql, /add column if not exists consumed_by_staff_member_id uuid references public\.staff_members\(id\)/i);
   assert.match(hardeningSql, /staff_attendance_qr_tokens_active_once_idx/i);
   assert.match(hardeningSql, /where revoked_at is null and consumed_at is null/i);
+});
+
+test("staff daily QR and WiFi migration keeps attendance security additive", () => {
+  assert.match(dailyQrWifiSql, /token_mode text not null default 'single_use'/i);
+  assert.match(dailyQrWifiSql, /token_mode in \('single_use', 'daily_branch'\)/i);
+  assert.match(dailyQrWifiSql, /staff_attendance_qr_tokens_daily_branch_idx/i);
+  assert.match(dailyQrWifiSql, /clock_in_source in \('gps', 'qr', 'wifi', 'manual', 'offline_sync'\)/i);
+  assert.match(dailyQrWifiSql, /create table if not exists public\.staff_attendance_wifi_networks/i);
+  assert.match(dailyQrWifiSql, /public_ip_cidr cidr not null/i);
+  assert.match(dailyQrWifiSql, /alter table public\.staff_attendance_wifi_networks enable row level security/i);
+  assert.match(dailyQrWifiSql, /revoke all on table public\.staff_attendance_wifi_networks from anon, authenticated/i);
+  assert.match(dailyQrWifiSql, /grant all on table public\.staff_attendance_wifi_networks to service_role/i);
 });
 
 test("staff operations hardening blocks overlapping active shift assignments atomically", () => {

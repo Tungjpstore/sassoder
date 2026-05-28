@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Wifi,
   UserRound,
   UsersRound
 } from "lucide-react";
@@ -67,7 +68,14 @@ import type {
   StaffOpsTimesheetSummary,
   StaffOpsRealtimeState
 } from "@/features/staff/types";
-import { createStaffAttendanceQrToken, createStaffRequest, type StaffAttendanceQrTokenResult, type StaffRequestCreatePayload } from "@/features/staff/api/client";
+import {
+  createStaffAttendanceQrToken,
+  createStaffRequest,
+  registerStaffAttendanceWifiNetwork,
+  type StaffAttendanceQrTokenResult,
+  type StaffAttendanceWifiNetworkResult,
+  type StaffRequestCreatePayload
+} from "@/features/staff/api/client";
 import { STAFF_OPERATIONS_REALTIME_TABLES, staffOperationsChannelName } from "@/features/staff/realtime/channels";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 
@@ -497,6 +505,7 @@ function attendanceTone(state: StaffOpsMember["todayAttendanceState"] | StaffOps
 function attendanceSourceLabel(source: StaffOpsAttendanceFeedItem["source"] | null | undefined) {
   if (source === "gps") return "GPS";
   if (source === "qr") return "QR";
+  if (source === "wifi") return "WiFi";
   if (source === "manual") return "Quản lý";
   if (source === "offline_sync") return "Offline";
   return "--";
@@ -2658,10 +2667,16 @@ function AttendanceScreen({
   const [attendanceQuery, setAttendanceQuery] = useState("");
   const [attendanceFilter, setAttendanceFilter] = useState<AttendanceFilterKey>("all");
   const [qrBranchId, setQrBranchId] = useState(branches[0]?.id ?? "");
-  const [qrExpiresInMinutes, setQrExpiresInMinutes] = useState(5);
   const [qrToken, setQrToken] = useState<StaffAttendanceQrTokenResult | null>(null);
   const [qrMessage, setQrMessage] = useState<{ tone: "success" | "warning" | "neutral"; text: string } | null>(null);
   const [creatingQr, setCreatingQr] = useState(false);
+  const [wifiLabel, setWifiLabel] = useState("WiFi quán");
+  const [wifiNetwork, setWifiNetwork] = useState<StaffAttendanceWifiNetworkResult | null>(null);
+  const [wifiMessage, setWifiMessage] = useState<{ tone: "success" | "warning" | "neutral"; text: string } | null>(null);
+  const [savingWifiNetwork, setSavingWifiNetwork] = useState(false);
+  const [manualStaffMemberId, setManualStaffMemberId] = useState(members[0]?.id ?? "");
+  const [manualBranchId, setManualBranchId] = useState(members[0]?.primaryBranchId ?? branches[0]?.id ?? "");
+  const [manualNote, setManualNote] = useState("Quản lý chấm hộ tại quán");
   const deferredAttendanceQuery = useDeferredValue(attendanceQuery);
   const today = todayInputValue();
 
@@ -2846,6 +2861,9 @@ function AttendanceScreen({
     }))
   ].slice(0, 5);
   const selectedQrBranch = branches.find((branch) => branch.id === qrBranchId) ?? branches[0] ?? null;
+  const selectedManualMember = members.find((member) => member.id === manualStaffMemberId) ?? members[0] ?? null;
+  const selectedManualRow = selectedManualMember ? attendanceRows.find((item) => item.member.id === selectedManualMember.id) ?? null : null;
+  const selectedManualBranchId = manualBranchId || selectedManualMember?.primaryBranchId || branches[0]?.id || "";
   const createQrToken = async () => {
     if (!selectedQrBranch) {
       setQrMessage({ tone: "warning", text: "Chưa có chi nhánh để tạo QR chấm công." });
@@ -2857,14 +2875,36 @@ function AttendanceScreen({
     try {
       const result = await createStaffAttendanceQrToken({
         branchId: selectedQrBranch.id,
-        expiresInMinutes: qrExpiresInMinutes
+        expiresInMinutes: 5,
+        mode: "daily_branch"
       });
       setQrToken(result);
-      setQrMessage({ tone: "success", text: `QR ${result.branchName} hiệu lực tới ${shortTime(result.expiresAt)}.` });
+      setQrMessage({ tone: "success", text: `QR ${result.branchName} dùng trong ngày, hiệu lực tới ${shortTime(result.expiresAt)}.` });
     } catch (error) {
       setQrMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể tạo QR chấm công." });
     } finally {
       setCreatingQr(false);
+    }
+  };
+  const saveWifiNetwork = async () => {
+    if (!selectedQrBranch) {
+      setWifiMessage({ tone: "warning", text: "Chưa có chi nhánh để lưu WiFi chấm công." });
+      return;
+    }
+
+    setSavingWifiNetwork(true);
+    setWifiMessage({ tone: "neutral", text: "Đang lưu IP mạng WiFi hiện tại." });
+    try {
+      const result = await registerStaffAttendanceWifiNetwork({
+        branchId: selectedQrBranch.id,
+        label: wifiLabel.trim() || "WiFi quán"
+      });
+      setWifiNetwork(result);
+      setWifiMessage({ tone: "success", text: `Đã lưu ${result.label} cho ${result.branchName}.` });
+    } catch (error) {
+      setWifiMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể lưu WiFi chấm công." });
+    } finally {
+      setSavingWifiNetwork(false);
     }
   };
   const copyQrAttendanceUrl = async () => {
@@ -2887,29 +2927,80 @@ function AttendanceScreen({
         <StatTile label="Chờ check-in" value={waitingRows.length} tone={operationalTone(waitingRows.length, 2)} />
       </div>
 
+      <div className="border-b border-[#EFE5D9] bg-[#FFF9F0] p-3">
+        <section className="rounded-xl border border-[#E8DED0] bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Chấm hộ</p>
+              <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Quản lý vào ca / kết ca hộ</h3>
+            </div>
+            <Pill tone={selectedManualRow?.isClockOpen ? "green" : "neutral"}>{selectedManualRow?.isClockOpen ? "Đang trong ca" : "Chưa vào ca"}</Pill>
+          </div>
+          <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(180px,1fr)_minmax(160px,0.8fr)_minmax(180px,1fr)_auto]">
+            <select
+              value={manualStaffMemberId}
+              onChange={(event) => {
+                const nextMember = members.find((member) => member.id === event.target.value) ?? null;
+                setManualStaffMemberId(event.target.value);
+                setManualBranchId(nextMember?.primaryBranchId ?? branches[0]?.id ?? "");
+              }}
+              className="staff-field-input h-10"
+            >
+              {members.map((member) => (
+                <option key={member.id} value={member.id}>{member.fullName}</option>
+              ))}
+            </select>
+            <select value={selectedManualBranchId} onChange={(event) => setManualBranchId(event.target.value)} className="staff-field-input h-10">
+              {branches.map((branch) => (
+                <option key={branch.id} value={branch.id}>{branch.name}</option>
+              ))}
+            </select>
+            <input value={manualNote} onChange={(event) => setManualNote(event.target.value)} className="staff-field-input h-10" maxLength={240} placeholder="Lý do chấm hộ" />
+            <div className="grid grid-cols-2 gap-1.5 lg:w-[188px]">
+              <form action={manualClockInFormAction}>
+                <input type="hidden" name="staffMemberId" value={selectedManualMember?.id ?? ""} />
+                <input type="hidden" name="branchId" value={selectedManualBranchId} />
+                <input type="hidden" name="note" value={manualNote || "Quản lý chấm hộ tại quán"} />
+                <button disabled={manualClockingIn || !selectedManualMember || !selectedManualBranchId || selectedManualRow?.isClockOpen} className="h-10 w-full rounded-lg border border-[#CBE5D2] bg-[#E8F5EC] px-2 text-[10px] font-black text-[#0F6A45] disabled:opacity-50">
+                  Vào ca
+                </button>
+              </form>
+              <form action={manualClockOutFormAction}>
+                <input type="hidden" name="attendanceLogId" value={selectedManualRow?.row?.id ?? ""} />
+                <input type="hidden" name="staffMemberId" value={selectedManualMember?.id ?? ""} />
+                <input type="hidden" name="branchId" value={selectedManualBranchId} />
+                <input type="hidden" name="note" value={manualNote || "Quản lý kết ca hộ tại quán"} />
+                <button disabled={manualClockingOut || !selectedManualMember || !selectedManualBranchId || !selectedManualRow?.isClockOpen} className="h-10 w-full rounded-lg border border-[#F2D2B2] bg-[#FFF1DF] px-2 text-[10px] font-black text-[#A85B14] disabled:opacity-50">
+                  Kết ca
+                </button>
+              </form>
+            </div>
+          </div>
+          <div className="mt-2 grid gap-1.5 md:grid-cols-2">
+            <ActionNotice state={manualClockInState} />
+            <ActionNotice state={manualClockOutState} />
+          </div>
+        </section>
+      </div>
+
       <div className="grid gap-2 border-b border-[#EFE5D9] bg-[#FFFCF6] p-3 xl:grid-cols-[minmax(0,1fr)_232px]">
         <section className="rounded-xl border border-[#E8DED0] bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">QR attendance</p>
-              <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Mã chấm công theo chi nhánh</h3>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">QR & WiFi attendance</p>
+              <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Chấm công theo chi nhánh</h3>
             </div>
-            <Pill tone={qrToken ? "green" : "neutral"}>{qrToken ? shortTime(qrToken.expiresAt) : "Chưa tạo"}</Pill>
+            <Pill tone={qrToken ? "green" : "neutral"}>{qrToken?.mode === "daily_branch" ? "QR ngày" : qrToken ? shortTime(qrToken.expiresAt) : "Chưa tạo"}</Pill>
           </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(180px,1fr)_160px_160px]">
+          <div className="mt-3 grid gap-2 md:grid-cols-[minmax(180px,1fr)_150px]">
             <select value={qrBranchId} onChange={(event) => setQrBranchId(event.target.value)} className="staff-field-input h-10">
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>{branch.name}</option>
               ))}
             </select>
-            <select value={qrExpiresInMinutes} onChange={(event) => setQrExpiresInMinutes(Number(event.target.value))} className="staff-field-input h-10">
-              <option value={5}>5 phút</option>
-              <option value={10}>10 phút</option>
-              <option value={15}>15 phút</option>
-            </select>
             <button type="button" onClick={createQrToken} disabled={creatingQr || !selectedQrBranch} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-[#003F2D] px-3 text-[11px] font-black text-white disabled:opacity-50">
               <QrCode size={14} />
-              {creatingQr ? "Đang tạo..." : "Tạo QR"}
+              {creatingQr ? "Đang tạo..." : "Tạo QR ngày"}
             </button>
           </div>
           {qrMessage ? (
@@ -2935,6 +3026,33 @@ function AttendanceScreen({
               </button>
             </div>
           ) : null}
+          <div className="mt-3 rounded-lg border border-[#E8DED0] bg-[#FFF9F0] p-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">WiFi chấm công</p>
+                <p className="mt-0.5 text-[11px] font-bold text-[#756E64]">Lưu IP public của mạng hiện tại cho chi nhánh đã chọn.</p>
+              </div>
+              <Pill tone={wifiNetwork ? "green" : "neutral"}>{wifiNetwork ? wifiNetwork.publicIpCidr : "Chưa lưu"}</Pill>
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_136px]">
+              <input value={wifiLabel} onChange={(event) => setWifiLabel(event.target.value)} maxLength={80} className="staff-field-input h-10" placeholder="Tên mạng WiFi" />
+              <button type="button" onClick={saveWifiNetwork} disabled={savingWifiNetwork || !selectedQrBranch} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-[#E8DED0] bg-white px-3 text-[11px] font-black text-[#0B3F31] disabled:opacity-50">
+                <Wifi size={14} />
+                {savingWifiNetwork ? "Đang lưu..." : "Lưu WiFi"}
+              </button>
+            </div>
+            {wifiMessage ? (
+              <div className={`mt-2 rounded-lg border px-2.5 py-2 text-[11px] font-bold ${
+                wifiMessage.tone === "success"
+                  ? "border-[#CBE5D2] bg-[#E8F5EC] text-[#0F6A45]"
+                  : wifiMessage.tone === "warning"
+                    ? "border-[#F2D2B2] bg-[#FFF1DF] text-[#A85B14]"
+                    : "border-[#E8DED0] bg-white text-[#756E64]"
+              }`}>
+                {wifiMessage.text}
+              </div>
+            ) : null}
+          </div>
         </section>
         <aside className="grid min-h-[188px] place-items-center rounded-xl border border-[#E8DED0] bg-white p-3">
           {qrToken ? (
@@ -2942,8 +3060,8 @@ function AttendanceScreen({
           ) : (
             <div className="text-center">
               <QrCode className="mx-auto text-[#0F4D3A]" size={28} />
-              <p className="mt-2 text-xs font-black text-[#0B3F31]">QR theo ca</p>
-              <p className="mt-0.5 text-[10.5px] font-bold text-[#756E64]">Mỗi mã gắn với một chi nhánh.</p>
+              <p className="mt-2 text-xs font-black text-[#0B3F31]">QR hôm nay</p>
+              <p className="mt-0.5 text-[10.5px] font-bold text-[#756E64]">Tự đổi mã theo ngày và chi nhánh.</p>
             </div>
           )}
         </aside>
@@ -3225,10 +3343,6 @@ function AttendanceScreen({
             <p className="mt-1 text-[11px] font-bold text-[#756E64]">Thử đổi trạng thái hoặc tìm theo tên/chi nhánh khác.</p>
           </div>
         ) : null}
-      </div>
-      <div className="grid gap-1.5 border-t border-[#EFE5D9] bg-[#FFF9F0] px-3 py-2 md:grid-cols-2">
-        <ActionNotice state={manualClockInState} />
-        <ActionNotice state={manualClockOutState} />
       </div>
       {approvals.length ? (
         <div className="border-t border-[#EFE5D9] bg-[#FFF9F0] p-3">

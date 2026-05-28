@@ -798,7 +798,7 @@ async function getHotOrderInbox(connection: TelegramConnection) {
   const query = branchScoped(
     db()
       .from("orders")
-      .select("id,branch_id,total,status,payment_status,fulfillment_type,delivery_status,customer_name,delivery_address,service_due_at,created_at,table:tables(name)")
+      .select("id,branch_id,total,status,payment_status,fulfillment_type,delivery_status,customer_name,customer_phone,delivery_address,service_due_at,created_at,table:tables(name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(name))")
       .eq("restaurant_id", connection.restaurant_id)
       .in("status", ["pending", "ordering"])
       .order("service_due_at", { ascending: true, nullsFirst: false })
@@ -818,7 +818,7 @@ async function getHotOrderInbox(connection: TelegramConnection) {
       branchId: row.branch_id ? String(row.branch_id) : null,
       kind: "order",
       title: `${late ? "Trễ SLA" : row.status === "pending" ? "Đơn cần nhận" : "Đơn đang xử lý"} #${code}`,
-      detail: [tableName, row.fulfillment_type, money(Number(row.total ?? 0))].filter(Boolean).join(" · "),
+      detail: [tableName, fulfillmentLabel(row.fulfillment_type), row.customer_name, money(Number(row.total ?? 0)), orderItemsSummary(row.items)].filter(Boolean).join(" · "),
       priority: late ? 1 : row.status === "pending" ? 2 : 4,
       resourceType: "order",
       createdAt: row.created_at ? String(row.created_at) : null,
@@ -827,6 +827,8 @@ async function getHotOrderInbox(connection: TelegramConnection) {
         paymentStatus: row.payment_status,
         fulfillmentType: row.fulfillment_type,
         deliveryStatus: row.delivery_status,
+        customerPhone: row.customer_phone,
+        deliveryAddress: row.delivery_address,
         late
       }
     } satisfies TelegramOpsInboxItem;
@@ -837,7 +839,7 @@ async function getPaymentInbox(connection: TelegramConnection) {
   const query = branchScoped(
     db()
       .from("orders")
-      .select("id,branch_id,total,status,payment_status,payment_method,customer_name,created_at,table:tables(name)")
+      .select("id,branch_id,total,status,payment_status,payment_method,customer_name,customer_phone,fulfillment_type,delivery_address,created_at,table:tables(name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(name))")
       .eq("restaurant_id", connection.restaurant_id)
       .or("status.in.(waiting_confirm,waiting_payment),payment_status.in.(waiting_confirm,waiting_payment)")
       .order("updated_at", { ascending: true })
@@ -851,14 +853,16 @@ async function getPaymentInbox(connection: TelegramConnection) {
     branchId: row.branch_id ? String(row.branch_id) : null,
     kind: "payment",
     title: `VietQR chờ xác nhận #${shortId(String(row.id))}`,
-    detail: [normalizeNestedName(row.table), row.customer_name, money(Number(row.total ?? 0))].filter(Boolean).join(" · "),
+    detail: [normalizeNestedName(row.table), fulfillmentLabel(row.fulfillment_type), row.customer_name, money(Number(row.total ?? 0)), orderItemsSummary(row.items)].filter(Boolean).join(" · "),
     priority: 1,
     resourceType: "order",
     createdAt: row.created_at ? String(row.created_at) : null,
     state: {
       status: row.status,
       paymentStatus: row.payment_status,
-      paymentMethod: row.payment_method
+      paymentMethod: row.payment_method,
+      customerPhone: row.customer_phone,
+      deliveryAddress: row.delivery_address
     }
   }));
 }
@@ -867,7 +871,7 @@ async function getReservationInbox(connection: TelegramConnection) {
   const today = vietnamDayWindow();
   const { data, error } = await db()
     .from("reservations")
-    .select("id,status,deposit_status,deposit_required_amount,deposit_paid_amount,customer_name,party_size,starts_at,created_at")
+    .select("id,status,deposit_status,deposit_required_amount,deposit_paid_amount,customer_name,customer_phone,customer_note,preferred_seating_zone,preferred_table_kind,party_size,starts_at,created_at,locks:reservation_table_locks(table:tables(name))")
     .eq("restaurant_id", connection.restaurant_id)
     .gte("starts_at", today.start)
     .lt("starts_at", new Date(Date.parse(today.end) + 2 * 86_400_000).toISOString())
@@ -880,7 +884,7 @@ async function getReservationInbox(connection: TelegramConnection) {
     branchId: null,
     kind: "reservation",
     title: `Đặt bàn ${formatVietnamTime(row.starts_at)}`,
-    detail: [row.customer_name, `${row.party_size} khách`, row.deposit_status === "waiting_confirm" ? "chờ cọc" : row.status].filter(Boolean).join(" · "),
+    detail: [row.customer_name, row.customer_phone, `${row.party_size} khách`, reservationTableSummary(row.locks), row.deposit_status === "waiting_confirm" ? "chờ cọc" : row.status, row.customer_note].filter(Boolean).join(" · "),
     priority: row.deposit_status === "waiting_confirm" ? 1 : 3,
     resourceType: "reservation",
     createdAt: row.created_at ? String(row.created_at) : null,
@@ -889,7 +893,11 @@ async function getReservationInbox(connection: TelegramConnection) {
       depositStatus: row.deposit_status,
       startsAt: row.starts_at,
       depositRequiredAmount: row.deposit_required_amount,
-      depositPaidAmount: row.deposit_paid_amount
+      depositPaidAmount: row.deposit_paid_amount,
+      customerPhone: row.customer_phone,
+      customerNote: row.customer_note,
+      preferredSeatingZone: row.preferred_seating_zone,
+      preferredTableKind: row.preferred_table_kind
     }
   }));
 }
@@ -971,6 +979,54 @@ async function getMenuInbox(connection: TelegramConnection) {
 
 function money(amount: number) {
   return `${Math.round(amount).toLocaleString("vi-VN")}đ`;
+}
+
+function fulfillmentLabel(value: unknown) {
+  if (value === "DINE_IN") return "Tại bàn";
+  if (value === "PICKUP") return "Mang đi";
+  if (value === "DELIVERY") return "Giao hàng";
+  return value ? String(value) : null;
+}
+
+function orderItemsSummary(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const labels = value
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const record = row as Record<string, any>;
+      const quantity = Number(record.quantity ?? 0);
+      const menuItem = Array.isArray(record.menuItem) ? record.menuItem[0] : record.menuItem;
+      const name = menuItem?.name ? String(menuItem.name) : "Món";
+      const modifiers = modifierSummary(record.modifier_snapshot);
+      if (!Number.isFinite(quantity) || quantity <= 0) return null;
+      return `${quantity}x ${name}${modifiers ? ` (${modifiers})` : ""}`;
+    })
+    .filter((label): label is string => Boolean(label));
+  if (labels.length === 0) return null;
+  return labels.length > 3 ? `${labels.slice(0, 3).join(", ")} +${labels.length - 3}` : labels.join(", ");
+}
+
+function modifierSummary(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const labels = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const optionName = (item as { optionName?: unknown; option_name?: unknown }).optionName ?? (item as { option_name?: unknown }).option_name;
+      return optionName ? String(optionName) : null;
+    })
+    .filter((label): label is string => Boolean(label));
+  return labels.length ? labels.slice(0, 3).join(", ") : null;
+}
+
+function reservationTableSummary(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const names = value
+    .map((lock) => {
+      if (!lock || typeof lock !== "object") return null;
+      return normalizeNestedName((lock as { table?: unknown }).table);
+    })
+    .filter((name): name is string => Boolean(name));
+  return names.length ? names.join(", ") : null;
 }
 
 function formatVietnamTime(value: string) {

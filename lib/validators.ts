@@ -966,7 +966,13 @@ export const staffSessionForceLogoutSchema = z
 
 export const staffAttendanceQrTokenCreateSchema = z.object({
   branchId: z.string().uuid(),
-  expiresInMinutes: z.coerce.number().int().min(1).max(15).default(5)
+  expiresInMinutes: z.coerce.number().int().min(1).max(15).default(5),
+  mode: z.enum(["single_use", "daily_branch"]).default("daily_branch")
+});
+
+export const staffAttendanceWifiNetworkRegisterSchema = z.object({
+  branchId: z.string().uuid(),
+  label: z.string().trim().min(2).max(80).optional().or(z.literal(""))
 });
 
 const shiftTimeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Giờ ca phải theo định dạng HH:mm.");
@@ -1177,7 +1183,7 @@ const attendanceCaptureBaseSchema = z.object({
 export const attendanceClockInSchema = attendanceCaptureBaseSchema
   .extend({
     shiftAssignmentId: z.string().uuid().optional().or(z.literal("")),
-    source: z.enum(["gps", "qr", "manual", "offline_sync"]).default("gps"),
+    source: z.enum(["gps", "qr", "wifi", "manual", "offline_sync"]).default("gps"),
     offlineQueueKey: z.string().trim().regex(/^[a-zA-Z0-9._:-]{8,120}$/).optional().or(z.literal(""))
   })
   .superRefine((value, context) => {
@@ -1209,7 +1215,7 @@ export const attendanceClockInSchema = attendanceCaptureBaseSchema
 export const attendanceClockOutSchema = attendanceCaptureBaseSchema
   .extend({
     attendanceLogId: z.string().uuid().optional().or(z.literal("")),
-    source: z.enum(["gps", "qr", "manual", "offline_sync"]).default("gps")
+    source: z.enum(["gps", "qr", "wifi", "manual", "offline_sync"]).default("gps")
   })
   .superRefine((value, context) => {
     if (hasPartialCoordinatePair(value)) {

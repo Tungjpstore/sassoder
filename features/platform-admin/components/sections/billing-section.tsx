@@ -37,11 +37,11 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
     <div className="grid gap-4">
       <div className="grid gap-3 md:grid-cols-3">
         <MetricCard label="Chờ xác minh" value={formatNumber(snapshot.metrics.pendingPayments)} detail="Chủ nền tảng xác nhận thủ công" icon={CreditCard} tone="warning" />
-        <MetricCard label="MRR" value={formatVnd(snapshot.metrics.mrr)} detail="Doanh thu SaaS dự kiến hằng tháng" icon={Banknote} tone="good" />
-        <MetricCard label="Trial" value={formatNumber(snapshot.metrics.trialingSubscriptions)} detail="Cần chuyển đổi sau 30 ngày" icon={CircleDot} tone="info" />
+        <MetricCard label="Doanh thu tháng" value={formatVnd(snapshot.metrics.mrr)} detail="Doanh thu SaaS dự kiến hằng tháng" icon={Banknote} tone="good" />
+        <MetricCard label="Dùng thử" value={formatNumber(snapshot.metrics.trialingSubscriptions)} detail="Cần chuyển đổi sau 30 ngày" icon={CircleDot} tone="info" />
       </div>
 
-      <SectionCard title="Billing v2 cutover health" action={<RunBillingButton />}>
+      <SectionCard title="Sức khoẻ billing v2" action={<RunBillingButton />}>
         <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
@@ -59,26 +59,26 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
             <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Legacy</p>
               <div className="mt-3 grid gap-2 text-sm text-slate-300">
-                <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.legacy.subscriptions)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Payments</span><strong>{formatNumber(snapshot.billingCutover.legacy.payments)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Pending</span><strong>{formatNumber(snapshot.billingCutover.legacy.pendingPayments)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>AI successes</span><strong>{formatNumber(snapshot.billingCutover.legacy.aiUsageSuccess)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Gói đăng ký</span><strong>{formatNumber(snapshot.billingCutover.legacy.subscriptions)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Thanh toán</span><strong>{formatNumber(snapshot.billingCutover.legacy.payments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Đang chờ</span><strong>{formatNumber(snapshot.billingCutover.legacy.pendingPayments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>AI thành công</span><strong>{formatNumber(snapshot.billingCutover.legacy.aiUsageSuccess)}</strong></div>
               </div>
             </div>
 
             <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4 sm:col-span-2">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Billing v2</p>
               <div className="mt-3 grid gap-2 text-sm text-slate-300 md:grid-cols-2">
-                <div className="flex items-center justify-between gap-3"><span>Plans</span><strong>{formatNumber(snapshot.billingCutover.v2.plans)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Entitlements</span><strong>{formatNumber(snapshot.billingCutover.v2.entitlements)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Subscriptions</span><strong>{formatNumber(snapshot.billingCutover.v2.subscriptions)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Invoices</span><strong>{formatNumber(snapshot.billingCutover.v2.invoices)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Payments</span><strong>{formatNumber(snapshot.billingCutover.v2.payments)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Payment logs</span><strong>{formatNumber(snapshot.billingCutover.v2.paymentLogs)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Usage quotas</span><strong>{formatNumber(snapshot.billingCutover.v2.usageQuotas)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Feature usage</span><strong>{formatNumber(snapshot.billingCutover.v2.featureUsageLogs)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Trial usage</span><strong>{formatNumber(snapshot.billingCutover.v2.trialUsage)}</strong></div>
-                <div className="flex items-center justify-between gap-3"><span>Upgrade events</span><strong>{formatNumber(snapshot.billingCutover.v2.upgradeEvents)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Gói</span><strong>{formatNumber(snapshot.billingCutover.v2.plans)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Quyền dùng</span><strong>{formatNumber(snapshot.billingCutover.v2.entitlements)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Gói đăng ký</span><strong>{formatNumber(snapshot.billingCutover.v2.subscriptions)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Hoá đơn</span><strong>{formatNumber(snapshot.billingCutover.v2.invoices)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Thanh toán</span><strong>{formatNumber(snapshot.billingCutover.v2.payments)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Log thanh toán</span><strong>{formatNumber(snapshot.billingCutover.v2.paymentLogs)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Hạn mức dùng</span><strong>{formatNumber(snapshot.billingCutover.v2.usageQuotas)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Dùng tính năng</span><strong>{formatNumber(snapshot.billingCutover.v2.featureUsageLogs)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Dùng thử</span><strong>{formatNumber(snapshot.billingCutover.v2.trialUsage)}</strong></div>
+                <div className="flex items-center justify-between gap-3"><span>Sự kiện nâng cấp</span><strong>{formatNumber(snapshot.billingCutover.v2.upgradeEvents)}</strong></div>
               </div>
             </div>
           </div>
@@ -89,7 +89,7 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-slate-100">{check.label}</p>
                   <span className={badgeTone(check.status === "pass" ? "good" : check.status === "warn" ? "warning" : "danger")}>
-                    {check.status === "pass" ? "PASS" : check.status === "warn" ? "WARN" : "FAIL"}
+                    {check.status === "pass" ? "ĐẠT" : check.status === "warn" ? "CẢNH BÁO" : "LỖI"}
                   </span>
                 </div>
                 <p className="mt-2 text-sm leading-6 text-slate-400">{check.detail}</p>
@@ -99,7 +99,7 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </SectionCard>
 
-      <SectionCard title="Billing anomalies cần xử lý" action={<RunBillingButton />}>
+      <SectionCard title="Bất thường billing cần xử lý" action={<RunBillingButton />}>
         <div className="grid gap-3">
           {snapshot.billingCutover.anomalies.length ? (
             snapshot.billingCutover.anomalies.map((anomaly) => (
@@ -120,7 +120,7 @@ export function Billing({ snapshot }: { snapshot: Snapshot }) {
                 </div>
                 {canResolveBillingAnomaly(anomaly) ? (
                   <form action={resolveBillingAnomalyAction} className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#0A1020] p-3">
-                    <p className="text-xs font-semibold text-slate-400">Guarded server action + audit</p>
+                    <p className="text-xs font-semibold text-slate-400">Server action có audit</p>
                     <input type="hidden" name="key" value={anomaly.key} />
                     {anomaly.subscriptionId ? <input type="hidden" name="subscriptionId" value={anomaly.subscriptionId} /> : null}
                     {anomaly.paymentId ? <input type="hidden" name="paymentId" value={anomaly.paymentId} /> : null}

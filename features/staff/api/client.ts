@@ -46,13 +46,13 @@ export type AttendanceCapturePayload = {
 
 export type AttendanceClockInPayload = AttendanceCapturePayload & {
   shiftAssignmentId?: string;
-  source?: "gps" | "qr" | "manual" | "offline_sync";
+  source?: "gps" | "qr" | "wifi" | "manual" | "offline_sync";
   offlineQueueKey?: string;
 };
 
 export type AttendanceClockOutPayload = AttendanceCapturePayload & {
   attendanceLogId?: string;
-  source?: "gps" | "qr" | "manual" | "offline_sync";
+  source?: "gps" | "qr" | "wifi" | "manual" | "offline_sync";
 };
 
 export type AttendanceReviewPayload = {
@@ -95,6 +95,7 @@ export type StaffSessionHeartbeatResult = {
 export type StaffAttendanceQrTokenPayload = {
   branchId: string;
   expiresInMinutes?: number;
+  mode?: "single_use" | "daily_branch";
 };
 
 export type StaffAttendanceQrTokenResult = {
@@ -105,6 +106,24 @@ export type StaffAttendanceQrTokenResult = {
   attendanceUrl: string;
   qrImageUrl: string;
   expiresAt: string;
+  createdAt: string;
+  mode?: "single_use" | "daily_branch";
+  qrDate?: string | null;
+};
+
+export type StaffAttendanceWifiNetworkPayload = {
+  branchId: string;
+  label?: string;
+};
+
+export type StaffAttendanceWifiNetworkResult = {
+  id: string;
+  branchId: string;
+  branchName: string;
+  label: string;
+  publicIpCidr: string;
+  lastSeenIp: string;
+  lastSeenAt: string;
   createdAt: string;
 };
 
@@ -199,6 +218,10 @@ export async function forceStaffSessionLogout(payload: StaffSessionForceLogoutPa
 
 export async function createStaffAttendanceQrToken(payload: StaffAttendanceQrTokenPayload) {
   return postOperational<StaffAttendanceQrTokenResult>("/api/admin/staff-operations/attendance-qr-tokens", payload, "Không thể tạo QR chấm công.");
+}
+
+export async function registerStaffAttendanceWifiNetwork(payload: StaffAttendanceWifiNetworkPayload) {
+  return postOperational<StaffAttendanceWifiNetworkResult>("/api/admin/staff-operations/attendance-wifi-networks", payload, "Không thể lưu WiFi chấm công.");
 }
 
 export async function createStaffRequest(payload: StaffRequestCreatePayload) {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { validateStaffAttendanceQrToken } from "@/features/attendance/services/attendance-qr-service";
+import { validateStaffAttendanceWifiNetwork } from "@/features/attendance/services/attendance-wifi-service";
 import { evaluateAttendanceAnomaly } from "@/features/attendance/services/attendance-anomaly-engine";
 import { assessAttendanceDeviceTrust, type StaffAttendanceDeviceTrust } from "@/features/staff/services/staff-device-trust-service";
 import { AppError } from "@/lib/response";
@@ -16,7 +17,12 @@ type DashboardSession = {
   role: "ADMIN" | "STAFF";
 };
 
-type AttendanceSource = "gps" | "qr" | "manual" | "offline_sync";
+type AttendanceSource = "gps" | "qr" | "wifi" | "manual" | "offline_sync";
+
+type AttendanceNetworkContext = {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+};
 
 type AttendanceCaptureInput = {
   staffMemberId?: string | "";
@@ -28,6 +34,7 @@ type AttendanceCaptureInput = {
   deviceInfo: Record<string, unknown>;
   qrToken?: string | "";
   note?: string | "";
+  network?: AttendanceNetworkContext;
 };
 
 type AttendanceClockInInput = AttendanceCaptureInput & {
@@ -249,7 +256,7 @@ function parseClientCapturedAt(value: string | undefined) {
   return capturedAt;
 }
 
-function normalizeCapturedAt(value: string | undefined, source: "gps" | "qr" | "manual" | "offline_sync") {
+function normalizeCapturedAt(value: string | undefined, source: AttendanceSource) {
   const clientCapturedAt = parseClientCapturedAt(value);
   const now = Date.now();
 
@@ -421,7 +428,7 @@ function scoreAnomalies({
 }: {
   gps: GpsEvaluation;
   accuracyMeters?: number;
-  source: "gps" | "qr" | "manual" | "offline_sync";
+  source: AttendanceSource;
   capturedAt: Date;
   lateMinutes?: number;
   workMinutes?: number;
@@ -451,6 +458,11 @@ function scoreAnomalies({
   if (source === "manual") {
     flags.push("manual_attendance");
     score += 20;
+  }
+
+  if (source === "wifi") {
+    flags.push("wifi_attendance");
+    score += 4;
   }
 
   if ((lateMinutes ?? 0) > 0) {
@@ -1328,7 +1340,7 @@ function assertSourceAllowed({
   session,
   isPremium
 }: {
-  source: "gps" | "qr" | "manual" | "offline_sync";
+  source: AttendanceSource;
   session: DashboardSession;
   isPremium: boolean;
 }) {
@@ -1347,6 +1359,9 @@ function attendanceSourceApprovalReason(source: AttendanceSource, deviceTrust: S
   }
   if (source === "qr" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
     return "QR chấm công cần thiết bị tin cậy hoặc quản lý đối soát trước khi tính công.";
+  }
+  if (source === "wifi" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
+    return "WiFi chấm công cần thiết bị tin cậy hoặc quản lý đối soát trước khi tính công.";
   }
   return null;
 }
@@ -1437,6 +1452,17 @@ export async function clockInStaffAttendance({
         staffMemberId: staff.id
       })
     : null;
+  const wifiNetwork = source === "wifi"
+    ? await validateStaffAttendanceWifiNetwork({
+        supabase,
+        restaurantId: session.restaurantId,
+        branchId: branch.id,
+        requestIp: input.network?.ipAddress ?? null,
+        usedAt: capturedAt,
+        clock: "in",
+        staffMemberId: staff.id
+      })
+    : null;
   const radiusMeters = shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters ?? 80;
   const gps = evaluateGps({
     lat: input.lat,
@@ -1463,7 +1489,10 @@ export async function clockInStaffAttendance({
     ...input.deviceInfo,
     deviceTrustStatus: deviceTrust.status,
     trustedForAttendance: deviceTrust.trustedForAttendance,
-    staffDeviceId: deviceTrust.deviceId
+    staffDeviceId: deviceTrust.deviceId,
+    networkIp: input.network?.ipAddress ?? null,
+    networkUserAgent: input.network?.userAgent ?? null,
+    wifiNetworkId: wifiNetwork?.id ?? null
   };
 
   const insertResult = await supabase
@@ -1495,6 +1524,8 @@ export async function clockInStaffAttendance({
         branchId: input.branchId || null,
         shiftAssignmentId: input.shiftAssignmentId || null,
         qrTokenId: qrToken?.id ?? null,
+        wifiNetworkId: wifiNetwork?.id ?? null,
+        networkIp: input.network?.ipAddress ?? null,
         deviceTrustStatus: deviceTrust.status,
         staffDeviceId: deviceTrust.deviceId
       },
@@ -1574,6 +1605,7 @@ export async function clockInStaffAttendance({
         capturedAt: capturedAt.toISOString(),
         clientCapturedAt: input.capturedAt ?? null,
         qrTokenId: qrToken?.id ?? null,
+        wifiNetworkId: wifiNetwork?.id ?? null,
         deviceTrust
       }
     });
@@ -1594,6 +1626,8 @@ export async function clockInStaffAttendance({
     metadata: {
       source,
       qrTokenId: qrToken?.id ?? null,
+      wifiNetworkId: wifiNetwork?.id ?? null,
+      networkIp: input.network?.ipAddress ?? null,
       distanceMeters: gps.distanceMeters,
       radiusMeters: gps.radiusMeters,
       shiftOverrideReason,
@@ -1745,6 +1779,17 @@ export async function clockOutStaffAttendance({
         staffMemberId: staff.id
       })
     : null;
+  const wifiNetwork = source === "wifi"
+    ? await validateStaffAttendanceWifiNetwork({
+        supabase,
+        restaurantId: session.restaurantId,
+        branchId: branch.id,
+        requestIp: input.network?.ipAddress ?? null,
+        usedAt: capturedAt,
+        clock: "out",
+        staffMemberId: staff.id
+      })
+    : null;
   const radiusMeters = shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters ?? 80;
   const gps = evaluateGps({
     lat: input.lat,
@@ -1777,7 +1822,10 @@ export async function clockOutStaffAttendance({
     ...input.deviceInfo,
     deviceTrustStatus: deviceTrust.status,
     trustedForAttendance: deviceTrust.trustedForAttendance,
-    staffDeviceId: deviceTrust.deviceId
+    staffDeviceId: deviceTrust.deviceId,
+    networkIp: input.network?.ipAddress ?? null,
+    networkUserAgent: input.network?.userAgent ?? null,
+    wifiNetworkId: wifiNetwork?.id ?? null
   };
 
   const updateResult = await supabase
@@ -1876,6 +1924,7 @@ export async function clockOutStaffAttendance({
         capturedAt: capturedAt.toISOString(),
         clientCapturedAt: input.capturedAt ?? null,
         qrTokenId: qrToken?.id ?? null,
+        wifiNetworkId: wifiNetwork?.id ?? null,
         attendanceLogId: attendance.id,
         deviceTrust
       }
@@ -1898,6 +1947,8 @@ export async function clockOutStaffAttendance({
     metadata: {
       source,
       qrTokenId: qrToken?.id ?? null,
+      wifiNetworkId: wifiNetwork?.id ?? null,
+      networkIp: input.network?.ipAddress ?? null,
       distanceMeters: gps.distanceMeters,
       radiusMeters: gps.radiusMeters,
       shiftOverrideReason,

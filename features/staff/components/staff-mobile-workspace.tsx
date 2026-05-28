@@ -276,7 +276,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     return () => window.clearInterval(timer);
   }, []);
 
-  async function runClockAction(source: "gps" | "qr") {
+  async function runClockAction(source: "gps" | "qr" | "wifi") {
     if (!staff || processingAttendance) return;
     if (!selectedBranchId) {
       setMessage({ tone: "warning", text: "Bạn cần chọn chi nhánh trước khi chấm công." });
@@ -284,6 +284,10 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     }
     if (source === "qr" && !qrToken.trim()) {
       setMessage({ tone: "warning", text: "Bạn cần quét QR tại quán trước khi chấm công." });
+      return;
+    }
+    if (source === "wifi" && !offlineQueue.isOnline) {
+      setMessage({ tone: "warning", text: "WiFi chấm công cần thiết bị đang online tại mạng quán." });
       return;
     }
 
@@ -499,13 +503,19 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
         </div>
 
         <StaffPrimaryButton onClick={() => void runClockAction(machine.source)} disabled={!machine.canSubmit || processingAttendance} tone={activeAttendance ? "danger" : "primary"}>
-          <MapPin size={18} aria-hidden="true" />
+          {machine.source === "wifi" ? <Wifi size={18} aria-hidden="true" /> : machine.source === "qr" ? <Fingerprint size={18} aria-hidden="true" /> : <MapPin size={18} aria-hidden="true" />}
           {machine.primaryLabel}
         </StaffPrimaryButton>
-        <StaffSecondaryButton onClick={() => void runClockAction("qr")} disabled={!selectedBranchId || !qrReady || processingAttendance}>
-          <Fingerprint size={17} aria-hidden="true" />
-          {activeAttendance ? "Check-out QR" : "QR tại quán"}
-        </StaffSecondaryButton>
+        <div className="grid grid-cols-2 gap-2">
+          <StaffSecondaryButton onClick={() => void runClockAction("wifi")} disabled={!selectedBranchId || !offlineQueue.isOnline || processingAttendance}>
+            <Wifi size={17} aria-hidden="true" />
+            WiFi quán
+          </StaffSecondaryButton>
+          <StaffSecondaryButton onClick={() => void runClockAction("qr")} disabled={!selectedBranchId || !qrReady || processingAttendance}>
+            <Fingerprint size={17} aria-hidden="true" />
+            QR
+          </StaffSecondaryButton>
+        </div>
         {offlineQueue.queue.length ? (
           <StaffSecondaryButton onClick={() => void offlineQueue.syncQueue({ force: true })} disabled={offlineQueue.syncing}>
             <RefreshCw size={16} className={offlineQueue.syncing ? "animate-spin" : undefined} aria-hidden="true" />
@@ -547,12 +557,10 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           todayAssignments={todayAssignments}
           recentAttendance={recentAttendance}
           activeDuration={activeDuration}
-          nowMs={nowMs}
         />
       ) : null}
       {activeTab === "work" ? (
         <StaffWorkPanel
-          staff={staff}
           mobileOps={bundle.mobileOps}
           sortedWorkItems={sortedWorkItems}
           processingWorkItemKey={processingWorkItemKey}

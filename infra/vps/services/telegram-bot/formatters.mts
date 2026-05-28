@@ -17,25 +17,49 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     event.type === "order.delivery_status_changed"
   ) {
     const code = event.order.displayCode ?? shortId(event.order.id);
-    const location = event.order.tableName ? `\n📍 ${escapeHtml(event.order.tableName)}` : "";
+    const location = event.order.tableName ? `📍 ${escapeHtml(event.order.tableName)}` : "";
     const deliveryAddress =
-      event.order.fulfillmentType === "DELIVERY" && event.order.deliveryAddress ? `\n📍 ${escapeHtml(event.order.deliveryAddress)}` : "";
-    const customer = event.order.customerName ? `\n👤 ${escapeHtml(event.order.customerName)}` : "";
-    const channel = event.order.fulfillmentType ? `\n🚦 ${fulfillmentLabel(event.order.fulfillmentType)}` : "";
+      event.order.fulfillmentType === "DELIVERY" && event.order.deliveryAddress ? `📍 ${escapeHtml(compactText(event.order.deliveryAddress, 120))}` : "";
+    const customer = contactLine(event.order.customerName, event.order.customerPhone);
+    const channel = event.order.fulfillmentType ? `🚦 ${fulfillmentLabel(event.order.fulfillmentType)}` : "";
+    const payment = event.order.paymentStatus ? `💳 ${paymentStatusLabel(event.order.paymentStatus)}` : "";
+    const source = event.source ? `🔗 ${sourceLabel(event.source)}` : "";
     const headline = orderHeadline(event);
     return {
       title: testTitle(test, headline.title(code)),
-      body: `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title(code))}</b>\n\n🍜 ${event.order.itemCount} món\n💰 ${money(event.order.total)}${channel}${location}${deliveryAddress}${customer}`,
+      body: compactCard([
+        `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title(code))}</b>`,
+        orderItemsBlock(event.order.items, event.order.itemCount),
+        `💰 ${money(event.order.total)}`,
+        channel,
+        location,
+        deliveryAddress,
+        customer,
+        payment,
+        source
+      ]),
       viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
     };
   }
 
   if (event.type === "payment.waiting_confirm" || event.type === "payment.received") {
-    const customer = event.payment.customerName ? `\n👤 ${escapeHtml(event.payment.customerName)}` : "";
-    const title = event.type === "payment.received" ? "Đã xác nhận thanh toán" : "VietQR cần xác nhận";
+    const code = event.payment.orderDisplayCode ?? shortId(event.payment.orderId);
+    const customer = contactLine(event.payment.customerName, event.payment.customerPhone);
+    const title = event.type === "payment.received" ? `Đã xác nhận thanh toán #${code}` : `VietQR cần xác nhận #${code}`;
+    const channel = event.payment.fulfillmentType ? `🚦 ${fulfillmentLabel(event.payment.fulfillmentType)}` : "";
+    const location = event.payment.tableName ? `📍 ${escapeHtml(event.payment.tableName)}` : "";
+    const deliveryAddress = event.payment.fulfillmentType === "DELIVERY" && event.payment.deliveryAddress ? `📍 ${escapeHtml(compactText(event.payment.deliveryAddress, 120))}` : "";
     return {
       title: testTitle(test, title),
-      body: `${testPrefix(test)}💳 <b>${escapeHtml(title)}</b>\n\n💰 ${money(event.payment.amount)}${customer}`,
+      body: compactCard([
+        `${testPrefix(test)}💳 <b>${escapeHtml(title)}</b>`,
+        `💰 ${money(event.payment.amount)} · ${paymentMethodLabel(event.payment.method)}`,
+        customer,
+        channel,
+        location,
+        deliveryAddress,
+        orderItemsBlock(event.payment.orderItems, event.payment.orderItems?.reduce((sum, item) => sum + item.quantity, 0) ?? 0)
+      ]),
       viewPath: viewPath(test, `/dashboard/orders?orderId=${event.payment.orderId}`)
     };
   }
@@ -69,15 +93,19 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
           }).format(new Date(event.reservation.previousStartsAt))
         : null;
     const customer = event.reservation.customerName ? `\n👤 ${escapeHtml(event.reservation.customerName)}` : "";
+    const phone = event.reservation.customerPhone ? `\n☎️ ${escapeHtml(event.reservation.customerPhone)}` : "";
     const requiredDeposit = Number(event.reservation.depositRequiredAmount ?? 0);
     const paidDeposit = Number(event.reservation.depositPaidAmount ?? 0);
-    const deposit = requiredDeposit > 0 ? `\n💳 Cọc ${money(paidDeposit > 0 ? paidDeposit : requiredDeposit)}` : "";
+    const deposit = requiredDeposit > 0 ? `\n💳 Cọc ${money(paidDeposit > 0 ? paidDeposit : requiredDeposit)} · ${depositStatusLabel(event.reservation.depositStatus)}` : "";
     const tables = event.reservation.tableNames?.length ? `\n📍 ${event.reservation.tableNames.map(escapeHtml).join(", ")}` : "";
     const headline = reservationHeadline(event);
     const previous = previousStartsAt ? `\n↪️ Từ ${previousStartsAt}` : "";
+    const preference = reservationPreferenceLine(event.reservation.preferredSeatingZone, event.reservation.preferredTableKind);
+    const note = event.reservation.customerNote ? `\n📝 ${escapeHtml(compactText(event.reservation.customerNote, 160))}` : "";
+    const hold = event.reservation.holdExpiresAt ? `\n⏳ Giữ tới ${formatVietnamDateTime(event.reservation.holdExpiresAt)}` : "";
     return {
       title: testTitle(test, headline.title),
-      body: `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title)}</b>\n\n🕖 ${startsAt}${previous}\n👥 ${event.reservation.partySize} khách${deposit}${tables}${customer}`,
+      body: `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title)}</b>\n\n🕖 ${startsAt}${previous}\n👥 ${event.reservation.partySize} khách${deposit}${tables}${customer}${phone}${preference}${note}${hold}`,
       viewPath: viewPath(test, `/dashboard/reservations?reservationId=${event.reservation.id}`)
     };
   }
@@ -201,6 +229,105 @@ function fulfillmentLabel(value: string) {
   if (value === "PICKUP") return "Mang đi";
   if (value === "DELIVERY") return "Giao hàng";
   return value;
+}
+
+function sourceLabel(value: string) {
+  if (value === "customer_qr") return "QR tại quán";
+  if (value === "online_ordering") return "Đặt online";
+  if (value === "dashboard") return "Dashboard";
+  if (value === "staff") return "Nhân viên";
+  if (value === "telegram") return "Telegram";
+  return value;
+}
+
+function paymentMethodLabel(value: string) {
+  if (value === "QR") return "VietQR";
+  if (value === "CASH") return "Tiền mặt";
+  return value;
+}
+
+function paymentStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    unpaid: "Chưa thanh toán",
+    waiting_payment: "Chờ khách thanh toán",
+    waiting_confirm: "Chờ xác nhận tiền",
+    paid: "Đã thanh toán",
+    refunded: "Đã hoàn tiền"
+  };
+  return labels[value] ?? value;
+}
+
+function depositStatusLabel(value?: string | null) {
+  if (value === "waiting_payment") return "chờ khách chuyển";
+  if (value === "waiting_confirm") return "chờ xác nhận";
+  if (value === "paid") return "đã nhận";
+  if (value === "refundable") return "cần hoàn";
+  if (value === "refunded") return "đã hoàn";
+  return "cần theo dõi";
+}
+
+function orderItemsBlock(
+  items: Array<{ name: string; quantity: number; note?: string | null; modifierSummary?: string | null }> | undefined,
+  itemCount: number
+) {
+  const totalQuantity = Number(itemCount) || items?.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) || 0;
+  if (!items?.length) return totalQuantity > 0 ? `🍜 ${totalQuantity} món` : "";
+  const maxLines = 7;
+  const lines = items.slice(0, maxLines).map((item) => {
+    const quantity = Number(item.quantity) || 0;
+    const modifier = item.modifierSummary ? ` (${compactText(item.modifierSummary, 64)})` : "";
+    const note = item.note ? ` · ghi chú: ${compactText(item.note, 72)}` : "";
+    return `• ${quantity}x ${escapeHtml(compactText(item.name, 80))}${escapeHtml(modifier)}${escapeHtml(note)}`;
+  });
+  if (items.length > maxLines) lines.push(`• +${items.length - maxLines} dòng món khác`);
+  return [`🍜 ${totalQuantity} món`, ...lines].join("\n");
+}
+
+function contactLine(name?: string | null, phone?: string | null) {
+  const parts = [name, phone].filter((value): value is string => Boolean(value && value.trim())).map((value) => escapeHtml(compactText(value, 80)));
+  return parts.length ? `👤 ${parts.join(" · ")}` : "";
+}
+
+function reservationPreferenceLine(zone?: string | null, kind?: string | null) {
+  const zoneLabel = zone ? seatingZoneLabel(zone) : "";
+  const kindLabel = kind ? tableKindLabel(kind) : "";
+  const value = [zoneLabel, kindLabel].filter(Boolean).join(" · ");
+  return value ? `\n🪑 ${escapeHtml(value)}` : "";
+}
+
+function seatingZoneLabel(value: string) {
+  if (value === "indoor") return "Trong nhà";
+  if (value === "outdoor") return "Ngoài trời";
+  if (value === "mixed") return "Linh hoạt trong/ngoài";
+  return value;
+}
+
+function tableKindLabel(value: string) {
+  if (value === "standard") return "Bàn thường";
+  if (value === "vip") return "Bàn VIP";
+  if (value === "bar") return "Quầy bar";
+  if (value === "community") return "Bàn chung";
+  return value;
+}
+
+function formatVietnamDateTime(value: string) {
+  return new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Ho_Chi_Minh"
+  }).format(new Date(value));
+}
+
+function compactCard(lines: Array<string | null | undefined | false>) {
+  return lines.filter((line): line is string => Boolean(line && line.trim())).join("\n");
+}
+
+function compactText(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
 }
 
 function deliveryStatusLabel(value: string) {

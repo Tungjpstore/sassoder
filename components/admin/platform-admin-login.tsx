@@ -16,27 +16,20 @@ type PlatformAdminLoginProps = {
 
 export function PlatformAdminLogin({
   configured,
-  devFallbackEnabled,
   requiresFirstPasswordChange,
-  adminUsersConfigured,
-  bootstrapFallbackEnabled,
-  sessionTtlHours
+  adminUsersConfigured
 }: PlatformAdminLoginProps) {
   const [state, formAction, pending] = useActionState(platformAdminLoginAction, undefined);
-  const mode = adminUsersConfigured ? "RBAC" : bootstrapFallbackEnabled ? "Bootstrap" : "Local";
 
   return (
     <main className="stitch-admin stitch-devops grid min-h-screen place-items-center bg-[#080C16] px-4 py-8 text-slate-100">
-      <form action={formAction} className="w-full max-w-[420px] rounded-lg border border-white/10 bg-[#0F1629] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
-        <div className="mb-5 flex items-center justify-between gap-4">
+      <form action={formAction} className="w-full max-w-[380px] rounded-lg border border-white/10 bg-[#0F1629] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
+        <div className="mb-5 flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sm font-black text-white">LV</span>
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sm font-black text-white">LV</span>
-            <div>
-              <h1 className="text-base font-semibold text-white">Đăng nhập quản trị</h1>
-              <p className="mt-0.5 text-xs text-slate-500">admin.logivn.com</p>
-            </div>
+            <h1 className="text-base font-semibold text-white">Đăng nhập quản trị</h1>
+            <p className="text-xs text-slate-500">admin.logivn.com</p>
           </div>
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-slate-300">{mode}</span>
         </div>
 
         {!configured ? (
@@ -87,7 +80,6 @@ export function PlatformAdminLogin({
         </div>
 
         {state?.error ? <p className="mt-4 rounded-lg border border-red-400/30 bg-red-400/10 p-3 text-sm font-medium text-red-100">{state.error}</p> : null}
-        {devFallbackEnabled ? <p className="mt-3 text-xs text-slate-500">Local: local-dev-admin</p> : null}
 
         <button
           className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#F8FAFC] px-4 text-sm font-semibold text-[#080C16] transition hover:bg-slate-200 disabled:pointer-events-none disabled:opacity-50"
@@ -96,11 +88,6 @@ export function PlatformAdminLogin({
           {pending ? "Đang kiểm tra" : "Đăng nhập"}
           {pending ? <LockKeyhole className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
         </button>
-
-        <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-4 text-xs text-slate-500">
-          <span>Phiên {sessionTtlHours}h</span>
-          <span>{adminUsersConfigured ? "Permission" : "Bootstrap"}</span>
-        </div>
       </form>
     </main>
   );

@@ -780,6 +780,7 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
   method?: PaymentMethod;
   customerName?: string | null;
 }) {
+  const details = await getPaymentNotificationDetails(input.restaurantId, input.orderId).catch(() => null);
   await enqueueTelegramNotification({
     type: "payment.waiting_confirm",
     eventId: buildPaymentEventId("payment.waiting_confirm", input),
@@ -792,7 +793,12 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
       billId: input.billId ?? null,
       amount: input.amount,
       method: input.method ?? "QR",
-      customerName: input.customerName ?? null,
+      customerName: input.customerName ?? details?.customerName ?? null,
+      customerPhone: details?.customerPhone ?? null,
+      fulfillmentType: details?.fulfillmentType ?? null,
+      tableName: details?.tableName ?? null,
+      deliveryAddress: details?.deliveryAddress ?? null,
+      orderItems: details?.items ?? [],
       status: "waiting_confirm"
     })
   });
@@ -808,6 +814,7 @@ async function enqueuePaymentReceivedNotification(input: {
   customerName?: string | null;
   actorUserId?: string | null;
 }) {
+  const details = await getPaymentNotificationDetails(input.restaurantId, input.orderId).catch(() => null);
   await enqueueTelegramNotification({
     type: "payment.received",
     eventId: buildPaymentEventId("payment.received", input),
@@ -820,10 +827,82 @@ async function enqueuePaymentReceivedNotification(input: {
       billId: input.billId ?? null,
       amount: input.amount,
       method: input.method,
-      customerName: input.customerName ?? null,
+      customerName: input.customerName ?? details?.customerName ?? null,
+      customerPhone: details?.customerPhone ?? null,
+      fulfillmentType: details?.fulfillmentType ?? null,
+      tableName: details?.tableName ?? null,
+      deliveryAddress: details?.deliveryAddress ?? null,
+      orderItems: details?.items ?? [],
       status: "confirmed"
     })
   });
+}
+
+async function getPaymentNotificationDetails(restaurantId: string, orderId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id,fulfillment_type,customer_name,customer_phone,delivery_address,table:tables(name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(name))")
+    .eq("id", orderId)
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  return {
+    customerName: data.customer_name ? String(data.customer_name) : null,
+    customerPhone: data.customer_phone ? String(data.customer_phone) : null,
+    fulfillmentType: normalizeFulfillmentType(data.fulfillment_type),
+    tableName: nestedName(data.table),
+    deliveryAddress: data.delivery_address ? String(data.delivery_address) : null,
+    items: normalizePaymentNotificationItems(data.items)
+  };
+}
+
+function normalizePaymentNotificationItems(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const record = row as Record<string, any>;
+      const quantity = Number(record.quantity ?? 0);
+      const unitPrice = Number(record.price ?? 0);
+      const menuItem = Array.isArray(record.menuItem) ? record.menuItem[0] : record.menuItem;
+      const name = menuItem?.name ? String(menuItem.name) : "Món";
+      if (!Number.isFinite(quantity) || quantity <= 0) return null;
+      return {
+        name,
+        quantity,
+        unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
+        lineTotal: Number.isFinite(unitPrice) ? Math.round(quantity * unitPrice) : null,
+        note: record.note ? String(record.note) : null,
+        modifierSummary: paymentModifierSummary(record.modifier_snapshot)
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .slice(0, 30);
+}
+
+function paymentModifierSummary(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const labels = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const optionName = (item as { optionName?: unknown; option_name?: unknown }).optionName ?? (item as { option_name?: unknown }).option_name;
+      return optionName ? String(optionName) : null;
+    })
+    .filter((label): label is string => Boolean(label));
+  return labels.length ? labels.slice(0, 4).join(", ") : null;
+}
+
+function normalizeFulfillmentType(value: unknown): FulfillmentType | null {
+  return value === "DINE_IN" || value === "PICKUP" || value === "DELIVERY" ? value : null;
+}
+
+function nestedName(value: unknown) {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!row || typeof row !== "object" || !("name" in row)) return null;
+  const name = (row as { name?: unknown }).name;
+  return name ? String(name) : null;
 }
 
 export async function confirmPayment(restaurantId: string, orderId: string, actorUserId?: string | null) {

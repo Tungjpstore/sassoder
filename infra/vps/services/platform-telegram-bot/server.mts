@@ -258,7 +258,7 @@ async function handleStart(ctx: Context, token: string) {
     } catch (error) {
       if (isLikelySignedConnectToken(token)) {
         logger.warn({ telegramUserId: ctx.from.id, error: safeLogError(error) }, "platform connect token rejected");
-        await ctx.reply("Link kết nối DevOps đã hết hạn hoặc đã được dùng. Vui lòng tạo link mới trong admin.logivn.com/ops.");
+        await ctx.reply("Link kết nối DevOps không còn hiệu lực hoặc đã được dùng. Vui lòng tạo hoặc thu hồi link trong admin.logivn.com/ops.");
         return;
       }
     }
@@ -298,14 +298,14 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
     .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .row()
-    .text("Health", await signedPlatformCallback(connection, "health"))
-    .text("Queues", await signedPlatformCallback(connection, "queues"))
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .text("Queue lỗi", await signedPlatformCallback(connection, "queues"))
     .row()
     .text("Webhook", await signedPlatformCallback(connection, "webhook"))
-    .text("Incidents", await signedPlatformCallback(connection, "incidents"))
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     .row()
-    .text("Security", await signedPlatformCallback(connection, "security"))
-    .text("Disconnect", await signedPlatformCallback(connection, "disconnect"))
+    .text("Bảo mật", await signedPlatformCallback(connection, "security"))
+    .text("Ngắt", await signedPlatformCallback(connection, "disconnect"))
     .row()
     .url("Admin Ops", platformAdminUrl("/ops"))
     .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
@@ -318,14 +318,23 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     "LogiVN DevOps Command Center",
     "",
     connectionLabel(connection),
-    `Cần xử lý: ${pendingPayments.length ? "có gói chờ duyệt" : "không có gói chờ"} · ${tenantActions.length ? "có tenant cần rà soát" : "tenant ổn"}`,
+    `Cần xử lý: ${pendingPayments.length ? "có gói chờ duyệt" : "không có gói chờ"} · ${tenantActions.length ? "có quán cần rà soát" : "quán ổn"}`,
     "",
     "Chọn thao tác nhanh bên dưới."
   ].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithHelp(ctx: Context) {
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói subscription", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra service", "/queues - queue/DLQ", "/webhook - webhook bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"));
+  const connection = await connectionForContext(ctx);
+  const keyboard = connection
+    ? new InlineKeyboard()
+        .text("Mở menu", await signedPlatformCallback(connection, "menu"))
+        .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+        .row()
+        .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+        .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
+    : new InlineKeyboard().url("Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -360,10 +369,10 @@ async function replyWithPayments(ctx: Context, preferredConnection?: PlatformTel
     .text("Refresh", await signedPlatformCallback(connection, "payments"))
     .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .row()
-    .url("Mở Billing", platformAdminUrl("/payments"));
+    .url("Mở thu phí", platformAdminUrl("/payments"));
 
   const lines = [
-    "Duyệt gói subscription",
+    "Gói chờ duyệt",
     "",
     payments.length ? `${payments.length} giao dịch đang chờ xác minh.` : "Không có giao dịch chờ xác minh.",
     "",
@@ -454,12 +463,12 @@ async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTele
     .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
     .row()
     .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
-    .url("Mở Tenants", platformAdminUrl("/tenants"));
+    .url("Mở danh sách quán", platformAdminUrl("/tenants"));
 
   const lines = [
     "Quản lý quán",
     "",
-    tenants.length ? "Các quán cần thao tác nhanh:" : "Chưa có tenant cần xử lý.",
+    tenants.length ? "Các quán cần thao tác nhanh:" : "Chưa có quán cần xử lý.",
     "",
     ...tenants.slice(0, 5).map((tenant, index) => `${index + 1}. ${tenant.name} · ${tenant.platformStatus} · ${tenant.planName}\n   ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "ổn"}`)
   ];
@@ -501,8 +510,8 @@ async function replyWithHealth(ctx: Context, preferredConnection?: PlatformTeleg
   const connection = await requireConnection(ctx, preferredConnection, "infra.read");
   if (!connection) return;
   const checks = await Promise.all(serviceChecks().map(checkService));
-  const lines = ["Health · LogiVN VPS", "", ...checks.map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name} · ${item.ms}ms`)];
-  const keyboard = new InlineKeyboard().text("Refresh", await signedPlatformCallback(connection, "health")).text("Queues", await signedPlatformCallback(connection, "queues"));
+  const lines = ["Sức khỏe hệ thống · LogiVN VPS", "", ...checks.map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name} · ${item.ms}ms`)];
+  const keyboard = new InlineKeyboard().text("Làm mới", await signedPlatformCallback(connection, "health")).text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -515,8 +524,8 @@ async function replyWithQueues(ctx: Context, preferredConnection?: PlatformTeleg
     .filter((row) => row.backlog > 0 || row.failed > 0 || row.name === PLATFORM_TELEGRAM_QUEUE)
     .sort((a, b) => b.failed - a.failed || b.backlog - a.backlog)
     .slice(0, 10);
-  const lines = ["Queues · BullMQ", "", ...(rows.length ? rows.map((row) => `- ${row.name}: backlog ${row.backlog}, failed ${row.failed}`) : ["Không có backlog nổi bật."])];
-  const keyboard = new InlineKeyboard().text("Refresh", await signedPlatformCallback(connection, "queues")).text("Health", await signedPlatformCallback(connection, "health"));
+  const lines = ["Việc lỗi · BullMQ", "", ...(rows.length ? rows.map((row) => `- ${row.name}: backlog ${row.backlog}, failed ${row.failed}`) : ["Không có backlog nổi bật."])];
+  const keyboard = new InlineKeyboard().text("Làm mới", await signedPlatformCallback(connection, "queues")).text("Sức khỏe", await signedPlatformCallback(connection, "health"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -633,20 +642,20 @@ async function signedPlatformCallback(connection: PlatformTelegramConnection, ac
 
 async function platformIncidentKeyboard(connection: PlatformTelegramConnection) {
   return new InlineKeyboard()
-    .text("Health", await signedPlatformCallback(connection, "health"))
-    .text("Queues", await signedPlatformCallback(connection, "queues"));
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
 }
 
 async function configurePlatformCommands() {
   if (!bot) return;
   await bot.api.setMyCommands([
     { command: "menu", description: "Mở trung tâm thao tác" },
-    { command: "payments", description: "Duyệt gói subscription" },
-    { command: "tenants", description: "Quản lý tenant nhanh" },
-    { command: "health", description: "Kiểm tra service health" },
-    { command: "queues", description: "Kiểm tra queue/DLQ" },
+    { command: "payments", description: "Duyệt gói chủ quán" },
+    { command: "tenants", description: "Quản lý quán nhanh" },
+    { command: "health", description: "Kiểm tra hệ thống" },
+    { command: "queues", description: "Kiểm tra việc lỗi" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
-    { command: "incidents", description: "Xem sự cố queue/infra" },
+    { command: "incidents", description: "Xem sự cố vận hành" },
     { command: "whoami", description: "Xem tài khoản và scope" },
     { command: "security", description: "Xem audit bảo mật" },
     { command: "disconnect", description: "Ngắt tài khoản DevOps" },

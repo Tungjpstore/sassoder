@@ -18,6 +18,15 @@ const baseEventSchema = z.object({
   source: z.enum(["customer_qr", "online_ordering", "dashboard", "staff", "telegram", "system", "devops"]).optional()
 });
 
+const orderItemSnapshotSchema = z.object({
+  name: z.string().min(1).max(160),
+  quantity: z.number().nonnegative(),
+  unitPrice: z.number().nonnegative().nullable().optional(),
+  lineTotal: z.number().nonnegative().nullable().optional(),
+  note: z.string().max(240).nullable().optional(),
+  modifierSummary: z.string().max(240).nullable().optional()
+});
+
 export const telegramActionSchema = z.enum([
   "order.confirm",
   "order.cancel",
@@ -65,6 +74,7 @@ export const orderCreatedEventSchema = baseEventSchema.extend({
     displayCode: z.string().min(1).max(40).optional(),
     itemCount: z.number().int().nonnegative(),
     total: z.number().nonnegative(),
+    items: z.array(orderItemSnapshotSchema).max(30).optional(),
     tableName: z.string().max(80).nullable().optional(),
     fulfillmentType: z.enum(["DINE_IN", "PICKUP", "DELIVERY"]).optional(),
     customerName: z.string().max(120).nullable().optional(),
@@ -104,9 +114,15 @@ export const paymentWaitingConfirmEventSchema = baseEventSchema.extend({
   payment: z.object({
     orderId: z.string().uuid(),
     billId: z.string().uuid().nullable().optional(),
+    orderDisplayCode: z.string().max(40).nullable().optional(),
     amount: z.number().nonnegative(),
     method: z.enum(["QR", "CASH"]).default("QR"),
     customerName: z.string().max(120).nullable().optional(),
+    customerPhone: z.string().max(40).nullable().optional(),
+    fulfillmentType: z.enum(["DINE_IN", "PICKUP", "DELIVERY"]).nullable().optional(),
+    tableName: z.string().max(80).nullable().optional(),
+    deliveryAddress: z.string().max(240).nullable().optional(),
+    orderItems: z.array(orderItemSnapshotSchema).max(30).optional(),
     status: z.enum(["pending", "waiting_confirm", "confirmed", "failed", "cancelled", "refunded"]).optional()
   })
 });
@@ -127,7 +143,12 @@ export const reservationCreatedEventSchema = baseEventSchema.extend({
     depositPaidAmount: z.number().nonnegative().optional(),
     status: z.string().max(40).optional(),
     depositStatus: z.string().max(40).nullable().optional(),
-    tableNames: z.array(z.string().min(1).max(80)).max(10).optional()
+    tableNames: z.array(z.string().min(1).max(80)).max(10).optional(),
+    customerNote: z.string().max(500).nullable().optional(),
+    preferredSeatingZone: z.string().max(80).nullable().optional(),
+    preferredTableKind: z.string().max(80).nullable().optional(),
+    source: z.string().max(80).nullable().optional(),
+    holdExpiresAt: z.string().datetime().nullable().optional()
   })
 });
 

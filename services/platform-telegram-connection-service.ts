@@ -119,6 +119,8 @@ export async function createPlatformTelegramConnectionToken(session: PlatformAdm
     expires_at: expiresAt,
     metadata: {
       source: "admin.logivn.com",
+      persistent: true,
+      expiresPolicy: "until_revoked_or_consumed",
       nonce: randomUUID(),
       userAgent: "platform-control-center"
     }

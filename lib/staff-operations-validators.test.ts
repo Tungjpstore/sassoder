@@ -97,7 +97,9 @@ test("attendance approval rejection requires an audit note", () => {
 
 test("attendance QR schemas require real branch tokens", () => {
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).expiresInMinutes, 5);
+  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).mode, "daily_branch");
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId, expiresInMinutes: "10" }).expiresInMinutes, 10);
+  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId, mode: "single_use" }).mode, "single_use");
   assert.equal(staffAttendanceQrTokenCreateSchema.safeParse({ branchId, expiresInMinutes: 0 }).success, false);
   assert.equal(staffAttendanceQrTokenCreateSchema.safeParse({ branchId, expiresInMinutes: 16 }).success, false);
 
@@ -119,6 +121,14 @@ test("attendance QR schemas require real branch tokens", () => {
   });
   assert.equal(parsed.source, "qr");
   assert.match(parsed.qrToken ?? "", /^stqr_/);
+
+  const wifiParsed = attendanceClockInSchema.parse({
+    staffMemberId,
+    branchId,
+    source: "wifi",
+    deviceInfo: { deviceFingerprint: "staff-device-abcdef" }
+  });
+  assert.equal(wifiParsed.source, "wifi");
 });
 
 test("staff device trust schema supports attendance binding", () => {
@@ -168,7 +178,7 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(pinSource, /staff_auth\.pin_unknown_locked/);
 });
 
-test("offline attendance queue never converts QR scans into offline sync", async () => {
+test("offline attendance queue never converts QR or WiFi scans into offline sync", async () => {
   const source = await import("node:fs").then((fs) => fs.readFileSync("features/attendance/hooks/use-offline-attendance-queue.ts", "utf8"));
 
   assert.match(source, /type OfflineAttendanceSource = "gps"/);

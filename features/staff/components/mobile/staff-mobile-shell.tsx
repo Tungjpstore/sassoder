@@ -44,7 +44,7 @@ const tabItems: Array<{ key: StaffMobileTab; label: string; icon: typeof Clock3 
   { key: "today", label: "Hôm nay", icon: Clock3 },
   { key: "work", label: "Việc", icon: ListChecks },
   { key: "requests", label: "Yêu cầu", icon: Send },
-  { key: "inbox", label: "Inbox", icon: Bell }
+  { key: "inbox", label: "Tin", icon: Bell }
 ];
 
 export function StaffMobileShell({
@@ -111,7 +111,7 @@ export function StaffMobileShell({
                 <RadioTower size={13} aria-hidden="true" />
                 {realtimeLabel(realtimeState)}
               </StaffStatusPill>
-              <span className="truncate text-xs font-medium text-[var(--muted-foreground)]">Cập nhật {lastRefreshedLabel}</span>
+              <span className="truncate text-xs font-medium text-[var(--muted-foreground)]">{lastRefreshedLabel}</span>
             </div>
 
             <nav className="mt-2 grid grid-cols-4 gap-1 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-1" aria-label="Staff mobile sections">
@@ -147,9 +147,9 @@ export function StaffMobileShell({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <LogiVNLogo className="h-8" priority />
-                <p className="dashboard-eyebrow mt-4">Staff operations</p>
-                <h1 className="dashboard-page-title mt-2">Ứng dụng làm việc của nhân viên</h1>
-                <p className="dashboard-body-copy mt-2">Tối ưu cho ca làm, chấm công, hàng việc và thông báo nội bộ tại quán.</p>
+                <p className="dashboard-eyebrow mt-4">{restaurantName}</p>
+                <h1 className="dashboard-page-title mt-2">Ca làm hôm nay</h1>
+                <p className="dashboard-body-copy mt-2">Chấm công, xử lý việc trong ca và nhận thông báo vận hành.</p>
               </div>
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[var(--primary)]/15 bg-[var(--primary-soft)] text-[var(--primary)]">
                 <Store size={20} aria-hidden="true" />

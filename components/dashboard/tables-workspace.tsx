@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useTransition, type ElementType } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition, type CSSProperties, type ElementType } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -63,6 +63,7 @@ const statusOptions: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 const POSTER_LOGO_URL = "/brand/logivn/logo-horizontal-transparent.png";
+const POSTER_TITLE_MAX_LINES = 3;
 
 function statusMeta(status: TableOperationalStatus) {
   const map = {
@@ -359,14 +360,41 @@ function filenameSafe(value: string) {
     .toLowerCase() || "qr-ban";
 }
 
-function splitPosterTitle(value: string) {
-  const words = value.trim().split(/\s+/).filter(Boolean);
+function charLength(value: string) {
+  return Array.from(value).length;
+}
+
+function normalizePosterTitle(value: string) {
+  return value.trim().replace(/\s+/g, " ") || "LogiVN";
+}
+
+function chunkLongWord(word: string, size: number) {
+  const chars = Array.from(word);
+  const chunks: string[] = [];
+  for (let index = 0; index < chars.length; index += size) {
+    chunks.push(chars.slice(index, index + size).join(""));
+  }
+  return chunks;
+}
+
+function titleWords(value: string) {
+  return normalizePosterTitle(value)
+    .split(" ")
+    .flatMap((word) => (charLength(word) > 24 ? chunkLongWord(word, 18) : [word]));
+}
+
+function balanceTitleLines(words: string[], lineCount: number) {
+  if (lineCount <= 1 || words.length <= 1) return [words.join(" ")];
+
+  const target = Math.ceil(words.reduce((total, word) => total + charLength(word), 0) / lineCount);
   const lines: string[] = [];
   let current = "";
 
-  for (const word of words) {
+  for (let index = 0; index < words.length; index += 1) {
+    const word = words[index];
     const next = current ? `${current} ${word}` : word;
-    if (next.length > 16 && current) {
+
+    if (current && charLength(next) > target && lines.length < lineCount - 1) {
       lines.push(current);
       current = word;
     } else {
@@ -375,8 +403,31 @@ function splitPosterTitle(value: string) {
   }
 
   if (current) lines.push(current);
-  if (lines.length <= 2) return lines.length ? lines : ["LogiVN"];
-  return [lines[0], lines.slice(1).join(" ")];
+
+  while (lines.length > lineCount) {
+    const tail = lines.pop();
+    if (!tail) break;
+    lines[lines.length - 1] = `${lines[lines.length - 1]} ${tail}`;
+  }
+
+  return lines;
+}
+
+function getPosterTitleLayout(value: string) {
+  const words = titleWords(value);
+  const totalLength = charLength(words.join(" "));
+  const requestedLines = totalLength <= 18 ? 1 : totalLength <= 40 ? 2 : POSTER_TITLE_MAX_LINES;
+  const lines = balanceTitleLines(words, Math.min(requestedLines, POSTER_TITLE_MAX_LINES));
+  const longestLine = Math.max(...lines.map(charLength), 1);
+  const maxFontSize = lines.length === 1 ? 64 : lines.length === 2 ? 48 : 38;
+  const minFontSize = lines.length === 1 ? 42 : lines.length === 2 ? 34 : 28;
+  const fittedFontSize = Math.floor(580 / (longestLine * 0.56));
+  const fontSize = Math.max(minFontSize, Math.min(maxFontSize, fittedFontSize));
+  const lineGap = Math.round(fontSize * (lines.length === 3 ? 1.13 : 1.16));
+  const blockHeight = fontSize + (lines.length - 1) * lineGap;
+  const titleStartY = Math.round(360 - blockHeight / 2 + fontSize * 0.78);
+
+  return { lines, fontSize, lineGap, titleStartY };
 }
 
 function readBlobAsDataUrl(blob: Blob) {
@@ -406,11 +457,9 @@ function buildQrPosterSvg({
   logoDataUrl: string;
 }) {
   const tableNumber = tableName.match(/\d+/)?.[0]?.padStart(2, "0") ?? tableName.slice(0, 8).toUpperCase();
-  const titleLines = splitPosterTitle(restaurantName);
-  const titleFontSize = titleLines.length > 1 ? 52 : 62;
-  const titleStartY = titleLines.length > 1 ? 314 : 338;
-  const titleMarkup = titleLines
-    .map((line, index) => `<tspan x="400" dy="${index === 0 ? 0 : 58}">${escapeXml(line)}</tspan>`)
+  const titleLayout = getPosterTitleLayout(restaurantName);
+  const titleMarkup = titleLayout.lines
+    .map((line, index) => `<tspan x="400" dy="${index === 0 ? 0 : titleLayout.lineGap}">${escapeXml(line)}</tspan>`)
     .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -420,42 +469,32 @@ function buildQrPosterSvg({
       <stop offset="0" stop-color="#fffaf1"/>
       <stop offset="1" stop-color="#fff2df"/>
     </linearGradient>
-    <pattern id="waves" width="42" height="18" patternUnits="userSpaceOnUse">
-      <path d="M0 18C10 2 30 2 42 18" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="2"/>
-      <path d="M-21 18C-10 2 10 2 21 18" fill="none" stroke="#ffffff" stroke-opacity=".1" stroke-width="2"/>
-    </pattern>
     <filter id="softShadow" x="-15%" y="-15%" width="130%" height="130%">
       <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#0F4D3A" flood-opacity=".14"/>
     </filter>
   </defs>
   <rect x="0" y="0" width="800" height="1120" rx="36" fill="url(#ivory)"/>
-  <rect x="28" y="28" width="744" height="1064" rx="28" fill="none" stroke="#0F4D3A" stroke-width="5"/>
-  <rect x="46" y="46" width="708" height="1028" rx="22" fill="none" stroke="#0F4D3A" stroke-opacity=".22" stroke-width="2"/>
+  <rect x="30" y="30" width="740" height="1060" rx="30" fill="#fffaf1" stroke="#0F4D3A" stroke-width="5"/>
+  <rect x="58" y="58" width="684" height="1004" rx="20" fill="none" stroke="#0F4D3A" stroke-opacity=".18" stroke-width="2"/>
+  <path d="M58 214H742" stroke="#0F4D3A" stroke-opacity=".2" stroke-width="2"/>
+  <path d="M58 942H742" stroke="#0F4D3A" stroke-opacity=".2" stroke-width="2"/>
 
-  <path d="M92 92h210M498 92h210" stroke="#0F4D3A" stroke-width="3" stroke-linecap="round"/>
-  <text x="400" y="104" text-anchor="middle" font-size="36" fill="#F28C28" font-family="Arial, Helvetica, sans-serif">✦</text>
-  <image href="${logoDataUrl}" x="126" y="116" width="548" height="112" preserveAspectRatio="xMidYMid meet"/>
-  <path d="M210 258h380" stroke="#0F4D3A" stroke-width="3" stroke-linecap="round"/>
-  <text x="400" y="276" text-anchor="middle" font-size="30" fill="#F28C28" font-family="Arial, Helvetica, sans-serif">◆</text>
+  <image href="${logoDataUrl}" x="150" y="88" width="500" height="96" preserveAspectRatio="xMidYMid meet"/>
+  <text x="400" y="230" text-anchor="middle" font-size="21" font-weight="900" fill="#F28C28" font-family="Arial, Helvetica, sans-serif">SCAN ĐỂ GỌI MÓN TẠI BÀN</text>
 
-  <rect x="98" y="292" width="604" height="158" rx="24" fill="#fffaf1" fill-opacity=".9" stroke="#0F4D3A" stroke-width="4"/>
-  <text x="400" y="${titleStartY}" text-anchor="middle" font-size="${titleFontSize}" font-weight="900" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">${titleMarkup}</text>
-  <text x="400" y="494" text-anchor="middle" font-size="26" font-weight="800" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">Quét mã để xem menu &amp; gọi món</text>
+  <rect x="92" y="260" width="616" height="200" rx="22" fill="#ffffff" stroke="#0F4D3A" stroke-width="4"/>
+  <text x="400" y="${titleLayout.titleStartY}" text-anchor="middle" font-size="${titleLayout.fontSize}" font-weight="900" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">${titleMarkup}</text>
+  <text x="400" y="502" text-anchor="middle" font-size="25" font-weight="800" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">Quét mã để xem menu &amp; gửi order cho quán</text>
 
-  <rect x="152" y="530" width="496" height="496" rx="34" fill="#ffffff" stroke="#0F4D3A" stroke-width="7" filter="url(#softShadow)"/>
-  <rect x="176" y="554" width="448" height="448" rx="18" fill="#ffffff" stroke="#F28C28" stroke-width="3" stroke-dasharray="9 10"/>
-  <image href="${qrDataUrl}" x="196" y="574" width="408" height="408" preserveAspectRatio="xMidYMid meet"/>
+  <rect x="190" y="534" width="420" height="420" rx="24" fill="#ffffff" stroke="#0F4D3A" stroke-width="7" filter="url(#softShadow)"/>
+  <rect x="216" y="560" width="368" height="368" rx="14" fill="#ffffff" stroke="#F28C28" stroke-width="3" stroke-dasharray="10 10"/>
+  <image href="${qrDataUrl}" x="236" y="580" width="328" height="328" preserveAspectRatio="xMidYMid meet"/>
 
-  <rect x="250" y="1010" width="300" height="56" rx="18" fill="#fffaf1" stroke="#0F4D3A" stroke-width="3"/>
-  <text x="400" y="1048" text-anchor="middle" font-size="24" font-weight="900" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">MÃ QR GỌI MÓN</text>
-
-  <text x="400" y="1090" text-anchor="middle" font-size="21" font-weight="800" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">Gọi món nhanh  •  Thanh toán tiện lợi  •  Phục vụ tốt hơn</text>
-
-  <path d="M0 1014C150 970 250 1060 400 1018C550 976 650 1042 800 998V1120H0Z" fill="#0F4D3A"/>
-  <path d="M0 997C150 954 250 1044 400 1001C550 960 650 1024 800 982" fill="none" stroke="#F28C28" stroke-width="8"/>
-  <rect x="252" y="960" width="296" height="84" rx="25" fill="#fffaf1" stroke="#F28C28" stroke-width="3"/>
-  <text x="340" y="1011" text-anchor="middle" font-size="24" font-weight="900" fill="#0F4D3A" font-family="Arial, Helvetica, sans-serif">Bàn số:</text>
-  <text x="455" y="1025" text-anchor="middle" font-size="64" font-weight="900" fill="#F28C28" font-family="Arial, Helvetica, sans-serif">${escapeXml(tableNumber)}</text>
+  <rect x="92" y="972" width="616" height="88" rx="20" fill="#0F4D3A"/>
+  <text x="176" y="1027" text-anchor="start" font-size="25" font-weight="900" fill="#FFF7EB" font-family="Arial, Helvetica, sans-serif">BÀN</text>
+  <text x="400" y="1035" text-anchor="middle" font-size="72" font-weight="900" fill="#F28C28" font-family="Arial, Helvetica, sans-serif">${escapeXml(tableNumber)}</text>
+  <text x="624" y="1012" text-anchor="end" font-size="18" font-weight="800" fill="#FFF7EB" font-family="Arial, Helvetica, sans-serif">Gọi món nhanh</text>
+  <text x="624" y="1039" text-anchor="end" font-size="18" font-weight="800" fill="#FFF7EB" font-family="Arial, Helvetica, sans-serif">Thanh toán tiện lợi</text>
 </svg>`;
 }
 
@@ -535,24 +574,29 @@ function QrPrintPoster({
   qrUrl: string;
 }) {
   const tableNumber = tableName.match(/\d+/)?.[0]?.padStart(2, "0") ?? tableName.slice(0, 8).toUpperCase();
+  const titleLayout = getPosterTitleLayout(restaurantName);
+  const titleStyle = {
+    "--poster-title-font-size": `${Math.max(20, Math.round(titleLayout.fontSize * 0.55))}px`
+  } as CSSProperties;
 
   return (
     <article className="logivn-qr-poster">
       <div className="qr-poster-inner">
-        <LogiVNLogo className="mx-auto h-16" priority />
-        <div className="qr-poster-divider" />
-        <h2>{restaurantName}</h2>
-        <p className="qr-poster-subtitle">Quét mã để xem menu & gọi món</p>
+        <LogiVNLogo className="mx-auto h-12" priority />
+        <div className="qr-poster-kicker">Scan để gọi món tại bàn</div>
+        <h2 className="qr-poster-title" style={titleStyle}>
+          {titleLayout.lines.map((line, index) => (
+            <span key={`${line}-${index}`}>{line}</span>
+          ))}
+        </h2>
+        <p className="qr-poster-subtitle">Quét mã để xem menu & gửi order cho quán</p>
         <div className="qr-poster-box">
           <Image src={qrUrl} alt={`QR gọi món ${tableName}`} width={360} height={360} className="h-full w-full object-contain" />
         </div>
-        <div className="qr-poster-code-label">Mã QR gọi món</div>
-        <p className="qr-poster-benefits">
-          Gọi món nhanh <span /> Thanh toán tiện lợi <span /> Phục vụ tốt hơn
-        </p>
         <div className="qr-poster-table">
-          <span>Bàn số:</span>
+          <span>Bàn</span>
           <strong>{tableNumber}</strong>
+          <small>Gọi món nhanh · Thanh toán tiện lợi</small>
         </div>
       </div>
     </article>

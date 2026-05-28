@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Command, Search, X } from "lucide-react";
+import { Bot, Command, CreditCard, ListRestart, RefreshCw, RotateCcw, Search, ServerCog, Sparkles, X } from "lucide-react";
+import { refreshPlatformAdminAction, requestPlatformOperationAction, runPlatformCronJobAction } from "@/features/platform-admin/actions";
 import { platformAdminQuickActions } from "@/features/platform-admin/navigation";
 
 function matches(value: string, query: string) {
@@ -14,6 +15,19 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const actions = useMemo(() => platformAdminQuickActions.filter((action) => matches(action.label, query)), [query]);
+  const operationActions = useMemo(
+    () =>
+      [
+        { label: "Chạy AI vận hành", shortcut: "A R", icon: Bot, kind: "cron", jobKey: "ai-ops" },
+        { label: "Đối soát thanh toán", shortcut: "P R", icon: CreditCard, kind: "cron", jobKey: "subscriptions" },
+        { label: "Làm mới snapshot", shortcut: "R", icon: RefreshCw, kind: "refresh" },
+        { label: "Replay hàng đợi AI", shortcut: "Q R", icon: ListRestart, kind: "operation", operation: "replay_queue", targetType: "queue", targetId: "ai-ops" },
+        { label: "Dọn cache platform", shortcut: "C C", icon: RotateCcw, kind: "operation", operation: "clear_cache", targetType: "redis", targetId: "platform:snapshot" },
+        { label: "Yêu cầu restart workers", shortcut: "W R", icon: ServerCog, kind: "operation", operation: "restart_workers", targetType: "worker_pool", targetId: "platform" },
+        { label: "Tạo tóm tắt AI cảnh báo", shortcut: "A S", icon: Sparkles, kind: "operation", operation: "create_ai_summary", targetType: "alerts", targetId: "open" }
+      ].filter((action) => matches(action.label, query)),
+    [query]
+  );
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -69,6 +83,46 @@ export function CommandPalette() {
               </button>
             </div>
             <div className="grid max-h-[26rem] gap-1 overflow-y-auto p-2">
+              {operationActions.map((action) => {
+                const Icon = action.icon;
+                const content = (
+                  <button
+                    type="submit"
+                    onClick={() => setOpen(false)}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-slate-300 transition hover:bg-sky-400/10 hover:text-white"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sky-200">
+                        <Icon size={15} />
+                      </span>
+                      {action.label}
+                    </span>
+                    <kbd className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[10px] font-semibold text-slate-500">{action.shortcut}</kbd>
+                  </button>
+                );
+
+                if (action.kind === "cron") {
+                  return (
+                    <form key={action.label} action={runPlatformCronJobAction}>
+                      <input type="hidden" name="jobKey" value={action.jobKey} />
+                      {content}
+                    </form>
+                  );
+                }
+
+                if (action.kind === "refresh") {
+                  return <form key={action.label} action={refreshPlatformAdminAction}>{content}</form>;
+                }
+
+                return (
+                  <form key={action.label} action={requestPlatformOperationAction}>
+                    <input type="hidden" name="operation" value={action.operation} />
+                    <input type="hidden" name="targetType" value={action.targetType} />
+                    <input type="hidden" name="targetId" value={action.targetId} />
+                    {content}
+                  </form>
+                );
+              })}
               {actions.map((action) => {
                 const Icon = action.icon;
                 return (
@@ -88,7 +142,7 @@ export function CommandPalette() {
                   </Link>
                 );
               })}
-              {!actions.length ? <p className="px-3 py-8 text-center text-sm text-slate-500">Không có lệnh phù hợp.</p> : null}
+              {!actions.length && !operationActions.length ? <p className="px-3 py-8 text-center text-sm text-slate-500">Không có lệnh phù hợp.</p> : null}
             </div>
           </div>
         </div>

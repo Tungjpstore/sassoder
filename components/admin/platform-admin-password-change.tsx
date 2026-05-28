@@ -9,23 +9,20 @@ type PlatformAdminPasswordChangeProps = {
   sessionTtlHours: number;
 };
 
-export function PlatformAdminPasswordChange({ forced = false, sessionTtlHours }: PlatformAdminPasswordChangeProps) {
+export function PlatformAdminPasswordChange({ forced = false }: PlatformAdminPasswordChangeProps) {
   const [state, formAction, pending] = useActionState(platformAdminChangePasswordAction, undefined);
 
   return (
     <main className="stitch-admin stitch-devops grid min-h-screen place-items-center bg-[#080C16] px-4 py-8 text-slate-100">
       <form action={formAction} className="w-full max-w-[420px] rounded-lg border border-white/10 bg-[#0F1629] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.42)]">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-white">
-              <LockKeyhole className="h-5 w-5" />
-            </span>
-            <div>
-              <h1 className="text-base font-semibold text-white">{forced ? "Đổi mật khẩu lần đầu" : "Đổi mật khẩu"}</h1>
-              <p className="mt-0.5 text-xs text-slate-500">admin.logivn.com</p>
-            </div>
+        <div className="mb-5 flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-white">
+            <LockKeyhole className="h-5 w-5" />
+          </span>
+          <div>
+            <h1 className="text-base font-semibold text-white">{forced ? "Đổi mật khẩu lần đầu" : "Đổi mật khẩu"}</h1>
+            <p className="mt-0.5 text-xs text-slate-500">admin.logivn.com</p>
           </div>
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] font-semibold text-slate-300">{sessionTtlHours}h</span>
         </div>
 
         <div className="grid gap-4">

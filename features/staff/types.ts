@@ -64,7 +64,7 @@ export type StaffOpsAttendanceFeedItem = {
   fullName: string;
   branchName: string | null;
   state: "on_time" | "late" | "early_leave" | "overtime" | "absent";
-  source: "gps" | "qr" | "manual" | "offline_sync";
+  source: "gps" | "qr" | "wifi" | "manual" | "offline_sync";
   approvalState: "auto_approved" | "pending" | "approved" | "rejected";
   clockInAt: string;
   clockOutAt: string | null;

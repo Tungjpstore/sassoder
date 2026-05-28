@@ -134,7 +134,7 @@ type AttendanceRow = {
   approval_state: "auto_approved" | "pending" | "approved" | "rejected";
   clock_in_at: string;
   clock_out_at: string | null;
-  clock_in_source: "gps" | "qr" | "manual" | "offline_sync";
+  clock_in_source: "gps" | "qr" | "wifi" | "manual" | "offline_sync";
   clock_in_distance_meters: number | null;
   late_minutes: number;
   work_minutes: number | null;

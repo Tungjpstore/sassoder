@@ -1500,10 +1500,10 @@ function friendlyCallbackError(error: unknown) {
 
 function friendlyConnectError(error: unknown) {
   const message = error instanceof Error ? error.message : "connect_failed";
-  if (message.includes("expired")) return "Link kết nối đã hết hạn. Hãy tạo link mới trong Dashboard.";
+  if (message.includes("expired")) return "Link kết nối không còn hiệu lực. Hãy tạo hoặc thu hồi link trong Dashboard.";
   if (message.includes("used")) return "Link kết nối này đã được dùng. Hãy tạo link mới trong Dashboard.";
   if (message.includes("already_connected")) return "Telegram này đang nối với tài khoản khác trong quán.";
-  if (message.includes("not_found") || message.includes("signature")) return "Link kết nối không hợp lệ hoặc đã hết hạn.";
+  if (message.includes("not_found") || message.includes("signature")) return "Link kết nối không hợp lệ hoặc đã bị thu hồi.";
   return "Chưa kết nối được Telegram. Dashboard sẽ có log chi tiết.";
 }
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomBytes } from "crypto";
+import { createHash, createHmac, randomBytes } from "crypto";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
@@ -12,6 +12,7 @@ type DashboardSession = {
 type StaffAttendanceQrTokenCreateInput = {
   branchId: string;
   expiresInMinutes: number;
+  mode?: "single_use" | "daily_branch";
 };
 
 type ValidateStaffAttendanceQrTokenInput = {
@@ -28,17 +29,21 @@ type StaffAttendanceQrTokenRow = {
   id: string;
   restaurant_id: string;
   branch_id: string;
+  token_hash: string;
+  token_mode: "single_use" | "daily_branch";
+  qr_date: string | null;
   expires_at: string;
   revoked_at: string | null;
   consumed_at: string | null;
   consumed_by_staff_member_id: string | null;
+  usage_limit: number | null;
   usage_count: number;
 };
 
 function isMissingQrTokenSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   const message = error.message ?? "";
-  return error.code === "PGRST204" || error.code === "42P01" || /staff_attendance_qr_tokens|token_hash|consumed_at/i.test(message);
+  return error.code === "PGRST204" || error.code === "42P01" || /staff_attendance_qr_tokens|token_hash|consumed_at|token_mode|qr_date/i.test(message);
 }
 
 function hashAttendanceQrToken(token: string) {
@@ -47,6 +52,41 @@ function hashAttendanceQrToken(token: string) {
 
 function createRawAttendanceQrToken() {
   return `stqr_${randomBytes(32).toString("base64url")}`;
+}
+
+function dailyQrSecret() {
+  const secret = process.env.STAFF_ATTENDANCE_QR_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new AppError("Thiếu STAFF_ATTENDANCE_QR_SECRET để tạo QR chấm công hằng ngày.", 503);
+  }
+  return secret || "logivn-dev-attendance-daily-qr-secret";
+}
+
+function dateKeyInVietnam(value: Date) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
+}
+
+function vietnamDayBoundary(dateKey: string, dayOffset = 0) {
+  const date = new Date(`${dateKey}T00:00:00+07:00`);
+  date.setUTCDate(date.getUTCDate() + dayOffset);
+  return date;
+}
+
+function createDailyRawAttendanceQrToken({ restaurantId, branchId, qrDate }: { restaurantId: string; branchId: string; qrDate: string }) {
+  const signature = createHmac("sha256", dailyQrSecret())
+    .update(`${restaurantId}:${branchId}:${qrDate}:attendance`)
+    .digest("base64url")
+    .slice(0, 48);
+  return `stqr_day_${qrDate.replace(/-/g, "")}_${signature}`;
 }
 
 function normalizeBaseUrl(baseUrl: string) {
@@ -82,24 +122,88 @@ export async function createStaffAttendanceQrToken({
   const branch = branchResult.data as { id: string; name: string; is_active: boolean } | null;
   if (!branch || !branch.is_active) throw new AppError("Chi nhánh tạo QR không khả dụng.", 404);
 
+  const mode = input.mode ?? "daily_branch";
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + input.expiresInMinutes * 60_000);
-  const token = createRawAttendanceQrToken();
+  const qrDate = dateKeyInVietnam(now);
+  const validFrom = mode === "daily_branch" ? vietnamDayBoundary(qrDate) : now;
+  const expiresAt = mode === "daily_branch" ? vietnamDayBoundary(qrDate, 1) : new Date(now.getTime() + input.expiresInMinutes * 60_000);
+  const token = mode === "daily_branch"
+    ? createDailyRawAttendanceQrToken({ restaurantId: session.restaurantId, branchId: branch.id, qrDate })
+    : createRawAttendanceQrToken();
+  const tokenHash = hashAttendanceQrToken(token);
   const attendanceUrl = buildAttendanceUrl({ baseUrl, branchId: branch.id, token });
   const qrImageUrl = `/api/admin/staff-operations/attendance-qr-tokens/qr-image?size=360&data=${encodeURIComponent(attendanceUrl)}`;
+
+  if (mode === "daily_branch") {
+    const existingResult = await supabase
+      .from("staff_attendance_qr_tokens")
+      .select("id,branch_id,expires_at,created_at,token_hash")
+      .eq("restaurant_id", session.restaurantId)
+      .eq("branch_id", branch.id)
+      .eq("purpose", "attendance")
+      .eq("token_mode", "daily_branch")
+      .eq("qr_date", qrDate)
+      .is("revoked_at", null)
+      .maybeSingle();
+
+    if (existingResult.error) {
+      if (isMissingQrTokenSchema(existingResult.error)) {
+        throw new AppError("Chưa có migration QR chấm công hằng ngày. Vui lòng cập nhật database trước khi tạo mã.", 503);
+      }
+      throw existingResult.error;
+    }
+
+    if (existingResult.data?.id) {
+      const updateResult = await supabase
+        .from("staff_attendance_qr_tokens")
+        .update({
+          token_hash: tokenHash,
+          valid_from: validFrom.toISOString(),
+          expires_at: expiresAt.toISOString(),
+          metadata: {
+            baseUrl: normalizeBaseUrl(baseUrl),
+            qrDate,
+            resetPolicy: "daily_branch"
+          }
+        })
+        .eq("restaurant_id", session.restaurantId)
+        .eq("id", existingResult.data.id)
+        .select("id,branch_id,expires_at,created_at")
+        .single();
+
+      if (updateResult.error) throw updateResult.error;
+
+      return {
+        id: updateResult.data.id as string,
+        branchId: branch.id,
+        branchName: branch.name,
+        token,
+        attendanceUrl,
+        qrImageUrl,
+        expiresAt: updateResult.data.expires_at as string,
+        createdAt: updateResult.data.created_at as string,
+        mode,
+        qrDate
+      };
+    }
+  }
 
   const insertResult = await supabase
     .from("staff_attendance_qr_tokens")
     .insert({
       restaurant_id: session.restaurantId,
       branch_id: branch.id,
-      token_hash: hashAttendanceQrToken(token),
+      token_hash: tokenHash,
+      token_mode: mode,
+      qr_date: mode === "daily_branch" ? qrDate : null,
       purpose: "attendance",
-      valid_from: now.toISOString(),
+      valid_from: validFrom.toISOString(),
       expires_at: expiresAt.toISOString(),
       created_by: session.userId,
       metadata: {
-        baseUrl: normalizeBaseUrl(baseUrl)
+        baseUrl: normalizeBaseUrl(baseUrl),
+        qrDate: mode === "daily_branch" ? qrDate : null,
+        resetPolicy: mode === "daily_branch" ? "daily_branch" : "single_use"
       }
     })
     .select("id,branch_id,expires_at,created_at")
@@ -120,7 +224,9 @@ export async function createStaffAttendanceQrToken({
     attendanceUrl,
     qrImageUrl,
     expiresAt: insertResult.data.expires_at as string,
-    createdAt: insertResult.data.created_at as string
+    createdAt: insertResult.data.created_at as string,
+    mode,
+    qrDate: mode === "daily_branch" ? qrDate : null
   };
 }
 
@@ -141,7 +247,7 @@ export async function validateStaffAttendanceQrToken({
   const tokenHash = hashAttendanceQrToken(normalizedToken);
   const result = await supabase
     .from("staff_attendance_qr_tokens")
-    .select("id,restaurant_id,branch_id,expires_at,revoked_at,consumed_at,consumed_by_staff_member_id,usage_count")
+    .select("id,restaurant_id,branch_id,token_hash,token_mode,qr_date,expires_at,revoked_at,consumed_at,consumed_by_staff_member_id,usage_limit,usage_count")
     .eq("restaurant_id", restaurantId)
     .eq("branch_id", branchId)
     .eq("token_hash", tokenHash)
@@ -149,7 +255,6 @@ export async function validateStaffAttendanceQrToken({
     .lte("valid_from", usedAt.toISOString())
     .gt("expires_at", usedAt.toISOString())
     .is("revoked_at", null)
-    .is("consumed_at", null)
     .maybeSingle();
 
   if (result.error) {
@@ -164,21 +269,34 @@ export async function validateStaffAttendanceQrToken({
     throw new AppError("Mã QR chấm công không hợp lệ, sai chi nhánh hoặc đã hết hạn.", 403);
   }
 
-  const updateResult = await supabase
+  const tokenMode = qrToken.token_mode ?? "single_use";
+  if (tokenMode !== "daily_branch" && qrToken.consumed_at) {
+    throw new AppError("Mã QR chấm công đã được sử dụng. Vui lòng quét mã mới.", 409);
+  }
+  if (qrToken.usage_limit !== null && (qrToken.usage_count ?? 0) >= qrToken.usage_limit) {
+    throw new AppError("Mã QR chấm công đã đạt giới hạn sử dụng trong ngày.", 409);
+  }
+
+  let updateQuery = supabase
     .from("staff_attendance_qr_tokens")
     .update({
-      consumed_at: usedAt.toISOString(),
-      consumed_by_staff_member_id: staffMemberId,
+      consumed_at: tokenMode === "daily_branch" ? qrToken.consumed_at : usedAt.toISOString(),
+      consumed_by_staff_member_id: tokenMode === "daily_branch" ? qrToken.consumed_by_staff_member_id : staffMemberId,
       last_used_at: usedAt.toISOString(),
       usage_count: (qrToken.usage_count ?? 0) + 1,
       metadata: {
         lastClock: clock,
-        lastStaffMemberId: staffMemberId
+        lastStaffMemberId: staffMemberId,
+        lastUsedMode: tokenMode,
+        qrDate: qrToken.qr_date
       }
     })
     .eq("restaurant_id", restaurantId)
-    .eq("id", qrToken.id)
-    .is("consumed_at", null)
+    .eq("id", qrToken.id);
+
+  if (tokenMode !== "daily_branch") updateQuery = updateQuery.is("consumed_at", null);
+
+  const updateResult = await updateQuery
     .select("id")
     .maybeSingle();
 
@@ -186,12 +304,14 @@ export async function validateStaffAttendanceQrToken({
     throw updateResult.error;
   }
   if (!updateResult.data?.id) {
-    throw new AppError("Mã QR chấm công đã được sử dụng. Vui lòng quét mã mới.", 409);
+    throw new AppError(tokenMode === "daily_branch" ? "Mã QR chấm công chưa cập nhật được lượt dùng. Vui lòng thử lại." : "Mã QR chấm công đã được sử dụng. Vui lòng quét mã mới.", 409);
   }
 
   return {
     id: qrToken.id,
     branchId: qrToken.branch_id,
-    expiresAt: qrToken.expires_at
+    expiresAt: qrToken.expires_at,
+    mode: tokenMode,
+    qrDate: qrToken.qr_date
   };
 }

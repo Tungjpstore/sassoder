@@ -153,6 +153,8 @@ type GeneratedToken = {
   expiresAt: string;
   startUrl: string | null;
   startCommand: string;
+  persistent?: boolean;
+  ttlSeconds?: number;
 };
 
 type RequestState = "idle" | "loading" | "success" | "error";
@@ -205,6 +207,7 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const [status, setStatus] = useState<TelegramStatus | null>(null);
   const [token, setToken] = useState<GeneratedToken | null>(null);
   const [requestState, setRequestState] = useState<RequestState>("idle");
+  const [revokeTokenState, setRevokeTokenState] = useState<RequestState>("idle");
   const [retryState, setRetryState] = useState<RequestState>("idle");
   const [testState, setTestState] = useState<RequestState>("idle");
   const [testingKind, setTestingKind] = useState<TelegramTestKind | null>(null);
@@ -222,15 +225,9 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
 
   useEffect(() => {
     if (!token) return;
-    const expiresAt = new Date(token.expiresAt).getTime();
     let stopped = false;
 
     const interval = window.setInterval(async () => {
-      if (Date.now() >= expiresAt) {
-        window.clearInterval(interval);
-        return;
-      }
-
       const nextStatus = await refreshStatus({ clearNotice: false });
       if (stopped || !nextStatus) return;
       if (nextStatus.activeConnectionCount > tokenBaselineConnectionCount.current) {
@@ -292,7 +289,38 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
     tokenBaselineConnectionCount.current = status?.activeConnectionCount ?? 0;
     setToken(body.data);
     setRequestState("success");
-    setNotice("Link đã sẵn sàng. Mở Telegram rồi bấm Start để xác nhận kết nối.");
+    setNotice("Link đã sẵn sàng và không tự hết hạn. Mở Telegram rồi bấm Start để xác nhận kết nối.");
+  }
+
+  async function revokePendingToken() {
+    setRevokeTokenState("loading");
+    setError(null);
+    setNotice(null);
+
+    const response = await fetch("/api/admin/telegram/connect-token/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ branchId: selectedBranchId || null })
+    }).catch(() => null);
+
+    if (!response) {
+      setRevokeTokenState("error");
+      setError("Không thu hồi được link kết nối Telegram.");
+      return;
+    }
+
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.ok === false) {
+      setRevokeTokenState("error");
+      setError(body?.error ?? "Không thu hồi được link kết nối Telegram.");
+      return;
+    }
+
+    setToken(null);
+    setRevokeTokenState("success");
+    setNotice(`Đã thu hồi ${body.data?.revoked ?? 0} link chưa dùng.`);
+    await refreshStatus({ clearNotice: false });
   }
 
   async function retryFailedNotifications(notificationId?: string) {
@@ -514,12 +542,16 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
                 <p className="text-sm font-semibold text-[var(--primary)]">Link đã tạo</p>
                 <p className="mt-1 text-sm font-medium text-[var(--foreground)]">Mở Telegram rồi bấm Start. Nếu không thấy phản hồi, copy lệnh dự phòng và dán vào bot.</p>
                 <p className="mt-2 break-all font-mono text-xs font-semibold text-[var(--muted-foreground)]">{token.startCommand}</p>
-                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Hết hạn {formatDateTime(token.expiresAt)}</p>
+                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Có hiệu lực tới khi kết nối hoặc bạn thu hồi link.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="secondary" onClick={copyStartCommand}>
                   <Copy size={15} />
                   Copy /start
+                </Button>
+                <Button type="button" variant="secondary" onClick={revokePendingToken} disabled={revokeTokenState === "loading"}>
+                  {revokeTokenState === "loading" ? <RefreshCw size={15} className="animate-spin" /> : <Unlink size={15} />}
+                  Thu hồi link
                 </Button>
                 {token.startUrl ? (
                   <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-[#FFF7EB]">
@@ -574,7 +606,7 @@ function SetupFlow({
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto] lg:items-end">
         <div>
           <p className="text-sm font-semibold text-[var(--foreground)]">Bắt đầu trong 30 giây</p>
-          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Tạo link riêng cho tài khoản đang đăng nhập. Link có hạn và chỉ dùng một lần.</p>
+          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Tạo link riêng cho tài khoản đang đăng nhập. Link không tự hết hạn, chỉ dùng một lần hoặc thu hồi khi gửi nhầm.</p>
         </div>
         <label className="grid gap-2 text-sm font-semibold">
           Phạm vi

@@ -10,6 +10,7 @@ import type { SessionProfile } from "@/types/domain";
 
 const TOKEN_PREFIX = "lg1";
 const SIGNATURE_LENGTH = 12;
+const PERSISTENT_CONNECT_EXPIRES_AT = "2126-01-01T00:00:00.000Z";
 const TELEGRAM_QUEUE_NAME = "telegram.notifications";
 const TELEGRAM_DLQ_NAME = `${TELEGRAM_QUEUE_NAME}.dlq`;
 const RETRYABLE_NOTIFICATION_STATUSES = ["failed", "rate_limited"] as const;
@@ -100,7 +101,7 @@ export async function createTelegramConnectionToken(session: SessionProfile, inp
   if (revokeResult.error) throw revokeResult.error;
 
   const token = createSignedToken(connectSecret());
-  const expiresAt = new Date(Date.now() + tokenTtlSeconds() * 1000).toISOString();
+  const expiresAt = persistentConnectExpiresAt();
   const { error } = await supabase.from("telegram_connection_tokens").insert({
     token_hash: tokenHash(token),
     restaurant_id: session.restaurantId,
@@ -112,6 +113,8 @@ export async function createTelegramConnectionToken(session: SessionProfile, inp
     created_by: session.userId,
     metadata: {
       source: "dashboard",
+      persistent: true,
+      expiresPolicy: "until_revoked_or_consumed",
       roleCode: permissionContext.roleCode,
       staffMemberId: permissionContext.staffMemberId
     }
@@ -123,7 +126,9 @@ export async function createTelegramConnectionToken(session: SessionProfile, inp
     token,
     expiresAt,
     startUrl: botUsername ? `https://t.me/${botUsername}?start=${encodeURIComponent(token)}` : null,
-    startCommand: `/start ${token}`
+    startCommand: `/start ${token}`,
+    persistent: true,
+    ttlSeconds: tokenTtlSeconds()
   };
 }
 
@@ -167,6 +172,47 @@ export async function sendTelegramTestNotification(session: SessionProfile, inpu
     eventType: event.type,
     job
   };
+}
+
+export async function revokeTelegramPendingConnectTokens(session: SessionProfile, input: { branchId?: string | null } = {}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const branchId = input.branchId?.trim() || null;
+  await assertTelegramBranchScope(supabase, session, branchId);
+
+  const now = new Date().toISOString();
+  let query = supabase
+    .from("telegram_connection_tokens")
+    .update({
+      revoked_at: now,
+      metadata: {
+        revokedBy: session.userId,
+        revokedSource: "dashboard",
+        revokedReason: "manual_revoke_pending_connect_link"
+      }
+    })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("user_id", session.userId)
+    .is("consumed_at", null)
+    .is("revoked_at", null);
+  query = branchId ? query.eq("branch_id", branchId) : query.is("branch_id", null);
+
+  const { data, error } = await query.select("id,branch_id");
+  if (error) throw error;
+
+  const revoked = (data ?? []).length;
+  if (revoked > 0) {
+    await supabase.from("telegram_audit_logs").insert({
+      restaurant_id: session.restaurantId,
+      branch_id: branchId,
+      user_id: session.userId,
+      action: "telegram.connect_token.revoke_pending",
+      entity_type: "telegram_connection_token",
+      outcome: "accepted",
+      metadata: { revoked, source: "dashboard" }
+    });
+  }
+
+  return { revoked };
 }
 
 export async function getTelegramOperationsStatus(session: SessionProfile) {
@@ -525,8 +571,11 @@ function connectSecret() {
 }
 
 function tokenTtlSeconds() {
-  const parsed = Number(process.env.TELEGRAM_CONNECT_TOKEN_TTL_SECONDS || "600");
-  return Number.isFinite(parsed) && parsed >= 60 ? parsed : 600;
+  return 0;
+}
+
+function persistentConnectExpiresAt() {
+  return PERSISTENT_CONNECT_EXPIRES_AT;
 }
 
 function safeEqual(a: string, b: string) {
@@ -965,7 +1014,7 @@ function buildTelegramSetupStatus({
         key: "secure_link",
         label: "Link tích hợp",
         status: connected ? "done" : "pending",
-        detail: "Token có hạn"
+        detail: "Dùng tới khi thu hồi"
       },
       {
         key: "account_mapping",
@@ -1061,9 +1110,17 @@ function buildTelegramTestEvent(session: SessionProfile, branchId: string | null
       payment: {
         orderId: randomUUID(),
         billId: randomUUID(),
+        orderDisplayCode: "TEST-1025",
         amount: 245000,
         method: "QR",
-        customerName: "Khách test LogiVN"
+        customerName: "Khách test LogiVN",
+        customerPhone: "0900000000",
+        fulfillmentType: "DINE_IN",
+        tableName: "Bàn test",
+        orderItems: [
+          { name: "Phở bò", quantity: 2, unitPrice: 75000, lineTotal: 150000, modifierSummary: "tái", note: null },
+          { name: "Trà đào", quantity: 1, unitPrice: 45000, lineTotal: 45000, modifierSummary: null, note: "ít đá" }
+        ]
       }
     };
   }
@@ -1077,7 +1134,13 @@ function buildTelegramTestEvent(session: SessionProfile, branchId: string | null
         startsAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
         partySize: 4,
         customerName: "Khách đặt bàn test",
-        depositRequiredAmount: 100000
+        customerPhone: "0900000000",
+        depositRequiredAmount: 100000,
+        depositStatus: "waiting_payment",
+        tableNames: ["Bàn test"],
+        customerNote: "Ưu tiên góc yên tĩnh",
+        preferredSeatingZone: "indoor",
+        preferredTableKind: "standard"
       }
     };
   }
@@ -1160,9 +1223,15 @@ function buildTelegramTestEvent(session: SessionProfile, branchId: string | null
       displayCode: "TEST-1025",
       itemCount: 3,
       total: 245000,
+      items: [
+        { name: "Phở bò", quantity: 2, unitPrice: 75000, lineTotal: 150000, modifierSummary: "tái", note: null },
+        { name: "Trà đào", quantity: 1, unitPrice: 45000, lineTotal: 45000, modifierSummary: null, note: "ít đá" }
+      ],
       tableName: "Bàn test",
       fulfillmentType: "DINE_IN",
-      customerName: "Khách test LogiVN"
+      customerName: "Khách test LogiVN",
+      customerPhone: "0900000000",
+      paymentStatus: "unpaid"
     }
   };
 }

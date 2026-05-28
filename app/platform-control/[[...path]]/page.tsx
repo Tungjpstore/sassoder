@@ -10,21 +10,21 @@ import { getPlatformAdminSnapshot } from "@/services/platform-admin-service";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "LogiVN DevOps Control Center",
-  description: "Nền tảng vận hành nội bộ admin.logivn.com cho DevOps, AI Ops, realtime operations, queue, deploy, logs, alerts và tenant control của LogiVN.",
+  title: "LogiVN Control Center",
+  description: "Bảng vận hành nội bộ admin.logivn.com cho triển khai, hàng đợi, AI, thanh toán, nhật ký, cảnh báo và tenant của LogiVN.",
   alternates: {
     canonical: PLATFORM_ADMIN_ORIGIN
   },
   openGraph: {
-    title: "LogiVN DevOps Control Center",
-    description: "Realtime AI Operations Platform cho hệ sinh thái LogiVN.",
+    title: "LogiVN Control Center",
+    description: "Nền tảng vận hành realtime cho hệ sinh thái LogiVN.",
     url: PLATFORM_ADMIN_ORIGIN,
-    siteName: "LogiVN DevOps Control Center"
+    siteName: "LogiVN Control Center"
   },
   twitter: {
     card: "summary",
-    title: "LogiVN DevOps Control Center",
-    description: "Realtime AI Operations Platform cho hệ sinh thái LogiVN."
+    title: "LogiVN Control Center",
+    description: "Nền tảng vận hành realtime cho hệ sinh thái LogiVN."
   },
   robots: {
     index: false,

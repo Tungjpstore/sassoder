@@ -33,14 +33,14 @@ export const platformAdminSections: PlatformAdminSection[] = [
   { key: "services", label: "Dịch vụ", href: "/services", icon: ServerCog },
   { key: "queues", label: "Hàng đợi", href: "/queues", icon: ListTree },
   { key: "redis", label: "Redis", href: "/redis", icon: Rows3 },
-  { key: "telegram", label: "Telegram Ops", href: "/telegram", icon: RadioTower },
-  { key: "ai", label: "AI Ops", href: "/ai", icon: Bot },
+  { key: "telegram", label: "Telegram", href: "/telegram", icon: RadioTower },
+  { key: "ai", label: "Vận hành AI", href: "/ai", icon: Bot },
   { key: "payments", label: "Thanh toán", href: "/payments", icon: CreditCard },
   { key: "tenants", label: "Tenant", href: "/tenants", icon: Store },
-  { key: "logs", label: "Logs", href: "/logs", icon: TerminalSquare },
+  { key: "logs", label: "Nhật ký", href: "/logs", icon: TerminalSquare },
   { key: "alerts", label: "Cảnh báo", href: "/alerts", icon: AlertTriangle },
   { key: "incidents", label: "Sự cố", href: "/incidents", icon: Siren },
-  { key: "flags", label: "Feature Flags", href: "/flags", icon: Flag },
+  { key: "flags", label: "Cờ tính năng", href: "/flags", icon: Flag },
   { key: "settings", label: "Cài đặt", href: "/settings", icon: Settings2 }
 ];
 
@@ -70,12 +70,12 @@ export function getActivePlatformAdminSection(path?: string[]): ActiveSection {
 
 export const platformAdminQuickActions = [
   { label: "Mở bản đồ hệ thống", href: "/system-map", shortcut: "G M", icon: Workflow },
-  { label: "Xem hàng đợi BullMQ", href: "/queues", shortcut: "G Q", icon: ListTree },
-  { label: "Mở Redis monitor", href: "/redis", shortcut: "G R", icon: Rows3 },
+  { label: "Xem hàng đợi", href: "/queues", shortcut: "G Q", icon: ListTree },
+  { label: "Mở Redis", href: "/redis", shortcut: "G R", icon: Rows3 },
   { label: "Xoay khoá AI", href: "/ai", shortcut: "A K", icon: Bot },
-  { label: "Kiểm tra thanh toán pending", href: "/payments", shortcut: "P", icon: CreditCard },
-  { label: "Mở logs realtime", href: "/logs", shortcut: "L", icon: TerminalSquare },
-  { label: "War-room sự cố", href: "/incidents", shortcut: "I", icon: Siren },
-  { label: "Bật feature flag", href: "/flags", shortcut: "F", icon: Zap },
+  { label: "Xử lý thanh toán chờ", href: "/payments", shortcut: "P", icon: CreditCard },
+  { label: "Mở nhật ký realtime", href: "/logs", shortcut: "L", icon: TerminalSquare },
+  { label: "Phòng xử lý sự cố", href: "/incidents", shortcut: "I", icon: Siren },
+  { label: "Bật cờ tính năng", href: "/flags", shortcut: "F", icon: Zap },
   { label: "Cài đặt bảo mật", href: "/settings", shortcut: "S", icon: Settings2 }
 ] as const;
