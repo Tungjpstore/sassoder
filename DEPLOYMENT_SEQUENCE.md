@@ -1,5 +1,15 @@
 # Deployment Sequence - LogiVN Production
 
+## 2026-05-29 Gate Update
+
+Before any production promotion, run:
+
+```bash
+npm run release:blockers:strict
+```
+
+Current status is NO-GO because backup/PITR proof, authenticated QA and monitoring/alerting sign-off remain incomplete. `supabase db push --dry-run --linked --yes` now reports `Remote database is up to date`; do not follow the old 16-file pending migration apply sequence unless a future dry-run shows pending migrations again.
+
 Date: 2026-05-20
 Current instruction: production deployment is conditionally allowed only after external go-live blockers are closed.
 

@@ -100,6 +100,21 @@
   - `vercel build` hoặc `vercel build --prod`
   - upload `.vercel/output/` làm artifact để xem config thực tế đã sinh ra
 
+### External release blocker preflight
+
+- `npm run release:blockers` ghi report read-only vào `reports/release/` và kiểm tra Supabase branch/backups/dry-run, Docker dump readiness, authenticated QA sign-off và monitoring sign-off.
+- `npm run release:blockers:strict` dùng cùng kiểm tra nhưng exit non-zero nếu còn blocker.
+- Script này không tạo Supabase branch, không restore backup và không apply migration; các thao tác có chi phí/rủi ro vẫn cần release owner phê duyệt riêng.
+
+Các trường vận hành cần có trong release env hoặc `.env.release.local` trước khi đóng alerting blocker:
+
+- `MONITORING_WATCH_OWNER`
+- `MONITORING_ALERT_EMAIL`
+- `MONITORING_LOG_DRAIN_DESTINATION`
+- `MONITORING_5XX_THRESHOLD`
+- `MONITORING_FIRST_HOUR_WATCH_START`
+- `MONITORING_FIRST_HOUR_WATCH_OWNER`
+
 ## Cron jobs
 
 ### Bảo vệ endpoint

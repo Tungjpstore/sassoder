@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
-import { StaffMobileWorkspace } from "@/features/staff/components/staff-mobile-workspace";
+import { StaffMobileRedesignWorkspace } from "@/features/staff/components/staff-mobile-redesign-workspace";
 import { getStaffOperationsBundle } from "@/features/staff/services/staff-operations-service";
 
 export const dynamic = "force-dynamic";
@@ -22,11 +22,12 @@ export default async function StaffMobilePage() {
   const bundle = await getStaffOperationsBundle(session.restaurantId, session.userId, { scope: "self" });
 
   return (
-    <StaffMobileWorkspace
+    <StaffMobileRedesignWorkspace
       initialBundle={bundle}
       restaurantId={session.restaurantId}
       restaurantName={session.restaurant.name}
       userId={session.userId}
+      enableHeartbeat={bundle.members.length > 0}
     />
   );
 }

@@ -24,6 +24,8 @@
     "open-design:mcp-smoke": "node scripts/dev/open-design.mjs mcp-smoke",
     "open-design:config": "node scripts/dev/open-design.mjs config",
     "infra:check": "node scripts/infra/check.mjs",
+    "release:blockers": "node scripts/infra/release-external-blockers.mjs --write",
+    "release:blockers:strict": "node scripts/infra/release-external-blockers.mjs --write --strict",
     "vps:deploy": "infra/vps/scripts/deploy.sh",
     "vps:validate": "infra/vps/scripts/validate.sh --local-only",
     "vps:backup": "infra/vps/scripts/backup.sh",
@@ -87,6 +89,6 @@
     "mermaid": "11.15.0",
     "postcss": "8.5.12",
     "prismjs": "1.30.0",
-    "tmp": "0.2.5"
+    "tmp": "0.2.6"
   }
 }

@@ -1,5 +1,18 @@
 # Release Checklist - LogiVN Production
 
+## 2026-05-29 Current Gate
+
+Result: NO-GO for production promotion.
+
+Use `npm run release:blockers` for current external evidence. The current Supabase dry-run reports `Remote database is up to date`, so the old 16-file pending migration apply list is stale. The live blockers are now backup/PITR proof, authenticated QA sign-off and monitoring/alerting sign-off.
+
+Required before GO:
+
+1. Enable PITR or capture a usable full data backup and restore note. A schema-only dump exists at `reports/release/pre-release-schema-20260529T105852Z.sql`, but it is not sufficient for data rollback.
+2. Complete `RELEASE_QA_SIGNOFF.md` with real tester evidence.
+3. Complete `MONITORING_ALERTING_RUNBOOK.md` and set the `MONITORING_*` release env values.
+4. Rerun `npm run release:blockers:strict` and confirm it exits 0.
+
 Date: 2026-05-20
 Current result: CONDITIONAL GO for local artifact
 

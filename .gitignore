@@ -11,6 +11,7 @@ supabase/.temp
 coverage
 reports/seo/
 reports/responsive/
+reports/release/
 docs/p1-progress-*.md
 docs/p2-progress-*.md
 .lighthouseci/

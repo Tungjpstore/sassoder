@@ -1,5 +1,19 @@
 # Migration Release Rehearsal - LogiVN
 
+## 2026-05-29 Refresh
+
+Status: no current pending migration apply according to Supabase dry-run.
+
+Evidence from `npm run release:blockers`:
+
+- 108 local SQL migration files exist; latest is `20260529105500_staff_attendance_daily_qr_wifi.sql`.
+- No duplicate migration versions were found locally.
+- `supabase db push --dry-run --linked --yes` returned `Remote database is up to date`.
+- Only the default Supabase branch exists, so this project still lacks a non-production branch for future rehearsal.
+- Backup/PITR proof is still blocked: `pitr_enabled=false`, `backups=[]`. Docker is now reachable and a schema-only dump exists at `reports/release/pre-release-schema-20260529T105852Z.sql`, but full data rollback proof is still missing.
+
+Release rule: do not use the historical 16-file `20260519*` pending batch below as a current apply list. It is now a historical audit target. For the next migration batch, create a staging branch/project or another isolated rehearsal environment before production apply, then paste the new evidence into `MIGRATION_LOG.md`.
+
 Date: 2026-05-20
 Status: required before Conditional GO
 Scope: pending Supabase migration batch from `20260519090000` through `20260519201100`

@@ -1,5 +1,19 @@
 # LogiVN Migration Log
 
+## 2026-05-29 Refresh
+
+Current release evidence no longer matches the 2026-05-20 pending-batch snapshot:
+
+- Local SQL migration files: 108.
+- Latest local migration: `20260529105500_staff_attendance_daily_qr_wifi.sql`.
+- Duplicate migration versions: none found.
+- `supabase db push --dry-run --linked --yes`: pass, `Remote database is up to date`.
+- `supabase branches list --project-ref tfhqatvevbrbzaaqjhfa -o json`: only default `main` branch exists.
+- `supabase backups list --project-ref tfhqatvevbrbzaaqjhfa -o json`: `pitr_enabled=false`, `backups=[]`, `walg_enabled=true`.
+- Colima/Docker is reachable and a schema-only dump exists at `reports/release/pre-release-schema-20260529T105852Z.sql` (538092 bytes). `pg_dump` is not installed locally. PITR/full data rollback proof is still missing.
+
+Production migration apply is not currently pending, but production promotion remains NO-GO until backup/PITR proof, authenticated QA and monitoring sign-off are complete. Use `EXTERNAL_BLOCKERS_STATUS.md` and `npm run release:blockers` as the current evidence path.
+
 Last updated: 2026-05-20
 
 ## Current Snapshot

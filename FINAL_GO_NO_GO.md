@@ -1,5 +1,19 @@
 # Final Go / No-Go - LogiVN Production Release
 
+## 2026-05-29 Refresh
+
+Decision: NO-GO for production promotion.
+
+The 2026-05-20 migration blocker is stale for the current remote state: `supabase db push --dry-run --linked --yes` now reports `Remote database is up to date`, with 108 local SQL migration files and no duplicate versions. That means there is no current pending production migration batch to apply, but the missing pre-apply staging rehearsal remains a residual process risk for the migrations that were already applied.
+
+Production remains blocked by three live external gates:
+
+1. Backup/PITR proof: Supabase reports `pitr_enabled=false` and `backups=[]`. A schema-only dump now exists at `reports/release/pre-release-schema-20260529T105852Z.sql`, but it does not replace PITR or a full data backup for rollback.
+2. Authenticated QA: `RELEASE_QA_SIGNOFF.md` exists but still requires real tester sign-off for owner, Google OAuth, VietQR/order, reservation, staff and admin RBAC flows.
+3. Monitoring/alerting: `MONITORING_ALERTING_RUNBOOK.md` exists but still needs real alert routes, log drain destination, owner and first-hour watch values.
+
+Run `npm run release:blockers` for evidence capture or `npm run release:blockers:strict` as the release-blocking gate.
+
 Date: 2026-05-20
 Decision authority: Release Commander + Principal Production Coordinator
 

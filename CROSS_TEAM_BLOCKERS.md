@@ -1,16 +1,18 @@
 # Cross-Team Blockers - LogiVN Release
 
-Date: 2026-05-20
-Final release stance: CONDITIONAL GO for local artifact; production GO requires external release evidence.
+Date: 2026-05-29
+Final release stance: NO-GO for production promotion until backup/PITR, authenticated QA and monitoring sign-off are complete.
+
+Current evidence lives in `EXTERNAL_BLOCKERS_STATUS.md`. Run `npm run release:blockers` for a fresh read-only capture of Supabase branches, backups, migration dry-run, Docker dump readiness, QA sign-off and monitoring sign-off.
 
 ## External Go-Live Blockers
 
-| ID | Blocker | Owner | Evidence | Required Exit Criteria |
+| ID | Blocker | Owner | 2026-05-29 Evidence | Required Exit Criteria |
 | --- | --- | --- | --- | --- |
-| EXT-01 | Supabase staging rehearsal not captured | Database / Release | `supabase db push --dry-run --linked --yes` passed and would apply 16 migrations from `20260519090000` through `20260519201100`. `supabase branches create release-20260520` failed because Branching requires Supabase Pro or above. | Provide a staging DB URL/project, upgrade/enable Supabase branching, or approve another isolated rehearsal environment before production migration. |
-| EXT-02 | Production backup/PITR proof missing | Database / Ops | `supabase backups list --project-ref tfhqatvevbrbzaaqjhfa` exits 0 and reports `WALG=true`, `PITR=false`, earliest/latest timestamp `0`. CLI schema dump was blocked because Docker daemon is not running. | Enable/confirm backup/PITR or provide a valid pre-release backup artifact before production migration. |
-| EXT-04 | Authenticated production/staging QA missing | QA / Release | Unit/build/smoke pass, but signed owner/customer/staff/admin flows are not proven on final artifact. | Complete manual/E2E checklist in `RELEASE_CHECKLIST.md`. |
-| EXT-05 | Alerting/log drain sign-off missing | Ops | Health and cron contracts exist; alert destination, log drain and first-hour watch owner are not proven. | Record alert routes, owners and monitoring window. |
+| EXT-01 | Supabase staging rehearsal not captured | Database / Release | Converted to residual risk: `supabase db push --dry-run --linked --yes` now returns `Remote database is up to date`; no migration apply is pending in the current remote state. Only the default Supabase branch exists. | For the next migration batch, provide a staging DB/project, enable Supabase Branching, or approve another isolated rehearsal environment before production migration. |
+| EXT-02 | Production backup/PITR proof missing | Database / Ops | `supabase backups list --project-ref tfhqatvevbrbzaaqjhfa -o json` returns `pitr_enabled=false`, `backups=[]`, `walg_enabled=true`. Colima/Docker is now reachable and schema dump proof exists at `reports/release/pre-release-schema-20260529T105852Z.sql`; `pg_dump` is not installed locally. | Enable/confirm PITR or provide a valid full data backup and restore note before any risky production migration. Schema-only proof is not enough for data rollback. |
+| EXT-04 | Authenticated production/staging QA missing | QA / Release | `RELEASE_QA_SIGNOFF.md` exists but remains pending for owner, Google OAuth, VietQR/order, reservation, staff and admin RBAC flows. | Complete `RELEASE_QA_SIGNOFF.md` with tester, timestamp and evidence, or record an explicit release-commander waiver. |
+| EXT-05 | Alerting/log drain sign-off missing | Ops | `MONITORING_ALERTING_RUNBOOK.md` exists but still has pending owner/routes; `MONITORING_*` release env values are not present in the active env files. | Record alert routes, log drain destination, owner, 5xx threshold and first-hour watch window, then rerun `npm run release:blockers:strict`. |
 
 ## Closed P0 Items
 
