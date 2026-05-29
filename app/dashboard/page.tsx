@@ -203,6 +203,10 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       }))
     }
   });
+  const recommendationDeck = buildAiRecommendationDeck({
+    operationInsights: generatedOperationInsights,
+    limit: 3
+  });
 
   after(async () => {
     try {
@@ -347,6 +351,8 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       priorityCards={priorityCards}
       commandSignals={commandSignals}
       activationRunway={activationRunway}
+      operationInsightsDeck={generatedOperationInsights}
+      recommendationDeck={recommendationDeck}
     />
   );
 }

@@ -96,7 +96,9 @@ export function AiOpsInsightCards({
   deck: AiOperationInsightsDeck;
   morningBrief?: AiMorningBriefRun | null;
 }) {
-  const visibleInsights = deck.insights.slice(0, 3);
+  const insights = Array.isArray(deck?.insights) ? deck.insights : [];
+  const healthScore = Number.isFinite(deck?.healthScore) ? deck.healthScore : 100;
+  const visibleInsights = insights.slice(0, 3);
   const hasInsights = visibleInsights.length > 0;
 
   return (
@@ -108,7 +110,7 @@ export function AiOpsInsightCards({
             AI Ops Radar
           </p>
           <h2 id="ai-ops-radar-title" className="dashboard-section-title mt-1">
-            {deck.summary}
+            {deck?.summary ?? "AI Ops chưa có tín hiệu cần xử lý"}
           </h2>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -120,9 +122,9 @@ export function AiOpsInsightCards({
             </Link>
           ) : null}
           <div className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3">
-            <ShieldCheck size={16} className={healthTone(deck.healthScore)} />
+            <ShieldCheck size={16} className={healthTone(healthScore)} />
             <span className="text-xs font-semibold text-[var(--muted-foreground)]">Health</span>
-            <strong className={`metric-number text-lg ${healthTone(deck.healthScore)}`}>{deck.healthScore}/100</strong>
+            <strong className={`metric-number text-lg ${healthTone(healthScore)}`}>{healthScore}/100</strong>
           </div>
         </div>
       </div>

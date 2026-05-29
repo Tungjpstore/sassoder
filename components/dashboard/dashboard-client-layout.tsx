@@ -34,6 +34,8 @@ import { AiOpsInsightCards } from "@/components/dashboard/ai-ops-insight-cards";
 import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-cards";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { OnboardingDraftCleanup } from "@/components/dashboard/onboarding-draft-cleanup";
+import type { AiOperationInsightsDeck } from "@/lib/ai/operation-insights";
+import type { AiRecommendationDeck } from "@/lib/ai/recommendation-engine";
 
 const iconMap = {
   Warehouse,
@@ -185,6 +187,8 @@ type DashboardClientProps = {
   priorityCards: ReadonlyArray<PriorityCard>;
   commandSignals: readonly any[];
   activationRunway: any;
+  operationInsightsDeck: AiOperationInsightsDeck;
+  recommendationDeck: AiRecommendationDeck;
 };
 
 function formatOrderTime(value: string) {
@@ -265,7 +269,9 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
     showActivationPanel,
     priorityCards,
     commandSignals,
-    activationRunway
+    activationRunway,
+    operationInsightsDeck,
+    recommendationDeck
   } = props;
 
   // client states
@@ -972,7 +978,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
               <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)]">AI Operations</p>
               <span className="inline-flex h-2 w-2 rounded-full bg-[var(--primary)] animate-pulse" />
             </div>
-            <AiOpsInsightCards deck={latestMorningBrief ?? []} morningBrief={latestMorningBrief} />
+            <AiOpsInsightCards deck={operationInsightsDeck} morningBrief={latestMorningBrief} />
           </div>
 
           {/* AI Recommendations component */}
@@ -980,7 +986,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
             <div className="flex items-center justify-between border-b border-[var(--border)]/35 pb-2">
               <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)]">Khuyến nghị của AI</p>
             </div>
-            <AiRecommendationCards deck={latestMorningBrief ?? []} schemaReady={true} />
+            <AiRecommendationCards deck={recommendationDeck} schemaReady={true} />
           </div>
 
           {/* Priority Cards breakdown */}

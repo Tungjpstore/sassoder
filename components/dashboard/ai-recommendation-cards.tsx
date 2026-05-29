@@ -38,6 +38,8 @@ export function AiRecommendationCards({
   deck: AiRecommendationDeck;
   schemaReady: boolean;
 }) {
+  const recommendations = Array.isArray(deck?.recommendations) ? deck.recommendations : [];
+
   return (
     <section className="dashboard-panel p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -48,8 +50,8 @@ export function AiRecommendationCards({
           </p>
           <h2 className="dashboard-section-title mt-1">Gợi ý hành động nên duyệt</h2>
         </div>
-        <Badge tone={schemaReady ? (deck.recommendations.length ? "green" : "blue") : "yellow"}>
-          {schemaReady ? `${deck.recommendations.length} gợi ý` : "Cần schema"}
+        <Badge tone={schemaReady ? (recommendations.length ? "green" : "blue") : "yellow"}>
+          {schemaReady ? `${recommendations.length} gợi ý` : "Cần schema"}
         </Badge>
       </div>
 
@@ -57,9 +59,9 @@ export function AiRecommendationCards({
         <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
           Cần migration `ai_recommendations` để lưu lifecycle gợi ý AI.
         </div>
-      ) : deck.recommendations.length ? (
+      ) : recommendations.length ? (
         <div className="mt-3 grid gap-3 xl:grid-cols-3">
-          {deck.recommendations.map((recommendation) => (
+          {recommendations.map((recommendation) => (
             <article key={recommendation.lifecycle?.databaseId ?? recommendation.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="flex flex-wrap gap-2">
