@@ -37,6 +37,8 @@ import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
 import { buildOnboardingRunway, formatDraftSavedLabel } from "@/lib/onboarding-runway";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
 import type { AddressAutocompletePrediction } from "@/services/maps/types";
+import { InteractiveStorePreview } from "@/components/dashboard/interactive-store-preview";
+import { motion, AnimatePresence } from "framer-motion";
 
 type BusinessPreset = {
   id: string;
@@ -250,6 +252,54 @@ const fallbackPlanFeatures: Record<string, string[]> = {
   ]
 };
 
+const planVisualFeatures: Record<string, { icon: LucideIcon; title: string; subtext: string; isAi?: boolean }[]> = {
+  pro: [
+    {
+      icon: QrCode,
+      title: "Menu QR & Gọi món",
+      subtext: "Quét gọi món tại bàn không giới hạn"
+    },
+    {
+      icon: Clock3,
+      title: "Vận hành Real-time",
+      subtext: "Đồng bộ đơn hàng, bếp & bàn ăn"
+    },
+    {
+      icon: CreditCard,
+      title: "Thanh toán VietQR",
+      subtext: "Tự sinh mã chuyển khoản & đối soát"
+    },
+    {
+      icon: Layers3,
+      title: "Báo cáo cơ bản",
+      subtext: "Theo dõi doanh thu & món bán chạy"
+    }
+  ],
+  premium: [
+    {
+      icon: Sparkles,
+      title: "AI Co-Pilot & Insights",
+      subtext: "Tự động gợi ý menu & phân tích bán chéo",
+      isAi: true
+    },
+    {
+      icon: BadgeCheck,
+      title: "Báo cáo chuyên sâu",
+      subtext: "Dự báo giờ cao điểm, kiểm soát chi phí"
+    },
+    {
+      icon: Store,
+      title: "Mở rộng chuỗi chi nhánh",
+      subtext: "Quản trị nhiều cơ sở, phân quyền sâu"
+    },
+    {
+      icon: Smartphone,
+      title: "Trải nghiệm thương hiệu",
+      subtext: "Trang gọi món tùy biến logo & giao diện"
+    }
+  ]
+};
+
 function formatVnd(value: number) {
   return `${new Intl.NumberFormat("vi-VN").format(value)}đ`;
 }
@@ -402,13 +452,18 @@ function SupportLine({ label, value, active = false }: { label: string; value: s
   );
 }
 
-function StepSupportPanel({ step, children }: { step: number; children: ReactNode }) {
+function StepSupportPanel({ step, children, preview }: { step: number; children: ReactNode; preview?: ReactNode }) {
   const visual = onboardingVisuals[step] ?? onboardingVisuals[0];
 
   return (
-    <aside className={`dashboard-onboarding-support order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start`}>
+    <aside className={`dashboard-onboarding-support order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start lg:w-[330px] shrink-0`}>
+      {preview && (
+        <div className="hidden lg:block w-full mb-4">
+          {preview}
+        </div>
+      )}
       <div className="dashboard-onboarding-support-inner grid grid-cols-[88px_minmax(0,1fr)] gap-3 sm:grid-cols-[124px_minmax(0,1fr)] lg:block">
-        <div className="dashboard-onboarding-visual-card relative aspect-square overflow-hidden rounded-md border border-[#d8dee9] bg-white">
+        <div className={`dashboard-onboarding-visual-card relative aspect-square overflow-hidden rounded-md border border-[#d8dee9] bg-white ${preview ? "lg:hidden" : ""}`}>
           <Image
             src={visual.src}
             alt={visual.alt}
@@ -1120,6 +1175,27 @@ export function RestaurantOnboardingFlow({
             ? "Sẵn sàng tạo dashboard thật cho quán"
             : "Có thể tiếp tục bước tiếp theo";
 
+  const storePreview = (
+    <InteractiveStorePreview
+      name={name}
+      presetId={businessPresetId}
+      customBusinessType={customBusinessType}
+      streetAddress={streetAddress}
+      district={district}
+      ward={wardLabel}
+      province={provinceLabel}
+      selectedAddress={selectedAddress}
+      planCode={planCode}
+      tableCount={tableCount}
+      itemName={itemName}
+      itemPrice={itemPrice}
+      itemCategory={itemCategory}
+      confirmedMenuItems={confirmedMenuItems}
+      slug={slug}
+      hotline={hotline}
+    />
+  );
+
   return (
     <main className="dashboard-onboarding-shell min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
       <form
@@ -1233,25 +1309,33 @@ export function RestaurantOnboardingFlow({
 
         <section className="dashboard-onboarding-main min-h-0 flex-1">
           <div className={`dashboard-onboarding-frame flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${sectionLine} bg-white`}>
-            {step === 0 ? (
-              <>
-                <StepHeader
-                  meta={stepDetails[0]}
-                  right={
-                    <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                      <MousePointerClick className="h-4 w-4" />
-                      Nhập nhanh
-                    </span>
-                  }
-                />
-                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <StepSupportPanel step={0}>
-                    <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
-                    <SupportLine label="Loại hình" value={selectedPreset.label} active />
-                    <SupportLine label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
-                    <SupportLine label="GPS" value={hasPinnedLocation ? "Đã ghim" : "Có thể chỉnh sau"} active={hasPinnedLocation} />
-                  </StepSupportPanel>
-                  <div className="grid min-w-0 content-start gap-4">
+            <AnimatePresence mode="wait">
+              {step === 0 && (
+                <motion.div
+                  key="step-0"
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -15 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col h-full min-h-0"
+                >
+                  <StepHeader
+                    meta={stepDetails[0]}
+                    right={
+                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
+                        <MousePointerClick className="h-4 w-4" />
+                        Nhập nhanh
+                      </span>
+                    }
+                  />
+                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                    <StepSupportPanel step={0} preview={storePreview}>
+                      <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
+                      <SupportLine label="Loại hình" value={selectedPreset.label} active />
+                      <SupportLine label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
+                      <SupportLine label="GPS" value={hasPinnedLocation ? "Đã ghim" : "Có thể chỉnh sau"} active={hasPinnedLocation} />
+                    </StepSupportPanel>
+                    <div className="grid min-w-0 content-start gap-4">
                     <label className="grid gap-2 text-sm font-black">
                       Tên quán
                       <input value={name} onChange={(event) => setName(event.target.value)} className={fieldClass} placeholder="Nhập tên quán" />
@@ -1268,8 +1352,8 @@ export function RestaurantOnboardingFlow({
                               type="button"
                               onClick={() => setBusinessPresetId(preset.id)}
                               aria-pressed={active}
-                              className={`flex h-14 items-center justify-center gap-2 rounded-md border px-2 text-sm font-black transition ${
-                                active ? "border-[#0F4D3A] bg-[#0F4D3A] text-white" : "border-[#d8dee9] bg-white text-[#475467] hover:border-[#0F4D3A]/35"
+                              className={`flex h-14 items-center justify-center gap-2 rounded-md border px-2 text-sm font-black transition premium-glow-border ${
+                                active ? "border-[#0F4D3A] bg-[#0F4D3A] text-white is-active" : "border-[#d8dee9] bg-white text-[#475467] hover:border-[#0F4D3A]/35"
                               }`}
                             >
                               <Icon className="h-4 w-4" />
@@ -1398,29 +1482,35 @@ export function RestaurantOnboardingFlow({
                       </label>
                     </div>
                   </div>
-
                 </div>
-              </>
-            ) : null}
+              </motion.div>
+            )}
 
-            {step === 1 ? (
-              <>
-                <StepHeader
-                  meta={stepDetails[1]}
-                  right={
-                    <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
-                      <Sparkles className="h-4 w-4" />
-                      {selectedPlanNarrative?.badge ?? "So sánh gói"}
-                    </span>
-                  }
-                />
-                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <StepSupportPanel step={1}>
-                    <SupportLine label="Đang chọn" value={selectedPlan?.name ?? "Chưa chọn"} active={Boolean(selectedPlan)} />
-                    <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
-                    <SupportLine label="Chi phí" value={selectedPlan ? formatVnd(selectedPlan.monthly_price) : "-"} active={Boolean(selectedPlan)} />
-                    <SupportLine label="Bàn khởi tạo" value={`${tableCount} bàn`} active />
-                  </StepSupportPanel>
+              {step === 1 && (
+                <motion.div
+                  key="step-1"
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -15 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col h-full min-h-0"
+                >
+                  <StepHeader
+                    meta={stepDetails[1]}
+                    right={
+                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
+                        <Sparkles className="h-4 w-4" />
+                        {selectedPlanNarrative?.badge ?? "So sánh gói"}
+                      </span>
+                    }
+                  />
+                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                    <StepSupportPanel step={1} preview={storePreview}>
+                      <SupportLine label="Đang chọn" value={selectedPlan?.name ?? "Chưa chọn"} active={Boolean(selectedPlan)} />
+                      <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
+                      <SupportLine label="Chi phí" value={selectedPlan ? formatVnd(selectedPlan.monthly_price) : "-"} active={Boolean(selectedPlan)} />
+                      <SupportLine label="Bàn khởi tạo" value={`${tableCount} bàn`} active />
+                    </StepSupportPanel>
                   <div className="dashboard-plan-stage grid min-w-0 content-start gap-3 lg:grid-cols-2">
                     <div className="dashboard-plan-decision-panel rounded-lg border border-[#0F4D3A]/14 bg-[#f7fbf7] p-4 lg:col-span-2">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1446,7 +1536,7 @@ export function RestaurantOnboardingFlow({
                         <article
                           key={plan.code}
                           aria-current={active ? "true" : undefined}
-                          className={`dashboard-plan-card rounded-lg border bg-white p-4 text-left transition ${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""} ${
+                          className={`dashboard-plan-card rounded-lg border bg-white p-4 text-left transition premium-glow-border ${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""} ${
                             active ? "border-[#0F4D3A] shadow-[0_18px_42px_rgba(15,77,58,0.10)]" : "border-[#d8dee9] hover:border-[#0F4D3A]/35"
                           }`}
                         >
@@ -1464,17 +1554,45 @@ export function RestaurantOnboardingFlow({
                             <span className="text-sm font-bold text-[#667085]"> /tháng</span>
                           </p>
                           <p className="mt-2 text-xs font-black text-[#0F4D3A]">Dùng thử {plan.trial_days} ngày · {planFeatureCount(plan)} tính năng</p>
-                          <p className="mt-3 rounded-md border border-[#d8dee9] bg-[#fbfcfb] px-3 py-2 text-sm font-semibold leading-6 text-[#475467]">
-                            {narrative.promise}
+                          <p className="mt-3 rounded-md border border-[#d8dee9]/60 bg-[#fbfcfb] px-3 py-2 text-xs font-black leading-relaxed text-[#556379] uppercase tracking-[0.04em]">
+                            Khách hàng nhận được: {narrative.promise}
                           </p>
-                          <ul className="mt-4 grid gap-2">
-                            {previewFeatures.map((feature) => (
-                              <li key={feature} className="flex gap-2 text-sm font-semibold leading-5 text-[#475467]">
-                                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#0F4D3A]" />
-                                <span>{feature}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          <div className="mt-4 grid gap-2.5">
+                            {(planVisualFeatures[plan.code.toLowerCase()] ?? []).map((feat, idx) => {
+                              const FeatIcon = feat.icon;
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`flex items-start gap-3 rounded-lg border p-3 transition-all duration-200 ${
+                                    feat.isAi
+                                      ? "border-[#F28C28]/25 bg-[#fff7ed]/40 hover:bg-[#fff7ed]/70 shadow-[0_4px_12px_rgba(242,140,40,0.04)]"
+                                      : "border-[#d8dee9]/50 bg-white hover:bg-[#f6faf7]/40"
+                                  }`}
+                                >
+                                  <span className={`grid h-8.5 w-8.5 shrink-0 place-items-center rounded-lg ${
+                                    feat.isAi
+                                      ? "bg-gradient-to-tr from-[#F28C28] to-[#ea580c] text-white shadow-sm"
+                                      : "bg-[#eef7f2] text-[#0F4D3A]"
+                                  }`}>
+                                    <FeatIcon className="h-4.5 w-4.5" />
+                                  </span>
+                                  <div className="min-w-0">
+                                    <h4 className="flex flex-wrap items-center gap-1.5 text-sm font-black text-[#111827]">
+                                      {feat.title}
+                                      {feat.isAi && (
+                                        <span className="inline-block rounded bg-[#F28C28]/15 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-[#9a4a17] animate-pulse">
+                                          Trợ lý AI
+                                        </span>
+                                      )}
+                                    </h4>
+                                    <p className="mt-0.5 text-[11px] font-semibold leading-normal text-[#667085]">
+                                      {feat.subtext}
+                                    </p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                           <button
                             type="button"
                             onClick={() => setFeaturePlan(plan)}
@@ -1546,34 +1664,41 @@ export function RestaurantOnboardingFlow({
                     }}
                   />
                 ) : null}
-              </>
-            ) : null}
+                </motion.div>
+              )}
 
-            {step === 2 ? (
-              <>
-                <StepHeader
-                  meta={stepDetails[2]}
-                  right={
-                    <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                      <BadgeCheck className="h-4 w-4" />
-                      {setupProgress}% sẵn sàng
-                    </span>
-                  }
-                />
-                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <StepSupportPanel step={2}>
-                    <div className="col-span-2 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
-                      <div className="flex items-center justify-between text-xs font-black">
-                        <span className="text-[#667085]">Tiến độ</span>
-                        <span className="text-[#0F4D3A]">{setupProgress}%</span>
+              {step === 2 && (
+                <motion.div
+                  key="step-2"
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -15 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col h-full min-h-0"
+                >
+                  <StepHeader
+                    meta={stepDetails[2]}
+                    right={
+                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
+                        <BadgeCheck className="h-4 w-4" />
+                        {setupProgress}% sẵn sàng
+                      </span>
+                    }
+                  />
+                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                    <StepSupportPanel step={2} preview={storePreview}>
+                      <div className="col-span-2 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
+                        <div className="flex items-center justify-between text-xs font-black">
+                          <span className="text-[#667085]">Tiến độ</span>
+                          <span className="text-[#0F4D3A]">{setupProgress}%</span>
+                        </div>
+                        <div className="mt-2 h-1.5 rounded-full bg-[#eef7f2]">
+                          <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
+                        </div>
                       </div>
-                      <div className="mt-2 h-1.5 rounded-full bg-[#eef7f2]">
-                        <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
-                      </div>
-                    </div>
-                    <SupportLine label="Sẵn sàng" value={`${setupDoneCount}/${setupTasks.length}`} active={setupDoneCount === setupTasks.length} />
-                    <SupportLine label="Mở quán" value={canSubmitOnboarding ? "Có thể tạo" : "Cần menu"} active={canSubmitOnboarding} />
-                  </StepSupportPanel>
+                      <SupportLine label="Sẵn sàng" value={`${setupDoneCount}/${setupTasks.length}`} active={setupDoneCount === setupTasks.length} />
+                      <SupportLine label="Mở quán" value={canSubmitOnboarding ? "Có thể tạo" : "Cần menu"} active={canSubmitOnboarding} />
+                    </StepSupportPanel>
                   <div className="grid min-w-0 content-start gap-4">
                     <div className={`rounded-lg border ${sectionLine} bg-white p-4`}>
                       <div className="flex items-center justify-between text-sm font-black">
@@ -1604,41 +1729,48 @@ export function RestaurantOnboardingFlow({
                     </div>
                   </div>
                 </div>
-              </>
-            ) : null}
+              </motion.div>
+            )}
 
-            {step === 3 ? (
-              <>
-                <StepHeader
-                  meta={stepDetails[3]}
-                  right={
-                    <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                      <Table2 className="h-4 w-4" />
-                      {tableCount} bàn
-                    </span>
-                  }
-                />
-                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
-                      <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
-                      <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
-                      <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
-                        {selectedPlan?.name ?? planCode}
+              {step === 3 && (
+                <motion.div
+                  key="step-3"
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -15 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col h-full min-h-0"
+                >
+                  <StepHeader
+                    meta={stepDetails[3]}
+                    right={
+                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
+                        <Table2 className="h-4 w-4" />
+                        {tableCount} bàn
                       </span>
+                    }
+                  />
+                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
+                        <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
+                        <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
+                        <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
+                          {selectedPlan?.name ?? planCode}
+                        </span>
+                      </div>
+                      <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                        {Array.from({ length: Math.min(tableCount, 12) }).map((_, index) => (
+                          <div key={index} className={`rounded-md border p-3 ${index === 2 ? "border-[#F28C28]/35 bg-[#fff7ed]" : "border-[#d8dee9] bg-white"}`}>
+                            <Table2 className={`h-4 w-4 ${index === 2 ? "text-[#9a4a17]" : "text-[#0F4D3A]"}`} />
+                            <p className="mt-3 text-sm font-black">{formatTableName(index)}</p>
+                            <p className="mt-1 text-xs font-semibold text-[#667085]">{index === 2 ? "Đang phục vụ" : "Trống"}</p>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-                      {Array.from({ length: Math.min(tableCount, 12) }).map((_, index) => (
-                        <div key={index} className={`rounded-md border p-3 ${index === 2 ? "border-[#F28C28]/35 bg-[#fff7ed]" : "border-[#d8dee9] bg-white"}`}>
-                          <Table2 className={`h-4 w-4 ${index === 2 ? "text-[#9a4a17]" : "text-[#0F4D3A]"}`} />
-                          <p className="mt-3 text-sm font-black">{formatTableName(index)}</p>
-                          <p className="mt-1 text-xs font-semibold text-[#667085]">{index === 2 ? "Đang phục vụ" : "Trống"}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <StepSupportPanel step={3}>
+                    <StepSupportPanel step={3} preview={storePreview}>
                     <SupportLine label="Tổng bàn" value={`${tableCount}`} active />
                     <SupportLine label="QR mẫu" value="Sẵn sàng" active />
                     <div className="col-span-2 flex items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
@@ -1652,42 +1784,49 @@ export function RestaurantOnboardingFlow({
                     </div>
                   </StepSupportPanel>
                 </div>
-              </>
-            ) : null}
+              </motion.div>
+            )}
 
-            {step === 4 ? (
-              <>
-                <StepHeader
-                  meta={stepDetails[4]}
-                  right={
-                    <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
-                      <Wand2 className="h-4 w-4" />
-                      AI menu tuỳ chọn
-                    </span>
-                  }
-                />
-                <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-                  <StepSupportPanel step={4}>
-                    <SupportLine label="Món đầu" value={shortText(itemName)} active={Boolean(itemName.trim())} />
-                    <SupportLine label="Menu quét" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : "Tuỳ chọn"} active={confirmedMenuItems.length > 0} />
-                    <SupportLine label="Trạng thái" value={canSubmitOnboarding ? "Có thể tạo" : "Cần món"} active={canSubmitOnboarding} />
-                    <div className="col-span-2 hidden items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 sm:flex lg:col-span-1">
-                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-[#d8dee9] bg-white">
-                        <Image
-                          src="/onboarding/flow/launch-dashboard.png"
-                          alt="Minh hoạ dashboard sẵn sàng vận hành"
-                          fill
-                          sizes="48px"
-                          className="object-cover"
-                        />
+              {step === 4 && (
+                <motion.div
+                  key="step-4"
+                  initial={{ opacity: 0, x: 15 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -15 }}
+                  transition={{ duration: 0.22 }}
+                  className="flex flex-col h-full min-h-0"
+                >
+                  <StepHeader
+                    meta={stepDetails[4]}
+                    right={
+                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
+                        <Wand2 className="h-4 w-4" />
+                        AI menu tuỳ chọn
+                      </span>
+                    }
+                  />
+                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                    <StepSupportPanel step={4} preview={storePreview}>
+                      <SupportLine label="Món đầu" value={shortText(itemName)} active={Boolean(itemName.trim())} />
+                      <SupportLine label="Menu quét" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : "Tuỳ chọn"} active={confirmedMenuItems.length > 0} />
+                      <SupportLine label="Trạng thái" value={canSubmitOnboarding ? "Có thể tạo" : "Cần món"} active={canSubmitOnboarding} />
+                      <div className="col-span-2 hidden items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 sm:flex lg:col-span-1">
+                        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-[#d8dee9] bg-white">
+                          <Image
+                            src="/onboarding/flow/launch-dashboard.png"
+                            alt="Minh hoạ dashboard sẵn sàng vận hành"
+                            fill
+                            sizes="48px"
+                            className="object-cover"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-black text-[#111827]">Dashboard</p>
+                          <p className="mt-0.5 text-xs font-bold text-[#667085]">Mở sau khi hoàn tất</p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-black text-[#111827]">Dashboard</p>
-                        <p className="mt-0.5 text-xs font-bold text-[#667085]">Mở sau khi hoàn tất</p>
-                      </div>
-                    </div>
-                  </StepSupportPanel>
-                  <div className="grid min-w-0 content-start gap-4">
+                    </StepSupportPanel>
+                    <div className="grid min-w-0 content-start gap-4">
                     <div className={`grid gap-4 rounded-lg border ${sectionLine} bg-white p-4`}>
                     <label className="grid gap-2 text-sm font-black">
                       Tên món
@@ -1717,30 +1856,44 @@ export function RestaurantOnboardingFlow({
                       <div className="mt-3 grid gap-3">
                         <label className="grid gap-2 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
                           Ảnh menu giấy
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp"
-                            className={fieldClass}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0] ?? null;
-                              if (file && file.size > 5 * 1024 * 1024) {
-                                setMenuOcrError("Ảnh menu tối đa 5MB. Vui lòng chụp/nén lại ảnh rõ hơn.");
-                                setMenuOcrImage(null);
-                                return;
-                              }
-                              setMenuOcrError("");
-                              setMenuOcrImage(file);
-                            }}
-                          />
+                          <div className="relative">
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              className={fieldClass}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0] ?? null;
+                                if (file && file.size > 5 * 1024 * 1024) {
+                                  setMenuOcrError("Ảnh menu tối đa 5MB. Vui lòng chụp/nén lại ảnh rõ hơn.");
+                                  setMenuOcrImage(null);
+                                  return;
+                                }
+                                setMenuOcrError("");
+                                setMenuOcrImage(file);
+                              }}
+                            />
+                            {menuOcrLoading && (
+                              <div className="absolute inset-0 bg-[#0F4D3A]/5 border border-[#0f4d3a]/25 rounded-md overflow-hidden z-20 pointer-events-none">
+                                <div className="animate-laser-scan" />
+                              </div>
+                            )}
+                          </div>
                         </label>
                         <label className="grid gap-2 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
                           Hoặc dán menu thô
-                          <textarea
-                            value={menuOcrText}
-                            onChange={(event) => setMenuOcrText(event.target.value)}
-                            className="min-h-24 rounded-md border border-[#d8dee9] bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-[#111827] outline-none focus:border-[#0F4D3A]/70 focus:ring-2 focus:ring-[#0F4D3A]/10"
-                            placeholder={"CÀ PHÊ\nCà phê sữa đá 28000\nBạc xỉu 35000"}
-                          />
+                          <div className="relative">
+                            <textarea
+                              value={menuOcrText}
+                              onChange={(event) => setMenuOcrText(event.target.value)}
+                              className="w-full min-h-24 rounded-md border border-[#d8dee9] bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-[#111827] outline-none focus:border-[#0F4D3A]/70 focus:ring-2 focus:ring-[#0F4D3A]/10"
+                              placeholder={"CÀ PHÊ\nCà phê sữa đá 28000\nBạc xỉu 35000"}
+                            />
+                            {menuOcrLoading && (
+                              <div className="absolute inset-0 bg-[#0F4D3A]/5 border border-[#0f4d3a]/25 rounded-md overflow-hidden z-20 pointer-events-none">
+                                <div className="animate-laser-scan" />
+                              </div>
+                            )}
+                          </div>
                         </label>
                         <button
                           type="button"
@@ -1792,8 +1945,9 @@ export function RestaurantOnboardingFlow({
                     {state?.error ? <p className="rounded-md border border-[#F28C28]/30 bg-[#fff7ed] p-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p> : null}
                   </div>
                 </div>
-              </>
-            ) : null}
+              </motion.div>
+            )}
+          </AnimatePresence>
             <footer className={`dashboard-onboarding-action-bar shrink-0 border-t ${sectionLine} bg-white p-3`}>
               <div className="dashboard-onboarding-action-layout flex items-center justify-between gap-3">
                 <div className="dashboard-onboarding-action-summary min-w-0">

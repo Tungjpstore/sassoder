@@ -26,6 +26,7 @@ export default async function StaffMobilePage() {
       initialBundle={bundle}
       restaurantId={session.restaurantId}
       restaurantName={session.restaurant.name}
+      restaurantSlug={session.restaurant.slug}
       userId={session.userId}
       enableHeartbeat={bundle.members.length > 0}
     />

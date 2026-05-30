@@ -49,6 +49,7 @@ import { requireOperationalAdminSession } from "./shared";
 export type StaffActionState = {
   error?: string;
   success?: string;
+  staffUserId?: string;
 };
 
 function staffActionError(error: unknown) {
@@ -107,7 +108,7 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
       label: "tài khoản nhân sự"
     });
 
-    await createRestaurantUser({
+    const createdUser = await createRestaurantUser({
       restaurantId: session.restaurantId,
       email: parsed.email ?? createInternalStaffEmail({ restaurantId: session.restaurantId, fullName: parsed.fullName }),
       password: parsed.password ?? createTemporaryStaffPassword(),
@@ -120,7 +121,7 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
     });
 
     revalidatePath("/dashboard/staff");
-    return { success: "Đã tạo hồ sơ nhân sự." };
+    return { success: "Đã tạo hồ sơ nhân sự.", staffUserId: createdUser?.id };
   } catch (error) {
     return { error: staffActionError(error) };
   }

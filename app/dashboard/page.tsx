@@ -351,8 +351,6 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       priorityCards={priorityCards}
       commandSignals={commandSignals}
       activationRunway={activationRunway}
-      operationInsightsDeck={generatedOperationInsights}
-      recommendationDeck={recommendationDeck}
     />
   );
 }

@@ -49,6 +49,8 @@ import type { TelegramOpsInboxItem } from "./repository.mjs";
 
 const TELEGRAM_QUEUE = "telegram.notifications";
 const TELEGRAM_SESSION_CALLBACK_PREFIX = "s:";
+const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_CONTINUATION_PREFIX = "↳ Chi tiết tiếp\n";
 const AI_OPS_COMMANDS = {
   doanhthu: {
     intent: "reports",
@@ -462,6 +464,8 @@ async function deliverOperationalEvent(event: OperationalTelegramEvent) {
   let sent = 0;
   let skipped = 0;
   const errors: string[] = [];
+  let firstError: unknown = null;
+  let firstRateLimitError: TelegramRateLimitError | null = null;
 
   for (const recipient of recipients) {
     const notification = await getOrCreateNotification({
@@ -482,11 +486,11 @@ async function deliverOperationalEvent(event: OperationalTelegramEvent) {
 
     try {
       const keyboard = await buildKeyboard(event, recipient, notification.id, card.viewPath);
-      const message = await sendTelegramMessage(recipient.telegram_chat_id, card.body, {
+      const delivery = await sendOperationalTelegramMessage(recipient.telegram_chat_id, card.body, {
         parse_mode: "HTML",
         reply_markup: keyboard
       });
-      await markNotificationSent(notification.id, message.message_id);
+      await markNotificationSent(notification.id, delivery.firstMessageId);
       await recordTelegramAudit({
         restaurantId: event.restaurantId,
         branchId: event.branchId ?? null,
@@ -495,11 +499,18 @@ async function deliverOperationalEvent(event: OperationalTelegramEvent) {
         telegramUserId: recipient.telegram_user_id,
         action: event.type,
         outcome: "sent",
-        metadata: { notificationId: notification.id, telegramMessageId: message.message_id }
+        metadata: {
+          notificationId: notification.id,
+          telegramMessageId: delivery.firstMessageId,
+          telegramMessageIds: delivery.messageIds,
+          messageParts: delivery.messageIds.length
+        }
       });
       sent += 1;
       await delay(numberEnv("TELEGRAM_SEND_INTERVAL_MS", 75));
     } catch (error) {
+      firstError ??= error;
+      if (!firstRateLimitError && error instanceof TelegramRateLimitError) firstRateLimitError = error;
       const message = telegramErrorMessage(error);
       const status = telegramRetryAfterMs(error) ? "rate_limited" : "failed";
       await markNotificationFailed(notification.id, message, status);
@@ -534,6 +545,8 @@ async function deliverOperationalEvent(event: OperationalTelegramEvent) {
     }
   }
 
+  if (firstRateLimitError) throw firstRateLimitError;
+  if (firstError instanceof Error) throw firstError;
   if (errors.length > 0) throw new Error(errors[0]);
   return { delivered: sent > 0, sent, skipped, failed: errors.length, recipients: recipients.length };
 }
@@ -1372,8 +1385,13 @@ async function createCallbackTokenForInboxItem(item: TelegramOpsInboxItem, actio
     connectionId: connection.id,
     resourceType: item.resourceType,
     resourceId: item.id,
-    payload: { source: "ops_inbox", state: item.state }
+    payload: { source: "ops_inbox", state: callbackStateForInboxItem(item.state) }
   });
+}
+
+function callbackStateForInboxItem(state: Record<string, unknown>) {
+  const allowedKeys = ["status", "paymentStatus", "fulfillmentType", "deliveryStatus", "depositStatus", "requestType", "type", "available"];
+  return Object.fromEntries(allowedKeys.filter((key) => key in state).map((key) => [key, state[key]]));
 }
 
 function requiredPermissionForEvent(event: OperationalTelegramEvent) {
@@ -1561,6 +1579,97 @@ function telegramErrorMessage(error: unknown) {
   if (error instanceof HttpError) return error.message;
   if (error instanceof Error) return error.message;
   return "telegram_delivery_failed";
+}
+
+async function sendOperationalTelegramMessage(
+  chatId: string | number,
+  text: string,
+  options: Parameters<Bot["api"]["sendMessage"]>[2]
+) {
+  const parts = splitTelegramMessage(text);
+  const messageIds: number[] = [];
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const message = await sendTelegramMessage(chatId, parts[index], index === 0 ? options : withoutReplyMarkup(options));
+    messageIds.push(message.message_id);
+    if (index < parts.length - 1) await delay(numberEnv("TELEGRAM_SEND_INTERVAL_MS", 75));
+  }
+
+  const firstMessageId = messageIds[0];
+  if (!firstMessageId) throw new Error("telegram_message_not_sent");
+  return { firstMessageId, messageIds };
+}
+
+function splitTelegramMessage(text: string) {
+  const normalized = text.replace(/\n{3,}/g, "\n\n").trim();
+  if (normalized.length <= TELEGRAM_MESSAGE_LIMIT) return [normalized];
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const line of normalized.split("\n")) {
+    for (const fragment of splitTelegramLine(line)) {
+      const candidate = current ? `${current}\n${fragment}` : prefixedTelegramFragment(chunks.length, fragment);
+      if (candidate.length <= TELEGRAM_MESSAGE_LIMIT) {
+        current = candidate;
+        continue;
+      }
+
+      if (current) chunks.push(current);
+      current = prefixedTelegramFragment(chunks.length, fragment);
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function splitTelegramLine(line: string) {
+  const maxLength = TELEGRAM_MESSAGE_LIMIT - TELEGRAM_CONTINUATION_PREFIX.length;
+  const parts: string[] = [];
+  let remaining = line;
+
+  while (remaining.length > maxLength) {
+    const [part, next] = takeTelegramSegment(remaining, maxLength);
+    parts.push(part);
+    remaining = next;
+  }
+
+  if (remaining) parts.push(remaining);
+  return parts.length ? parts : [""];
+}
+
+function takeTelegramSegment(value: string, maxLength: number): [string, string] {
+  let end = Math.min(maxLength, value.length);
+  const whitespace = value.lastIndexOf(" ", end);
+  if (whitespace > maxLength * 0.6) end = whitespace;
+
+  end = avoidOpenHtmlEntity(value, end);
+  end = avoidOpenHtmlTag(value, end);
+  if (end <= 0) end = Math.min(maxLength, value.length);
+
+  return [value.slice(0, end).trimEnd(), value.slice(end).trimStart()];
+}
+
+function avoidOpenHtmlEntity(value: string, end: number) {
+  const lastAmp = value.lastIndexOf("&", end);
+  const lastSemi = value.lastIndexOf(";", end);
+  return lastAmp > lastSemi ? lastAmp : end;
+}
+
+function avoidOpenHtmlTag(value: string, end: number) {
+  const lastOpen = value.lastIndexOf("<", end);
+  const lastClose = value.lastIndexOf(">", end);
+  return lastOpen > lastClose ? lastOpen : end;
+}
+
+function prefixedTelegramFragment(chunkCount: number, fragment: string) {
+  return chunkCount === 0 ? fragment : `${TELEGRAM_CONTINUATION_PREFIX}${fragment}`;
+}
+
+function withoutReplyMarkup(options: Parameters<Bot["api"]["sendMessage"]>[2]): Parameters<Bot["api"]["sendMessage"]>[2] {
+  const { reply_markup: _replyMarkup, ...rest } = options ?? {};
+  return rest;
 }
 
 async function sendTelegramMessage(

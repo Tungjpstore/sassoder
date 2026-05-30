@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import QRCode from "qrcode";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { AppError } from "@/lib/response";
 
@@ -25,21 +26,17 @@ export async function GET(request: Request) {
     }
 
     const size = safeSize(url.searchParams.get("size"));
-    const qrUrl = new URL("https://api.qrserver.com/v1/create-qr-code/");
-    qrUrl.searchParams.set("size", `${size}x${size}`);
-    qrUrl.searchParams.set("format", "png");
-    qrUrl.searchParams.set("margin", "12");
-    qrUrl.searchParams.set("data", data);
-
-    const response = await fetch(qrUrl, { cache: "no-store" });
-    if (!response.ok || !response.body) {
-      return NextResponse.json({ ok: false, error: "Không tạo được ảnh QR chấm công." }, { status: 502 });
-    }
+    const qrImage = await QRCode.toBuffer(data, {
+      type: "png",
+      width: size,
+      margin: 2,
+      errorCorrectionLevel: "M"
+    });
 
     const headers = new Headers();
     headers.set("Content-Type", "image/png");
     headers.set("Cache-Control", "private, no-store");
-    return new Response(response.body, { headers });
+    return new Response(new Blob([new Uint8Array(qrImage)], { type: "image/png" }), { headers });
   } catch (error) {
     if (error instanceof AppError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });

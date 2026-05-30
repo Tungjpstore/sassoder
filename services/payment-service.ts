@@ -724,6 +724,7 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
       orderId,
       billId: typedOrder.bill_id ?? null,
       amount: typedOrder.total,
+      source: "online_ordering",
       customerName: typedOrder.customer_name ?? null
     });
     return getRemotePaymentOrder(orderId, access);
@@ -765,6 +766,7 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
     orderId,
     billId: typedOrder.bill_id ?? null,
     amount: typedOrder.total,
+    source: "online_ordering",
     customerName: typedOrder.customer_name ?? null
   });
   invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
@@ -778,6 +780,7 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
   billId?: string | null;
   amount: number;
   method?: PaymentMethod;
+  source?: "customer_qr" | "online_ordering" | "dashboard" | "staff" | "telegram" | "system" | "devops";
   customerName?: string | null;
 }) {
   const details = await getPaymentNotificationDetails(input.restaurantId, input.orderId).catch(() => null);
@@ -786,18 +789,24 @@ async function enqueuePaymentWaitingConfirmNotification(input: {
     eventId: buildPaymentEventId("payment.waiting_confirm", input),
     restaurantId: input.restaurantId,
     branchId: input.branchId ?? null,
-    source: "customer_qr",
+    source: input.source ?? "customer_qr",
     actor: { type: "customer" },
     payment: buildPaymentSnapshot({
       orderId: input.orderId,
       billId: input.billId ?? null,
       amount: input.amount,
       method: input.method ?? "QR",
+      orderSubtotal: details?.subtotal ?? null,
+      orderDiscountAmount: details?.discountAmount ?? null,
+      orderDeliveryFee: details?.deliveryFee ?? null,
+      orderServiceFee: details?.serviceFee ?? null,
       customerName: input.customerName ?? details?.customerName ?? null,
       customerPhone: details?.customerPhone ?? null,
+      customerNote: details?.customerNote ?? null,
       fulfillmentType: details?.fulfillmentType ?? null,
       tableName: details?.tableName ?? null,
       deliveryAddress: details?.deliveryAddress ?? null,
+      deliveryDistanceKm: details?.deliveryDistanceKm ?? null,
       orderItems: details?.items ?? [],
       status: "waiting_confirm"
     })
@@ -827,11 +836,17 @@ async function enqueuePaymentReceivedNotification(input: {
       billId: input.billId ?? null,
       amount: input.amount,
       method: input.method,
+      orderSubtotal: details?.subtotal ?? null,
+      orderDiscountAmount: details?.discountAmount ?? null,
+      orderDeliveryFee: details?.deliveryFee ?? null,
+      orderServiceFee: details?.serviceFee ?? null,
       customerName: input.customerName ?? details?.customerName ?? null,
       customerPhone: details?.customerPhone ?? null,
+      customerNote: details?.customerNote ?? null,
       fulfillmentType: details?.fulfillmentType ?? null,
       tableName: details?.tableName ?? null,
       deliveryAddress: details?.deliveryAddress ?? null,
+      deliveryDistanceKm: details?.deliveryDistanceKm ?? null,
       orderItems: details?.items ?? [],
       status: "confirmed"
     })
@@ -842,7 +857,7 @@ async function getPaymentNotificationDetails(restaurantId: string, orderId: stri
   const supabase = createAdminSupabaseClient() as any;
   const { data, error } = await supabase
     .from("orders")
-    .select("id,fulfillment_type,customer_name,customer_phone,delivery_address,table:tables(name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(name))")
+    .select("id,subtotal,discount_amount,total,delivery_fee,service_fee,fulfillment_type,customer_name,customer_phone,customer_note,delivery_address,delivery_distance_km,table:tables(name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(name))")
     .eq("id", orderId)
     .eq("restaurant_id", restaurantId)
     .maybeSingle();
@@ -851,11 +866,23 @@ async function getPaymentNotificationDetails(restaurantId: string, orderId: stri
   return {
     customerName: data.customer_name ? String(data.customer_name) : null,
     customerPhone: data.customer_phone ? String(data.customer_phone) : null,
+    customerNote: data.customer_note ? String(data.customer_note) : null,
+    subtotal: numberOrNull(data.subtotal),
+    discountAmount: numberOrNull(data.discount_amount),
+    total: numberOrNull(data.total),
+    deliveryFee: numberOrNull(data.delivery_fee),
+    serviceFee: numberOrNull(data.service_fee),
     fulfillmentType: normalizeFulfillmentType(data.fulfillment_type),
     tableName: nestedName(data.table),
     deliveryAddress: data.delivery_address ? String(data.delivery_address) : null,
+    deliveryDistanceKm: numberOrNull(data.delivery_distance_km),
     items: normalizePaymentNotificationItems(data.items)
   };
+}
+
+function numberOrNull(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizePaymentNotificationItems(value: unknown) {
@@ -878,8 +905,7 @@ function normalizePaymentNotificationItems(value: unknown) {
         modifierSummary: paymentModifierSummary(record.modifier_snapshot)
       };
     })
-    .filter((item): item is NonNullable<typeof item> => Boolean(item))
-    .slice(0, 30);
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
 function paymentModifierSummary(value: unknown) {
@@ -891,7 +917,7 @@ function paymentModifierSummary(value: unknown) {
       return optionName ? String(optionName) : null;
     })
     .filter((label): label is string => Boolean(label));
-  return labels.length ? labels.slice(0, 4).join(", ") : null;
+  return labels.length ? labels.join(", ") : null;
 }
 
 function normalizeFulfillmentType(value: unknown): FulfillmentType | null {

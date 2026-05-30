@@ -28,6 +28,11 @@ type OperationalOrderSnapshot = {
   id: string;
   displayCode?: string;
   itemCount: number;
+  lineCount?: number;
+  subtotal?: number;
+  discountAmount?: number;
+  deliveryFee?: number;
+  serviceFee?: number;
   total: number;
   items?: Array<{
     name: string;
@@ -41,10 +46,15 @@ type OperationalOrderSnapshot = {
   fulfillmentType?: "DINE_IN" | "PICKUP" | "DELIVERY";
   customerName?: string | null;
   customerPhone?: string | null;
+  customerNote?: string | null;
   status?: string;
   paymentStatus?: string | null;
   deliveryStatus?: string | null;
   deliveryAddress?: string | null;
+  deliveryDistanceKm?: number | null;
+  createdAt?: string | null;
+  acceptedAt?: string | null;
+  servedAt?: string | null;
   serviceDueAt?: string | null;
 };
 
@@ -54,11 +64,17 @@ type OperationalPaymentSnapshot = {
   orderDisplayCode?: string | null;
   amount: number;
   method: "QR" | "CASH";
+  orderSubtotal?: number | null;
+  orderDiscountAmount?: number | null;
+  orderDeliveryFee?: number | null;
+  orderServiceFee?: number | null;
   customerName?: string | null;
   customerPhone?: string | null;
+  customerNote?: string | null;
   fulfillmentType?: "DINE_IN" | "PICKUP" | "DELIVERY" | null;
   tableName?: string | null;
   deliveryAddress?: string | null;
+  deliveryDistanceKm?: number | null;
   orderItems?: OperationalOrderSnapshot["items"];
   status?: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
 };

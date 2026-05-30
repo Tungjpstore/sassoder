@@ -489,158 +489,7 @@ function OrderOpsMetric({
   );
 }
 
-function OrderShiftCommandCenter({
-  operationsSnapshot,
-  channelStats,
-  slaBands,
-  statusCounts,
-  activeTotal,
-  clockTick,
-  onFilterStatus,
-  onFilterChannel,
-  onSelectGroup
-}: {
-  operationsSnapshot: OperationsSnapshot;
-  channelStats: ChannelOpsStat[];
-  slaBands: ReturnType<typeof buildSlaBands>;
-  statusCounts: Record<OrderFilter, number>;
-  activeTotal: number;
-  clockTick: number;
-  onFilterStatus: (filter: OrderFilter) => void;
-  onFilterChannel: (channel: ChannelFilter) => void;
-  onSelectGroup: (groupId: string | null) => void;
-}) {
-  const criticalBand = slaBands.find((band) => band.key === "critical");
-  const warningBand = slaBands.find((band) => band.key === "warning");
-  const leadingGroup = operationsSnapshot.priorityGroups[0] ?? criticalBand?.groups[0] ?? warningBand?.groups[0] ?? null;
-  const totalUrgentChannels = channelStats.reduce((sum, stat) => sum + stat.urgent, 0);
-  const shiftScore = Math.max(
-    0,
-    100 -
-      operationsSnapshot.pending * 10 -
-      operationsSnapshot.overdue * 14 -
-      operationsSnapshot.payment * 7 -
-      (criticalBand?.groups.length ?? 0) * 8 -
-      Math.max(0, operationsSnapshot.oldestAge - 15)
-  );
-  const shiftTone: OrderRushTone = shiftScore >= 82 ? "green" : shiftScore >= 62 ? "yellow" : "red";
-  const checks = [
-    {
-      id: "new",
-      label: "Đơn mới đã nhận",
-      value: operationsSnapshot.pending.toLocaleString("vi-VN"),
-      done: operationsSnapshot.pending === 0,
-      action: () => onFilterStatus("pending")
-    },
-    {
-      id: "kitchen",
-      label: "Bếp không quá giờ",
-      value: operationsSnapshot.overdue.toLocaleString("vi-VN"),
-      done: operationsSnapshot.overdue === 0,
-      action: () => onFilterStatus("ordering")
-    },
-    {
-      id: "payment",
-      label: "Bill chờ tiền sạch",
-      value: operationsSnapshot.payment.toLocaleString("vi-VN"),
-      done: operationsSnapshot.payment === 0,
-      action: () => onFilterStatus("waiting_confirm")
-    },
-    {
-      id: "channel",
-      label: "Kênh nóng được tách",
-      value: totalUrgentChannels.toLocaleString("vi-VN"),
-      done: totalUrgentChannels === 0,
-      action: () => onFilterChannel(channelStats.find((stat) => stat.urgent > 0)?.key ?? "all")
-    }
-  ];
 
-  return (
-    <section className="dashboard-panel dashboard-command-center p-3">
-      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
-        <div className={`rounded-xl border p-4 ${rushToneClass(shiftTone)}`}>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase opacity-80">Shift command</p>
-              <h2 className="mt-1 text-xl font-semibold">Điều phối ca bán hàng</h2>
-            </div>
-            <Badge tone={shiftTone === "red" ? "red" : shiftTone === "yellow" ? "yellow" : "green"}>{shiftScore}/100</Badge>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
-              <p className="text-xs font-semibold opacity-75">Bill mở</p>
-              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.open}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
-              <p className="text-xs font-semibold opacity-75">Tiền đang mở</p>
-              <p className="metric-number mt-1 text-lg font-semibold">{formatVnd(activeTotal)}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
-              <p className="text-xs font-semibold opacity-75">Đơn lâu nhất</p>
-              <p className="metric-number mt-1 text-2xl font-semibold">{operationsSnapshot.oldestAge}p</p>
-            </div>
-            <div className="rounded-lg bg-[var(--surface)]/75 p-3">
-              <p className="text-xs font-semibold opacity-75">Lịch sử hôm nay</p>
-              <p className="metric-number mt-1 text-2xl font-semibold">{statusCounts.history}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist chạm-là-xử-lý</p>
-              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {checks.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={item.action}
-                  className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]"
-                >
-                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
-                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Việc đầu tiên nên làm</p>
-              <Badge tone={leadingGroup ? getBillGroupRush(leadingGroup, clockTick).tone : "green"}>{leadingGroup ? "Có việc" : "Ổn"}</Badge>
-            </div>
-            {leadingGroup ? (
-              <button
-                type="button"
-                onClick={() => onSelectGroup(leadingGroup.id)}
-                className={`w-full rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:shadow-[var(--shadow-soft)] ${rushToneClass(getBillGroupRush(leadingGroup, clockTick).tone)}`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{leadingGroup.tableName}</span>
-                    <span className="mt-0.5 block truncate text-xs font-semibold opacity-80">
-                      #{leadingGroup.id.slice(0, 8).toUpperCase()} · {getBillGroupAge(leadingGroup, clockTick)} phút
-                    </span>
-                  </span>
-                  <span className="rounded-lg bg-[var(--surface)]/75 px-2 py-1 text-xs font-semibold">{getBillGroupRush(leadingGroup, clockTick).actionLabel}</span>
-                </div>
-                <p className="mt-2 text-sm font-semibold">{getBillGroupRush(leadingGroup, clockTick).label}</p>
-                <p className="metric-number mt-1 text-sm font-semibold opacity-85">{formatVnd(leadingGroup.total)}</p>
-              </button>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                Không có bill cần kéo lên đầu ca.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function playOrderNotice() {
   try {
@@ -1558,9 +1407,6 @@ export function OrdersBoard({
               <Badge tone={operationsSnapshot.open ? "blue" : "green"}>{operationsSnapshot.open} bill đang mở</Badge>
             </div>
             <h2 className="dashboard-page-title mt-3">Trung tâm xử lý đơn realtime</h2>
-            <p className="dashboard-body-copy mt-2 max-w-3xl">
-              Xác nhận đơn online, theo dõi bếp, chốt phục vụ, xác nhận VietQR và điều phối giao hàng trong một màn đủ nhanh cho giờ cao điểm.
-            </p>
           </div>
           <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
             <div className="flex items-center justify-between gap-3">
@@ -1596,17 +1442,24 @@ export function OrdersBoard({
         </div>
       </section>
 
-      <OrderShiftCommandCenter
-        operationsSnapshot={operationsSnapshot}
-        channelStats={channelStats}
-        slaBands={slaBands}
-        statusCounts={statusCounts}
-        activeTotal={activeTotal}
-        clockTick={clockTick}
-        onFilterStatus={setFilter}
-        onFilterChannel={setChannelFilter}
-        onSelectGroup={setSelectedGroupId}
-      />
+      {(() => {
+        const shiftScore = Math.max(0, 100 - operationsSnapshot.pending * 10 - operationsSnapshot.overdue * 14 - operationsSnapshot.payment * 7 - Math.max(0, operationsSnapshot.oldestAge - 15));
+        const shiftTone: OrderRushTone = shiftScore >= 82 ? "green" : shiftScore >= 62 ? "yellow" : "red";
+        return (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+            <Badge tone={shiftTone}>{shiftScore}/100</Badge>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Bill mở {operationsSnapshot.open}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Đơn mới {operationsSnapshot.pending}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className={`text-xs font-semibold ${operationsSnapshot.overdue > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>Quá giờ {operationsSnapshot.overdue}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Chờ thu {operationsSnapshot.payment}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">{formatVnd(activeTotal)}</span>
+          </div>
+        );
+      })()}
 
       <section className="dashboard-panel p-3">
         <div className="dashboard-mobile-order-status flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">

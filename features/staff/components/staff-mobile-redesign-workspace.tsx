@@ -13,7 +13,6 @@ import {
   Grid2X2,
   ListChecks,
   MapPin,
-  Plus,
   RefreshCw,
   Send,
   UserRound,
@@ -27,11 +26,13 @@ import {
   clockOutAttendance,
   createStaffRequest,
   fetchStaffOperationsBundle,
+  markStaffNotificationRead,
   runStaffMobileQuickAction,
   sendStaffSessionHeartbeat,
   type StaffRequestCreatePayload,
   type StaffSessionHeartbeatResult
 } from "@/features/staff/api/client";
+import { useStaffMobileRealtime } from "@/features/staff/components/mobile/use-staff-mobile-realtime";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import type { StaffOperationsBundle, StaffOpsApprovalItem, StaffOpsMobileWorkItem, StaffOpsShiftAssignment } from "@/features/staff/types";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,7 @@ type StaffMobileRedesignWorkspaceProps = {
   initialBundle: StaffOperationsBundle;
   restaurantId: string;
   restaurantName: string;
+  restaurantSlug: string;
   userId: string;
   enableHeartbeat?: boolean;
 };
@@ -227,7 +229,7 @@ function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?
   return <span className={cn("inline-flex min-h-8 items-center rounded-full px-3 text-base font-bold", tone === "success" && "bg-[#DDF8E9] text-[#0F4D3A]", tone === "danger" && "bg-[#FFE0DF] text-[#B91C1C]", tone === "warning" && "bg-[#FFF0D9] text-[#93540A]", tone === "neutral" && "bg-[#ECE9E3] text-[#595650]")}>{children}</span>;
 }
 
-export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, userId, enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
+export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
   const [bundle, setBundle] = useState(initialBundle);
   const [activeTab, setActiveTab] = useState<StaffAppTab>("home");
   const [selectedBranchId, setSelectedBranchId] = useState(initialBundle.members[0]?.primaryBranchId ?? initialBundle.branches[0]?.id ?? "");
@@ -241,6 +243,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const [requestDraft, setRequestDraft] = useState<RequestDraft>(initialRequestDraft);
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [forcedLogout, setForcedLogout] = useState(false);
 
   const staff = bundle.members[0] ?? null;
   const today = todayInputValue();
@@ -258,7 +261,12 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     }
   }, []);
 
+  useStaffMobileRealtime({ restaurantId, onRefresh: refreshBundle });
+
   const offlineQueue = useOfflineAttendanceQueue({ restaurantId, userId, onSynced: refreshBundle });
+  const pendingOfflineClockIn = offlineQueue.queue.some((item) => item.action === "clock_in");
+  const pendingOfflineClockOut = offlineQueue.queue.some((item) => item.action === "clock_out" && (!activeAttendance?.id || item.attendanceLogId === activeAttendance.id));
+  const attendanceBlockedByOffline = pendingOfflineClockIn || pendingOfflineClockOut;
 
   const todayAssignments = useMemo(
     () => bundle.shiftAssignments.filter((assignment) => assignment.scheduledDate === today && assignment.status !== "cancelled" && (!staff || assignment.staffMemberId === staff.id)),
@@ -306,14 +314,21 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       })
         .then((result) => {
           if (result.deviceTrust) setDeviceTrust(result.deviceTrust);
-          if (result.forcedLogout) setMessage({ tone: "warning", text: "Phiên thiết bị đã bị quản lý đăng xuất." });
+          if (result.forcedLogout) {
+            setForcedLogout(true);
+            setMessage({ tone: "warning", text: "Phiên thiết bị đã bị quản lý đăng xuất." });
+            const loginPath = `/staff/${restaurantSlug}/login?session=forced`;
+            window.setTimeout(() => {
+              window.location.assign(`/auth/clear-session?next=${encodeURIComponent(loginPath)}`);
+            }, 900);
+          }
         })
         .catch(() => undefined);
     };
     sendHeartbeat();
     const timer = window.setInterval(sendHeartbeat, 60_000);
     return () => window.clearInterval(timer);
-  }, [deviceFingerprint, enableHeartbeat, selectedBranchId]);
+  }, [deviceFingerprint, enableHeartbeat, restaurantSlug, selectedBranchId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -322,8 +337,20 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
 
   async function runClockAction(source: ClockSource) {
     if (!staff || processingAttendance) return;
+    if (forcedLogout) {
+      setMessage({ tone: "warning", text: "Phiên đã bị quản lý đăng xuất. Vui lòng đăng nhập lại." });
+      return;
+    }
     if (!selectedBranchId) {
       setMessage({ tone: "warning", text: "Bạn cần chọn chi nhánh trước khi chấm công." });
+      return;
+    }
+    if (attendanceBlockedByOffline) {
+      setMessage({ tone: "warning", text: pendingOfflineClockIn ? "Đang có check-in offline chờ đồng bộ. Hãy đồng bộ trước khi thao tác tiếp." : "Lần kết ca này đang chờ đồng bộ offline." });
+      return;
+    }
+    if (source === "gps" && !bundle.premium.gpsAttendance) {
+      setMessage({ tone: "warning", text: "Gói hiện tại chưa bật GPS. Vui lòng dùng QR hoặc WiFi tại quán." });
       return;
     }
     if (source === "qr" && !qrToken.trim()) {
@@ -356,8 +383,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     } catch (error) {
       const canQueue = shouldQueueAttendanceOffline({ error, isPremium: bundle.premium.gpsAttendance, isOnline: offlineQueue.isOnline, source });
       if (canQueue && source === "gps" && gps) {
-        offlineQueue.enqueue({ action, branchId: selectedBranchId, attendanceLogId: activeAttendance?.id, source: "gps", lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, capturedAt, deviceInfo });
-        setMessage({ tone: "warning", text: "Mạng yếu. Thao tác đã được lưu vào hàng đợi offline." });
+        const queued = offlineQueue.enqueue({ action, branchId: selectedBranchId, attendanceLogId: activeAttendance?.id, source: "gps", lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, capturedAt, deviceInfo });
+        setMessage({ tone: "warning", text: queued.error ?? "Mạng yếu. Thao tác đã được lưu vào hàng đợi offline." });
       } else {
         setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
       }
@@ -368,6 +395,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
 
   function runWorkItem(item: StaffOpsMobileWorkItem) {
     if (!item.action) return;
+    if (forcedLogout) {
+      setMessage({ tone: "warning", text: "Phiên đã bị quản lý đăng xuất. Vui lòng đăng nhập lại." });
+      return;
+    }
     setProcessingWorkItemKey(item.id);
     void (async () => {
       try {
@@ -384,6 +415,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
 
   function submitRequest() {
     if (!staff) return;
+    if (forcedLogout) {
+      setMessage({ tone: "warning", text: "Phiên đã bị quản lý đăng xuất. Vui lòng đăng nhập lại." });
+      return;
+    }
     const payload: StaffRequestCreatePayload = { requestType: requestDraft.kind, staffMemberId: staff.id, branchId: selectedBranchId, reason: requestDraft.reason.trim() || undefined };
     if (requestDraft.kind === "leave_request") {
       payload.fromDate = requestDraft.fromDate;
@@ -413,6 +448,20 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     })();
   }
 
+  async function markNotificationsRead() {
+    if (!bundle.unreadNotificationCount) {
+      setMessage({ tone: "success", text: "Không có thông báo mới." });
+      return;
+    }
+    try {
+      await markStaffNotificationRead({ all: true });
+      setMessage({ tone: "success", text: "Đã đánh dấu thông báo là đã đọc." });
+      await refreshBundle();
+    } catch (error) {
+      setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể cập nhật thông báo." });
+    }
+  }
+
   if (!staff) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#FFF7EB] p-5 text-[#2B2B2B]">
@@ -437,7 +486,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button type="button" className="relative grid h-12 w-12 place-items-center rounded-full text-[#111]" aria-label="Thông báo"><Bell size={28} />{bundle.unreadNotificationCount ? <span className="absolute right-3 top-2 h-3 w-3 rounded-full bg-[#C91E1E]" /> : null}</button>
+            <button type="button" onClick={markNotificationsRead} className="relative grid h-12 w-12 place-items-center rounded-full text-[#111]" aria-label={bundle.unreadNotificationCount ? `Đánh dấu ${bundle.unreadNotificationCount} thông báo đã đọc` : "Thông báo"}><Bell size={28} />{bundle.unreadNotificationCount ? <span className="absolute right-3 top-2 h-3 w-3 rounded-full bg-[#C91E1E]" /> : null}</button>
           </div>
         </div>
       </header>
@@ -445,9 +494,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       <section className="mx-auto grid w-full max-w-6xl gap-5 px-5 pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-7 lg:grid-cols-[minmax(390px,460px)_minmax(0,1fr)] lg:pb-10">
         <div className="min-w-0 space-y-5">
           {message ? <MessageBar message={message} /> : null}
+          {attendanceBlockedByOffline ? <MessageBar message={{ tone: "warning", text: pendingOfflineClockIn ? "Có check-in offline đang chờ đồng bộ." : "Có kết ca offline đang chờ đồng bộ." }} /> : null}
           {activeTab === "home" ? <HomeTab staffName={staff.fullName} workItems={workItems} processingKey={processingWorkItemKey} onRunWorkItem={runWorkItem} currentShift={todayAssignments[0] ?? upcomingAssignments[0] ?? null} activeDuration={activeAttendance ? activeDuration : null} /> : null}
           {activeTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} /> : null}
-          {activeTab === "attendance" ? <AttendanceTab activeAttendance={activeAttendance} latestAttendance={latestAttendance} selectedBranchId={selectedBranchId} selectedBranchName={selectedBranchName} branches={bundle.branches} onBranchChange={setSelectedBranchId} onClock={runClockAction} processing={processingAttendance} qrReady={Boolean(qrToken.trim())} online={offlineQueue.isOnline} queueLength={offlineQueue.queue.length} syncing={offlineQueue.syncing} onSync={() => void offlineQueue.syncQueue({ force: true })} activeDuration={activeDuration} onTimeCount={onTimeCount} lateCount={lateCount} /> : null}
+          {activeTab === "attendance" ? <AttendanceTab staffName={staff.fullName} activeAttendance={activeAttendance} latestAttendance={latestAttendance} selectedBranchId={selectedBranchId} selectedBranchName={selectedBranchName} branches={bundle.branches} onBranchChange={setSelectedBranchId} onClock={runClockAction} processing={processingAttendance || forcedLogout || attendanceBlockedByOffline} gpsEnabled={bundle.premium.gpsAttendance} qrReady={Boolean(qrToken.trim())} online={offlineQueue.isOnline} queueLength={offlineQueue.queue.length} syncing={offlineQueue.syncing} onSync={() => void offlineQueue.syncQueue({ force: true })} activeDuration={activeDuration} onTimeCount={onTimeCount} lateCount={lateCount} /> : null}
           {activeTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
           {activeTab === "reports" ? <ReportsTab bundle={bundle} staffId={staff.id} /> : null}
         </div>
@@ -497,7 +547,6 @@ function ScheduleTab({ assignments, branchName }: { assignments: StaffOpsShiftAs
       <ShiftGroup title="Ca sáng (06:00 - 14:00)" assignments={assignments.slice(0, 2)} />
       <ShiftGroup title="Ca chiều (14:00 - 22:00)" assignments={assignments.slice(2, 4)} />
       {!assignments.length ? <AppCard className="grid min-h-40 place-items-center p-5 text-center"><p className="text-lg font-black text-[#5E5A54]">Chưa có ca sắp tới</p></AppCard> : null}
-      <button className="fixed bottom-[106px] right-6 grid h-20 w-20 place-items-center rounded-2xl bg-[#0F4D3A] text-white shadow-[0_18px_32px_rgba(15,77,58,0.24)] lg:hidden"><Plus size={34} /></button>
     </div>
   );
 }
@@ -506,22 +555,25 @@ function ShiftGroup({ title, assignments }: { title: string; assignments: StaffO
   return <section className="space-y-4"><div className="flex items-center gap-3"><span className="text-3xl text-[#F28C28]">☼</span><h2 className="text-lg font-black uppercase tracking-[0.08em] text-[#3F3D39]">{title}</h2><span className="h-px flex-1 bg-[#E5DDD2]" /></div>{assignments.map((assignment) => <AppCard key={assignment.id} className="p-5"><div className="flex items-center justify-between"><div><h3 className="text-2xl font-medium text-[#111]">{assignment.shiftName}</h3><p className="mt-2 text-xl font-medium text-[#5E5A54]">{assignment.branchName ?? "Chi nhánh"}</p></div><StatusPill tone="success">Đã gán</StatusPill></div><div className="mt-5 border-t border-[#E5DDD2] pt-5"><p className="text-xl font-medium text-[#111]">{assignment.staffName}</p></div></AppCard>)}</section>;
 }
 
-function AttendanceTab({ activeAttendance, latestAttendance, selectedBranchId, selectedBranchName, branches, onBranchChange, onClock, processing, qrReady, online, queueLength, syncing, onSync, activeDuration, onTimeCount, lateCount }: { activeAttendance: ReturnType<typeof activeAttendanceForMember>; latestAttendance: StaffOperationsBundle["attendanceFeed"][number] | null; selectedBranchId: string; selectedBranchName: string; branches: StaffOperationsBundle["branches"]; onBranchChange: (value: string) => void; onClock: (source: ClockSource) => void; processing: boolean; qrReady: boolean; online: boolean; queueLength: number; syncing: boolean; onSync: () => void; activeDuration: string; onTimeCount: number; lateCount: number }) {
+function AttendanceTab({ staffName, activeAttendance, latestAttendance, selectedBranchId, selectedBranchName, branches, onBranchChange, onClock, processing, gpsEnabled, qrReady, online, queueLength, syncing, onSync, activeDuration, onTimeCount, lateCount }: { staffName: string; activeAttendance: ReturnType<typeof activeAttendanceForMember>; latestAttendance: StaffOperationsBundle["attendanceFeed"][number] | null; selectedBranchId: string; selectedBranchName: string; branches: StaffOperationsBundle["branches"]; onBranchChange: (value: string) => void; onClock: (source: ClockSource) => void; processing: boolean; gpsEnabled: boolean; qrReady: boolean; online: boolean; queueLength: number; syncing: boolean; onSync: () => void; activeDuration: string; onTimeCount: number; lateCount: number }) {
   return (
     <div className="space-y-6">
       <section><h1 className="text-[38px] font-black leading-tight text-[#111]">Chấm công hôm nay</h1><p className="mt-2 text-xl font-medium text-[#3F3D39]">{formatDate(todayInputValue())}</p></section>
       <div className="grid grid-cols-2 gap-4"><AppCard className="p-5"><p className="flex items-center gap-2 text-lg font-black text-[#0F4D3A]"><Check size={24} /> Đúng giờ</p><p className="mt-6 text-[42px] font-black">{onTimeCount}</p></AppCard><AppCard className="p-5"><p className="flex items-center gap-2 text-lg font-black text-[#C91E1E]"><Clock3 size={24} /> Đi muộn</p><p className="mt-6 text-[42px] font-black">{lateCount}</p></AppCard></div>
-      <AppCard className="p-5"><div className="flex items-center justify-between gap-4"><div className="flex items-center gap-4"><span className="grid h-20 w-20 place-items-center rounded-full bg-[#E8E5E0] text-2xl font-black">NV</span><div><p className="text-[30px] font-black leading-tight text-[#111]">{activeAttendance ? "Đang trong ca" : "Sẵn sàng"}</p><p className="text-xl font-medium text-[#3F3D39]">{selectedBranchName}</p></div></div><StatusPill tone={activeAttendance ? "success" : "neutral"}>{activeAttendance ? activeDuration : "Chưa vào"}</StatusPill></div><div className="mt-6 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F3F0EC] p-4 text-xl font-black"><span>{shortTime(activeAttendance?.clockInAt ?? latestAttendance?.clockInAt)}</span><span className="pl-4">{shortTime(activeAttendance?.clockOutAt ?? latestAttendance?.clockOutAt)}</span></div><label className="mt-5 block"><span className="sr-only">Chi nhánh</span><select value={selectedBranchId} onChange={(event) => onBranchChange(event.target.value)} className="h-14 w-full rounded-xl border border-[#D8D1C7] bg-white px-4 text-base font-bold">{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><div className="mt-4 grid gap-3"><ShellButton disabled={processing} onClick={() => onClock("gps")} className="min-h-16"><MapPin size={22} /> {activeAttendance ? "Kết ca bằng GPS" : "Check-in bằng GPS"}</ShellButton><div className="grid grid-cols-2 gap-3"><ShellButton variant="secondary" disabled={!online || processing} onClick={() => onClock("wifi")}><Wifi size={21} /> WiFi</ShellButton><ShellButton variant="secondary" disabled={!qrReady || processing} onClick={() => onClock("qr")}><Fingerprint size={21} /> QR</ShellButton></div>{queueLength ? <ShellButton variant="ghost" onClick={onSync} disabled={syncing}><RefreshCw size={18} className={syncing ? "animate-spin" : undefined} /> Đồng bộ {queueLength}</ShellButton> : null}<p className="flex items-center gap-2 text-sm font-bold text-[#5E5A54]">{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Thiết bị online" : "Thiết bị offline"}</p></div></AppCard>
+      <AppCard className="p-5"><div className="flex items-center justify-between gap-4"><div className="flex items-center gap-4"><span className="grid h-20 w-20 place-items-center rounded-full bg-[#E8E5E0] text-2xl font-black text-[#0F4D3A]">{initials(staffName)}</span><div><p className="text-[30px] font-black leading-tight text-[#111]">{activeAttendance ? "Đang trong ca" : "Sẵn sàng"}</p><p className="text-xl font-medium text-[#3F3D39]">{selectedBranchName}</p></div></div><StatusPill tone={activeAttendance ? "success" : "neutral"}>{activeAttendance ? activeDuration : "Chưa vào"}</StatusPill></div><div className="mt-6 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F3F0EC] p-4 text-xl font-black"><span>{shortTime(activeAttendance?.clockInAt ?? latestAttendance?.clockInAt)}</span><span className="pl-4">{shortTime(activeAttendance?.clockOutAt ?? latestAttendance?.clockOutAt)}</span></div><label className="mt-5 block"><span className="sr-only">Chi nhánh</span><select value={selectedBranchId} onChange={(event) => onBranchChange(event.target.value)} className="h-14 w-full rounded-xl border border-[#D8D1C7] bg-white px-4 text-base font-bold">{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label><div className="mt-4 grid gap-3"><ShellButton disabled={processing || !gpsEnabled} onClick={() => onClock("gps")} className="min-h-16"><MapPin size={22} /> {gpsEnabled ? activeAttendance ? "Kết ca bằng GPS" : "Check-in bằng GPS" : "GPS chưa bật"}</ShellButton><div className="grid grid-cols-2 gap-3"><ShellButton variant="secondary" disabled={!online || processing} onClick={() => onClock("wifi")}><Wifi size={21} /> WiFi</ShellButton><ShellButton variant="secondary" disabled={!qrReady || processing} onClick={() => onClock("qr")}><Fingerprint size={21} /> QR</ShellButton></div>{queueLength ? <ShellButton variant="ghost" onClick={onSync} disabled={syncing}><RefreshCw size={18} className={syncing ? "animate-spin" : undefined} /> Đồng bộ {queueLength}</ShellButton> : null}<p className="flex items-center gap-2 text-sm font-bold text-[#5E5A54]">{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Thiết bị online" : "Thiết bị offline"}</p></div></AppCard>
     </div>
   );
 }
 
 function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubmit, submitting }: { draft: RequestDraft; onDraftChange: (patch: Partial<RequestDraft>) => void; recentRequests: StaffOpsApprovalItem[]; assignments: StaffOpsShiftAssignment[]; onSubmit: () => void; submitting: boolean }) {
+  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected">("pending");
+  const visibleRequests = recentRequests.filter((request) => request.status === statusFilter);
+  const cannotSubmitShiftSwap = draft.kind === "shift_swap" && !assignments.length;
   return (
     <div className="space-y-6">
-      <div className="flex gap-3 overflow-x-auto"><button className="min-h-14 rounded-full bg-[#0F4D3A] px-7 text-lg font-black text-white">Đang chờ</button><button className="min-h-14 rounded-full bg-[#ECE9E3] px-7 text-lg font-black text-[#4B4945]">Đã duyệt</button><button className="min-h-14 rounded-full bg-[#ECE9E3] px-7 text-lg font-black text-[#4B4945]">Đã từ chối</button></div>
-      <AppCard className="p-5"><h1 className="text-2xl font-black text-[#111]">Tạo yêu cầu</h1><div className="mt-4 grid gap-3"><select value={draft.kind} onChange={(event) => onDraftChange({ kind: event.target.value as RequestDraft["kind"] })} className="staff-redesign-input"><option value="leave_request">Nghỉ phép</option><option value="shift_swap">Đổi ca</option><option value="overtime">Tăng ca</option></select>{draft.kind === "shift_swap" ? <select value={draft.shiftAssignmentId} onChange={(event) => onDraftChange({ shiftAssignmentId: event.target.value })} className="staff-redesign-input">{assignments.map((assignment) => <option key={assignment.id} value={assignment.id}>{assignment.shiftName} · {assignment.scheduledDate}</option>)}</select> : <div className="grid grid-cols-2 gap-3"><input type="date" value={draft.fromDate} onChange={(event) => onDraftChange({ fromDate: event.target.value })} className="staff-redesign-input" /><input type="date" value={draft.toDate} onChange={(event) => onDraftChange({ toDate: event.target.value })} className="staff-redesign-input" /></div>}{draft.kind === "overtime" ? <input type="number" value={draft.overtimeMinutes} onChange={(event) => onDraftChange({ overtimeMinutes: Number(event.target.value) })} className="staff-redesign-input" min={15} max={720} /> : null}<textarea value={draft.reason} onChange={(event) => onDraftChange({ reason: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-base font-semibold outline-none" placeholder="Lý do" /><ShellButton onClick={onSubmit} disabled={submitting}><Send size={18} /> {submitting ? "Đang gửi..." : `Gửi ${requestTypeLabel(draft.kind).toLowerCase()}`}</ShellButton></div></AppCard>
-      <div className="space-y-4">{recentRequests.map((request) => <AppCard key={request.id} className="p-5"><div className="flex items-start justify-between"><div><p className="text-2xl font-medium text-[#111]">{requestTypeLabel(request.requestType)}</p><p className="mt-1 text-lg font-medium text-[#5E5A54]">{request.reason ?? "Không có ghi chú"}</p></div><StatusPill tone={request.status === "approved" ? "success" : request.status === "rejected" ? "danger" : "neutral"}>{request.status === "pending" ? "Đang chờ" : request.status === "approved" ? "Đã duyệt" : "Đã từ chối"}</StatusPill></div></AppCard>)}</div>
+      <div className="flex gap-3 overflow-x-auto">{(["pending", "approved", "rejected"] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} className={cn("min-h-14 rounded-full px-7 text-lg font-black", statusFilter === status ? "bg-[#0F4D3A] text-white" : "bg-[#ECE9E3] text-[#4B4945]")}>{status === "pending" ? "Đang chờ" : status === "approved" ? "Đã duyệt" : "Đã từ chối"}</button>)}</div>
+      <AppCard className="p-5"><h1 className="text-2xl font-black text-[#111]">Tạo yêu cầu</h1><div className="mt-4 grid gap-3"><select value={draft.kind} onChange={(event) => onDraftChange({ kind: event.target.value as RequestDraft["kind"] })} className="staff-redesign-input"><option value="leave_request">Nghỉ phép</option><option value="shift_swap">Đổi ca</option><option value="overtime">Tăng ca</option></select>{draft.kind === "shift_swap" ? assignments.length ? <select value={draft.shiftAssignmentId || assignments[0]?.id || ""} onChange={(event) => onDraftChange({ shiftAssignmentId: event.target.value })} className="staff-redesign-input">{assignments.map((assignment) => <option key={assignment.id} value={assignment.id}>{assignment.shiftName} · {assignment.scheduledDate}</option>)}</select> : <InlineEmptyState title="Chưa có ca để đổi" text="Yêu cầu đổi ca cần một ca thật đã được gán cho bạn." /> : <div className="grid grid-cols-2 gap-3"><input type="date" value={draft.fromDate} onChange={(event) => onDraftChange({ fromDate: event.target.value })} className="staff-redesign-input" /><input type="date" value={draft.toDate} onChange={(event) => onDraftChange({ toDate: event.target.value })} className="staff-redesign-input" /></div>}{draft.kind === "overtime" ? <input type="number" value={draft.overtimeMinutes} onChange={(event) => onDraftChange({ overtimeMinutes: Number(event.target.value) })} className="staff-redesign-input" min={15} max={720} /> : null}<textarea value={draft.reason} onChange={(event) => onDraftChange({ reason: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-base font-semibold outline-none" placeholder="Lý do" /><ShellButton onClick={onSubmit} disabled={submitting || cannotSubmitShiftSwap}><Send size={18} /> {submitting ? "Đang gửi..." : `Gửi ${requestTypeLabel(draft.kind).toLowerCase()}`}</ShellButton></div></AppCard>
+      <div className="space-y-4">{visibleRequests.map((request) => <AppCard key={request.id} className="p-5"><div className="flex items-start justify-between"><div><p className="text-2xl font-medium text-[#111]">{requestTypeLabel(request.requestType)}</p><p className="mt-1 text-lg font-medium text-[#5E5A54]">{request.reason ?? "Không có ghi chú"}</p></div><StatusPill tone={request.status === "approved" ? "success" : request.status === "rejected" ? "danger" : "neutral"}>{request.status === "pending" ? "Đang chờ" : request.status === "approved" ? "Đã duyệt" : "Đã từ chối"}</StatusPill></div></AppCard>)}{!visibleRequests.length ? <InlineEmptyState title="Không có yêu cầu phù hợp" text="Yêu cầu nghỉ, đổi ca hoặc tăng ca sẽ hiển thị theo trạng thái thật." /> : null}</div>
     </div>
   );
 }

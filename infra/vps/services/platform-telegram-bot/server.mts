@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Worker } from "bullmq";
 import type { Job } from "bullmq";
 import type { NextFunction, Request, Response } from "express";
@@ -18,9 +19,11 @@ import {
   connectPlatformTelegramAccount,
   confirmPlatformSubscriptionPayment,
   createPlatformSession,
+  getPendingSubscriptionPayment,
   getPlatformAlertRecipients,
   getPlatformConnectionRecentAudit,
   getPlatformConnectionForTelegramUser,
+  getPlatformTenantAction,
   hasPlatformScope,
   listPendingSubscriptionPayments,
   listPlatformTenantActions,
@@ -28,7 +31,9 @@ import {
   rejectPlatformSubscriptionPayment,
   revokePlatformConnectionById,
   touchPlatformConnection,
-  updatePlatformTenantStatusFromTelegram
+  updatePlatformTenantStatusFromTelegram,
+  type PlatformSubscriptionPayment,
+  type PlatformTenantAction
 } from "./repository.mjs";
 import { platformTelegramJobSchema, type PlatformAlertJob, type PlatformTelegramConnection } from "./types.mjs";
 
@@ -235,11 +240,11 @@ async function deliverPlatformAlert(event: PlatformAlertJob) {
 
 async function handleStart(ctx: Context, token: string) {
   if (!ctx.from || !ctx.chat) {
-    await ctx.reply("Không xác định được tài khoản Telegram.");
+    await ctx.reply("Không xác định được tài khoản Telegram.", { reply_markup: new InlineKeyboard().url("Mở Admin Ops", platformAdminUrl("/ops")) });
     return;
   }
   if (await isPlatformUserRateLimited("connect", ctx.from.id)) {
-    await ctx.reply("Bạn đang thao tác quá nhanh. Vui lòng thử lại sau ít phút.");
+    await ctx.reply("Bạn đang thao tác quá nhanh. Vui lòng thử lại sau ít phút.", { reply_markup: new InlineKeyboard().url("Mở Admin Ops", platformAdminUrl("/ops")) });
     return;
   }
 
@@ -258,7 +263,7 @@ async function handleStart(ctx: Context, token: string) {
     } catch (error) {
       if (isLikelySignedConnectToken(token)) {
         logger.warn({ telegramUserId: ctx.from.id, error: safeLogError(error) }, "platform connect token rejected");
-        await ctx.reply("Link kết nối DevOps không còn hiệu lực hoặc đã được dùng. Vui lòng tạo hoặc thu hồi link trong admin.logivn.com/ops.");
+        await ctx.reply("Link kết nối DevOps không còn hiệu lực hoặc đã được dùng.", { reply_markup: new InlineKeyboard().url("Tạo link mới", platformAdminUrl("/ops")) });
         return;
       }
     }
@@ -273,7 +278,7 @@ async function handleStart(ctx: Context, token: string) {
 
   if (!isBootstrapAllowed(ctx.from.id, token)) {
     await recordPlatformTelegramAudit({ telegramUserId: ctx.from.id, action: "platform.telegram.connect", outcome: "denied" });
-    await ctx.reply("Tài khoản này chưa được cấp quyền DevOps Bot. Hãy tạo link kết nối trong admin.logivn.com/ops.");
+    await ctx.reply("Tài khoản này chưa được cấp quyền DevOps Bot.", { reply_markup: new InlineKeyboard().url("Tạo link kết nối", platformAdminUrl("/ops")) });
     return;
   }
 
@@ -291,7 +296,7 @@ async function handleStart(ctx: Context, token: string) {
 async function replyWithPlatformMenu(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
   const connection = preferredConnection ?? (await connectionForContext(ctx));
   if (!connection) {
-    await ctx.reply("DevOps Bot chưa kết nối. Hãy tạo link trong admin.logivn.com/ops rồi mở lại Telegram.");
+    await replyWithConnectAction(ctx);
     return;
   }
   const keyboard = new InlineKeyboard()
@@ -299,7 +304,7 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .row()
     .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
-    .text("Queue lỗi", await signedPlatformCallback(connection, "queues"))
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
     .row()
     .text("Webhook", await signedPlatformCallback(connection, "webhook"))
     .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
@@ -312,15 +317,18 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .row()
     .url("Grafana", readEnv("PLATFORM_GRAFANA_URL", "https://monitor.logivn.com/grafana/"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
-  const pendingPayments = await listPendingSubscriptionPayments(1).catch(() => []);
-  const tenantActions = await listPlatformTenantActions(1).catch(() => []);
+  const [pendingPayments, tenantActions] = await Promise.all([
+    listPendingSubscriptionPayments(6).catch(() => []),
+    listPlatformTenantActions(6).catch(() => [])
+  ]);
   await ctx.reply([
-    "LogiVN DevOps Command Center",
+    "LogiVN DevOps",
     "",
-    connectionLabel(connection),
-    `Cần xử lý: ${pendingPayments.length ? "có gói chờ duyệt" : "không có gói chờ"} · ${tenantActions.length ? "có quán cần rà soát" : "quán ổn"}`,
+    `Bạn: ${connectionLabel(connection)}`,
+    `Việc mở: ${countLabel(pendingPayments.length, 6)} gói chờ duyệt · ${countLabel(tenantActions.length, 6)} quán cần rà soát`,
+    `Ưu tiên: ${platformMenuPriority(pendingPayments[0], tenantActions[0])}`,
     "",
-    "Chọn thao tác nhanh bên dưới."
+    "Chọn nút để xử lý ngay."
   ].join("\n"), { reply_markup: keyboard });
 }
 
@@ -341,14 +349,14 @@ async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTeleg
   const connection = await requireConnection(ctx, preferredConnection, "infra.read");
   if (!connection) return;
   const lines = [
-    "Whoami · LogiVN DevOps",
+    "Tài khoản DevOps",
     "",
     `${connectionLabel(connection)}`,
     `Telegram ID: ${connection.telegram_user_id}`,
     `Username: ${connection.telegram_username ? `@${connection.telegram_username}` : "none"}`,
-    `Scopes: ${compactScopes(connection.scopes)}`
+    `Quyền: ${compactScopes(connection.scopes)}`
   ];
-  const keyboard = new InlineKeyboard().text("Security", await signedPlatformCallback(connection, "security")).text("Menu", await signedPlatformCallback(connection, "menu"));
+  const keyboard = new InlineKeyboard().text("Bảo mật", await signedPlatformCallback(connection, "security")).text("Menu", await signedPlatformCallback(connection, "menu"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -358,25 +366,25 @@ async function replyWithPayments(ctx: Context, preferredConnection?: PlatformTel
   const payments = await listPendingSubscriptionPayments(6);
   const keyboard = new InlineKeyboard();
 
-  for (const payment of payments.slice(0, 4)) {
+  for (const [index, payment] of payments.slice(0, 4).entries()) {
     keyboard
-      .text(`Duyệt ${shortId(payment.id)}`, await signedPlatformCallback(connection, "payment.confirm.prompt", { paymentId: payment.id }))
-      .text("Từ chối", await signedPlatformCallback(connection, "payment.reject.prompt", { paymentId: payment.id }))
+      .text(`Duyệt #${index + 1}`, await signedPlatformCallback(connection, "payment.confirm.prompt", { paymentId: payment.id }))
+      .text(`Từ chối #${index + 1}`, await signedPlatformCallback(connection, "payment.reject.prompt", { paymentId: payment.id }))
       .row();
   }
 
   keyboard
-    .text("Refresh", await signedPlatformCallback(connection, "payments"))
+    .text("Làm mới", await signedPlatformCallback(connection, "payments"))
     .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .row()
     .url("Mở thu phí", platformAdminUrl("/payments"));
 
   const lines = [
-    "Gói chờ duyệt",
+    "Duyệt gói",
     "",
-    payments.length ? `${payments.length} giao dịch đang chờ xác minh.` : "Không có giao dịch chờ xác minh.",
+    payments.length ? `${countLabel(payments.length, 6)} giao dịch cần quyết định.` : "Không có giao dịch chờ xác minh.",
     "",
-    ...payments.slice(0, 5).map((payment, index) => `${index + 1}. ${payment.restaurantName} · ${payment.planName} · ${formatVnd(payment.amount)} · ${payment.months} tháng\n   CK: ${payment.transferContent || shortId(payment.id)}`)
+    ...payments.slice(0, 5).map(formatPaymentListRow)
   ];
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
@@ -386,13 +394,20 @@ async function replyWithPaymentConfirmPrompt(ctx: Context, connection: PlatformT
   if (!approvedConnection) return;
   const paymentId = payloadString(payload, "paymentId");
   if (!paymentId) {
-    await ctx.reply("Thiếu giao dịch cần duyệt. Bấm /payments để tải lại danh sách.");
+    await replyWithPaymentsReload(ctx, approvedConnection, "Thiếu giao dịch cần duyệt.");
+    return;
+  }
+  const payment = await getPendingSubscriptionPayment(paymentId);
+  if (!payment) {
+    await replyWithPaymentsReload(ctx, approvedConnection, "Giao dịch không còn chờ duyệt.");
     return;
   }
   const keyboard = new InlineKeyboard()
     .text("Xác nhận duyệt", await signedPlatformCallback(approvedConnection, "payment.confirm", { paymentId }))
-    .text("Quay lại", await signedPlatformCallback(approvedConnection, "payments"));
-  await ctx.reply(`Duyệt giao dịch ${shortId(paymentId)} và kích hoạt/gia hạn gói cho quán?`, { reply_markup: keyboard });
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "payments"))
+    .row()
+    .url("Mở thu phí", platformAdminUrl("/payments"));
+  await ctx.reply(formatPaymentDecisionPrompt("Duyệt thanh toán", payment, "Sau khi duyệt: kích hoạt hoặc gia hạn gói và ghi audit."), { reply_markup: keyboard });
 }
 
 async function confirmPaymentFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
@@ -400,7 +415,7 @@ async function confirmPaymentFromTelegram(ctx: Context, connection: PlatformTele
   if (!approvedConnection) return;
   const paymentId = payloadString(payload, "paymentId");
   if (!paymentId) {
-    await ctx.reply("Thiếu giao dịch cần duyệt. Bấm /payments để tải lại danh sách.");
+    await replyWithPaymentsReload(ctx, approvedConnection, "Thiếu giao dịch cần duyệt.");
     return;
   }
   const result = await confirmPlatformSubscriptionPayment(paymentId, actorForConnection(approvedConnection));
@@ -414,13 +429,20 @@ async function replyWithPaymentRejectPrompt(ctx: Context, connection: PlatformTe
   if (!approvedConnection) return;
   const paymentId = payloadString(payload, "paymentId");
   if (!paymentId) {
-    await ctx.reply("Thiếu giao dịch cần từ chối. Bấm /payments để tải lại danh sách.");
+    await replyWithPaymentsReload(ctx, approvedConnection, "Thiếu giao dịch cần từ chối.");
+    return;
+  }
+  const payment = await getPendingSubscriptionPayment(paymentId);
+  if (!payment) {
+    await replyWithPaymentsReload(ctx, approvedConnection, "Giao dịch không còn chờ từ chối.");
     return;
   }
   const keyboard = new InlineKeyboard()
-    .text("Từ chối giao dịch", await signedPlatformCallback(approvedConnection, "payment.reject", { paymentId }))
-    .text("Quay lại", await signedPlatformCallback(approvedConnection, "payments"));
-  await ctx.reply(`Từ chối giao dịch ${shortId(paymentId)} với lý do mặc định: không khớp giao dịch ngân hàng?`, { reply_markup: keyboard });
+    .text("Xác nhận từ chối", await signedPlatformCallback(approvedConnection, "payment.reject", { paymentId }))
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "payments"))
+    .row()
+    .url("Mở thu phí", platformAdminUrl("/payments"));
+  await ctx.reply(formatPaymentDecisionPrompt("Từ chối thanh toán", payment, "Lý do sẽ ghi: Không khớp giao dịch ngân hàng."), { reply_markup: keyboard });
 }
 
 async function rejectPaymentFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
@@ -428,7 +450,7 @@ async function rejectPaymentFromTelegram(ctx: Context, connection: PlatformTeleg
   if (!approvedConnection) return;
   const paymentId = payloadString(payload, "paymentId");
   if (!paymentId) {
-    await ctx.reply("Thiếu giao dịch cần từ chối. Bấm /payments để tải lại danh sách.");
+    await replyWithPaymentsReload(ctx, approvedConnection, "Thiếu giao dịch cần từ chối.");
     return;
   }
   const result = await rejectPlatformSubscriptionPayment(paymentId, actorForConnection(approvedConnection), "Không khớp giao dịch ngân hàng");
@@ -444,22 +466,22 @@ async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTele
   const canManage = hasPlatformScope(connection, "tenants.manage");
   const keyboard = new InlineKeyboard();
 
-  for (const tenant of tenants.slice(0, 4)) {
-    keyboard.url(`Mở ${tenant.slug || shortId(tenant.id)}`, tenantDashboardUrl(tenant.slug)).row();
+  for (const [index, tenant] of tenants.slice(0, 4).entries()) {
+    keyboard.url(`Mở #${index + 1}`, tenantDashboardUrl(tenant.slug)).row();
     if (canManage) {
       if (tenant.platformStatus === "active") {
         keyboard
-          .text("Tạm dừng", await signedPlatformCallback(connection, "tenant.suspend.prompt", { restaurantId: tenant.id, restaurantName: tenant.name }))
-          .text("Xóa mềm", await signedPlatformCallback(connection, "tenant.delete.prompt", { restaurantId: tenant.id, restaurantName: tenant.name }))
+          .text(`Tạm dừng #${index + 1}`, await signedPlatformCallback(connection, "tenant.suspend.prompt", { restaurantId: tenant.id }))
+          .text(`Xóa mềm #${index + 1}`, await signedPlatformCallback(connection, "tenant.delete.prompt", { restaurantId: tenant.id }))
           .row();
       } else {
-        keyboard.text("Mở lại", await signedPlatformCallback(connection, "tenant.restore.prompt", { restaurantId: tenant.id, restaurantName: tenant.name })).row();
+        keyboard.text(`Mở lại #${index + 1}`, await signedPlatformCallback(connection, "tenant.restore.prompt", { restaurantId: tenant.id })).row();
       }
     }
   }
 
   keyboard
-    .text("Refresh", await signedPlatformCallback(connection, "tenants"))
+    .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
     .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
     .row()
     .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
@@ -468,9 +490,9 @@ async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTele
   const lines = [
     "Quản lý quán",
     "",
-    tenants.length ? "Các quán cần thao tác nhanh:" : "Chưa có quán cần xử lý.",
+    tenants.length ? `${countLabel(tenants.length, 6)} quán cần quyết định hoặc theo dõi.` : "Chưa có quán cần xử lý.",
     "",
-    ...tenants.slice(0, 5).map((tenant, index) => `${index + 1}. ${tenant.name} · ${tenant.platformStatus} · ${tenant.planName}\n   ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "ổn"}`)
+    ...tenants.slice(0, 5).map(formatTenantListRow)
   ];
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
@@ -479,17 +501,23 @@ async function replyWithTenantStatusPrompt(ctx: Context, connection: PlatformTel
   const approvedConnection = await requireConnection(ctx, connection, "tenants.manage");
   if (!approvedConnection) return;
   const restaurantId = payloadString(payload, "restaurantId");
-  const restaurantName = payloadString(payload, "restaurantName") || shortId(restaurantId);
   if (!restaurantId) {
-    await ctx.reply("Thiếu quán cần xử lý. Bấm /tenants để tải lại danh sách.");
+    await replyWithTenantsReload(ctx, approvedConnection, "Thiếu quán cần xử lý.");
+    return;
+  }
+  const tenant = await getPlatformTenantAction(restaurantId);
+  if (!tenant) {
+    await replyWithTenantsReload(ctx, approvedConnection, "Không tìm thấy quán cần xử lý.");
     return;
   }
   const action = status === "active" ? "tenant.restore" : status === "suspended" ? "tenant.suspend" : "tenant.delete";
-  const label = status === "active" ? "Mở lại" : status === "suspended" ? "Tạm dừng" : "Xóa mềm";
+  const label = tenantStatusActionLabel(status);
   const keyboard = new InlineKeyboard()
-    .text(label, await signedPlatformCallback(approvedConnection, action, { restaurantId }))
-    .text("Quay lại", await signedPlatformCallback(approvedConnection, "tenants"));
-  await ctx.reply(`${label} quán ${restaurantName}? Thao tác này ghi audit và đổi trạng thái platform.`, { reply_markup: keyboard });
+    .text(`Xác nhận ${label.toLowerCase()}`, await signedPlatformCallback(approvedConnection, action, { restaurantId }))
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "tenants"))
+    .row()
+    .url("Mở quán", tenantDashboardUrl(tenant.slug));
+  await ctx.reply(formatTenantDecisionPrompt(label, tenant, tenantStatusImpact(status)), { reply_markup: keyboard });
 }
 
 async function updateTenantFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>, status: "active" | "suspended" | "deleted") {
@@ -497,7 +525,7 @@ async function updateTenantFromTelegram(ctx: Context, connection: PlatformTelegr
   if (!approvedConnection) return;
   const restaurantId = payloadString(payload, "restaurantId");
   if (!restaurantId) {
-    await ctx.reply("Thiếu quán cần xử lý. Bấm /tenants để tải lại danh sách.");
+    await replyWithTenantsReload(ctx, approvedConnection, "Thiếu quán cần xử lý.");
     return;
   }
   const result = await updatePlatformTenantStatusFromTelegram({ restaurantId, status, actor: actorForConnection(approvedConnection), reason: tenantStatusReason(status) });
@@ -510,8 +538,22 @@ async function replyWithHealth(ctx: Context, preferredConnection?: PlatformTeleg
   const connection = await requireConnection(ctx, preferredConnection, "infra.read");
   if (!connection) return;
   const checks = await Promise.all(serviceChecks().map(checkService));
-  const lines = ["Sức khỏe hệ thống · LogiVN VPS", "", ...checks.map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name} · ${item.ms}ms`)];
-  const keyboard = new InlineKeyboard().text("Làm mới", await signedPlatformCallback(connection, "health")).text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
+  const failed = checks.filter((item) => !item.ok);
+  const slow = checks.filter((item) => item.ok && item.ms >= 1_500);
+  const lines = [
+    "Sức khỏe hệ thống",
+    "",
+    failed.length ? `Cần xử lý: ${failed.map((item) => item.name).join(", ")}` : `OK: ${checks.length}/${checks.length} dịch vụ phản hồi`,
+    slow.length ? `Chậm: ${slow.map((item) => `${item.name} ${item.ms}ms`).join(", ")}` : "Chậm: không có",
+    "",
+    ...checks.map((item) => `${item.ok ? "OK" : "FAIL"} ${item.name} · ${item.ms}ms`)
+  ];
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "health"))
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
+    .row()
+    .text("Webhook", await signedPlatformCallback(connection, "webhook"))
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -524,8 +566,21 @@ async function replyWithQueues(ctx: Context, preferredConnection?: PlatformTeleg
     .filter((row) => row.backlog > 0 || row.failed > 0 || row.name === PLATFORM_TELEGRAM_QUEUE)
     .sort((a, b) => b.failed - a.failed || b.backlog - a.backlog)
     .slice(0, 10);
-  const lines = ["Việc lỗi · BullMQ", "", ...(rows.length ? rows.map((row) => `- ${row.name}: backlog ${row.backlog}, failed ${row.failed}`) : ["Không có backlog nổi bật."])];
-  const keyboard = new InlineKeyboard().text("Làm mới", await signedPlatformCallback(connection, "queues")).text("Sức khỏe", await signedPlatformCallback(connection, "health"));
+  const totalBacklog = rows.reduce((sum, row) => sum + row.backlog, 0);
+  const totalFailed = rows.reduce((sum, row) => sum + row.failed, 0);
+  const lines = [
+    "Hàng đợi",
+    "",
+    rows.length ? `Cần xem: ${totalBacklog} việc chờ · ${totalFailed} việc lỗi` : "Không có hàng đợi nổi bật.",
+    "",
+    ...(rows.length ? rows.map((row) => `- ${row.name}: chờ ${row.backlog}, lỗi ${row.failed}`) : ["Bấm Làm mới để kiểm tra lại."])
+  ];
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "queues"))
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .row()
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
+    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -534,13 +589,18 @@ async function replyWithWebhook(ctx: Context, preferredConnection?: PlatformTele
   if (!connection || !bot) return;
   const info = await bot.api.getWebhookInfo();
   const lines = [
-    "Webhook · DevOps Bot",
+    "Webhook bot",
     "",
-    `URL: ${info.url ? "configured" : "missing"}`,
-    `Pending: ${info.pending_update_count}`,
-    `Last error: ${info.last_error_message ?? "none"}`
+    `Trạng thái: ${info.url ? "đã cấu hình" : "thiếu webhook"}`,
+    `Tin chờ: ${info.pending_update_count}`,
+    `Lỗi cuối: ${info.last_error_message ? redactVisibleSecret(info.last_error_message) : "không có"}`,
+    `Thời điểm lỗi: ${formatUnixDate(info.last_error_date)}`
   ];
-  const keyboard = new InlineKeyboard().text("Refresh", await signedPlatformCallback(connection, "webhook"));
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "webhook"))
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .row()
+    .text("Bảo mật", await signedPlatformCallback(connection, "security"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -553,8 +613,8 @@ async function replyWithIncidents(ctx: Context, preferredConnection?: PlatformTe
     .filter((row) => row.failed > 0)
     .sort((a, b) => b.failed - a.failed)
     .slice(0, 8);
-  const lines = ["Incidents · Queue/DLQ", "", ...(failed.length ? failed.map((row) => `- ${row.name}: ${row.failed} failed`) : ["Không có failed queue nổi bật."])];
-  const keyboard = new InlineKeyboard().text("Refresh", await signedPlatformCallback(connection, "incidents")).text("Queues", await signedPlatformCallback(connection, "queues"));
+  const lines = ["Sự cố", "", ...(failed.length ? failed.map((row) => `- ${row.name}: ${row.failed} lỗi`) : ["Không có hàng đợi lỗi nổi bật."])];
+  const keyboard = new InlineKeyboard().text("Làm mới", await signedPlatformCallback(connection, "incidents")).text("Hàng đợi", await signedPlatformCallback(connection, "queues"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
@@ -563,16 +623,17 @@ async function replyWithSecurity(ctx: Context, preferredConnection?: PlatformTel
   if (!connection) return;
   const audit = await getPlatformConnectionRecentAudit(connection, 5);
   const lines = [
-    "Security · DevOps Bot",
+    "Bảo mật",
     "",
-    `${connectionLabel(connection)}`,
-    `Scopes: ${compactScopes(connection.scopes)}`,
+    `Tài khoản: ${connectionLabel(connection)}`,
+    `Quyền: ${compactScopes(connection.scopes)}`,
+    `Trạng thái: ${connection.status}`,
     "",
-    ...(audit.length ? audit.map((item) => `- ${item.outcome} · ${item.action} · ${formatShortDate(item.createdAt)}`) : ["Chưa có audit gần đây."])
+    ...(audit.length ? audit.map((item) => `- ${item.outcome} · ${shortAuditAction(item.action)} · ${formatShortDate(item.createdAt)}`) : ["Chưa có audit gần đây."])
   ];
   const keyboard = new InlineKeyboard()
-    .text("Refresh", await signedPlatformCallback(connection, "security"))
-    .text("Disconnect", await signedPlatformCallback(connection, "disconnect"))
+    .text("Làm mới", await signedPlatformCallback(connection, "security"))
+    .text("Ngắt kết nối", await signedPlatformCallback(connection, "disconnect"))
     .row()
     .text("Menu", await signedPlatformCallback(connection, "menu"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
@@ -589,7 +650,8 @@ async function replyWithDisconnectPrompt(ctx: Context, preferredConnection?: Pla
 
 async function confirmDisconnect(ctx: Context, connection: PlatformTelegramConnection) {
   await revokePlatformConnectionById(connection);
-  await ctx.reply("Đã ngắt kết nối DevOps Bot cho tài khoản Telegram này. Tạo link mới trong admin.logivn.com/ops nếu cần kết nối lại.");
+  const keyboard = new InlineKeyboard().url("Tạo link mới", platformAdminUrl("/ops"));
+  await ctx.reply("Đã ngắt kết nối DevOps Bot cho tài khoản Telegram này.", { reply_markup: keyboard });
 }
 
 async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction, connection: PlatformTelegramConnection, payload: Record<string, unknown> = {}) {
@@ -619,12 +681,12 @@ async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction
 async function requireConnection(ctx: Context, preferredConnection: PlatformTelegramConnection | undefined, scope: string) {
   const connection = preferredConnection ?? (await connectionForContext(ctx));
   if (!connection) {
-    await ctx.reply("DevOps Bot chưa kết nối hoặc đã bị thu hồi quyền.");
+    await replyWithConnectAction(ctx);
     return null;
   }
   if (!hasPlatformScope(connection, scope)) {
     await recordPlatformTelegramAudit({ connection, action: `platform.scope.${scope}`, outcome: "denied" });
-    await ctx.reply("Bạn chưa có scope cho thao tác DevOps này.");
+    await replyWithScopeDenied(ctx, connection, scope);
     return null;
   }
   await touchPlatformConnection(connection).catch(() => undefined);
@@ -643,7 +705,182 @@ async function signedPlatformCallback(connection: PlatformTelegramConnection, ac
 async function platformIncidentKeyboard(connection: PlatformTelegramConnection) {
   return new InlineKeyboard()
     .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
-    .text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"));
+}
+
+async function replyWithConnectAction(ctx: Context) {
+  const keyboard = new InlineKeyboard().url("Mở Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply("DevOps Bot chưa kết nối hoặc quyền đã bị thu hồi.", { reply_markup: keyboard });
+}
+
+async function replyWithScopeDenied(ctx: Context, connection: PlatformTelegramConnection, scope: string) {
+  const keyboard = new InlineKeyboard()
+    .text("Bảo mật", await signedPlatformCallback(connection, "security"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(`Thiếu quyền ${scope} cho thao tác này.`, { reply_markup: keyboard });
+}
+
+async function replyWithPaymentsReload(ctx: Context, connection: PlatformTelegramConnection, message: string) {
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "payments"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(`${message} Tải lại danh sách thanh toán hiện tại.`, { reply_markup: keyboard });
+}
+
+async function replyWithTenantsReload(ctx: Context, connection: PlatformTelegramConnection, message: string) {
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(`${message} Tải lại danh sách quán hiện tại.`, { reply_markup: keyboard });
+}
+
+function platformMenuPriority(payment?: PlatformSubscriptionPayment, tenant?: PlatformTenantAction) {
+  if (payment) return `Duyệt ${paymentRestaurantLabel(payment)} · ${formatVnd(payment.amount)}`;
+  if (tenant) return `Rà soát ${tenantRestaurantLabel(tenant)} · ${tenant.riskFlags[0] ?? tenant.platformStatus}`;
+  return "theo dõi sức khỏe hệ thống";
+}
+
+function formatPaymentListRow(payment: PlatformSubscriptionPayment, index: number) {
+  return [
+    `${index + 1}. ${paymentRestaurantLabel(payment)}`,
+    `   ${billingActionLabel(payment.billingAction)} · ${paymentPlanLabel(payment)} · ${payment.months} tháng · ${formatVnd(payment.amount)}`,
+    `   CK: ${payment.transferContent || shortId(payment.id)}`,
+    `   Tạo: ${formatShortDate(payment.createdAt)} (${formatAge(payment.createdAt)})`,
+    payment.effectiveSummary ? `   Hiệu lực: ${truncateVisible(payment.effectiveSummary, 120)}` : null
+  ].filter(Boolean).join("\n");
+}
+
+function formatPaymentDecisionPrompt(title: string, payment: PlatformSubscriptionPayment, impact: string) {
+  return [
+    title,
+    "",
+    `Quán: ${paymentRestaurantLabel(payment)}`,
+    `Gói: ${billingActionLabel(payment.billingAction)} · ${paymentPlanLabel(payment)} · ${payment.months} tháng`,
+    `Số tiền: ${formatVnd(payment.amount)}`,
+    `Nội dung CK: ${payment.transferContent || shortId(payment.id)}`,
+    `Tạo: ${formatShortDate(payment.createdAt)} (${formatAge(payment.createdAt)})`,
+    payment.subscriptionStatus ? `Trạng thái gói: ${payment.subscriptionStatus}` : null,
+    formatPaymentPeriod(payment),
+    payment.effectiveSummary ? `Hiệu lực: ${truncateVisible(payment.effectiveSummary, 140)}` : null,
+    payment.effectiveAt ? `Áp dụng: ${formatShortDate(payment.effectiveAt)}` : null,
+    "",
+    impact
+  ].filter(Boolean).join("\n");
+}
+
+function formatTenantListRow(tenant: PlatformTenantAction, index: number) {
+  return [
+    `${index + 1}. ${tenantRestaurantLabel(tenant)}`,
+    `   Trạng thái: ${tenant.platformStatus} · Gói: ${tenant.planName} · ${tenant.subscriptionStatus ?? "chưa có gói"}`,
+    `   Kỳ/trial: ${formatTenantPeriod(tenant)}`,
+    `   Tạo: ${formatShortDate(tenant.createdAt)} (${formatAge(tenant.createdAt)})`,
+    `   Cờ rủi ro: ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "không có"}`
+  ].join("\n");
+}
+
+function formatTenantDecisionPrompt(actionLabel: string, tenant: PlatformTenantAction, impact: string) {
+  return [
+    `${actionLabel} quán`,
+    "",
+    `Quán: ${tenantRestaurantLabel(tenant)}`,
+    `Trạng thái: ${tenant.platformStatus}`,
+    `Gói: ${tenant.planName} · ${tenant.subscriptionStatus ?? "chưa có gói"}`,
+    `Kỳ/trial: ${formatTenantPeriod(tenant)}`,
+    `Tạo: ${formatShortDate(tenant.createdAt)} (${formatAge(tenant.createdAt)})`,
+    `Cờ rủi ro: ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "không có"}`,
+    tenant.suspendedReason ? `Lý do hiện tại: ${truncateVisible(tenant.suspendedReason, 120)}` : null,
+    tenant.deletedAt ? `Xóa mềm: ${formatShortDate(tenant.deletedAt)}` : null,
+    "",
+    impact
+  ].filter(Boolean).join("\n");
+}
+
+function formatPaymentPeriod(payment: PlatformSubscriptionPayment) {
+  if (payment.currentPeriodStart || payment.currentPeriodEnd) return `Kỳ hiện tại: ${formatDateRange(payment.currentPeriodStart, payment.currentPeriodEnd)}`;
+  if (payment.trialEndsAt) return `Trial đến: ${formatShortDate(payment.trialEndsAt)}`;
+  return null;
+}
+
+function formatTenantPeriod(tenant: PlatformTenantAction) {
+  if (tenant.currentPeriodStart || tenant.currentPeriodEnd) return formatDateRange(tenant.currentPeriodStart, tenant.currentPeriodEnd);
+  if (tenant.trialEndsAt) return `trial đến ${formatShortDate(tenant.trialEndsAt)}`;
+  if (tenant.subscriptionCreatedAt) return `tạo gói ${formatShortDate(tenant.subscriptionCreatedAt)}`;
+  return "chưa có";
+}
+
+function tenantStatusActionLabel(status: "active" | "suspended" | "deleted") {
+  if (status === "active") return "Mở lại";
+  if (status === "suspended") return "Tạm dừng";
+  return "Xóa mềm";
+}
+
+function tenantStatusImpact(status: "active" | "suspended" | "deleted") {
+  if (status === "active") return "Sau khi mở lại: quán quay về active và bỏ khóa tạm dừng/xóa mềm.";
+  if (status === "suspended") return "Sau khi tạm dừng: quán bị chặn và gói đang chạy chuyển sang suspended.";
+  return "Sau khi xóa mềm: quán bị ẩn khỏi kênh bán hàng và có audit để khôi phục khi cần.";
+}
+
+function paymentRestaurantLabel(payment: PlatformSubscriptionPayment) {
+  return payment.restaurantSlug ? `${payment.restaurantName} (${payment.restaurantSlug})` : payment.restaurantName;
+}
+
+function tenantRestaurantLabel(tenant: PlatformTenantAction) {
+  return tenant.slug ? `${tenant.name} (${tenant.slug})` : tenant.name;
+}
+
+function paymentPlanLabel(payment: PlatformSubscriptionPayment) {
+  return payment.planCode ? `${payment.planName} (${payment.planCode})` : payment.planName;
+}
+
+function billingActionLabel(value: string | null) {
+  if (value === "renew") return "Gia hạn";
+  if (value === "upgrade") return "Nâng gói";
+  if (value === "downgrade") return "Hạ gói";
+  return "Thanh toán";
+}
+
+function formatDateRange(start: string | null, end: string | null) {
+  if (start && end) return `${formatShortDate(start)} -> ${formatShortDate(end)}`;
+  if (end) return `đến ${formatShortDate(end)}`;
+  if (start) return `từ ${formatShortDate(start)}`;
+  return "chưa có";
+}
+
+function countLabel(count: number, limit: number) {
+  return count >= limit ? `${limit}+` : String(count);
+}
+
+function formatAge(value: string) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return "unknown";
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60_000));
+  if (minutes < 1) return "vừa tạo";
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
+}
+
+function formatUnixDate(value?: number) {
+  if (!value) return "không có";
+  const iso = new Date(value * 1000).toISOString();
+  return `${formatShortDate(iso)} (${formatAge(iso)})`;
+}
+
+function shortAuditAction(action: string) {
+  return action.replace(/^platform\./, "").replace(/^telegram\./, "").replace(/\./g, " ");
+}
+
+function truncateVisible(value: string, maxLength: number) {
+  const text = redactVisibleSecret(value).replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function redactVisibleSecret(value: string) {
+  return value
+    .replace(/bot\d+:[A-Za-z0-9_-]+/g, "bot***")
+    .replace(/lg1_[A-Za-z0-9_.-]{16,}/g, "lg1_***")
+    .replace(/\/webhooks\/platform-telegram\/[^\s/]+/g, "/webhooks/platform-telegram/***");
 }
 
 async function configurePlatformCommands() {
@@ -656,7 +893,7 @@ async function configurePlatformCommands() {
     { command: "queues", description: "Kiểm tra việc lỗi" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
     { command: "incidents", description: "Xem sự cố vận hành" },
-    { command: "whoami", description: "Xem tài khoản và scope" },
+    { command: "whoami", description: "Xem tài khoản và quyền" },
     { command: "security", description: "Xem audit bảo mật" },
     { command: "disconnect", description: "Ngắt tài khoản DevOps" },
     { command: "help", description: "Hướng dẫn DevOps Bot" }
@@ -691,13 +928,15 @@ async function checkService(input: { name: string; url: string }) {
 }
 
 function isBootstrapAllowed(telegramUserId: number, token: string) {
+  if (readEnv("NODE_ENV").toLowerCase() === "production") return false;
+
   const allowedIds = readEnv("PLATFORM_TELEGRAM_ALLOWED_USER_IDS")
     .split(",")
     .map((value) => Number(value.trim()))
     .filter(Number.isFinite);
   if (allowedIds.includes(telegramUserId)) return true;
   const expected = readEnv("PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN");
-  return Boolean(expected && token && token === expected);
+  return Boolean(expected && token && secureEqual(token, expected));
 }
 
 function isLikelySignedConnectToken(token: string) {
@@ -721,8 +960,16 @@ async function sendPlatformMessage(chatId: string | number, text: string, option
 
 function verifyPlatformTelegramWebhookSecret(req: Request, res: Response, next: NextFunction) {
   const provided = req.header("x-telegram-bot-api-secret-token");
-  if (!webhookSecret || provided !== webhookSecret) return res.status(401).json({ ok: false, error: "invalid_platform_telegram_webhook_secret" });
+  if (!webhookSecret || !provided || !secureEqual(provided, webhookSecret)) {
+    return res.status(401).json({ ok: false, error: "invalid_platform_telegram_webhook_secret" });
+  }
   return next();
+}
+
+function secureEqual(left: string, right: string) {
+  const leftHash = createHash("sha256").update(left).digest();
+  const rightHash = createHash("sha256").update(right).digest();
+  return timingSafeEqual(leftHash, rightHash);
 }
 
 function scopeForAlert(event: PlatformAlertJob) {

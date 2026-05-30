@@ -6,6 +6,15 @@ export type FormattedTelegramCard = {
   viewPath?: string;
 };
 
+type OrderItemSnapshot = {
+  name: string;
+  quantity: number;
+  unitPrice?: number | null;
+  lineTotal?: number | null;
+  note?: string | null;
+  modifierSummary?: string | null;
+};
+
 export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTelegramCard {
   const test = isTestEvent(event);
 
@@ -17,25 +26,40 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     event.type === "order.delivery_status_changed"
   ) {
     const code = event.order.displayCode ?? shortId(event.order.id);
-    const location = event.order.tableName ? `📍 ${escapeHtml(event.order.tableName)}` : "";
-    const deliveryAddress =
-      event.order.fulfillmentType === "DELIVERY" && event.order.deliveryAddress ? `📍 ${escapeHtml(compactText(event.order.deliveryAddress, 120))}` : "";
+    const location = event.order.tableName ? `📍 Bàn: ${escapeHtml(singleLineText(event.order.tableName))}` : "";
+    const deliveryAddress = event.order.deliveryAddress ? `📍 Địa chỉ giao: ${escapeHtml(singleLineText(event.order.deliveryAddress))}` : "";
+    const deliveryDistance = distanceLine(event.order.deliveryDistanceKm);
     const customer = contactLine(event.order.customerName, event.order.customerPhone);
-    const channel = event.order.fulfillmentType ? `🚦 ${fulfillmentLabel(event.order.fulfillmentType)}` : "";
-    const payment = event.order.paymentStatus ? `💳 ${paymentStatusLabel(event.order.paymentStatus)}` : "";
-    const source = event.source ? `🔗 ${sourceLabel(event.source)}` : "";
+    const customerNote = noteLine("Ghi chú khách", event.order.customerNote);
+    const channel = event.order.fulfillmentType ? `🚦 Kênh: ${fulfillmentLabel(event.order.fulfillmentType)}` : "";
+    const status = event.order.status ? `📦 Đơn: ${orderStatusLabel(event.order.status)}` : "";
+    const payment = event.order.paymentStatus ? `💳 Thanh toán: ${paymentStatusLabel(event.order.paymentStatus)}` : "";
+    const deliveryStatus = event.order.deliveryStatus && event.order.deliveryStatus !== "none" ? `🛵 Giao hàng: ${deliveryStatusLabel(event.order.deliveryStatus)}` : "";
+    const createdAt = event.order.createdAt ? `🕒 Tạo lúc: ${formatVietnamDateTime(event.order.createdAt)}` : "";
+    const source = event.source ? `🔗 Nguồn: ${sourceLabel(event.source)}` : "";
     const headline = orderHeadline(event);
     return {
       title: testTitle(test, headline.title(code)),
       body: compactCard([
         `${testPrefix(test)}${headline.icon} <b>${escapeHtml(headline.title(code))}</b>`,
         orderItemsBlock(event.order.items, event.order.itemCount),
-        `💰 ${money(event.order.total)}`,
+        moneyBreakdownBlock({
+          subtotal: event.order.subtotal,
+          discountAmount: event.order.discountAmount,
+          deliveryFee: event.order.deliveryFee,
+          serviceFee: event.order.serviceFee,
+          total: event.order.total
+        }),
         channel,
         location,
         deliveryAddress,
+        deliveryDistance,
         customer,
+        customerNote,
+        status,
         payment,
+        deliveryStatus,
+        createdAt,
         source
       ]),
       viewPath: viewPath(test, `/dashboard/orders?orderId=${event.order.id}`)
@@ -46,19 +70,34 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     const code = event.payment.orderDisplayCode ?? shortId(event.payment.orderId);
     const customer = contactLine(event.payment.customerName, event.payment.customerPhone);
     const title = event.type === "payment.received" ? `Đã xác nhận thanh toán #${code}` : `VietQR cần xác nhận #${code}`;
-    const channel = event.payment.fulfillmentType ? `🚦 ${fulfillmentLabel(event.payment.fulfillmentType)}` : "";
-    const location = event.payment.tableName ? `📍 ${escapeHtml(event.payment.tableName)}` : "";
-    const deliveryAddress = event.payment.fulfillmentType === "DELIVERY" && event.payment.deliveryAddress ? `📍 ${escapeHtml(compactText(event.payment.deliveryAddress, 120))}` : "";
+    const channel = event.payment.fulfillmentType ? `🚦 Kênh: ${fulfillmentLabel(event.payment.fulfillmentType)}` : "";
+    const location = event.payment.tableName ? `📍 Bàn: ${escapeHtml(singleLineText(event.payment.tableName))}` : "";
+    const deliveryAddress = event.payment.deliveryAddress ? `📍 Địa chỉ giao: ${escapeHtml(singleLineText(event.payment.deliveryAddress))}` : "";
+    const deliveryDistance = distanceLine(event.payment.deliveryDistanceKm);
+    const customerNote = noteLine("Ghi chú khách", event.payment.customerNote);
+    const status = event.payment.status ? `💳 Trạng thái thanh toán: ${paymentTransactionStatusLabel(event.payment.status)}` : "";
+    const source = event.source ? `🔗 Nguồn: ${sourceLabel(event.source)}` : "";
     return {
       title: testTitle(test, title),
       body: compactCard([
         `${testPrefix(test)}💳 <b>${escapeHtml(title)}</b>`,
-        `💰 ${money(event.payment.amount)} · ${paymentMethodLabel(event.payment.method)}`,
+        `💳 Phương thức: ${paymentMethodLabel(event.payment.method)}`,
+        moneyBreakdownBlock({
+          subtotal: event.payment.orderSubtotal,
+          discountAmount: event.payment.orderDiscountAmount,
+          deliveryFee: event.payment.orderDeliveryFee,
+          serviceFee: event.payment.orderServiceFee,
+          total: event.payment.amount
+        }),
+        orderItemsBlock(event.payment.orderItems, event.payment.orderItems?.reduce((sum, item) => sum + item.quantity, 0) ?? 0),
         customer,
+        customerNote,
         channel,
         location,
         deliveryAddress,
-        orderItemsBlock(event.payment.orderItems, event.payment.orderItems?.reduce((sum, item) => sum + item.quantity, 0) ?? 0)
+        deliveryDistance,
+        status,
+        source
       ]),
       viewPath: viewPath(test, `/dashboard/orders?orderId=${event.payment.orderId}`)
     };
@@ -257,6 +296,32 @@ function paymentStatusLabel(value: string) {
   return labels[value] ?? value;
 }
 
+function paymentTransactionStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    pending: "Chờ xử lý",
+    waiting_confirm: "Chờ xác nhận tiền",
+    confirmed: "Đã xác nhận",
+    failed: "Thất bại",
+    cancelled: "Đã huỷ",
+    refunded: "Đã hoàn tiền"
+  };
+  return labels[value] ?? paymentStatusLabel(value);
+}
+
+function orderStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    pending: "Mới tạo",
+    waiting_payment: "Chờ thanh toán",
+    waiting_confirm: "Chờ xác nhận tiền",
+    confirmed: "Đã nhận",
+    preparing: "Đang chuẩn bị",
+    completed: "Đã xong",
+    served: "Đã phục vụ",
+    cancelled: "Đã huỷ"
+  };
+  return labels[value] ?? value;
+}
+
 function depositStatusLabel(value?: string | null) {
   if (value === "waiting_payment") return "chờ khách chuyển";
   if (value === "waiting_confirm") return "chờ xác nhận";
@@ -266,26 +331,79 @@ function depositStatusLabel(value?: string | null) {
   return "cần theo dõi";
 }
 
-function orderItemsBlock(
-  items: Array<{ name: string; quantity: number; note?: string | null; modifierSummary?: string | null }> | undefined,
-  itemCount: number
-) {
+function orderItemsBlock(items: OrderItemSnapshot[] | undefined, itemCount: number) {
   const totalQuantity = Number(itemCount) || items?.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) || 0;
-  if (!items?.length) return totalQuantity > 0 ? `🍜 ${totalQuantity} món` : "";
-  const maxLines = 7;
-  const lines = items.slice(0, maxLines).map((item) => {
-    const quantity = Number(item.quantity) || 0;
-    const modifier = item.modifierSummary ? ` (${compactText(item.modifierSummary, 64)})` : "";
-    const note = item.note ? ` · ghi chú: ${compactText(item.note, 72)}` : "";
-    return `• ${quantity}x ${escapeHtml(compactText(item.name, 80))}${escapeHtml(modifier)}${escapeHtml(note)}`;
-  });
-  if (items.length > maxLines) lines.push(`• +${items.length - maxLines} dòng món khác`);
-  return [`🍜 ${totalQuantity} món`, ...lines].join("\n");
+  if (!items?.length) return totalQuantity > 0 ? `🍜 Món: ${formatQuantity(totalQuantity)}` : "";
+  return [`🍜 Món (${formatQuantity(totalQuantity)})`, ...items.map(formatOrderItemLine)].join("\n");
+}
+
+function formatOrderItemLine(item: OrderItemSnapshot) {
+  const quantity = Number(item.quantity) || 0;
+  const price = itemPriceText(item);
+  const lines = [`• ${formatQuantity(quantity)}x ${escapeHtml(singleLineText(item.name))}${price ? ` · ${price}` : ""}`];
+  if (item.modifierSummary) lines.push(`  Tuỳ chọn: ${escapeHtml(singleLineText(item.modifierSummary))}`);
+  if (item.note) lines.push(`  Ghi chú món: ${escapeHtml(singleLineText(item.note))}`);
+  return lines.join("\n");
+}
+
+function itemPriceText(item: OrderItemSnapshot) {
+  const unitPrice = finiteMoney(item.unitPrice);
+  const lineTotal = finiteMoney(item.lineTotal);
+  if (unitPrice !== null && lineTotal !== null) return `${money(unitPrice)}/món = ${money(lineTotal)}`;
+  if (lineTotal !== null) return money(lineTotal);
+  if (unitPrice !== null) return `${money(unitPrice)}/món`;
+  return "";
+}
+
+function moneyBreakdownBlock(input: {
+  subtotal?: number | null;
+  discountAmount?: number | null;
+  deliveryFee?: number | null;
+  serviceFee?: number | null;
+  total: number;
+}) {
+  return [
+    "💰 Tiền",
+    moneyBreakdownLine("Tạm tính", input.subtotal),
+    moneyBreakdownLine("Giảm giá", input.discountAmount),
+    moneyBreakdownLine("Phí giao", input.deliveryFee),
+    moneyBreakdownLine("Phí dịch vụ", input.serviceFee),
+    `  Tổng cộng: ${money(input.total)}`
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function moneyBreakdownLine(label: string, amount?: number | null) {
+  const value = finiteMoney(amount);
+  return value === null ? "" : `  ${label}: ${money(value)}`;
+}
+
+function finiteMoney(value?: number | null) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
 }
 
 function contactLine(name?: string | null, phone?: string | null) {
-  const parts = [name, phone].filter((value): value is string => Boolean(value && value.trim())).map((value) => escapeHtml(compactText(value, 80)));
-  return parts.length ? `👤 ${parts.join(" · ")}` : "";
+  const parts = [name, phone].filter((value): value is string => Boolean(value && value.trim())).map((value) => escapeHtml(singleLineText(value)));
+  return parts.length ? `👤 Khách: ${parts.join(" · ")}` : "";
+}
+
+function noteLine(label: string, value?: string | null) {
+  return value?.trim() ? `📝 ${label}: ${escapeHtml(singleLineText(value))}` : "";
+}
+
+function distanceLine(value?: number | null) {
+  const distance = Number(value);
+  return Number.isFinite(distance) && distance > 0 ? `🛵 Khoảng cách: ${formatDistance(distance)}` : "";
+}
+
+function formatDistance(value: number) {
+  return `${value.toLocaleString("vi-VN", { maximumFractionDigits: 1 })} km`;
+}
+
+function formatQuantity(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toLocaleString("vi-VN", { maximumFractionDigits: 2 });
 }
 
 function reservationPreferenceLine(zone?: string | null, kind?: string | null) {
@@ -328,6 +446,10 @@ function compactText(value: string, maxLength: number) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength - 1).trim()}…`;
+}
+
+function singleLineText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function deliveryStatusLabel(value: string) {

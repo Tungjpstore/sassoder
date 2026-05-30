@@ -32,16 +32,26 @@ export function buildTelegramOrderSnapshot(order: OrderDto): TelegramOrderSnapsh
     id: order.id,
     displayCode: displayCode(order.id),
     itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
+    lineCount: order.items.length,
+    subtotal: order.subtotal,
+    discountAmount: order.discountAmount,
+    deliveryFee: order.deliveryFee ?? 0,
+    serviceFee: order.serviceFee ?? 0,
     total: order.total,
     items,
     tableName: order.table?.name ?? null,
     fulfillmentType: order.fulfillmentType,
     customerName: order.customerName ?? null,
     customerPhone: order.customerPhone ?? null,
+    customerNote: order.customerNote ?? null,
     status: order.status,
     paymentStatus: order.paymentStatus,
     deliveryStatus: order.deliveryStatus ?? null,
     deliveryAddress: order.deliveryAddress ?? null,
+    deliveryDistanceKm: order.deliveryDistanceKm ?? null,
+    createdAt: order.createdAt,
+    acceptedAt: order.acceptedAt ?? null,
+    servedAt: order.servedAt ?? null,
     serviceDueAt: order.serviceDueAt ?? null
   };
 }
@@ -91,11 +101,17 @@ export function buildPaymentSnapshot(input: {
   orderDisplayCode?: string | null;
   amount: number;
   method: PaymentMethod;
+  orderSubtotal?: number | null;
+  orderDiscountAmount?: number | null;
+  orderDeliveryFee?: number | null;
+  orderServiceFee?: number | null;
   customerName?: string | null;
   customerPhone?: string | null;
+  customerNote?: string | null;
   fulfillmentType?: OrderDto["fulfillmentType"] | null;
   tableName?: string | null;
   deliveryAddress?: string | null;
+  deliveryDistanceKm?: number | null;
   orderItems?: TelegramOrderSnapshot["items"];
   status?: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
 }): TelegramPaymentSnapshot {
@@ -105,11 +121,17 @@ export function buildPaymentSnapshot(input: {
     orderDisplayCode: input.orderDisplayCode ?? displayCode(input.orderId),
     amount: input.amount,
     method: input.method,
+    orderSubtotal: input.orderSubtotal ?? null,
+    orderDiscountAmount: input.orderDiscountAmount ?? null,
+    orderDeliveryFee: input.orderDeliveryFee ?? null,
+    orderServiceFee: input.orderServiceFee ?? null,
     customerName: input.customerName ?? null,
     customerPhone: input.customerPhone ?? null,
+    customerNote: input.customerNote ?? null,
     fulfillmentType: input.fulfillmentType ?? null,
     tableName: input.tableName ?? null,
     deliveryAddress: input.deliveryAddress ?? null,
+    deliveryDistanceKm: input.deliveryDistanceKm ?? null,
     orderItems: input.orderItems ?? [],
     status: input.status
   };

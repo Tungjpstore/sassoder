@@ -274,6 +274,61 @@ function compactOperationResponse(value: unknown) {
   return text.length > 1200 ? `${text.slice(0, 1200)}...` : text;
 }
 
+async function callInternalPlatformPath(pathOrUrl: string) {
+  const origin = await currentRequestOrigin();
+  const url = /^https?:\/\//i.test(pathOrUrl) ? new URL(pathOrUrl) : new URL(pathOrUrl, origin);
+  const headers: HeadersInit = { accept: "application/json,text/html;q=0.9,*/*;q=0.8" };
+  if (process.env.CRON_SECRET) headers.authorization = `Bearer ${process.env.CRON_SECRET}`;
+
+  const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
+  const bodyText = await response.text();
+  return {
+    ok: response.ok,
+    status: response.status,
+    path: `${url.pathname}${url.search}`,
+    response: compactOperationResponse(bodyText)
+  };
+}
+
+function replayPathForTarget(targetType: string, targetId?: string | null) {
+  const target = `${targetType} ${targetId ?? ""}`.toLowerCase();
+  if (target.includes("billing") || target.includes("payment") || target.includes("vietqr") || target.includes("subscription")) {
+    return cronJobPaths.subscriptions;
+  }
+  if (target.includes("report")) return cronJobPaths.reports;
+  if (target.includes("reservation")) return cronJobPaths["reservations-expire"];
+  return cronJobPaths["ai-ops"];
+}
+
+function smokePathForTarget(targetId?: string | null) {
+  const target = targetId?.trim();
+  if (!target) return "/";
+  if (target.startsWith("/")) return target;
+  if (/^https?:\/\//i.test(target)) return target;
+  return "/";
+}
+
+async function executePlatformOperation(parsed: z.infer<typeof platformOperationSchema>) {
+  if (parsed.operation === "clear_cache") {
+    revalidateAdmin();
+    return { mode: "cache_invalidated", executed: true };
+  }
+
+  if (parsed.operation === "create_ai_summary") {
+    return { mode: "internal_endpoint", executed: true, ...(await callInternalPlatformPath(cronJobPaths["ai-ops"])) };
+  }
+
+  if (parsed.operation === "replay_queue") {
+    return { mode: "internal_endpoint", executed: true, ...(await callInternalPlatformPath(replayPathForTarget(parsed.targetType, parsed.targetId))) };
+  }
+
+  if (parsed.operation === "run_smoke_check") {
+    return { mode: "smoke_check", executed: true, ...(await callInternalPlatformPath(smokePathForTarget(parsed.targetId))) };
+  }
+
+  return { mode: "audit_request", executed: false };
+}
+
 export async function platformAdminLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
   const parsed = loginSchema.safeParse({
     email: formData.get("email"),
@@ -404,13 +459,46 @@ export async function requestPlatformOperationAction(formData: FormData) {
 
   await writePlatformAuditLog({
     actor: session.actor,
-    action: `platform_operation_${parsed.operation}`,
+    action: `platform_operation_${parsed.operation}_requested`,
     targetType: parsed.targetType,
     targetId: parsed.targetId,
     metadata: { reason: parsed.reason ?? null, source: "admin.logivn.com" },
     required: true
   });
+
+  let execution: Awaited<ReturnType<typeof executePlatformOperation>>;
+  try {
+    execution = await executePlatformOperation(parsed);
+  } catch (error) {
+    await writePlatformAuditLog({
+      actor: session.actor,
+      action: `platform_operation_${parsed.operation}_failed`,
+      targetType: parsed.targetType,
+      targetId: parsed.targetId,
+      metadata: {
+        reason: parsed.reason ?? null,
+        source: "admin.logivn.com",
+        error: error instanceof Error ? error.message : String(error)
+      },
+      required: true
+    });
+    revalidateAdmin();
+    throw error;
+  }
+
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: `platform_operation_${parsed.operation}_${execution.executed ? "completed" : "queued"}`,
+    targetType: parsed.targetType,
+    targetId: parsed.targetId,
+    metadata: { reason: parsed.reason ?? null, source: "admin.logivn.com", execution },
+    required: true
+  });
   revalidateAdmin();
+
+  if ("ok" in execution && !execution.ok) {
+    throw new Error(`Thao tác ${parsed.operation} không hoàn tất: HTTP ${execution.status}`);
+  }
 }
 
 export async function createPlatformTelegramConnectTokenAction(

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   Banknote,
-  CalendarCheck,
+
   CalendarClock,
   Check,
   Clock3,
@@ -199,14 +199,7 @@ function formatClock(value: string) {
   }).format(new Date(value));
 }
 
-function formatSyncedClock(value: Date | null) {
-  if (!value) return "Đang đồng bộ";
-  return new Intl.DateTimeFormat("vi-VN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit"
-  }).format(value);
-}
+
 
 function formatNumber(value: number, maximumFractionDigits = 1) {
   return value.toLocaleString("vi-VN", { maximumFractionDigits });
@@ -664,156 +657,7 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
   );
 }
 
-function ReservationIntakeCommandCenter({
-  stats,
-  operationalQueues,
-  settings,
-  clockTick,
-  primaryReservation,
-  onFilter,
-  onOpenReservation,
-  onOpenSettings,
-  onOpenShare
-}: {
-  stats: {
-    total: number;
-    holding: number;
-    waitingDeposit: number;
-    confirmed: number;
-    checkedIn: number;
-    seated: number;
-  };
-  operationalQueues: Array<{
-    key: string;
-    title: string;
-    helper: string;
-    tone: "green" | "yellow" | "blue" | "red";
-    reservations: ReservationDto[];
-  }>;
-  settings: ReservationSettings;
-  clockTick: number;
-  primaryReservation: ReservationDto | null;
-  onFilter: (filter: FilterKey) => void;
-  onOpenReservation: (reservation: ReservationDto) => void;
-  onOpenSettings: () => void;
-  onOpenShare: () => void;
-}) {
-  const pressureCount = operationalQueues.reduce((sum, queue) => sum + queue.reservations.length, 0);
-  const noShowCount = operationalQueues.find((queue) => queue.key === "no-show")?.reservations.length ?? 0;
-  const depositCount = operationalQueues.find((queue) => queue.key === "deposit")?.reservations.length ?? 0;
-  const holdCount = operationalQueues.find((queue) => queue.key === "hold")?.reservations.length ?? 0;
-  const arrivalCount = operationalQueues.find((queue) => queue.key === "arrival")?.reservations.length ?? 0;
-  const intakeScore = Math.max(0, 100 - noShowCount * 18 - depositCount * 12 - holdCount * 10 - arrivalCount * 5 - (settings.reservations_enabled ? 0 : 20));
-  const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
-  const checks = [
-    {
-      id: "enabled",
-      label: "Kênh đặt bàn đang bật",
-      value: settings.reservations_enabled ? "Bật" : "Tắt",
-      done: settings.reservations_enabled,
-      action: onOpenSettings
-    },
-    {
-      id: "deposit",
-      label: "Cọc chờ xác nhận",
-      value: depositCount.toLocaleString("vi-VN"),
-      done: depositCount === 0,
-      action: () => onFilter("waiting_deposit_confirm")
-    },
-    {
-      id: "hold",
-      label: "Hold sắp hết hạn",
-      value: holdCount.toLocaleString("vi-VN"),
-      done: holdCount === 0,
-      action: () => onFilter("holding")
-    },
-    {
-      id: "arrivals",
-      label: "Khách sắp đến đã chuẩn bị",
-      value: arrivalCount.toLocaleString("vi-VN"),
-      done: arrivalCount === 0,
-      action: () => onFilter("confirmed")
-    }
-  ];
 
-  return (
-    <section className="dashboard-panel dashboard-command-center p-3">
-      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow">Reservation intake</p>
-              <h2 className="dashboard-section-title mt-1">Đón khách đặt bàn</h2>
-            </div>
-            <Badge tone={intakeTone}>Ready {intakeScore}/100</Badge>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Lịch trong ngày</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stats.total}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Việc nóng</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{pressureCount}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đã tới/quầy</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{stats.checkedIn + stats.seated}</p>
-            </div>
-            <button type="button" onClick={onOpenShare} className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Link đặt bàn</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--primary)]">Mở QR/link chia sẻ</p>
-            </button>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist trước giờ khách tới</p>
-              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {checks.map((item) => (
-                <button key={item.id} type="button" onClick={item.action} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
-                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
-                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Lịch cần xử lý trước</p>
-              <Badge tone={primaryReservation ? statusTone(primaryReservation.status) : "green"}>{primaryReservation ? "Có lịch" : "Sạch"}</Badge>
-            </div>
-            {primaryReservation ? (
-              <button type="button" onClick={() => onOpenReservation(primaryReservation)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{primaryReservation.customerName}</span>
-                    <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">
-                      {reservationTimeRange(primaryReservation)} · {minuteDistanceLabel(primaryReservation.startsAt, clockTick)}
-                    </span>
-                  </span>
-                  <Badge tone={statusTone(primaryReservation.status)}>{reservationStatusLabel(primaryReservation.status)}</Badge>
-                </div>
-                <p className="mt-2 truncate text-xs font-semibold text-[var(--muted-foreground)]">
-                  {primaryReservation.partySize} khách · {reservationTableLabel(primaryReservation)}
-                </p>
-              </button>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                Không có lịch cần kéo lên đầu ca.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 export function ReservationsWorkspace({
   restaurantId,
@@ -865,7 +709,7 @@ export function ReservationsWorkspace({
   const [copiedTableQrId, setCopiedTableQrId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [realtimeState, setRealtimeState] = useState<RealtimeState>("connecting");
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
+
   const [clockTick, setClockTick] = useState(() => Date.now());
   const refreshTimerRef = useRef<number | null>(null);
   const selected = reservations.find((reservation) => reservation.id === selectedId) ?? null;
@@ -997,6 +841,12 @@ export function ReservationsWorkspace({
         : "green";
   const pressureLabel = pressureCount > 0 ? `${pressureCount} việc cần xử lý` : "Ca đặt bàn ổn định";
   const primaryQueueReservation = operationalQueues.find((queue) => queue.reservations.length > 0)?.reservations[0] ?? null;
+  const noShowCount = operationalQueues.find((queue) => queue.key === "no-show")?.reservations.length ?? 0;
+  const depositCount = operationalQueues.find((queue) => queue.key === "deposit")?.reservations.length ?? 0;
+  const holdCount = operationalQueues.find((queue) => queue.key === "hold")?.reservations.length ?? 0;
+  const arrivalCount = operationalQueues.find((queue) => queue.key === "arrival")?.reservations.length ?? 0;
+  const intakeScore = Math.max(0, 100 - noShowCount * 18 - depositCount * 12 - holdCount * 10 - arrivalCount * 5 - (settings.reservations_enabled ? 0 : 20));
+  const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
 
   const timelineGroups = useMemo(() => {
     const groups = new Map<string, ReservationDto[]>();
@@ -1092,7 +942,7 @@ export function ReservationsWorkspace({
       const nextReservations = json.data as ReservationDto[];
       setReservations(nextReservations);
       setSelectedId((current) => (current && nextReservations.some((item) => item.id === current) ? current : nextReservations[0]?.id ?? null));
-      setLastSyncedAt(new Date());
+
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Không tải được lịch đặt bàn.");
     } finally {
@@ -1340,7 +1190,7 @@ export function ReservationsWorkspace({
       const updated = json.data as ReservationDto;
       setReservations((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setSelectedId(updated.id);
-      setLastSyncedAt(new Date());
+
       primeReservationControls(updated);
       void loadAnalytics(true);
       return updated;
@@ -1651,10 +1501,10 @@ export function ReservationsWorkspace({
       <div className="dashboard-operations-stack grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="grid min-w-0 gap-4">
           <section className="admin-hero-panel dashboard-mobile-reservation-hero rounded-[14px] p-4">
-            <div className="dashboard-mobile-reservation-intro relative z-[1] grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-center">
+            <div className="dashboard-mobile-reservation-intro relative z-[1] flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={settings.reservations_enabled ? "green" : "yellow"}>{settings.reservations_enabled ? "Đang nhận đặt bàn" : "Đang tắt đặt bàn"}</Badge>
+                <h1 className="dashboard-page-title">Đặt bàn trước</h1>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>
                     <span className="inline-flex items-center gap-1.5">
                       <RadioTower size={13} />
@@ -1662,89 +1512,29 @@ export function ReservationsWorkspace({
                     </span>
                   </Badge>
                   <Badge tone={pressureTone}>{pressureLabel}</Badge>
-                  <Badge tone={settings.reservation_deposit_enabled ? "blue" : "neutral"}>
-                    {settings.reservation_deposit_enabled ? "Cọc VietQR đang bật" : "Không bắt buộc cọc"}
-                  </Badge>
-                </div>
-                <h1 className="dashboard-page-title mt-3">Đặt bàn trước</h1>
-                <p className="dashboard-body-copy mt-2 max-w-3xl">
-                  Điều phối lịch giữ bàn, cọc VietQR, khách sắp đến và QR gọi món trong một màn đủ nhanh cho ca cao điểm.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/85 p-3 shadow-sm">
-                <div className="flex items-center justify-between gap-3 text-sm font-semibold text-[var(--muted-foreground)]">
-                  <span>Cập nhật</span>
-                  <strong className="text-[var(--foreground)]">{formatSyncedClock(lastSyncedAt)}</strong>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (primaryQueueReservation) {
-                        openReservationDetail(primaryQueueReservation);
-                        return;
-                      }
-                      setFilter("today");
-                    }}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary-strong)] px-3 text-sm font-semibold text-[var(--background)]"
-                  >
-                    <Flame size={15} />
-                    Ưu tiên
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void Promise.all([loadReservations(date), loadAnalytics()])}
-                    disabled={loading}
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] disabled:opacity-60"
-                  >
-                    <RefreshCw size={15} className={loading ? "animate-spin" : undefined} />
-                    Làm mới
-                  </button>
-                  <Button type="button" variant="secondary" onClick={() => setDrawer("settings")} className="col-span-1">
-                    <Settings2 size={16} />
-                    Cấu hình
-                  </Button>
-                  <Button type="button" onClick={() => setDrawer("share")} className="col-span-1">
-                    <QrCode size={16} />
-                    Link đặt bàn
-                  </Button>
                 </div>
               </div>
-            </div>
-
-            <div className="dashboard-mobile-reservation-stats mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-              {[
-                { label: "Tổng lịch", value: stats.total, icon: CalendarCheck },
-                { label: "Đang giữ", value: stats.holding, icon: Clock3 },
-                { label: "Chờ cọc", value: stats.waitingDeposit, icon: Banknote },
-                { label: "Đã xác nhận", value: stats.confirmed, icon: Check },
-                { label: "Đã check-in", value: stats.checkedIn, icon: UserRoundCheck },
-                { label: "Đã đến", value: stats.seated, icon: Sofa }
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <article key={item.label} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-                    <span className="dashboard-stat-icon"><Icon size={17} /></span>
-                    <p className="mt-3 text-xs font-semibold uppercase text-[var(--muted-foreground)]">{item.label}</p>
-                    <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{item.value}</p>
-                  </article>
-                );
-              })}
-            </div>
-
-            <div className="dashboard-mobile-hide mt-4">
-              <ReservationIntakeCommandCenter
-                stats={stats}
-                operationalQueues={operationalQueues}
-                settings={settings}
-                clockTick={clockTick}
-                primaryReservation={primaryQueueReservation}
-                onFilter={setFilter}
-                onOpenReservation={openReservationDetail}
-                onOpenSettings={() => setDrawer("settings")}
-                onOpenShare={() => setDrawer("share")}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="date"
+                  value={date}
+                  onChange={(event) => {
+                    setDate(event.target.value);
+                    void loadReservations(event.target.value);
+                  }}
+                  aria-label="Chọn ngày đặt bàn"
+                  className="h-9 w-auto"
+                />
+                <button
+                  type="button"
+                  onClick={() => void Promise.all([loadReservations(date), loadAnalytics()])}
+                  disabled={loading}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 text-sm font-semibold text-[var(--primary)] disabled:opacity-60"
+                >
+                  {loading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                  Làm mới
+                </button>
+              </div>
             </div>
 
             <div className="dashboard-mobile-hide mt-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
@@ -1938,6 +1728,19 @@ export function ReservationsWorkspace({
           </section>
 
           <section className="dashboard-data-surface dashboard-panel p-4">
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+              <Badge tone={intakeTone}>Đặt bàn {intakeScore}/100</Badge>
+              <span className="text-xs font-semibold text-[var(--muted-foreground)]">Hôm nay {stats.total}</span>
+              <span className="mx-0.5 text-[var(--border)]">·</span>
+              <span className={`text-xs font-semibold ${stats.waitingDeposit > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>Cọc chờ {stats.waitingDeposit}</span>
+              <span className="mx-0.5 text-[var(--border)]">·</span>
+              <span className="text-xs font-semibold text-[var(--muted-foreground)]">{stats.confirmed} xác nhận</span>
+              <span className="mx-0.5 text-[var(--border)]">·</span>
+              <span className="text-xs font-semibold text-[var(--muted-foreground)]">{stats.checkedIn + stats.seated} đã tới</span>
+              <span className="mx-0.5 text-[var(--border)]">·</span>
+              <span className={`text-xs font-semibold ${pressureCount > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>{pressureLabel}</span>
+            </div>
+
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold text-[var(--foreground)]">Lịch vận hành</h2>

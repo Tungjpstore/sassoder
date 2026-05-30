@@ -55,7 +55,7 @@ function createRawAttendanceQrToken() {
 }
 
 function dailyQrSecret() {
-  const secret = process.env.STAFF_ATTENDANCE_QR_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const secret = process.env.STAFF_ATTENDANCE_QR_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
   if (!secret && process.env.NODE_ENV === "production") {
     throw new AppError("Thiếu STAFF_ATTENDANCE_QR_SECRET để tạo QR chấm công hằng ngày.", 503);
   }
@@ -94,11 +94,15 @@ function normalizeBaseUrl(baseUrl: string) {
   return `${url.protocol}//${url.host}`;
 }
 
-function buildAttendanceUrl({ baseUrl, branchId, token }: { baseUrl: string; branchId: string; token: string }) {
-  const attendanceUrl = new URL("/dashboard/staff/mobile", normalizeBaseUrl(baseUrl));
-  attendanceUrl.searchParams.set("qr", token);
-  attendanceUrl.searchParams.set("branch", branchId);
-  return attendanceUrl.toString();
+function buildAttendanceUrl({ baseUrl, branchId, restaurantSlug, token }: { baseUrl: string; branchId: string; restaurantSlug: string; token: string }) {
+  const mobileNext = new URL("/dashboard/staff/mobile", normalizeBaseUrl(baseUrl));
+  mobileNext.searchParams.set("tab", "attendance");
+  mobileNext.searchParams.set("qr", token);
+  mobileNext.searchParams.set("branch", branchId);
+
+  const loginUrl = new URL(`/staff/${restaurantSlug}/login`, normalizeBaseUrl(baseUrl));
+  loginUrl.searchParams.set("next", `${mobileNext.pathname}${mobileNext.search}`);
+  return loginUrl.toString();
 }
 
 export async function createStaffAttendanceQrToken({
@@ -111,16 +115,26 @@ export async function createStaffAttendanceQrToken({
   baseUrl: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
-  const branchResult = await supabase
-    .from("store_branches")
-    .select("id,name,is_active")
-    .eq("restaurant_id", session.restaurantId)
-    .eq("id", input.branchId)
-    .maybeSingle();
+  const [branchResult, restaurantResult] = await Promise.all([
+    supabase
+      .from("store_branches")
+      .select("id,name,is_active")
+      .eq("restaurant_id", session.restaurantId)
+      .eq("id", input.branchId)
+      .maybeSingle(),
+    supabase
+      .from("restaurants")
+      .select("slug")
+      .eq("id", session.restaurantId)
+      .maybeSingle()
+  ]);
 
   if (branchResult.error) throw branchResult.error;
+  if (restaurantResult.error) throw restaurantResult.error;
   const branch = branchResult.data as { id: string; name: string; is_active: boolean } | null;
+  const restaurant = restaurantResult.data as { slug: string | null } | null;
   if (!branch || !branch.is_active) throw new AppError("Chi nhánh tạo QR không khả dụng.", 404);
+  if (!restaurant?.slug) throw new AppError("Chưa có mã quán để tạo link QR cho nhân viên.", 422);
 
   const mode = input.mode ?? "daily_branch";
   const now = new Date();
@@ -131,7 +145,7 @@ export async function createStaffAttendanceQrToken({
     ? createDailyRawAttendanceQrToken({ restaurantId: session.restaurantId, branchId: branch.id, qrDate })
     : createRawAttendanceQrToken();
   const tokenHash = hashAttendanceQrToken(token);
-  const attendanceUrl = buildAttendanceUrl({ baseUrl, branchId: branch.id, token });
+  const attendanceUrl = buildAttendanceUrl({ baseUrl, branchId: branch.id, restaurantSlug: restaurant.slug, token });
   const qrImageUrl = `/api/admin/staff-operations/attendance-qr-tokens/qr-image?size=360&data=${encodeURIComponent(attendanceUrl)}`;
 
   if (mode === "daily_branch") {

@@ -1,12 +1,14 @@
 import { z } from "zod";
 
+const isoDateTimeSchema = z.string().datetime({ offset: true });
+
 export const platformAlertJobSchema = z.object({
   type: z.literal("platform.alert"),
   eventId: z.string().min(8).max(180),
   tenantId: z.string().min(1).optional(),
   restaurantId: z.string().uuid().optional(),
   branchId: z.string().nullable().optional(),
-  occurredAt: z.string().datetime().optional(),
+  occurredAt: isoDateTimeSchema.optional(),
   source: z.enum(["system", "devops", "telegram", "dashboard"]).optional(),
   alert: z.object({
     severity: z.enum(["critical", "warning", "info"]),

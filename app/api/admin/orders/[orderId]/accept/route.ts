@@ -3,6 +3,7 @@ import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema, serviceTimerSchema } from "@/lib/validators";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, getOrderLifecycleSnapshot } from "@/services/order-service";
 
@@ -17,6 +18,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     });
     const { orderId } = adminOrderIdSchema.parse(await params);
     const body = serviceTimerSchema.partial().parse(await request.json().catch(() => ({})));
+    await assertStaffCanAccessOrder(session, orderId);
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
     const data = await acceptOrder(session.restaurantId, orderId, body.minutes ?? 15, session.userId);
     await writeAuditLog({

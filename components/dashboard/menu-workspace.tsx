@@ -789,53 +789,32 @@ export function MenuWorkspace({
 
   return (
     <div className="dashboard-menu-workspace grid gap-3">
-      <section className="admin-hero-panel dashboard-mobile-hide rounded-[14px] p-4">
-        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={realtimeTone(realtimeState)}>
-                <span className="inline-flex items-center gap-1.5">
-                  <RadioTower size={13} />
-                  {realtimeLabel(realtimeState)}
-                </span>
-              </Badge>
-              <Badge tone={menuReadiness >= 85 ? "green" : menuReadiness >= 65 ? "yellow" : "red"}>{menuReadiness}% sẵn sàng</Badge>
-              <Badge tone={pausedItems ? "yellow" : "green"}>{pausedItems ? `${pausedItems} món tạm hết` : "Không thiếu món"}</Badge>
-            </div>
-            <h2 className="dashboard-page-title mt-3">Menu vận hành & QR ordering</h2>
-            <p className="dashboard-body-copy mt-2 max-w-3xl">
-              Quản lý món, ảnh, giá và tình trạng bán theo nhịp vận hành thực tế. Menu sạch giúp khách gọi món nhanh hơn, bếp ít nhầm hơn và AI có dữ liệu tốt hơn để upsell.
-            </p>
-          </div>
-          <div className="dashboard-hero-action-panel grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
-            <div className="flex items-center justify-between gap-3">
-              <span>Cập nhật</span>
-              <strong className="text-[var(--foreground)]">{formatClock(lastSyncedAt)}</strong>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-[var(--surface-container-high)]">
-              <div className={cn("h-full rounded-full", menuReadiness >= 85 ? "bg-[var(--primary)]" : menuReadiness >= 65 ? "bg-[var(--accent)]" : "bg-[var(--tertiary)]")} style={{ width: `${menuReadiness}%` }} />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" onClick={refreshMenu} disabled={isRefreshing} className="h-10 flex-1 shadow-none hover:shadow-none">
-                <RefreshCw size={15} className={isRefreshing ? "animate-spin" : undefined} />
-                Làm mới
-              </Button>
-              <Button type="button" onClick={() => openPanel("createItem")} className="h-10 flex-1 shadow-none hover:shadow-none">
-                <Plus size={15} />
-                Thêm món
-              </Button>
-            </div>
-          </div>
+      {/* Compact Status Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={realtimeTone(realtimeState)}>
+            <span className="inline-flex items-center gap-1.5"><RadioTower size={13} />{realtimeLabel(realtimeState)}</span>
+          </Badge>
+          <Badge tone={menuReadiness >= 85 ? "green" : menuReadiness >= 65 ? "yellow" : "red"}>{menuReadiness}% sẵn sàng</Badge>
+          <span className="text-xs font-semibold text-[var(--muted-foreground)]">{items.length} món · {availableItems} đang bán</span>
+          <span className="mx-0.5 text-[var(--border)]">·</span>
+          <span className={`text-xs font-semibold ${pausedItems > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>{pausedItems} tạm hết</span>
+          <span className="mx-0.5 text-[var(--border)]">·</span>
+          <span className={`text-xs font-semibold ${missingImageItems > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>{missingImageItems} thiếu ảnh</span>
+          <span className="mx-0.5 text-[var(--border)]">·</span>
+          <span className="text-xs font-semibold text-[var(--muted-foreground)]">{modifierGroupCount} topping · {formatVnd(averagePrice)} TB</span>
         </div>
-      </section>
-
-      <section className="dashboard-menu-metric-grid grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <DashboardMetricCard icon={Utensils} label="Tổng món" value={items.length} meta={`${availableItems} đang bán, ${pausedItems} tạm hết`} tone={pausedItems ? "yellow" : "green"} />
-        <DashboardMetricCard icon={Flame} label="Bán chạy" value={topItemIds.length} meta={topItemNames[0] ?? "Chưa có dữ liệu bán"} tone={topItemIds.length ? "green" : "yellow"} />
-        <DashboardMetricCard icon={ImageIcon} label="Thiếu ảnh" value={missingImageItems} meta={missingImageItems ? "Nên bổ sung ảnh vuông cho menu mobile" : "Ảnh món đã đủ"} tone={missingImageItems ? "yellow" : "green"} />
-        <DashboardMetricCard icon={SlidersHorizontal} label="Topping" value={modifierGroupCount} meta={`${itemsWithModifiers} món có tùy chọn`} tone={modifierGroupCount ? "green" : "yellow"} />
-        <DashboardMetricCard icon={BarChart3} label="Giá TB" value={formatVnd(averagePrice)} meta={`${categories.length} danh mục đang quản lý`} tone="blue" />
-      </section>
+        <div className="flex gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={refreshMenu} disabled={isRefreshing} className="shadow-none">
+            <RefreshCw size={14} className={isRefreshing ? "animate-spin" : undefined} />
+            Làm mới
+          </Button>
+          <Button type="button" size="sm" onClick={() => openPanel("createItem")} className="shadow-none">
+            <Plus size={14} />
+            Thêm món
+          </Button>
+        </div>
+      </div>
 
       <section className="dashboard-panel dashboard-menu-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -950,28 +929,21 @@ export function MenuWorkspace({
               </div>
               <Badge tone={menuActionQueue.length ? "yellow" : "green"}>{menuActionQueue.length || "Ổn"}</Badge>
             </div>
-            <div className="grid gap-2">
-              {menuActionQueue.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                  Menu đã đủ trạng thái cơ bản. Có thể tập trung tối ưu giá, combo và upsell.
-                </div>
-              ) : (
-                menuActionQueue.map((item) => (
+            {menuActionQueue.length === 0 ? null : (
+              <div className="grid gap-2">
+                {menuActionQueue.slice(0, 4).map((item) => (
                   <button
                     key={item.key}
                     type="button"
                     onClick={() => openPanel("editItem", item.itemId)}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:border-[var(--primary)]"
+                    className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2 text-left transition hover:border-[var(--primary)]"
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-semibold text-[var(--foreground)]">{item.label}</span>
-                      <Badge tone={item.tone}>{item.tone === "yellow" ? "Tạm hết" : "Thiếu ảnh"}</Badge>
-                    </div>
-                    <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{item.meta}</p>
+                    <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
+                    <Badge tone={item.tone}>{item.tone === "yellow" ? "Tạm hết" : "Thiếu ảnh"}</Badge>
                   </button>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

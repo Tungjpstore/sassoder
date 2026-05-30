@@ -236,6 +236,37 @@ export async function recordStaffSessionHeartbeat({
   };
 }
 
+export async function assertActiveStaffDeviceSession({
+  session,
+  deviceFingerprint
+}: {
+  session: SessionProfile;
+  deviceFingerprint?: string | null;
+}) {
+  const fingerprint = deviceFingerprint?.trim();
+  if (!fingerprint) return;
+
+  const supabase = createAdminSupabaseClient() as any;
+  const result = await supabase
+    .from("staff_sessions")
+    .select("id,forced_logout_at")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("staff_user_id", session.userId)
+    .eq("device_fingerprint", fingerprint)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (result.error) {
+    if (isMissingSessionSchema(result.error)) return;
+    throw result.error;
+  }
+
+  if (result.data?.forced_logout_at) {
+    throw new AppError("Phiên thiết bị đã bị quản lý đăng xuất. Vui lòng đăng nhập lại.", 401);
+  }
+}
+
 export async function forceStaffSessionLogout({
   restaurantId,
   restaurantSlug,

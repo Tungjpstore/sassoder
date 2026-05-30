@@ -20,7 +20,7 @@ type RawServiceRequest = {
   created_at: string;
   acknowledged_at: string | null;
   resolved_at: string | null;
-  table: { name: string } | { name: string }[] | null;
+  table: { name: string; branch_id?: string | null } | { name: string; branch_id?: string | null }[] | null;
 };
 
 function firstOrNull<T>(value: T | T[] | null | undefined) {
@@ -32,6 +32,7 @@ function mapServiceRequest(row: RawServiceRequest): ServiceRequestDto {
   return {
     id: row.id,
     restaurantId: row.restaurant_id,
+    branchId: firstOrNull(row.table)?.branch_id ?? null,
     tableId: row.table_id,
     tableName: firstOrNull(row.table)?.name ?? null,
     customerSessionId: row.customer_session_id,
@@ -45,7 +46,7 @@ function mapServiceRequest(row: RawServiceRequest): ServiceRequestDto {
 }
 
 const serviceRequestSelect =
-  "id,restaurant_id,table_id,customer_session_id,type,status,message,created_at,acknowledged_at,resolved_at,table:tables(name)";
+  "id,restaurant_id,table_id,customer_session_id,type,status,message,created_at,acknowledged_at,resolved_at,table:tables(name,branch_id)";
 
 export async function createCustomerServiceRequest(input: {
   restaurantSlug: string;
@@ -107,7 +108,7 @@ export async function createCustomerServiceRequest(input: {
     type: "service_request.created",
     eventId: `service_request.created:${request.id}`,
     restaurantId: restaurant.id,
-    branchId: null,
+    branchId: request.branchId ?? null,
     source: "customer_qr",
     actor: { type: "customer" },
     serviceRequest: buildTelegramServiceRequestSnapshot(request)
@@ -148,7 +149,7 @@ export async function resolveServiceRequest(restaurantId: string, requestId: str
     type: "service_request.resolved",
     eventId: `service_request.resolved:${requestId}`,
     restaurantId,
-    branchId: null,
+    branchId: request.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     serviceRequest: buildTelegramServiceRequestSnapshot(request)

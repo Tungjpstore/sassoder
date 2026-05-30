@@ -8,7 +8,6 @@ import {
   ChefHat,
   Clock3,
   Flame,
-  Gauge,
   PackageCheck,
   RadioTower,
   RefreshCw,
@@ -148,41 +147,7 @@ function playKitchenNotice() {
   }
 }
 
-function KitchenOpsMetric({
-  icon: Icon,
-  label,
-  value,
-  meta,
-  tone
-}: {
-  icon: ElementType;
-  label: string;
-  value: string | number;
-  meta: string;
-  tone: "green" | "yellow" | "red" | "blue";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-[var(--accent)]/30 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-      : tone === "yellow"
-        ? "border-[var(--accent)]/20 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-        : tone === "blue"
-          ? "border-[var(--primary)]/15 bg-[var(--primary-soft)] text-[var(--primary-strong)]"
-          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary-strong)]";
 
-  return (
-    <article className={`rounded-xl border p-3 ${toneClass}`}>
-      <div className="flex items-start justify-between gap-3">
-        <span className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--surface)]/75">
-          <Icon size={17} />
-        </span>
-        <Badge tone={tone === "red" ? "red" : tone === "yellow" ? "yellow" : tone === "blue" ? "blue" : "green"}>{label}</Badge>
-      </div>
-      <p className="metric-number mt-3 text-2xl font-semibold">{value}</p>
-      <p className="mt-0.5 truncate text-xs font-medium opacity-80">{meta}</p>
-    </article>
-  );
-}
 
 function KanbanColumn({
   title,
@@ -231,168 +196,7 @@ function EmptyKitchenColumn({ icon: Icon, title, detail }: { icon: ElementType; 
   );
 }
 
-function KitchenShiftCommandCenter({
-  orders,
-  pendingOrders,
-  cookingOrders,
-  overdueOrders,
-  dueSoonCount,
-  priorityOrders,
-  totalItems,
-  totalNotes,
-  oldestAge,
-  nowMs,
-  mutatingOrderId,
-  onMutate
-}: {
-  orders: OrderDto[];
-  pendingOrders: OrderDto[];
-  cookingOrders: OrderDto[];
-  overdueOrders: OrderDto[];
-  dueSoonCount: number;
-  priorityOrders: OrderDto[];
-  totalItems: number;
-  totalNotes: number;
-  oldestAge: number;
-  nowMs: number;
-  mutatingOrderId: string | null;
-  onMutate: (orderId: string, action: KitchenAction, body?: unknown) => void;
-}) {
-  const nextOrder = overdueOrders[0] ?? pendingOrders[0] ?? priorityOrders[0] ?? null;
-  const pressureScore = orders.length ? Math.min(100, pendingOrders.length * 18 + overdueOrders.length * 26 + dueSoonCount * 12 + totalItems) : 0;
-  const readyScore = Math.max(0, 100 - pendingOrders.length * 12 - overdueOrders.length * 18 - dueSoonCount * 9 - Math.max(0, oldestAge - 20));
-  const readyTone = readyScore >= 82 ? "green" : readyScore >= 62 ? "yellow" : "red";
-  const lanes = [
-    {
-      id: "new",
-      label: "Đơn mới",
-      value: pendingOrders.length,
-      meta: `${pendingOrders.reduce((sum, order) => sum + orderItemCount(order), 0)} món chưa nhận`,
-      done: pendingOrders.length === 0,
-      tone: pendingOrders.length > 0 ? "yellow" : "green"
-    },
-    {
-      id: "due",
-      label: "Sắp trễ",
-      value: dueSoonCount,
-      meta: "Còn dưới 5 phút",
-      done: dueSoonCount === 0,
-      tone: dueSoonCount > 0 ? "yellow" : "green"
-    },
-    {
-      id: "late",
-      label: "Quá giờ",
-      value: overdueOrders.length,
-      meta: overdueOrders.length ? "Cần kéo lên ngay" : "Không có món trễ",
-      done: overdueOrders.length === 0,
-      tone: overdueOrders.length > 0 ? "red" : "green"
-    },
-    {
-      id: "notes",
-      label: "Ghi chú",
-      value: totalNotes,
-      meta: "Món cần đọc kỹ",
-      done: totalNotes === 0,
-      tone: totalNotes > 0 ? "yellow" : "green"
-    }
-  ] as const;
 
-  return (
-    <section className="dashboard-panel dashboard-command-center p-3">
-      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow">Kitchen command</p>
-              <h2 className="dashboard-section-title mt-1">Điều phối ca bếp</h2>
-            </div>
-            <Badge tone={readyTone}>Ready {readyScore}/100</Badge>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Áp lực bếp</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{pressureScore}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Món trong hàng</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{totalItems}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Đang làm</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{cookingOrders.length}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Lâu nhất</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{oldestAge}p</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[0.92fr_1.08fr]">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist pass bếp</p>
-              <Badge tone={lanes.every((lane) => lane.done) ? "green" : "yellow"}>{lanes.filter((lane) => !lane.done).length || "Xong"}</Badge>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {lanes.map((lane) => (
-                <div key={lane.id} className="flex min-h-14 items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-semibold text-[var(--foreground)]">{lane.label}</span>
-                    <span className="block truncate text-[11px] font-medium text-[var(--muted-foreground)]">{lane.meta}</span>
-                  </span>
-                  <Badge tone={lane.tone}>{lane.value}</Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Hành động tiếp theo</p>
-              <Badge tone={nextOrder ? priorityTone(kitchenPriorityScore(nextOrder, nowMs)) : "green"}>{nextOrder ? "Có đơn" : "Rỗng"}</Badge>
-            </div>
-            {nextOrder ? (
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{orderLocationLabel(nextOrder)}</span>
-                    <span className="mt-0.5 block text-xs font-medium text-[var(--muted-foreground)]">
-                      {orderItemCount(nextOrder)} món · {minutesSinceAt(orderAgeAnchor(nextOrder), nowMs)}p · {fulfillmentLabel(nextOrder)}
-                    </span>
-                  </span>
-                  <Badge tone={priorityTone(kitchenPriorityScore(nextOrder, nowMs))}>{kitchenPriorityScore(nextOrder, nowMs)}</Badge>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {nextOrder.status === "pending" ? (
-                    <Button size="sm" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "accept", { minutes: 15 })}>
-                      <Utensils size={14} />
-                      Nhận ngay
-                    </Button>
-                  ) : (
-                    <>
-                      <Button size="sm" variant="secondary" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "timer", { minutes: 10 })}>
-                        +10p
-                      </Button>
-                      <Button size="sm" className="min-h-10 flex-1 shadow-none" disabled={mutatingOrderId === nextOrder.id} onClick={() => onMutate(nextOrder.id, "complete")}>
-                        <CheckCircle2 size={14} />
-                        Xong món
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                Hàng bếp đang sạch, chờ đơn mới realtime.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function KitchenCard({
   order,
@@ -778,18 +582,12 @@ export function KitchenBoard({
   return (
     <div className="dashboard-operations-stack dashboard-kitchen-workspace grid gap-3">
       <section className="admin-hero-panel rounded-[14px] p-4">
-        <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={realtimeTone(realtimeState)}>
-                <span className="inline-flex items-center gap-1.5"><RadioTower size={13} />{realtimeLabel(realtimeState)}</span>
-              </Badge>
-              <Badge tone={overdueOrders.length ? "red" : dueSoonCount ? "yellow" : "green"}>{overdueOrders.length ? `${overdueOrders.length} quá giờ` : dueSoonCount ? `${dueSoonCount} sắp trễ` : "Nhịp ổn"}</Badge>
-            </div>
-            <h1 className="dashboard-page-title mt-2">Màn hình bếp</h1>
-            <p className="mt-0.5 text-sm font-semibold text-[var(--muted-foreground)]">
-              {orders.length} lượt gọi · {totalItems} món · lâu nhất {oldestAge} phút
-            </p>
+        <div className="relative z-[1] flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="dashboard-page-title">Màn hình bếp</h1>
+            <Badge tone={realtimeTone(realtimeState)}>
+              <span className="inline-flex items-center gap-1.5"><RadioTower size={13} />{realtimeLabel(realtimeState)}</span>
+            </Badge>
           </div>
           <button
             type="button"
@@ -803,27 +601,22 @@ export function KitchenBoard({
         </div>
       </section>
 
-      <section className="dashboard-ops-metrics-grid grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-        <KitchenOpsMetric icon={Flame} label="Chờ nhận" value={pendingOrders.length} meta={`${pendingOrders.reduce((total, order) => total + orderItemCount(order), 0)} món chưa vào bếp`} tone={pendingOrders.length ? "yellow" : "green"} />
-        <KitchenOpsMetric icon={ChefHat} label="Đang làm" value={onTimeCookingOrders.length} meta={`${dueSoonCount} đơn còn dưới 5 phút`} tone={dueSoonCount ? "yellow" : "blue"} />
-        <KitchenOpsMetric icon={AlertTriangle} label="Quá giờ" value={overdueOrders.length} meta={overdueOrders.length ? `Trễ lâu nhất ${Math.max(...overdueOrders.map((order) => Math.abs(minutesUntilAt(order.serviceDueAt, nowMs) ?? 0)))}p` : "Không có đơn trễ"} tone={overdueOrders.length ? "red" : "green"} />
-        <KitchenOpsMetric icon={Gauge} label="Áp lực" value={orders.length ? Math.min(99, pendingOrders.length * 18 + overdueOrders.length * 28 + dueSoonCount * 12 + totalItems).toString() : 0} meta={`${totalItems} món trong hàng đợi`} tone={overdueOrders.length ? "red" : pendingOrders.length || dueSoonCount ? "yellow" : "green"} />
-      </section>
-
-      <KitchenShiftCommandCenter
-        orders={orders}
-        pendingOrders={pendingOrders}
-        cookingOrders={cookingOrders}
-        overdueOrders={overdueOrders}
-        dueSoonCount={dueSoonCount}
-        priorityOrders={priorityOrders}
-        totalItems={totalItems}
-        totalNotes={totalNotes}
-        oldestAge={oldestAge}
-        nowMs={nowMs}
-        mutatingOrderId={mutatingOrderId}
-        onMutate={mutateOrder}
-      />
+      {(() => {
+        const readyScore = Math.max(0, 100 - pendingOrders.length * 12 - overdueOrders.length * 18 - dueSoonCount * 9 - Math.max(0, oldestAge - 20));
+        const readyTone = readyScore >= 82 ? "green" : readyScore >= 62 ? "yellow" : "red";
+        return (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5">
+            <Badge tone={readyTone}>{readyScore}/100</Badge>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Đơn mới {pendingOrders.length}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Đang làm {cookingOrders.length}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className={`text-xs font-semibold ${overdueOrders.length > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>Quá giờ {overdueOrders.length}</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">{totalItems} món · {totalNotes} note</span>
+          </div>
+        );
+      })()}
 
       <section className="dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)]">
         <div className="dashboard-panel p-4">

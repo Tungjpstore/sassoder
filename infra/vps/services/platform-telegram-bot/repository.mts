@@ -25,16 +25,26 @@ type PlatformTelegramAuditEntry = {
   createdAt: string;
 };
 
+type PlatformAdminRole = "owner" | "ops" | "billing" | "content" | "support" | "readonly";
+
 export type PlatformSubscriptionPayment = {
   id: string;
   restaurantId: string;
   restaurantName: string;
   restaurantSlug: string;
   planName: string;
+  planCode: string;
   amount: number;
   months: number;
   transferContent: string;
   createdAt: string;
+  billingAction: string | null;
+  effectiveSummary: string | null;
+  effectiveAt: string | null;
+  subscriptionStatus: string | null;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  trialEndsAt: string | null;
 };
 
 export type PlatformTenantAction = {
@@ -44,8 +54,15 @@ export type PlatformTenantAction = {
   platformStatus: "active" | "suspended" | "deleted";
   subscriptionStatus: string | null;
   planName: string;
+  planCode: string;
   riskFlags: string[];
   createdAt: string;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  trialEndsAt: string | null;
+  subscriptionCreatedAt: string | null;
+  suspendedReason: string | null;
+  deletedAt: string | null;
 };
 
 type LegacySubscriptionStatus = "trialing" | "pending_payment" | "active" | "past_due" | "suspended" | "cancelled" | "expired";
@@ -81,6 +98,10 @@ type LegacyPaymentSnapshot = {
   amount?: number;
   confirmed_at?: string | null;
 };
+
+const PLATFORM_PAYMENT_SELECT = "id,restaurant_id,subscription_id,plan_id,amount,months,transfer_content,raw_data,created_at,restaurant:restaurants(name,slug),plan:saas_plans(name,code,monthly_price),subscription:restaurant_subscriptions(status,current_period_start,current_period_end,trial_ends_at,created_at)";
+const PLATFORM_RESTAURANT_SELECT = "id,name,slug,platform_status,suspended_reason,deleted_at,created_at";
+const PLATFORM_SUBSCRIPTION_SELECT = "id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_ends_at,created_at,plan:saas_plans(name,code,monthly_price)";
 
 export async function getPlatformConnectionForTelegramUser(telegramUserId: number) {
   const { data, error } = await db()
@@ -133,11 +154,10 @@ export async function claimPlatformConnectionToken(token: string, identity: Tele
     throw new Error("platform_connect_token_invalid");
   }
 
-  const role = normalizeRole(data.telegram_role);
-  const scopes = Array.isArray(data.scopes) ? data.scopes.map(String).filter(Boolean).slice(0, 80) : defaultScopes(role);
+  const tokenAccess = await resolveCurrentPlatformTokenAccess(data as Record<string, unknown>);
   const connection = await connectPlatformTelegramAccount(identity, {
-    role,
-    scopes,
+    role: tokenAccess.telegramRole,
+    scopes: tokenAccess.scopes,
     metadata: {
       source: "platform_admin_connect_link",
       tokenId: String(data.id),
@@ -250,40 +270,38 @@ export async function getPlatformConnectionRecentAudit(connection: PlatformTeleg
 export async function listPendingSubscriptionPayments(limit = 5): Promise<PlatformSubscriptionPayment[]> {
   const { data, error } = await db()
     .from("subscription_payment_logs")
-    .select("id,restaurant_id,plan_id,amount,months,transfer_content,created_at,restaurant:restaurants(name,slug),plan:saas_plans(name,code,monthly_price)")
+    .select(PLATFORM_PAYMENT_SELECT)
     .eq("status", "waiting_confirm")
     .order("created_at", { ascending: true })
     .limit(limit);
   if (isMissingOperationalSchema(error)) return [];
   if (error) throw error;
 
-  return (data ?? []).map((row: Record<string, unknown>) => {
-    const restaurant = firstOrNull(row.restaurant as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
-    const plan = firstOrNull(row.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
-    return {
-      id: String(row.id),
-      restaurantId: String(row.restaurant_id),
-      restaurantName: restaurant?.name ? String(restaurant.name) : "Không rõ quán",
-      restaurantSlug: restaurant?.slug ? String(restaurant.slug) : "",
-      planName: plan?.name ? String(plan.name) : "Gói SaaS",
-      amount: Number(row.amount ?? 0),
-      months: Number(row.months ?? 1),
-      transferContent: String(row.transfer_content ?? ""),
-      createdAt: String(row.created_at)
-    };
-  });
+  return (data ?? []).map((row: Record<string, unknown>) => normalizePlatformSubscriptionPayment(row));
+}
+
+export async function getPendingSubscriptionPayment(paymentId: string): Promise<PlatformSubscriptionPayment | null> {
+  const { data, error } = await db()
+    .from("subscription_payment_logs")
+    .select(PLATFORM_PAYMENT_SELECT)
+    .eq("id", paymentId)
+    .eq("status", "waiting_confirm")
+    .maybeSingle();
+  if (isMissingOperationalSchema(error)) return null;
+  if (error) throw error;
+  return data ? normalizePlatformSubscriptionPayment(data as Record<string, unknown>) : null;
 }
 
 export async function listPlatformTenantActions(limit = 6): Promise<PlatformTenantAction[]> {
   const [restaurantsResult, subscriptionsResult] = await Promise.all([
     db()
       .from("restaurants")
-      .select("id,name,slug,platform_status,suspended_reason,deleted_at,created_at")
+      .select(PLATFORM_RESTAURANT_SELECT)
       .order("created_at", { ascending: false })
       .limit(60),
     db()
       .from("restaurant_subscriptions")
-      .select("id,restaurant_id,plan_id,status,current_period_end,trial_ends_at,created_at,plan:saas_plans(name,code,monthly_price)")
+      .select(PLATFORM_SUBSCRIPTION_SELECT)
       .order("created_at", { ascending: false })
       .limit(200)
   ]);
@@ -299,30 +317,83 @@ export async function listPlatformTenantActions(limit = 6): Promise<PlatformTena
   }
 
   return (restaurantsResult.data ?? [])
-    .map((restaurant: Record<string, unknown>) => {
-      const subscription = subscriptionsByRestaurant.get(String(restaurant.id));
-      const plan = firstOrNull(subscription?.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
-      const platformStatus = normalizePlatformStatus(restaurant.platform_status);
-      const subscriptionStatus = subscription?.status ? String(subscription.status) : null;
-      const riskFlags = [
-        !subscription ? "chưa có gói" : null,
-        subscriptionStatus === "pending_payment" || subscriptionStatus === "past_due" ? "cần thanh toán" : null,
-        subscriptionStatus === "trialing" && daysUntil(subscription?.trial_ends_at) <= 3 ? "trial sắp hết" : null,
-        platformStatus !== "active" ? "đang bị hạn chế" : null
-      ].filter(Boolean) as string[];
-      return {
-        id: String(restaurant.id),
-        name: String(restaurant.name ?? "Không rõ quán"),
-        slug: String(restaurant.slug ?? ""),
-        platformStatus,
-        subscriptionStatus,
-        planName: plan?.name ? String(plan.name) : "Chưa có gói",
-        riskFlags,
-        createdAt: String(restaurant.created_at)
-      };
-    })
+    .map((restaurant: Record<string, unknown>) => normalizePlatformTenantAction(restaurant, subscriptionsByRestaurant.get(String(restaurant.id))))
     .sort((a: PlatformTenantAction, b: PlatformTenantAction) => tenantPriority(b) - tenantPriority(a))
     .slice(0, limit);
+}
+
+export async function getPlatformTenantAction(restaurantId: string): Promise<PlatformTenantAction | null> {
+  const [restaurantResult, subscriptionsResult] = await Promise.all([
+    db().from("restaurants").select(PLATFORM_RESTAURANT_SELECT).eq("id", restaurantId).maybeSingle(),
+    db().from("restaurant_subscriptions").select(PLATFORM_SUBSCRIPTION_SELECT).eq("restaurant_id", restaurantId).order("created_at", { ascending: false }).limit(1)
+  ]);
+
+  if (isMissingOperationalSchema(restaurantResult.error) || isMissingOperationalSchema(subscriptionsResult.error)) return null;
+  if (restaurantResult.error) throw restaurantResult.error;
+  if (subscriptionsResult.error) throw subscriptionsResult.error;
+  if (!restaurantResult.data) return null;
+
+  const subscription = firstOrNull((subscriptionsResult.data ?? []) as Record<string, unknown>[]);
+  return normalizePlatformTenantAction(restaurantResult.data as Record<string, unknown>, subscription ?? undefined);
+}
+
+function normalizePlatformSubscriptionPayment(row: Record<string, unknown>): PlatformSubscriptionPayment {
+  const restaurant = firstOrNull(row.restaurant as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const plan = firstOrNull(row.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const subscription = firstOrNull(row.subscription as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const rawData = asRecord(row.raw_data);
+
+  return {
+    id: String(row.id),
+    restaurantId: String(row.restaurant_id),
+    restaurantName: stringField(restaurant, "name") ?? "Không rõ quán",
+    restaurantSlug: stringField(restaurant, "slug") ?? "",
+    planName: stringField(rawData, "planName") ?? stringField(plan, "name") ?? "Gói SaaS",
+    planCode: stringField(rawData, "planCode") ?? stringField(plan, "code") ?? "",
+    amount: Number(row.amount ?? 0),
+    months: Number(row.months ?? 1),
+    transferContent: String(row.transfer_content ?? ""),
+    createdAt: String(row.created_at),
+    billingAction: stringField(rawData, "billingAction"),
+    effectiveSummary: stringField(rawData, "effectiveSummary"),
+    effectiveAt: stringField(rawData, "effectiveAt"),
+    subscriptionStatus: stringField(subscription, "status"),
+    currentPeriodStart: stringField(subscription, "current_period_start"),
+    currentPeriodEnd: stringField(subscription, "current_period_end"),
+    trialEndsAt: stringField(subscription, "trial_ends_at")
+  };
+}
+
+function normalizePlatformTenantAction(restaurant: Record<string, unknown>, subscription?: Record<string, unknown>): PlatformTenantAction {
+  const plan = firstOrNull(subscription?.plan as Record<string, unknown> | Record<string, unknown>[] | null | undefined);
+  const platformStatus = normalizePlatformStatus(restaurant.platform_status);
+  const subscriptionStatus = stringField(subscription, "status");
+  const trialEndsAt = stringField(subscription, "trial_ends_at");
+  const riskFlags = [
+    !subscription ? "chưa có gói" : null,
+    subscriptionStatus === "pending_payment" || subscriptionStatus === "past_due" ? "cần thanh toán" : null,
+    subscriptionStatus === "trialing" && daysUntil(trialEndsAt) <= 3 ? "trial sắp hết" : null,
+    platformStatus === "suspended" ? "đang tạm dừng" : null,
+    platformStatus === "deleted" ? "đã xóa mềm" : null
+  ].filter(Boolean) as string[];
+
+  return {
+    id: String(restaurant.id),
+    name: String(restaurant.name ?? "Không rõ quán"),
+    slug: String(restaurant.slug ?? ""),
+    platformStatus,
+    subscriptionStatus,
+    planName: stringField(plan, "name") ?? "Chưa có gói",
+    planCode: stringField(plan, "code") ?? "",
+    riskFlags,
+    createdAt: String(restaurant.created_at),
+    currentPeriodStart: stringField(subscription, "current_period_start"),
+    currentPeriodEnd: stringField(subscription, "current_period_end"),
+    trialEndsAt,
+    subscriptionCreatedAt: stringField(subscription, "created_at"),
+    suspendedReason: stringField(restaurant, "suspended_reason"),
+    deletedAt: stringField(restaurant, "deleted_at")
+  };
 }
 
 export async function confirmPlatformSubscriptionPayment(paymentId: string, actor: string) {
@@ -513,6 +584,56 @@ function normalizeConnection(row: Record<string, unknown>): PlatformTelegramConn
 function normalizeRole(value: unknown): PlatformTelegramRole {
   if (value === "SUPPORT" || value === "SRE" || value === "ADMIN") return value;
   return "DEV";
+}
+
+async function resolveCurrentPlatformTokenAccess(tokenRow: Record<string, unknown>) {
+  const adminUserId = typeof tokenRow.platform_admin_user_id === "string" ? tokenRow.platform_admin_user_id : null;
+  const adminSessionId = typeof tokenRow.platform_admin_session_id === "string" ? tokenRow.platform_admin_session_id : null;
+
+  if (adminUserId) {
+    const { data, error } = await db().from("platform_admin_users").select("id,role,status").eq("id", adminUserId).maybeSingle();
+    if (isMissingPlatformTelegramSchema(error)) return tokenAccessFromSnapshot(tokenRow);
+    if (error) throw error;
+    if (!data || data.status !== "active") throw new Error("platform_connect_admin_not_active");
+    const access = platformTelegramAccessForAdminRole(normalizeAdminRole(data.role));
+
+    if (adminSessionId) {
+      const { data: session, error: sessionError } = await db()
+        .from("platform_admin_sessions")
+        .select("id,expires_at,revoked_at,user_id")
+        .eq("id", adminSessionId)
+        .eq("user_id", adminUserId)
+        .maybeSingle();
+      if (isMissingPlatformTelegramSchema(sessionError)) return access;
+      if (sessionError) throw sessionError;
+      if (!session || session.revoked_at || new Date(String(session.expires_at)).getTime() <= Date.now()) {
+        throw new Error("platform_connect_session_not_active");
+      }
+    }
+
+    return access;
+  }
+
+  return tokenAccessFromSnapshot(tokenRow);
+}
+
+function tokenAccessFromSnapshot(tokenRow: Record<string, unknown>) {
+  const telegramRole = normalizeRole(tokenRow.telegram_role);
+  const scopes = Array.isArray(tokenRow.scopes) ? tokenRow.scopes.map(String).filter(Boolean).slice(0, 80) : defaultScopes(telegramRole);
+  return { telegramRole, scopes };
+}
+
+function normalizeAdminRole(value: unknown): PlatformAdminRole {
+  if (value === "owner" || value === "ops" || value === "billing" || value === "content" || value === "support") return value;
+  return "readonly";
+}
+
+function platformTelegramAccessForAdminRole(role: PlatformAdminRole): { telegramRole: PlatformTelegramRole; scopes: string[] } {
+  if (role === "owner") return { telegramRole: "ADMIN", scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"] };
+  if (role === "ops") return { telegramRole: "SRE", scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"] };
+  if (role === "billing") return { telegramRole: "DEV", scopes: ["billing.approve", "tenants.read"] };
+  if (role === "support") return { telegramRole: "SUPPORT", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"] };
+  return { telegramRole: "DEV", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read"] };
 }
 
 async function getPlatformConnectionByIdForTelegramUser(connectionId: string, telegramUserId: number) {
@@ -799,6 +920,15 @@ async function writePlatformAuditLog(input: { actor: string; action: string; tar
 function firstOrNull<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function stringField(row: Record<string, unknown> | null | undefined, key: string) {
+  const value = row?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function normalizeBillingPlanCode(value: string) {

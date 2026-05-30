@@ -25,6 +25,9 @@ export type OfflineAttendanceQueueItem = {
 };
 
 type EnqueueOfflineAttendanceInput = Omit<OfflineAttendanceQueueItem, "id" | "createdAt" | "attempts" | "lastError" | "nextRetryAt">;
+type EnqueueOfflineAttendanceResult =
+  | { item: OfflineAttendanceQueueItem; error?: undefined }
+  | { item: null; error: string };
 
 const maxOfflineQueueItems = 12;
 
@@ -58,9 +61,10 @@ function readQueue(key: string) {
 
 function writeQueue(key: string, queue: OfflineAttendanceQueueItem[]) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(queue.slice(0, maxOfflineQueueItems)));
+    window.localStorage.setItem(key, JSON.stringify(queue));
+    return true;
   } catch {
-    // Keep the live UI usable even when localStorage is blocked or full.
+    return false;
   }
 }
 
@@ -137,17 +141,38 @@ export function useOfflineAttendanceQueue({
   }, []);
 
   const enqueue = useCallback(
-    (input: EnqueueOfflineAttendanceInput) => {
+    (input: EnqueueOfflineAttendanceInput): EnqueueOfflineAttendanceResult => {
+      const currentQueue = readQueue(key);
+      if (currentQueue.length >= maxOfflineQueueItems) {
+        return { item: null, error: "Hàng đợi offline đã đầy. Vui lòng online để đồng bộ trước khi chấm công tiếp." };
+      }
+
+      const hasPendingClockIn = currentQueue.some((item) => item.action === "clock_in");
+      if (input.action === "clock_in" && hasPendingClockIn) {
+        return { item: null, error: "Đã có một lần check-in offline đang chờ đồng bộ." };
+      }
+      if (input.action === "clock_out" && hasPendingClockIn) {
+        return { item: null, error: "Cần đồng bộ lần check-in offline trước khi kết ca." };
+      }
+      if (input.action === "clock_out") {
+        const duplicateClockOut = currentQueue.some((item) => item.action === "clock_out" && item.attendanceLogId === input.attendanceLogId);
+        if (duplicateClockOut) return { item: null, error: "Lần kết ca này đã nằm trong hàng đợi offline." };
+      }
+
       const item: OfflineAttendanceQueueItem = {
         ...input,
         id: createQueueId(input.action),
         createdAt: new Date().toISOString(),
         attempts: 0
       };
-      updateQueue((currentQueue) => [item, ...currentQueue]);
-      return item;
+      const nextQueue = [item, ...currentQueue];
+      if (!writeQueue(key, nextQueue)) {
+        return { item: null, error: "Không thể lưu chấm công offline trên thiết bị này." };
+      }
+      setQueue(nextQueue);
+      return { item };
     },
-    [updateQueue]
+    [key]
   );
 
   const remove = useCallback(

@@ -34,8 +34,8 @@ type ReservationDbStatus = ReservationRow["status"];
 type ReservationSupabaseClient = SupabaseClient<Database>;
 type ReservationLockRow = Database["public"]["Tables"]["reservation_table_locks"]["Row"] & {
   table?:
-    | { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }
-    | { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }[]
+    | { id: string; branch_id?: string | null; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }
+    | { id: string; branch_id?: string | null; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null }[]
     | null;
 };
 type ReservationActiveLock = Pick<Database["public"]["Tables"]["reservation_table_locks"]["Row"], "id" | "reservation_id" | "restaurant_id" | "table_id" | "starts_at" | "ends_at" | "status">;
@@ -191,10 +191,10 @@ const activeHoldStatuses = ["holding", "waiting_deposit_confirm"] satisfies Rese
 const closedReservationStatuses = ["completed", "cancelled", "rejected", "expired", "no_show"] satisfies ReservationDbStatus[];
 
 const reservationSelect =
-  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,preferred_table_area_id,preferred_seating_zone,preferred_table_kind,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
+  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,preferred_table_area_id,preferred_seating_zone,preferred_table_kind,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,branch_id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
 
 const legacyReservationSelect =
-  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
+  "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,branch_id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
 
 const candidateTableSelect =
   "id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
@@ -400,9 +400,28 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
     completed_at?: string | null;
     rejected_at?: string | null;
   };
+  const activeTables = locks
+    .filter((lock) => lock.status === "active")
+    .map((lock) => firstOrNull(lock.table))
+    .filter(
+      (
+        table
+      ): table is {
+        id: string;
+        branch_id?: string | null;
+        name: string;
+        area: string;
+        capacity: number;
+        table_area_id?: string | null;
+        floor_label?: string | null;
+        seating_zone?: string | null;
+        table_kind?: string | null;
+      } => Boolean(table)
+    );
 
   return {
     id: row.id,
+    branchId: activeTables.find((table) => table.branch_id)?.branch_id ?? null,
     status: row.status as ReservationStatus,
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
@@ -432,15 +451,9 @@ function mapReservation(row: ReservationRow & { locks?: ReservationLockRow[] | n
     expiredAt: row.expired_at,
     noShowAt: row.no_show_at,
     seatedTableBillId: row.seated_table_bill_id,
-    tables: locks
-      .filter((lock) => lock.status === "active")
-      .map((lock) => firstOrNull(lock.table))
-      .filter(
-        (table): table is { id: string; name: string; area: string; capacity: number; table_area_id?: string | null; floor_label?: string | null; seating_zone?: string | null; table_kind?: string | null } =>
-          Boolean(table)
-      )
-      .map((table) => ({
+    tables: activeTables.map((table) => ({
         id: table.id,
+        branchId: table.branch_id ?? null,
         name: table.name,
         area: table.area,
         capacity: table.capacity,
@@ -2019,7 +2032,7 @@ export async function createReservation(input: {
     type: "reservation.created",
     eventId: `reservation.created:${nextReservation.id}`,
     restaurantId: settings.id,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "online_ordering",
     actor: { type: "customer" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2186,7 +2199,7 @@ export async function markReservationDepositPaid(reservationId: string, token: s
       type: "reservation.deposit_submitted",
       eventId: `reservation.deposit_submitted:${reservationId}`,
       restaurantId,
-      branchId: null,
+      branchId: nextReservation.branchId ?? null,
       source: "online_ordering",
       actor: { type: "customer" },
       reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2223,7 +2236,7 @@ export async function markReservationDepositPaid(reservationId: string, token: s
         type: "reservation.deposit_submitted",
         eventId: `reservation.deposit_submitted:${reservationId}`,
         restaurantId,
-        branchId: null,
+        branchId: currentReservation.branchId ?? null,
         source: "online_ordering",
         actor: { type: "customer" },
         reservation: buildTelegramReservationSnapshot(currentReservation)
@@ -2257,7 +2270,7 @@ export async function markReservationDepositPaid(reservationId: string, token: s
     type: "reservation.deposit_submitted",
     eventId: `reservation.deposit_submitted:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "online_ordering",
     actor: { type: "customer" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2472,7 +2485,7 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
       type: "reservation.confirmed",
       eventId: `reservation.confirmed:${reservationId}`,
       restaurantId,
-      branchId: null,
+      branchId: reservation.branchId ?? null,
       source: "dashboard",
       actor: { type: "merchant" },
       reservation: buildTelegramReservationSnapshot(reservation)
@@ -2551,7 +2564,7 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
     type: "reservation.confirmed",
     eventId: `reservation.confirmed:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2671,7 +2684,7 @@ export async function cancelReservation(restaurantId: string, reservationId: str
     type: "reservation.cancelled",
     eventId: `reservation.cancelled:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2738,7 +2751,7 @@ export async function rejectReservation(restaurantId: string, reservationId: str
     type: "reservation.rejected",
     eventId: `reservation.rejected:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -2791,7 +2804,7 @@ export async function checkInReservation(restaurantId: string, reservationId: st
     type: "reservation.checked_in",
     eventId: `reservation.checked_in:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -3326,7 +3339,7 @@ export async function rescheduleReservation(
     type: "reservation.rescheduled",
     eventId: `reservation.rescheduled:${reservationId}:${startsAt.toISOString()}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation, { previousStartsAt: reservation.startsAt })
@@ -3400,7 +3413,7 @@ export async function seatReservation(restaurantId: string, reservationId: strin
     type: "reservation.seated",
     eventId: `reservation.seated:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)
@@ -3476,7 +3489,7 @@ export async function markReservationNoShow(restaurantId: string, reservationId:
     type: "reservation.no_show",
     eventId: `reservation.no_show:${reservationId}`,
     restaurantId,
-    branchId: null,
+    branchId: nextReservation.branchId ?? null,
     source: "dashboard",
     actor: { type: "merchant" },
     reservation: buildTelegramReservationSnapshot(nextReservation)

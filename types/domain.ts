@@ -90,6 +90,7 @@ export type OrderDto = {
   fulfillmentType: FulfillmentType;
   customerName?: string | null;
   customerPhone?: string | null;
+  customerNote?: string | null;
   deliveryAddress?: string | null;
   deliveryLat?: number | null;
   deliveryLng?: number | null;
@@ -169,6 +170,7 @@ export type OrderDto = {
 export type ServiceRequestDto = {
   id: string;
   restaurantId: string;
+  branchId?: string | null;
   tableId: string | null;
   tableName: string | null;
   customerSessionId: string | null;
@@ -182,6 +184,7 @@ export type ServiceRequestDto = {
 
 export type ReservationDto = {
   id: string;
+  branchId?: string | null;
   status: ReservationStatus;
   customerName: string;
   customerPhone: string;
@@ -213,6 +216,7 @@ export type ReservationDto = {
   seatedTableBillId: string | null;
   tables: Array<{
     id: string;
+    branchId?: string | null;
     name: string;
     area: string;
     capacity: number;

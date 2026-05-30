@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 export const branchIdSchema = z.string().uuid().nullable().optional();
+const isoDateTimeSchema = z.string().datetime({ offset: true });
 
 const baseEventSchema = z.object({
   eventId: z.string().min(8).max(160),
   restaurantId: z.string().uuid(),
   branchId: branchIdSchema,
-  occurredAt: z.string().datetime().optional(),
+  occurredAt: isoDateTimeSchema.optional(),
   actor: z
     .object({
       type: z.enum(["customer", "merchant", "staff", "telegram", "system", "dev"]),
@@ -18,13 +19,16 @@ const baseEventSchema = z.object({
   source: z.enum(["customer_qr", "online_ordering", "dashboard", "staff", "telegram", "system", "devops"]).optional()
 });
 
+const orderItemSnapshotLimit = 500;
+const orderItemDetailLimit = 1000;
+
 const orderItemSnapshotSchema = z.object({
   name: z.string().min(1).max(160),
   quantity: z.number().nonnegative(),
   unitPrice: z.number().nonnegative().nullable().optional(),
   lineTotal: z.number().nonnegative().nullable().optional(),
-  note: z.string().max(240).nullable().optional(),
-  modifierSummary: z.string().max(240).nullable().optional()
+  note: z.string().max(orderItemDetailLimit).nullable().optional(),
+  modifierSummary: z.string().max(orderItemDetailLimit).nullable().optional()
 });
 
 export const telegramActionSchema = z.enum([
@@ -73,17 +77,27 @@ export const orderCreatedEventSchema = baseEventSchema.extend({
     id: z.string().uuid(),
     displayCode: z.string().min(1).max(40).optional(),
     itemCount: z.number().int().nonnegative(),
+    lineCount: z.number().int().nonnegative().optional(),
+    subtotal: z.number().nonnegative().optional(),
+    discountAmount: z.number().nonnegative().optional(),
+    deliveryFee: z.number().nonnegative().optional(),
+    serviceFee: z.number().nonnegative().optional(),
     total: z.number().nonnegative(),
-    items: z.array(orderItemSnapshotSchema).max(30).optional(),
+    items: z.array(orderItemSnapshotSchema).max(orderItemSnapshotLimit).optional(),
     tableName: z.string().max(80).nullable().optional(),
     fulfillmentType: z.enum(["DINE_IN", "PICKUP", "DELIVERY"]).optional(),
     customerName: z.string().max(120).nullable().optional(),
     customerPhone: z.string().max(40).nullable().optional(),
+    customerNote: z.string().max(500).nullable().optional(),
     status: z.string().max(40).optional(),
     paymentStatus: z.string().max(40).nullable().optional(),
     deliveryStatus: z.string().max(40).nullable().optional(),
     deliveryAddress: z.string().max(240).nullable().optional(),
-    serviceDueAt: z.string().datetime().nullable().optional()
+    deliveryDistanceKm: z.number().nonnegative().nullable().optional(),
+    createdAt: isoDateTimeSchema.nullable().optional(),
+    acceptedAt: isoDateTimeSchema.nullable().optional(),
+    servedAt: isoDateTimeSchema.nullable().optional(),
+    serviceDueAt: isoDateTimeSchema.nullable().optional()
   })
 });
 
@@ -117,12 +131,18 @@ export const paymentWaitingConfirmEventSchema = baseEventSchema.extend({
     orderDisplayCode: z.string().max(40).nullable().optional(),
     amount: z.number().nonnegative(),
     method: z.enum(["QR", "CASH"]).default("QR"),
+    orderSubtotal: z.number().nonnegative().nullable().optional(),
+    orderDiscountAmount: z.number().nonnegative().nullable().optional(),
+    orderDeliveryFee: z.number().nonnegative().nullable().optional(),
+    orderServiceFee: z.number().nonnegative().nullable().optional(),
     customerName: z.string().max(120).nullable().optional(),
     customerPhone: z.string().max(40).nullable().optional(),
+    customerNote: z.string().max(500).nullable().optional(),
     fulfillmentType: z.enum(["DINE_IN", "PICKUP", "DELIVERY"]).nullable().optional(),
     tableName: z.string().max(80).nullable().optional(),
     deliveryAddress: z.string().max(240).nullable().optional(),
-    orderItems: z.array(orderItemSnapshotSchema).max(30).optional(),
+    deliveryDistanceKm: z.number().nonnegative().nullable().optional(),
+    orderItems: z.array(orderItemSnapshotSchema).max(orderItemSnapshotLimit).optional(),
     status: z.enum(["pending", "waiting_confirm", "confirmed", "failed", "cancelled", "refunded"]).optional()
   })
 });
@@ -135,7 +155,7 @@ export const reservationCreatedEventSchema = baseEventSchema.extend({
   type: z.literal("reservation.created"),
   reservation: z.object({
     id: z.string().uuid(),
-    startsAt: z.string().datetime(),
+    startsAt: isoDateTimeSchema,
     partySize: z.number().int().positive(),
     customerName: z.string().max(120).nullable().optional(),
     customerPhone: z.string().max(40).nullable().optional(),
@@ -148,7 +168,7 @@ export const reservationCreatedEventSchema = baseEventSchema.extend({
     preferredSeatingZone: z.string().max(80).nullable().optional(),
     preferredTableKind: z.string().max(80).nullable().optional(),
     source: z.string().max(80).nullable().optional(),
-    holdExpiresAt: z.string().datetime().nullable().optional()
+    holdExpiresAt: isoDateTimeSchema.nullable().optional()
   })
 });
 
@@ -183,7 +203,7 @@ export const reservationNoShowEventSchema = reservationCreatedEventSchema.extend
 export const reservationRescheduledEventSchema = reservationCreatedEventSchema.extend({
   type: z.literal("reservation.rescheduled"),
   reservation: reservationCreatedEventSchema.shape.reservation.extend({
-    previousStartsAt: z.string().datetime().nullable().optional()
+    previousStartsAt: isoDateTimeSchema.nullable().optional()
   })
 });
 

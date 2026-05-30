@@ -12,6 +12,7 @@ type StaffPinLoginFormProps = {
   restaurantSlug?: string;
   restaurantName?: string | null;
   mode: "gate" | "pin";
+  nextPath?: string;
 };
 
 const recentRestaurantSlugKey = "logivn:staff-last-restaurant-slug:v1";
@@ -57,7 +58,14 @@ const featureItems = [
   { icon: LockKeyhole, label: "PIN", text: "Tách quyền" }
 ];
 
-export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }: StaffPinLoginFormProps) {
+function staffLoginPath(slug: string, nextPath?: string) {
+  const path = `/staff/${slug}/login`;
+  if (!nextPath) return path;
+  const params = new URLSearchParams({ next: nextPath });
+  return `${path}?${params.toString()}`;
+}
+
+export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode, nextPath = "" }: StaffPinLoginFormProps) {
   const router = useRouter();
   const normalizedRestaurantSlug = normalizeSlug(restaurantSlug);
   const storedRecentSlug = useSyncExternalStore(subscribeRecentRestaurantSlug, readRecentRestaurantSlug, () => "");
@@ -92,7 +100,7 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
     event.preventDefault();
     const normalized = rememberRestaurantSlug(slug);
     if (!normalized || normalized.length < 2) return;
-    router.push(`/staff/${normalized}/login`);
+    router.push(staffLoginPath(normalized, nextPath));
   };
 
   const appendPin = (value: string) => {
@@ -192,7 +200,7 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
                   type="button"
                   onClick={() => {
                     const normalized = rememberRestaurantSlug(recentSlug);
-                    if (normalized) router.push(`/staff/${normalized}/login`);
+                    if (normalized) router.push(staffLoginPath(normalized, nextPath));
                   }}
                   className="min-h-12 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4 text-xs font-semibold text-[var(--foreground)]"
                 >
@@ -204,6 +212,7 @@ export function StaffPinLoginForm({ restaurantSlug = "", restaurantName, mode }:
             <form action={formAction} className="mt-4 grid gap-4">
               <input type="hidden" name="restaurantSlug" value={restaurantSlug} />
               <input type="hidden" name="pin" value={pin} />
+              <input type="hidden" name="next" value={nextPath} />
 
               <div className="grid gap-2 text-center">
                 <div className="mx-auto flex h-14 min-w-56 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-4">

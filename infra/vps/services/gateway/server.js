@@ -26,6 +26,7 @@ const logger = createLogger("gateway");
 const app = createHttpApp({ logger, serviceName: "gateway" });
 const controlRedis = createRedisConnection("gateway-control");
 installQueueDashboard();
+const isoDateTimeSchema = z.string().datetime({ offset: true });
 
 const enqueueSchema = z.object({
   queueName: z.enum(queueNames),
@@ -68,7 +69,7 @@ const eventSchema = z
     tenantId: z.string().min(1).optional(),
     restaurantId: z.string().uuid().optional(),
     branchId: z.string().min(1).nullable().optional(),
-    occurredAt: z.string().datetime().optional()
+    occurredAt: isoDateTimeSchema.optional()
   })
   .passthrough()
   .superRefine((payload, ctx) => {

@@ -4,6 +4,7 @@ import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema } from "@/lib/validators";
 import { withVpsDistributedLock } from "@/lib/vps/backbone";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 import { auditRequestContext, writeAuditLog } from "@/services/audit-log-service";
 import { getOrderLifecycleSnapshot } from "@/services/order-service";
 import { confirmPayment } from "@/services/payment-service";
@@ -17,6 +18,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       permission: "payments.confirm"
     });
     const { orderId } = adminOrderIdSchema.parse(await params);
+    await assertStaffCanAccessOrder(session, orderId);
     const data = await withVpsDistributedLock(
       {
         tenantId: session.restaurantId,

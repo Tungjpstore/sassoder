@@ -113,7 +113,11 @@ export async function getTelegramRecipients(input: RecipientQuery): Promise<Tele
     .eq("restaurant_id", input.restaurantId)
     .eq("status", "active");
 
-  if (input.branchId) query = query.or(`branch_id.is.null,branch_id.eq.${input.branchId}`);
+  if (input.branchId) {
+    query = query.or(`branch_id.is.null,branch_id.eq.${input.branchId}`);
+  } else {
+    query = query.is("branch_id", null);
+  }
 
   const { data, error } = await query;
   if (error) throw error;
@@ -505,6 +509,20 @@ export async function claimCallbackAction(token: string, telegramUserId: number)
     throw new Error("connection_not_authorized");
   }
 
+  if (connection.branch_id && !typedAction.branch_id) {
+    await recordTelegramAudit({
+      restaurantId: typedAction.restaurant_id,
+      branchId: typedAction.branch_id,
+      connectionId: connection.id,
+      userId: connection.user_id,
+      telegramUserId,
+      action: typedAction.action_type,
+      outcome: "denied",
+      metadata: { reason: "global_callback_for_branch_connection" }
+    });
+    throw new Error("branch_not_authorized");
+  }
+
   if (typedAction.branch_id && connection.branch_id && typedAction.branch_id !== connection.branch_id) {
     await recordTelegramAudit({
       restaurantId: typedAction.restaurant_id,
@@ -579,6 +597,7 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
 
   const existing = await getConnectionForTelegramUser(connectToken.restaurant_id, identity.telegramUserId);
   if (existing && existing.user_id !== connectToken.user_id) throw new Error("telegram_user_already_connected");
+  const currentUser = await getActiveTelegramConnectUser(connectToken.restaurant_id, connectToken.user_id);
 
   const connectionPayload = {
     restaurant_id: connectToken.restaurant_id,
@@ -589,8 +608,8 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
     telegram_username: identity.username ?? null,
     telegram_first_name: identity.firstName ?? null,
     telegram_last_name: identity.lastName ?? null,
-    role: connectToken.role ?? "STAFF",
-    permissions: connectToken.permissions ?? [],
+    role: currentUser.role,
+    permissions: currentUser.permissions.length > 0 ? currentUser.permissions : connectToken.permissions ?? [],
     status: "active",
     connected_at: now,
     last_seen_at: now,
@@ -618,6 +637,26 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
 
   const connected = await getConnectionByIdForTelegramUser(connectToken.restaurant_id, connection.id, identity.telegramUserId);
   return connected ?? normalizeConnection(connection);
+}
+
+async function getActiveTelegramConnectUser(restaurantId: string, userId: string) {
+  const { data, error } = await db()
+    .from("users")
+    .select("id,role,permissions,account_status")
+    .eq("restaurant_id", restaurantId)
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || data.account_status === "blocked") throw new Error("connect_user_not_active");
+
+  return {
+    role: data.role === "ADMIN" ? "ADMIN" : "STAFF",
+    permissions: normalizePermissionList(data.permissions)
+  };
+}
+
+function normalizePermissionList(value: unknown) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean).slice(0, 100) : [];
 }
 
 export async function touchConnection(restaurantId: string, telegramUserId: number) {
@@ -871,46 +910,50 @@ async function getReservationInbox(connection: TelegramConnection) {
   const today = vietnamDayWindow();
   const { data, error } = await db()
     .from("reservations")
-    .select("id,status,deposit_status,deposit_required_amount,deposit_paid_amount,customer_name,customer_phone,customer_note,preferred_seating_zone,preferred_table_kind,party_size,starts_at,created_at,locks:reservation_table_locks(table:tables(name))")
+    .select("id,status,deposit_status,deposit_required_amount,deposit_paid_amount,customer_name,customer_phone,customer_note,preferred_seating_zone,preferred_table_kind,party_size,starts_at,created_at,locks:reservation_table_locks(table:tables(name,branch_id))")
     .eq("restaurant_id", connection.restaurant_id)
     .gte("starts_at", today.start)
     .lt("starts_at", new Date(Date.parse(today.end) + 2 * 86_400_000).toISOString())
     .in("status", ["holding", "waiting_deposit_confirm", "confirmed"])
     .order("starts_at", { ascending: true })
-    .limit(5);
+    .limit(20);
   if (error) return [];
-  return (data ?? []).map((row: any) => ({
-    id: String(row.id),
-    branchId: null,
-    kind: "reservation",
-    title: `Đặt bàn ${formatVietnamTime(row.starts_at)}`,
-    detail: [row.customer_name, row.customer_phone, `${row.party_size} khách`, reservationTableSummary(row.locks), row.deposit_status === "waiting_confirm" ? "chờ cọc" : row.status, row.customer_note].filter(Boolean).join(" · "),
-    priority: row.deposit_status === "waiting_confirm" ? 1 : 3,
-    resourceType: "reservation",
-    createdAt: row.created_at ? String(row.created_at) : null,
-    state: {
-      status: row.status,
-      depositStatus: row.deposit_status,
-      startsAt: row.starts_at,
-      depositRequiredAmount: row.deposit_required_amount,
-      depositPaidAmount: row.deposit_paid_amount,
-      customerPhone: row.customer_phone,
-      customerNote: row.customer_note,
-      preferredSeatingZone: row.preferred_seating_zone,
-      preferredTableKind: row.preferred_table_kind
-    }
-  }));
+  return (data ?? [])
+    .map((row: any) => ({ row, branchId: reservationBranchFromLocks(row.locks) }))
+    .filter((item: { row: any; branchId: string | null }) => !connection.branch_id || item.branchId === connection.branch_id)
+    .slice(0, 5)
+    .map(({ row, branchId }: { row: any; branchId: string | null }) => ({
+      id: String(row.id),
+      branchId,
+      kind: "reservation" as const,
+      title: `Đặt bàn ${formatVietnamTime(row.starts_at)}`,
+      detail: [row.customer_name, row.customer_phone, `${row.party_size} khách`, reservationTableSummary(row.locks), row.deposit_status === "waiting_confirm" ? "chờ cọc" : row.status, row.customer_note].filter(Boolean).join(" · "),
+      priority: row.deposit_status === "waiting_confirm" ? 1 : 3,
+      resourceType: "reservation" as const,
+      createdAt: row.created_at ? String(row.created_at) : null,
+      state: {
+        status: row.status,
+        depositStatus: row.deposit_status,
+        startsAt: row.starts_at,
+        depositRequiredAmount: row.deposit_required_amount,
+        depositPaidAmount: row.deposit_paid_amount,
+        customerPhone: row.customer_phone,
+        customerNote: row.customer_note,
+        preferredSeatingZone: row.preferred_seating_zone,
+        preferredTableKind: row.preferred_table_kind
+      }
+    }));
 }
 
 async function getStaffInbox(connection: TelegramConnection) {
   const [serviceRequests, approvals] = await Promise.all([
     db()
       .from("service_requests")
-      .select("id,table_id,type,status,message,created_at,table:tables(name)")
+      .select("id,table_id,type,status,message,created_at,table:tables(name,branch_id)")
       .eq("restaurant_id", connection.restaurant_id)
       .in("status", ["open", "acknowledged"])
       .order("created_at", { ascending: true })
-      .limit(3),
+      .limit(15),
     branchScoped(
       db()
         .from("attendance_approval_requests")
@@ -925,17 +968,21 @@ async function getStaffInbox(connection: TelegramConnection) {
 
   const serviceItems = serviceRequests.error
     ? []
-    : (serviceRequests.data ?? []).map((row: any) => ({
-        id: String(row.id),
-        branchId: connection.branch_id,
-        kind: "service_request" as const,
-        title: "Khách gọi phục vụ",
-        detail: [normalizeNestedName(row.table), row.message].filter(Boolean).join(" · "),
-        priority: 1,
-        resourceType: "service_request" as const,
-        createdAt: row.created_at ? String(row.created_at) : null,
-        state: { status: row.status, type: row.type }
-      }));
+    : (serviceRequests.data ?? [])
+        .map((row: any) => ({ row, branchId: nestedBranchId(row.table) }))
+        .filter((item: { row: any; branchId: string | null }) => !connection.branch_id || item.branchId === connection.branch_id)
+        .slice(0, 3)
+        .map(({ row, branchId }: { row: any; branchId: string | null }) => ({
+          id: String(row.id),
+          branchId,
+          kind: "service_request" as const,
+          title: "Khách gọi phục vụ",
+          detail: [normalizeNestedName(row.table), row.message].filter(Boolean).join(" · "),
+          priority: 1,
+          resourceType: "service_request" as const,
+          createdAt: row.created_at ? String(row.created_at) : null,
+          state: { status: row.status, type: row.type }
+        }));
 
   const approvalItems = approvals.error
     ? []
@@ -1003,7 +1050,7 @@ function orderItemsSummary(value: unknown) {
     })
     .filter((label): label is string => Boolean(label));
   if (labels.length === 0) return null;
-  return labels.length > 3 ? `${labels.slice(0, 3).join(", ")} +${labels.length - 3}` : labels.join(", ");
+  return labels.join(", ");
 }
 
 function modifierSummary(value: unknown) {
@@ -1015,7 +1062,7 @@ function modifierSummary(value: unknown) {
       return optionName ? String(optionName) : null;
     })
     .filter((label): label is string => Boolean(label));
-  return labels.length ? labels.slice(0, 3).join(", ") : null;
+  return labels.length ? labels.join(", ") : null;
 }
 
 function reservationTableSummary(value: unknown) {
@@ -1027,6 +1074,23 @@ function reservationTableSummary(value: unknown) {
     })
     .filter((name): name is string => Boolean(name));
   return names.length ? names.join(", ") : null;
+}
+
+function reservationBranchFromLocks(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  for (const lock of value) {
+    if (!lock || typeof lock !== "object") continue;
+    const branchId = nestedBranchId((lock as { table?: unknown }).table);
+    if (branchId) return branchId;
+  }
+  return null;
+}
+
+function nestedBranchId(value: unknown) {
+  const row = Array.isArray(value) ? value[0] : value;
+  if (!row || typeof row !== "object") return null;
+  const branchId = (row as { branch_id?: unknown }).branch_id;
+  return typeof branchId === "string" && branchId.trim() ? branchId.trim() : null;
 }
 
 function formatVietnamTime(value: string) {

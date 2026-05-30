@@ -30,12 +30,8 @@ import { Badge } from "@/components/ui/badge";
 import { formatVnd } from "@/lib/money";
 import type { PaymentMethod } from "@/types/domain";
 import { orderStatusLabel, paymentMethodLabel } from "@/lib/labels";
-import { AiOpsInsightCards } from "@/components/dashboard/ai-ops-insight-cards";
-import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-cards";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { OnboardingDraftCleanup } from "@/components/dashboard/onboarding-draft-cleanup";
-import type { AiOperationInsightsDeck } from "@/lib/ai/operation-insights";
-import type { AiRecommendationDeck } from "@/lib/ai/recommendation-engine";
 
 const iconMap = {
   Warehouse,
@@ -187,8 +183,6 @@ type DashboardClientProps = {
   priorityCards: ReadonlyArray<PriorityCard>;
   commandSignals: readonly any[];
   activationRunway: any;
-  operationInsightsDeck: AiOperationInsightsDeck;
-  recommendationDeck: AiRecommendationDeck;
 };
 
 function formatOrderTime(value: string) {
@@ -269,9 +263,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
     showActivationPanel,
     priorityCards,
     commandSignals,
-    activationRunway,
-    operationInsightsDeck,
-    recommendationDeck
+    activationRunway
   } = props;
 
   // client states
@@ -476,110 +468,9 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
       </section>
 
       {/* ── Desktop Layout (Redesigned 3-Zone Control Plane) ── */}
-      <div className="hidden gap-3 md:grid md:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px]">
-        {/* Zone 2: Main Grid Left Column (75%) */}
+      <div className="hidden gap-3 md:grid">
+        {/* Main Content (Full Width) */}
         <div className="flex flex-col gap-3 min-w-0">
-          
-          {/* Onboarding Welcome Panel (Dismissible Banner) */}
-          {showOnboarding && activationRunway ? (
-            <section className="relative overflow-hidden rounded-xl border border-[var(--primary)]/18 bg-[var(--primary-soft)] px-4 py-4 text-[var(--foreground)] transition-all">
-              <button
-                onClick={handleDismissOnboarding}
-                className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-lg border border-[var(--primary)]/15 bg-white/70 text-[var(--primary)] transition hover:bg-white"
-                title="Đóng bảng hướng dẫn"
-              >
-                <X size={15} />
-              </button>
-              <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px] xl:items-start pr-6">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-[var(--primary)] px-2.5 text-[11px] font-black uppercase tracking-[0.12em] text-white">
-                      <CheckCircle2 size={13} />
-                      Đã tạo quán
-                    </span>
-                    <span className={`inline-flex min-h-7 items-center rounded-full border px-2.5 text-[11px] font-black ${stageTone}`}>{activationRunway.riskLabel}</span>
-                    <span className="text-xs font-bold text-[var(--muted-foreground)]">{activationRunway.progressLabel}</span>
-                  </div>
-                  <h1 className="mt-2 text-2xl font-black tracking-[-0.04em] md:text-3xl">{restaurantName}: {activationRunway.title}</h1>
-                  <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
-                    {activationRunway.description}
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Link href={activationRunway.primaryAction.route} className="dashboard-primary-action">
-                      <ArrowRight size={16} />
-                      {activationRunway.primaryAction.label}
-                    </Link>
-                    {activationRunway.secondaryActions.map((action: any) => (
-                      <Link key={action.key} href={action.route} className="dashboard-secondary-action">
-                        <ArrowRight size={16} />
-                        {action.label}
-                      </Link>
-                    ))}
-                    <a href={tenantUrl} target="_blank" rel="noreferrer" className="dashboard-secondary-action">
-                      <ExternalLink size={16} />
-                      Mở trang gọi món
-                    </a>
-                  </div>
-                  <div className="mt-4 grid gap-2 md:grid-cols-2">
-                    {activationRunway.visibleTasks.map((task: any) => (
-                      <Link
-                        key={task.key}
-                        href={task.route}
-                        className={`group min-h-[84px] rounded-lg border px-3 py-2 transition hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(17,24,39,0.08)] ${taskTone(task.status, task.priority)}`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-black">{task.label}</p>
-                            <p className="mt-1 line-clamp-2 text-xs font-semibold opacity-80">{task.action}</p>
-                          </div>
-                          <span className="shrink-0 rounded-full border border-current/15 px-2 py-1 text-[10px] font-black">{task.badge}</span>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <div className="grid grid-cols-3 gap-2">
-                    {[
-                      { label: "Bàn QR", value: tableCount.toLocaleString("vi-VN"), icon: QrCode },
-                      { label: "Món menu", value: menuItemCount.toLocaleString("vi-VN"), icon: ReceiptText },
-                      { label: "Readiness", value: `${setupReadiness.score}%`, icon: Gauge }
-                    ].map((stat) => {
-                      const Icon = stat.icon;
-                      return (
-                        <div key={stat.label} className="rounded-lg border border-[var(--primary)]/12 bg-white/78 px-3 py-2">
-                          <Icon size={16} className="text-[var(--primary)]" />
-                          <p className="metric-number mt-2 text-xl font-black">{stat.value}</p>
-                          <p className="truncate text-[11px] font-bold text-[var(--muted-foreground)]">{stat.label}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="rounded-lg border border-[var(--primary)]/12 bg-white/78 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)]">Activation runway</p>
-                      <span className="text-xs font-black text-[var(--primary)]">{setupReadiness.completedCount}/{setupReadiness.totalCount}</span>
-                    </div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--primary-soft)]">
-                      <div className="h-full rounded-full bg-[var(--primary)] transition-all" style={{ width: `${setupReadiness.score}%` }} />
-                    </div>
-                    <div className="mt-3 grid gap-2">
-                      {activationRunway.futureActions.map((item: any) => (
-                        <Link key={item.key} href={item.route} className="flex min-h-11 items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-white/70 px-2 text-xs font-bold transition hover:bg-[var(--primary-soft)]">
-                          <span className="min-w-0">
-                            <span className="block truncate text-[var(--foreground)]">{item.label}</span>
-                            <span className="mt-0.5 block truncate text-[10px] text-[var(--muted-foreground)]">{item.badge}</span>
-                          </span>
-                          <ArrowRight size={13} className="shrink-0 text-[var(--primary)]" />
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
-          ) : null}
-
           {/* Live Status Bar & Fast Actions */}
           <section className="admin-hero-panel dashboard-wallpaper-stage relative overflow-hidden px-4 py-3.5 rounded-xl border border-[var(--border)]">
             <div className="relative z-[1] flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -621,26 +512,16 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
             </div>
           </section>
 
-          {/* Operational Metrics Horizontal Row */}
-          <section className="grid gap-2 md:grid-cols-5">
-            {commandSignals.map((signal) => {
-              const Icon = getIcon(signal.icon);
-              return (
-                <div key={signal.label} className="dashboard-panel dashboard-wallpaper-stage flex flex-col justify-between p-3 min-h-[96px] rounded-xl border border-[var(--border)]">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-bold uppercase text-[var(--muted-foreground)] tracking-wide">{signal.label}</span>
-                    <span className={`grid h-8 w-8 place-items-center rounded-lg border ${priorityTone(signal.tone)}`}>
-                      <Icon size={16} />
-                    </span>
-                  </div>
-                  <div className="mt-2">
-                    <p className="metric-number text-xl font-bold leading-none tabular-nums text-[var(--foreground)]">{signal.value}</p>
-                    <p className="mt-1 text-[10px] font-medium text-[var(--muted-foreground)] truncate">{signal.helper}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </section>
+          {/* Compact Operational Metrics Bar */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5">
+            {commandSignals.map((signal, idx) => (
+              <span key={signal.label} className="inline-flex items-center gap-1.5">
+                {idx > 0 && <span className="text-[var(--border)]">·</span>}
+                <span className={`text-xs font-bold tabular-nums ${signal.tone === 'red' ? 'text-[var(--accent-strong)]' : signal.tone === 'orange' ? 'text-[var(--accent)]' : 'text-[var(--foreground)]'}`}>{signal.value}</span>
+                <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">{signal.label}</span>
+              </span>
+            ))}
+          </div>
 
           {/* Main Grid Workspaces with Clean Tab Navigation */}
           <div className="dashboard-panel bg-[var(--surface)] border border-[var(--border)] rounded-xl overflow-hidden flex flex-col">
@@ -952,75 +833,6 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
             </div>
           </section>
         </div>
-
-        {/* Zone 3: AI Copilot Right Column Panel (25%) */}
-        <aside className="flex flex-col gap-3 min-w-0">
-          
-          {/* Health and Morning Brief Summary Card */}
-          <div className="dashboard-panel bg-gradient-to-br from-[var(--primary-soft)] to-white border border-[var(--primary)]/15 p-4 rounded-xl">
-            <div className="flex items-center justify-between">
-              <span className="dashboard-eyebrow text-[var(--primary)]">LogiBot Copilot</span>
-              <Badge tone={serviceHealthScore >= 82 ? "green" : serviceHealthScore >= 62 ? "yellow" : "red"}>
-                Health {serviceHealthScore}%
-              </Badge>
-            </div>
-            <h3 className="text-base font-bold text-[var(--foreground)] mt-2">Đề xuất vận hành hôm nay</h3>
-            <p className="text-xs font-semibold text-[var(--muted-foreground)] mt-1.5 leading-relaxed">
-              {salesForecast.trend === "behind"
-                ? "Dữ liệu dự báo AI cho thấy ca bán đang chậm nhịp so với hôm qua. Cân nhắc chạy ưu đãi giờ vàng."
-                : "Nhịp độ bán hàng đang ổn định. Không có rủi ro lớn từ nhà bếp."}
-            </p>
-          </div>
-
-          {/* AI Insights Deck Component */}
-          <div className="dashboard-panel bg-[var(--surface)] border border-[var(--border)] p-4 rounded-xl flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-[var(--border)]/35 pb-2">
-              <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)]">AI Operations</p>
-              <span className="inline-flex h-2 w-2 rounded-full bg-[var(--primary)] animate-pulse" />
-            </div>
-            <AiOpsInsightCards deck={operationInsightsDeck} morningBrief={latestMorningBrief} />
-          </div>
-
-          {/* AI Recommendations component */}
-          <div className="dashboard-panel bg-[var(--surface)] border border-[var(--border)] p-4 rounded-xl flex flex-col gap-3">
-            <div className="flex items-center justify-between border-b border-[var(--border)]/35 pb-2">
-              <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)]">Khuyến nghị của AI</p>
-            </div>
-            <AiRecommendationCards deck={recommendationDeck} schemaReady={true} />
-          </div>
-
-          {/* Priority Cards breakdown */}
-          <div className="dashboard-panel bg-[var(--surface)] border border-[var(--border)] p-4 rounded-xl flex flex-col gap-3">
-            <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--primary)] border-b border-[var(--border)]/35 pb-2">Việc nên làm trước</p>
-            <div className="grid gap-2">
-              {priorityCards.map((card) => {
-                const Icon = getIcon(card.icon);
-                const isAlert = card.tone !== "green";
-                return (
-                  <Link
-                    key={card.title}
-                    href={card.href}
-                    className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5 transition hover:border-[var(--primary)]"
-                  >
-                    <span className="flex items-center gap-2 min-w-0">
-                      <span className={`grid h-8 w-8 place-items-center rounded-lg border shrink-0 ${priorityTone(card.tone)}`}>
-                        <Icon size={15} />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-bold text-[var(--foreground)]">{card.title}</span>
-                        <span className="block text-[10px] text-[var(--muted-foreground)] font-semibold mt-0.5 truncate">{card.helper}</span>
-                      </span>
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <span className="metric-number text-base font-bold tabular-nums text-[var(--foreground)]">{card.value}</span>
-                      {isAlert && <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] animate-ping" />}
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        </aside>
       </div>
     </div>
   );

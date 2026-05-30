@@ -3,6 +3,7 @@ import { z, ZodError } from "zod";
 import { markStaffNotificationsRead } from "@/features/staff/services/staff-operations-service";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { AppError } from "@/lib/response";
+import { assertSameOriginRequest } from "@/lib/security/request-origin";
 
 export const preferredRegion = "sin1";
 
@@ -71,6 +72,7 @@ function failure(error: unknown) {
 
 export async function POST(request: Request) {
   try {
+    assertSameOriginRequest(request, { requireOrigin: true });
     const session = await requireOperationalDashboardApiSession({ feature: "staff_management" });
     const input = markReadSchema.parse(await request.json().catch(() => ({})));
     const result = await markStaffNotificationsRead({

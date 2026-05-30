@@ -97,7 +97,8 @@ export async function pinLoginAction(_prevState: { error?: string } | undefined,
   const session = await getSessionProfile();
   if (!session) redirect("/dashboard/onboarding");
 
-  redirect("/dashboard/staff/mobile");
+  const next = safeProtectedDashboardNextPath(formData.get("next"));
+  redirect(next || "/dashboard/staff/mobile");
 }
 
 export async function registerAccountAction(

@@ -346,7 +346,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
       });
 
       if (canQueue && source === "gps" && gps) {
-        offlineQueue.enqueue({
+        const queued = offlineQueue.enqueue({
           action,
           branchId: selectedBranchId,
           attendanceLogId: activeAttendance?.id,
@@ -357,7 +357,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           capturedAt,
           deviceInfo
         });
-        setMessage({ tone: "warning", text: "Mạng yếu. LogiVN đã đưa thao tác vào hàng đợi offline." });
+        setMessage({ tone: "warning", text: queued.error ?? "Mạng yếu. LogiVN đã đưa thao tác vào hàng đợi offline." });
       } else {
         setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
       }

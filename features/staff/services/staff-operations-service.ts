@@ -385,26 +385,41 @@ function buildMobileOps({
   orders,
   requests,
   permissions,
-  shiftSwapCandidates
+  shiftSwapCandidates,
+  branchById,
+  allowedBranchIds
 }: {
   orders: OrderDto[];
   requests: ServiceRequestDto[];
   permissions: StaffPermissionKey[];
   shiftSwapCandidates: StaffOpsMobileOps["shiftSwapCandidates"];
+  branchById: Map<string, BranchRow>;
+  allowedBranchIds: Set<string> | null;
 }): StaffOpsMobileOps {
   const canUpdateOrders = permissions.includes("orders.update");
   const canConfirmPayments = permissions.includes("payments.confirm");
   const canManageTables = permissions.includes("tables.manage") || permissions.includes("orders.view");
   const workItems: StaffOpsMobileWorkItem[] = [];
+  const branchAllowed = (branchId?: string | null) => {
+    if (!allowedBranchIds) return true;
+    if (branchId) return allowedBranchIds.has(branchId);
+    return allowedBranchIds.size === 1;
+  };
+  const visibleOrders = orders.filter((order) => branchAllowed(order.branchId ?? null));
+  const visibleRequests = requests.filter((request) => branchAllowed(request.branchId ?? null));
 
-  orders.forEach((order) => {
+  visibleOrders.forEach((order) => {
     const tableName = orderTableName(order);
     const urgent = isOrderUrgent(order);
+    const branchId = order.branchId ?? null;
+    const branchName = branchId ? branchById.get(branchId)?.name ?? null : null;
 
     if (order.status === "pending") {
       workItems.push({
         id: order.id,
         kind: "order_pending",
+        branchId,
+        branchName,
         title: tableName ? `${tableName} gọi món` : "Đơn mới cần nhận",
         subtitle: `${order.items.length} món · ${order.total.toLocaleString("vi-VN")}đ`,
         tableName,
@@ -419,6 +434,8 @@ function buildMobileOps({
       workItems.push({
         id: order.id,
         kind: "kitchen_order",
+        branchId,
+        branchName,
         title: tableName ? `${tableName} đang ra món` : "Đơn đang xử lý",
         subtitle: urgent ? "Quá giờ ra món" : `${order.items.length} dòng món`,
         tableName,
@@ -433,6 +450,8 @@ function buildMobileOps({
       workItems.push({
         id: order.id,
         kind: "payment_waiting",
+        branchId,
+        branchName,
         title: tableName ? `${tableName} chờ xác nhận tiền` : "Thanh toán cần xác nhận",
         subtitle: `${order.total.toLocaleString("vi-VN")}đ · ${order.paymentMethod ?? "chưa rõ"}`,
         tableName,
@@ -445,10 +464,13 @@ function buildMobileOps({
   });
 
   if (canManageTables) {
-    requests.forEach((request) => {
+    visibleRequests.forEach((request) => {
+      const branchId = request.branchId ?? null;
       workItems.push({
         id: request.id,
         kind: "service_request",
+        branchId,
+        branchName: branchId ? branchById.get(branchId)?.name ?? null : null,
         title: request.tableName ? `${request.tableName} gọi nhân viên` : "Khách gọi nhân viên",
         subtitle: request.message || "Cần hỗ trợ tại bàn",
         tableName: request.tableName,
@@ -468,10 +490,10 @@ function buildMobileOps({
     .slice(0, 8);
 
   return {
-    pendingOrders: orders.filter((order) => order.status === "pending").length,
-    cookingOrders: orders.filter((order) => order.status === "ordering").length,
-    waitingPayments: orders.filter((order) => order.paymentStatus === "waiting_confirm" || order.status === "waiting_confirm").length,
-    serviceRequests: requests.length,
+    pendingOrders: visibleOrders.filter((order) => order.status === "pending").length,
+    cookingOrders: visibleOrders.filter((order) => order.status === "ordering").length,
+    waitingPayments: visibleOrders.filter((order) => order.paymentStatus === "waiting_confirm" || order.status === "waiting_confirm").length,
+    serviceRequests: visibleRequests.length,
     urgentCount: sortedWorkItems.filter((item) => item.priority === "high").length,
     workItems: sortedWorkItems,
     shiftSwapCandidates
@@ -514,192 +536,6 @@ function notificationVisibilityQuery(supabase: any, restaurantId: string, curren
   return currentUserId ? query.or(`user_id.is.null,user_id.eq.${currentUserId}`) : query.is("user_id", null);
 }
 
-async function ensureStaffOperationsFoundation(restaurantId: string, users: StaffUserRow[], branches: BranchRow[]) {
-  const supabase = createAdminSupabaseClient() as any;
-  const roleUpserts = STAFF_ROLE_TEMPLATES.map((role, index) => ({
-    restaurant_id: restaurantId,
-    code: role.code,
-    name: role.title,
-    description: role.description,
-    legacy_permission_profile: role.profile,
-    role_scope: role.role,
-    is_system: true,
-    sort_order: index,
-    preview_actions: [role.preview]
-  }));
-
-  const roleUpsertResult = await supabase.from("staff_roles").upsert(roleUpserts, {
-    onConflict: "restaurant_id,code"
-  });
-
-  if (roleUpsertResult.error) {
-    if (isMissingStaffOperationsSchema(roleUpsertResult.error)) return;
-    throw roleUpsertResult.error;
-  }
-
-  const roles = await readOptionalRows<StaffRoleRow>(
-    supabase
-      .from("staff_roles")
-      .select("id,code,name,description,legacy_permission_profile,role_scope,is_system,preview_actions")
-      .eq("restaurant_id", restaurantId)
-  );
-
-  const roleByCode = new Map(roles.map((role) => [role.code, role]));
-  const existingPermissionRows = await readOptionalRows<StaffRolePermissionRow>(
-    supabase.from("staff_role_permissions").select("role_id,permission_key").eq("restaurant_id", restaurantId)
-  );
-  const rolesWithPermissions = new Set(existingPermissionRows.map((permission) => permission.role_id));
-  const permissionRows = roles.flatMap((role) =>
-    rolesWithPermissions.has(role.id) || !STAFF_ROLE_TEMPLATES.some((template) => template.code === role.code)
-      ? []
-      : getStaffRoleTemplate(role.code).permissions.map((permission) => ({
-          role_id: role.id,
-          restaurant_id: restaurantId,
-          permission_key: permission
-        }))
-  );
-
-  if (permissionRows.length > 0) {
-    const permissionUpsertResult = await supabase.from("staff_role_permissions").upsert(permissionRows, {
-      onConflict: "role_id,permission_key"
-    });
-
-    if (permissionUpsertResult.error && !isMissingStaffOperationsSchema(permissionUpsertResult.error)) {
-      throw permissionUpsertResult.error;
-    }
-  }
-
-  const existingMembers = await readOptionalRows<StaffMemberRow>(
-    supabase
-      .from("staff_members")
-      .select("id,user_id,role_id,role_code,full_name,phone,username,notes,employment_status,emergency_contact_name,emergency_contact_phone,last_seen_at,archived_at")
-      .eq("restaurant_id", restaurantId)
-  );
-
-  const memberByUserId = new Map(existingMembers.map((member) => [member.user_id, member]));
-  const memberUpserts = users.map((user) => {
-    const roleCode = user.role === "ADMIN" ? "owner" : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service");
-    const role = getStaffRoleTemplate(roleCode);
-    const existing = memberByUserId.get(user.id);
-    return {
-      restaurant_id: restaurantId,
-      user_id: user.id,
-      role_id: roleByCode.get(roleCode)?.id ?? existing?.role_id ?? null,
-      role_code: roleCode,
-      full_name: existing?.full_name || displayNameFromEmail(user.email),
-      phone: existing?.phone ?? null,
-      username: existing?.username ?? null,
-      notes: existing?.notes ?? null,
-      employment_status: existing?.employment_status ?? (user.account_status === "blocked" ? "suspended" : "active"),
-      emergency_contact_name: existing?.emergency_contact_name ?? null,
-      emergency_contact_phone: existing?.emergency_contact_phone ?? null
-    };
-  });
-
-  if (memberUpserts.length > 0) {
-    const memberUpsertResult = await supabase.from("staff_members").upsert(memberUpserts, {
-      onConflict: "user_id"
-    });
-
-    if (memberUpsertResult.error && !isMissingStaffOperationsSchema(memberUpsertResult.error)) {
-      throw memberUpsertResult.error;
-    }
-  }
-
-  const staffMembers = await readOptionalRows<StaffMemberRow>(
-    supabase
-      .from("staff_members")
-      .select("id,user_id,role_id,role_code,full_name,phone,username,notes,employment_status,emergency_contact_name,emergency_contact_phone,last_seen_at,archived_at")
-      .eq("restaurant_id", restaurantId)
-  );
-
-  const branchAssignments = await readOptionalRows<StaffBranchAssignmentRow>(
-    supabase
-      .from("staff_branch_assignments")
-      .select("staff_member_id,branch_id,is_primary,assignment_status,ended_at")
-      .eq("restaurant_id", restaurantId)
-  );
-
-  const activePrimaryBranch = branches.find((branch) => branch.is_primary && branch.is_active) ?? branches.find((branch) => branch.is_active);
-  if (!activePrimaryBranch) return;
-
-  const hasPrimaryAssignment = new Set(
-    branchAssignments
-      .filter((assignment) => assignment.is_primary && assignment.assignment_status === "active" && !assignment.ended_at)
-      .map((assignment) => assignment.staff_member_id)
-  );
-
-  const missingPrimaryAssignments = staffMembers
-    .filter((member) => !hasPrimaryAssignment.has(member.id))
-    .map((member) => ({
-      restaurant_id: restaurantId,
-      staff_member_id: member.id,
-      branch_id: activePrimaryBranch.id,
-      is_primary: true,
-      assignment_status: "active"
-    }));
-
-  if (missingPrimaryAssignments.length > 0) {
-    const insertAssignments = await supabase.from("staff_branch_assignments").insert(missingPrimaryAssignments);
-    if (insertAssignments.error && !isMissingStaffOperationsSchema(insertAssignments.error)) {
-      throw insertAssignments.error;
-    }
-  }
-
-  const defaultShiftTemplates = [
-    {
-      restaurant_id: restaurantId,
-      branch_id: activePrimaryBranch.id,
-      code: "morning",
-      name: "Ca sáng",
-      start_time: "07:00:00",
-      end_time: "11:00:00",
-      allowed_late_minutes: 10,
-      overtime_threshold_minutes: 30,
-      attendance_radius_meters: 80,
-      recurring_weekdays: [1, 2, 3, 4, 5, 6],
-      is_template: true,
-      metadata: { preset: "morning", market: "vietnam_restaurant" }
-    },
-    {
-      restaurant_id: restaurantId,
-      branch_id: activePrimaryBranch.id,
-      code: "afternoon",
-      name: "Ca chiều",
-      start_time: "13:00:00",
-      end_time: "17:00:00",
-      allowed_late_minutes: 10,
-      overtime_threshold_minutes: 30,
-      attendance_radius_meters: 80,
-      recurring_weekdays: [1, 2, 3, 4, 5, 6],
-      is_template: true,
-      metadata: { preset: "afternoon", market: "vietnam_restaurant" }
-    },
-    {
-      restaurant_id: restaurantId,
-      branch_id: activePrimaryBranch.id,
-      code: "night",
-      name: "Ca tối",
-      start_time: "18:00:00",
-      end_time: "22:30:00",
-      allowed_late_minutes: 10,
-      overtime_threshold_minutes: 30,
-      attendance_radius_meters: 80,
-      recurring_weekdays: [1, 2, 3, 4, 5, 6, 0],
-      is_template: true,
-      metadata: { preset: "night", market: "vietnam_restaurant" }
-    }
-  ];
-
-  const shiftUpsertResult = await supabase.from("shifts").upsert(defaultShiftTemplates, {
-    onConflict: "restaurant_id,code"
-  });
-
-  if (shiftUpsertResult.error && !isMissingStaffOperationsSchema(shiftUpsertResult.error)) {
-    throw shiftUpsertResult.error;
-  }
-}
-
 function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, currentUserId?: string | null): StaffOperationsBundle {
   const currentMember = bundle.members.find((member) => member.userId === currentUserId) ?? null;
   if (!currentMember) {
@@ -736,11 +572,18 @@ function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, curren
   }
 
   const currentMemberIds = new Set([currentMember.id]);
-  const branchIds = new Set([currentMember.primaryBranchId].filter(Boolean) as string[]);
-  const branches = bundle.branches.filter((branch) => branchIds.has(branch.id));
   const attendanceFeed = bundle.attendanceFeed.filter((item) => currentMemberIds.has(item.staffMemberId));
   const approvals = bundle.approvals.filter((item) => currentMemberIds.has(item.staffMemberId));
   const shiftAssignments = bundle.shiftAssignments.filter((item) => currentMemberIds.has(item.staffMemberId));
+  const branchIds = new Set(
+    [
+      currentMember.primaryBranchId,
+      ...shiftAssignments.map((assignment) => assignment.branchId),
+      ...attendanceFeed.map((attendance) => bundle.branches.find((branch) => branch.name === attendance.branchName)?.id ?? null),
+      ...approvals.map((approval) => bundle.branches.find((branch) => branch.name === approval.branchName)?.id ?? null)
+    ].filter(Boolean) as string[]
+  );
+  const branches = bundle.branches.filter((branch) => branchIds.has(branch.id));
   const activeShiftAssignments = shiftAssignments.filter((item) => item.status !== "cancelled");
   const timesheets = bundle.timesheets.filter((item) => currentMemberIds.has(item.staffMemberId));
 
@@ -759,7 +602,7 @@ function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, curren
       activeKitchenStaff: currentMember.roleCode === "kitchen" && currentMember.activeSessionCount > 0 ? 1 : 0
     },
     roles: bundle.roles.filter((role) => role.code === currentMember.roleCode),
-    branches: branches.length > 0 ? branches : bundle.branches.slice(0, 1),
+    branches: branches.length > 0 ? branches : bundle.branches.length === 1 ? bundle.branches : [],
     members: [currentMember],
     attendanceFeed,
     approvals,
@@ -796,9 +639,6 @@ export async function getStaffOperationsBundle(
     getRestaurantOperationsSummary(restaurantId),
     getRestaurantEntitlement(restaurantId)
   ]);
-
-  await ensureStaffOperationsFoundation(restaurantId, users, branches);
-
   const shouldLoadMobileOps = options.scope === "self";
   const [mobileOrders, mobileRequests] = shouldLoadMobileOps
     ? await Promise.all([
@@ -1243,12 +1083,14 @@ export async function getStaffOperationsBundle(
     .filter((member) => !member.isArchived)
     .map((member) => {
       const rows = attendanceRows.filter((attendance) => attendance.staff_member_id === member.id);
-      const workMinutes = rows.reduce((total, attendance) => total + attendanceWorkMinutes(attendance), 0);
-      const lateMinutes = rows.reduce((total, attendance) => total + attendance.late_minutes, 0);
+      const payableRows = rows.filter((attendance) => attendance.approval_state === "auto_approved" || attendance.approval_state === "approved");
+      const pendingAttendanceCount = rows.filter((attendance) => attendance.approval_state === "pending").length;
+      const workMinutes = payableRows.reduce((total, attendance) => total + attendanceWorkMinutes(attendance), 0);
+      const lateMinutes = payableRows.reduce((total, attendance) => total + attendance.late_minutes, 0);
       const approvedOvertimeMinutes = approvedOvertimeMinutesByMemberId.get(member.id) ?? 0;
-      const overtimeMinutes = rows.reduce((total, attendance) => total + attendance.overtime_minutes, 0) + approvedOvertimeMinutes;
-      const lateCount = rows.filter((attendance) => attendance.late_minutes > 0).length;
-      const pendingApprovals = pendingApprovalsByMemberId.get(member.id) ?? 0;
+      const overtimeMinutes = payableRows.reduce((total, attendance) => total + attendance.overtime_minutes, 0) + approvedOvertimeMinutes;
+      const lateCount = payableRows.filter((attendance) => attendance.late_minutes > 0).length;
+      const pendingApprovals = (pendingApprovalsByMemberId.get(member.id) ?? 0) + pendingAttendanceCount;
       const paidLeaveDays = approvedPaidLeaveDaysByMemberId.get(member.id) ?? 0;
       const unpaidLeaveDays = approvedUnpaidLeaveDaysByMemberId.get(member.id) ?? 0;
       const attendanceScore = Math.max(0, Math.min(100, 100 - lateCount * 8 - pendingApprovals * 12 - Math.floor(lateMinutes / 15) * 3));
@@ -1257,7 +1099,7 @@ export async function getStaffOperationsBundle(
         staffMemberId: member.id,
         fullName: member.fullName,
         branchName: member.primaryBranchName,
-        attendanceCount: rows.length,
+        attendanceCount: payableRows.length,
         workMinutes,
         lateMinutes,
         overtimeMinutes,
@@ -1374,6 +1216,21 @@ export async function getStaffOperationsBundle(
 
   const todayCoverage = weeklyCoverage.find((item) => item.isoDate === today) ?? null;
   const currentStaffMember = members.find((member) => member.userId === currentUserId) ?? null;
+  const currentStaffAllowedBranchIds = currentStaffMember
+    ? (() => {
+        if (["owner", "admin"].includes(String(currentStaffMember.roleCode))) return null;
+        const ids = new Set<string>();
+        if (currentStaffMember.primaryBranchId) ids.add(currentStaffMember.primaryBranchId);
+        branchAssignments
+          .filter((assignment) => assignment.staff_member_id === currentStaffMember.id && assignment.assignment_status === "active" && !assignment.ended_at)
+          .forEach((assignment) => ids.add(assignment.branch_id));
+        shiftAssignmentSummaries
+          .filter((assignment) => assignment.staffMemberId === currentStaffMember.id && assignment.status !== "cancelled" && assignment.branchId)
+          .forEach((assignment) => ids.add(assignment.branchId as string));
+        if (ids.size === 0 && branches.length === 1) ids.add(branches[0].id);
+        return ids;
+      })()
+    : null;
   const shiftSwapCandidates = currentStaffMember
     ? members
         .filter((member) => {
@@ -1397,7 +1254,9 @@ export async function getStaffOperationsBundle(
         orders: mobileOrders,
         requests: mobileRequests,
         permissions: currentStaffMember.permissions,
-        shiftSwapCandidates
+        shiftSwapCandidates,
+        branchById,
+        allowedBranchIds: currentStaffAllowedBranchIds
       })
     : emptyMobileOps();
 

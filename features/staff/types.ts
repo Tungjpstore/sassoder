@@ -225,6 +225,8 @@ export type StaffOpsDeviceItem = {
 export type StaffOpsMobileWorkItem = {
   id: string;
   kind: "order_pending" | "kitchen_order" | "payment_waiting" | "service_request";
+  branchId: string | null;
+  branchName: string | null;
   title: string;
   subtitle: string;
   tableName: string | null;

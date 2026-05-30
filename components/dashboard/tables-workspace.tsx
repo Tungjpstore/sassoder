@@ -173,174 +173,6 @@ function branchLabel(branchesById: Map<string, TableBranchOption>, table?: Pick<
   return branchesById.get(table.branch_id)?.name ?? "Chi nhánh đã ẩn";
 }
 
-function TablesMetric({
-  icon: Icon,
-  label,
-  value,
-  meta,
-  tone
-}: {
-  icon: ElementType;
-  label: string;
-  value: string | number;
-  meta: string;
-  tone: "green" | "yellow" | "red" | "blue";
-}) {
-  const toneClass =
-    tone === "red"
-      ? "border-[var(--accent)]/30 bg-[var(--danger-soft)] text-[var(--tertiary)]"
-      : tone === "yellow"
-        ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-        : tone === "blue"
-          ? "border-[var(--secondary)]/30 bg-[var(--secondary-soft)] text-[var(--primary)]"
-          : "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]";
-
-  return (
-    <article className="admin-stat-tile rounded-[14px] p-4">
-      <div className="flex items-start justify-between gap-3">
-        <span className={cn("grid h-10 w-10 place-items-center rounded-xl border", toneClass)}>
-          <Icon size={18} />
-        </span>
-        <Badge tone={tone}>{label}</Badge>
-      </div>
-      <p className="metric-number mt-3 text-2xl font-semibold text-[var(--foreground)]">{value}</p>
-      <p className="mt-1 truncate text-sm font-semibold text-[var(--muted-foreground)]">{meta}</p>
-    </article>
-  );
-}
-
-function FloorIntakeCommandCenter({
-  counts,
-  total,
-  occupancyRate,
-  qrEnabled,
-  qrDisabled,
-  qrIssueTables,
-  actionQueue,
-  nowMs,
-  onFilterStatus,
-  onShowQrIssues,
-  onOpenTable
-}: {
-  counts: Record<TableOperationalStatus, number>;
-  total: number;
-  occupancyRate: number;
-  qrEnabled: number;
-  qrDisabled: number;
-  qrIssueTables: RestaurantTableWithStatus[];
-  actionQueue: RestaurantTableWithStatus[];
-  nowMs: number;
-  onFilterStatus: (status: StatusFilter) => void;
-  onShowQrIssues: () => void;
-  onOpenTable: (tableId: string) => void;
-}) {
-  const firstAction = actionQueue[0] ?? null;
-  const intakeScore = Math.max(0, 100 - counts.overdue * 16 - counts.needs_confirm * 12 - counts.awaiting_payment * 8 - qrIssueTables.length * 6);
-  const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
-  const checks = [
-    {
-      id: "orders",
-      label: "Đơn QR mới đã nhận",
-      value: counts.needs_confirm.toLocaleString("vi-VN"),
-      done: counts.needs_confirm === 0,
-      action: () => onFilterStatus("needs_confirm")
-    },
-    {
-      id: "late",
-      label: "Không có bàn quá giờ",
-      value: counts.overdue.toLocaleString("vi-VN"),
-      done: counts.overdue === 0,
-      action: () => onFilterStatus("overdue")
-    },
-    {
-      id: "payment",
-      label: "Bàn chờ thu được gom",
-      value: counts.awaiting_payment.toLocaleString("vi-VN"),
-      done: counts.awaiting_payment === 0,
-      action: () => onFilterStatus("awaiting_payment")
-    },
-    {
-      id: "qr",
-      label: "QR/token sẵn sàng",
-      value: qrIssueTables.length.toLocaleString("vi-VN"),
-      done: qrIssueTables.length === 0,
-      action: onShowQrIssues
-    }
-  ];
-
-  return (
-    <section className="dashboard-panel dashboard-command-center dashboard-mobile-table-command p-3">
-      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow">Intake command</p>
-              <h2 className="dashboard-section-title mt-1">Đầu vào QR tại bàn</h2>
-            </div>
-            <Badge tone={intakeTone}>Ready {intakeScore}/100</Badge>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Công suất bàn</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{occupancyRate}%</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">QR bật</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{qrEnabled}/{total}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">QR tắt</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{qrDisabled}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Cần xử lý</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{actionQueue.length}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist mở ca mặt sàn</p>
-              <Badge tone={checks.every((item) => item.done) ? "green" : "yellow"}>{checks.filter((item) => !item.done).length || "Xong"}</Badge>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {checks.map((item) => (
-                <button key={item.id} type="button" onClick={item.action} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
-                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
-                  <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Bàn cần chạm trước</p>
-              <Badge tone={firstAction ? statusMeta(firstAction.status).tone : "green"}>{firstAction ? "Có việc" : "Sạch"}</Badge>
-            </div>
-            {firstAction ? (
-              <button type="button" onClick={() => onOpenTable(firstAction.id)} className="w-full rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-left transition hover:-translate-y-0.5 hover:border-[var(--primary)] hover:shadow-[var(--shadow-soft)]">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{firstAction.name}</span>
-                    <span className="mt-0.5 block truncate text-xs font-semibold text-[var(--muted-foreground)]">{tableAreaLabel(firstAction)} · {tableActionCopy(firstAction, nowMs)}</span>
-                  </span>
-                  <Badge tone={statusMeta(firstAction.status).tone}>{statusMeta(firstAction.status).label}</Badge>
-                </div>
-              </button>
-            ) : (
-              <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                Không có bàn cần xử lý ngay.
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
 
 function escapeXml(value: string) {
   return value
@@ -948,34 +780,25 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
         </div>
       </section>
 
-      <section className="dashboard-mobile-table-metrics dashboard-ops-metrics-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <TablesMetric icon={Table2} label="Tổng bàn" value={total} meta={`${areaStats.length || 1} khu vực đang quản lý`} tone="blue" />
-        <TablesMetric icon={CheckCircle2} label="Bàn trống" value={counts.available} meta={`${Math.round((counts.available / Math.max(total, 1)) * 100)}% sẵn sàng nhận khách`} tone="green" />
-        <TablesMetric icon={Users} label="Đang phục vụ" value={serving} meta={counts.overdue ? `${counts.overdue} bàn quá giờ` : `${counts.awaiting_payment} bàn chờ thu`} tone={counts.overdue > 0 ? "red" : counts.needs_confirm > 0 ? "yellow" : "green"} />
-        <TablesMetric icon={QrCode} label="QR active" value={qrEnabled} meta={qrDisabled ? `${qrDisabled} bàn cần bật/in lại QR` : "Tất cả QR đang bật"} tone={qrDisabled ? "yellow" : "green"} />
-      </section>
-
-      <FloorIntakeCommandCenter
-        counts={counts}
-        total={total}
-        occupancyRate={occupancyRate}
-        qrEnabled={qrEnabled}
-        qrDisabled={qrDisabled}
-        qrIssueTables={qrIssueTables}
-        actionQueue={actionQueue}
-        nowMs={nowMs}
-        onFilterStatus={(status) => {
-          setStatusFilter(status);
-          setAreaFilter("all");
-          setQuery("");
-        }}
-        onShowQrIssues={() => {
-          setStatusFilter("all");
-          setAreaFilter("all");
-          setQuery("qr");
-        }}
-        onOpenTable={openTableDrawer}
-      />
+      {/* Compact Status Bar */}
+      {(() => {
+        const intakeScore = Math.max(0, 100 - counts.overdue * 16 - counts.needs_confirm * 12 - counts.awaiting_payment * 8 - qrIssueTables.length * 6);
+        const intakeTone = intakeScore >= 84 ? "green" : intakeScore >= 64 ? "yellow" : "red";
+        return (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5">
+            <Badge tone={intakeTone}>Sàn {intakeScore}/100</Badge>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">Công suất {occupancyRate}%</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">{counts.available} trống</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className={`text-xs font-semibold ${counts.needs_confirm > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>{counts.needs_confirm} chờ nhận</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className={`text-xs font-semibold ${counts.overdue > 0 ? 'text-[var(--accent-strong)]' : 'text-[var(--muted-foreground)]'}`}>{counts.overdue} quá giờ</span>
+            <span className="mx-0.5 text-[var(--border)]">·</span>
+            <span className="text-xs font-semibold text-[var(--muted-foreground)]">QR {qrEnabled}/{total}</span>
+          </div>
+        );
+      })()}
 
       <section className="dashboard-mobile-hide dashboard-ops-split grid gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
         <div className="dashboard-panel p-4">

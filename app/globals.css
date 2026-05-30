@@ -1871,23 +1871,100 @@ img {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .dashboard-onboarding-step-button,
-  .dashboard-onboarding-primary-button,
-  .dashboard-plan-card,
-  .dashboard-plan-select-button,
-  .dashboard-plan-modal-backdrop,
-  .dashboard-plan-modal {
-    animation: none !important;
-    transition: none !important;
-  }
-
-  .dashboard-plan-card.is-active,
-  .dashboard-plan-select-button:hover,
-  .dashboard-onboarding-primary-button:hover {
-    transform: none !important;
-  }
+@keyframes laserScan {
+  0% { top: 0%; opacity: 0.3; }
+  50% { top: 100%; opacity: 1; }
+  100% { top: 0%; opacity: 0.3; }
 }
+
+@keyframes floatGlow {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -40px) scale(1.1); }
+  66% { transform: translate(-20px, 30px) scale(0.95); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+.animate-laser-scan {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #22c55e, transparent);
+  box-shadow: 0 0 8px #22c55e, 0 0 15px #22c55e;
+  animation: laserScan 2.5s infinite linear;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.bg-glow-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.25;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.bg-glow-green {
+  background-color: rgba(34, 197, 94, 0.4);
+  animation: floatGlow 12s infinite ease-in-out;
+}
+
+.bg-glow-orange {
+  background-color: rgba(249, 115, 22, 0.35);
+  animation: floatGlow 16s infinite ease-in-out 2s;
+}
+
+.bg-glow-emerald {
+  background-color: rgba(16, 185, 129, 0.3);
+  animation: floatGlow 14s infinite ease-in-out 4s;
+}
+
+/* Glassmorphism card premium effects */
+.premium-glow-border {
+  position: relative;
+}
+.premium-glow-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(15, 77, 58, 0.4), rgba(242, 140, 40, 0.4));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+.premium-glow-border:hover::after,
+.premium-glow-border.is-active::after {
+  opacity: 1;
+}
+
+/* Glass panel */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 77, 58, 0.08) !important;
+}
+
+/* Device Mockup custom scrollbar */
+.preview-device-screen::-webkit-scrollbar {
+  width: 4px;
+}
+.preview-device-screen::-webkit-scrollbar-track {
+  background: transparent;
+}
+.preview-device-screen::-webkit-scrollbar-thumb {
+  background: rgba(15, 77, 58, 0.15);
+  border-radius: 99px;
+}
+.preview-device-screen::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 77, 58, 0.3);
+}
+
 
 .dashboard-onboarding-scroll > *,
 .dashboard-onboarding-support > *,
@@ -10270,4 +10347,333 @@ img {
 .stitch-devops ::selection {
   background: rgba(56, 189, 248, 0.28);
   color: #FFFFFF;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD DYNAMIC EFFECTS — Micro-Animations & Visual Polish
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Staggered Entrance Cascade ── */
+@keyframes dash-section-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.stitch-admin section,
+.stitch-admin .dashboard-panel,
+.stitch-admin .dashboard-menu-workspace > *,
+.stitch-admin .admin-hero-panel {
+  animation: dash-section-rise 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.stitch-admin section:nth-child(1),
+.stitch-admin .dashboard-panel:nth-child(1) { animation-delay: 0ms; }
+.stitch-admin section:nth-child(2),
+.stitch-admin .dashboard-panel:nth-child(2) { animation-delay: 60ms; }
+.stitch-admin section:nth-child(3),
+.stitch-admin .dashboard-panel:nth-child(3) { animation-delay: 120ms; }
+.stitch-admin section:nth-child(4),
+.stitch-admin .dashboard-panel:nth-child(4) { animation-delay: 180ms; }
+.stitch-admin section:nth-child(5),
+.stitch-admin .dashboard-panel:nth-child(5) { animation-delay: 240ms; }
+.stitch-admin section:nth-child(n+6),
+.stitch-admin .dashboard-panel:nth-child(n+6) { animation-delay: 300ms; }
+
+
+/* ── 2. Compact Status Bar Effects ── */
+@keyframes status-bar-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes status-bar-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 16px -4px color-mix(in srgb, var(--primary) 12%, transparent);
+  }
+}
+
+/* Compact status bars — subtle shimmer overlay on load */
+.stitch-admin > .grid > div > div:first-child[class*="flex"][class*="rounded-xl"],
+.stitch-admin .dashboard-menu-workspace > div:first-child[class*="flex"][class*="rounded-xl"] {
+  position: relative;
+  overflow: hidden;
+  animation: status-bar-breathe 4s ease-in-out infinite;
+}
+
+.stitch-admin > .grid > div > div:first-child[class*="flex"][class*="rounded-xl"]::before,
+.stitch-admin .dashboard-menu-workspace > div:first-child[class*="flex"][class*="rounded-xl"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(15, 77, 58, 0.04) 25%,
+    rgba(15, 77, 58, 0.08) 50%,
+    rgba(15, 77, 58, 0.04) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: status-bar-shimmer 3s ease-in-out 0.5s 1 both;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+
+/* ── 3. Metric Number Transition ── */
+.stitch-admin .metric-number,
+.stitch-admin [class*="tabular-nums"] {
+  transition: color 300ms ease, transform 200ms ease;
+}
+
+.stitch-admin .metric-number:hover {
+  transform: scale(1.05);
+}
+
+
+/* ── 4. Dashboard Panel Hover Lift ── */
+.stitch-admin .dashboard-panel {
+  transition:
+    box-shadow 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 260ms ease,
+    background 260ms ease,
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.stitch-admin .dashboard-panel:hover {
+  transform: translateY(-2px);
+}
+
+/* Action buttons micro-lift */
+.stitch-admin .dashboard-primary-action:active,
+.stitch-admin .dashboard-secondary-action:active {
+  transform: translateY(0) scale(0.97);
+  transition-duration: 80ms;
+}
+
+
+/* ── 5. Real-time Badge Glow Pulse ── */
+@keyframes realtime-glow-ring {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+  }
+}
+
+.stitch-admin span[class*="animate-ping"] {
+  animation: realtime-glow-ring 2s ease-in-out infinite !important;
+  border-radius: 9999px;
+}
+
+
+/* ── 6. Grid Card Stagger Cascade ── */
+@keyframes card-cascade-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Table grid, menu category cards, and inventory items */
+.stitch-admin .dashboard-floor-card-grid > *,
+.stitch-admin .dashboard-menu-filter-grid + .dashboard-menu-insight-grid > * > *,
+.stitch-admin [class*="grid-cols"] > button,
+.stitch-admin [class*="grid-cols"] > a[class*="rounded-xl"] {
+  animation: card-cascade-in 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.stitch-admin [class*="grid-cols"] > *:nth-child(1) { animation-delay: 30ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(2) { animation-delay: 70ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(3) { animation-delay: 110ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(4) { animation-delay: 150ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(5) { animation-delay: 190ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(6) { animation-delay: 230ms; }
+.stitch-admin [class*="grid-cols"] > *:nth-child(n+7) { animation-delay: 270ms; }
+
+
+/* ── 7. Alert Glow on Accent-Strong Items ── */
+@keyframes accent-pulse-glow {
+  0%, 100% {
+    text-shadow: 0 0 0 transparent;
+  }
+  50% {
+    text-shadow: 0 0 8px color-mix(in srgb, var(--accent-strong) 30%, transparent);
+  }
+}
+
+.stitch-admin span[class*="accent-strong"] {
+  animation: accent-pulse-glow 2.5s ease-in-out infinite;
+}
+
+
+/* ── 8. Interactive Row Highlight ── */
+.stitch-admin a[class*="rounded-xl"][class*="border"]:hover,
+.stitch-admin button[class*="rounded-lg"][class*="border"]:hover {
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 200ms ease;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 77, 58, 0.06);
+}
+
+.stitch-admin a[class*="rounded-xl"][class*="border"]:active,
+.stitch-admin button[class*="rounded-lg"][class*="border"]:active {
+  transform: translateY(0) scale(0.985);
+  transition-duration: 80ms;
+}
+
+
+/* ── 9. Badge Micro-Animation ── */
+@keyframes badge-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  70% {
+    transform: scale(1.08);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.stitch-admin [data-badge],
+.stitch-admin span[class*="rounded-full"][class*="font-black"],
+.stitch-admin span[class*="rounded-full"][class*="font-semibold"][class*="min-h"] {
+  animation: badge-pop-in 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: 200ms;
+}
+
+
+/* ── 10. Tab Switch Transitions ── */
+.stitch-admin button[class*="rounded-lg"][class*="font-bold"] {
+  transition:
+    background 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 220ms ease,
+    box-shadow 220ms ease,
+    transform 160ms ease;
+}
+
+.stitch-admin button[class*="rounded-lg"][class*="font-bold"]:hover {
+  transform: translateY(-1px);
+}
+
+
+/* ── 11. Smooth Scroll Container ── */
+.stitch-admin [class*="overflow-x-auto"],
+.stitch-admin [class*="overflow-y-auto"] {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stitch-admin [class*="overflow-x-auto"]::-webkit-scrollbar {
+  height: 4px;
+}
+
+.stitch-admin [class*="overflow-x-auto"]::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--primary) 30%, var(--border));
+  border-radius: 8px;
+}
+
+
+/* ── 12. Hero Panel Gradient Drift ── */
+@keyframes hero-gradient-drift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.stitch-admin .admin-hero-panel {
+  background-size: 200% 200%;
+  animation: hero-gradient-drift 12s ease infinite;
+}
+
+
+/* ── 13. Kanban / Table Card Drag-Ready Hover ── */
+.stitch-admin .dashboard-table-card,
+.stitch-admin [class*="kanban"] [class*="rounded-xl"] {
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.stitch-admin .dashboard-table-card:hover,
+.stitch-admin [class*="kanban"] [class*="rounded-xl"]:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow:
+    0 12px 28px rgba(15, 77, 58, 0.08),
+    0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+
+
+/* ── 14. Focus Ring Glow ── */
+.stitch-admin input:focus,
+.stitch-admin select:focus,
+.stitch-admin textarea:focus,
+.stitch-admin button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 4px color-mix(in srgb, var(--primary) 40%, transparent);
+  transition: box-shadow 200ms ease;
+}
+
+
+/* ── 15. Loading Skeleton Shimmer (utility class) ── */
+@keyframes skeleton-wave {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.dash-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    color-mix(in srgb, var(--primary-soft) 50%, var(--surface)) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-wave 1.8s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+
+/* ── 16. Dot Separator Fade In ── */
+.stitch-admin span[class*="text-[var(--border)]"] {
+  opacity: 0;
+  animation: reveal-soft 400ms ease 100ms both;
+}
+
+
+/* ── Reduce Motion: Respect user preference ── */
+@media (prefers-reduced-motion: reduce) {
+  .stitch-admin *,
+  .stitch-admin *::before,
+  .stitch-admin *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

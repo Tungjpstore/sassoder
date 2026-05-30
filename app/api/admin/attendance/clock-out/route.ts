@@ -6,6 +6,7 @@ import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { firstForwardedIp } from "@/lib/attendance-network";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { clockOutStaffAttendance } from "@/features/attendance/services/attendance-service";
+import { assertActiveStaffDeviceSession } from "@/features/staff/services/staff-session-service";
 
 export const preferredRegion = "sin1";
 
@@ -72,6 +73,11 @@ function requestNetwork(request: Request) {
   };
 }
 
+function deviceFingerprint(deviceInfo: Record<string, unknown>) {
+  const value = deviceInfo.deviceFingerprint;
+  return typeof value === "string" ? value : null;
+}
+
 export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
@@ -81,6 +87,7 @@ export async function POST(request: Request) {
       feature: "staff_management",
       permission: input.source === "manual" ? ["attendance.clock", "attendance.edit"] : "attendance.clock"
     });
+    await assertActiveStaffDeviceSession({ session, deviceFingerprint: deviceFingerprint(input.deviceInfo) });
     return success(await clockOutStaffAttendance({ session, input: { ...input, network: requestNetwork(request) } }));
   } catch (error) {
     return failure(error);

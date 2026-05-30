@@ -123,6 +123,7 @@ type RawOrder = {
   customer_session_id?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
+  customer_note?: string | null;
   delivery_address?: string | null;
   delivery_lat?: number | string | null;
   delivery_lng?: number | string | null;
@@ -242,10 +243,10 @@ type MutableOrderRow = {
 };
 
 const orderSelect =
-  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
+  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const kitchenOrderSelect =
-  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
+  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const legacyOrderSelect = orderSelect.replace("branch_id,branch_assignment_source,", "");
 const legacyKitchenOrderSelect = kitchenOrderSelect.replace("branch_id,branch_assignment_source,", "");
@@ -685,6 +686,7 @@ function mapOrder(order: RawOrder): OrderDto {
     fulfillmentType: order.fulfillment_type ?? "DINE_IN",
     customerName: order.customer_name ?? null,
     customerPhone: order.customer_phone ?? null,
+    customerNote: order.customer_note ?? null,
     deliveryAddress: order.delivery_address ?? null,
     deliveryLat: numericOrNull(order.delivery_lat),
     deliveryLng: numericOrNull(order.delivery_lng),

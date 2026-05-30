@@ -9,11 +9,14 @@ type StaffOperationsApiResponse = {
 };
 
 type AttendanceApiResponse<T> = {
-  success: boolean;
-  message: string;
-  data: T | null;
+  success?: boolean;
+  ok?: boolean;
+  message?: string;
+  error?: string;
+  data?: T | null;
   meta?: Record<string, unknown> | null;
   errors?: unknown;
+  details?: unknown;
 };
 
 export class StaffOperationsApiError extends Error {
@@ -150,13 +153,18 @@ export type StaffRequestCreatePayload = {
 
 async function parseOperationalResponse<T>(response: Response, fallback: string) {
   const payload = (await response.json().catch(() => null)) as AttendanceApiResponse<T> | null;
-  if (!response.ok || !payload?.success || !payload.data) {
+  const requestSucceeded = payload?.success === true || payload?.ok === true;
+  const hasData = payload && Object.prototype.hasOwnProperty.call(payload, "data") && payload.data !== null && payload.data !== undefined;
+
+  if (!response.ok || !requestSucceeded || !hasData) {
     const firstError = Array.isArray(payload?.errors) ? payload.errors[0] : null;
-    throw new StaffOperationsApiError(typeof firstError === "string" ? firstError : payload?.message ?? fallback, {
+    const message = typeof firstError === "string" ? firstError : payload?.message ?? payload?.error ?? fallback;
+    throw new StaffOperationsApiError(message, {
       status: response.status
     });
   }
-  return payload.data;
+
+  return payload.data as T;
 }
 
 async function postOperational<T>(url: string, payload: unknown, fallback: string) {
