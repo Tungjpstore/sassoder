@@ -274,7 +274,7 @@ function IconButton({ label, children, className, ...props }: ButtonHTMLAttribut
       type="button"
       aria-label={label}
       title={label}
-      className={cn("relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[#D8D1C7] bg-white text-[#2B2B2B] transition hover:border-[#0F4D3A]/35 active:scale-[0.98]", className)}
+      className={cn("relative grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-[#0F4D3A]/15 bg-[#FFFDF8] text-[#2B2B2B] shadow-[0_8px_18px_rgba(15,42,31,0.045)] transition hover:border-[#0F4D3A]/35 active:scale-[0.98]", className)}
       {...props}
     >
       {children}
@@ -283,7 +283,7 @@ function IconButton({ label, children, className, ...props }: ButtonHTMLAttribut
 }
 
 function Panel({ children, className }: { children: ReactNode; className?: string }) {
-  return <section className={cn("rounded-2xl border border-[#D8D1C7] bg-white shadow-[0_2px_8px_rgba(43,43,43,0.04)]", className)}>{children}</section>;
+  return <section className={cn("staff-brand-panel", className)}>{children}</section>;
 }
 
 function StatusChip({ children, tone = "neutral" }: { children: ReactNode; tone?: "success" | "warning" | "danger" | "neutral" | "brand" }) {
@@ -293,7 +293,7 @@ function StatusChip({ children, tone = "neutral" }: { children: ReactNode; tone?
         "inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold",
         tone === "success" && "bg-[#DDF8E9] text-[#0F4D3A]",
         tone === "warning" && "bg-[#FFF0D9] text-[#93540A]",
-        tone === "danger" && "bg-[#FFE0DF] text-[#B91C1C]",
+        tone === "danger" && "bg-[#FFF0D9] text-[#A33D10]",
         tone === "neutral" && "bg-[#ECE9E3] text-[#595650]",
         tone === "brand" && "bg-[#E5EEE2] text-[#0F4D3A]"
       )}
@@ -315,7 +315,7 @@ function Avatar({ name, active, size = "md" }: { name: string; active?: boolean;
       )}
     >
       {initials(name)}
-      {active !== undefined ? <span className={cn("absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white", active ? "bg-[#0F8A5F]" : "bg-[#A6A19A]")} /> : null}
+      {active !== undefined ? <span className={cn("absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white", active ? "bg-[#0F4D3A]" : "bg-[#A6A19A]")} /> : null}
     </span>
   );
 }
@@ -360,7 +360,7 @@ export function StaffRedesignWorkspace({ bundle, restaurantId, restaurantName }:
   const pageTitle = activeView === "add" ? "Thêm nhân viên mới" : activeView === "success" ? "Hoàn tất" : activeView === "detail" ? selectedMember?.fullName ?? "Chi tiết nhân viên" : navItems.find((item) => item.key === activeView)?.label ?? "Nhân viên";
 
   return (
-    <main className="min-h-screen overflow-x-clip bg-[#FFF7EB] text-[#2B2B2B]">
+    <main className="staff-brand-page text-[#2B2B2B]">
       <DesktopSidebar activeView={lastPrimaryView} onNavigate={openView} />
       <section className="min-h-screen lg:pl-80">
         <TopBar title={pageTitle} restaurantName={restaurantName} search={search} onSearch={setSearch} onAdd={() => openView("add")} unreadCount={bundle.unreadNotificationCount} onNotifications={markNotificationsRead} />
@@ -385,7 +385,7 @@ export function StaffRedesignWorkspace({ bundle, restaurantId, restaurantName }:
 
 function DesktopSidebar({ activeView, onNavigate }: { activeView: PrimaryView; onNavigate: (view: StaffView) => void }) {
   return (
-    <aside className="fixed inset-y-0 left-0 z-40 hidden w-80 border-r border-[#D8D1C7] bg-[#FFFDF8] lg:flex lg:flex-col">
+    <aside className="staff-brand-sidebar fixed inset-y-0 left-0 z-40 hidden w-80 border-r lg:flex lg:flex-col">
       <div className="px-8 pb-7 pt-8">
         <LogiVNLogo priority className="h-12 w-auto" />
         <span>
@@ -403,7 +403,7 @@ function DesktopSidebar({ activeView, onNavigate }: { activeView: PrimaryView; o
               onClick={() => onNavigate(item.key)}
               className={cn(
                 "flex min-h-14 w-full items-center gap-4 rounded-xl px-5 text-left text-base font-bold transition",
-                active ? "border-r-4 border-[#0F8A5F] bg-[#F1EEE8] text-[#111]" : "text-[#3F3D39] hover:bg-[#F7F2EA]"
+                active ? "border-r-4 border-[#0F4D3A] bg-[#E5EEE2] text-[#2B2B2B]" : "text-[#3F3D39] hover:bg-[#F7F2EA]"
               )}
             >
               <Icon size={24} strokeWidth={2.2} aria-hidden="true" />
@@ -441,7 +441,7 @@ function TopBar({
   onNotifications: () => void;
 }) {
   return (
-    <header className="sticky top-0 z-30 hidden h-20 items-center justify-between border-b border-[#D8D1C7] bg-[rgba(255,253,248,0.92)] px-8 backdrop-blur-xl lg:flex">
+    <header className="staff-brand-topbar sticky top-0 z-30 hidden h-20 items-center justify-between border-b px-8 lg:flex">
       <label className="relative block w-full max-w-[560px]">
         <span className="sr-only">Tìm kiếm</span>
         <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#74716B]" size={23} />
@@ -455,7 +455,7 @@ function TopBar({
       <div className="flex items-center gap-5">
         <StaffButton onClick={onAdd} className="min-w-[190px]"><Plus size={18} /> Thêm nhân viên</StaffButton>
         <span className="h-10 w-px bg-[#D8D1C7]" />
-        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={23} />{unreadCount ? <span className="absolute mt-[-23px] ml-[18px] h-2.5 w-2.5 rounded-full bg-[#D22]" /> : null}</IconButton>
+        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={23} />{unreadCount ? <span className="absolute mt-[-23px] ml-[18px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
         <span className="grid h-11 w-11 place-items-center rounded-full bg-[#0F4D3A] text-sm font-black text-white ring-2 ring-[#D8D1C7]">{restaurantName.charAt(0).toUpperCase()}</span>
       </div>
     </header>
@@ -464,13 +464,13 @@ function TopBar({
 
 function MobileHeader({ title, onAdd, unreadCount, onNotifications }: { title: string; onAdd: () => void; unreadCount: number; onNotifications: () => void }) {
   return (
-    <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#E6DED4] bg-[rgba(255,253,248,0.94)] px-5 backdrop-blur-xl lg:hidden">
+    <header className="staff-brand-mobile-header sticky top-0 z-30 flex h-[68px] items-center justify-between border-b px-5 lg:hidden">
       <div className="flex items-center gap-4">
-        <h1 className="max-w-[180px] truncate text-3xl font-black leading-none text-[#111] sm:max-w-none">{title}</h1>
+        <h1 className="max-w-[180px] truncate text-3xl font-black leading-none text-[#2B2B2B] sm:max-w-none">{title}</h1>
       </div>
       <div className="flex items-center gap-1">
         <IconButton label="Thêm nhân viên" onClick={onAdd} className="border-transparent bg-transparent"><Plus size={30} /></IconButton>
-        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={28} />{unreadCount ? <span className="absolute mt-[-28px] ml-[22px] h-2.5 w-2.5 rounded-full bg-[#D22]" /> : null}</IconButton>
+        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={28} />{unreadCount ? <span className="absolute mt-[-28px] ml-[22px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
       </div>
     </header>
   );
@@ -479,12 +479,12 @@ function MobileHeader({ title, onAdd, unreadCount, onNotifications }: { title: s
 function MobileBottomNav({ activeView, onNavigate }: { activeView: PrimaryView; onNavigate: (view: StaffView) => void }) {
   const items = navItems.filter((item) => item.key !== "permissions");
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 grid h-[86px] grid-cols-5 border-t border-[#E6DED4] bg-[rgba(255,253,248,0.96)] px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl lg:hidden" aria-label="Staff mobile navigation">
+    <nav className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-40 grid h-[86px] grid-cols-5 border-t px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 lg:hidden" aria-label="Staff mobile navigation">
       {items.map((item) => {
         const Icon = item.icon;
         const active = activeView === item.key;
         return (
-          <button key={item.key} type="button" onClick={() => onNavigate(item.key)} className={cn("grid min-h-16 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#2E3038]")}> 
+          <button key={item.key} type="button" onClick={() => onNavigate(item.key)} className={cn("grid min-h-16 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#3F3D39]")}>
             <Icon size={27} strokeWidth={active ? 2.6 : 2.1} aria-hidden="true" />
             <span className="mt-0.5 truncate">{item.key === "staff" ? "Nhân viên" : item.key === "shifts" ? "Ca làm" : item.key === "attendance" ? "Chấm công" : item.key === "requests" ? "Yêu cầu" : "Báo cáo"}</span>
             <span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-[#0F4D3A]" : "bg-transparent")} />
@@ -526,7 +526,7 @@ function StaffListScreen({ bundle, search, onSearch, onOpenMember, onAdd, onNavi
   return (
     <div className="space-y-6">
       <section className="hidden lg:block">
-        <h1 className="text-[32px] font-black leading-tight text-[#111]">Quản lý Nhân viên</h1>
+        <h1 className="text-[32px] font-black leading-tight text-[#2B2B2B]">Quản lý Nhân viên</h1>
         <p className="mt-1 text-lg font-medium text-[#4B4945]">Tổng quan và danh sách nhân sự trong ca làm việc hôm nay.</p>
       </section>
 
@@ -538,10 +538,10 @@ function StaffListScreen({ bundle, search, onSearch, onOpenMember, onAdd, onNavi
             return (
               <Panel key={item.label} className="flex h-[126px] items-center justify-between p-6 lg:h-32">
                 <div>
-                  <p className="flex items-center gap-2 text-base font-semibold text-[#3F3D39]"><span className={cn("h-2.5 w-2.5 rounded-full", item.tone === "success" ? "bg-[#0F8A5F]" : item.tone === "danger" ? "bg-[#C91E1E]" : item.tone === "brand" ? "bg-[#0F4D3A]" : "bg-[#3B2500]")} />{item.label}</p>
-                  <p className={cn("mt-3 text-[42px] font-black leading-none", item.tone === "danger" ? "text-[#C91E1E]" : "text-[#111]")}>{item.value}</p>
+                  <p className="flex items-center gap-2 text-base font-semibold text-[#3F3D39]"><span className={cn("h-2.5 w-2.5 rounded-full", item.tone === "success" ? "bg-[#0F4D3A]" : item.tone === "danger" ? "bg-[#A33D10]" : item.tone === "brand" ? "bg-[#0F4D3A]" : "bg-[#3B2500]")} />{item.label}</p>
+                  <p className={cn("mt-3 text-[42px] font-black leading-none", item.tone === "danger" ? "text-[#A33D10]" : "text-[#2B2B2B]")}>{item.value}</p>
                 </div>
-                <span className={cn("hidden h-16 w-16 place-items-center rounded-full lg:grid", item.tone === "success" ? "bg-[#6EF0B0] text-[#0F4D3A]" : item.tone === "danger" ? "bg-[#FFD7D4] text-[#B91C1C]" : item.tone === "brand" ? "bg-[#DDE6FF] text-[#0F4D3A]" : "bg-[#6B3D00] text-[#FFF7EB]")}>
+                <span className={cn("hidden h-16 w-16 place-items-center rounded-full lg:grid", item.tone === "success" ? "bg-[#A9C5A1] text-[#0F4D3A]" : item.tone === "danger" ? "bg-[#FFE2C6] text-[#A33D10]" : item.tone === "brand" ? "bg-[#E5EEE2] text-[#0F4D3A]" : "bg-[#6B3D00] text-[#FFF7EB]")}>
                   <Icon size={28} />
                 </span>
               </Panel>
@@ -621,13 +621,13 @@ function StaffDesktopTable({ members, bundle, onOpenMember, onNavigate }: { memb
                   <button type="button" onClick={() => onOpenMember(member.id)} className="flex min-h-12 items-center gap-4 text-left">
                     <Avatar name={member.fullName} active={label === "Đang làm"} />
                     <span>
-                      <span className="block text-lg font-black text-[#111]">{member.fullName}</span>
+                      <span className="block text-lg font-black text-[#2B2B2B]">{member.fullName}</span>
                       <span className="block text-sm font-semibold text-[#4B4945]">EMP-{member.id.slice(0, 4).toUpperCase()}</span>
                     </span>
                   </button>
                 </td>
                 <td className="px-4 py-5 text-base font-medium text-[#3F3D39]">{member.roleTitle || roleLabel(member.roleCode)}</td>
-                <td className="px-4 py-5 text-base font-bold text-[#111]">{assignment ? `${assignment.shiftName.includes(":") ? "" : ""}${attendanceLabel(attendance)}` : "--:--"}</td>
+                <td className="px-4 py-5 text-base font-bold text-[#2B2B2B]">{assignment ? `${assignment.shiftName.includes(":") ? "" : ""}${attendanceLabel(attendance)}` : "--:--"}</td>
                 <td className="px-4 py-5"><StatusChip tone={statusTone(label)}>{label}</StatusChip></td>
                 <td className="px-4 py-5 text-base font-medium text-[#3F3D39]">{member.primaryBranchName ?? "Chưa gán"}</td>
                 <td className="px-7 py-5">
@@ -659,13 +659,13 @@ function StaffMobileCard({ member, bundle, onOpen, onAttendance }: { member: Sta
         <button type="button" onClick={onOpen} className="flex min-w-0 items-center gap-4 text-left">
           <Avatar name={member.fullName} size="md" />
           <span className="min-w-0">
-            <span className="block truncate text-[26px] font-black leading-tight text-[#111]">{member.fullName}</span>
+            <span className="block truncate text-[26px] font-black leading-tight text-[#2B2B2B]">{member.fullName}</span>
             <span className="mt-1 block truncate text-lg font-medium text-[#3F3D39]">{member.roleTitle} • {member.primaryBranchName ?? "Chưa gán"}</span>
           </span>
         </button>
         <StatusChip tone={statusTone(label)}>{label}</StatusChip>
       </div>
-      <div className="mt-5 flex min-h-16 items-center gap-3 rounded-xl bg-[#F3F0EC] px-4 text-lg font-semibold text-[#2B2B2B]"><Clock3 size={22} className="text-[#77736D]" />{assignment ? `${assignment.shiftName}: ${attendanceLabel(attendance)}` : "Chưa có ca hôm nay"}</div>
+      <div className="mt-5 flex min-h-16 items-center gap-3 rounded-xl bg-[#F5F8F1] px-4 text-lg font-semibold text-[#2B2B2B]"><Clock3 size={22} className="text-[#77736D]" />{assignment ? `${assignment.shiftName}: ${attendanceLabel(attendance)}` : "Chưa có ca hôm nay"}</div>
       <div className="mt-5 grid grid-cols-[minmax(124px,1.15fr)_minmax(92px,1fr)] gap-2">
         <StaffButton variant={label === "Đang làm" ? "secondary" : "ghost"} onClick={onAttendance} className="min-h-[56px] whitespace-nowrap px-3 text-sm"><Fingerprint size={22} /> Chấm công</StaffButton>
         <StaffButton variant="secondary" onClick={onOpen} className="min-h-[56px] whitespace-nowrap px-3 text-sm"><UserRound size={21} /> Hồ sơ</StaffButton>
@@ -692,7 +692,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
             <Avatar name={member.fullName} active={status === "Đang làm"} size="lg" />
             <div>
               <div className="flex flex-wrap items-center gap-3">
-                <h1 className="text-[40px] font-black leading-tight text-[#111]">{member.fullName}</h1>
+                <h1 className="text-[40px] font-black leading-tight text-[#2B2B2B]">{member.fullName}</h1>
                 <StatusChip tone={statusTone(status)}>{status.toUpperCase()}</StatusChip>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-4 text-lg font-medium text-[#3F3D39]"><span>EMP-{member.id.slice(0, 4).toUpperCase()}</span><span>{member.primaryBranchName ?? "Chưa gán chi nhánh"}</span></p>
@@ -701,7 +701,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
           <StaffButton variant="secondary" onClick={onPermissions}><KeyRound size={18} /> Phân quyền</StaffButton>
         </div>
       </Panel>
-      <div className="flex gap-8 border-b border-[#D8D1C7] text-base font-black"><span className="border-b-2 border-[#111] pb-4">Thông tin</span><span className="pb-4 text-[#5E5A54]">Lịch làm việc</span><span className="pb-4 text-[#5E5A54]">Lương & Thưởng</span></div>
+      <div className="flex gap-8 border-b border-[#D8D1C7] text-base font-black"><span className="border-b-2 border-[#0F4D3A] pb-4 text-[#0F4D3A]">Thông tin</span><span className="pb-4 text-[#5E5A54]">Lịch làm việc</span><span className="pb-4 text-[#5E5A54]">Lương & Thưởng</span></div>
       <div className="grid gap-6 lg:grid-cols-2">
         <Panel className="p-7">
           <h2 className="flex items-center gap-3 text-[28px] font-black"><UserRound size={28} /> Liên hệ</h2>
@@ -740,7 +740,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
       <Panel className="p-7">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <h2 className="text-2xl font-black text-[#111]">Kiểm soát tài khoản</h2>
+            <h2 className="text-2xl font-black text-[#2B2B2B]">Kiểm soát tài khoản</h2>
             <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Các thao tác này ghi audit log và cập nhật trạng thái đăng nhập của nhân sự.</p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -765,7 +765,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
 }
 
 function InfoLine({ label, value, dot }: { label: string; value: string; dot?: boolean }) {
-  return <div><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">{label}</p><p className="mt-2 flex items-center gap-2 text-xl font-medium text-[#111]">{dot ? <span className="h-2.5 w-2.5 rounded-full bg-[#0F8A5F]" /> : null}{value}</p></div>;
+  return <div><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">{label}</p><p className="mt-2 flex items-center gap-2 text-xl font-medium text-[#2B2B2B]">{dot ? <span className="h-2.5 w-2.5 rounded-full bg-[#0F4D3A]" /> : null}{value}</p></div>;
 }
 
 function AddStaffScreen({ bundle, onCancel, onSuccess }: { bundle: StaffOperationsBundle; onCancel: () => void; onSuccess: (staffUserId?: string) => void }) {
@@ -778,12 +778,12 @@ function AddStaffScreen({ bundle, onCancel, onSuccess }: { bundle: StaffOperatio
     <div className="mx-auto max-w-5xl space-y-8">
       <div>
         <p className="text-base font-bold text-[#3F3D39]">Staff › Add New</p>
-        <h1 className="mt-8 text-[44px] font-black leading-tight text-[#111]">Thêm nhân viên mới</h1>
+        <h1 className="mt-8 text-[44px] font-black leading-tight text-[#2B2B2B]">Thêm nhân viên mới</h1>
         <p className="mt-3 text-xl font-medium text-[#3F3D39]">Điền thông tin cơ bản để tạo hồ sơ nhân viên vào hệ thống LogiVN.</p>
       </div>
       <form action={action} className="space-y-6">
         <Panel className="p-6 sm:p-8">
-          <h2 className="text-[28px] font-black text-[#111]">Thông tin cá nhân</h2>
+          <h2 className="text-[28px] font-black text-[#2B2B2B]">Thông tin cá nhân</h2>
           <div className="mt-4 border-t border-[#D8D1C7] pt-6 grid gap-6 sm:grid-cols-2">
             <Field label="Họ và tên *"><input required name="fullName" placeholder="VD: Nguyễn Văn A" className="staff-redesign-input" /></Field>
             <Field label="Số điện thoại *"><input required name="phone" placeholder="09xx xxx xxx" className="staff-redesign-input" /></Field>
@@ -791,7 +791,7 @@ function AddStaffScreen({ bundle, onCancel, onSuccess }: { bundle: StaffOperatio
             <Field label="Mã PIN chấm công"><input name="pin" inputMode="numeric" minLength={4} maxLength={6} placeholder="4-6 số" className="staff-redesign-input" /></Field>
             <Field label="Ghi chú"><input name="notes" placeholder="Ví dụ: part-time cuối tuần" className="staff-redesign-input" /></Field>
           </div>
-          <h2 className="mt-10 text-[28px] font-black text-[#111]">Thông tin công việc</h2>
+          <h2 className="mt-10 text-[28px] font-black text-[#2B2B2B]">Thông tin công việc</h2>
           <div className="mt-4 border-t border-[#D8D1C7] pt-6 grid gap-6 sm:grid-cols-2">
             <Field label="Vị trí *"><select required name="roleCode" className="staff-redesign-input">{roles.map((role) => <option key={role.id} value={role.code}>{role.title}</option>)}</select></Field>
             <Field label="Chi nhánh"><select name="branchId" className="staff-redesign-input"><option value="">Chưa gán chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field>
@@ -808,15 +808,15 @@ function AddStaffScreen({ bundle, onCancel, onSuccess }: { bundle: StaffOperatio
 }
 
 function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
-  return <label className={cn("grid gap-2 text-sm font-black text-[#111]", className)}><span>{label}</span>{children}</label>;
+  return <label className={cn("grid gap-2 text-sm font-black text-[#2B2B2B]", className)}><span>{label}</span>{children}</label>;
 }
 
 function AddSuccessScreen({ member, onList, onProfile }: { member: StaffOpsMember | null; onList: () => void; onProfile: () => void }) {
   return (
     <div className="grid min-h-[calc(100vh-9rem)] place-items-center py-10">
       <div className="w-full max-w-[560px] text-center">
-        <span className="mx-auto grid h-28 w-28 place-items-center rounded-full border-4 border-[#6EF0B0] bg-[#DDF8E9] text-[#0F4D3A]"><CheckCircle2 size={62} /></span>
-        <h1 className="mt-8 text-[40px] font-black leading-tight text-[#111]">Thêm nhân viên thành công!</h1>
+        <span className="mx-auto grid h-28 w-28 place-items-center rounded-full border-4 border-[#A9C5A1] bg-[#DDF8E9] text-[#0F4D3A]"><CheckCircle2 size={62} /></span>
+        <h1 className="mt-8 text-[40px] font-black leading-tight text-[#2B2B2B]">Thêm nhân viên thành công!</h1>
         <p className="mx-auto mt-3 max-w-md text-lg font-medium text-[#3F3D39]">Hồ sơ nhân viên mới đã được tạo và lưu trữ an toàn trong hệ thống.</p>
         <Panel className="mx-auto mt-8 p-7 text-left">
           <div className="flex items-center gap-5"><Avatar name={member?.fullName ?? "Hồ sơ mới"} /><div><p className="text-[28px] font-black">{member?.fullName ?? "Hồ sơ vừa tạo"}</p><StatusChip tone="success">Đã lưu</StatusChip></div></div>
@@ -845,14 +845,14 @@ function ShiftScreen({ bundle }: { bundle: StaffOperationsBundle }) {
       </div>
       <div className="hidden space-y-5 lg:block">
       <section className="flex flex-col justify-between gap-4 border-b border-[#D8D1C7] pb-5 lg:flex-row lg:items-center">
-        <div className="flex items-center gap-7"><h1 className="text-[40px] font-black text-[#111]">Schedule</h1><div className="flex h-14 items-center gap-4 rounded-xl border border-[#D8D1C7] bg-white px-4 text-base font-bold"><ChevronLeft size={20} /> Tuần này <ChevronRight size={20} /></div></div>
+        <div className="flex items-center gap-7"><h1 className="text-[40px] font-black text-[#2B2B2B]">Schedule</h1><div className="flex h-14 items-center gap-4 rounded-xl border border-[#D8D1C7] bg-white px-4 text-base font-bold"><ChevronLeft size={20} /> Tuần này <ChevronRight size={20} /></div></div>
         <div className="flex gap-3"><span className="inline-flex h-11 items-center rounded-xl border border-[#D8D1C7] bg-white px-5 text-sm font-black text-[#2B2B2B]">Tuần này</span><StaffButton onClick={() => document.getElementById("staff-shift-template-form")?.scrollIntoView({ block: "center", behavior: "smooth" })}><Plus size={18} /> Tạo ca</StaffButton></div>
       </section>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Panel className="overflow-hidden">
           <div className="grid min-w-[920px] grid-cols-[250px_repeat(7,1fr)] border-b border-[#D8D1C7] text-center">
             <div className="flex items-center px-5 text-sm font-black uppercase tracking-[0.12em] text-[#3F3D39]">Staff</div>
-            {week.map((day, index) => <div key={day.iso} className={cn("border-l border-[#D8D1C7] p-3", index === 2 && "border-t-4 border-t-[#111] bg-[#EFEFEF]")}><p className="text-sm font-bold">{day.weekday}</p><p className="text-2xl font-black">{day.day}</p></div>)}
+            {week.map((day, index) => <div key={day.iso} className={cn("border-l border-[#D8D1C7] p-3", index === 2 && "border-t-4 border-t-[#0F4D3A] bg-[#E5EEE2]")}><p className="text-sm font-bold">{day.weekday}</p><p className="text-2xl font-black">{day.day}</p></div>)}
           </div>
           <div className="overflow-x-auto">
             {bundle.members.slice(0, 5).map((member) => (
@@ -860,7 +860,7 @@ function ShiftScreen({ bundle }: { bundle: StaffOperationsBundle }) {
                 <div className="flex items-center gap-4 px-5 py-4"><Avatar name={member.fullName} /><span><span className="block font-black">{member.fullName}</span><span className="text-sm font-medium text-[#3F3D39]">{member.roleTitle}</span></span></div>
                 {week.map((day, dayIndex) => {
                   const assignment = bundle.shiftAssignments.find((item) => item.staffMemberId === member.id && item.scheduledDate === day.iso);
-                  return <div key={day.iso} className="min-h-24 border-l border-[#D8D1C7] p-2">{assignment ? <div className={cn("rounded-lg border p-3 text-sm font-bold", dayIndex % 3 === 0 ? "border-[#0F4D3A]/25 bg-[#DDF8E9] text-[#0F4D3A]" : dayIndex % 3 === 1 ? "border-[#111]/20 bg-[#101828] text-white" : "border-[#F28C28]/25 bg-[#FFF0D9] text-[#93540A]")}><div className="flex items-start justify-between gap-2"><p>{assignment.shiftName}</p><form action={cancelAction}><input type="hidden" name="shiftAssignmentId" value={assignment.id} /><input type="hidden" name="note" value="Huỷ từ lịch Staff" /><button type="submit" disabled={cancelling} className="grid h-7 w-7 place-items-center rounded-lg bg-white/70 text-[#A33D10]" aria-label="Huỷ ca"><X size={14} /></button></form></div><p className="mt-3 text-xs opacity-75">{assignment.branchName ?? "Chưa gán chi nhánh"}</p></div> : <div className="grid h-full min-h-20 place-items-center rounded-lg border border-dashed border-[#D8D1C7] text-xl font-light text-[#6F6A62]">{dayIndex === 2 ? "+" : "Off"}</div>}</div>;
+                  return <div key={day.iso} className="min-h-24 border-l border-[#D8D1C7] p-2">{assignment ? <div className={cn("rounded-lg border p-3 text-sm font-bold", dayIndex % 3 === 0 ? "border-[#0F4D3A]/25 bg-[#DDF8E9] text-[#0F4D3A]" : dayIndex % 3 === 1 ? "border-[#0F4D3A]/20 bg-[#0F4D3A] text-white" : "border-[#F28C28]/25 bg-[#FFF0D9] text-[#93540A]")}><div className="flex items-start justify-between gap-2"><p>{assignment.shiftName}</p><form action={cancelAction}><input type="hidden" name="shiftAssignmentId" value={assignment.id} /><input type="hidden" name="note" value="Huỷ từ lịch Staff" /><button type="submit" disabled={cancelling} className="grid h-7 w-7 place-items-center rounded-lg bg-white/70 text-[#A33D10]" aria-label="Huỷ ca"><X size={14} /></button></form></div><p className="mt-3 text-xs opacity-75">{assignment.branchName ?? "Chưa gán chi nhánh"}</p></div> : <div className="grid h-full min-h-20 place-items-center rounded-lg border border-dashed border-[#D8D1C7] text-xl font-light text-[#6F6A62]">{dayIndex === 2 ? "+" : "Off"}</div>}</div>;
                 })}
               </div>
             ))}
@@ -955,16 +955,16 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
         />
       </div>
       <div className="hidden space-y-6 lg:block">
-      <section><h1 className="text-[32px] font-black text-[#111]">Quản lý Chấm công</h1><p className="mt-1 text-lg font-medium text-[#3F3D39]">Theo dõi dữ liệu vào/ra và xử lý chấm công hộ khi cần.</p></section>
+      <section><h1 className="text-[32px] font-black text-[#2B2B2B]">Quản lý Chấm công</h1><p className="mt-1 text-lg font-medium text-[#3F3D39]">Theo dõi dữ liệu vào/ra và xử lý chấm công hộ khi cần.</p></section>
       <div className="grid gap-5 xl:grid-cols-[1fr_386px]">
         <Panel className="p-6"><h2 className="text-2xl font-black">Bộ lọc dữ liệu</h2><div className="mt-5 grid gap-4 md:grid-cols-3"><Field label="Ngày"><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="staff-redesign-input" /></Field><Field label="Chi nhánh"><select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field><Field label="Trạng thái"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả trạng thái</option><option value="on_time">Đúng giờ</option><option value="late">Đi trễ</option><option value="absent">Vắng mặt</option><option value="overtime">Tăng ca</option></select></Field></div></Panel>
-        <Panel className="p-6"><h2 className="text-2xl font-black">Tỷ lệ đúng giờ</h2><p className="mt-2 text-sm font-medium text-[#3F3D39]">Ngày {formatDate(today)}</p><div className="mt-4 flex items-center gap-7"><div className="grid h-28 w-28 place-items-center rounded-full border-[14px] border-[#0F8A5F] border-l-[#C91E1E]"><span className="text-2xl font-black">{onTimeRate}%</span></div><div className="space-y-3 text-base font-medium"><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#0F8A5F]" />Đúng giờ</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#C91E1E]" />Đi trễ/Vắng</p></div></div></Panel>
+        <Panel className="p-6"><h2 className="text-2xl font-black">Tỷ lệ đúng giờ</h2><p className="mt-2 text-sm font-medium text-[#3F3D39]">Ngày {formatDate(today)}</p><div className="mt-4 flex items-center gap-7"><div className="grid h-28 w-28 place-items-center rounded-full border-[14px] border-[#0F4D3A] border-l-[#A33D10]"><span className="text-2xl font-black">{onTimeRate}%</span></div><div className="space-y-3 text-base font-medium"><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#0F4D3A]" />Đúng giờ</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#A33D10]" />Đi trễ/Vắng</p></div></div></Panel>
       </div>
       <Panel className="p-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1fr]">
           <div><h2 className="text-xl font-black">QR hằng ngày</h2><p className="mt-1 text-sm font-medium text-[#5E5A54]">Mỗi chi nhánh dùng một mã theo ngày để giảm gian lận.</p><StaffButton onClick={generateQr} className="mt-4 w-full"><Fingerprint size={18} /> Tạo QR hôm nay</StaffButton></div>
           <div><h2 className="text-xl font-black">WiFi quán</h2><p className="mt-1 text-sm font-medium text-[#5E5A54]">Ghi nhận IP mạng hiện tại làm lớp xác thực phụ.</p><StaffButton variant="secondary" onClick={registerWifi} className="mt-4 w-full"><Wifi size={18} /> Lưu WiFi hiện tại</StaffButton></div>
-          <div className="rounded-xl bg-[#F6F1EA] p-4 text-sm font-semibold text-[#3F3D39]">{qrState ? <div className="flex items-center gap-4"><Image src={qrState.qrImageUrl} alt={`QR chấm công ${qrState.branchName}`} width={112} height={112} unoptimized className="h-28 w-28 rounded-xl border border-[#D8D1C7] bg-white object-contain" /><p>QR: {qrState.branchName}<br />Hết hạn {formatDateTime(qrState.expiresAt)}</p></div> : null}{wifiState ? <p className="mt-2">WiFi: {wifiState.publicIpCidr}</p> : null}{utilityError ? <p className="text-[#A33D10]">{utilityError}</p> : !qrState && !wifiState ? "Chọn thao tác để tạo mã kiểm soát chấm công." : null}</div>
+          <div className="rounded-xl bg-[#F5F8F1] p-4 text-sm font-semibold text-[#3F3D39]">{qrState ? <div className="flex items-center gap-4"><Image src={qrState.qrImageUrl} alt={`QR chấm công ${qrState.branchName}`} width={112} height={112} unoptimized className="h-28 w-28 rounded-xl border border-[#D8D1C7] bg-white object-contain" /><p>QR: {qrState.branchName}<br />Hết hạn {formatDateTime(qrState.expiresAt)}</p></div> : null}{wifiState ? <p className="mt-2">WiFi: {wifiState.publicIpCidr}</p> : null}{utilityError ? <p className="text-[#A33D10]">{utilityError}</p> : !qrState && !wifiState ? "Chọn thao tác để tạo mã kiểm soát chấm công." : null}</div>
         </div>
       </Panel>
       <Panel className="overflow-hidden">
@@ -979,11 +979,11 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
 }
 
 function AttendanceTable({ feed, members, clockOutAction, clockingOut }: { feed: StaffOpsAttendanceFeedItem[]; members: StaffOpsMember[]; clockOutAction: (payload: FormData) => void; clockingOut: boolean }) {
-  return <table className="w-full text-left"><thead className="border-b border-[#D8D1C7] bg-[#FCFAF6] text-xs font-black uppercase tracking-[0.13em]"><tr><th className="px-7 py-4">Nhân viên</th><th className="px-4 py-4">Ca làm</th><th className="px-4 py-4">Giờ vào</th><th className="px-4 py-4">Giờ ra</th><th className="px-4 py-4">Trạng thái</th><th className="px-7 py-4 text-right">Hành động</th></tr></thead><tbody className="divide-y divide-[#D8D1C7]">{feed.slice(0, 8).map((item) => { const member = members.find((candidate) => candidate.id === item.staffMemberId); return <tr key={item.id}><td className="px-7 py-5"><div className="flex items-center gap-3"><Avatar name={item.fullName} size="sm" /><span><span className="block font-black">{item.fullName}</span><span className="text-sm font-medium text-[#3F3D39]">{member?.roleTitle ?? item.branchName ?? "Nhân viên"}</span></span></div></td><td className="px-4 py-5 font-medium">Ca làm</td><td className={cn("px-4 py-5 font-bold", item.state === "late" && "text-[#C91E1E]")}>{shortTime(item.clockInAt)}</td><td className="px-4 py-5 font-bold">{item.clockOutAt ? shortTime(item.clockOutAt) : "--:--"}</td><td className="px-4 py-5"><StatusChip tone={item.state === "late" ? "danger" : item.state === "on_time" ? "success" : "neutral"}>{item.state === "late" ? "Đi trễ" : item.state === "on_time" ? "Đúng giờ" : item.state === "overtime" ? "Tăng ca" : item.state === "absent" ? "Vắng mặt" : "Chưa bắt đầu"}</StatusChip></td><td className="px-7 py-5 text-right">{!item.clockOutAt ? <form action={clockOutAction} className="inline-flex"><input type="hidden" name="attendanceLogId" value={item.id} /><input type="hidden" name="staffMemberId" value={item.staffMemberId} /><input type="hidden" name="branchId" value="" /><button disabled={clockingOut} className="grid h-11 w-11 place-items-center rounded-xl border border-[#D8D1C7]"><Check size={18} /></button></form> : <StatusChip tone="success">Đã kết ca</StatusChip>}</td></tr>; })}</tbody></table>;
+  return <table className="w-full text-left"><thead className="border-b border-[#D8D1C7] bg-[#FCFAF6] text-xs font-black uppercase tracking-[0.13em]"><tr><th className="px-7 py-4">Nhân viên</th><th className="px-4 py-4">Ca làm</th><th className="px-4 py-4">Giờ vào</th><th className="px-4 py-4">Giờ ra</th><th className="px-4 py-4">Trạng thái</th><th className="px-7 py-4 text-right">Hành động</th></tr></thead><tbody className="divide-y divide-[#D8D1C7]">{feed.slice(0, 8).map((item) => { const member = members.find((candidate) => candidate.id === item.staffMemberId); return <tr key={item.id}><td className="px-7 py-5"><div className="flex items-center gap-3"><Avatar name={item.fullName} size="sm" /><span><span className="block font-black">{item.fullName}</span><span className="text-sm font-medium text-[#3F3D39]">{member?.roleTitle ?? item.branchName ?? "Nhân viên"}</span></span></div></td><td className="px-4 py-5 font-medium">Ca làm</td><td className={cn("px-4 py-5 font-bold", item.state === "late" && "text-[#A33D10]")}>{shortTime(item.clockInAt)}</td><td className="px-4 py-5 font-bold">{item.clockOutAt ? shortTime(item.clockOutAt) : "--:--"}</td><td className="px-4 py-5"><StatusChip tone={item.state === "late" ? "danger" : item.state === "on_time" ? "success" : "neutral"}>{item.state === "late" ? "Đi trễ" : item.state === "on_time" ? "Đúng giờ" : item.state === "overtime" ? "Tăng ca" : item.state === "absent" ? "Vắng mặt" : "Chưa bắt đầu"}</StatusChip></td><td className="px-7 py-5 text-right">{!item.clockOutAt ? <form action={clockOutAction} className="inline-flex"><input type="hidden" name="attendanceLogId" value={item.id} /><input type="hidden" name="staffMemberId" value={item.staffMemberId} /><input type="hidden" name="branchId" value="" /><button disabled={clockingOut} className="grid h-11 w-11 place-items-center rounded-xl border border-[#D8D1C7]"><Check size={18} /></button></form> : <StatusChip tone="success">Đã kết ca</StatusChip>}</td></tr>; })}</tbody></table>;
 }
 
 function AttendanceCard({ item }: { item: StaffOpsAttendanceFeedItem }) {
-  return <Panel className="p-5"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><Avatar name={item.fullName} /><div><p className="text-xl font-black">{item.fullName}</p><p className="text-sm font-semibold text-[#3F3D39]">{item.branchName ?? "Chi nhánh"}</p></div></div><StatusChip tone={item.state === "late" ? "danger" : "success"}>{item.state === "late" ? "Đi muộn" : "Đúng giờ"}</StatusChip></div><div className="mt-4 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F3F0EC] p-4 text-lg font-black"><span>{shortTime(item.clockInAt)}</span><span className="pl-4">{item.clockOutAt ? shortTime(item.clockOutAt) : "--:--"}</span></div></Panel>;
+  return <Panel className="p-5"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><Avatar name={item.fullName} /><div><p className="text-xl font-black">{item.fullName}</p><p className="text-sm font-semibold text-[#3F3D39]">{item.branchName ?? "Chi nhánh"}</p></div></div><StatusChip tone={item.state === "late" ? "danger" : "success"}>{item.state === "late" ? "Đi muộn" : "Đúng giờ"}</StatusChip></div><div className="mt-4 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F5F8F1] p-4 text-lg font-black"><span>{shortTime(item.clockInAt)}</span><span className="pl-4">{item.clockOutAt ? shortTime(item.clockOutAt) : "--:--"}</span></div></Panel>;
 }
 
 function RequestsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
@@ -1006,7 +1006,7 @@ function RequestsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
 function RequestCard({ request, action, reviewing }: { request: StaffOpsApprovalItem; action: (payload: FormData) => void; reviewing: boolean }) {
   return (
     <Panel className="p-6">
-      <div className="flex items-start justify-between gap-4"><div className="flex items-center gap-4"><Avatar name={request.fullName} /><div><p className="text-2xl font-medium text-[#111]">{request.fullName}</p><p className="text-base font-semibold text-[#5E5A54]">{request.branchName ?? "Nhân sự"}</p></div></div><span className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[#ECE9E3] px-3 text-base font-semibold text-[#3F3D39]"><CalendarClock size={17} /> {requestLabel(request.requestType)}</span></div>
+      <div className="flex items-start justify-between gap-4"><div className="flex items-center gap-4"><Avatar name={request.fullName} /><div><p className="text-2xl font-medium text-[#2B2B2B]">{request.fullName}</p><p className="text-base font-semibold text-[#5E5A54]">{request.branchName ?? "Nhân sự"}</p></div></div><span className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[#ECE9E3] px-3 text-base font-semibold text-[#3F3D39]"><CalendarClock size={17} /> {requestLabel(request.requestType)}</span></div>
       <div className="mt-5 space-y-2 text-xl font-medium text-[#2B2B2B]"><p className="flex items-center gap-3"><Clock3 size={22} className="text-[#77736D]" />{formatDateTime(request.createdAt)}</p><p className="flex items-center gap-3"><ListChecks size={22} className="text-[#77736D]" />{request.reason ?? "Không có ghi chú"}</p></div>
       {request.status === "pending" ? <form action={action} className="mt-6 grid grid-cols-2 gap-4"><input type="hidden" name="approvalId" value={request.id} /><input type="hidden" name="note" value="Duyệt từ giao diện Staff mới" /><button name="decision" value="rejected" disabled={reviewing} className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-[#ECE9E3] text-lg font-black text-[#4B4945]"><X size={20} /> Từ chối</button><button name="decision" value="approved" disabled={reviewing} className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-[#0F4D3A] text-lg font-black text-white"><Check size={20} /> Duyệt</button></form> : <StatusChip tone={request.status === "approved" ? "success" : "danger"}>{request.status === "approved" ? "Đã duyệt" : "Đã từ chối"}</StatusChip>}
     </Panel>
@@ -1031,7 +1031,7 @@ function PermissionsScreen({ bundle, selectedMember }: { bundle: StaffOperations
 
   return (
     <div className="space-y-6">
-      <section><p className="text-base font-bold text-[#3F3D39]">Staff List / Permissions</p><h1 className="mt-3 text-[40px] font-black text-[#111]">Phân quyền nhân viên</h1><p className="mt-1 flex items-center gap-2 text-lg font-medium text-[#3F3D39]"><UserRound size={20} /> {selectedMember?.fullName ?? "Chọn nhân viên"}</p></section>
+      <section><p className="text-base font-bold text-[#3F3D39]">Staff List / Permissions</p><h1 className="mt-3 text-[40px] font-black text-[#2B2B2B]">Phân quyền nhân viên</h1><p className="mt-1 flex items-center gap-2 text-lg font-medium text-[#3F3D39]"><UserRound size={20} /> {selectedMember?.fullName ?? "Chọn nhân viên"}</p></section>
       <form action={action} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <input type="hidden" name="roleId" value={role?.id ?? ""} />
         <div className="space-y-6">
@@ -1057,7 +1057,7 @@ function ReportsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
         <MobileReportsScreen bundle={bundle} totalStaff={totalStaff} totalHours={totalHours} avgAttendance={avgAttendance} />
       </div>
       <div className="hidden space-y-8 lg:block">
-      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-[42px] font-black text-[#111]">Báo cáo hiệu suất</h1><p className="mt-2 text-xl font-medium text-[#3F3D39]">Dữ liệu thật từ nhân sự, chấm công, ca làm và timesheet hiện có.</p></div><div className="flex gap-3"><span className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D8D1C7] bg-white px-4 text-sm font-bold text-[#2B2B2B]"><CalendarClock size={18} /> Tháng này</span><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D8D1C7] bg-white px-4 text-sm font-bold text-[#2B2B2B] hover:border-[#0F4D3A]/35"><Download size={18} /> Xuất CSV</a></div></section>
+      <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h1 className="text-[42px] font-black text-[#2B2B2B]">Báo cáo hiệu suất</h1><p className="mt-2 text-xl font-medium text-[#3F3D39]">Dữ liệu thật từ nhân sự, chấm công, ca làm và timesheet hiện có.</p></div><div className="flex gap-3"><span className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D8D1C7] bg-white px-4 text-sm font-bold text-[#2B2B2B]"><CalendarClock size={18} /> Tháng này</span><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#D8D1C7] bg-white px-4 text-sm font-bold text-[#2B2B2B] hover:border-[#0F4D3A]/35"><Download size={18} /> Xuất CSV</a></div></section>
       <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4"><ReportCard label="Nhân sự" value={totalStaff} tone="brand" /><ReportCard label="Giờ công" value={formatHours(totalHours)} tone="warning" /><ReportCard label="Điểm công" value={`${avgAttendance}%`} tone="success" /><ReportCard label="Chi nhánh nổi bật" value={topBranch?.name ?? "Chưa có"} tone="dark" /></div>
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_386px]"><Panel className="p-7"><h2 className="text-2xl font-black">Giờ công theo nhân viên</h2>{timesheetRows.length ? <ReportBarChart rows={timesheetRows.map((item) => ({ label: item.fullName, value: item.workMinutes, display: formatHours(item.workMinutes) }))} /> : <InlineEmptyState title="Chưa có dữ liệu giờ công" text="Khi nhân viên chấm công hoặc chốt ca, biểu đồ sẽ tự cập nhật từ timesheet thật." />}</Panel><Panel className="p-7"><h2 className="text-2xl font-black">Cơ cấu vai trò</h2><div className="mx-auto mt-8 grid h-56 w-56 place-items-center rounded-full border-[20px] border-[#0F4D3A] border-l-[#A9C5A1] border-t-[#F28C28]"><span className="text-center"><span className="block text-3xl font-black">{totalStaff}</span><span className="text-sm font-medium">nhân sự thật</span></span></div><div className="mt-8 space-y-4 text-lg font-medium">{roleRows.length ? roleRows.map((row, index) => <Legend key={row.label} label={row.label} value={`${row.percent}%`} color={index === 0 ? "#0F4D3A" : index === 1 ? "#F28C28" : "#A9C5A1"} />) : <p className="text-base font-semibold text-[#5E5A54]">Chưa có nhân sự để phân bổ vai trò.</p>}</div></Panel></div>
       <Panel className="overflow-hidden"><div className="p-7"><h2 className="text-2xl font-black">Hiệu suất chi nhánh</h2></div><table className="hidden w-full text-left lg:table"><thead className="border-y border-[#D8D1C7] bg-[#FCFAF6] text-xs font-black uppercase tracking-[0.13em]"><tr><th className="px-7 py-4">Chi nhánh</th><th className="px-4 py-4">Nhân sự active</th><th className="px-4 py-4">Chi phí công</th><th className="px-4 py-4">Điểm phủ ca</th><th className="px-7 py-4">Trạng thái</th></tr></thead><tbody>{bundle.branches.map((branch) => <tr key={branch.id} className="border-b border-[#D8D1C7]"><td className="px-7 py-5 font-black">{branch.name}</td><td className="px-4 py-5">{branch.activeStaff}</td><td className="px-4 py-5">Chưa cấu hình</td><td className="px-4 py-5"><span className="inline-block h-2 rounded-full bg-[#0F4D3A]" style={{ width: `${Math.max(10, Math.min(112, branch.coverageScore * 1.12))}px` }} /> {branch.coverageScore}/100</td><td className="px-7 py-5"><StatusChip tone={branch.coverageScore >= 80 ? "success" : branch.coverageScore >= 55 ? "neutral" : "danger"}>{branch.coverageScore >= 80 ? "Ổn định" : branch.coverageScore >= 55 ? "Cần theo dõi" : "Thiếu phủ ca"}</StatusChip></td></tr>)}</tbody></table></Panel>
@@ -1081,7 +1081,7 @@ function MobileShiftManagementScreen({ bundle }: { bundle: StaffOperationsBundle
         <select className="h-14 rounded-xl border border-[#D8D1C7] bg-white px-4 text-lg font-bold text-[#2B2B2B]">
           <option>{branchName}</option>
         </select>
-        <div className="flex items-center gap-5 text-lg font-black text-[#111]">
+        <div className="flex items-center gap-5 text-lg font-black text-[#2B2B2B]">
           <ChevronLeft size={23} />
           Tuần này
           <ChevronRight size={23} />
@@ -1094,7 +1094,7 @@ function MobileShiftManagementScreen({ bundle }: { bundle: StaffOperationsBundle
             type="button"
             className={cn(
               "grid h-24 place-items-center rounded-2xl border text-center",
-              index === 0 ? "border-[#111] bg-[#111] text-white" : "border-[#E5DDD2] bg-white text-[#111]"
+              index === 0 ? "border-[#0F4D3A] bg-[#0F4D3A] text-white" : "border-[#E5DDD2] bg-white text-[#2B2B2B]"
             )}
           >
             <span className="text-base font-black">{day.weekday}</span>
@@ -1126,17 +1126,17 @@ function MobileShiftSection({ title, assignments, cancelAction, cancelling }: { 
         <Panel key={assignment.id} className="p-6">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-2xl font-medium text-[#111]">{assignment.shiftName}</h3>
+              <h3 className="text-2xl font-medium text-[#2B2B2B]">{assignment.shiftName}</h3>
               <p className="mt-2 text-xl font-medium text-[#5E5A54]">{assignment.branchName ?? "Toàn bộ"}</p>
             </div>
             <form action={cancelAction} className="shrink-0">
               <input type="hidden" name="shiftAssignmentId" value={assignment.id} />
               <input type="hidden" name="note" value="Huỷ từ lịch mobile Staff admin" />
-              <button type="submit" disabled={cancelling} className="rounded-full bg-[#FFE0DF] px-4 py-2 text-base font-bold text-[#B91C1C]">Huỷ ca</button>
+              <button type="submit" disabled={cancelling} className="rounded-full bg-[#FFF0D9] px-4 py-2 text-base font-bold text-[#A33D10]">Huỷ ca</button>
             </form>
           </div>
           <div className="mt-6 border-t border-[#E5DDD2] pt-5">
-            <p className="flex items-center gap-3 text-2xl font-medium text-[#111]"><Avatar name={assignment.staffName} size="sm" />{assignment.staffName}</p>
+            <p className="flex items-center gap-3 text-2xl font-medium text-[#2B2B2B]"><Avatar name={assignment.staffName} size="sm" />{assignment.staffName}</p>
           </div>
         </Panel>
       ))}
@@ -1166,12 +1166,12 @@ function MobileAttendanceManagementScreen({
   return (
     <div className="space-y-7">
       <section>
-        <h1 className="text-[38px] font-black leading-tight text-[#111]">Chấm công hôm nay</h1>
+        <h1 className="text-[38px] font-black leading-tight text-[#2B2B2B]">Chấm công hôm nay</h1>
         <p className="mt-2 text-xl font-medium text-[#3F3D39]">{formatDate(today)}</p>
       </section>
       <div className="grid grid-cols-2 gap-4">
         <Panel className="p-6"><p className="flex items-center gap-2 text-lg font-black text-[#0F4D3A]"><CheckCircle2 size={24} /> Đúng giờ</p><p className="mt-6 text-[42px] font-black">{onTime}</p></Panel>
-        <Panel className="p-6"><p className="flex items-center gap-2 text-lg font-black text-[#C91E1E]"><Clock3 size={24} /> Đi muộn</p><p className="mt-6 text-[42px] font-black">{late}</p></Panel>
+        <Panel className="p-6"><p className="flex items-center gap-2 text-lg font-black text-[#A33D10]"><Clock3 size={24} /> Đi muộn</p><p className="mt-6 text-[42px] font-black">{late}</p></Panel>
       </div>
       <div className="space-y-4">
         {todayFeed.map((item) => {
@@ -1179,25 +1179,25 @@ function MobileAttendanceManagementScreen({
           return (
           <Panel key={item.id} className="p-5">
             <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-4"><Avatar name={item.fullName} /><div><p className="text-[28px] font-black leading-tight text-[#111]">{item.fullName}</p><p className="text-xl font-medium text-[#3F3D39]">{assignment?.shiftName ?? "Chưa gán ca"}</p></div></div>
+              <div className="flex items-center gap-4"><Avatar name={item.fullName} /><div><p className="text-[28px] font-black leading-tight text-[#2B2B2B]">{item.fullName}</p><p className="text-xl font-medium text-[#3F3D39]">{assignment?.shiftName ?? "Chưa gán ca"}</p></div></div>
               <StatusChip tone={item.state === "late" ? "danger" : item.state === "absent" ? "neutral" : "success"}>{item.state === "late" ? "Đi muộn" : item.state === "absent" ? "Vắng mặt" : "Đúng giờ"}</StatusChip>
             </div>
-            {item.state !== "absent" ? <div className="mt-5 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F3F0EC] p-4 text-xl font-black"><span className={item.state === "late" ? "text-[#C91E1E]" : "text-[#0F4D3A]"}>{shortTime(item.clockInAt)}</span><span className="pl-4 text-[#77736D]">{shortTime(item.clockOutAt)}</span></div> : null}
+            {item.state !== "absent" ? <div className="mt-5 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F5F8F1] p-4 text-xl font-black"><span className={item.state === "late" ? "text-[#A33D10]" : "text-[#0F4D3A]"}>{shortTime(item.clockInAt)}</span><span className="pl-4 text-[#77736D]">{shortTime(item.clockOutAt)}</span></div> : null}
             <p className="mt-4 flex items-center gap-2 text-lg font-medium text-[#3F3D39]"><MapPin size={19} /> {item.branchName ?? "Chưa gán chi nhánh"}</p>
           </Panel>
         );})}
         {!todayFeed.length ? <EmptyState title="Chưa có log chấm công hôm nay" text="Khi nhân viên check-in bằng GPS, QR hoặc WiFi, dữ liệu thật sẽ xuất hiện tại đây." /> : null}
       </div>
       <Panel className="p-5">
-        <h2 className="text-2xl font-black text-[#111]">Chấm công hộ</h2>
+        <h2 className="text-2xl font-black text-[#2B2B2B]">Chấm công hộ</h2>
         <form action={clockInAction} className="mt-4 grid gap-3">
           <select name="staffMemberId" className="staff-redesign-input">{bundle.members.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</select>
           <select name="branchId" className="staff-redesign-input"><option value="">Chi nhánh theo hồ sơ</option>{branchOptions(bundle.branches).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
           <button type="submit" disabled={clockingIn} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#0F4D3A] text-sm font-black text-white">{clockingIn ? "Đang xử lý..." : "Chấm công hộ"}</button>
         </form>
         <div className="mt-4 grid grid-cols-2 gap-3"><StaffButton onClick={generateQr}><Fingerprint size={17} /> QR ngày</StaffButton><StaffButton variant="secondary" onClick={registerWifi}><Wifi size={17} /> WiFi</StaffButton></div>
-        {utilityState.qrState ? <div className="mt-3 flex items-center gap-3 rounded-xl bg-[#F3F0EC] p-3 text-sm font-semibold text-[#5E5A54]"><Image src={utilityState.qrState.qrImageUrl} alt={`QR chấm công ${utilityState.qrState.branchName}`} width={88} height={88} unoptimized className="h-[88px] w-[88px] rounded-lg bg-white object-contain" /><span>{utilityState.qrState.branchName}<br />Hết hạn {formatDateTime(utilityState.qrState.expiresAt)}</span></div> : null}
-        {utilityState.utilityError || utilityState.wifiState ? <p className="mt-3 rounded-xl bg-[#F3F0EC] p-3 text-sm font-semibold text-[#5E5A54]">{utilityState.utilityError || utilityState.wifiState?.publicIpCidr}</p> : null}
+        {utilityState.qrState ? <div className="mt-3 flex items-center gap-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]"><Image src={utilityState.qrState.qrImageUrl} alt={`QR chấm công ${utilityState.qrState.branchName}`} width={88} height={88} unoptimized className="h-[88px] w-[88px] rounded-lg bg-white object-contain" /><span>{utilityState.qrState.branchName}<br />Hết hạn {formatDateTime(utilityState.qrState.expiresAt)}</span></div> : null}
+        {utilityState.utilityError || utilityState.wifiState ? <p className="mt-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]">{utilityState.utilityError || utilityState.wifiState?.publicIpCidr}</p> : null}
       </Panel>
     </div>
   );
@@ -1208,21 +1208,21 @@ function MobileReportsScreen({ bundle, totalStaff, totalHours, avgAttendance }: 
   const reportBars = topStaff.slice(0, 7).map((item) => ({ label: item.fullName, value: item.workMinutes, display: formatHours(item.workMinutes) }));
   return (
     <div className="space-y-7">
-      <section><h1 className="text-[40px] font-black leading-tight text-[#111]">Báo cáo</h1><p className="mt-2 text-xl font-medium text-[#3F3D39]">Tổng quan hiệu suất hoạt động</p></section>
-      <div className="grid grid-cols-3 rounded-2xl bg-[#F3F0EC] p-1 text-center text-lg font-black text-[#4B4945]"><button className="min-h-14 rounded-xl">Hôm nay</button><button className="min-h-14 rounded-xl bg-white text-[#111] shadow-[0_2px_8px_rgba(43,43,43,0.06)]">Tuần này</button><button className="min-h-14 rounded-xl">Tháng này</button></div>
-      <div className="grid grid-cols-2 gap-4"><Panel className="p-6"><p className="flex items-center gap-2 text-xl font-bold text-[#3F3D39]"><BriefcaseBusiness size={23} /> Nhân sự</p><p className="mt-6 text-[38px] font-black text-[#111]">{totalStaff}</p><p className="mt-2 text-sm font-bold text-[#5E5A54]">Từ hồ sơ thật</p></Panel><Panel className="p-6"><p className="flex items-center gap-2 text-xl font-bold text-[#3F3D39]"><Clock3 size={23} /> Giờ công</p><p className="mt-6 text-[38px] font-black text-[#111]">{formatHours(totalHours)}</p><p className="mt-2 text-sm font-bold text-[#5E5A54]">Điểm công {avgAttendance}%</p></Panel></div>
-      <Panel className="p-7"><h2 className="text-[30px] font-black text-[#111]">Giờ công theo nhân viên</h2>{reportBars.length ? <ReportBarChart rows={reportBars} compact /> : <InlineEmptyState title="Chưa có giờ công" text="Báo cáo sẽ cập nhật khi có dữ liệu chấm công thật." />}</Panel>
-      <Panel className="p-7"><h2 className="text-[30px] font-black text-[#111]">Top nhân viên tích cực</h2>{topStaff.length ? <div className="mt-6 space-y-5">{topStaff.map((item) => <div key={item.staffMemberId} className="flex items-center gap-4"><Avatar name={item.fullName} /><div className="min-w-0 flex-1"><p className="truncate text-xl font-black text-[#111]">{item.fullName}</p><p className="text-lg font-medium text-[#5E5A54]">{item.branchName ?? "Nhân viên"}</p></div><p className="text-xl font-black">{formatHours(item.workMinutes)}</p></div>)}</div> : <InlineEmptyState title="Chưa có xếp hạng" text="Không hiển thị nhân viên ảo khi chưa có timesheet." />}</Panel>
+      <section><h1 className="text-[40px] font-black leading-tight text-[#2B2B2B]">Báo cáo</h1><p className="mt-2 text-xl font-medium text-[#3F3D39]">Tổng quan hiệu suất hoạt động</p></section>
+      <div className="grid grid-cols-3 rounded-2xl bg-[#F5F8F1] p-1 text-center text-lg font-black text-[#4B4945]"><button className="min-h-14 rounded-xl">Hôm nay</button><button className="min-h-14 rounded-xl bg-white text-[#2B2B2B] shadow-[0_2px_8px_rgba(43,43,43,0.06)]">Tuần này</button><button className="min-h-14 rounded-xl">Tháng này</button></div>
+      <div className="grid grid-cols-2 gap-4"><Panel className="p-6"><p className="flex items-center gap-2 text-xl font-bold text-[#3F3D39]"><BriefcaseBusiness size={23} /> Nhân sự</p><p className="mt-6 text-[38px] font-black text-[#2B2B2B]">{totalStaff}</p><p className="mt-2 text-sm font-bold text-[#5E5A54]">Từ hồ sơ thật</p></Panel><Panel className="p-6"><p className="flex items-center gap-2 text-xl font-bold text-[#3F3D39]"><Clock3 size={23} /> Giờ công</p><p className="mt-6 text-[38px] font-black text-[#2B2B2B]">{formatHours(totalHours)}</p><p className="mt-2 text-sm font-bold text-[#5E5A54]">Điểm công {avgAttendance}%</p></Panel></div>
+      <Panel className="p-7"><h2 className="text-[30px] font-black text-[#2B2B2B]">Giờ công theo nhân viên</h2>{reportBars.length ? <ReportBarChart rows={reportBars} compact /> : <InlineEmptyState title="Chưa có giờ công" text="Báo cáo sẽ cập nhật khi có dữ liệu chấm công thật." />}</Panel>
+      <Panel className="p-7"><h2 className="text-[30px] font-black text-[#2B2B2B]">Top nhân viên tích cực</h2>{topStaff.length ? <div className="mt-6 space-y-5">{topStaff.map((item) => <div key={item.staffMemberId} className="flex items-center gap-4"><Avatar name={item.fullName} /><div className="min-w-0 flex-1"><p className="truncate text-xl font-black text-[#2B2B2B]">{item.fullName}</p><p className="text-lg font-medium text-[#5E5A54]">{item.branchName ?? "Nhân viên"}</p></div><p className="text-xl font-black">{formatHours(item.workMinutes)}</p></div>)}</div> : <InlineEmptyState title="Chưa có xếp hạng" text="Không hiển thị nhân viên ảo khi chưa có timesheet." />}</Panel>
     </div>
   );
 }
 
 function MetricMini({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="rounded-xl bg-[#F6F1EA] p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">{label}</p><p className="mt-2 text-2xl font-black text-[#111]">{value}</p></div>;
+  return <div className="rounded-xl bg-[#F5F8F1] p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">{label}</p><p className="mt-2 text-2xl font-black text-[#2B2B2B]">{value}</p></div>;
 }
 
 function ReportCard({ label, value, tone }: { label: string; value: ReactNode; tone: "brand" | "warning" | "success" | "dark" }) {
-  return <Panel className="p-7"><span className={cn("grid h-12 w-12 place-items-center rounded-full", tone === "brand" && "bg-[#DDE6FF] text-[#0F4D3A]", tone === "warning" && "bg-[#FFD8A8] text-[#93540A]", tone === "success" && "bg-[#6EF0B0] text-[#0F4D3A]", tone === "dark" && "bg-[#101828] text-white")}><BarChart3 size={22} /></span><p className="mt-6 text-sm font-black uppercase tracking-[0.08em] text-[#2B2B2B]">{label}</p><p className="mt-3 truncate text-[30px] font-black leading-tight text-[#111]">{value}</p></Panel>;
+  return <Panel className="p-7"><span className={cn("grid h-12 w-12 place-items-center rounded-full", tone === "brand" && "bg-[#E5EEE2] text-[#0F4D3A]", tone === "warning" && "bg-[#FFD8A8] text-[#93540A]", tone === "success" && "bg-[#A9C5A1] text-[#0F4D3A]", tone === "dark" && "bg-[#0F4D3A] text-white")}><BarChart3 size={22} /></span><p className="mt-6 text-sm font-black uppercase tracking-[0.08em] text-[#2B2B2B]">{label}</p><p className="mt-3 truncate text-[30px] font-black leading-tight text-[#2B2B2B]">{value}</p></Panel>;
 }
 
 function Legend({ label, value, color }: { label: string; value: string; color: string }) {
@@ -1248,7 +1248,7 @@ function ReportBarChart({ rows, compact }: { rows: Array<{ label: string; value:
       {rows.map((row) => (
         <div key={row.label} className="grid gap-2">
           <div className="flex items-center justify-between gap-3 text-sm font-black text-[#2B2B2B]"><span className="truncate">{row.label}</span><span>{row.display}</span></div>
-          <div className="h-4 overflow-hidden rounded-full bg-[#F3F0EC]"><div className="h-full rounded-full bg-[#0F4D3A]" style={{ width: `${Math.max(8, Math.round((row.value / max) * 100))}%` }} /></div>
+          <div className="h-4 overflow-hidden rounded-full bg-[#F5F8F1]"><div className="h-full rounded-full bg-[#0F4D3A]" style={{ width: `${Math.max(8, Math.round((row.value / max) * 100))}%` }} /></div>
         </div>
       ))}
     </div>
@@ -1256,9 +1256,9 @@ function ReportBarChart({ rows, compact }: { rows: Array<{ label: string; value:
 }
 
 function InlineEmptyState({ title, text }: { title: string; text: string }) {
-  return <div className="mt-8 grid min-h-48 place-items-center rounded-xl border border-dashed border-[#D8D1C7] bg-[#FFFDF8] p-6 text-center"><div><h3 className="text-xl font-black text-[#111]">{title}</h3><p className="mt-2 text-sm font-semibold text-[#5E5A54]">{text}</p></div></div>;
+  return <div className="mt-8 grid min-h-48 place-items-center rounded-xl border border-dashed border-[#D8D1C7] bg-[#FFFDF8] p-6 text-center"><div><h3 className="text-xl font-black text-[#2B2B2B]">{title}</h3><p className="mt-2 text-sm font-semibold text-[#5E5A54]">{text}</p></div></div>;
 }
 
 function EmptyState({ title, text, action }: { title: string; text: string; action?: ReactNode }) {
-  return <Panel className="grid min-h-56 place-items-center p-7 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#E5EEE2] text-[#0F4D3A]"><CheckCircle2 size={28} /></span><h2 className="mt-4 text-2xl font-black text-[#111]">{title}</h2><p className="mt-2 text-base font-medium text-[#5E5A54]">{text}</p>{action ? <div className="mt-5">{action}</div> : null}</div></Panel>;
+  return <Panel className="grid min-h-56 place-items-center p-7 text-center"><div><span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#E5EEE2] text-[#0F4D3A]"><CheckCircle2 size={28} /></span><h2 className="mt-4 text-2xl font-black text-[#2B2B2B]">{title}</h2><p className="mt-2 text-base font-medium text-[#5E5A54]">{text}</p>{action ? <div className="mt-5">{action}</div> : null}</div></Panel>;
 }

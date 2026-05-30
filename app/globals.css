@@ -2809,6 +2809,87 @@ img {
   transform: translateY(-1px);
 }
 
+.staff-brand-page {
+  position: relative;
+  isolation: isolate;
+  min-height: 100svh;
+  overflow-x: clip;
+  background:
+    linear-gradient(180deg, #fff7eb 0%, #fffaf3 52%, #f5f8f1 100%);
+  color: #2b2b2b;
+  font-family: var(--font-sora), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+.staff-brand-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(15, 77, 58, 0.052), transparent 30%),
+    linear-gradient(180deg, transparent 0%, transparent 54%, rgba(169, 197, 161, 0.22) 100%),
+    url("/brand/logivn/vietnam-line-motif.svg") right clamp(-140px, -8vw, -72px) bottom -132px / min(560px, 62vw) no-repeat;
+  opacity: 0.64;
+}
+
+.staff-brand-page--mobile::before {
+  background:
+    linear-gradient(180deg, rgba(255, 247, 235, 0), rgba(245, 248, 241, 0.72)),
+    url("/brand/logivn/vietnam-line-motif.svg") right -174px top 72px / 392px no-repeat;
+  opacity: 0.42;
+}
+
+.staff-brand-sidebar,
+.staff-brand-topbar,
+.staff-brand-mobile-header,
+.staff-brand-bottom-nav {
+  border-color: rgba(15, 77, 58, 0.14) !important;
+  background: rgba(255, 253, 248, 0.94) !important;
+  box-shadow: 0 16px 34px rgba(15, 42, 31, 0.05);
+  backdrop-filter: blur(18px);
+}
+
+.staff-brand-sidebar {
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(245, 248, 241, 0.88)),
+    linear-gradient(90deg, rgba(15, 77, 58, 0.045), transparent 28%) !important;
+}
+
+.staff-brand-bottom-nav {
+  box-shadow: 0 -16px 38px rgba(15, 42, 31, 0.075);
+}
+
+.staff-brand-panel {
+  border: 1px solid rgba(15, 77, 58, 0.14);
+  border-radius: 1rem;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(255, 250, 242, 0.94));
+  box-shadow: 0 10px 26px rgba(15, 42, 31, 0.048), inset 0 1px 0 rgba(255, 255, 255, 0.84);
+}
+
+.staff-brand-muted-surface {
+  background: rgba(245, 248, 241, 0.74) !important;
+}
+
+.staff-brand-accent-surface {
+  background: linear-gradient(135deg, rgba(15, 77, 58, 0.1), rgba(242, 140, 40, 0.09)) !important;
+}
+
+.staff-brand-page input,
+.staff-brand-page select,
+.staff-brand-page textarea {
+  border-color: rgba(15, 77, 58, 0.16) !important;
+  background-color: rgba(255, 253, 248, 0.94) !important;
+}
+
+.staff-brand-page input:focus,
+.staff-brand-page select:focus,
+.staff-brand-page textarea:focus {
+  border-color: rgba(15, 77, 58, 0.72) !important;
+  box-shadow: 0 0 0 4px rgba(15, 77, 58, 0.1) !important;
+}
+
 .staff-cockpit-shell {
   position: relative;
   overflow: hidden;

@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { fail, ok } from "@/lib/response";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
-import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { assertInternalApiKey } from "@/services/telegram-connection-service";
+import { getTelegramActionResourceBranchId } from "@/services/telegram-action-branch-service";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, cancelOrder, getOrderLifecycleSnapshot, markOrderCompleted, updateOrderDeliveryStatus } from "@/services/order-service";
 import { confirmPayment } from "@/services/payment-service";
@@ -78,63 +77,10 @@ export async function POST(request: Request) {
 async function assertTelegramResourceBranch(input: z.infer<typeof telegramActionSchema>) {
   if (!input.branchId || input.resourceType === "menu_item") return;
 
-  const actualBranchId = await getTelegramResourceBranchId(input);
+  const actualBranchId = await getTelegramActionResourceBranchId(input);
   if (actualBranchId !== input.branchId) {
     throw new Error("telegram_resource_branch_mismatch");
   }
-}
-
-async function getTelegramResourceBranchId(input: z.infer<typeof telegramActionSchema>) {
-  const supabase = createAdminSupabaseClient() as any;
-
-  if (input.resourceType === "order") {
-    const { data, error } = await supabase.from("orders").select("branch_id").eq("id", input.resourceId).eq("restaurant_id", input.restaurantId).maybeSingle();
-    throwIfSupabaseError(error);
-    return data?.branch_id ?? null;
-  }
-
-  if (input.resourceType === "service_request") {
-    const { data, error } = await supabase
-      .from("service_requests")
-      .select("table:tables(branch_id)")
-      .eq("id", input.resourceId)
-      .eq("restaurant_id", input.restaurantId)
-      .maybeSingle();
-    throwIfSupabaseError(error);
-    return nestedBranchId(data?.table);
-  }
-
-  if (input.resourceType === "reservation") {
-    const { data, error } = await supabase
-      .from("reservation_table_locks")
-      .select("table:tables(branch_id)")
-      .eq("reservation_id", input.resourceId)
-      .eq("restaurant_id", input.restaurantId)
-      .eq("status", "active")
-      .limit(1);
-    throwIfSupabaseError(error);
-    return nestedBranchId(data?.[0]?.table);
-  }
-
-  if (input.resourceType === "staff_request") {
-    const { data, error } = await supabase
-      .from("attendance_approval_requests")
-      .select("branch_id")
-      .eq("id", input.resourceId)
-      .eq("restaurant_id", input.restaurantId)
-      .maybeSingle();
-    throwIfSupabaseError(error);
-    return data?.branch_id ?? null;
-  }
-
-  return null;
-}
-
-function nestedBranchId(value: unknown) {
-  const row = Array.isArray(value) ? value[0] : value;
-  if (!row || typeof row !== "object") return null;
-  const branchId = (row as { branch_id?: unknown }).branch_id;
-  return typeof branchId === "string" && branchId.trim() ? branchId.trim() : null;
 }
 
 function telegramActionSession(input: z.infer<typeof telegramActionSchema>): SessionProfile {
