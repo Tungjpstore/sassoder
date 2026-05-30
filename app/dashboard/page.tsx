@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AdminDashboardClientLayout } from "@/components/dashboard/dashboard-client-layout";
+import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
@@ -98,8 +99,19 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
     inventory,
     latestMorningBrief
   ] = await Promise.all([
-    getAdminDashboardOverview(restaurantId),
-    getInventorySnapshot(restaurantId),
+    readThroughDashboardWorkspaceCache({
+      restaurantId,
+      workspace: "overview",
+      ttlSeconds: 5,
+      load: () => getAdminDashboardOverview(restaurantId)
+    }),
+    readThroughDashboardWorkspaceCache({
+      restaurantId,
+      workspace: "inventory",
+      identifier: "snapshot",
+      ttlSeconds: 8,
+      load: () => getInventorySnapshot(restaurantId)
+    }),
     getLatestAiMorningBriefRun(restaurantId)
   ]);
   const tenantUrl = buildTenantUrl(dashboard.restaurant.slug, "/");

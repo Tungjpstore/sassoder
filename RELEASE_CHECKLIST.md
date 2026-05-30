@@ -1,5 +1,21 @@
 # Release Checklist - LogiVN Production
 
+## 2026-05-30 Production Deploy Addendum
+
+Result: GO for production deploy.
+
+| Gate | Status | Evidence |
+| --- | --- | --- |
+| Release scope gathered | Pass | 75 modified files and 10 new files reviewed as one release batch. |
+| Supabase migration ordered first | Pass | `20260530103818_staff_identity_password_login` applied before Vercel deploy and verified by REST schema checks. |
+| Service-role boundary | Pass | `npm run infra:check` passes after moving Telegram callback dispatch DB validation into service layer. |
+| Static/automated validation | Pass | `git diff --check`, infra check, app TypeScript, VPS typecheck, full `npm test`, targeted staff RLS tests, lint and Vercel production build all pass. |
+| Vercel production env presence | Pass | Required encrypted envs are present in Vercel production. |
+| Rollback plan | Pass with DB caveat | Vercel rollback is available; additive DB migration should be left in place on code rollback. PITR remains disabled. |
+| Release docs | Pass | Mandatory release documents contain this 2026-05-30 status addendum. |
+
+Post-deploy smoke required: `/api/health`, dashboard owner login, staff login/change password, order/payment confirmation, reservation, Telegram callback action and dashboard workspace latency.
+
 ## 2026-05-29 Current Gate
 
 Result: NO-GO for production promotion.

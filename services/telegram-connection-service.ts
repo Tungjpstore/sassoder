@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "crypto";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { getStaffAuthorizedBranchIds } from "@/features/staff/services/staff-branch-authorization-service";
 import { getStaffEffectivePermissions } from "@/services/staff-permission-service";
 import type { OperationalEvent } from "@/services/operational-event-bus";
 import type { AiAgentAction } from "@/types/ai-agent";
@@ -19,16 +20,29 @@ const TELEGRAM_POLICY_RECIPIENT_SCOPES = ["permission", "admins", "branch", "sil
 
 const TELEGRAM_DEFAULT_POLICIES = [
   { eventType: "order.created", label: "Đơn mới", requiredPermission: "orders.update", priority: 2, escalationAfterSeconds: 300 },
+  { eventType: "order.confirmed", label: "Đơn đã nhận", requiredPermission: "orders.update", priority: 4, escalationAfterSeconds: 900 },
+  { eventType: "order.completed", label: "Đơn hoàn tất", requiredPermission: "orders.update", priority: 5, escalationAfterSeconds: 1800 },
+  { eventType: "order.cancelled", label: "Đơn đã huỷ", requiredPermission: "orders.update", priority: 2, escalationAfterSeconds: 300 },
+  { eventType: "order.delivery_status_changed", label: "Cập nhật giao hàng", requiredPermission: "orders.update", priority: 2, escalationAfterSeconds: 600 },
   { eventType: "payment.waiting_confirm", label: "VietQR chờ xác nhận", requiredPermission: "payments.confirm", priority: 1, escalationAfterSeconds: 180 },
+  { eventType: "payment.received", label: "Đã nhận thanh toán", requiredPermission: "payments.view", priority: 3, escalationAfterSeconds: 900 },
   { eventType: "reservation.created", label: "Đặt bàn mới", requiredPermission: "reservations.manage", priority: 2, escalationAfterSeconds: 600 },
   { eventType: "reservation.deposit_submitted", label: "Khách báo cọc", requiredPermission: "reservations.manage", priority: 1, escalationAfterSeconds: 300 },
-  { eventType: "order.delivery_status_changed", label: "Giao hàng", requiredPermission: "orders.update", priority: 2, escalationAfterSeconds: 600 },
+  { eventType: "reservation.confirmed", label: "Đặt bàn đã xác nhận", requiredPermission: "reservations.manage", priority: 4, escalationAfterSeconds: 1800 },
+  { eventType: "reservation.rejected", label: "Đặt bàn bị từ chối", requiredPermission: "reservations.manage", priority: 4, escalationAfterSeconds: 1800 },
+  { eventType: "reservation.cancelled", label: "Đặt bàn đã huỷ", requiredPermission: "reservations.manage", priority: 3, escalationAfterSeconds: 900 },
+  { eventType: "reservation.checked_in", label: "Khách check-in", requiredPermission: "reservations.manage", priority: 3, escalationAfterSeconds: 900 },
+  { eventType: "reservation.seated", label: "Khách vào bàn", requiredPermission: "reservations.manage", priority: 4, escalationAfterSeconds: 1200 },
+  { eventType: "reservation.no_show", label: "Đặt bàn no-show", requiredPermission: "reservations.manage", priority: 2, escalationAfterSeconds: 600 },
+  { eventType: "reservation.rescheduled", label: "Đặt bàn đổi giờ", requiredPermission: "reservations.manage", priority: 2, escalationAfterSeconds: 600 },
   { eventType: "service_request.created", label: "Khách gọi phục vụ", requiredPermission: "orders.update", priority: 1, escalationAfterSeconds: 180 },
+  { eventType: "service_request.resolved", label: "Đã xử lý gọi phục vụ", requiredPermission: "orders.view", priority: 5, escalationAfterSeconds: 1800 },
   { eventType: "sla.warning", label: "Cảnh báo SLA", requiredPermission: "orders.update", priority: 1, escalationAfterSeconds: 120 },
   { eventType: "inventory.low", label: "Tồn kho thấp", requiredPermission: "inventory.view", priority: 2, escalationAfterSeconds: 3600 },
   { eventType: "menu.item_availability_suggested", label: "Gợi ý ẩn/mở món", requiredPermission: "menu.edit", priority: 2, escalationAfterSeconds: 1800 },
   { eventType: "staff.checked_in", label: "Nhân sự check-in", requiredPermission: "attendance.view", priority: 5, escalationAfterSeconds: 3600 },
-  { eventType: "staff.request_created", label: "Duyệt nhân sự", requiredPermission: "approvals.review", priority: 2, escalationAfterSeconds: 1800 }
+  { eventType: "staff.request_created", label: "Duyệt nhân sự", requiredPermission: "approvals.review", priority: 2, escalationAfterSeconds: 1800 },
+  { eventType: "staff.request_reviewed", label: "Kết quả duyệt nhân sự", requiredPermission: "approvals.review", priority: 5, escalationAfterSeconds: 3600 }
 ] as const;
 
 type QueueCounts = {
@@ -43,6 +57,7 @@ type QueueCounts = {
 type GatewayFailedJob = {
   id?: string | number | null;
   name?: string | null;
+  state?: string | null;
   attemptsMade?: number | null;
   failedReason?: string | null;
   timestamp?: number | null;
@@ -81,12 +96,21 @@ type TelegramOwnerBriefingInput = {
   actions: AiAgentAction[];
 };
 
+type TelegramCallbackDispatchInput = {
+  actionId: string;
+  actionType: string;
+  restaurantId: string;
+  branchId?: string | null;
+  actorUserId: string;
+  actorRole: "ADMIN" | "STAFF";
+  resourceType: string;
+  resourceId: string;
+};
+
 export async function createTelegramConnectionToken(session: SessionProfile, input: { branchId?: string | null } = {}) {
   const supabase = createAdminSupabaseClient() as any;
   const permissionContext = await getStaffEffectivePermissions(session);
-  const branchId = input.branchId?.trim() || null;
-
-  await assertTelegramBranchScope(supabase, session, branchId);
+  const branchId = await resolveTelegramMutationBranchId(supabase, session, input.branchId?.trim() || null);
 
   const now = new Date().toISOString();
   let revokeQuery = supabase
@@ -134,10 +158,8 @@ export async function createTelegramConnectionToken(session: SessionProfile, inp
 
 export async function sendTelegramTestNotification(session: SessionProfile, input: TelegramTestNotificationInput = {}) {
   const supabase = createAdminSupabaseClient() as any;
-  const branchId = input.branchId?.trim() || null;
+  const branchId = await resolveTelegramMutationBranchId(supabase, session, input.branchId?.trim() || null);
   const kind = normalizeTelegramTestKind(input.kind);
-
-  await assertTelegramBranchScope(supabase, session, branchId);
 
   const activeConnectionCount = await countActiveTelegramConnections(supabase, session.restaurantId, branchId);
   if (activeConnectionCount === 0) {
@@ -176,8 +198,7 @@ export async function sendTelegramTestNotification(session: SessionProfile, inpu
 
 export async function revokeTelegramPendingConnectTokens(session: SessionProfile, input: { branchId?: string | null } = {}) {
   const supabase = createAdminSupabaseClient() as any;
-  const branchId = input.branchId?.trim() || null;
-  await assertTelegramBranchScope(supabase, session, branchId);
+  const branchId = await resolveTelegramMutationBranchId(supabase, session, input.branchId?.trim() || null);
 
   const now = new Date().toISOString();
   let query = supabase
@@ -218,34 +239,47 @@ export async function revokeTelegramPendingConnectTokens(session: SessionProfile
 export async function getTelegramOperationsStatus(session: SessionProfile) {
   const supabase = createAdminSupabaseClient() as any;
   const restaurantId = session.restaurantId;
+  const branchScope = await resolveTelegramDashboardBranchScope(session);
 
   const [connectionsResult, recentNotificationsResult, recentAuditResult, failedCountResult, queueHealth, policyStatus, incidentStatus] = await Promise.all([
-    supabase
-      .from("telegram_connections")
-      .select("id,branch_id,user_id,telegram_username,telegram_first_name,telegram_last_name,role,status,connected_at,last_seen_at")
-      .eq("restaurant_id", restaurantId)
+    applyTelegramBranchScope(
+      supabase
+        .from("telegram_connections")
+        .select("id,branch_id,user_id,telegram_username,telegram_first_name,telegram_last_name,role,status,connected_at,last_seen_at")
+        .eq("restaurant_id", restaurantId),
+      branchScope
+    )
       .order("connected_at", { ascending: false })
       .limit(10),
-    supabase
-      .from("telegram_notifications")
-      .select("id,event_type,status,title,sent_at,failed_at,last_error,created_at")
-      .eq("restaurant_id", restaurantId)
+    applyTelegramBranchScope(
+      supabase
+        .from("telegram_notifications")
+        .select("id,event_type,status,title,sent_at,failed_at,last_error,created_at")
+        .eq("restaurant_id", restaurantId),
+      branchScope
+    )
       .order("created_at", { ascending: false })
       .limit(8),
-    supabase
-      .from("telegram_audit_logs")
-      .select("id,action,outcome,entity_type,entity_id,created_at")
-      .eq("restaurant_id", restaurantId)
+    applyTelegramBranchScope(
+      supabase
+        .from("telegram_audit_logs")
+        .select("id,branch_id,action,outcome,entity_type,entity_id,created_at")
+        .eq("restaurant_id", restaurantId),
+      branchScope
+    )
       .order("created_at", { ascending: false })
       .limit(8),
-    supabase
-      .from("telegram_notifications")
-      .select("id", { count: "exact", head: true })
-      .eq("restaurant_id", restaurantId)
-      .in("status", ["failed", "rate_limited"]),
+    applyTelegramBranchScope(
+      supabase
+        .from("telegram_notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .in("status", ["failed", "rate_limited"]),
+      branchScope
+    ),
     getTelegramQueueHealth(),
     getTelegramNotificationPolicies(session),
-    getTelegramIncidentStatus(supabase, session)
+    getTelegramIncidentStatus(supabase, session, branchScope)
   ]);
 
   if (connectionsResult.error) throw connectionsResult.error;
@@ -314,11 +348,15 @@ export async function getTelegramOperationsStatus(session: SessionProfile) {
 export async function getTelegramNotificationPolicies(session: SessionProfile) {
   const supabase = createAdminSupabaseClient() as any;
   const defaults = defaultPolicyViews();
+  const branchScope = await resolveTelegramDashboardBranchScope(session);
 
-  const result = await supabase
-    .from("telegram_notification_policies")
-    .select("id,event_type,label,branch_id,enabled,recipient_scope,required_permission,priority,escalation_after_seconds,escalate_to_admin,digest_enabled,updated_at")
-    .eq("restaurant_id", session.restaurantId)
+  const result = await applyTelegramBranchScope(
+    supabase
+      .from("telegram_notification_policies")
+      .select("id,event_type,label,branch_id,enabled,recipient_scope,required_permission,priority,escalation_after_seconds,escalate_to_admin,digest_enabled,updated_at")
+      .eq("restaurant_id", session.restaurantId),
+    branchScope
+  )
     .order("priority", { ascending: true })
     .order("label", { ascending: true });
 
@@ -329,17 +367,17 @@ export async function getTelegramNotificationPolicies(session: SessionProfile) {
 
   const rows = result.data ?? [];
   if (rows.length === 0) {
+    if (branchScope.branchIds !== null) return summarizeTelegramPolicies(defaults, true);
     const seeded = await seedDefaultTelegramNotificationPolicies(supabase, session);
     return summarizeTelegramPolicies(seeded.length ? seeded : defaults, true);
   }
 
-  return summarizeTelegramPolicies(rows.map(normalizeTelegramPolicyRow), true);
+  return summarizeTelegramPolicies(mergeDefaultTelegramPolicies(rows.map(normalizeTelegramPolicyRow)), true);
 }
 
 export async function updateTelegramNotificationPolicy(session: SessionProfile, input: TelegramNotificationPolicyInput) {
   const supabase = createAdminSupabaseClient() as any;
-  const branchId = input.branchId?.trim() || null;
-  await assertTelegramBranchScope(supabase, session, branchId);
+  const branchId = await resolveTelegramMutationBranchId(supabase, session, input.branchId?.trim() || null);
 
   const defaultsByType: Map<string, (typeof TELEGRAM_DEFAULT_POLICIES)[number]> = new Map(
     TELEGRAM_DEFAULT_POLICIES.map((policy) => [policy.eventType, policy])
@@ -461,6 +499,37 @@ export async function recordTelegramOwnerBriefing(input: TelegramOwnerBriefingIn
   };
 }
 
+export async function assertTelegramCallbackDispatch(input: TelegramCallbackDispatchInput, requiredPermission: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { data: action, error } = await supabase
+    .from("telegram_callback_actions")
+    .select("id,action_type,restaurant_id,branch_id,connection_id,resource_type,resource_id,required_permission,status,used_at")
+    .eq("id", input.actionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!action) throw new Error("telegram_callback_not_found");
+  if (action.status !== "used" || !action.used_at) throw new Error("telegram_callback_not_claimed");
+  if (String(action.action_type) !== input.actionType) throw new Error("telegram_callback_action_mismatch");
+  if (String(action.restaurant_id) !== input.restaurantId) throw new Error("telegram_callback_restaurant_mismatch");
+  if ((action.branch_id ? String(action.branch_id) : null) !== (input.branchId ?? null)) throw new Error("telegram_callback_branch_mismatch");
+  if (String(action.resource_type) !== input.resourceType || String(action.resource_id) !== input.resourceId) throw new Error("telegram_callback_resource_mismatch");
+  if (String(action.required_permission) !== requiredPermission) throw new Error("telegram_callback_permission_mismatch");
+
+  const { data: connection, error: connectionError } = await supabase
+    .from("telegram_connections")
+    .select("id,restaurant_id,branch_id,user_id,role,status")
+    .eq("id", action.connection_id)
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.actorUserId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (connectionError) throw connectionError;
+  if (!connection) throw new Error("telegram_callback_connection_invalid");
+  if (connection.role !== input.actorRole) throw new Error("telegram_callback_actor_role_mismatch");
+  const connectionBranchId = connection.branch_id ? String(connection.branch_id) : null;
+  if (connectionBranchId && connectionBranchId !== (input.branchId ?? null)) throw new Error("telegram_callback_connection_branch_mismatch");
+}
+
 export async function retryTelegramNotifications(
   session: SessionProfile,
   input: { notificationId?: string | null; limit?: number } = {}
@@ -503,6 +572,19 @@ export async function retryTelegramNotifications(
 export async function revokeTelegramConnection(session: SessionProfile, input: { connectionId: string }) {
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date().toISOString();
+  const branchScope = await resolveTelegramDashboardBranchScope(session);
+  const { data: targetConnection, error: targetError } = await supabase
+    .from("telegram_connections")
+    .select("id,branch_id,user_id,telegram_user_id")
+    .eq("id", input.connectionId)
+    .eq("restaurant_id", session.restaurantId)
+    .neq("status", "revoked")
+    .maybeSingle();
+
+  if (targetError) throw targetError;
+  if (!targetConnection) throw new AppError("Không tìm thấy kết nối Telegram cần ngắt.", 404);
+  assertTelegramBranchScopeAllows(branchScope, targetConnection.branch_id ?? null);
+
   const { data: connection, error } = await supabase
     .from("telegram_connections")
     .update({
@@ -589,11 +671,15 @@ async function getRetryableTelegramNotifications(
   session: SessionProfile,
   input: { notificationId?: string | null; limit?: number }
 ) {
-  let query = supabase
-    .from("telegram_notifications")
-    .select("id,event_id,event_type,restaurant_id,branch_id,connection_id,status,payload,attempts,title,last_error,created_at")
-    .eq("restaurant_id", session.restaurantId)
-    .in("status", RETRYABLE_NOTIFICATION_STATUSES)
+  const branchScope = await resolveTelegramDashboardBranchScope(session);
+  let query = applyTelegramBranchScope(
+    supabase
+      .from("telegram_notifications")
+      .select("id,event_id,event_type,restaurant_id,branch_id,connection_id,status,payload,attempts,title,last_error,created_at")
+      .eq("restaurant_id", session.restaurantId)
+      .in("status", RETRYABLE_NOTIFICATION_STATUSES),
+    branchScope
+  )
     .order("created_at", { ascending: true })
     .limit(Math.min(Math.max(input.limit ?? 25, 1), 50));
 
@@ -767,6 +853,7 @@ function normalizeGatewayJobs(jobs: GatewayFailedJob[]) {
   return jobs.slice(0, 5).map((job) => ({
     id: job.id == null ? null : String(job.id),
     name: job.name ? String(job.name) : null,
+    state: job.state ? String(job.state) : null,
     attemptsMade: safeCount(job.attemptsMade),
     failedReason: job.failedReason ? String(job.failedReason).slice(0, 240) : null,
     failedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
@@ -844,6 +931,12 @@ function defaultPolicyViews() {
   }));
 }
 
+function mergeDefaultTelegramPolicies(policies: ReturnType<typeof normalizeTelegramPolicyRow>[]) {
+  const existingGlobalTypes = new Set(policies.filter((policy) => policy.branchId === null).map((policy) => policy.eventType));
+  const missingDefaults = defaultPolicyViews().filter((policy) => !existingGlobalTypes.has(policy.eventType));
+  return [...policies, ...missingDefaults].sort((left, right) => left.priority - right.priority || left.label.localeCompare(right.label, "vi"));
+}
+
 function summarizeTelegramPolicies(policies: ReturnType<typeof normalizeTelegramPolicyRow>[], schemaReady: boolean) {
   const enabledCount = policies.filter((policy) => policy.enabled).length;
   const criticalCount = policies.filter((policy) => policy.enabled && policy.priority <= 2).length;
@@ -857,12 +950,15 @@ function summarizeTelegramPolicies(policies: ReturnType<typeof normalizeTelegram
   };
 }
 
-async function getTelegramIncidentStatus(supabase: any, session: SessionProfile) {
-  const result = await supabase
-    .from("telegram_ops_incidents")
-    .select("id,severity,area,status,title,summary,last_seen_at")
-    .eq("restaurant_id", session.restaurantId)
-    .in("status", ["open", "acknowledged"])
+async function getTelegramIncidentStatus(supabase: any, session: SessionProfile, branchScope: TelegramDashboardBranchScope) {
+  const result = await applyTelegramBranchScope(
+    supabase
+      .from("telegram_ops_incidents")
+      .select("id,branch_id,severity,area,status,title,summary,last_seen_at")
+      .eq("restaurant_id", session.restaurantId)
+      .in("status", ["open", "acknowledged"]),
+    branchScope
+  )
     .order("last_seen_at", { ascending: false })
     .limit(5);
 
@@ -1063,7 +1159,33 @@ function isMissingTelegramOpsSchema(error: { code?: string; message?: string } |
   );
 }
 
-async function assertTelegramBranchScope(supabase: any, session: SessionProfile, branchId: string | null) {
+type TelegramDashboardBranchScope = {
+  branchIds: string[] | null;
+};
+
+async function resolveTelegramMutationBranchId(supabase: any, session: SessionProfile, requestedBranchId: string | null) {
+  const branchIds = await getStaffAuthorizedBranchIds(session);
+  if (branchIds === null) {
+    await assertTelegramBranchBelongsToRestaurant(supabase, session, requestedBranchId);
+    return requestedBranchId;
+  }
+
+  if (requestedBranchId) {
+    if (!branchIds.has(requestedBranchId)) throw new AppError("Bạn không có quyền cấu hình Telegram cho chi nhánh này.", 403);
+    await assertTelegramBranchBelongsToRestaurant(supabase, session, requestedBranchId);
+    return requestedBranchId;
+  }
+
+  if (branchIds.size === 1) return Array.from(branchIds)[0];
+  throw new AppError("Hãy chọn chi nhánh trước khi tạo link hoặc thao tác Telegram cho nhân viên.", 403);
+}
+
+async function resolveTelegramDashboardBranchScope(session: SessionProfile): Promise<TelegramDashboardBranchScope> {
+  const branchIds = await getStaffAuthorizedBranchIds(session);
+  return { branchIds: branchIds === null ? null : Array.from(branchIds) };
+}
+
+async function assertTelegramBranchBelongsToRestaurant(supabase: any, session: SessionProfile, branchId: string | null) {
   if (!branchId) return;
   const { data: branch, error } = await supabase
     .from("store_branches")
@@ -1075,6 +1197,18 @@ async function assertTelegramBranchScope(supabase: any, session: SessionProfile,
   if (!branch) throw new AppError("Chi nhánh Telegram không thuộc quán hiện tại.", 403);
 }
 
+function applyTelegramBranchScope(query: any, scope: TelegramDashboardBranchScope) {
+  if (scope.branchIds === null) return query;
+  if (scope.branchIds.length === 0) return query.eq("branch_id", "00000000-0000-0000-0000-000000000000");
+  return scope.branchIds.length === 1 ? query.eq("branch_id", scope.branchIds[0]) : query.in("branch_id", scope.branchIds);
+}
+
+function assertTelegramBranchScopeAllows(scope: TelegramDashboardBranchScope, branchId: string | null) {
+  if (scope.branchIds === null) return;
+  if (branchId && scope.branchIds.includes(branchId)) return;
+  throw new AppError("Bạn không có quyền thao tác kết nối Telegram ngoài chi nhánh được gán.", 403);
+}
+
 async function countActiveTelegramConnections(supabase: any, restaurantId: string, branchId: string | null) {
   let query = supabase
     .from("telegram_connections")
@@ -1082,7 +1216,11 @@ async function countActiveTelegramConnections(supabase: any, restaurantId: strin
     .eq("restaurant_id", restaurantId)
     .eq("status", "active");
 
-  if (branchId) query = query.or(`branch_id.is.null,branch_id.eq.${branchId}`);
+  if (branchId) {
+    query = query.or(`branch_id.is.null,branch_id.eq.${branchId}`);
+  } else {
+    query = query.is("branch_id", null);
+  }
 
   const { count, error } = await query;
   if (error) throw error;

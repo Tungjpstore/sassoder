@@ -137,6 +137,8 @@ export type Database = {
           id: string;
           name: string;
           slug: string;
+          staff_code: string;
+          staff_code_generated_at: string | null;
           business_type: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
           timezone: string;
           table_count: number | null;
@@ -217,6 +219,8 @@ export type Database = {
           id?: string;
           name: string;
           slug: string;
+          staff_code?: string;
+          staff_code_generated_at?: string | null;
           business_type?: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
           timezone?: string;
           table_count?: number | null;
@@ -297,6 +301,8 @@ export type Database = {
           id?: string;
           name?: string;
           slug?: string;
+          staff_code?: string;
+          staff_code_generated_at?: string | null;
           business_type?: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
           timezone?: string;
           table_count?: number | null;

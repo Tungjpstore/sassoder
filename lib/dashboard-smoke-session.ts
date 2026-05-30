@@ -10,6 +10,7 @@ type SmokeRestaurantRow = {
   id: string;
   name: string;
   slug: string;
+  staff_code?: string | null;
   business_type?: BusinessType | null;
   platform_status?: SessionProfile["restaurant"]["platformStatus"] | null;
 };
@@ -38,11 +39,21 @@ export async function getDashboardSmokeSessionProfile(): Promise<SessionProfile 
   if (!parsed) return null;
 
   const supabase = createAdminSupabaseClient();
-  const { data, error } = (await supabase
+  let { data, error } = (await supabase
     .from("restaurants")
-    .select("id,name,slug,business_type,platform_status")
+    .select("id,name,slug,staff_code,business_type,platform_status")
     .eq("slug", parsed.restaurantSlug)
     .maybeSingle()) as { data: SmokeRestaurantRow | null; error: unknown };
+
+  if (error) {
+    const fallback = (await supabase
+      .from("restaurants")
+      .select("id,name,slug,business_type,platform_status")
+      .eq("slug", parsed.restaurantSlug)
+      .maybeSingle()) as { data: SmokeRestaurantRow | null; error: unknown };
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error || !data || data.platform_status === "deleted") return null;
 
@@ -56,6 +67,7 @@ export async function getDashboardSmokeSessionProfile(): Promise<SessionProfile 
       id: data.id,
       name: data.name,
       slug: data.slug,
+      staffCode: data.staff_code ?? null,
       businessType: data.business_type ?? null,
       platformStatus: data.platform_status ?? "active"
     }

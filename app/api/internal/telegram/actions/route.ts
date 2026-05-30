@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { fail, ok } from "@/lib/response";
-import { assertInternalApiKey } from "@/services/telegram-connection-service";
+import { withVpsDistributedLock } from "@/lib/vps/backbone";
+import { broadcastVpsRealtime, type VpsRealtimeEvent } from "@/lib/vps/realtime";
+import { assertInternalApiKey, assertTelegramCallbackDispatch } from "@/services/telegram-connection-service";
 import { getTelegramActionResourceBranchId } from "@/services/telegram-action-branch-service";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, cancelOrder, getOrderLifecycleSnapshot, markOrderCompleted, updateOrderDeliveryStatus } from "@/services/order-service";
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
   try {
     assertInternalApiKey(request);
     const input = telegramActionSchema.parse(await request.json());
+    await assertTelegramCallbackDispatch(input, requiredPermissionByTelegramAction[input.actionType]);
     await assertTelegramResourceBranch(input);
     await assertStaffActionPermission(telegramActionSession(input), requiredPermissionByTelegramAction[input.actionType]);
     const data = await executeTelegramAction(input);
@@ -113,6 +116,7 @@ async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>
       branchId: input.branchId ?? null,
       metadata: { telegramActionId: input.actionId, payload: input.payload ?? {} }
     });
+    await broadcastTelegramAction(input);
     return { message: "Đã cập nhật đơn.", result: data };
   }
 
@@ -129,6 +133,7 @@ async function executeTelegramAction(input: z.infer<typeof telegramActionSchema>
       branchId: input.branchId ?? null,
       metadata: { telegramActionId: input.actionId, payload: input.payload ?? {} }
     });
+    await broadcastTelegramAction(input);
     return { message: "Đã xử lý yêu cầu.", result: data };
   }
 
@@ -188,8 +193,43 @@ async function executeOrderAction(input: z.infer<typeof telegramActionSchema>) {
   if (input.actionType === "delivery.out_for_delivery") return updateOrderDeliveryStatus(input.restaurantId, input.resourceId, "out_for_delivery", input.actorUserId);
   if (input.actionType === "delivery.delivered") return updateOrderDeliveryStatus(input.restaurantId, input.resourceId, "delivered", input.actorUserId);
   if (input.actionType === "delivery.reject") return updateOrderDeliveryStatus(input.restaurantId, input.resourceId, "rejected", input.actorUserId);
-  if (input.actionType === "payment.confirm") return confirmPayment(input.restaurantId, input.resourceId, input.actorUserId);
+  if (input.actionType === "payment.confirm") {
+    return withVpsDistributedLock(
+      {
+        tenantId: input.restaurantId,
+        scope: "payment",
+        resourceId: input.resourceId,
+        ttlMs: 30_000
+      },
+      () => confirmPayment(input.restaurantId, input.resourceId, input.actorUserId)
+    );
+  }
   throw new Error("Unsupported Telegram order action.");
+}
+
+async function broadcastTelegramAction(input: z.infer<typeof telegramActionSchema>) {
+  const event = realtimeEventForTelegramAction(input.actionType, input.resourceType);
+  if (!event) return;
+  await broadcastVpsRealtime({
+    event,
+    restaurantId: input.restaurantId,
+    orderId: input.resourceType === "order" ? input.resourceId : null,
+    payload: {
+      action: `telegram.${input.actionType}`,
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      branchId: input.branchId ?? null,
+      telegramActionId: input.actionId
+    }
+  });
+}
+
+function realtimeEventForTelegramAction(actionType: z.infer<typeof telegramActionSchema>["actionType"], resourceType: z.infer<typeof telegramActionSchema>["resourceType"]): VpsRealtimeEvent | null {
+  if (actionType === "order.confirm") return "order_confirmed";
+  if (actionType === "payment.confirm") return "payment_update";
+  if (resourceType === "order") return "kitchen_update";
+  if (resourceType === "service_request" || resourceType === "staff_request") return "staff_notification";
+  return null;
 }
 
 async function executeReservationAction(input: z.infer<typeof telegramActionSchema>) {

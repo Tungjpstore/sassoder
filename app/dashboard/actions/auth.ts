@@ -15,7 +15,9 @@ import {
   registerAccountSchema,
   registerOnboardingSchema,
   resendEmailOtpSchema,
-  resetPasswordSchema
+  resetPasswordSchema,
+  staffAppLoginSchema,
+  staffAppPasswordChangeSchema
 } from "@/lib/validators";
 import {
   getAuthEmailRegistrationStatus,
@@ -29,6 +31,7 @@ import {
   verifySignupEmailOtp
 } from "@/services/auth-service";
 import { loginWithStaffPin } from "@/features/staff/services/staff-pin-service";
+import { changeOwnStaffAppPassword, loginWithStaffAppPassword } from "@/features/staff/services/staff-app-auth-service";
 import { consumeRegistrationIntentForUser, createRegistrationIntent } from "@/services/restaurant-service";
 import { checkActionRateLimit, getDashboardDestination } from "./shared";
 
@@ -96,6 +99,74 @@ export async function pinLoginAction(_prevState: { error?: string } | undefined,
 
   const session = await getSessionProfile();
   if (!session) redirect("/dashboard/onboarding");
+
+  const next = safeProtectedDashboardNextPath(formData.get("next"));
+  redirect(next || "/dashboard/staff/mobile");
+}
+
+export async function staffAppLoginAction(_prevState: { error?: string } | undefined, formData: FormData) {
+  const parsed = staffAppLoginSchema.safeParse({
+    employeeCode: formData.get("employeeCode"),
+    password: formData.get("password")
+  });
+
+  if (!parsed.success) {
+    return { error: "Vui lòng nhập mã nhân viên và mật khẩu app." };
+  }
+
+  if (!(await checkActionRateLimit(`staff-app-login:${parsed.data.employeeCode}`, 8, 60_000))) {
+    return { error: "Bạn thử đăng nhập quá nhanh. Vui lòng chờ một chút." };
+  }
+
+  let loginResult: Awaited<ReturnType<typeof loginWithStaffAppPassword>>;
+  try {
+    loginResult = await loginWithStaffAppPassword(parsed.data);
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Mã nhân viên hoặc mật khẩu không đúng." };
+  }
+
+  const session = await getSessionProfile();
+  if (!session) redirect("/dashboard/onboarding");
+
+  const next = safeProtectedDashboardNextPath(formData.get("next"));
+  if (loginResult.mustChangePassword) {
+    const params = new URLSearchParams({ next: next || "/dashboard/staff/mobile" });
+    redirect(`/staff/change-password?${params.toString()}`);
+  }
+
+  redirect(next || "/dashboard/staff/mobile");
+}
+
+export async function staffAppPasswordChangeAction(_prevState: { error?: string; success?: string } | undefined, formData: FormData) {
+  const parsed = staffAppPasswordChangeSchema.safeParse({
+    currentPassword: formData.get("currentPassword"),
+    newPassword: formData.get("newPassword"),
+    confirmPassword: formData.get("confirmPassword")
+  });
+
+  if (!parsed.success) {
+    return { error: parsed.error.issues.map((issue) => issue.message).join(" ") || "Mật khẩu mới chưa hợp lệ." };
+  }
+
+  const session = await getSessionProfile();
+
+  if (!session) return { error: "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." };
+
+  if (!(await checkActionRateLimit(`staff-password-change:${session.userId}`, 5, 10 * 60_000))) {
+    return { error: "Bạn đổi mật khẩu quá nhanh. Vui lòng thử lại sau vài phút." };
+  }
+
+  try {
+    await changeOwnStaffAppPassword({
+      session,
+      currentPassword: parsed.data.currentPassword,
+      newPassword: parsed.data.newPassword
+    });
+  } catch (error) {
+    if (error instanceof AppError) return { error: error.message };
+    return { error: "Không đổi được mật khẩu app lúc này." };
+  }
 
   const next = safeProtectedDashboardNextPath(formData.get("next"));
   redirect(next || "/dashboard/staff/mobile");

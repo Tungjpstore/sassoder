@@ -5,6 +5,7 @@ import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 
 export const preferredRegion = "sin1";
 
@@ -80,7 +81,9 @@ export async function POST(request: Request, context: RouteContext) {
       request.json().catch(() => ({}))
     ]);
     const input = attendanceApprovalReviewSchema.parse(payload);
-    return success(await reviewAttendanceApproval({ session, approvalId, input }));
+    const data = await reviewAttendanceApproval({ session, approvalId, input });
+    await invalidateStaffOperationsBundleCache(session.restaurantId);
+    return success(data);
   } catch (error) {
     return failure(error);
   }

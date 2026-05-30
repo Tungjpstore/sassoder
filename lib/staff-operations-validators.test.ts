@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attendanceApprovalReviewSchema, attendanceClockInSchema, staffAttendanceQrTokenCreateSchema, staffDeviceTrustUpdateSchema, staffOperationalRequestSchema } from "@/lib/validators";
+import {
+  attendanceApprovalReviewSchema,
+  attendanceClockInSchema,
+  attendanceManualAdjustmentSchema,
+  staffAttendanceQrTokenCreateSchema,
+  staffDeviceCreateSchema,
+  staffDeviceTrustUpdateSchema,
+  staffDocumentCreateSchema,
+  staffOperationalRequestSchema,
+  staffSessionForceLogoutSchema,
+  staffShiftAssignmentSchema,
+  staffShiftAssignmentUpdateSchema,
+  staffShiftTemplateUpdateSchema
+} from "@/lib/validators";
 
 const staffMemberId = "11111111-1111-4111-8111-111111111111";
 const branchId = "22222222-2222-4222-8222-222222222222";
@@ -95,6 +108,22 @@ test("attendance approval rejection requires an audit note", () => {
   assert.match(JSON.stringify(rejected.error.flatten()), /Từ chối yêu cầu cần ghi lý do/);
 });
 
+test("attendance manual adjustment requires real log, staff and audit reason", () => {
+  const parsed = attendanceManualAdjustmentSchema.parse({
+    attendanceLogId: shiftAssignmentId,
+    staffMemberId,
+    clockInAt: "2026-05-30T08:05",
+    clockOutAt: "2026-05-30T16:10",
+    note: "Quản lý xác nhận quên bấm kết ca"
+  });
+
+  assert.equal(parsed.attendanceLogId, shiftAssignmentId);
+  assert.equal(parsed.staffMemberId, staffMemberId);
+  assert.equal(attendanceManualAdjustmentSchema.safeParse({ ...parsed, clockOutAt: "2026-05-30T07:59" }).success, false);
+  assert.equal(attendanceManualAdjustmentSchema.safeParse({ ...parsed, clockInAt: "2026-05-30T08:05:00+07:00", clockOutAt: "2026-05-30T09:05:00+07:00" }).success, true);
+  assert.equal(attendanceManualAdjustmentSchema.safeParse({ ...parsed, note: "" }).success, false);
+});
+
 test("attendance QR schemas require real branch tokens", () => {
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).expiresInMinutes, 5);
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).mode, "daily_branch");
@@ -139,7 +168,87 @@ test("staff device trust schema supports attendance binding", () => {
   });
 
   assert.equal(parsed.trustedForAttendance, true);
+  assert.equal(staffDeviceTrustUpdateSchema.parse({ deviceId: staffMemberId, trustedForAttendance: "false" }).trustedForAttendance, false);
   assert.equal(staffDeviceTrustUpdateSchema.safeParse({ trustedForAttendance: true }).success, false);
+});
+
+test("staff document and device schemas support real security workflows", () => {
+  const document = staffDocumentCreateSchema.parse({
+    staffMemberId,
+    documentName: "CCCD mặt trước",
+    documentType: "identity_card",
+    status: "missing",
+    fileUrl: ""
+  });
+
+  assert.equal(document.status, "missing");
+  assert.equal(staffDocumentCreateSchema.safeParse({ ...document, status: "draft" }).success, false);
+
+  const device = staffDeviceCreateSchema.parse({
+    staffMemberId,
+    deviceName: "iPhone thu ngân",
+    deviceType: "phone",
+    trustedForAttendance: "false",
+    issuedAt: "2026-05-30"
+  });
+
+  assert.equal(device.trustedForAttendance, false);
+  assert.equal(staffDeviceCreateSchema.safeParse({ ...device, trustedForAttendance: "true" }).success, false);
+  assert.equal(staffDeviceCreateSchema.parse({ ...device, trustedForAttendance: "true", deviceFingerprint: "device-fp-123456" }).trustedForAttendance, true);
+
+  const forceLogout = staffSessionForceLogoutSchema.parse({ staffMemberId, reason: "Đổi thiết bị" });
+  assert.equal(forceLogout.staffMemberId, staffMemberId);
+});
+
+test("staff shift update schemas support real edit workflows", () => {
+  const template = staffShiftTemplateUpdateSchema.parse({
+    shiftId: shiftAssignmentId,
+    name: "Ca chiều",
+    branchId,
+    startTime: "14:00",
+    endTime: "22:00",
+    recurringWeekdays: "[1,2,3,4,5]"
+  });
+
+  assert.equal(template.shiftId, shiftAssignmentId);
+  assert.deepEqual(template.recurringWeekdays, [1, 2, 3, 4, 5]);
+  assert.equal(staffShiftTemplateUpdateSchema.safeParse({ ...template, endTime: "14:00" }).success, false);
+
+  const assignment = staffShiftAssignmentUpdateSchema.parse({
+    shiftAssignmentId,
+    staffMemberId,
+    shiftId: targetStaffMemberId,
+    scheduledDate: "2026-05-30",
+    note: "Đổi sang ca chiều"
+  });
+
+  assert.equal(assignment.shiftAssignmentId, shiftAssignmentId);
+  assert.equal(assignment.scheduledDate, "2026-05-30");
+});
+
+test("staff shift assignment schema supports create workflows", () => {
+  const assignment = staffShiftAssignmentSchema.parse({
+    staffMemberId,
+    shiftId: targetStaffMemberId,
+    scheduledDate: "2026-05-30",
+    note: "Gán ca từ lịch Staff"
+  });
+
+  assert.equal(assignment.staffMemberId, staffMemberId);
+  assert.equal(assignment.shiftId, targetStaffMemberId);
+  assert.equal(assignment.note, "Gán ca từ lịch Staff");
+  assert.equal(staffShiftAssignmentSchema.safeParse({ ...assignment, staffMemberId: "" }).success, false);
+  assert.equal(staffShiftAssignmentSchema.safeParse({ ...assignment, scheduledDate: "30/05/2026" }).success, false);
+});
+
+test("staff shift service hardens assignment edge cases", async () => {
+  const source = await import("node:fs").then((fs) => fs.readFileSync("features/shifts/services/shift-service.ts", "utf8"));
+
+  assert.match(source, /readAssignableStaff\(supabase, restaurantId, input\.staffMemberId\)/);
+  assert.match(source, /assertNoShiftAssignmentOverlap/);
+  assert.match(source, /if \(staff\.user_id\)/);
+  assert.match(source, /isShiftAssignmentOverlapError/);
+  assert.match(source, /Ca mới bị trùng giờ với một ca đã xếp/);
 });
 
 test("staff request workflow guards payroll conflicts before insert", async () => {
@@ -160,6 +269,20 @@ test("staff operations workspace does not keep archived duplicate screen drafts"
   assert.match(source, /function BranchCommandCenterScreen\(/);
 });
 
+test("staff operations exposes QR production readiness before creating daily codes", async () => {
+  const [typesSource, serviceSource, workspaceSource] = await Promise.all([
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/types.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/services/staff-operations-service.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/components/staff-redesign-workspace.tsx", "utf8"))
+  ]);
+
+  assert.match(typesSource, /StaffOpsConfigReadiness/);
+  assert.match(serviceSource, /STAFF_ATTENDANCE_QR_SECRET/);
+  assert.match(serviceSource, /opsConfig: resolveStaffOpsConfigReadiness\(\)/);
+  assert.match(workspaceSource, /qrConfigBlocked/);
+  assert.match(workspaceSource, /Thiếu QR secret/);
+});
+
 test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", async () => {
   const [attendanceSource, qrSource, pinSource] = await Promise.all([
     import("node:fs").then((fs) => fs.readFileSync("features/attendance/services/attendance-service.ts", "utf8")),
@@ -171,8 +294,12 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /source !== "offline_sync"[\s\S]*maxTrustedClientCaptureAgeMs/);
   assert.match(attendanceSource, /return new Date\(now\)/);
   assert.match(attendanceSource, /assertClockOutAfterClockIn/);
+  assert.match(attendanceSource, /attendance\.adjusted/);
+  assert.match(attendanceSource, /manual_attendance_edit/);
   assert.match(attendanceSource, /GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị/);
   assert.match(qrSource, /\.is\("consumed_at", null\)/);
+  assert.match(qrSource, /process\.env\.STAFF_ATTENDANCE_QR_SECRET\?\.trim\(\)/);
+  assert.match(qrSource, /NODE_ENV === "production"[\s\S]*Thiếu STAFF_ATTENDANCE_QR_SECRET/);
   assert.match(qrSource, /Mã QR chấm công đã được sử dụng/);
   assert.match(pinSource, /buildStaffPinUnknownRateLimitInput/);
   assert.match(pinSource, /staff_auth\.pin_unknown_locked/);

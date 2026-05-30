@@ -21,11 +21,14 @@ export const paymentTools = [
 export async function detect_payment_issue(_args: Record<string, unknown>, context: AiToolContext): Promise<AiToolResult> {
   const supabase = createAdminSupabaseClient();
 
-  const { data: orders, error } = await supabase
+  let query = supabase
     .from("orders")
     .select("id, total, status, payment_status, payment_method, created_at")
     .eq("restaurant_id", context.restaurantId)
-    .in("payment_status", ["failed", "waiting_confirm", "unpaid"])
+    .in("payment_status", ["failed", "waiting_confirm", "unpaid"]);
+  if (context.branchId) query = query.eq("branch_id", context.branchId);
+
+  const { data: orders, error } = await query
     .order("created_at", { ascending: false })
     .limit(10);
 

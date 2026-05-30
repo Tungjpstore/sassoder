@@ -102,28 +102,31 @@ type LegacyPaymentSnapshot = {
 const PLATFORM_PAYMENT_SELECT = "id,restaurant_id,subscription_id,plan_id,amount,months,transfer_content,raw_data,created_at,restaurant:restaurants(name,slug),plan:saas_plans(name,code,monthly_price),subscription:restaurant_subscriptions(status,current_period_start,current_period_end,trial_ends_at,created_at)";
 const PLATFORM_RESTAURANT_SELECT = "id,name,slug,platform_status,suspended_reason,deleted_at,created_at";
 const PLATFORM_SUBSCRIPTION_SELECT = "id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_ends_at,created_at,plan:saas_plans(name,code,monthly_price)";
+const PLATFORM_CONNECTION_SELECT = "id,telegram_user_id,telegram_chat_id,telegram_username,display_name,role,scopes,status,metadata";
 
 export async function getPlatformConnectionForTelegramUser(telegramUserId: number) {
   const { data, error } = await db()
     .from("platform_telegram_connections")
-    .select("id,telegram_user_id,telegram_chat_id,telegram_username,display_name,role,scopes,status")
+    .select(PLATFORM_CONNECTION_SELECT)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
-  return data ? normalizeConnection(data) : null;
+  if (!data) return null;
+  return refreshPlatformConnectionAccess(normalizeConnection(data));
 }
 
 export async function getPlatformAlertRecipients(requiredScope = "incidents.read") {
   const { data, error } = await db()
     .from("platform_telegram_connections")
-    .select("id,telegram_user_id,telegram_chat_id,telegram_username,display_name,role,scopes,status")
+    .select(PLATFORM_CONNECTION_SELECT)
     .eq("status", "active")
     .order("last_seen_at", { ascending: false })
     .limit(25);
   if (isMissingPlatformTelegramSchema(error)) return [];
   if (error) throw error;
-  return (data ?? []).map(normalizeConnection).filter((connection: PlatformTelegramConnection) => hasPlatformScope(connection, requiredScope));
+  const refreshed = await refreshPlatformConnectionsAccess((data ?? []).map(normalizeConnection));
+  return refreshed.filter((connection: PlatformTelegramConnection) => hasPlatformScope(connection, requiredScope));
 }
 
 export async function claimPlatformConnectionToken(token: string, identity: TelegramIdentity) {
@@ -207,7 +210,7 @@ export async function connectPlatformTelegramAccount(
       },
       { onConflict: "telegram_user_id" }
     )
-    .select("id,telegram_user_id,telegram_chat_id,telegram_username,display_name,role,scopes,status")
+    .select(PLATFORM_CONNECTION_SELECT)
     .single();
   if (error) throw error;
   const connection = normalizeConnection(data);
@@ -568,6 +571,77 @@ export function hasPlatformScope(connection: PlatformTelegramConnection, scope: 
   return connection.scopes.includes(scope) || connection.scopes.includes("platform.admin");
 }
 
+async function refreshPlatformConnectionsAccess(connections: PlatformTelegramConnection[]) {
+  const refreshed = await Promise.all(connections.map(refreshPlatformConnectionAccess));
+  return refreshed.filter((connection): connection is PlatformTelegramConnection => Boolean(connection));
+}
+
+async function refreshPlatformConnectionAccess(connection: PlatformTelegramConnection) {
+  if (!connection.platform_admin_user_id) return connection;
+
+  const { data, error } = await db()
+    .from("platform_admin_users")
+    .select("id,role,status")
+    .eq("id", connection.platform_admin_user_id)
+    .maybeSingle();
+  if (isMissingPlatformTelegramSchema(error)) return connection;
+  if (error) throw error;
+
+  if (!data || data.status !== "active") {
+    await revokeStalePlatformConnection(connection, "platform_admin_not_active");
+    return null;
+  }
+
+  const access = platformTelegramAccessForAdminRole(normalizeAdminRole(data.role));
+  const next = { ...connection, role: access.telegramRole, scopes: access.scopes };
+  if (platformConnectionAccessChanged(connection, next)) {
+    await persistPlatformConnectionAccess(next).catch(() => undefined);
+  }
+  return next;
+}
+
+function platformConnectionAccessChanged(previous: PlatformTelegramConnection, next: PlatformTelegramConnection) {
+  return previous.role !== next.role || previous.scopes.join("\u0000") !== next.scopes.join("\u0000");
+}
+
+async function persistPlatformConnectionAccess(connection: PlatformTelegramConnection) {
+  const { error } = await db()
+    .from("platform_telegram_connections")
+    .update({ role: connection.role, scopes: connection.scopes, last_seen_at: new Date().toISOString() })
+    .eq("id", connection.id)
+    .eq("telegram_user_id", connection.telegram_user_id)
+    .eq("status", "active");
+  if (error) throw error;
+}
+
+async function revokeStalePlatformConnection(connection: PlatformTelegramConnection, reason: string) {
+  const now = new Date().toISOString();
+  const { error } = await db()
+    .from("platform_telegram_connections")
+    .update({
+      status: "revoked",
+      revoked_at: now,
+      metadata: {
+        revokedBy: "platform_current_access_guard",
+        revokedReason: reason,
+        platformAdminUserId: connection.platform_admin_user_id ?? null
+      }
+    })
+    .eq("id", connection.id)
+    .eq("telegram_user_id", connection.telegram_user_id)
+    .eq("status", "active");
+  if (error) throw error;
+
+  await recordPlatformTelegramAudit({
+    connection,
+    action: "platform.telegram.connection.revoked_by_current_access",
+    outcome: "denied",
+    targetType: "platform_telegram_connection",
+    targetId: connection.id,
+    metadata: { reason, revokedAt: now }
+  }).catch(() => undefined);
+}
+
 function normalizeConnection(row: Record<string, unknown>): PlatformTelegramConnection {
   return {
     id: String(row.id),
@@ -577,8 +651,16 @@ function normalizeConnection(row: Record<string, unknown>): PlatformTelegramConn
     display_name: row.display_name ? String(row.display_name) : null,
     role: normalizeRole(row.role),
     scopes: Array.isArray(row.scopes) ? row.scopes.map(String) : [],
-    status: String(row.status ?? "active")
+    status: String(row.status ?? "active"),
+    platform_admin_user_id: metadataPlatformAdminUserId(row.metadata)
   };
+}
+
+function metadataPlatformAdminUserId(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = (metadata as { platformAdminUserId?: unknown; platform_admin_user_id?: unknown }).platformAdminUserId ??
+    (metadata as { platform_admin_user_id?: unknown }).platform_admin_user_id;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function normalizeRole(value: unknown): PlatformTelegramRole {
@@ -639,13 +721,14 @@ function platformTelegramAccessForAdminRole(role: PlatformAdminRole): { telegram
 async function getPlatformConnectionByIdForTelegramUser(connectionId: string, telegramUserId: number) {
   const { data, error } = await db()
     .from("platform_telegram_connections")
-    .select("id,telegram_user_id,telegram_chat_id,telegram_username,display_name,role,scopes,status")
+    .select(PLATFORM_CONNECTION_SELECT)
     .eq("id", connectionId)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
-  return data ? normalizeConnection(data) : null;
+  if (!data) return null;
+  return refreshPlatformConnectionAccess(normalizeConnection(data));
 }
 
 async function deletePlatformSession(id: string) {

@@ -10,6 +10,8 @@ import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { publishOperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
+import type { z } from "zod";
+import type { attendanceManualAdjustmentSchema } from "@/lib/validators";
 
 type DashboardSession = {
   userId: string;
@@ -52,6 +54,8 @@ type AttendanceApprovalReviewInput = {
   decision: "approved" | "rejected";
   note?: string;
 };
+
+type AttendanceManualAdjustmentInput = z.infer<typeof attendanceManualAdjustmentSchema>;
 
 type StaffMemberRow = {
   id: string;
@@ -273,6 +277,16 @@ function normalizeCapturedAt(value: string | undefined, source: AttendanceSource
   }
 
   return new Date(now);
+}
+
+function parseManualAdjustmentDateTime(value: string) {
+  const trimmed = value.trim();
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(trimmed);
+  const withSeconds = trimmed.length === 16 ? `${trimmed}:00` : trimmed;
+  const normalized = hasExplicitTimezone ? withSeconds : `${withSeconds}+07:00`;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) throw new AppError("Thời gian sửa công không hợp lệ.", 422);
+  return date;
 }
 
 function haversineMeters(origin: { lat: number; lng: number }, destination: { lat: number; lng: number }) {
@@ -1985,6 +1999,122 @@ export async function clockOutStaffAttendance({
       anomaly_flags: evaluatedAnomaly.flags
     },
     approval
+  };
+}
+
+export async function adjustStaffAttendanceLog({
+  session,
+  input
+}: {
+  session: DashboardSession;
+  input: AttendanceManualAdjustmentInput;
+}) {
+  if (session.role !== "ADMIN") throw new AppError("Cần quyền quản trị để sửa công.", 403);
+
+  const supabase = createAdminSupabaseClient() as any;
+  const existingResult = await supabase
+    .from("attendance_logs")
+    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", input.attendanceLogId)
+    .eq("staff_member_id", input.staffMemberId)
+    .maybeSingle();
+
+  if (existingResult.error) throwDataError(existingResult.error, "Không tải được bản ghi công cần sửa.");
+  const existing = existingResult.data as AttendanceLogRow | null;
+  if (!existing) throw new AppError("Không tìm thấy bản ghi công cần sửa.", 404);
+
+  const nextClockInAt = parseManualAdjustmentDateTime(input.clockInAt);
+  const nextClockOutAt = input.clockOutAt ? parseManualAdjustmentDateTime(input.clockOutAt) : null;
+  if (nextClockOutAt) assertClockOutAfterClockIn(nextClockInAt.toISOString(), nextClockOutAt);
+
+  if (!nextClockOutAt) {
+    const openResult = await supabase
+      .from("attendance_logs")
+      .select("id")
+      .eq("restaurant_id", session.restaurantId)
+      .eq("staff_member_id", input.staffMemberId)
+      .is("clock_out_at", null)
+      .neq("id", existing.id)
+      .maybeSingle();
+
+    if (openResult.error) throwDataError(openResult.error, "Không kiểm tra được phiên công đang mở.");
+    if (openResult.data?.id) throw new AppError("Nhân sự đã có phiên công đang mở khác. Hãy kết ca phiên đó trước khi mở lại bản ghi này.", 409);
+  }
+
+  const shiftContext = await readShiftForAttendance(supabase, session.restaurantId, existing);
+  const scheduledDate = shiftContext.assignment?.scheduled_date ?? dateKeyInVietnam(nextClockInAt);
+  const clockInTiming = computeClockInTiming(nextClockInAt, shiftContext.shift, scheduledDate);
+  const clockOutTiming = nextClockOutAt
+    ? computeClockOutTiming({
+        clockInAt: nextClockInAt.toISOString(),
+        clockOutAt: nextClockOutAt,
+        currentState: clockInTiming.state,
+        shift: shiftContext.shift,
+        scheduledDate
+      })
+    : {
+        workMinutes: null,
+        earlyLeaveMinutes: 0,
+        overtimeMinutes: 0,
+        state: clockInTiming.state
+      };
+
+  const anomalyFlags = mergeAnomalyFlags(existing.anomaly_flags ?? [], ["manual_attendance_edit"]);
+  const updateResult = await supabase
+    .from("attendance_logs")
+    .update({
+      clock_in_at: nextClockInAt.toISOString(),
+      clock_out_at: nextClockOutAt ? nextClockOutAt.toISOString() : null,
+      clock_out_source: nextClockOutAt ? "manual" : null,
+      attendance_state: clockOutTiming.state,
+      approval_state: "approved",
+      late_minutes: clockInTiming.lateMinutes,
+      early_leave_minutes: clockOutTiming.earlyLeaveMinutes,
+      overtime_minutes: clockOutTiming.overtimeMinutes,
+      work_minutes: clockOutTiming.workMinutes,
+      anomaly_score: Math.max(existing.anomaly_score ?? 0, 35),
+      anomaly_flags: anomalyFlags,
+      note: input.note
+    })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", existing.id)
+    .eq("staff_member_id", input.staffMemberId)
+    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
+    .single();
+
+  if (updateResult.error) throwDataError(updateResult.error, "Không lưu được sửa công.");
+  const updatedAttendance = updateResult.data as AttendanceLogRow;
+
+  await insertActivityLog({
+    supabase,
+    session,
+    staffMemberId: input.staffMemberId,
+    branchId: updatedAttendance.branch_id,
+    entityType: "attendance_log",
+    entityId: updatedAttendance.id,
+    action: "attendance.adjusted",
+    severity: "warning",
+    reason: input.note,
+    beforeState: existing,
+    afterState: updatedAttendance,
+    deviceInfo: {
+      mode: "dashboard_staff_manual_adjustment",
+      actorUserId: session.userId
+    },
+    metadata: {
+      source: "manual",
+      scheduledDate,
+      previousClockInAt: existing.clock_in_at,
+      previousClockOutAt: existing.clock_out_at,
+      nextClockInAt: updatedAttendance.clock_in_at,
+      nextClockOutAt: updatedAttendance.clock_out_at,
+      anomalyFlags
+    }
+  });
+
+  return {
+    attendance: updatedAttendance
   };
 }
 

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { requireSession } from "@/lib/session";
 import {
   orderingSettingsSchema,
@@ -18,6 +19,7 @@ import { updateRestaurantOrderingSettings } from "@/services/delivery-service";
 import { updateDeliveryBranchAvailability } from "@/services/delivery/branch-delivery-settings-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 import { invalidateOnlineOrderingDashboardCache } from "@/services/online-ordering-service";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { updateReportSchedule } from "@/services/report-schedule-service";
 import { updateReservationSettings } from "@/services/reservation-service";
 import {
@@ -59,14 +61,21 @@ function branchFormData(formData: FormData) {
   };
 }
 
-function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<typeof requireOperationalAdminSession>>) {
+async function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<typeof requireOperationalAdminSession>>) {
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateOnlineOrderingDashboardCache(session.restaurantId);
   invalidateMenuCache();
+  await Promise.all([
+    invalidateDashboardWorkspaceCaches(session.restaurantId, ["inventory", "online", "overview", "reservations", "tables"]),
+    invalidateStaffOperationsBundleCache(session.restaurantId)
+  ]);
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard/tables");
   revalidatePath("/dashboard/staff");
+  revalidatePath("/dashboard/staff/mobile");
+  revalidatePath("/dashboard/online");
+  revalidatePath("/dashboard/reservations");
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/inventory");
   revalidatePath("/dashboard/ai-ops");
@@ -96,7 +105,10 @@ export async function updatePaymentSettingsAction(
 
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateOnlineOrderingDashboardCache(session.restaurantId);
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["payments", "online", "overview"]);
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/payments");
+  revalidatePath("/dashboard/online");
   revalidatePath("/dashboard");
   return { success: "Đã lưu thông tin ngân hàng. VietQR sẽ dùng thông tin này cho đơn mới." };
 }
@@ -128,7 +140,13 @@ export async function updateRestaurantSettingsAction(formData: FormData) {
   await updateRestaurantSettings(session.restaurantId, parsed);
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateMenuCache();
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview", "payments", "reservations", "tables"]);
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard/online");
+  revalidatePath("/dashboard/payments");
+  revalidatePath("/dashboard/reservations");
+  revalidatePath("/dashboard/tables");
   revalidatePath("/dashboard");
 }
 
@@ -162,7 +180,10 @@ export async function applyAiSetupBrandAction(
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateOnlineOrderingDashboardCache(session.restaurantId);
   invalidateMenuCache();
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview"]);
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/menu");
+  revalidatePath("/dashboard/online");
   revalidatePath("/dashboard");
   return { success: parsed.data.includeLogo ? "Đã áp dụng slogan, mô tả và logo AI vào hồ sơ quán." : "Đã áp dụng slogan và mô tả AI vào hồ sơ quán." };
 }
@@ -218,7 +239,7 @@ export async function createStoreBranchAction(
     return { error: error instanceof Error ? error.message : "Không tạo được chi nhánh." };
   }
 
-  revalidateBranchSettingsSurfaces(session);
+  await revalidateBranchSettingsSurfaces(session);
   return { success: "Đã tạo chi nhánh và đồng bộ quyền vận hành cho quán." };
 }
 
@@ -239,7 +260,7 @@ export async function updateStoreBranchAction(
     return { error: error instanceof Error ? error.message : "Không lưu được chi nhánh." };
   }
 
-  revalidateBranchSettingsSurfaces(session);
+  await revalidateBranchSettingsSurfaces(session);
   return { success: "Đã cập nhật chi nhánh và quyền vận hành liên quan." };
 }
 
@@ -307,7 +328,10 @@ export async function updateOrderingSettingsAction(
 
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateMenuCache();
+  invalidateOnlineOrderingDashboardCache(session.restaurantId);
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview"]);
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/online");
   revalidatePath("/dashboard/orders");
   revalidatePath(`/r/${session.restaurant.slug}`);
   return { success: "Đã lưu cấu hình đặt món online." };
@@ -340,7 +364,9 @@ export async function updateBranchDeliveryAvailabilityAction(
 
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateOnlineOrderingDashboardCache(session.restaurantId);
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["online", "overview"]);
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/online");
   revalidatePath("/dashboard/orders");
   revalidatePath(`/r/${session.restaurant.slug}`);
   return { success: "Đã cập nhật trạng thái giao hàng của chi nhánh." };
@@ -378,7 +404,9 @@ export async function updateReservationSettingsAction(
   }
 
   invalidateRestaurantDashboardCache(session.restaurantId);
+  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["reservations", "tables", "overview"]);
   revalidatePath("/dashboard/reservations");
+  revalidatePath("/dashboard/tables");
   revalidatePath(`/r/${session.restaurant.slug}/reserve`);
   return { success: "Đã lưu cấu hình đặt bàn trước." };
 }

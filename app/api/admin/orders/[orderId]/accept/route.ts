@@ -2,8 +2,10 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema, serviceTimerSchema } from "@/lib/validators";
+import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { acceptOrder, getOrderLifecycleSnapshot } from "@/services/order-service";
 
@@ -32,6 +34,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       afterData: data,
       metadata: { minutes: body.minutes ?? 15 }
     });
+    await Promise.all([
+      invalidateDashboardWorkspaceCaches(session.restaurantId, ["online", "overview", "payments", "tables"]),
+      invalidateStaffOperationsBundleCache(session.restaurantId)
+    ]);
     await broadcastVpsRealtime({
       event: "order_confirmed",
       restaurantId: session.restaurantId,

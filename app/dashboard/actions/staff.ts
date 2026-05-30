@@ -1,14 +1,16 @@
 "use server";
 
-import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { z, ZodError } from "zod";
 import { AppError } from "@/lib/response";
 import {
   attendanceClockInSchema,
   attendanceClockOutSchema,
+  attendanceManualAdjustmentSchema,
   attendanceApprovalReviewSchema,
   staffAccountStateSchema,
+  staffAppPasswordBulkResetSchema,
+  staffAppPasswordResetSchema,
   staffContractCreateSchema,
   staffDeviceCreateSchema,
   staffDeviceTrustUpdateSchema,
@@ -22,12 +24,20 @@ import {
   staffSessionForceLogoutSchema,
   staffShiftAssignmentCancelSchema,
   staffShiftAssignmentSchema,
+  staffShiftAssignmentUpdateSchema,
   staffShiftTemplateSchema,
+  staffShiftTemplateUpdateSchema,
   staffUserSchema
 } from "@/lib/validators";
-import { clockInStaffAttendance, clockOutStaffAttendance, reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
+import { adjustStaffAttendanceLog, clockInStaffAttendance, clockOutStaffAttendance, reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
 import { cloneStaffRole, updateStaffRolePermissions } from "@/features/roles/services/role-service";
-import { assignStaffShift, cancelStaffShiftAssignment, createStaffShiftTemplate } from "@/features/shifts/services/shift-service";
+import {
+  assignStaffShift,
+  cancelStaffShiftAssignment,
+  createStaffShiftTemplate,
+  updateStaffShiftAssignment,
+  updateStaffShiftTemplate
+} from "@/features/shifts/services/shift-service";
 import {
   createStaffContract,
   createStaffDevice,
@@ -36,6 +46,8 @@ import {
 } from "@/features/staff/services/staff-admin-workflow-service";
 import { updateStaffDeviceAttendanceTrust } from "@/features/staff/services/staff-device-trust-service";
 import { forceStaffSessionLogout } from "@/features/staff/services/staff-session-service";
+import { createTemporaryStaffAppPassword, resetStaffAppPassword } from "@/features/staff/services/staff-app-auth-service";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import {
   createRestaurantUser,
@@ -50,6 +62,14 @@ export type StaffActionState = {
   error?: string;
   success?: string;
   staffUserId?: string;
+  employeeCode?: string | null;
+  temporaryPassword?: string | null;
+  temporaryCredentials?: Array<{
+    userId: string;
+    staffName: string;
+    employeeCode: string;
+    temporaryPassword: string;
+  }>;
 };
 
 function staffActionError(error: unknown) {
@@ -82,8 +102,10 @@ function createInternalStaffEmail({ restaurantId, fullName }: { restaurantId: st
   return `${staffToken}.${restaurantToken}.${suffix}@staff.logivn.vn`;
 }
 
-function createTemporaryStaffPassword() {
-  return `LogiVN-${randomBytes(12).toString("base64url")}9aA`;
+async function revalidateStaffDashboards(restaurantId: string) {
+  await invalidateStaffOperationsBundleCache(restaurantId);
+  revalidatePath("/dashboard/staff");
+  revalidatePath("/dashboard/staff/mobile");
 }
 
 export async function createStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
@@ -94,6 +116,8 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
       password: formData.get("password"),
       pin: formData.get("pin"),
       fullName: formData.get("fullName"),
+      dateOfBirth: formData.get("dateOfBirth"),
+      hometown: formData.get("hometown"),
       phone: formData.get("phone"),
       roleCode: formData.get("roleCode") || "waiter",
       branchId: formData.get("branchId"),
@@ -108,20 +132,29 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
       label: "tài khoản nhân sự"
     });
 
+    const temporaryPassword = parsed.password ?? createTemporaryStaffAppPassword();
     const createdUser = await createRestaurantUser({
       restaurantId: session.restaurantId,
       email: parsed.email ?? createInternalStaffEmail({ restaurantId: session.restaurantId, fullName: parsed.fullName }),
-      password: parsed.password ?? createTemporaryStaffPassword(),
+      password: temporaryPassword,
       roleCode: parsed.roleCode,
       fullName: parsed.fullName,
       pin: parsed.pin || undefined,
-      phone: parsed.phone || undefined,
+      phone: parsed.phone,
+      dateOfBirth: parsed.dateOfBirth,
+      hometown: parsed.hometown,
+      mustChangeAppPassword: true,
       branchId: parsed.branchId || undefined,
       notes: parsed.notes || undefined
     });
 
-    revalidatePath("/dashboard/staff");
-    return { success: "Đã tạo hồ sơ nhân sự.", staffUserId: createdUser?.id };
+    await revalidateStaffDashboards(session.restaurantId);
+    return {
+      success: "Đã tạo nhân viên và mật khẩu app lần đầu.",
+      staffUserId: createdUser?.id,
+      employeeCode: createdUser?.employeeCode ?? null,
+      temporaryPassword
+    };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -134,6 +167,8 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
       userId: formData.get("userId"),
       fullName: formData.get("fullName"),
       phone: formData.get("phone"),
+      dateOfBirth: formData.get("dateOfBirth"),
+      hometown: formData.get("hometown"),
       username: formData.get("username"),
       pin: formData.get("pin"),
       roleCode: formData.get("roleCode"),
@@ -151,6 +186,8 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
       actorUserId: session.userId,
       fullName: parsed.fullName,
       phone: parsed.phone || undefined,
+      dateOfBirth: parsed.dateOfBirth || undefined,
+      hometown: parsed.hometown || undefined,
       username: parsed.username || undefined,
       pin: parsed.pin || undefined,
       roleCode: parsed.roleCode,
@@ -161,8 +198,70 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
       notes: parsed.notes || undefined
     });
 
-    revalidatePath("/dashboard/staff");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã cập nhật hồ sơ và quyền nhân sự." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function resetStaffAppPasswordAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalAdminSession("staff_management");
+    const parsed = staffAppPasswordResetSchema.parse({
+      userId: formData.get("userId"),
+      reason: formData.get("reason")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const reset = await resetStaffAppPassword({
+      restaurantId: session.restaurantId,
+      userId: parsed.userId,
+      actorUserId: session.userId,
+      reason: parsed.reason || undefined
+    });
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return {
+      success: `Đã đặt lại mật khẩu app cho ${reset.staffName}.`,
+      employeeCode: reset.employeeCode,
+      temporaryPassword: reset.temporaryPassword
+    };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function resetStaffAppPasswordsAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalAdminSession("staff_management");
+    const parsed = staffAppPasswordBulkResetSchema.parse({
+      userIds: formData.get("userIds"),
+      reason: formData.get("reason")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const credentials: NonNullable<StaffActionState["temporaryCredentials"]> = [];
+    for (const userId of parsed.userIds) {
+      const reset = await resetStaffAppPassword({
+        restaurantId: session.restaurantId,
+        userId,
+        actorUserId: session.userId,
+        reason: parsed.reason || "Chủ quán cấp lại mật khẩu app hàng loạt"
+      });
+      credentials.push({
+        userId,
+        staffName: reset.staffName,
+        employeeCode: reset.employeeCode,
+        temporaryPassword: reset.temporaryPassword
+      });
+    }
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return {
+      success: `Đã cấp lại mật khẩu app cho ${credentials.length} nhân viên.`,
+      temporaryCredentials: credentials
+    };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -189,7 +288,7 @@ export async function setStaffAccountStateAction(_prevState: StaffActionState | 
       reason: parsed.reason || undefined
     });
 
-    revalidatePath("/dashboard/staff");
+    await revalidateStaffDashboards(session.restaurantId);
     return {
       success:
         parsed.nextState === "active"
@@ -219,7 +318,7 @@ export async function updateStaffRoleAction(_prevState: StaffActionState | undef
       permissionProfile: parsed.permissionProfile
     });
 
-    revalidatePath("/dashboard/staff");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã cập nhật vai trò cũ." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -241,8 +340,7 @@ export async function updateStaffRolePermissionsAction(_prevState: StaffActionSt
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã cập nhật ma trận quyền cho vai trò." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -265,8 +363,7 @@ export async function cloneStaffRoleAction(_prevState: StaffActionState | undefi
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã clone vai trò mới. Bạn có thể chỉnh quyền và gán cho nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -289,7 +386,7 @@ export async function deleteStaffAction(_prevState: StaffActionState | undefined
       reason: "Lưu trữ từ màn hình vận hành nhân sự"
     });
 
-    revalidatePath("/dashboard/staff");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã lưu trữ nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -317,9 +414,37 @@ export async function createStaffShiftTemplateAction(_prevState: StaffActionStat
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã tạo mẫu ca làm." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateStaffShiftTemplateAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalAdminSession("staff_management");
+    const parsed = staffShiftTemplateUpdateSchema.parse({
+      shiftId: formData.get("shiftId"),
+      name: formData.get("name"),
+      branchId: formData.get("branchId"),
+      startTime: formData.get("startTime"),
+      endTime: formData.get("endTime"),
+      allowedLateMinutes: formData.get("allowedLateMinutes") || 10,
+      overtimeThresholdMinutes: formData.get("overtimeThresholdMinutes") || 30,
+      attendanceRadiusMeters: formData.get("attendanceRadiusMeters") || 80,
+      recurringWeekdays: formData.get("recurringWeekdays")
+    });
+    await assertStaffActionPermission(session, "shifts.manage");
+
+    await updateStaffShiftTemplate({
+      restaurantId: session.restaurantId,
+      actorUserId: session.userId,
+      input: parsed
+    });
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return { success: "Đã cập nhật ca làm và kiểm tra trùng lịch." };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -342,9 +467,33 @@ export async function assignStaffShiftAction(_prevState: StaffActionState | unde
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã gán ca cho nhân sự." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateStaffShiftAssignmentAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalAdminSession("staff_management");
+    const parsed = staffShiftAssignmentUpdateSchema.parse({
+      shiftAssignmentId: formData.get("shiftAssignmentId"),
+      staffMemberId: formData.get("staffMemberId"),
+      shiftId: formData.get("shiftId"),
+      scheduledDate: formData.get("scheduledDate"),
+      note: formData.get("note")
+    });
+    await assertStaffActionPermission(session, ["shifts.assign", "shifts.manage"], { mode: "any" });
+
+    await updateStaffShiftAssignment({
+      restaurantId: session.restaurantId,
+      actorUserId: session.userId,
+      input: parsed
+    });
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return { success: "Đã sửa phân ca và thông báo cho nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -365,8 +514,7 @@ export async function cancelStaffShiftAssignmentAction(_prevState: StaffActionSt
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã huỷ ca làm và ghi nhật ký vận hành." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -395,8 +543,7 @@ export async function manualClockInStaffAction(_prevState: StaffActionState | un
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã chấm công thủ công và ghi audit log." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -425,9 +572,32 @@ export async function manualClockOutStaffAction(_prevState: StaffActionState | u
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã kết ca thủ công và cập nhật công." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function adjustStaffAttendanceAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalAdminSession("staff_management");
+    const parsed = attendanceManualAdjustmentSchema.parse({
+      attendanceLogId: formData.get("attendanceLogId"),
+      staffMemberId: formData.get("staffMemberId"),
+      clockInAt: formData.get("clockInAt"),
+      clockOutAt: formData.get("clockOutAt"),
+      note: formData.get("note") || "Sửa công từ dashboard nhân sự"
+    });
+    await assertStaffActionPermission(session, "attendance.edit");
+
+    await adjustStaffAttendanceLog({
+      session,
+      input: parsed
+    });
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return { success: "Đã sửa công và ghi audit log." };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -450,8 +620,7 @@ export async function createStaffReviewAction(_prevState: StaffActionState | und
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã lưu đánh giá nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -488,8 +657,7 @@ export async function createStaffContractAction(_prevState: StaffActionState | u
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã tạo hồ sơ hợp đồng." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -504,6 +672,7 @@ export async function createStaffDocumentAction(_prevState: StaffActionState | u
       documentName: formData.get("documentName"),
       documentType: formData.get("documentType"),
       fileUrl: formData.get("fileUrl"),
+      status: formData.get("status") || "complete",
       note: formData.get("note")
     });
     await assertStaffActionPermission(session, "staff.edit");
@@ -514,8 +683,7 @@ export async function createStaffDocumentAction(_prevState: StaffActionState | u
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã thêm tài liệu nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -543,8 +711,7 @@ export async function createStaffDeviceAction(_prevState: StaffActionState | und
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: "Đã cấp thiết bị cho nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -567,8 +734,7 @@ export async function updateStaffDeviceTrustAction(_prevState: StaffActionState 
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: parsed.trustedForAttendance ? "Đã duyệt thiết bị chấm công." : "Đã bỏ tin cậy thiết bị chấm công." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -591,8 +757,7 @@ export async function reviewAttendanceApprovalAction(_prevState: StaffActionStat
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: parsed.decision === "approved" ? "Đã duyệt yêu cầu nhân sự." : "Đã từ chối yêu cầu nhân sự." };
   } catch (error) {
     return { error: staffActionError(error) };
@@ -616,8 +781,7 @@ export async function forceStaffSessionsLogoutAction(_prevState: StaffActionStat
       input: parsed
     });
 
-    revalidatePath("/dashboard/staff");
-    revalidatePath("/dashboard/staff/mobile");
+    await revalidateStaffDashboards(session.restaurantId);
     return { success: `Đã buộc đăng xuất ${result.affectedSessions} phiên nhân sự.` };
   } catch (error) {
     return { error: staffActionError(error) };

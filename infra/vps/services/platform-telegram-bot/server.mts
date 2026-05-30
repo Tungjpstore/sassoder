@@ -5,7 +5,7 @@ import type { NextFunction, Request, Response } from "express";
 import { Bot, GrammyError, HttpError, InlineKeyboard, webhookCallback } from "grammy";
 import type { Context } from "grammy";
 import { z } from "zod";
-import { enqueueDeadLetterJob, queueDefinition, queueSummary } from "../shared/queues.js";
+import { enqueueDeadLetterJob, failedJobs, queueDefinition, queueSummary, retryFailedJob } from "../shared/queues.js";
 import { bullMqPrefix, queueConcurrency, queueNames, readEnv, requiredEnv, servicePort } from "../shared/env.js";
 import { createHttpApp, listen, requireInternalApiKey } from "../shared/http.js";
 import { createLogger } from "../shared/logger.js";
@@ -39,6 +39,8 @@ import { platformTelegramJobSchema, type PlatformAlertJob, type PlatformTelegram
 
 const PLATFORM_TELEGRAM_QUEUE = "platform.telegram.notifications";
 const PLATFORM_CALLBACK_PREFIX = "p:";
+const BASE_QUEUE_NAMES = queueNames as string[];
+const QUEUE_CONTROL_NAMES = new Set<string>([...BASE_QUEUE_NAMES, ...BASE_QUEUE_NAMES.map((name) => `${name}.dlq`)]);
 const PLATFORM_MENU_ACTIONS = [
   "menu",
   "payments",
@@ -55,6 +57,9 @@ const PLATFORM_MENU_ACTIONS = [
   "tenant.delete",
   "health",
   "queues",
+  "queue.failed",
+  "queue.retry.prompt",
+  "queue.retry",
   "webhook",
   "incidents",
   "security",
@@ -63,6 +68,25 @@ const PLATFORM_MENU_ACTIONS = [
   "help"
 ] as const;
 type PlatformMenuAction = (typeof PLATFORM_MENU_ACTIONS)[number];
+
+type QueueAttentionRow = {
+  name: string;
+  backlog: number;
+  failed: number;
+  paused: number;
+};
+
+type QueueFailedJobView = {
+  id?: string | number | null;
+  name?: string | null;
+  state?: string | null;
+  attemptsMade?: number | null;
+  failedReason?: string | null;
+  timestamp?: number | null;
+  processedOn?: number | null;
+  finishedOn?: number | null;
+  data?: Record<string, unknown> | null;
+};
 
 const logger = createLogger("platform-telegram-bot");
 const queueConfig = queueDefinition(PLATFORM_TELEGRAM_QUEUE);
@@ -317,15 +341,17 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .row()
     .url("Grafana", readEnv("PLATFORM_GRAFANA_URL", "https://monitor.logivn.com/grafana/"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
-  const [pendingPayments, tenantActions] = await Promise.all([
+  const [pendingPayments, tenantActions, queueRows] = await Promise.all([
     listPendingSubscriptionPayments(6).catch(() => []),
-    listPlatformTenantActions(6).catch(() => [])
+    listPlatformTenantActions(6).catch(() => []),
+    queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[])
   ]);
+  const queueFailures = queueRows.reduce((sum, row) => sum + row.failed, 0);
   await ctx.reply([
     "LogiVN DevOps",
     "",
     `Bạn: ${connectionLabel(connection)}`,
-    `Việc mở: ${countLabel(pendingPayments.length, 6)} gói chờ duyệt · ${countLabel(tenantActions.length, 6)} quán cần rà soát`,
+    `Việc mở: ${countLabel(pendingPayments.length, 6)} gói · ${countLabel(tenantActions.length, 6)} quán · ${queueFailures} queue lỗi`,
     `Ưu tiên: ${platformMenuPriority(pendingPayments[0], tenantActions[0])}`,
     "",
     "Chọn nút để xử lý ngay."
@@ -561,27 +587,117 @@ async function replyWithQueues(ctx: Context, preferredConnection?: PlatformTeleg
   const connection = await requireConnection(ctx, preferredConnection, "queues.read");
   if (!connection) return;
   const summary = await queueSummary({ includeDeadLetters: true });
-  const rows = Object.entries(summary)
-    .map(([name, counts]: [string, any]) => ({ name, backlog: Number(counts.waiting ?? 0) + Number(counts.active ?? 0) + Number(counts.delayed ?? 0) + Number(counts.paused ?? 0), failed: Number(counts.failed ?? 0) }))
-    .filter((row) => row.backlog > 0 || row.failed > 0 || row.name === PLATFORM_TELEGRAM_QUEUE)
-    .sort((a, b) => b.failed - a.failed || b.backlog - a.backlog)
-    .slice(0, 10);
+  const rows = queueAttentionRows(summary).slice(0, 10);
   const totalBacklog = rows.reduce((sum, row) => sum + row.backlog, 0);
   const totalFailed = rows.reduce((sum, row) => sum + row.failed, 0);
+  const failedRows = rows.filter((row) => row.failed > 0).slice(0, 4);
   const lines = [
     "Hàng đợi",
     "",
-    rows.length ? `Cần xem: ${totalBacklog} việc chờ · ${totalFailed} việc lỗi` : "Không có hàng đợi nổi bật.",
+    rows.length ? `Cần xem: ${totalBacklog} việc chờ · ${totalFailed} việc lỗi/DLQ` : "Không có hàng đợi nổi bật.",
     "",
-    ...(rows.length ? rows.map((row) => `- ${row.name}: chờ ${row.backlog}, lỗi ${row.failed}`) : ["Bấm Làm mới để kiểm tra lại."])
+    ...(rows.length ? rows.map(formatQueueAttentionRow) : ["Bấm Làm mới để kiểm tra lại."])
   ];
-  const keyboard = new InlineKeyboard()
+  const keyboard = new InlineKeyboard();
+  for (const row of failedRows) {
+    keyboard.text(`Xem lỗi ${shortQueueName(row.name)}`, await signedPlatformCallback(connection, "queue.failed", { queueName: row.name })).row();
+  }
+  keyboard
     .text("Làm mới", await signedPlatformCallback(connection, "queues"))
     .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
     .row()
     .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithQueueFailedJobs(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "queues.read");
+  if (!approvedConnection) return;
+  const queueName = payloadQueueName(payload);
+  if (!queueName) {
+    await replyWithQueues(ctx, approvedConnection);
+    return;
+  }
+
+  const jobs = (await failedJobs({ queueName, limit: 5 })) as QueueFailedJobView[];
+  const canRetry = hasPlatformScope(approvedConnection, "queues.retry");
+  const keyboard = new InlineKeyboard();
+  if (canRetry) {
+    for (const [index, job] of jobs.entries()) {
+      if (!job.id) continue;
+      keyboard.text(`Retry #${index + 1}`, await signedPlatformCallback(approvedConnection, "queue.retry.prompt", { queueName, jobId: String(job.id) })).row();
+    }
+  }
+  keyboard
+    .text("Làm mới", await signedPlatformCallback(approvedConnection, "queue.failed", { queueName }))
+    .text("Tất cả queue", await signedPlatformCallback(approvedConnection, "queues"))
+    .row()
+    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
+
+  const lines = [
+    `Lỗi queue · ${queueName}`,
+    "",
+    jobs.length ? `${jobs.length} job cần xem. ${canRetry ? "Chọn Retry để xử lý ngay." : "Bạn chưa có quyền retry."}` : "Không còn job lỗi/DLQ trong queue này.",
+    "",
+    ...(jobs.length ? jobs.map(formatQueueFailedJobLine) : ["Quay lại Hàng đợi để kiểm tra queue khác."])
+  ];
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithQueueRetryPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "queues.retry");
+  if (!approvedConnection) return;
+  const queueName = payloadQueueName(payload);
+  const jobId = payloadString(payload, "jobId");
+  if (!queueName || !jobId) {
+    await replyWithQueues(ctx, approvedConnection);
+    return;
+  }
+
+  const job = await findQueueFailedJob(queueName, jobId);
+  const keyboard = new InlineKeyboard()
+    .text("Xác nhận retry", await signedPlatformCallback(approvedConnection, "queue.retry", { queueName, jobId }))
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "queue.failed", { queueName }))
+    .row()
+    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
+  const detail = job ? formatQueueFailedJobLine(job, 0) : `#1 ${shortId(jobId)} · job có thể đã được xử lý khỏi danh sách lỗi`;
+  await ctx.reply(["Retry queue job", "", `Queue: ${queueName}`, detail, "", "Sau khi xác nhận: job failed sẽ được retry, DLQ sẽ replay một lần về queue gốc."].join("\n"), { reply_markup: keyboard });
+}
+
+async function retryQueueJobFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "queues.retry");
+  if (!approvedConnection) return;
+  const queueName = payloadQueueName(payload);
+  const jobId = payloadString(payload, "jobId");
+  if (!queueName || !jobId) {
+    await replyWithQueues(ctx, approvedConnection);
+    return;
+  }
+
+  try {
+    const result = await retryFailedJob({ queueName, jobId, actor: actorForConnection(approvedConnection) });
+    await recordPlatformTelegramAudit({
+      connection: approvedConnection,
+      action: "platform.queue.retry",
+      outcome: "accepted",
+      targetType: "queue_job",
+      targetId: `${queueName}:${jobId}`,
+      metadata: result as Record<string, unknown>
+    });
+    const keyboard = new InlineKeyboard().text("Xem queue", await signedPlatformCallback(approvedConnection, "queue.failed", { queueName })).text("Tất cả", await signedPlatformCallback(approvedConnection, "queues"));
+    await ctx.reply(formatQueueRetryResult(result as Record<string, unknown>), { reply_markup: keyboard });
+  } catch (error) {
+    await recordPlatformTelegramAudit({
+      connection: approvedConnection,
+      action: "platform.queue.retry",
+      outcome: "failed",
+      targetType: "queue_job",
+      targetId: `${queueName}:${jobId}`,
+      metadata: safeLogError(error)
+    });
+    throw error;
+  }
 }
 
 async function replyWithWebhook(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -670,6 +786,9 @@ async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction
   if (action === "tenant.delete") return updateTenantFromTelegram(ctx, connection, payload, "deleted");
   if (action === "health") return replyWithHealth(ctx, connection);
   if (action === "queues") return replyWithQueues(ctx, connection);
+  if (action === "queue.failed") return replyWithQueueFailedJobs(ctx, connection, payload);
+  if (action === "queue.retry.prompt") return replyWithQueueRetryPrompt(ctx, connection, payload);
+  if (action === "queue.retry") return retryQueueJobFromTelegram(ctx, connection, payload);
   if (action === "webhook") return replyWithWebhook(ctx, connection);
   if (action === "incidents") return replyWithIncidents(ctx, connection);
   if (action === "security") return replyWithSecurity(ctx, connection);
@@ -732,6 +851,75 @@ async function replyWithTenantsReload(ctx: Context, connection: PlatformTelegram
     .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
     .text("Menu", await signedPlatformCallback(connection, "menu"));
   await ctx.reply(`${message} Tải lại danh sách quán hiện tại.`, { reply_markup: keyboard });
+}
+
+function queueAttentionRows(summary: Record<string, any>): QueueAttentionRow[] {
+  return Object.entries(summary)
+    .map(([name, counts]: [string, any]) => {
+      const waiting = Number(counts.waiting ?? 0);
+      const active = Number(counts.active ?? 0);
+      const delayed = Number(counts.delayed ?? 0);
+      const paused = Number(counts.paused ?? 0);
+      const backlog = waiting + active + delayed + paused;
+      const failed = Number(counts.failed ?? 0) + (name.endsWith(".dlq") ? backlog : 0);
+      return { name, backlog, failed, paused };
+    })
+    .filter((row) => row.backlog > 0 || row.failed > 0 || row.name === PLATFORM_TELEGRAM_QUEUE)
+    .sort((a, b) => b.failed - a.failed || b.backlog - a.backlog || a.name.localeCompare(b.name));
+}
+
+function formatQueueAttentionRow(row: QueueAttentionRow) {
+  const attention = row.name.endsWith(".dlq") ? `DLQ ${row.failed}` : `lỗi ${row.failed}`;
+  return `- ${row.name}: chờ ${row.backlog}, ${attention}${row.paused > 0 ? `, paused ${row.paused}` : ""}`;
+}
+
+function payloadQueueName(payload: Record<string, unknown>) {
+  const queueName = payloadString(payload, "queueName");
+  return QUEUE_CONTROL_NAMES.has(queueName) ? queueName : "";
+}
+
+async function findQueueFailedJob(queueName: string, jobId: string) {
+  const jobs = (await failedJobs({ queueName, limit: 50 })) as QueueFailedJobView[];
+  return jobs.find((job) => String(job.id ?? "") === jobId) ?? null;
+}
+
+function formatQueueFailedJobLine(job: QueueFailedJobView, index: number) {
+  const id = shortId(String(job.id ?? "unknown"));
+  const tenant = queueJobTenant(job);
+  const state = job.state ? ` · ${job.state}` : "";
+  const attempts = Number(job.attemptsMade ?? 0);
+  const reason = job.failedReason ? truncateVisible(job.failedReason, 140) : "không có lỗi chi tiết";
+  const failedAt = formatQueueJobTime(job.finishedOn ?? job.processedOn ?? job.timestamp ?? null);
+  return [`#${index + 1} ${job.name ?? "job"} · ${id}${state}`, `   tenant: ${tenant} · attempts ${attempts} · ${failedAt}`, `   lỗi: ${reason}`].join("\n");
+}
+
+function queueJobTenant(job: QueueFailedJobView) {
+  const data = job.data && typeof job.data === "object" ? job.data : {};
+  const direct = data.tenantId ?? data.restaurantId;
+  if (direct) return shortId(String(direct));
+  const nested = data.data && typeof data.data === "object" && !Array.isArray(data.data) ? (data.data as Record<string, unknown>) : null;
+  const nestedTenant = nested?.tenantId ?? nested?.restaurantId;
+  return nestedTenant ? shortId(String(nestedTenant)) : "unknown";
+}
+
+function formatQueueRetryResult(result: Record<string, unknown>) {
+  if (result.mode === "dead_letter_replay") {
+    const replayed = result.replayed && typeof result.replayed === "object" ? (result.replayed as Record<string, unknown>) : {};
+    return ["Đã replay DLQ", "", `Từ: ${result.queueName}:${shortId(String(result.jobId ?? ""))}`, `Về: ${replayed.queueName ?? "unknown"}:${shortId(String(replayed.jobId ?? ""))}`].join("\n");
+  }
+  return ["Đã retry job", "", `Queue: ${result.queueName ?? "unknown"}`, `Job: ${shortId(String(result.jobId ?? ""))}`].join("\n");
+}
+
+function shortQueueName(value: string) {
+  return value
+    .replace("telegram.notifications", "tenant.tg")
+    .replace("platform.telegram.notifications", "platform.tg")
+    .replace(".dlq", ".DLQ");
+}
+
+function formatQueueJobTime(value: number | null) {
+  if (!value) return "chưa có thời điểm";
+  return formatShortDate(new Date(value).toISOString());
 }
 
 function platformMenuPriority(payment?: PlatformSubscriptionPayment, tenant?: PlatformTenantAction) {
@@ -1047,6 +1235,7 @@ function friendlyPlatformError(error: unknown) {
   if (message.includes("expired")) return "Nút này đã hết hạn.";
   if (message.includes("authorized")) return "Tài khoản chưa được cấp quyền DevOps Bot.";
   if (message.includes("scope")) return "Bạn chưa có scope cho thao tác này.";
+  if (message.includes("queue") || message.includes("dead_letter")) return "Queue job không còn retry được. Mở Hàng đợi để tải lại.";
   if (message.includes("payment")) return "Giao dịch không còn ở trạng thái chờ xử lý.";
   if (message.includes("tenant")) return "Không xử lý được tenant này.";
   if (message.includes("downgrade")) return "Downgrade cần xử lý trong Admin Billing.";

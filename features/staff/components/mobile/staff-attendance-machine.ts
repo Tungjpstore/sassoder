@@ -68,10 +68,10 @@ export function buildStaffAttendanceMachine({
   processing: boolean;
 }): StaffAttendanceMachine {
   const action: StaffAttendanceAction = activeAttendance ? "clock_out" : "clock_in";
-  const source: StaffAttendanceSource = canUseGps ? "gps" : qrReady ? "qr" : "wifi";
+  const source: StaffAttendanceSource = qrReady ? "qr" : canUseGps ? "gps" : "wifi";
   const deviceBlocked = Boolean(deviceTrust?.blocked || deviceTrust?.status === "blocked");
   const deviceNeedsApproval = Boolean(deviceTrust?.approvalRequired && !deviceTrust.trustedForAttendance);
-  const shortSourceLabel = canUseGps ? "GPS" : qrReady ? "QR" : "WiFi";
+  const shortSourceLabel = qrReady ? "QR" : canUseGps ? "GPS" : "WiFi";
   const readiness: StaffReadinessItem[] = [
     {
       label: "Chi nhánh",
@@ -80,7 +80,7 @@ export function buildStaffAttendanceMachine({
     },
     {
       label: "Nguồn chấm",
-      value: canUseGps ? "GPS" : qrReady ? "QR" : "WiFi quán",
+      value: qrReady ? "QR tại quán" : canUseGps ? "GPS" : "WiFi quán",
       tone: canUseGps || qrReady || isOnline ? "success" : "warning"
     },
     {

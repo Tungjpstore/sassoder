@@ -1,11 +1,21 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { tableIdSchema, tableQrStatusSchema, tableSchema, updateTableSchema } from "@/lib/validators";
 import { invalidateRestaurantDashboardCache } from "@/services/restaurant-service";
 import { createTable, deleteTable, rotateTableQrToken, updateTable, updateTableQrStatus } from "@/services/table-service";
 import { assertRestaurantResourceLimit } from "@/services/subscription-service";
 import { requireOperationalAdminSession } from "./shared";
+
+async function revalidateTableSurfaces(restaurantId: string, options: { settings?: boolean } = {}) {
+  invalidateRestaurantDashboardCache(restaurantId);
+  await invalidateDashboardWorkspaceCaches(restaurantId, ["tables", "reservations", "overview"]);
+  revalidatePath("/dashboard/tables");
+  revalidatePath("/dashboard/reservations");
+  if (options.settings) revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard");
+}
 
 export async function createTableAction(formData: FormData) {
   const session = await requireOperationalAdminSession("table_qr");
@@ -29,9 +39,7 @@ export async function createTableAction(formData: FormData) {
     label: "bàn"
   });
   await createTable(session.restaurantId, session.restaurant.slug, parsed);
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/tables");
-  revalidatePath("/dashboard");
+  await revalidateTableSurfaces(session.restaurantId);
 }
 
 export async function updateTableAction(formData: FormData) {
@@ -51,10 +59,7 @@ export async function updateTableAction(formData: FormData) {
     isUnderMaintenance: formData.get("isUnderMaintenance") === "true"
   });
   await updateTable(session.restaurantId, parsed);
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/tables");
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard");
+  await revalidateTableSurfaces(session.restaurantId, { settings: true });
 }
 
 export async function toggleTableQrAction(formData: FormData) {
@@ -64,10 +69,7 @@ export async function toggleTableQrAction(formData: FormData) {
     qrEnabled: formData.get("qrEnabled") === "true"
   });
   await updateTableQrStatus(session.restaurantId, parsed);
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/tables");
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard");
+  await revalidateTableSurfaces(session.restaurantId, { settings: true });
 }
 
 export async function rotateTableQrAction(formData: FormData) {
@@ -76,10 +78,7 @@ export async function rotateTableQrAction(formData: FormData) {
     tableId: formData.get("tableId")
   });
   await rotateTableQrToken(session.restaurantId, parsed.tableId);
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/tables");
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard");
+  await revalidateTableSurfaces(session.restaurantId, { settings: true });
 }
 
 export async function deleteTableAction(formData: FormData) {
@@ -88,8 +87,5 @@ export async function deleteTableAction(formData: FormData) {
     tableId: formData.get("tableId")
   });
   await deleteTable(session.restaurantId, parsed.tableId);
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  revalidatePath("/dashboard/tables");
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard");
+  await revalidateTableSurfaces(session.restaurantId, { settings: true });
 }

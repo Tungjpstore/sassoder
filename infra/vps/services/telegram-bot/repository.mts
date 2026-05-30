@@ -104,12 +104,24 @@ const legacyPermissionFallbacks: Record<string, string[]> = {
   "notifications.manage": ["settings.manage"]
 };
 
+const TELEGRAM_CONNECTION_SELECT =
+  "id,restaurant_id,branch_id,user_id,staff_member_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)";
+
+type CurrentTelegramAccess = {
+  role: "ADMIN" | "STAFF";
+  permissions: string[];
+  staffMemberId: string | null;
+  branchIds: Set<string> | null;
+  activeBranchCount: number;
+  branchScopeReady: boolean;
+};
+
 export async function getTelegramRecipients(input: RecipientQuery): Promise<TelegramConnection[]> {
   if (input.recipientScope === "silent") return [];
 
   let query = db()
     .from("telegram_connections")
-    .select("id,restaurant_id,branch_id,user_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)")
+    .select(TELEGRAM_CONNECTION_SELECT)
     .eq("restaurant_id", input.restaurantId)
     .eq("status", "active");
 
@@ -122,8 +134,8 @@ export async function getTelegramRecipients(input: RecipientQuery): Promise<Tele
   const { data, error } = await query;
   if (error) throw error;
 
-  return (data ?? [])
-    .map(normalizeConnection)
+  const connections = await refreshTelegramConnectionsAccess((data ?? []).map(normalizeConnection));
+  return connections
     .filter((connection: TelegramConnection) => recipientScopeAllows(connection, input))
     .filter((connection: TelegramConnection) => !input.requiredPermission || hasPermission(connection, input.requiredPermission));
 }
@@ -162,12 +174,12 @@ export async function getTelegramEventPolicy(input: { restaurantId: string; bran
 export async function getTelegramConnectionsForUser(telegramUserId: number): Promise<TelegramConnection[]> {
   const { data, error } = await db()
     .from("telegram_connections")
-    .select("id,restaurant_id,branch_id,user_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)")
+    .select(TELEGRAM_CONNECTION_SELECT)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
     .order("last_seen_at", { ascending: false, nullsFirst: false });
   if (error) throw error;
-  return (data ?? []).map(normalizeConnection);
+  return refreshTelegramConnectionsAccess((data ?? []).map(normalizeConnection));
 }
 
 export async function getTelegramOpsBoard(connection: TelegramConnection) {
@@ -203,26 +215,11 @@ export async function getTelegramOpsBoard(connection: TelegramConnection) {
         branchId
       )
     ),
-    countRows(
-      db()
-        .from("reservations")
-        .select("id", { count: "exact", head: true })
-        .eq("restaurant_id", restaurantId)
-        .gte("starts_at", today.start)
-        .lt("starts_at", today.end)
-        .in("status", ["holding", "waiting_deposit_confirm", "confirmed", "checked_in", "seated"])
-    ),
-    countRows(
-      db()
-        .from("reservations")
-        .select("id", { count: "exact", head: true })
-        .eq("restaurant_id", restaurantId)
-        .in("deposit_status", ["waiting_payment", "waiting_confirm"])
-        .in("status", ["holding", "waiting_deposit_confirm"])
-    ),
-    countRows(db().from("service_requests").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["open", "acknowledged"])),
-    countRows(branchScoped(db().from("attendance_approval_requests").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).eq("status", "pending"), branchId)),
-    countRows(db().from("telegram_notifications").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["failed", "rate_limited"]))
+    countReservationsForBoard({ restaurantId, branchId, startsFrom: today.start, startsBefore: today.end, statuses: ["holding", "waiting_deposit_confirm", "confirmed", "checked_in", "seated"] }),
+    countReservationsForBoard({ restaurantId, branchId, statuses: ["holding", "waiting_deposit_confirm"], depositStatuses: ["waiting_payment", "waiting_confirm"] }),
+    countServiceRequestsForBoard(restaurantId, branchId),
+    countStaffApprovalRequests(connection),
+    countRows(branchScoped(db().from("telegram_notifications").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId).in("status", ["failed", "rate_limited"]), branchId))
   ]);
 
   return {
@@ -598,11 +595,14 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
   const existing = await getConnectionForTelegramUser(connectToken.restaurant_id, identity.telegramUserId);
   if (existing && existing.user_id !== connectToken.user_id) throw new Error("telegram_user_already_connected");
   const currentUser = await getActiveTelegramConnectUser(connectToken.restaurant_id, connectToken.user_id);
+  await assertTelegramConnectionBranchAccess(connectToken.restaurant_id, connectToken.branch_id ?? null, currentUser);
+  const staffMemberId = currentUser.staffMemberId ?? metadataStaffMemberId(connectToken.metadata);
 
   const connectionPayload = {
     restaurant_id: connectToken.restaurant_id,
     branch_id: connectToken.branch_id ?? null,
     user_id: connectToken.user_id,
+    staff_member_id: staffMemberId,
     telegram_user_id: identity.telegramUserId,
     telegram_chat_id: identity.chatId,
     telegram_username: identity.username ?? null,
@@ -639,20 +639,46 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
   return connected ?? normalizeConnection(connection);
 }
 
-async function getActiveTelegramConnectUser(restaurantId: string, userId: string) {
-  const { data, error } = await db()
-    .from("users")
-    .select("id,role,permissions,account_status")
-    .eq("restaurant_id", restaurantId)
-    .eq("id", userId)
-    .maybeSingle();
-  if (error) throw error;
+async function getActiveTelegramConnectUser(
+  restaurantId: string,
+  userId: string
+): Promise<Pick<CurrentTelegramAccess, "role" | "staffMemberId"> & { staffRoleCode: string | null; staffRoleId: string | null; permissions: string[] }> {
+  const [userResult, staffResult] = await Promise.all([
+    db()
+      .from("users")
+      .select("id,role,permissions,account_status")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", userId)
+      .maybeSingle(),
+    db()
+      .from("staff_members")
+      .select("id,role_code,role_id,employment_status,archived_at")
+      .eq("restaurant_id", restaurantId)
+      .eq("user_id", userId)
+      .maybeSingle()
+  ]);
+  if (userResult.error) throw userResult.error;
+  if (staffResult.error) throw staffResult.error;
+  const data = userResult.data;
   if (!data || data.account_status === "blocked") throw new Error("connect_user_not_active");
+  const staffMember = staffResult.data;
+  if (staffMember && (staffMember.employment_status !== "active" || staffMember.archived_at)) throw new Error("connect_staff_not_active");
+
+  const role: "ADMIN" | "STAFF" = data.role === "ADMIN" ? "ADMIN" : "STAFF";
 
   return {
-    role: data.role === "ADMIN" ? "ADMIN" : "STAFF",
-    permissions: normalizePermissionList(data.permissions)
+    role,
+    permissions: normalizePermissionList(data.permissions),
+    staffMemberId: staffMember?.id ? String(staffMember.id) : null,
+    staffRoleCode: staffMember?.role_code ? String(staffMember.role_code) : null,
+    staffRoleId: staffMember?.role_id ? String(staffMember.role_id) : null
   };
+}
+
+function metadataStaffMemberId(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const staffMemberId = (value as { staffMemberId?: unknown }).staffMemberId;
+  return typeof staffMemberId === "string" && staffMemberId.trim() ? staffMemberId.trim() : null;
 }
 
 function normalizePermissionList(value: unknown) {
@@ -733,29 +759,243 @@ export function hasPermission(connection: TelegramConnection, permission: string
   return (legacyPermissionFallbacks[permission] ?? []).some((fallback) => permissions.has(fallback));
 }
 
+async function refreshTelegramConnectionsAccess(connections: TelegramConnection[]) {
+  const refreshed = await Promise.all(connections.map(refreshTelegramConnectionAccess));
+  return refreshed.filter((connection): connection is TelegramConnection => Boolean(connection));
+}
+
+async function refreshTelegramConnectionAccess(connection: TelegramConnection) {
+  const access = await resolveCurrentTelegramAccess(connection.restaurant_id, connection.user_id);
+  if (!access) {
+    await revokeStaleTelegramConnection(connection, "user_or_staff_not_active");
+    return null;
+  }
+
+  if (!connectionBranchAllowed(connection.branch_id, access)) {
+    await revokeStaleTelegramConnection(connection, "branch_scope_no_longer_allowed");
+    return null;
+  }
+
+  const next: TelegramConnection = {
+    ...connection,
+    role: access.role,
+    permissions: access.permissions,
+    staff_member_id: access.staffMemberId
+  };
+
+  if (telegramConnectionAccessChanged(connection, next)) {
+    await persistTelegramConnectionAccess(next).catch(() => undefined);
+  }
+
+  return next;
+}
+
+async function resolveCurrentTelegramAccess(restaurantId: string, userId: string): Promise<CurrentTelegramAccess | null> {
+  const [userResult, staffResult] = await Promise.all([
+    db()
+      .from("users")
+      .select("id,role,permissions,account_status")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", userId)
+      .maybeSingle(),
+    db()
+      .from("staff_members")
+      .select("id,role_id,role_code,employment_status,archived_at")
+      .eq("restaurant_id", restaurantId)
+      .eq("user_id", userId)
+      .maybeSingle()
+  ]);
+  if (userResult.error) throw userResult.error;
+  if (staffResult.error) throw staffResult.error;
+
+  const user = userResult.data;
+  if (!user || user.account_status === "blocked") return null;
+
+  const staff = staffResult.data;
+  if (staff && (staff.archived_at || staff.employment_status !== "active")) return null;
+
+  const role = user.role === "ADMIN" ? "ADMIN" : "STAFF";
+  const staffMemberId = staff?.id ? String(staff.id) : null;
+  const permissions = role === "ADMIN" ? [] : await resolveCurrentStaffPermissions(restaurantId, user.permissions, staff);
+  const branchScope = await resolveCurrentBranchScope(restaurantId, role, staff);
+
+  return {
+    role,
+    permissions,
+    staffMemberId,
+    ...branchScope
+  };
+}
+
+async function resolveCurrentStaffPermissions(restaurantId: string, userPermissions: unknown, staff: Record<string, unknown> | null) {
+  const roleId = staff?.role_id ? String(staff.role_id) : null;
+  if (!roleId) return normalizePermissionList(userPermissions);
+
+  const { data, error } = await db()
+    .from("staff_role_permissions")
+    .select("permission_key")
+    .eq("restaurant_id", restaurantId)
+    .eq("role_id", roleId);
+  if (isMissingStaffScopeSchema(error)) return normalizePermissionList(userPermissions);
+  if (error) throw error;
+
+  const rolePermissions = normalizePermissionList((data ?? []).map((row: any) => row.permission_key));
+  return rolePermissions.length > 0 ? rolePermissions : normalizePermissionList(userPermissions);
+}
+
+async function resolveCurrentBranchScope(restaurantId: string, role: "ADMIN" | "STAFF", staff: Record<string, unknown> | null) {
+  if (role === "ADMIN" || staff?.role_code === "owner") {
+    return { branchIds: null, activeBranchCount: 0, branchScopeReady: true };
+  }
+
+  if (!staff?.id) {
+    return { branchIds: new Set<string>(), activeBranchCount: 0, branchScopeReady: true };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const [assignmentResult, shiftResult, branchResult] = await Promise.all([
+    db()
+      .from("staff_branch_assignments")
+      .select("branch_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("staff_member_id", staff.id)
+      .eq("assignment_status", "active")
+      .is("ended_at", null),
+    db()
+      .from("shift_assignments")
+      .select("branch_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("staff_member_id", staff.id)
+      .neq("status", "cancelled")
+      .gte("scheduled_date", today),
+    db().from("store_branches").select("id", { count: "exact" }).eq("restaurant_id", restaurantId).eq("is_active", true).limit(2)
+  ]);
+
+  for (const result of [assignmentResult, shiftResult, branchResult]) {
+    if (isMissingStaffScopeSchema(result.error)) {
+      return { branchIds: new Set<string>(), activeBranchCount: 0, branchScopeReady: false };
+    }
+    if (result.error) throw result.error;
+  }
+
+  const branchIds = new Set<string>();
+  for (const row of assignmentResult.data ?? []) if (row.branch_id) branchIds.add(String(row.branch_id));
+  for (const row of shiftResult.data ?? []) if (row.branch_id) branchIds.add(String(row.branch_id));
+
+  const activeBranches = (branchResult.data ?? []).map((row: any) => String(row.id));
+  if (branchIds.size === 0 && Number(branchResult.count ?? activeBranches.length) === 1 && activeBranches[0]) {
+    branchIds.add(activeBranches[0]);
+  }
+
+  return {
+    branchIds,
+    activeBranchCount: Number(branchResult.count ?? activeBranches.length),
+    branchScopeReady: true
+  };
+}
+
+async function assertTelegramConnectionBranchAccess(
+  restaurantId: string,
+  branchId: string | null,
+  access: Pick<CurrentTelegramAccess, "role" | "staffMemberId"> & { staffRoleCode?: string | null; staffRoleId?: string | null; permissions: string[] }
+) {
+  if (branchId) await assertBranchBelongsToRestaurant(restaurantId, branchId);
+  const branchScope = await resolveCurrentBranchScope(restaurantId, access.role, {
+    id: access.staffMemberId,
+    role_code: access.staffRoleCode ?? null,
+    role_id: access.staffRoleId ?? null
+  });
+  if (!connectionBranchAllowed(branchId, { ...access, ...branchScope })) throw new Error("connect_branch_not_authorized");
+}
+
+async function assertBranchBelongsToRestaurant(restaurantId: string, branchId: string) {
+  const { data, error } = await db().from("store_branches").select("id").eq("restaurant_id", restaurantId).eq("id", branchId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("branch_not_authorized");
+}
+
+function connectionBranchAllowed(branchId: string | null, access: CurrentTelegramAccess) {
+  if (access.role === "ADMIN" || access.branchIds === null) return true;
+  if (!access.branchScopeReady) return false;
+  if (branchId) return access.branchIds.has(branchId);
+  return access.branchIds.size <= 1 && access.activeBranchCount <= 1;
+}
+
+function telegramConnectionAccessChanged(previous: TelegramConnection, next: TelegramConnection) {
+  return (
+    previous.role !== next.role ||
+    previous.staff_member_id !== next.staff_member_id ||
+    previous.permissions.join("\u0000") !== next.permissions.join("\u0000")
+  );
+}
+
+async function persistTelegramConnectionAccess(connection: TelegramConnection) {
+  const { error } = await db()
+    .from("telegram_connections")
+    .update({
+      role: connection.role,
+      permissions: connection.permissions,
+      staff_member_id: connection.staff_member_id,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", connection.id)
+    .eq("restaurant_id", connection.restaurant_id)
+    .eq("status", "active");
+  if (error) throw error;
+}
+
+async function revokeStaleTelegramConnection(connection: TelegramConnection, reason: string) {
+  const now = new Date().toISOString();
+  const { error } = await db()
+    .from("telegram_connections")
+    .update({ status: "revoked", revoked_at: now, updated_at: now })
+    .eq("id", connection.id)
+    .eq("restaurant_id", connection.restaurant_id)
+    .eq("status", "active");
+  if (error) throw error;
+
+  await recordTelegramAudit({
+    restaurantId: connection.restaurant_id,
+    branchId: connection.branch_id,
+    connectionId: connection.id,
+    userId: connection.user_id,
+    telegramUserId: connection.telegram_user_id,
+    action: "telegram.connection.revoked_by_current_access",
+    outcome: "denied",
+    metadata: { reason }
+  }).catch(() => undefined);
+}
+
+function isMissingStaffScopeSchema(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return error.code === "PGRST204" || error.code === "42P01" || /staff_(members|roles|role_permissions|branch_assignments)|shift_assignments|permission_key|branch_id/i.test(error.message ?? "");
+}
+
 async function getConnectionForTelegramUser(restaurantId: string, telegramUserId: number) {
   const { data, error } = await db()
     .from("telegram_connections")
-    .select("id,restaurant_id,branch_id,user_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)")
+    .select(TELEGRAM_CONNECTION_SELECT)
     .eq("restaurant_id", restaurantId)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
-  return data ? normalizeConnection(data) : null;
+  if (!data) return null;
+  return refreshTelegramConnectionAccess(normalizeConnection(data));
 }
 
 async function getConnectionByIdForTelegramUser(restaurantId: string, connectionId: string, telegramUserId: number) {
   const { data, error } = await db()
     .from("telegram_connections")
-    .select("id,restaurant_id,branch_id,user_id,telegram_user_id,telegram_chat_id,telegram_username,role,permissions,status,restaurant:restaurants(name),branch:store_branches(name)")
+    .select(TELEGRAM_CONNECTION_SELECT)
     .eq("id", connectionId)
     .eq("restaurant_id", restaurantId)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
     .maybeSingle();
   if (error) throw error;
-  return data ? normalizeConnection(data) : null;
+  if (!data) return null;
+  return refreshTelegramConnectionAccess(normalizeConnection(data));
 }
 
 async function expireCallbackAction(id: string) {
@@ -782,6 +1022,7 @@ function normalizeConnection(row: Record<string, unknown>): TelegramConnection {
     restaurant_id: String(row.restaurant_id),
     branch_id: row.branch_id ? String(row.branch_id) : null,
     user_id: String(row.user_id),
+    staff_member_id: row.staff_member_id ? String(row.staff_member_id) : null,
     telegram_user_id: Number(row.telegram_user_id),
     telegram_chat_id: Number(row.telegram_chat_id),
     telegram_username: row.telegram_username ? String(row.telegram_username) : null,
@@ -830,6 +1071,54 @@ async function countRows(query: any) {
   const { count, error } = await query;
   if (error) return 0;
   return Number(count ?? 0);
+}
+
+async function countReservationsForBoard(input: {
+  restaurantId: string;
+  branchId?: string | null;
+  startsFrom?: string;
+  startsBefore?: string;
+  statuses: string[];
+  depositStatuses?: string[];
+}) {
+  let query = db().from("reservations").eq("restaurant_id", input.restaurantId).in("status", input.statuses);
+  if (input.startsFrom) query = query.gte("starts_at", input.startsFrom);
+  if (input.startsBefore) query = query.lt("starts_at", input.startsBefore);
+  if (input.depositStatuses?.length) query = query.in("deposit_status", input.depositStatuses);
+
+  if (!input.branchId) return countRows(query.select("id", { count: "exact", head: true }));
+
+  const { data, error } = await query
+    .select("id,locks:reservation_table_locks(table:tables(branch_id))")
+    .limit(500);
+  if (error) return 0;
+  return (data ?? []).filter((row: any) => reservationBranchFromLocks(row.locks) === input.branchId).length;
+}
+
+async function countServiceRequestsForBoard(restaurantId: string, branchId?: string | null) {
+  let query = db().from("service_requests").eq("restaurant_id", restaurantId).in("status", ["open", "acknowledged"]);
+  if (!branchId) return countRows(query.select("id", { count: "exact", head: true }));
+
+  const { data, error } = await query.select("id,table:tables(branch_id)").limit(500);
+  if (error) return 0;
+  return (data ?? []).filter((row: any) => nestedBranchId(row.table) === branchId).length;
+}
+
+async function countStaffApprovalRequests(connection: TelegramConnection) {
+  const query = staffApprovalRequestQuery(connection, "id", { count: "exact", head: true });
+  return query ? countRows(query) : 0;
+}
+
+function staffApprovalRequestQuery(connection: TelegramConnection, select: string, options?: Record<string, unknown>) {
+  if (!hasPermission(connection, "approvals.review") && !connection.staff_member_id) return null;
+  let query = db()
+    .from("attendance_approval_requests")
+    .select(select, options)
+    .eq("restaurant_id", connection.restaurant_id)
+    .eq("status", "pending");
+  query = branchScoped(query, connection.branch_id);
+  if (!hasPermission(connection, "approvals.review")) query = query.eq("staff_member_id", connection.staff_member_id);
+  return query;
 }
 
 async function getHotOrderInbox(connection: TelegramConnection) {
@@ -887,23 +1176,26 @@ async function getPaymentInbox(connection: TelegramConnection) {
   );
   const { data, error } = await query;
   if (error) return [];
-  return (data ?? []).map((row: any) => ({
-    id: String(row.id),
-    branchId: row.branch_id ? String(row.branch_id) : null,
-    kind: "payment",
-    title: `VietQR chờ xác nhận #${shortId(String(row.id))}`,
-    detail: [normalizeNestedName(row.table), fulfillmentLabel(row.fulfillment_type), row.customer_name, money(Number(row.total ?? 0)), orderItemsSummary(row.items)].filter(Boolean).join(" · "),
-    priority: 1,
-    resourceType: "order",
-    createdAt: row.created_at ? String(row.created_at) : null,
-    state: {
-      status: row.status,
-      paymentStatus: row.payment_status,
-      paymentMethod: row.payment_method,
-      customerPhone: row.customer_phone,
-      deliveryAddress: row.delivery_address
-    }
-  }));
+  return (data ?? []).map((row: any) => {
+    const method = paymentMethodLabel(row.payment_method);
+    return {
+      id: String(row.id),
+      branchId: row.branch_id ? String(row.branch_id) : null,
+      kind: "payment",
+      title: `${method} chờ xác nhận #${shortId(String(row.id))}`,
+      detail: [normalizeNestedName(row.table), fulfillmentLabel(row.fulfillment_type), row.customer_name, money(Number(row.total ?? 0)), orderItemsSummary(row.items)].filter(Boolean).join(" · "),
+      priority: 1,
+      resourceType: "order",
+      createdAt: row.created_at ? String(row.created_at) : null,
+      state: {
+        status: row.status,
+        paymentStatus: row.payment_status,
+        paymentMethod: row.payment_method,
+        customerPhone: row.customer_phone,
+        deliveryAddress: row.delivery_address
+      }
+    } satisfies TelegramOpsInboxItem;
+  });
 }
 
 async function getReservationInbox(connection: TelegramConnection) {
@@ -946,6 +1238,10 @@ async function getReservationInbox(connection: TelegramConnection) {
 }
 
 async function getStaffInbox(connection: TelegramConnection) {
+  const approvalsQuery = staffApprovalRequestQuery(
+    connection,
+    "id,branch_id,staff_member_id,request_type,status,reason,created_at,staff_member:staff_members(display_name)"
+  );
   const [serviceRequests, approvals] = await Promise.all([
     db()
       .from("service_requests")
@@ -954,16 +1250,7 @@ async function getStaffInbox(connection: TelegramConnection) {
       .in("status", ["open", "acknowledged"])
       .order("created_at", { ascending: true })
       .limit(15),
-    branchScoped(
-      db()
-        .from("attendance_approval_requests")
-        .select("id,branch_id,request_type,status,reason,created_at,staff_member:staff_members(display_name)")
-        .eq("restaurant_id", connection.restaurant_id)
-        .eq("status", "pending")
-        .order("created_at", { ascending: true })
-        .limit(3),
-      connection.branch_id
-    )
+    approvalsQuery ? approvalsQuery.order("created_at", { ascending: true }).limit(3) : Promise.resolve({ data: [], error: null })
   ]);
 
   const serviceItems = serviceRequests.error
@@ -1033,6 +1320,12 @@ function fulfillmentLabel(value: unknown) {
   if (value === "PICKUP") return "Mang đi";
   if (value === "DELIVERY") return "Giao hàng";
   return value ? String(value) : null;
+}
+
+function paymentMethodLabel(value: unknown) {
+  if (value === "QR") return "VietQR";
+  if (value === "CASH") return "Tiền mặt";
+  return value ? String(value) : "Thanh toán";
 }
 
 function orderItemsSummary(value: unknown) {

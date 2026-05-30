@@ -38,7 +38,7 @@ import { buildOperationalPassport } from "@/lib/ai/operational-passport";
 import { recordAiSecurityEvent } from "@/lib/ai/security-audit";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
 import { looksLikeRawAiPayload, normalizeAiReply, sanitizeAiDisplayText } from "@/lib/ai/response-contract";
-import { getInventoryAiEconomicsSignal, getInventorySnapshot } from "@/services/inventory-service";
+import { getInventoryAiEconomicsSignal, getInventorySnapshot, type InventoryAiEconomicsSignal, type InventorySnapshot } from "@/services/inventory-service";
 import { assertPublicTenantActive } from "@/services/tenant-status-guard";
 import {
   assertFeatureEntitlement,
@@ -68,8 +68,14 @@ type ExecutedAiToolCall = {
 
 type AiToolRuntimeContext = {
   restaurantId: string;
+  branchId?: string | null;
   userId?: string | null;
   customerSessionId?: string | null;
+};
+
+type OwnerAiSnapshotScope = {
+  branchId?: string | null;
+  branchName?: string | null;
 };
 
 function sanitizeAssistantText(value: string, maxLength = 900) {
@@ -1330,6 +1336,335 @@ function intentNeeds(intent: OwnerAiIntent, candidates: OwnerAiIntent[]) {
   return intent === "overview" || intent === "setup" || candidates.includes(intent);
 }
 
+function applyBranchScope(query: any, branchId?: string | null, column = "branch_id") {
+  return branchId ? query.eq(column, branchId) : query;
+}
+
+function readContextBranchId(context?: Record<string, unknown>) {
+  const value = context?.branchId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+async function resolveOwnerAiSnapshotScope(restaurantId: string, context?: Record<string, unknown>): Promise<OwnerAiSnapshotScope> {
+  const branchId = readContextBranchId(context);
+  if (!branchId) return { branchId: null, branchName: null };
+
+  const supabase = createAdminSupabaseClient() as any;
+  const { data, error } = await supabase
+    .from("store_branches")
+    .select("id,name")
+    .eq("restaurant_id", restaurantId)
+    .eq("id", branchId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new AppError("Chi nhánh AI Ops không thuộc quán hiện tại hoặc đã bị tắt.", 403);
+  return { branchId, branchName: data.name ? String(data.name) : null };
+}
+
+function reservationMatchesBranch(row: any, branchId: string | null) {
+  if (!branchId) return true;
+  const locks = Array.isArray(row?.locks) ? row.locks : [];
+  return locks.some((lock: any) => {
+    const table = Array.isArray(lock?.table) ? lock.table[0] : lock?.table;
+    return table?.branch_id === branchId;
+  });
+}
+
+function scopeStaffAiRowsByBranch(input: {
+  members: any[] | null;
+  attendance: any[] | null;
+  approvals: any[] | null;
+  shifts: any[] | null;
+  branchAssignments: any[] | null;
+  reviews: any[] | null;
+}) {
+  const memberIds = new Set<string>();
+  for (const row of [...(input.attendance ?? []), ...(input.approvals ?? []), ...(input.shifts ?? []), ...(input.branchAssignments ?? [])]) {
+    if (row?.staff_member_id) memberIds.add(String(row.staff_member_id));
+  }
+
+  return {
+    members: (input.members ?? []).filter((member) => memberIds.has(String(member.id))),
+    attendance: input.attendance ?? [],
+    approvals: input.approvals ?? [],
+    shifts: input.shifts ?? [],
+    branchAssignments: input.branchAssignments ?? [],
+    reviews: (input.reviews ?? []).filter((review) => memberIds.has(String(review.staff_member_id)))
+  };
+}
+
+function numericInventoryValue(value: unknown) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function emptyOwnerInventorySnapshot(schemaReady: boolean): InventorySnapshot {
+  return {
+    schemaReady,
+    ingredientCount: 0,
+    activeIngredientCount: 0,
+    lowStockCount: 0,
+    recipeReadyItemCount: 0,
+    menuItemCount: 0,
+    recipeCoveragePercent: 0,
+    openCountSessions: 0,
+    openAlertCount: 0,
+    wasteSpikeAlertCount: 0,
+    priceSpikeAlertCount: 0,
+    supplierDelayAlertCount: 0,
+    expiringBatchCount: 0,
+    openPurchaseOrderCount: 0,
+    totalReferenceValue: 0,
+    lowStockIngredients: [],
+    recentMovements: []
+  };
+}
+
+function emptyOwnerInventoryEconomics(schemaReady: boolean): InventoryAiEconomicsSignal {
+  return {
+    schemaReady,
+    projectedPurchaseValue: 0,
+    weeklyUsageValue: 0,
+    reorderSuggestionCount: 0,
+    highReorderCount: 0,
+    topReorderSuggestion: null,
+    wasteSignalCount: 0,
+    topWasteSignal: null,
+    priceSignalCount: 0,
+    topPriceSignal: null,
+    highFoodCostItemCount: 0,
+    topHighFoodCostItem: null
+  };
+}
+
+function countInventoryAlertRowsByType(rows: any[], alertType: string) {
+  return rows.filter((row) => row?.alert_type === alertType).length;
+}
+
+async function getOwnerInventoryAiData(
+  restaurantId: string,
+  branchId: string | null
+): Promise<{ snapshot: InventorySnapshot; economics: InventoryAiEconomicsSignal | null }> {
+  if (!branchId) {
+    const snapshot = await getInventorySnapshot(restaurantId);
+    return {
+      snapshot,
+      economics: snapshot.schemaReady ? await getInventoryAiEconomicsSignal(restaurantId, snapshot).catch(() => null) : null
+    };
+  }
+
+  const supabase = createAdminSupabaseClient() as any;
+  const expiryCutoff = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const movementSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const weekSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [stockRows, movementRows, alertRows, openCountSessions, openPurchaseOrderCount, recipeRows, menuItemCount] = await Promise.all([
+    safeSupabaseQuery<any[]>(
+      supabase
+        .from("stock_balances")
+        .select(
+          "id,batch_id,ingredient_id,on_hand_quantity,reserved_quantity,incoming_quantity,ingredient:ingredients(name,unit,minimum_quantity,reference_unit_cost,is_active),batch:inventory_batches(expiration_date,status,unit_cost)"
+        )
+        .eq("restaurant_id", restaurantId)
+        .eq("branch_id", branchId)
+        .limit(2000)
+    ),
+    safeSupabaseQuery<any[]>(
+      supabase
+        .from("inventory_movements")
+        .select("id,ingredient_id,movement_type,quantity_delta,unit_cost,source_type,reason,created_at,ingredient:ingredients(name,unit,reference_unit_cost)")
+        .eq("restaurant_id", restaurantId)
+        .eq("branch_id", branchId)
+        .gte("created_at", movementSince)
+        .order("created_at", { ascending: false })
+        .limit(500)
+    ),
+    safeSupabaseQuery<any[]>(
+      supabase
+        .from("inventory_alerts")
+        .select("alert_type,severity,status")
+        .eq("restaurant_id", restaurantId)
+        .eq("branch_id", branchId)
+        .in("status", ["open", "acknowledged"])
+        .limit(1000)
+    ),
+    safeSupabaseCount(
+      supabase
+        .from("inventory_counts")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .eq("branch_id", branchId)
+        .in("status", ["draft", "submitted"])
+    ),
+    safeSupabaseCount(
+      supabase
+        .from("purchase_orders")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", restaurantId)
+        .eq("branch_id", branchId)
+        .in("status", ["draft", "pending", "approved", "ordered", "partially_delivered"])
+    ),
+    safeSupabaseQuery<any[]>(supabase.from("menu_item_recipes").select("menu_item_id").eq("restaurant_id", restaurantId).limit(3000)),
+    safeSupabaseCount(supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("restaurant_id", restaurantId))
+  ]);
+
+  if (!stockRows || !movementRows || !alertRows) {
+    return { snapshot: emptyOwnerInventorySnapshot(false), economics: emptyOwnerInventoryEconomics(false) };
+  }
+
+  const ingredientMap = new Map<
+    string,
+    { id: string; name: string; unit: string; onHandQuantity: number; minimumQuantity: number; referenceUnitCost: number; isActive: boolean }
+  >();
+  let totalReferenceValue = 0;
+  const expiringBatchIds = new Set<string>();
+
+  for (const row of stockRows) {
+    const ingredientId = String(row?.ingredient_id ?? "");
+    if (!ingredientId) continue;
+    const ingredient = firstOrNull(row.ingredient);
+    const batch = firstOrNull(row.batch);
+    const onHandQuantity = Math.max(0, numericInventoryValue(row.on_hand_quantity));
+    const minimumQuantity = numericInventoryValue(ingredient?.minimum_quantity);
+    const referenceUnitCost = numericInventoryValue(batch?.unit_cost ?? ingredient?.reference_unit_cost);
+    const current = ingredientMap.get(ingredientId) ?? {
+      id: ingredientId,
+      name: String(ingredient?.name ?? "Nguyen lieu"),
+      unit: String(ingredient?.unit ?? "unit"),
+      onHandQuantity: 0,
+      minimumQuantity,
+      referenceUnitCost,
+      isActive: ingredient?.is_active !== false
+    };
+    current.onHandQuantity += onHandQuantity;
+    current.minimumQuantity = Math.max(current.minimumQuantity, minimumQuantity);
+    if (referenceUnitCost > 0) current.referenceUnitCost = referenceUnitCost;
+    current.isActive = current.isActive && ingredient?.is_active !== false;
+    ingredientMap.set(ingredientId, current);
+    totalReferenceValue += onHandQuantity * referenceUnitCost;
+
+    if (row?.batch_id && onHandQuantity > 0 && batch?.expiration_date && batch.expiration_date <= expiryCutoff && ["active", "quarantined", "expired"].includes(String(batch.status ?? ""))) {
+      expiringBatchIds.add(String(row.batch_id));
+    }
+  }
+
+  const lowStockIngredients = [...ingredientMap.values()]
+    .filter((ingredient) => ingredient.isActive && ingredient.minimumQuantity > 0 && ingredient.onHandQuantity <= ingredient.minimumQuantity)
+    .sort((left, right) => left.onHandQuantity - right.onHandQuantity)
+    .map((ingredient) => ({
+      id: ingredient.id,
+      name: ingredient.name,
+      unit: ingredient.unit,
+      onHandQuantity: Math.round(ingredient.onHandQuantity * 1000) / 1000,
+      minimumQuantity: Math.round(ingredient.minimumQuantity * 1000) / 1000,
+      referenceUnitCost: Math.round(ingredient.referenceUnitCost)
+    }));
+
+  const recipeReadyItemIds = new Set((recipeRows ?? []).map((row) => row?.menu_item_id).filter((id): id is string => Boolean(id)));
+  const recentMovements = movementRows.slice(0, 8).map((movement) => {
+    const ingredient = firstOrNull(movement.ingredient);
+    return {
+      id: String(movement.id),
+      movementType: movement.movement_type as InventorySnapshot["recentMovements"][number]["movementType"],
+      quantityDelta: numericInventoryValue(movement.quantity_delta),
+      unitCost: movement.unit_cost === null || movement.unit_cost === undefined ? null : numericInventoryValue(movement.unit_cost),
+      sourceType: String(movement.source_type ?? "manual"),
+      reason: movement.reason ?? null,
+      createdAt: String(movement.created_at ?? ""),
+      ingredientName: String(ingredient?.name ?? "Nguyen lieu"),
+      ingredientUnit: String(ingredient?.unit ?? "unit")
+    };
+  });
+
+  const projectedPurchaseValue = lowStockIngredients.reduce((sum, ingredient) => {
+    const reorderQuantity = Math.max(0, ingredient.minimumQuantity * 2 - ingredient.onHandQuantity);
+    return sum + reorderQuantity * ingredient.referenceUnitCost;
+  }, 0);
+  const weeklyUsageValue = movementRows
+    .filter((movement) => String(movement.created_at ?? "") >= weekSince && numericInventoryValue(movement.quantity_delta) < 0)
+    .reduce((sum, movement) => sum + Math.abs(numericInventoryValue(movement.quantity_delta)) * numericInventoryValue(movement.unit_cost ?? firstOrNull(movement.ingredient)?.reference_unit_cost), 0);
+  const reorderSuggestions = lowStockIngredients.map((ingredient) => {
+    const monthlyUsage = movementRows
+      .filter((movement) => String(movement.ingredient_id ?? "") === ingredient.id && numericInventoryValue(movement.quantity_delta) < 0)
+      .reduce((sum, movement) => sum + Math.abs(numericInventoryValue(movement.quantity_delta)), 0);
+    const dailyUsage = Math.round((monthlyUsage / 30) * 1000) / 1000;
+    const daysLeft = dailyUsage > 0 ? Math.floor(ingredient.onHandQuantity / dailyUsage) : null;
+    const reorderQuantity = Math.max(0, ingredient.minimumQuantity * 2 - ingredient.onHandQuantity);
+    const urgency = ingredient.onHandQuantity <= 0 || (daysLeft !== null && daysLeft <= 2) ? "high" : ingredient.onHandQuantity <= ingredient.minimumQuantity * 0.5 ? "medium" : "low";
+    return {
+      ingredientId: ingredient.id,
+      name: ingredient.name,
+      unit: ingredient.unit,
+      onHandQuantity: ingredient.onHandQuantity,
+      minimumQuantity: ingredient.minimumQuantity,
+      dailyUsage,
+      daysLeft,
+      reorderQuantity: Math.round(reorderQuantity * 1000) / 1000,
+      estimatedCost: Math.round(reorderQuantity * ingredient.referenceUnitCost),
+      urgency
+    } satisfies NonNullable<InventoryAiEconomicsSignal["topReorderSuggestion"]>;
+  });
+  const wasteSignals = movementRows
+    .filter((movement) => ["waste", "expired"].includes(String(movement.movement_type)))
+    .reduce<Map<string, NonNullable<InventoryAiEconomicsSignal["topWasteSignal"]>>>((acc, movement) => {
+      const ingredientId = String(movement.ingredient_id ?? "");
+      if (!ingredientId) return acc;
+      const ingredient = firstOrNull(movement.ingredient);
+      const current = acc.get(ingredientId) ?? {
+        ingredientId,
+        name: String(ingredient?.name ?? "Nguyen lieu"),
+        unit: String(ingredient?.unit ?? "unit"),
+        wasteQuantity: 0,
+        wasteCost: 0,
+        movementCount: 0
+      };
+      const quantity = Math.abs(numericInventoryValue(movement.quantity_delta));
+      current.wasteQuantity += quantity;
+      current.wasteCost += quantity * numericInventoryValue(movement.unit_cost ?? ingredient?.reference_unit_cost);
+      current.movementCount += 1;
+      acc.set(ingredientId, current);
+      return acc;
+    }, new Map());
+  const topWasteSignal = [...wasteSignals.values()].sort((left, right) => right.wasteCost - left.wasteCost)[0] ?? null;
+
+  return {
+    snapshot: {
+      schemaReady: true,
+      ingredientCount: ingredientMap.size,
+      activeIngredientCount: [...ingredientMap.values()].filter((ingredient) => ingredient.isActive).length,
+      lowStockCount: lowStockIngredients.length,
+      recipeReadyItemCount: recipeReadyItemIds.size,
+      menuItemCount,
+      recipeCoveragePercent: menuItemCount > 0 ? Math.round((recipeReadyItemIds.size / menuItemCount) * 100) : 0,
+      openCountSessions,
+      openAlertCount: alertRows.length,
+      wasteSpikeAlertCount: countInventoryAlertRowsByType(alertRows, "waste_spike"),
+      priceSpikeAlertCount: countInventoryAlertRowsByType(alertRows, "price_spike"),
+      supplierDelayAlertCount: countInventoryAlertRowsByType(alertRows, "supplier_delay"),
+      expiringBatchCount: expiringBatchIds.size,
+      openPurchaseOrderCount,
+      totalReferenceValue: Math.round(totalReferenceValue),
+      lowStockIngredients,
+      recentMovements
+    },
+    economics: {
+      schemaReady: true,
+      projectedPurchaseValue: Math.round(projectedPurchaseValue),
+      weeklyUsageValue: Math.round(weeklyUsageValue),
+      reorderSuggestionCount: reorderSuggestions.length,
+      highReorderCount: reorderSuggestions.filter((suggestion) => suggestion.urgency === "high").length,
+      topReorderSuggestion: reorderSuggestions.sort((left, right) => right.estimatedCost - left.estimatedCost)[0] ?? null,
+      wasteSignalCount: wasteSignals.size,
+      topWasteSignal: topWasteSignal ? { ...topWasteSignal, wasteQuantity: Math.round(topWasteSignal.wasteQuantity * 1000) / 1000, wasteCost: Math.round(topWasteSignal.wasteCost) } : null,
+      priceSignalCount: 0,
+      topPriceSignal: null,
+      highFoodCostItemCount: 0,
+      topHighFoodCostItem: null
+    }
+  };
+}
+
 async function getRestaurantSetupBundle(restaurantId: string) {
   const supabase = createAdminSupabaseClient() as any;
   const [restaurant, tableCount, menuItemCount, categoryCount, staffCount, promotionCount] = await Promise.all([
@@ -1442,30 +1777,42 @@ function buildStaffAiSnapshot(input: {
   };
 }
 
-export async function getOwnerOperationalSnapshot(restaurantId: string, intent: OwnerAiIntent, restaurant: RestaurantAiContext) {
+export async function getOwnerOperationalSnapshot(
+  restaurantId: string,
+  intent: OwnerAiIntent,
+  restaurant: RestaurantAiContext,
+  scope: OwnerAiSnapshotScope = {}
+) {
   const supabase = createAdminSupabaseClient() as any;
+  const branchId = scope.branchId ?? null;
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const monthStart = monthStartIso();
   const today = isoDateOffset(0);
   const nextWeek = isoDateOffset(7);
 
   const recentOrdersPromise = safeSupabaseQuery<any[]>(
-    supabase
-      .from("orders")
-      .select(
-        "id,branch_id,branch_assignment_source,status,total,payment_method,payment_status,fulfillment_type,customer_name,delivery_address,delivery_distance_km,created_at,accepted_at,served_at,service_due_at,table:tables(name),items:order_items(quantity,price,note,menuItem:menu_items(name))"
-      )
-      .eq("restaurant_id", restaurantId)
+    applyBranchScope(
+      supabase
+        .from("orders")
+        .select(
+          "id,branch_id,branch_assignment_source,status,total,payment_method,payment_status,fulfillment_type,customer_name,delivery_address,delivery_distance_km,created_at,accepted_at,served_at,service_due_at,table:tables(name),items:order_items(quantity,price,note,menuItem:menu_items(name))"
+        )
+        .eq("restaurant_id", restaurantId),
+      branchId
+    )
       .order("created_at", { ascending: false })
       .limit(12)
   );
 
   const todayOrdersPromise = safeSupabaseQuery<any[]>(
-    supabase
-      .from("orders")
-      .select("id,branch_id,branch_assignment_source,status,total,payment_status,payment_method,fulfillment_type,created_at")
-      .eq("restaurant_id", restaurantId)
-      .gte("created_at", since)
+    applyBranchScope(
+      supabase
+        .from("orders")
+        .select("id,branch_id,branch_assignment_source,status,total,payment_status,payment_method,fulfillment_type,created_at")
+        .eq("restaurant_id", restaurantId)
+        .gte("created_at", since),
+      branchId
+    )
       .order("created_at", { ascending: false })
       .limit(150)
   );
@@ -1483,21 +1830,28 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
 
   const tablesPromise = intentNeeds(intent, ["tables", "orders", "kitchen"])
     ? safeSupabaseQuery<any[]>(
-        supabase
-          .from("tables")
-          .select("id,name,area,capacity,qr_enabled,orders:orders(id,status,total,created_at,service_due_at)")
-          .eq("restaurant_id", restaurantId)
-          .in("orders.status", ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"])
+        applyBranchScope(
+          supabase
+            .from("tables")
+            .select("id,branch_id,name,area,capacity,qr_enabled,orders:orders(id,status,total,created_at,service_due_at)")
+            .eq("restaurant_id", restaurantId)
+            .in("orders.status", ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"]),
+          branchId
+        )
           .order("name", { ascending: true })
       )
     : Promise.resolve(null);
 
   const paymentsPromise = intentNeeds(intent, ["payments", "reports"])
     ? safeSupabaseQuery<any[]>(
-        supabase
-          .from("payment_logs")
-          .select("id,order_id,method,status,amount,created_at,order:orders!inner(restaurant_id,total,status,created_at)")
-          .eq("order.restaurant_id", restaurantId)
+        applyBranchScope(
+          supabase
+            .from("payment_logs")
+            .select("id,order_id,method,status,amount,created_at,order:orders!inner(restaurant_id,total,status,created_at,branch_id)")
+            .eq("order.restaurant_id", restaurantId),
+          branchId,
+          "order.branch_id"
+        )
           .order("created_at", { ascending: false })
           .limit(30)
       )
@@ -1518,19 +1872,14 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
     snapshot: Awaited<ReturnType<typeof getInventorySnapshot>>;
     economics: Awaited<ReturnType<typeof getInventoryAiEconomicsSignal>> | null;
   } | null> = intentNeeds(intent, ["inventory", "overview", "reports"])
-    ? getInventorySnapshot(restaurantId)
-        .then(async (snapshot) => ({
-          snapshot,
-          economics: snapshot.schemaReady ? await getInventoryAiEconomicsSignal(restaurantId, snapshot).catch(() => null) : null
-        }))
-        .catch(() => null)
+    ? getOwnerInventoryAiData(restaurantId, branchId).catch(() => null)
     : Promise.resolve(null);
 
   const reservationsPromise = intentNeeds(intent, ["reservations", "reports"])
     ? safeSupabaseQuery<any[]>(
         supabase
           .from("reservations")
-          .select("id,status,customer_name,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_status,created_at")
+          .select("id,status,customer_name,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_status,created_at,locks:reservation_table_locks(table:tables(branch_id,name))")
           .eq("restaurant_id", restaurantId)
           .order("starts_at", { ascending: true })
           .limit(30)
@@ -1548,38 +1897,50 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
             .limit(120)
         ),
         safeSupabaseQuery<any[]>(
-          supabase
-            .from("attendance_logs")
-            .select("id,staff_member_id,attendance_state,approval_state,late_minutes,overtime_minutes,work_minutes,clock_in_at,clock_out_at")
-            .eq("restaurant_id", restaurantId)
-            .gte("clock_in_at", since)
+          applyBranchScope(
+            supabase
+              .from("attendance_logs")
+              .select("id,staff_member_id,branch_id,attendance_state,approval_state,late_minutes,overtime_minutes,work_minutes,clock_in_at,clock_out_at")
+              .eq("restaurant_id", restaurantId)
+              .gte("clock_in_at", since),
+            branchId
+          )
             .order("clock_in_at", { ascending: false })
             .limit(120)
         ),
         safeSupabaseQuery<any[]>(
-          supabase
-            .from("attendance_approval_requests")
-            .select("id,staff_member_id,request_type,status,reason,created_at")
-            .eq("restaurant_id", restaurantId)
+          applyBranchScope(
+            supabase
+              .from("attendance_approval_requests")
+              .select("id,staff_member_id,branch_id,request_type,status,reason,created_at")
+              .eq("restaurant_id", restaurantId),
+            branchId
+          )
             .order("created_at", { ascending: false })
             .limit(120)
         ),
         safeSupabaseQuery<any[]>(
-          supabase
-            .from("shift_assignments")
-            .select("id,staff_member_id,branch_id,shift_id,scheduled_date,status")
-            .eq("restaurant_id", restaurantId)
-            .gte("scheduled_date", today)
-            .lte("scheduled_date", nextWeek)
+          applyBranchScope(
+            supabase
+              .from("shift_assignments")
+              .select("id,staff_member_id,branch_id,shift_id,scheduled_date,status")
+              .eq("restaurant_id", restaurantId)
+              .gte("scheduled_date", today)
+              .lte("scheduled_date", nextWeek),
+            branchId
+          )
             .order("scheduled_date", { ascending: true })
             .limit(120)
         ),
         safeSupabaseQuery<any[]>(
-          supabase
-            .from("staff_branch_assignments")
-            .select("id,staff_member_id,branch_id,is_primary,assignment_status")
-            .eq("restaurant_id", restaurantId)
-            .eq("assignment_status", "active")
+          applyBranchScope(
+            supabase
+              .from("staff_branch_assignments")
+              .select("id,staff_member_id,branch_id,is_primary,assignment_status")
+              .eq("restaurant_id", restaurantId)
+              .eq("assignment_status", "active"),
+            branchId
+          )
             .limit(160)
         ),
         safeSupabaseQuery<any[]>(
@@ -1593,7 +1954,11 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
       ]).then(([members, attendance, approvals, shifts, branchAssignments, reviews]) =>
         members === null && attendance === null && approvals === null && shifts === null && branchAssignments === null && reviews === null
           ? null
-          : buildStaffAiSnapshot({ members, attendance, approvals, shifts, branchAssignments, reviews })
+          : buildStaffAiSnapshot(
+              branchId
+                ? scopeStaffAiRowsByBranch({ members, attendance, approvals, shifts, branchAssignments, reviews })
+                : { members, attendance, approvals, shifts, branchAssignments, reviews }
+            )
       )
     : Promise.resolve(null);
 
@@ -1610,6 +1975,7 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
   ]);
   const inventorySnapshotRaw = inventoryRaw?.snapshot ?? null;
   const inventoryEconomicsRaw = inventoryRaw?.economics ?? null;
+  const reservationsScoped = (reservationsRaw ?? []).filter((reservation) => reservationMatchesBranch(reservation, branchId));
 
   const todayOrders = todayOrdersRaw ?? [];
   const paidRevenue = todayOrders
@@ -1656,6 +2022,11 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
   const snapshot = {
     generatedAt: new Date().toISOString(),
     intent,
+    scope: {
+      type: branchId ? "branch" : "restaurant",
+      branchId,
+      branchName: scope.branchName ?? null
+    },
     restaurant: {
       id: restaurant.id,
       name: restaurant.name,
@@ -1769,7 +2140,7 @@ export async function getOwnerOperationalSnapshot(restaurantId: string, intent: 
         }
       : null,
     reservations: reservationsRaw
-      ? reservationsRaw.map((reservation) => ({
+      ? reservationsScoped.map((reservation) => ({
           id: String(reservation.id ?? "").slice(0, 8),
           status: reservation.status,
           customerName: reservation.customer_name,
@@ -2285,6 +2656,7 @@ export async function runOwnerAssistant(input: {
   }
 
   const restaurant = await getRestaurantContext(input.restaurantId);
+  const scope = await resolveOwnerAiSnapshotScope(input.restaurantId, input.context);
   if (isCasualGreeting(input.message)) {
     const greetingResult = buildOwnerGreetingResult(restaurant, input.message);
     const conversationId = await persistAiConversationMessage({
@@ -2294,7 +2666,7 @@ export async function runOwnerAssistant(input: {
       surface: "dashboard",
       role: "user",
       content: input.message,
-      metadata: { intent: greetingResult.intent, source: "owner_ai_greeting", threadId: input.threadId ?? null }
+      metadata: { intent: greetingResult.intent, source: "owner_ai_greeting", threadId: input.threadId ?? null, scope }
     });
     await persistAiConversationMessage({
       restaurantId: input.restaurantId,
@@ -2313,14 +2685,15 @@ export async function runOwnerAssistant(input: {
         actions: [],
         actionIds: [],
         greeting: true,
-        threadId: input.threadId ?? null
+        threadId: input.threadId ?? null,
+        scope
       }
     });
     return greetingResult;
   }
 
   const [snapshot, memory] = await Promise.all([
-    getOwnerOperationalSnapshot(input.restaurantId, intent, restaurant),
+    getOwnerOperationalSnapshot(input.restaurantId, intent, restaurant, scope),
     getScopedRestaurantMemoryContext({
       restaurantId: input.restaurantId,
       query: input.message,
@@ -2345,7 +2718,7 @@ export async function runOwnerAssistant(input: {
       preferredProvider: normalizeAiProvider(process.env.AI_OWNER_PROVIDER),
       maxTokens: 260,
       taskType: intent === "reports" ? "analytics_reasoning" : intent === "growth" ? "business_insight" : "dashboard_operation",
-      toolContext: { restaurantId: input.restaurantId, userId: input.userId },
+      toolContext: { restaurantId: input.restaurantId, branchId: scope.branchId ?? null, userId: input.userId },
       proactiveToolCalls: buildOwnerProactiveToolCalls(intent, input.message)
     });
 
@@ -2359,7 +2732,7 @@ export async function runOwnerAssistant(input: {
       status: "success",
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
-      metadata: { intent, memorySchemaReady: memory.schemaReady, memoryCount: memory.items.length },
+      metadata: { intent, memorySchemaReady: memory.schemaReady, memoryCount: memory.items.length, scope },
       aiResult: result
     });
     const actions = buildOwnerAgentActions(intent, ownerAiIntentConfig[intent].suggestions, snapshot, toolRuns, input.message);
@@ -2412,7 +2785,7 @@ export async function runOwnerAssistant(input: {
       surface: "dashboard",
       role: "user",
       content: input.message,
-      metadata: { intent, source: "owner_ai", threadId: input.threadId ?? null }
+      metadata: { intent, source: "owner_ai", threadId: input.threadId ?? null, scope }
     });
     await persistAiConversationMessage({
       restaurantId: input.restaurantId,
@@ -2438,7 +2811,8 @@ export async function runOwnerAssistant(input: {
         replyQuality: replyContract.quality,
         commandDeck,
         mission,
-        passport
+        passport,
+        scope
       }
     });
     return {
@@ -2465,7 +2839,7 @@ export async function runOwnerAssistant(input: {
       requestKind: "chat",
       status: "failed",
       errorMessage: error instanceof Error ? error.message : "AI owner assistant failed",
-      metadata: { intent }
+      metadata: { intent, scope }
     });
 
     const actions = buildOwnerAgentActions(intent, ownerAiIntentConfig[intent].suggestions, snapshot, [], input.message);
@@ -2520,7 +2894,7 @@ export async function runOwnerAssistant(input: {
         surface: "dashboard",
         role: "user",
         content: input.message,
-        metadata: { intent, source: "owner_ai_fallback", threadId: input.threadId ?? null }
+        metadata: { intent, source: "owner_ai_fallback", threadId: input.threadId ?? null, scope }
       });
       await persistAiConversationMessage({
         restaurantId: input.restaurantId,
@@ -2544,7 +2918,8 @@ export async function runOwnerAssistant(input: {
           replyQuality: replyContract.quality,
           commandDeck,
           mission,
-          passport
+          passport,
+          scope
         }
       });
     } catch {

@@ -1,5 +1,29 @@
 # Deployment Sequence - LogiVN Production
 
+## 2026-05-30 Production Deploy Sequence
+
+Current sequence for this release:
+
+1. Freeze release scope and keep all current dashboard/staff/VPS/Telegram changes in one commit.
+2. Apply Supabase migration before code deploy.
+3. Verify schema through REST checks for staff code, employee identity/password columns, and `staff_incident_reports`.
+4. Verify migration history contains `20260530103818_staff_identity_password_login`.
+5. Run local release gates: whitespace, infra contract, TypeScript, VPS typecheck, tests, lint and Vercel production build.
+6. Commit and push `codex/p0-production-clean`.
+7. Deploy the prebuilt Vercel production artifact with `vercel deploy --prebuilt --prod`.
+8. Run production smoke and first-hour watch.
+
+Abort conditions for this release:
+
+| Condition | Action |
+| --- | --- |
+| Any P0 validation fails | Do not deploy; fix forward and rerun full gate. |
+| Supabase schema check fails | Do not deploy code that depends on staff identity/password columns. |
+| Vercel build fails | Do not deploy; preserve previous production. |
+| Staff/order/payment smoke fails after deploy | Roll back Vercel code first and leave additive DB schema in place. |
+
+VPS cache sequencing: deploy VPS gateway cache endpoints before enabling `LOGIVN_VPS_DASHBOARD_CACHE_ENABLED=1` in production.
+
 ## 2026-05-29 Gate Update
 
 Before any production promotion, run:

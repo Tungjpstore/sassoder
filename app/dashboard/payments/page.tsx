@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { PaymentsWorkspace } from "@/components/dashboard/payments-workspace";
+import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
 import { getAdminReport } from "@/services/dashboard-report-service";
@@ -14,10 +16,36 @@ function percent(value: number, total: number) {
 
 export default async function AdminPaymentsPage() {
   const { session, entitlement } = await requireDashboardAccess("vietqr_payments");
-  const [{ dashboard, operations }, report] = await Promise.all([
-    getRestaurantAdminDashboard(session.restaurantId),
-    getAdminReport(session.restaurantId)
-  ]);
+  return (
+    <AdminShell
+      title="Thanh toán"
+      restaurantName={session.restaurant.name}
+      restaurantId={session.restaurantId}
+      entitlement={entitlement}
+      subtitle="Theo dõi giao dịch, xác nhận VietQR và quản lý tiền mặt"
+    >
+      <Suspense fallback={<PaymentsWorkspaceSkeleton />}>
+        <PaymentsWorkspaceContent restaurantId={session.restaurantId} />
+      </Suspense>
+    </AdminShell>
+  );
+}
+
+async function PaymentsWorkspaceContent({ restaurantId }: { restaurantId: string }) {
+  const { dashboardBundle, report } = await readThroughDashboardWorkspaceCache({
+    restaurantId,
+    workspace: "payments",
+    ttlSeconds: 4,
+    load: async () => {
+      const [dashboardBundle, report] = await Promise.all([
+        getRestaurantAdminDashboard(restaurantId),
+        getAdminReport(restaurantId)
+      ]);
+
+      return { dashboardBundle, report };
+    }
+  });
+  const { dashboard, operations } = dashboardBundle;
 
   const totalPaid = operations.qrRevenue + operations.cashRevenue;
   const waitingAmount = operations.openOrderTotal;
@@ -29,26 +57,31 @@ export default async function AdminPaymentsPage() {
   ];
 
   return (
-    <AdminShell
-      title="Thanh toán"
+    <PaymentsWorkspace
+      stats={stats}
+      transactions={report.paymentTransactions}
+      restaurantId={restaurantId}
+      bankCode={dashboard.restaurant.bank_code}
+      bankAccount={dashboard.restaurant.bank_account}
+      bankAccountName={dashboard.restaurant.bank_account_name}
       restaurantName={dashboard.restaurant.name}
-      restaurantId={session.restaurantId}
-      entitlement={entitlement}
-      subtitle="Theo dõi giao dịch, xác nhận VietQR và quản lý tiền mặt"
-    >
-      <PaymentsWorkspace
-        stats={stats}
-        transactions={report.paymentTransactions}
-        restaurantId={session.restaurantId}
-        bankCode={dashboard.restaurant.bank_code}
-        bankAccount={dashboard.restaurant.bank_account}
-        bankAccountName={dashboard.restaurant.bank_account_name}
-        restaurantName={dashboard.restaurant.name}
-        totalPaid={totalPaid}
-        waitingAmount={waitingAmount}
-        cashRevenue={operations.cashRevenue}
-        qrRevenue={operations.qrRevenue}
-      />
-    </AdminShell>
+      totalPaid={totalPaid}
+      waitingAmount={waitingAmount}
+      cashRevenue={operations.cashRevenue}
+      qrRevenue={operations.qrRevenue}
+    />
+  );
+}
+
+function PaymentsWorkspaceSkeleton() {
+  return (
+    <div className="dashboard-panel grid gap-4 p-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="h-24 animate-pulse rounded-xl bg-[#A9C5A1]/18" />
+        ))}
+      </div>
+      <div className="h-[420px] animate-pulse rounded-xl border border-[var(--border)] bg-[var(--soft-surface)]" />
+    </div>
   );
 }

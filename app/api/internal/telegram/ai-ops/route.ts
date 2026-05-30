@@ -3,6 +3,7 @@ import { fail, ok } from "@/lib/response";
 import { assertInternalApiKey, recordTelegramOwnerBriefing } from "@/services/telegram-connection-service";
 import { runOwnerAssistant } from "@/services/ai-service";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
+import { assertStaffCanAccessBranch } from "@/features/staff/services/staff-branch-authorization-service";
 import type { StaffPermissionKey } from "@/lib/staff-permissions";
 import type { SessionProfile } from "@/types/domain";
 
@@ -30,7 +31,9 @@ export async function POST(request: Request) {
   try {
     assertInternalApiKey(request);
     const input = aiOpsCommandSchema.parse(await request.json());
-    await assertStaffActionPermission(telegramAiOpsSession(input), requiredPermissionByAiOpsCommand[input.command]);
+    const session = telegramAiOpsSession(input);
+    await assertStaffActionPermission(session, requiredPermissionByAiOpsCommand[input.command]);
+    if (input.branchId) await assertStaffCanAccessBranch(session, input.branchId);
     const result = await runOwnerAssistant({
       restaurantId: input.restaurantId,
       userId: input.actorUserId,

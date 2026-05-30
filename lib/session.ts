@@ -24,17 +24,19 @@ type ProfileRow = {
   email: string;
   role: SessionProfile["role"];
   account_status?: SessionProfile["accountStatus"];
-  restaurant_id: string;
-  restaurant:
-    | (SessionProfile["restaurant"] & {
-        business_type?: SessionProfile["restaurant"]["businessType"];
-        platform_status?: SessionProfile["restaurant"]["platformStatus"];
-      })
-    | Array<
-        SessionProfile["restaurant"] & {
-          business_type?: SessionProfile["restaurant"]["businessType"];
-          platform_status?: SessionProfile["restaurant"]["platformStatus"];
-        }
+      restaurant_id: string;
+      restaurant:
+        | (SessionProfile["restaurant"] & {
+            staff_code?: SessionProfile["restaurant"]["staffCode"];
+            business_type?: SessionProfile["restaurant"]["businessType"];
+            platform_status?: SessionProfile["restaurant"]["platformStatus"];
+          })
+        | Array<
+            SessionProfile["restaurant"] & {
+              staff_code?: SessionProfile["restaurant"]["staffCode"];
+              business_type?: SessionProfile["restaurant"]["businessType"];
+              platform_status?: SessionProfile["restaurant"]["platformStatus"];
+            }
       >
     | null;
 };
@@ -76,7 +78,7 @@ async function readProfileWithAdmin(user: AuthIdentity) {
   const supabase = createAdminSupabaseClient();
   const initialProfileResult = (await supabase
     .from("users")
-    .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+    .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
     .eq("id", user.id)
     .maybeSingle()) as any;
   let data = initialProfileResult.data;
@@ -96,7 +98,7 @@ async function readProfileWithAdmin(user: AuthIdentity) {
   if (!data && !error) {
     const fallback = (await supabase
       .from("users")
-      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
       .eq("email", user.email.toLowerCase())
       .maybeSingle()) as any;
 
@@ -129,7 +131,7 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
 
   const initialProfileResult = (await supabase
     .from("users")
-    .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+    .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
     .eq("id", user.id)
     .maybeSingle()) as any;
   let data = initialProfileResult.data;
@@ -149,7 +151,7 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
   if (!data && !error) {
     const fallback = (await supabase
       .from("users")
-      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,business_type,platform_status)")
+      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
       .eq("email", user.email.toLowerCase())
       .maybeSingle()) as any;
 
@@ -191,6 +193,7 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
       id: restaurant.id,
       name: restaurant.name,
       slug: restaurant.slug,
+      staffCode: restaurant.staff_code ?? null,
       businessType: restaurant.business_type ?? null,
       platformStatus: restaurant.platform_status ?? "active"
     }

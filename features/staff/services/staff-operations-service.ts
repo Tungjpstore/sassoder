@@ -13,6 +13,8 @@ import {
 } from "@/lib/staff-permissions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
+import { staffOperationsCacheKey } from "@/lib/staff-operations-cache";
+import { readVpsTenantCache, writeVpsTenantCache } from "@/lib/vps-tenant-cache";
 import { listOrdersForRestaurant } from "@/services/order-service";
 import { listRestaurantUsers, getRestaurantOperationsSummary } from "@/services/restaurant-service";
 import { listOpenServiceRequests } from "@/services/service-request-service";
@@ -79,12 +81,21 @@ type StaffRolePermissionRow = {
 type StaffMemberRow = {
   id: string;
   user_id: string;
+  employee_code: string | null;
+  employee_number: number | null;
   role_id: string | null;
   role_code: string;
   full_name: string;
+  avatar_url: string | null;
+  date_of_birth: string | null;
+  hometown: string | null;
   phone: string | null;
   username: string | null;
   pin_hash: string | null;
+  must_change_app_password: boolean | null;
+  app_password_attempts: number | null;
+  app_password_locked_until: string | null;
+  app_password_last_failed_at: string | null;
   notes: string | null;
   employment_status: "active" | "suspended" | "resigned";
   emergency_contact_name: string | null;
@@ -130,6 +141,7 @@ type AttendanceRow = {
   staff_member_id: string;
   staff_user_id: string;
   branch_id: string | null;
+  shift_id: string | null;
   attendance_state: "on_time" | "late" | "early_leave" | "overtime" | "absent";
   approval_state: "auto_approved" | "pending" | "approved" | "rejected";
   clock_in_at: string;
@@ -523,6 +535,36 @@ async function readOptionalRows<T>(query: Promise<{ data: T[] | null; error: { c
   return data ?? [];
 }
 
+async function readStaffMemberRows(supabase: any, restaurantId: string) {
+  const fullSelect =
+    "id,user_id,employee_code,employee_number,role_id,role_code,full_name,avatar_url,date_of_birth,hometown,phone,username,pin_hash,must_change_app_password,app_password_attempts,app_password_locked_until,app_password_last_failed_at,notes,employment_status,emergency_contact_name,emergency_contact_phone,last_seen_at,archived_at";
+  const legacySelect = "id,user_id,role_id,role_code,full_name,phone,username,pin_hash,notes,employment_status,emergency_contact_name,emergency_contact_phone,last_seen_at,archived_at";
+  const query = (select: string) => supabase.from("staff_members").select(select).eq("restaurant_id", restaurantId).order("created_at", { ascending: true });
+  const result = await query(fullSelect);
+
+  if (!result.error) return (result.data ?? []) as StaffMemberRow[];
+  if (!isMissingStaffOperationsSchema(result.error)) throw result.error;
+
+  const fallback = await query(legacySelect);
+  if (fallback.error) {
+    if (isMissingStaffOperationsSchema(fallback.error)) return [] as StaffMemberRow[];
+    throw fallback.error;
+  }
+
+  return ((fallback.data ?? []) as Partial<StaffMemberRow>[]).map((row) => ({
+    employee_code: null,
+    employee_number: null,
+    avatar_url: null,
+    date_of_birth: null,
+    hometown: null,
+    must_change_app_password: null,
+    app_password_attempts: null,
+    app_password_locked_until: null,
+    app_password_last_failed_at: null,
+    ...row
+  })) as StaffMemberRow[];
+}
+
 function notificationVisibilityQuery(supabase: any, restaurantId: string, currentUserId?: string | null, scope?: StaffOperationsBundleScope) {
   const query = supabase
     .from("notifications")
@@ -534,6 +576,18 @@ function notificationVisibilityQuery(supabase: any, restaurantId: string, curren
   }
 
   return currentUserId ? query.or(`user_id.is.null,user_id.eq.${currentUserId}`) : query.is("user_id", null);
+}
+
+function resolveStaffOpsConfigReadiness() {
+  const attendanceQrSecretConfigured = Boolean(process.env.STAFF_ATTENDANCE_QR_SECRET?.trim());
+  const attendanceQrSecretRequired = process.env.NODE_ENV === "production";
+  const missingRequiredEnv = attendanceQrSecretRequired && !attendanceQrSecretConfigured ? ["STAFF_ATTENDANCE_QR_SECRET"] : [];
+
+  return {
+    attendanceQrSecretConfigured,
+    attendanceQrSecretRequired,
+    missingRequiredEnv
+  };
 }
 
 function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, currentUserId?: string | null): StaffOperationsBundle {
@@ -629,6 +683,10 @@ export async function getStaffOperationsBundle(
   currentUserId?: string | null,
   options: { scope?: StaffOperationsBundleScope } = {}
 ): Promise<StaffOperationsBundle> {
+  const cacheKey = staffOperationsCacheKey(restaurantId, currentUserId, options.scope);
+  const cachedBundle = await readVpsTenantCache<StaffOperationsBundle>(cacheKey);
+  if (cachedBundle) return cachedBundle;
+
   const supabase = createAdminSupabaseClient() as any;
   await ensureDefaultStoreBranch(restaurantId);
   const [users, branches, operations, entitlement] = await Promise.all([
@@ -652,6 +710,7 @@ export async function getStaffOperationsBundle(
   const weekEnd = weekRange[weekRange.length - 1];
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const shouldLoadAdminExtendedData = options.scope !== "self";
 
   const [
     roles,
@@ -682,13 +741,7 @@ export async function getStaffOperationsBundle(
     readOptionalRows<StaffRolePermissionRow>(
       supabase.from("staff_role_permissions").select("role_id,permission_key").eq("restaurant_id", restaurantId)
     ),
-    readOptionalRows<StaffMemberRow>(
-      supabase
-        .from("staff_members")
-        .select("id,user_id,role_id,role_code,full_name,phone,username,pin_hash,notes,employment_status,emergency_contact_name,emergency_contact_phone,last_seen_at,archived_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: true })
-    ),
+    readStaffMemberRows(supabase, restaurantId),
     readOptionalRows<StaffBranchAssignmentRow>(
       supabase
         .from("staff_branch_assignments")
@@ -713,7 +766,7 @@ export async function getStaffOperationsBundle(
     readOptionalRows<AttendanceRow>(
       supabase
         .from("attendance_logs")
-        .select("id,staff_member_id,staff_user_id,branch_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
+        .select("id,staff_member_id,staff_user_id,branch_id,shift_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
         .eq("restaurant_id", restaurantId)
         .gte("clock_in_at", sevenDaysAgo.toISOString())
         .order("clock_in_at", { ascending: false })
@@ -735,14 +788,16 @@ export async function getStaffOperationsBundle(
         .order("created_at", { ascending: false })
         .limit(40)
     ),
-    readOptionalRows<LegacyAuditRow>(
-      supabase
-        .from("audit_logs")
-        .select("id,actor_user_id,entity_type,entity_id,action,created_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: false })
-        .limit(20)
-    ),
+    shouldLoadAdminExtendedData
+      ? readOptionalRows<LegacyAuditRow>(
+          supabase
+            .from("audit_logs")
+            .select("id,actor_user_id,entity_type,entity_id,action,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(20)
+        )
+      : Promise.resolve([] as LegacyAuditRow[]),
     readOptionalRows<StaffSessionRow>(
       supabase
         .from("staff_sessions")
@@ -756,38 +811,46 @@ export async function getStaffOperationsBundle(
         .order("created_at", { ascending: false })
         .limit(20)
     ),
-    readOptionalRows<StaffReviewRow>(
-      supabase
-        .from("staff_reviews")
-        .select("id,staff_member_id,period_label,score,status,note,created_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: false })
-        .limit(120)
-    ),
-    readOptionalRows<StaffContractRow>(
-      supabase
-        .from("staff_contracts")
-        .select("id,staff_member_id,contract_type,template_code,contract_number,job_title,work_location,salary_amount,salary_payment_method,working_time,rest_time,start_date,end_date,status,e_signature_status,e_contract_provider,e_contract_id,signed_document_url,note,created_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: false })
-        .limit(120)
-    ),
-    readOptionalRows<StaffDocumentRow>(
-      supabase
-        .from("staff_documents")
-        .select("id,staff_member_id,document_name,document_type,file_url,file_size_bytes,status,note,created_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: false })
-        .limit(120)
-    ),
-    readOptionalRows<StaffDeviceRow>(
-      supabase
-        .from("staff_devices")
-        .select("id,staff_member_id,device_name,device_type,serial_number,device_fingerprint,trusted_for_attendance,trusted_at,last_seen_at,issued_at,status,note,created_at")
-        .eq("restaurant_id", restaurantId)
-        .order("created_at", { ascending: false })
-        .limit(120)
-    )
+    shouldLoadAdminExtendedData
+      ? readOptionalRows<StaffReviewRow>(
+          supabase
+            .from("staff_reviews")
+            .select("id,staff_member_id,period_label,score,status,note,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        )
+      : Promise.resolve([] as StaffReviewRow[]),
+    shouldLoadAdminExtendedData
+      ? readOptionalRows<StaffContractRow>(
+          supabase
+            .from("staff_contracts")
+            .select("id,staff_member_id,contract_type,template_code,contract_number,job_title,work_location,salary_amount,salary_payment_method,working_time,rest_time,start_date,end_date,status,e_signature_status,e_contract_provider,e_contract_id,signed_document_url,note,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        )
+      : Promise.resolve([] as StaffContractRow[]),
+    shouldLoadAdminExtendedData
+      ? readOptionalRows<StaffDocumentRow>(
+          supabase
+            .from("staff_documents")
+            .select("id,staff_member_id,document_name,document_type,file_url,file_size_bytes,status,note,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        )
+      : Promise.resolve([] as StaffDocumentRow[]),
+    shouldLoadAdminExtendedData
+      ? readOptionalRows<StaffDeviceRow>(
+          supabase
+            .from("staff_devices")
+            .select("id,staff_member_id,device_name,device_type,serial_number,device_fingerprint,trusted_for_attendance,trusted_at,last_seen_at,issued_at,status,note,created_at")
+            .eq("restaurant_id", restaurantId)
+            .order("created_at", { ascending: false })
+            .limit(120)
+        )
+      : Promise.resolve([] as StaffDeviceRow[])
   ]);
 
   const rolePermissionMap = new Map<string, StaffPermissionKey[]>();
@@ -880,10 +943,19 @@ export async function getStaffOperationsBundle(
       id: member?.id ?? user.id,
       userId: user.id,
       email: user.email,
+      employeeCode: member?.employee_code ?? null,
+      employeeNumber: member?.employee_number ?? null,
       fullName: member?.full_name || displayNameFromEmail(user.email),
+      avatarUrl: member?.avatar_url ?? null,
+      dateOfBirth: member?.date_of_birth ?? null,
+      hometown: member?.hometown ?? null,
       phone: member?.phone ?? null,
       username: member?.username ?? user.email.split("@")[0]?.toLowerCase() ?? null,
       hasPin: Boolean(member?.pin_hash),
+      mustChangeAppPassword: Boolean(member?.must_change_app_password),
+      appPasswordAttempts: member?.app_password_attempts ?? 0,
+      appPasswordLockedUntil: member?.app_password_locked_until ?? null,
+      appPasswordLastFailedAt: member?.app_password_last_failed_at ?? null,
       roleCode: resolvedRole?.code ?? roleCode,
       roleTitle: resolvedRole?.name ?? roleTemplate.title,
       roleProfile: resolvedRole?.legacy_permission_profile ?? roleTemplate.profile,
@@ -939,7 +1011,9 @@ export async function getStaffOperationsBundle(
       id: attendance.id,
       staffMemberId: attendance.staff_member_id,
       fullName: memberNameById.get(attendance.staff_member_id) ?? userById.get(attendance.staff_user_id)?.email ?? "Nhân viên",
+      branchId: attendance.branch_id,
       branchName: attendance.branch_id ? branchById.get(attendance.branch_id)?.name ?? null : null,
+      shiftName: attendance.shift_id ? shiftById.get(attendance.shift_id)?.name ?? null : null,
       state: attendance.attendance_state,
       source: attendance.clock_in_source,
       approvalState: attendance.approval_state,
@@ -1271,6 +1345,7 @@ export async function getStaffOperationsBundle(
 
   const bundle = {
     generatedAt: new Date().toISOString(),
+    opsConfig: resolveStaffOpsConfigReadiness(),
     overview: {
       activeStaff: members.filter((member) => member.activeSessionCount > 0 && !member.isArchived).length,
       lateAttendance: todayAttendanceRows.filter((attendance) => attendance.late_minutes > 0).length,
@@ -1308,5 +1383,7 @@ export async function getStaffOperationsBundle(
     premium
   } satisfies StaffOperationsBundle;
 
-  return options.scope === "self" ? scopeStaffOperationsBundleForSelf(bundle, currentUserId) : bundle;
+  const finalBundle = options.scope === "self" ? scopeStaffOperationsBundleForSelf(bundle, currentUserId) : bundle;
+  void writeVpsTenantCache({ ...cacheKey, value: finalBundle, ttlSeconds: options.scope === "self" ? 4 : 8 });
+  return finalBundle;
 }

@@ -1,5 +1,35 @@
 # Master Release Status - LogiVN
 
+## 2026-05-30 Production Deploy Addendum
+
+Decision: GO for production deployment after the current verification gate.
+
+Current release scope combines the dashboard performance rollout, staff app password identity flow, Telegram/VPS operational hardening, cache invalidation coverage, and Vercel production deployment.
+
+Release evidence captured on 2026-05-30:
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Supabase migration | Pass | `20260530103818_staff_identity_password_login` applied to production and recorded in `supabase_migrations.schema_migrations`. REST schema checks pass for `restaurants.staff_code`, staff identity/password columns, and `staff_incident_reports`. |
+| Migration safety | Pass with residual backup risk | Migration is additive/idempotent; no drop/truncate. Backfill was hardened to avoid staff-code collision during production apply. Supabase PITR remains `false`. |
+| Service-role boundary | Pass | `npm run infra:check` passes with 0 direct app service-role violations. |
+| App verification | Pass | `git diff --check`, `npm run infra:check`, TypeScript, VPS typecheck, full `npm test`, targeted staff RLS tests, lint, and `vercel build --prod` all pass. |
+| Vercel env | Pass | Production env list contains Supabase, staff QR/PIN, internal API, Telegram, maps, AI, billing/email and cron secrets as encrypted values. |
+| Lint residual | Warning only | 3 existing warnings: two `<img>` optimization warnings and one hook dependency warning; no lint errors. |
+
+Open residual risks for the watch window:
+
+| Risk | Severity | Handling |
+| --- | --- | --- |
+| Supabase PITR disabled | P1 | DB rollback is fix-forward-first. Do not run destructive migrations until PITR/full backup proof exists. |
+| Authenticated manual QA not fully signed | P1 | Run owner/staff/order/payment/reservation smoke immediately after deploy. |
+| Monitoring/log-drain sign-off incomplete | P1 | First-hour watch must cover Vercel errors, Supabase schema/auth errors, Telegram callbacks, payment confirmation and dashboard latency. |
+| VPS dashboard cache is opt-in | Note | Keep `LOGIVN_VPS_DASHBOARD_CACHE_ENABLED` disabled unless the VPS gateway cache endpoints are deployed and healthy. |
+
+Release confidence: High for code/build/schema compatibility; Medium for operational rollout because PITR/manual QA/monitoring evidence is incomplete.
+
+Rollback confidence: High for Vercel code rollback; Medium-low for database rollback because the production schema change is additive but PITR is disabled.
+
 Date: 2026-05-20
 Role: Release Commander + Principal Production Coordinator
 Scope: system-wide production readiness, release process, deployment safety, operational risk

@@ -246,6 +246,9 @@ async function upsertStaffOperationsProfile(
     phone?: string | null;
     username?: string | null;
     pin?: string | null;
+    dateOfBirth?: string | null;
+    hometown?: string | null;
+    mustChangeAppPassword?: boolean;
     employmentStatus?: "active" | "suspended" | "resigned";
     emergencyContactName?: string | null;
     emergencyContactPhone?: string | null;
@@ -265,6 +268,9 @@ async function upsertStaffOperationsProfile(
         };
       })()
     : {};
+  const passwordStatePayload = typeof input.mustChangeAppPassword === "boolean"
+    ? { must_change_app_password: input.mustChangeAppPassword }
+    : {};
 
   const profileResult = await supabase.from("staff_members").upsert(
     {
@@ -275,15 +281,18 @@ async function upsertStaffOperationsProfile(
       full_name: nullIfBlank(input.fullName) ?? profileNameFromEmail(input.email),
       phone: nullIfBlank(input.phone),
       username: nullIfBlank(input.username),
+      date_of_birth: nullIfBlank(input.dateOfBirth),
+      hometown: nullIfBlank(input.hometown),
       employment_status: input.employmentStatus ?? "active",
       emergency_contact_name: nullIfBlank(input.emergencyContactName),
       emergency_contact_phone: nullIfBlank(input.emergencyContactPhone),
       notes: nullIfBlank(input.notes),
       archived_at: input.employmentStatus === "resigned" ? new Date().toISOString() : null,
+      ...passwordStatePayload,
       ...pinPayload
     },
     { onConflict: "user_id" }
-  );
+  ).select("id,employee_code,employee_number,date_of_birth,hometown,must_change_app_password").single();
 
   if (profileResult.error && !isMissingStaffOperationsTable(profileResult.error)) {
     if (profileResult.error.code === "23505" && /pin/i.test(profileResult.error.message ?? "")) {
@@ -292,7 +301,17 @@ async function upsertStaffOperationsProfile(
     throw new AppError(profileResult.error.message, 400);
   }
 
-  return role;
+  return {
+    role,
+    profile: profileResult.data as {
+      id: string;
+      employee_code: string | null;
+      employee_number: number | null;
+      date_of_birth: string | null;
+      hometown: string | null;
+      must_change_app_password: boolean | null;
+    } | null
+  };
 }
 
 async function syncStaffPrimaryBranch(
@@ -669,6 +688,9 @@ export async function createRestaurantUser(input: {
   fullName: string;
   pin?: string | null;
   phone?: string | null;
+  dateOfBirth?: string | null;
+  hometown?: string | null;
+  mustChangeAppPassword?: boolean;
   branchId?: string | null;
   notes?: string | null;
 }) {
@@ -737,7 +759,7 @@ export async function createRestaurantUser(input: {
     throw new AppError(error.message, 400);
   }
 
-  await upsertStaffOperationsProfile(supabase, {
+  const staffProfile = await upsertStaffOperationsProfile(supabase, {
     restaurantId: input.restaurantId,
     userId: authUser.user.id,
     email: normalizedEmail,
@@ -746,6 +768,9 @@ export async function createRestaurantUser(input: {
     fullName: input.fullName,
     pin: input.pin ?? null,
     phone: input.phone ?? null,
+    dateOfBirth: input.dateOfBirth ?? null,
+    hometown: input.hometown ?? null,
+    mustChangeAppPassword: input.mustChangeAppPassword ?? true,
     notes: input.notes ?? null
   });
 
@@ -755,7 +780,12 @@ export async function createRestaurantUser(input: {
     branchId: input.branchId ?? null
   });
 
-  return data;
+  return {
+    ...data,
+    employeeCode: staffProfile.profile?.employee_code ?? null,
+    staffMemberId: staffProfile.profile?.id ?? null,
+    mustChangeAppPassword: staffProfile.profile?.must_change_app_password ?? true
+  };
 }
 
 export async function updateRestaurantUserRole(input: {
@@ -847,6 +877,8 @@ export async function updateRestaurantUserOperationsProfile(input: {
   actorUserId: string;
   fullName: string;
   phone?: string | null;
+  dateOfBirth?: string | null;
+  hometown?: string | null;
   username?: string | null;
   pin?: string | null;
   roleCode: string;
@@ -865,7 +897,7 @@ export async function updateRestaurantUserOperationsProfile(input: {
 
   const currentMemberResult = await supabase
     .from("staff_members")
-    .select("full_name,phone,username,notes,employment_status,emergency_contact_name,emergency_contact_phone")
+    .select("full_name,phone,username,date_of_birth,hometown,notes,employment_status,emergency_contact_name,emergency_contact_phone")
     .eq("restaurant_id", input.restaurantId)
     .eq("user_id", input.userId)
     .maybeSingle();
@@ -889,6 +921,8 @@ export async function updateRestaurantUserOperationsProfile(input: {
         full_name: string;
         phone: string | null;
         username: string | null;
+        date_of_birth: string | null;
+        hometown: string | null;
         notes: string | null;
         employment_status: "active" | "suspended" | "resigned";
         emergency_contact_name: string | null;
@@ -957,6 +991,8 @@ export async function updateRestaurantUserOperationsProfile(input: {
     fullName: input.fullName,
     pin: input.pin ?? null,
     phone: input.phone ?? currentMember?.phone ?? null,
+    dateOfBirth: input.dateOfBirth ?? currentMember?.date_of_birth ?? null,
+    hometown: input.hometown ?? currentMember?.hometown ?? null,
     username: input.username ?? currentMember?.username ?? null,
     employmentStatus: input.employmentStatus,
     emergencyContactName: input.emergencyContactName ?? currentMember?.emergency_contact_name ?? null,

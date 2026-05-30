@@ -346,6 +346,7 @@ export type TelegramConnection = {
   restaurant_id: string;
   branch_id: string | null;
   user_id: string;
+  staff_member_id: string | null;
   telegram_user_id: number;
   telegram_chat_id: number;
   telegram_username: string | null;

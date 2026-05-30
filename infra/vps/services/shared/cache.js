@@ -1,4 +1,4 @@
-import { tenantCacheKey } from "./redis-keys.js";
+import { tenantCacheKey, tenantKey } from "./redis-keys.js";
 
 export async function getTenantCache(connection, { tenantId, scope, identifier }) {
   const raw = await connection.get(tenantCacheKey(tenantId, scope, identifier));
@@ -13,7 +13,7 @@ export async function setTenantCache(connection, { tenantId, scope, identifier, 
 }
 
 export async function invalidateTenantCache(connection, { tenantId, scope, identifier = "*" }) {
-  const pattern = tenantCacheKey(tenantId, scope, identifier);
+  const pattern = identifier === "*" ? `${tenantKey(tenantId, "cache", scope)}:*` : tenantCacheKey(tenantId, scope, identifier);
   const stream = connection.scanStream({ match: pattern, count: 100 });
   let deleted = 0;
 

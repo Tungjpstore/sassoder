@@ -2,6 +2,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { assertStaffCanAccessServiceRequest } from "@/features/staff/services/staff-branch-authorization-service";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { resolveServiceRequest } from "@/services/service-request-service";
 
 export const preferredRegion = "sin1";
@@ -12,7 +13,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ req
     const session = await requireOperationalDashboardApiSession({ feature: "staff_call" });
     const { requestId } = await params;
     await assertStaffCanAccessServiceRequest(session, requestId);
-    return ok(await resolveServiceRequest(session.restaurantId, requestId));
+    const data = await resolveServiceRequest(session.restaurantId, requestId);
+    await invalidateStaffOperationsBundleCache(session.restaurantId);
+    return ok(data);
   } catch (error) {
     return fail(error);
   }

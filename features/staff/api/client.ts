@@ -151,6 +151,23 @@ export type StaffRequestCreatePayload = {
   reason?: string;
 };
 
+export type StaffSelfProfilePayload = {
+  fullName: string;
+  phone?: string;
+  dateOfBirth?: string;
+  hometown?: string;
+  avatarUrl?: string;
+};
+
+export type StaffIncidentReportPayload = {
+  staffMemberId: string;
+  branchId?: string;
+  title: string;
+  description: string;
+  severity?: "low" | "normal" | "high" | "urgent";
+  attachmentUrl?: string;
+};
+
 async function parseOperationalResponse<T>(response: Response, fallback: string) {
   const payload = (await response.json().catch(() => null)) as AttendanceApiResponse<T> | null;
   const requestSucceeded = payload?.success === true || payload?.ok === true;
@@ -234,6 +251,14 @@ export async function registerStaffAttendanceWifiNetwork(payload: StaffAttendanc
 
 export async function createStaffRequest(payload: StaffRequestCreatePayload) {
   return postOperational("/api/admin/staff-operations/requests", payload, "Không thể gửi yêu cầu nhân sự.");
+}
+
+export async function updateStaffSelfProfile(payload: StaffSelfProfilePayload) {
+  return postOperational("/api/admin/staff-operations/profile", payload, "Không thể cập nhật hồ sơ nhân viên.");
+}
+
+export async function reportStaffIncident(payload: StaffIncidentReportPayload) {
+  return postOperational("/api/admin/staff-operations/incidents", payload, "Không thể gửi báo cáo sự cố.");
 }
 
 export async function runStaffMobileQuickAction(action: StaffMobileQuickAction, targetId: string) {

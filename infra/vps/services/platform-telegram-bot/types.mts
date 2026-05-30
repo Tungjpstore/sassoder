@@ -34,4 +34,5 @@ export type PlatformTelegramConnection = {
   role: PlatformTelegramRole;
   scopes: string[];
   status: string;
+  platform_admin_user_id?: string | null;
 };

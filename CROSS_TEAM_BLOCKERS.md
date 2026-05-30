@@ -1,5 +1,27 @@
 # Cross-Team Blockers - LogiVN Release
 
+## 2026-05-30 Production Deploy Addendum
+
+Current release stance: GO for production deploy, with residual P1 watch items.
+
+Closed for this deploy:
+
+| ID | Status | Evidence |
+| --- | --- | --- |
+| P0-DB-STAFF-IDENTITY | Closed | Production migration `20260530103818_staff_identity_password_login` applied and schema verified through Supabase REST/service-role checks. |
+| P0-SERVICE-ROLE-BOUNDARY | Closed | Telegram callback dispatch validation moved behind `services/telegram-connection-service.ts`; `npm run infra:check` passes with 0 direct app service-role violations. |
+| P0-BUILD-VERIFY | Closed | TypeScript, VPS typecheck, lint, full tests, targeted staff RLS tests and Vercel production build pass. |
+| P0-ENV-PRESENCE | Closed | `vercel env ls production` confirms encrypted production values for required Supabase, staff, Telegram, billing/email, maps, AI, cron and internal API envs. |
+
+Residual non-P0 items to watch after deploy:
+
+| ID | Owner | Risk | Required Follow-up |
+| --- | --- | --- | --- |
+| P1-BACKUP | Database / Ops | Supabase PITR is `false`; DB rollback is not point-in-time. | Enable PITR or capture full data backup before any future risky/destructive migration. |
+| P1-QA | QA / Release | Authenticated production QA sign-off remains manual. | Verify owner login, staff login/change password, order/payment, reservation and RBAC after deploy. |
+| P1-MONITORING | Ops | Alert/log-drain sign-off remains incomplete. | Watch first-hour Vercel/Supabase/Telegram/payment errors and dashboard latency. |
+| P1-VPS-CACHE | DevOps | VPS dashboard cache requires gateway rollout before enabling flag. | Keep cache flag off unless `/cache` gateway endpoints are deployed and healthy. |
+
 Date: 2026-05-29
 Final release stance: NO-GO for production promotion until backup/PITR, authenticated QA and monitoring sign-off are complete.
 

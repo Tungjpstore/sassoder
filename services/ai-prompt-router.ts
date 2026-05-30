@@ -945,6 +945,7 @@ function buildOwnerNextStep(input: {
 function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unknown; context?: Record<string, unknown> }) {
   const snapshot = recordFromUnknown(input.snapshot);
   const context = recordFromUnknown(input.context);
+  const scope = recordFromUnknown(snapshot?.scope);
   const summary = recordFromUnknown(snapshot?.summary24h);
   const restaurant = recordFromUnknown(snapshot?.restaurant);
   const readiness = recordFromUnknown(restaurant?.setupReadiness);
@@ -958,6 +959,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const primaryInsightId = textValue(operationInsights?.primaryInsightId);
   const primaryInsight = insightRows.find((insight) => textValue(insight.id) === primaryInsightId) ?? insightRows[0];
   const route = textValue(context?.route) || textValue(context?.currentPath) || textValue(context?.pathname);
+  const scopeLabel = textValue(scope?.type) === "branch" ? `chi nhánh ${textValue(scope?.branchName) || textValue(scope?.branchId) || "được gán"}` : "toàn quán";
   const plan = ownerRoutePlans[input.intent];
   const passport = sanitizeOperationalPassport(context?.operationalPassport) || sanitizeOperationalPassport(context?.passport);
   const attentionOrders = topAttentionOrders(snapshot);
@@ -972,7 +974,7 @@ function buildOwnerContextDigest(input: { intent: OwnerAiIntent; snapshot?: unkn
   const orderStatus = statusCountText(summary?.statusCount);
   const paymentStatus = statusCountText(summary?.paymentStatusCount);
   const lines = [
-    `Context digest ưu tiên: intent=${input.intent}${route ? `, route=${route}` : ""}.`,
+    `Context digest ưu tiên: intent=${input.intent}, scope=${scopeLabel}${route ? `, route=${route}` : ""}.`,
     `Router hiểu nhiệm vụ: ${plan.outputMode}. Cần dữ liệu: ${plan.dataNeeds.join(", ")}. Hành động cho phép: ${plan.operatingActions.join(", ")}. Contract: ${plan.actionContract}`,
     summary
       ? `Ca 24h: ${numberValue(summary.orderCount)} đơn, doanh thu đã thanh toán ${formatVnd(summary.paidRevenue)}${orderStatus ? `, order ${orderStatus}` : ""}${paymentStatus ? `, payment ${paymentStatus}` : ""}.`
@@ -1144,7 +1146,7 @@ export function buildOwnerAssistantMessages(input: {
         `Yêu cầu của chủ quán:\n${input.message.trim()}`,
         contextDigest ? `\n\n${contextDigest}` : "",
         input.memoryContext ? `\n\nRestaurant memory được lưu cho đúng quán:\n${input.memoryContext.slice(0, 1800)}` : "",
-        input.snapshot ? `\nSnapshot vận hành đúng restaurant_id:\n${jsonBlock(input.snapshot, 9000)}` : "",
+        input.snapshot ? `\nSnapshot vận hành đúng phạm vi tenant/chi nhánh:\n${jsonBlock(input.snapshot, 9000)}` : "",
         input.context ? `\nNgữ cảnh UI từ dashboard:\n${jsonBlock(input.context, 5000)}` : "",
         "\nHãy trả lời plain text cực gọn theo 3 dòng: Tình huống, Bước tiếp, Nút/màn nên bấm. Không markdown. Không liệt kê dài vì UI đã có nút action riêng."
         + "\nNếu intent có output=draft/apply/queue, phải nói rõ draft/queue/action nào nên được tạo hoặc mở. Không chỉ tư vấn."

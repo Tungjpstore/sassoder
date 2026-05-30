@@ -1,5 +1,21 @@
 # Rollback Plan - LogiVN Production
 
+## 2026-05-30 Rollback Addendum
+
+Rollback stance for this deploy: Vercel code rollback first; database fix-forward only if the additive schema itself causes issues.
+
+| Layer | Rollback Action |
+| --- | --- |
+| Vercel app | Promote the previous stable production deployment or redeploy the previous commit, then run production smoke. |
+| Supabase migration `20260530103818` | Leave additive columns/table/functions in place during code rollback. Do not drop staff identity columns or `staff_incident_reports` while production data may exist. |
+| Dashboard performance cache | If cache causes stale data, disable `LOGIVN_VPS_DASHBOARD_CACHE_ENABLED` and redeploy/restart affected runtime; cache helpers fall back to Supabase. |
+| Telegram callback actions | If internal Telegram actions fail, roll back Vercel code and watch `telegram_callback_actions`/audit logs for replay or permission errors. |
+| Staff password flow | If staff login/change-password fails, roll back Vercel code; keep DB columns and repair data via fix-forward migration/service patch. |
+
+Rollback triggers: health failure, 5xx spike, auth/login breakage, payment confirmation inconsistency, tenant leak suspicion, staff login outage, or dashboard latency worse than pre-release.
+
+DB caveat: Supabase PITR is currently `false`, so destructive rollback is not approved. Future risky migrations require PITR/full backup proof first.
+
 Date: 2026-05-20
 Rollback confidence: low to medium-low until migration and backup blockers are closed.
 

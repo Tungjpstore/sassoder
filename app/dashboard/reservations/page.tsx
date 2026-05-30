@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
+import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { getReservationAnalytics, getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
@@ -15,13 +17,6 @@ function todayInputValue() {
 
 export default async function ReservationsPage() {
   const { session, entitlement } = await requireDashboardAccess("reservations");
-  const [settings, reservations, tables, analytics] = await Promise.all([
-    getReservationSettings(session.restaurantId),
-    listReservationsForRestaurant(session.restaurantId, todayInputValue()),
-    listTablesWithStatus(session.restaurantId),
-    getReservationAnalytics(session.restaurantId)
-  ]);
-
   return (
     <AdminShell
       title="Đặt bàn trước"
@@ -30,33 +25,72 @@ export default async function ReservationsPage() {
       entitlement={entitlement}
       subtitle="Nhận lịch giữ bàn, cọc VietQR, chống trùng giờ và đưa khách vào bàn đang phục vụ."
     >
-      <ReservationsWorkspace
-        restaurantId={session.restaurantId}
-        settings={settings}
-        initialReservations={JSON.parse(JSON.stringify(reservations))}
-        tableOptions={tables.map((table) => ({
-          id: table.id,
-          name: table.name,
-          area: table.area,
-          capacity: table.capacity,
-          tableAreaId: table.table_area_id ?? null,
-          floorLabel: table.floor_label ?? null,
-          seatingZone: table.seating_zone ?? null,
-          tableKind: table.table_kind ?? null,
-          isBookable: table.is_bookable !== false,
-          isHidden: Boolean(table.is_hidden),
-          isUnderMaintenance: Boolean(table.is_under_maintenance),
-          qrEnabled: table.qr_enabled,
-          qrToken: table.qr_token ?? null,
-          operationalStatus: table.status,
-          activeOrderCount: table.activeOrderCount,
-          activeBillCount: table.activeBillCount,
-          activeReservationCount: table.activeReservationCount,
-          unpaidTotal: table.unpaidTotal
-        }))}
-        publicUrl={buildTenantUrl(settings.slug, "/reserve")}
-        analytics={analytics}
-      />
+      <Suspense fallback={<ReservationsWorkspaceSkeleton />}>
+        <ReservationsWorkspaceContent restaurantId={session.restaurantId} />
+      </Suspense>
     </AdminShell>
+  );
+}
+
+async function ReservationsWorkspaceContent({ restaurantId }: { restaurantId: string }) {
+  const today = todayInputValue();
+  const { settings, reservations, tables, analytics } = await readThroughDashboardWorkspaceCache({
+    restaurantId,
+    workspace: "reservations",
+    identifier: `today:${today}`,
+    ttlSeconds: 5,
+    load: async () => {
+      const [settings, reservations, tables, analytics] = await Promise.all([
+        getReservationSettings(restaurantId),
+        listReservationsForRestaurant(restaurantId, today),
+        listTablesWithStatus(restaurantId),
+        getReservationAnalytics(restaurantId)
+      ]);
+
+      return { settings, reservations, tables, analytics };
+    }
+  });
+
+  return (
+    <ReservationsWorkspace
+      restaurantId={restaurantId}
+      settings={settings}
+      initialReservations={JSON.parse(JSON.stringify(reservations))}
+      tableOptions={tables.map((table) => ({
+        id: table.id,
+        name: table.name,
+        area: table.area,
+        capacity: table.capacity,
+        tableAreaId: table.table_area_id ?? null,
+        floorLabel: table.floor_label ?? null,
+        seatingZone: table.seating_zone ?? null,
+        tableKind: table.table_kind ?? null,
+        isBookable: table.is_bookable !== false,
+        isHidden: Boolean(table.is_hidden),
+        isUnderMaintenance: Boolean(table.is_under_maintenance),
+        qrEnabled: table.qr_enabled,
+        qrToken: table.qr_token ?? null,
+        operationalStatus: table.status,
+        activeOrderCount: table.activeOrderCount,
+        activeBillCount: table.activeBillCount,
+        activeReservationCount: table.activeReservationCount,
+        unpaidTotal: table.unpaidTotal
+      }))}
+      publicUrl={buildTenantUrl(settings.slug, "/reserve")}
+      analytics={analytics}
+    />
+  );
+}
+
+function ReservationsWorkspaceSkeleton() {
+  return (
+    <div className="dashboard-panel grid gap-4 p-4">
+      <div className="grid gap-3 md:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="h-24 animate-pulse rounded-xl bg-[#A9C5A1]/18" />
+        ))}
+      </div>
+      <div className="h-[460px] animate-pulse rounded-xl border border-[var(--border)] bg-[var(--soft-surface)]" />
+    </div>
   );
 }

@@ -4,6 +4,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { staffOperationalRequestSchema } from "@/lib/validators";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { createStaffOperationalRequest } from "@/features/staff/services/staff-request-service";
 
 export const preferredRegion = "sin1";
@@ -73,7 +74,9 @@ export async function POST(request: Request) {
       request.json().catch(() => ({}))
     ]);
     const input = staffOperationalRequestSchema.parse(payload);
-    return success(await createStaffOperationalRequest({ session, input }));
+    const data = await createStaffOperationalRequest({ session, input });
+    await invalidateStaffOperationsBundleCache(session.restaurantId);
+    return success(data);
   } catch (error) {
     return failure(error);
   }

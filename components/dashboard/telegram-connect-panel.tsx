@@ -64,6 +64,7 @@ type TelegramQueueCounts = {
 type TelegramQueueJobView = {
   id: string | null;
   name: string | null;
+  state: string | null;
   attemptsMade: number;
   failedReason: string | null;
   failedAt: string | null;
@@ -890,7 +891,7 @@ function AdvancedTelegramPanel({
             {queueJobs.map((job, index) => (
               <div key={`${job.id ?? "job"}-${index}`} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate font-semibold text-[var(--foreground)]">{job.name ?? "telegram job"}</span>
+                  <span className="truncate font-semibold text-[var(--foreground)]">{job.name ?? "telegram job"}{job.state ? ` · ${job.state}` : ""}</span>
                   <span className="shrink-0 font-semibold text-[var(--accent-strong)]">{job.attemptsMade} lần</span>
                 </div>
                 <span className="truncate text-[var(--muted-foreground)]">

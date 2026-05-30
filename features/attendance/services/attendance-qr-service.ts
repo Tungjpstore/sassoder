@@ -55,11 +55,14 @@ function createRawAttendanceQrToken() {
 }
 
 function dailyQrSecret() {
-  const secret = process.env.STAFF_ATTENDANCE_QR_SECRET || process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") {
+  const staffQrSecret = process.env.STAFF_ATTENDANCE_QR_SECRET?.trim();
+  if (staffQrSecret) return staffQrSecret;
+
+  if (process.env.NODE_ENV === "production") {
     throw new AppError("Thiếu STAFF_ATTENDANCE_QR_SECRET để tạo QR chấm công hằng ngày.", 503);
   }
-  return secret || "logivn-dev-attendance-daily-qr-secret";
+
+  return process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "logivn-dev-attendance-daily-qr-secret";
 }
 
 function dateKeyInVietnam(value: Date) {

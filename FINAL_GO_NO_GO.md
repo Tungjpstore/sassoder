@@ -1,5 +1,32 @@
 # Final Go / No-Go - LogiVN Production Release
 
+## 2026-05-30 Final Decision
+
+Decision: GO for production deployment, with a required first-hour watch.
+
+Why this is GO:
+
+1. No unresolved P0 remains in the current release batch.
+2. Staff identity/password Supabase migration is applied before code deploy and verified in production schema.
+3. Service-role boundary is clean: `npm run infra:check` reports 0 direct app service-role violations.
+4. Build/verification gates pass: whitespace, infra, TypeScript, VPS typecheck, targeted staff RLS tests, full `npm test`, lint and Vercel production build.
+5. Vercel production env contains encrypted required runtime secrets.
+
+Release confidence: High for code/build/schema; Medium for operations.
+
+Rollback confidence: High for Vercel code; Medium-low for DB because PITR is disabled. The applied DB migration is additive and should remain in place during code rollback.
+
+Unresolved risks accepted for this deploy:
+
+| Risk | Severity | Action |
+| --- | --- | --- |
+| Supabase PITR disabled | P1 | No destructive migrations; fix-forward only. Enable PITR/full backup before future risky DB work. |
+| Manual authenticated QA not fully signed | P1 | Execute post-deploy smoke for owner/staff/order/payment/reservation/RBAC. |
+| Monitoring/log-drain sign-off incomplete | P1 | Watch first-hour Vercel/Supabase/Telegram/payment errors and dashboard latency. |
+| VPS dashboard cache flag sequencing | P1 | Keep cache flag disabled until VPS gateway cache endpoints are deployed and healthy. |
+
+Final conclusion: GO.
+
 ## 2026-05-29 Refresh
 
 Decision: NO-GO for production promotion.

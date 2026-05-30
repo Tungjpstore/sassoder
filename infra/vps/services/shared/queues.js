@@ -323,17 +323,104 @@ export async function queueSummary({ includeDeadLetters = true } = {}) {
 
 export async function failedJobs({ queueName, limit = 25 }) {
   const queue = getQueue(queueName);
-  const jobs = await queue.getFailed(0, Math.max(0, limit - 1));
-  return jobs.map((job) => ({
+  const jobs = queueName.endsWith(".dlq") ? await deadLetterJobs(queue, limit) : await queue.getFailed(0, Math.max(0, limit - 1));
+  return Promise.all(jobs.map(serializeQueueJob));
+}
+
+export async function retryFailedJob({ queueName, jobId, actor = "system" }) {
+  const resolvedQueueName = resolveQueueName(queueName);
+  if (!isSupportedQueue(resolvedQueueName)) throw new Error(`Unsupported queue: ${queueName}`);
+  if (!jobId) throw new Error("queue_job_id_required");
+
+  const queue = getQueue(resolvedQueueName);
+  const job = await queue.getJob(String(jobId));
+  if (!job) throw new Error("queue_job_not_found");
+
+  const state = await job.getState();
+  if (resolvedQueueName.endsWith(".dlq")) return replayDeadLetterJob({ queueName: resolvedQueueName, job, state, actor });
+  if (state !== "failed") throw new Error(`queue_job_not_failed:${state}`);
+
+  await job.retry("failed");
+  return {
+    mode: "retry",
+    queueName: resolvedQueueName,
+    jobId: String(job.id),
+    name: job.name,
+    previousState: state
+  };
+}
+
+async function replayDeadLetterJob({ queueName, job, state, actor }) {
+  const data = job.data && typeof job.data === "object" ? job.data : {};
+  if (data.replayedAt) throw new Error("dead_letter_already_replayed");
+
+  const failedQueueName = resolveQueueName(String(data.failedQueueName ?? ""));
+  if (!queueNames.includes(failedQueueName)) throw new Error("dead_letter_original_queue_invalid");
+
+  const failedJobName = String(data.failedJobName || "dead-letter-replay").slice(0, 120);
+  const failedData = data.data && typeof data.data === "object" ? data.data : {};
+  const replayedAt = new Date().toISOString();
+  const replayedJob = await enqueueJob({
+    queueName: failedQueueName,
+    name: failedJobName,
+    data: failedData,
+    priority: "critical",
+    opts: {
+      jobId: jobIdForParts(failedQueueName, "dlq-replay", job.id ?? Date.now(), Date.now()),
+      attempts: queueDefinition(failedQueueName).attempts
+    }
+  });
+
+  await job.updateData({
+    ...data,
+    replayedAt,
+    replayedBy: String(actor).slice(0, 160),
+    replayedQueueName: failedQueueName,
+    replayedJobId: replayedJob.id
+  });
+
+  return {
+    mode: "dead_letter_replay",
+    queueName,
+    jobId: String(job.id),
+    name: job.name,
+    previousState: state,
+    replayed: {
+      queueName: failedQueueName,
+      jobId: String(replayedJob.id),
+      name: failedJobName
+    }
+  };
+}
+
+async function deadLetterJobs(queue, limit) {
+  const end = Math.max(0, limit - 1);
+  const batches = await Promise.all([queue.getFailed(0, end), queue.getWaiting(0, end), queue.getDelayed(0, end)]);
+  const seen = new Set();
+  return batches
+    .flat()
+    .filter((job) => {
+      const key = String(job.id ?? "");
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((left, right) => Number(right.timestamp ?? 0) - Number(left.timestamp ?? 0))
+    .slice(0, Math.max(0, limit));
+}
+
+async function serializeQueueJob(job) {
+  return {
     id: job.id,
     name: job.name,
+    state: await job.getState(),
     attemptsMade: job.attemptsMade,
     failedReason: job.failedReason,
     timestamp: job.timestamp,
     processedOn: job.processedOn,
     finishedOn: job.finishedOn,
     data: redactLargePayload(job.data)
-  }));
+  };
 }
 
 function queueConfig(domain, { attempts, delay, priority, timeoutMs }) {

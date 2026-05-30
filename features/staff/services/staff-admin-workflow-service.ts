@@ -253,7 +253,7 @@ export async function createStaffDocument({
       document_name: input.documentName,
       document_type: input.documentType,
       file_url: input.fileUrl || null,
-      status: "complete",
+      status: input.status,
       note: input.note || null,
       created_by: actorUserId
     })
@@ -278,8 +278,8 @@ export async function createStaffDocument({
     restaurantId,
     staff,
     type: "staff_document_created",
-    title: "Tài liệu nhân sự đã được thêm",
-    body: input.documentName
+    title: input.status === "complete" ? "Tài liệu nhân sự đã được thêm" : "Hồ sơ nhân sự cần bổ sung",
+    body: input.status === "complete" ? input.documentName : `${input.documentName} đang ở trạng thái cần xử lý`
   });
 
   return result.data;

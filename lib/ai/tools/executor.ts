@@ -36,6 +36,7 @@ export type AiToolResult = {
 
 export type AiToolContext = {
   restaurantId: string;
+  branchId?: string | null;
   userId?: string | null;
   customerSessionId?: string | null;
   surface: AiToolSurfaceValue;

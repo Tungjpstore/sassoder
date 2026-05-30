@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { AppError } from "@/lib/response";
 import {
   inventoryAlertStatusSchema,
@@ -47,8 +48,9 @@ import {
 } from "@/services/inventory-service";
 import { requireOperationalAdminSession } from "./shared";
 
-function revalidateInventorySurfaces(restaurantId: string, options: { dashboard?: boolean } = {}) {
+async function revalidateInventorySurfaces(restaurantId: string, options: { dashboard?: boolean } = {}) {
   invalidateInventorySnapshotCache(restaurantId);
+  await invalidateDashboardWorkspaceCaches(restaurantId, ["inventory", "overview"]);
   revalidatePath("/dashboard/inventory");
   if (options.dashboard) revalidatePath("/dashboard");
 }
@@ -69,7 +71,7 @@ export async function createInventoryCategoryAction(formData: FormData) {
   });
 
   await createInventoryCategory(session.restaurantId, parsed);
-  revalidateInventorySurfaces(session.restaurantId);
+  await revalidateInventorySurfaces(session.restaurantId);
 }
 
 export async function createInventorySupplierAction(formData: FormData) {
@@ -83,7 +85,7 @@ export async function createInventorySupplierAction(formData: FormData) {
   });
 
   await createInventorySupplier(session.restaurantId, parsed);
-  revalidateInventorySurfaces(session.restaurantId);
+  await revalidateInventorySurfaces(session.restaurantId);
 }
 
 export async function createInventoryPurchaseOrderAction(formData: FormData) {
@@ -140,7 +142,7 @@ export async function createInventoryPurchaseOrderAction(formData: FormData) {
     actorUserId: session.userId,
     lines
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
@@ -168,13 +170,13 @@ export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
     actorUserId: session.userId,
     lines
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function refreshInventoryAlertsAction(_formData?: FormData) {
   const session = await requireOperationalAdminSession("inventory_management");
   await refreshInventoryAlerts(session.restaurantId);
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function applyInventoryCountAction(formData: FormData) {
@@ -225,7 +227,7 @@ export async function applyInventoryCountAction(formData: FormData) {
     actorUserId: session.userId,
     lines
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function createInventoryTransferAction(formData: FormData) {
@@ -278,7 +280,7 @@ export async function createInventoryTransferAction(formData: FormData) {
     actorUserId: session.userId,
     lines
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function processInventoryTransferAction(formData: FormData) {
@@ -301,7 +303,7 @@ export async function processInventoryTransferAction(formData: FormData) {
     })),
     actorUserId: session.userId
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function updateInventoryAlertStatusAction(formData: FormData) {
@@ -316,7 +318,7 @@ export async function updateInventoryAlertStatusAction(formData: FormData) {
     status: parsed.status,
     actorUserId: session.userId
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function createInventoryIngredientAction(formData: FormData) {
@@ -347,7 +349,7 @@ export async function createInventoryIngredientAction(formData: FormData) {
     reorderLeadDays: parsed.reorderLeadDays,
     actorUserId: session.userId
   });
-  revalidateInventorySurfaces(session.restaurantId);
+  await revalidateInventorySurfaces(session.restaurantId);
 }
 
 export async function updateInventoryIngredientAction(formData: FormData) {
@@ -378,7 +380,7 @@ export async function updateInventoryIngredientAction(formData: FormData) {
     storageNote: parsed.storageNote || undefined,
     reorderLeadDays: parsed.reorderLeadDays
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function deactivateInventoryIngredientAction(formData: FormData) {
@@ -388,7 +390,7 @@ export async function deactivateInventoryIngredientAction(formData: FormData) {
   });
 
   await deactivateInventoryIngredient(session.restaurantId, parsed.ingredientId);
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function recordInventoryMovementAction(formData: FormData) {
@@ -419,7 +421,7 @@ export async function recordInventoryMovementAction(formData: FormData) {
     },
     actorUserId: session.userId
   });
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function importInventoryIntakeAction(
@@ -443,7 +445,7 @@ export async function importInventoryIntakeAction(
     actorUserId: session.userId
   });
 
-  revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
+  await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 
   return {
     ...result,
@@ -461,7 +463,7 @@ export async function upsertInventoryRecipeLineAction(formData: FormData) {
   });
 
   await upsertInventoryRecipeLine(session.restaurantId, parsed);
-  revalidateInventorySurfaces(session.restaurantId);
+  await revalidateInventorySurfaces(session.restaurantId);
 }
 
 export async function deleteInventoryRecipeLineAction(formData: FormData) {
@@ -471,5 +473,5 @@ export async function deleteInventoryRecipeLineAction(formData: FormData) {
   });
 
   await deleteInventoryRecipeLine(session.restaurantId, parsed.recipeLineId);
-  revalidateInventorySurfaces(session.restaurantId);
+  await revalidateInventorySurfaces(session.restaurantId);
 }

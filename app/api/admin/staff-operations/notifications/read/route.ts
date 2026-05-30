@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { markStaffNotificationsRead } from "@/features/staff/services/staff-operations-service";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { AppError } from "@/lib/response";
@@ -81,6 +82,7 @@ export async function POST(request: Request) {
       notificationId: input.notificationId,
       all: input.all
     });
+    await invalidateStaffOperationsBundleCache(session.restaurantId);
 
     return success(result);
   } catch (error) {

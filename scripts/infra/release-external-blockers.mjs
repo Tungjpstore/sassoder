@@ -102,6 +102,24 @@ function hasValue(key) {
   return typeof value === "string" && value.trim() !== "";
 }
 
+function vercelProductionEnvNames() {
+  const result = run("npx", ["--yes", "vercel", "env", "list", "production"], { timeoutMs: 120_000 });
+  evidence.commands.vercelStaffHrEnv = result;
+
+  if (result.status !== 0) {
+    return { names: new Set(), error: summarizeCommandError(result) };
+  }
+
+  const names = new Set();
+  const output = result.stdout.replace(/\x1b\[[0-9;]*m/g, "");
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\s*([A-Z][A-Z0-9_]+)\s+Encrypted\s+Production\b/);
+    if (match?.[1]) names.add(match[1]);
+  }
+
+  return { names, error: null };
+}
+
 function migrationStats() {
   const migrationsDir = path.join(rootDir, "supabase/migrations");
   if (!existsSync(migrationsDir)) return { count: 0, duplicateVersions: [] };
@@ -306,6 +324,34 @@ function monitoringReadiness() {
   });
 }
 
+function staffHrEnvReadiness() {
+  const requiredEnv = ["STAFF_ATTENDANCE_QR_SECRET", "STAFF_PIN_PEPPER"];
+  const missingLocalEnv = requiredEnv.filter((key) => !hasValue(key));
+
+  if (missingLocalEnv.length === 0) {
+    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR and PIN secrets are configured for release preflight.", {
+      source: "local-release-env"
+    });
+    return;
+  }
+
+  const vercelEnv = vercelProductionEnvNames();
+  const missingEnv = requiredEnv.filter((key) => !hasValue(key) && !vercelEnv.names.has(key));
+
+  if (missingEnv.length === 0) {
+    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR and PIN secrets are configured in Vercel Production.", {
+      source: "vercel-production-env"
+    });
+    return;
+  }
+
+  addCheck("staff-hr-secrets", "block", "Staff HR production secrets are incomplete; QR/PIN staff flows are not release-ready.", {
+    missingEnv,
+    missingLocalEnv,
+    vercelEnvList: vercelEnv.error ? `unavailable: ${vercelEnv.error}` : "checked"
+  });
+}
+
 function summarizeCommandError(result) {
   const output = `${result.stderr}\n${result.stdout}`.trim();
   if (result.timedOut) return "Command timed out.";
@@ -379,6 +425,7 @@ supabaseReadiness();
 dockerAndDumpReadiness();
 qaReadiness();
 monitoringReadiness();
+staffHrEnvReadiness();
 
 const report = markdownReport();
 

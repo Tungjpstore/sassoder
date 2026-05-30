@@ -69,6 +69,7 @@ export type SessionProfile = {
     id: string;
     name: string;
     slug: string;
+    staffCode?: string | null;
     businessType?: BusinessType | null;
     platformStatus?: "active" | "suspended" | "deleted";
   };

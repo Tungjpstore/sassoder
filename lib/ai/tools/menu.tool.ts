@@ -111,11 +111,14 @@ export async function find_best_seller(args: Record<string, unknown>, context: A
   const supabase = createAdminSupabaseClient();
   const limit = Math.min(Math.max(Number(args.limit ?? 5), 1), 10);
 
-  const { data: orders, error } = await supabase
+  let query = supabase
     .from("orders")
     .select("items:order_items(quantity,menuItem:menu_items(id,name,price))")
     .eq("restaurant_id", context.restaurantId)
-    .in("status", ["paid", "completed"])
+    .in("status", ["paid", "completed"]);
+  if (context.branchId) query = query.eq("branch_id", context.branchId);
+
+  const { data: orders, error } = await query
     .order("created_at", { ascending: false })
     .limit(500);
 

@@ -14,9 +14,11 @@ import {
   getQueue,
   publishOperationalEvent,
   queueSummary,
-  recentOperationalEvents
+  recentOperationalEvents,
+  retryFailedJob
 } from "../shared/queues.js";
 import { checkRedisRateLimit } from "../shared/rate-limit.js";
+import { getTenantCache, invalidateTenantCache, setTenantCache } from "../shared/cache.js";
 import { createRedisConnection, redisServerSnapshot } from "../shared/redis.js";
 import { tenantRateLimitKey } from "../shared/redis-keys.js";
 import { getRealtimeState, listRealtimeState, setRealtimeState } from "../shared/realtime-state.js";
@@ -34,6 +36,13 @@ const enqueueSchema = z.object({
   data: z.record(z.string(), z.unknown()).and(z.object({ tenantId: z.string().min(1).optional(), restaurantId: z.string().min(1).optional() })),
   priority: z.enum(priorityNames).optional(),
   opts: z.record(z.string(), z.unknown()).optional()
+});
+
+const queueControlNames = queueNames.map((name) => `${name}.dlq`).concat(queueNames);
+const retryQueueJobSchema = z.object({
+  queueName: z.enum(queueControlNames),
+  jobId: z.union([z.string().min(1).max(180), z.number().int().nonnegative()]).transform(String),
+  actor: z.string().min(1).max(160).optional()
 });
 
 const eventSchema = z
@@ -99,6 +108,23 @@ const rateLimitSchema = z.object({
   identifier: z.string().min(1).max(160),
   limit: z.number().int().min(1).max(10_000),
   windowMs: z.number().int().min(1000).max(86_400_000)
+});
+
+const tenantCacheQuerySchema = z.object({
+  tenantId: z.string().min(1),
+  scope: z.string().min(1).max(120),
+  identifier: z.string().min(1).max(180)
+});
+
+const tenantCacheWriteSchema = tenantCacheQuerySchema.extend({
+  value: z.unknown(),
+  ttlSeconds: z.number().int().min(1).max(3600).default(30)
+});
+
+const tenantCacheInvalidateSchema = z.object({
+  tenantId: z.string().min(1),
+  scope: z.string().min(1).max(120),
+  identifier: z.string().min(1).max(180).default("*")
 });
 
 const realtimeStateSchema = z.object({
@@ -205,6 +231,16 @@ app.post("/queues/jobs", requireInternalApiKey, async (req, res, next) => {
   }
 });
 
+app.post("/queues/retry", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = retryQueueJobSchema.parse(req.body);
+    const result = await retryFailedJob(payload);
+    res.status(202).json({ ok: true, result });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/locks/acquire", requireInternalApiKey, async (req, res, next) => {
   try {
     const payload = lockAcquireSchema.parse(req.body);
@@ -233,6 +269,36 @@ app.post("/rate-limits/check", requireInternalApiKey, async (req, res, next) => 
       windowMs: payload.windowMs
     });
     res.status(result.allowed ? 200 : 429).json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/cache", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const query = tenantCacheQuerySchema.parse(req.query);
+    const value = await getTenantCache(controlRedis, query);
+    res.json({ ok: true, hit: value !== null, value });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/cache", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = tenantCacheWriteSchema.parse(req.body);
+    const result = await setTenantCache(controlRedis, payload);
+    res.status(202).json({ ok: true, ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/cache", requireInternalApiKey, async (req, res, next) => {
+  try {
+    const payload = tenantCacheInvalidateSchema.parse(req.body ?? {});
+    const result = await invalidateTenantCache(controlRedis, payload);
+    res.json({ ok: true, ...result });
   } catch (error) {
     next(error);
   }

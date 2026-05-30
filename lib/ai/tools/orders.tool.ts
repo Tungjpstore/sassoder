@@ -3,6 +3,16 @@ import "server-only";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import type { AiToolContext, AiToolDefinition, AiToolResult } from "./executor";
 
+type SalesOrderRow = {
+  total: number | string | null;
+  status: string | null;
+  payment_status: string | null;
+};
+
+type PeakHourOrderRow = {
+  created_at: string | null;
+};
+
 export const orderTools = [
   {
     type: "function" as const,
@@ -66,23 +76,30 @@ function getDateRange(timeRange: string) {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+function branchScoped(query: any, context: AiToolContext) {
+  return context.branchId ? query.eq("branch_id", context.branchId) : query;
+}
+
 export async function summarize_sales(args: Record<string, unknown>, context: AiToolContext): Promise<AiToolResult> {
   const supabase = createAdminSupabaseClient();
   const timeRange = typeof args.timeRange === "string" ? args.timeRange : "today";
   const { start, end } = getDateRange(timeRange);
 
-  const { data: orders, error } = await supabase
-    .from("orders")
-    .select("total, status, payment_status")
-    .eq("restaurant_id", context.restaurantId)
-    .gte("created_at", start)
-    .lte("created_at", end);
+  const { data: orders, error } = await branchScoped(
+    supabase
+      .from("orders")
+      .select("total, status, payment_status")
+      .eq("restaurant_id", context.restaurantId)
+      .gte("created_at", start)
+      .lte("created_at", end),
+    context
+  );
 
   if (error) {
     return { status: "error", message: "Không thể lấy dữ liệu đơn hàng." };
   }
 
-  const validOrders = orders || [];
+  const validOrders = (orders ?? []) as SalesOrderRow[];
   const totalOrders = validOrders.length;
   const paidOrders = validOrders.filter((order) => order.status === "completed" || order.payment_status === "paid" || order.status === "paid");
   const totalRevenue = paidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
@@ -102,11 +119,14 @@ export async function analyze_peak_hour(_args: Record<string, unknown>, context:
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const { data: orders, error } = await supabase
-    .from("orders")
-    .select("created_at")
-    .eq("restaurant_id", context.restaurantId)
-    .gte("created_at", thirtyDaysAgo.toISOString());
+  const { data: orders, error } = await branchScoped(
+    supabase
+      .from("orders")
+      .select("created_at")
+      .eq("restaurant_id", context.restaurantId)
+      .gte("created_at", thirtyDaysAgo.toISOString()),
+    context
+  );
 
   if (error || !orders || orders.length === 0) {
     return { status: "error", message: "Chưa có đủ dữ liệu để phân tích giờ cao điểm." };
@@ -114,7 +134,7 @@ export async function analyze_peak_hour(_args: Record<string, unknown>, context:
 
   const hourCounts: Record<number, number> = {};
 
-  orders.forEach((order) => {
+  ((orders ?? []) as PeakHourOrderRow[]).forEach((order) => {
     if (!order.created_at) return;
     const hour = new Date(order.created_at).getHours();
     hourCounts[hour] = (hourCounts[hour] || 0) + 1;

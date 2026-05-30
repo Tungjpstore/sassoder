@@ -45,7 +45,7 @@ import {
   type TelegramConnection,
   type TelegramNotificationJob
 } from "./types.mjs";
-import type { TelegramOpsInboxItem } from "./repository.mjs";
+import type { TelegramOpsInboxItem, TelegramOpsInboxSlice } from "./repository.mjs";
 
 const TELEGRAM_QUEUE = "telegram.notifications";
 const TELEGRAM_SESSION_CALLBACK_PREFIX = "s:";
@@ -138,6 +138,13 @@ const aiOpsCounter = createCounter({
   name: "logivn_telegram_ai_ops_total",
   help: "Telegram AI Ops command attempts",
   labelNames: ["command", "status"] as const
+});
+
+const interactionLatency = createHistogram({
+  name: "logivn_telegram_interaction_seconds",
+  help: "Telegram command and callback latency",
+  labelNames: ["kind", "action", "status"] as const,
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30]
 });
 
 const deliveryLatency = createHistogram({
@@ -235,6 +242,8 @@ if (bot) {
 
   bot.on("callback_query:data", async (ctx) => {
     let actionType = "unknown";
+    let acknowledged = false;
+    const stopTimer = interactionLatency.startTimer({ kind: "callback", action: actionType });
     try {
       if (!ctx.from) throw new Error("telegram_user_missing");
       if (await isTelegramUserRateLimited("callback", ctx.from.id)) {
@@ -242,8 +251,12 @@ if (bot) {
       }
       if (ctx.callbackQuery.data.startsWith(TELEGRAM_SESSION_CALLBACK_PREFIX)) {
         await handleTelegramSessionCallback(ctx, ctx.callbackQuery.data.slice(TELEGRAM_SESSION_CALLBACK_PREFIX.length));
+        stopTimer({ status: "accepted" });
         return;
       }
+      await ctx.answerCallbackQuery({ text: "Đang xử lý..." }).then(() => {
+        acknowledged = true;
+      }).catch(() => undefined);
       const claimed = await claimCallbackAction(ctx.callbackQuery.data, ctx.from.id);
       actionType = claimed.action.action_type;
       await touchConnection(claimed.connection.restaurant_id, ctx.from.id).catch((error) => {
@@ -251,15 +264,21 @@ if (bot) {
       });
       const result = await executeInternalAction(claimed.action, claimed.connection);
       callbackCounter.inc({ action_type: claimed.action.action_type, status: "accepted" });
-      await ctx.answerCallbackQuery({ text: result.message ?? "Đã thực hiện." });
       await ctx.editMessageReplyMarkup().catch(() => undefined);
+      await ctx.reply(result.message ?? "Đã thực hiện.").catch(() => undefined);
+      stopTimer({ status: "accepted" });
     } catch (error) {
       callbackCounter.inc({ action_type: actionType, status: "failed" });
       logger.warn({ error: safeLogError(error) }, "telegram callback rejected");
-      await ctx.answerCallbackQuery({
-        text: friendlyCallbackError(error),
-        show_alert: true
-      });
+      if (acknowledged) {
+        await ctx.reply(friendlyCallbackError(error)).catch(() => undefined);
+      } else {
+        await ctx.answerCallbackQuery({
+          text: friendlyCallbackError(error),
+          show_alert: true
+        });
+      }
+      stopTimer({ status: "failed" });
     }
   });
 
@@ -559,9 +578,10 @@ async function buildKeyboard(
 ) {
   const keyboard = new InlineKeyboard();
   const actions = actionsForEvent(event).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType]));
+  const tokens = await Promise.all(actions.map((actionType) => createCallbackTokenForEvent(event, actionType, connection, notificationId)));
 
-  for (const actionType of actions) {
-    keyboard.text(labelForAction(actionType), await createCallbackTokenForEvent(event, actionType, connection, notificationId));
+  for (const [index, actionType] of actions.entries()) {
+    keyboard.text(labelForAction(actionType), tokens[index]);
   }
 
   if (actions.length > 0) keyboard.row();
@@ -696,15 +716,17 @@ async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
     return;
   }
 
-  await buildTenantOpsMenuKeyboard(keyboard, connections[0]);
+  const primaryConnection = connections[0];
+  await buildTenantOpsMenuKeyboard(keyboard, primaryConnection);
 
   const connectionSummary = connections
     .slice(0, 3)
     .map((connection) => `- ${connectionLabel(connection)} · ${connection.role}`)
     .join("\n");
   const extra = connections.length > 3 ? `\n+${connections.length - 3} kết nối khác` : "";
+  const title = primaryConnection.role === "ADMIN" ? headline : "LogiVN Staff Ops";
 
-  await ctx.reply(compactTelegramText(`${headline}\n\n${connectionSummary}${extra}\n\nChọn việc cần xử lý.`), {
+  await ctx.reply(compactTelegramText(`${title}\n\n${connectionSummary}${extra}\n\nChọn việc cần xử lý.`), {
     reply_markup: keyboard
   });
 }
@@ -712,7 +734,7 @@ async function replyWithOpsMenu(ctx: Context, headline = "LogiVN Ops Center") {
 async function replyWithHelp(ctx: Context) {
   const keyboard = new InlineKeyboard();
   const connections = ctx.from ? await getTelegramConnectionsForUser(ctx.from.id) : [];
-  if (connections.length > 0) keyboard.text("Mở menu", await signedMenuCallback(connections[0], "menu")).row();
+  if (connections.length > 0) keyboard.text("Mở menu", (await signedMenuCallbacks(connections[0], ["menu"])).menu).row();
   keyboard.url("Dashboard", absoluteAppUrl("/dashboard/settings?section=notifications"));
 
   await ctx.reply(
@@ -753,8 +775,9 @@ async function replyWithConnectionStatus(ctx: Context) {
     return `- ${connectionLabel(connection)} · ${connection.role} · ${permissions}`;
   });
 
+  const callbacks = await signedMenuCallbacks(connections[0], ["menu"]);
   const keyboard = new InlineKeyboard()
-    .text("Mở menu", await signedMenuCallback(connections[0], "menu"))
+    .text("Mở menu", callbacks.menu)
     .row()
     .url("Quản lý kết nối", absoluteAppUrl("/dashboard/settings?section=notifications"));
   await ctx.reply(compactTelegramText(`Kết nối đang hoạt động\n\n${rows.join("\n")}`), { reply_markup: keyboard });
@@ -805,15 +828,23 @@ async function replyWithOpsBoard(ctx: Context, preferredConnection?: TelegramCon
   }
 
   const board = await getTelegramOpsBoard(connection);
+  const callbacks = await signedMenuCallbacks(connection, ["ops_board", "tinhhinh", "hot_orders", "payments", "reservations", "staff", "menu_ops", "incidents"]);
   const counts = board.counts;
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", await signedMenuCallback(connection, "ops_board"))
-    .text("AI tóm tắt", await signedMenuCallback(connection, "tinhhinh"))
+    .text("Làm mới", callbacks.ops_board)
+    .text("AI tóm tắt", callbacks.tinhhinh)
     .row()
-    .text("Đơn nóng", await signedMenuCallback(connection, "hot_orders"))
-    .text("Thanh toán", await signedMenuCallback(connection, "payments"))
+    .text("Đơn nóng", callbacks.hot_orders)
+    .text("Thanh toán", callbacks.payments)
     .row()
-    .url("Mở Dashboard", absoluteAppUrl("/dashboard"));
+    .text("Đặt bàn", callbacks.reservations)
+    .text("Bàn gọi", callbacks.staff)
+    .row()
+    .text("Nhân sự", callbacks.staff)
+    .text("Menu", callbacks.menu_ops)
+    .row()
+    .text("Sự cố", callbacks.incidents)
+    .url("Dashboard", absoluteAppUrl("/dashboard"));
 
   await ctx.reply(
     compactTelegramText(
@@ -843,17 +874,24 @@ async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuActio
 
   const board = await getTelegramOpsBoard(connection);
   const inbox = await getTelegramOpsInbox(connection, action);
+  const callbacks = await signedMenuCallbacks(connection, [action, "ops_board"]);
+  const inboxActionRows = await Promise.all(
+    inbox.slice(0, 4).map(async (item) => {
+      const actions = actionsForInboxItem(item).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType])).slice(0, 2);
+      const tokens = await Promise.all(actions.map((actionType) => createCallbackTokenForInboxItem(item, actionType, connection)));
+      return { item, actions, tokens };
+    })
+  );
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", await signedMenuCallback(connection, action))
-    .text("Tổng quan", await signedMenuCallback(connection, "ops_board"))
+    .text("Làm mới", callbacks[action])
+    .text("Tổng quan", callbacks.ops_board)
     .row();
 
-  for (const item of inbox.slice(0, 4)) {
-    const actions = actionsForInboxItem(item).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType]));
-    for (const actionType of actions.slice(0, 2)) {
-      keyboard.text(`${labelForAction(actionType)} ${shortId(item.id)}`, await createCallbackTokenForInboxItem(item, actionType, connection));
+  for (const row of inboxActionRows) {
+    for (const [index, actionType] of row.actions.entries()) {
+      keyboard.text(`${labelForAction(actionType)} ${shortId(row.item.id)}`, row.tokens[index]);
     }
-    if (actions.length > 0) keyboard.row();
+    if (row.actions.length > 0) keyboard.row();
   }
   keyboard.url("Mở Dashboard", absoluteAppUrl(routeForOpsSlice(action)));
 
@@ -868,39 +906,45 @@ async function firstConnectionForContext(ctx: Context) {
 
 async function buildTenantOpsMenuKeyboard(keyboard: InlineKeyboard, connection: TelegramConnection) {
   if (connection.role === "ADMIN") {
+    const callbacks = await signedMenuCallbacks(connection, ["ops_board", "hot_orders", "payments", "reservations", "staff", "menu_ops", "tinhhinh", "tonkho", "briefings", "incidents", "status"]);
     keyboard
-      .text("Hôm nay", await signedMenuCallback(connection, "ops_board"))
-      .text("Đơn nóng", await signedMenuCallback(connection, "hot_orders"))
+      .text("Hôm nay", callbacks.ops_board)
+      .text("Đơn nóng", callbacks.hot_orders)
       .row()
-      .text("Thanh toán", await signedMenuCallback(connection, "payments"))
-      .text("Đặt bàn", await signedMenuCallback(connection, "reservations"))
+      .text("Thanh toán", callbacks.payments)
+      .text("Đặt bàn", callbacks.reservations)
       .row()
-      .text("Nhân sự", await signedMenuCallback(connection, "staff"))
-      .text("Menu", await signedMenuCallback(connection, "menu_ops"))
+      .text("Nhân sự", callbacks.staff)
+      .text("Menu", callbacks.menu_ops)
       .row()
-      .text("AI Ops", await signedMenuCallback(connection, "tinhhinh"))
-      .text("Tồn kho", await signedMenuCallback(connection, "tonkho"))
+      .text("AI Ops", callbacks.tinhhinh)
+      .text("Tồn kho", callbacks.tonkho)
       .row()
-      .text("Brief", await signedMenuCallback(connection, "briefings"))
-      .text("Sự cố", await signedMenuCallback(connection, "incidents"))
+      .text("Brief", callbacks.briefings)
+      .text("Sự cố", callbacks.incidents)
       .row()
-      .text("Kết nối", await signedMenuCallback(connection, "status"))
+      .text("Kết nối", callbacks.status)
       .row()
       .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"));
     return;
   }
 
+  const staffActions: TelegramMenuAction[] = ["staff_shift", "hot_orders", "staff", "status"];
+  if (hasPermission(connection, "payments.view")) staffActions.push("payments");
+  if (hasPermission(connection, "inventory.view")) staffActions.push("tonkho");
+  const callbacks = await signedMenuCallbacks(connection, staffActions);
+
   keyboard
-    .text("Ca", await signedMenuCallback(connection, "staff_shift"))
-    .text("Đơn", await signedMenuCallback(connection, "hot_orders"))
+    .text("Ca", callbacks.staff_shift)
+    .text("Đơn", callbacks.hot_orders)
     .row()
-    .text("Bàn gọi", await signedMenuCallback(connection, "staff"))
-    .text("Yêu cầu", await signedMenuCallback(connection, "staff"))
+    .text("Bàn gọi", callbacks.staff)
+    .text("Yêu cầu", callbacks.staff)
     .row();
 
-  if (hasPermission(connection, "payments.view")) keyboard.text("Thanh toán", await signedMenuCallback(connection, "payments"));
-  if (hasPermission(connection, "inventory.view")) keyboard.text("Tồn kho", await signedMenuCallback(connection, "tonkho"));
-  keyboard.row().text("Kết nối", await signedMenuCallback(connection, "status")).row().url("Màn nhân viên", absoluteAppUrl("/dashboard/staff/mobile"));
+  if (callbacks.payments) keyboard.text("Thanh toán", callbacks.payments);
+  if (callbacks.tonkho) keyboard.text("Tồn kho", callbacks.tonkho);
+  keyboard.row().text("Kết nối", callbacks.status).row().url("Màn nhân viên", absoluteAppUrl("/dashboard/staff/mobile"));
 }
 
 async function replyWithStaffShift(ctx: Context, preferredConnection?: TelegramConnection) {
@@ -912,9 +956,10 @@ async function replyWithStaffShift(ctx: Context, preferredConnection?: TelegramC
 
   const board = await getTelegramOpsBoard(connection);
   const inbox = await getTelegramOpsInbox(connection, "staff");
+  const callbacks = await signedMenuCallbacks(connection, ["staff_shift", "hot_orders"]);
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", await signedMenuCallback(connection, "staff_shift"))
-    .text("Đơn", await signedMenuCallback(connection, "hot_orders"))
+    .text("Làm mới", callbacks.staff_shift)
+    .text("Đơn", callbacks.hot_orders)
     .row()
     .url("Màn nhân viên", absoluteAppUrl("/dashboard/staff/mobile"));
 
@@ -943,9 +988,10 @@ async function replyWithOwnerBriefings(ctx: Context, preferredConnection?: Teleg
   }
 
   const briefings = await getTelegramOwnerBriefings(connection, 5);
+  const callbacks = await signedMenuCallbacks(connection, ["briefings", "tinhhinh"]);
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", await signedMenuCallback(connection, "briefings"))
-    .text("AI Ops mới", await signedMenuCallback(connection, "tinhhinh"))
+    .text("Làm mới", callbacks.briefings)
+    .text("AI Ops mới", callbacks.tinhhinh)
     .row()
     .url("Mở AI Ops", absoluteAppUrl("/dashboard/ai-ops"));
 
@@ -978,9 +1024,10 @@ async function replyWithOpenIncidents(ctx: Context, preferredConnection?: Telegr
   }
 
   const incidents = await getTelegramOpenIncidents(connection, 5);
+  const callbacks = await signedMenuCallbacks(connection, ["incidents", "ops_board"]);
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", await signedMenuCallback(connection, "incidents"))
-    .text("Tổng quan", await signedMenuCallback(connection, "ops_board"))
+    .text("Làm mới", callbacks.incidents)
+    .text("Tổng quan", callbacks.ops_board)
     .row()
     .url("Mở Dashboard", absoluteAppUrl("/dashboard/settings?section=notifications"));
 
@@ -1101,7 +1148,14 @@ async function handleAiOpsCommand(ctx: Context, command: AiOpsCommand, message: 
     return;
   }
 
-  await runAiOpsForConnection(ctx, eligibleConnections[0], command, spec);
+  scheduleAiOpsForConnection(ctx, eligibleConnections[0], command, spec);
+}
+
+function scheduleAiOpsForConnection(ctx: Context, connection: TelegramConnection, command: AiOpsCommand, spec: AiOpsRequestSpec) {
+  void runAiOpsForConnection(ctx, connection, command, spec).catch((error) => {
+    aiOpsCounter.inc({ command, status: "failed" });
+    logger.error({ error: safeLogError(error), command, connectionId: connection.id }, "telegram ai ops background run failed");
+  });
 }
 
 async function runAiOpsForConnection(
@@ -1115,9 +1169,16 @@ async function runAiOpsForConnection(
   });
 
   await ctx.api.sendChatAction(ctx.chat!.id, "typing").catch(() => undefined);
-  const loading = await ctx.reply("Đang đọc dữ liệu vận hành thật...");
+  const loading = await ctx.reply(`Đang đọc dữ liệu ${connection.branch_id ? `chi nhánh ${connection.branch_name ?? shortId(connection.branch_id)}` : "toàn quán"}...`);
+  let keepLoadingMessage = false;
 
   try {
+    if (command !== "chat") {
+      keepLoadingMessage = await editAiOpsFastPreview(ctx, loading.chat.id, loading.message_id, connection, command).catch((error) => {
+        logger.warn({ error: safeLogError(error), command, connectionId: connection.id }, "telegram ai ops fast preview failed");
+        return false;
+      });
+    }
     const result = await executeAiOpsCommand({
       command,
       message: spec.message,
@@ -1126,7 +1187,7 @@ async function runAiOpsForConnection(
     });
     const keyboard = await buildAiOpsKeyboard(connection, spec, result);
     await ctx.reply(formatAiOpsReply(result), { reply_markup: keyboard });
-    await ctx.api.deleteMessage(loading.chat.id, loading.message_id).catch(() => undefined);
+    if (!keepLoadingMessage) await ctx.api.deleteMessage(loading.chat.id, loading.message_id).catch(() => undefined);
     aiOpsCounter.inc({ command, status: "accepted" });
     await recordTelegramAudit({
       restaurantId: connection.restaurant_id,
@@ -1136,7 +1197,7 @@ async function runAiOpsForConnection(
       telegramUserId: connection.telegram_user_id,
       action: `telegram.ai_ops.${command}`,
       outcome: "accepted",
-      metadata: { intent: result.intent, provider: result.provider, model: result.model }
+      metadata: { intent: result.intent, provider: result.provider, model: result.model, scope: connection.branch_id ? "branch" : "restaurant" }
     });
   } catch (error) {
     await ctx.reply(friendlyAiOpsError(error));
@@ -1167,6 +1228,44 @@ async function runAiOpsForConnection(
       metadata: { error: error instanceof Error ? error.message : "ai_ops_failed" }
     });
   }
+}
+
+async function editAiOpsFastPreview(ctx: Context, chatId: number, messageId: number, connection: TelegramConnection, command: Exclude<AiOpsCommand, "chat">) {
+  const inboxSlice: TelegramOpsInboxSlice | null = command === "doanhthu" ? "payments" : command === "tinhhinh" ? "hot_orders" : null;
+  const [board, inbox, callbacks] = await Promise.all([
+    getTelegramOpsBoard(connection),
+    inboxSlice ? getTelegramOpsInbox(connection, inboxSlice).catch(() => []) : Promise.resolve([]),
+    signedMenuCallbacks(connection, ["ops_board", "hot_orders", "payments", "menu_ops", "tonkho"])
+  ]);
+  const keyboard = new InlineKeyboard();
+  if (command === "doanhthu") keyboard.text("Thanh toán", callbacks.payments).url("Báo cáo", absoluteAppUrl("/dashboard/analytics"));
+  else if (command === "tonkho") keyboard.text("Kho", callbacks.tonkho).url("Mở kho", absoluteAppUrl("/dashboard/inventory"));
+  else keyboard.text("Đơn nóng", callbacks.hot_orders).text("Tổng quan", callbacks.ops_board);
+
+  await ctx.api.editMessageText(chatId, messageId, formatAiOpsFastPreview(command, board, inbox), { reply_markup: keyboard });
+  return true;
+}
+
+function formatAiOpsFastPreview(command: Exclude<AiOpsCommand, "chat">, board: Awaited<ReturnType<typeof getTelegramOpsBoard>>, inbox: TelegramOpsInboxItem[]) {
+  const counts = board.counts;
+  const hotItems = inbox
+    .slice(0, 3)
+    .map((item) => `- ${item.title}${item.detail ? ` · ${item.detail}` : ""}`)
+    .join("\n");
+  const base = [
+    `Tóm tắt nhanh · ${board.scopeLabel}`,
+    "",
+    `Đơn mở: ${counts.openOrders} · chờ nhận: ${counts.pendingOrders} · trễ SLA: ${counts.lateOrders}`,
+    `VietQR chờ: ${counts.waitingPayments} · đặt bàn hôm nay: ${counts.todayReservations}`,
+    `Bàn gọi: ${counts.openServiceRequests} · nhân sự chờ duyệt: ${counts.pendingStaffRequests}`
+  ];
+  if (command === "tonkho") {
+    base.push("", "AI đang đọc kho chi tiết. Trong lúc chờ, mở Kho nếu cần xử lý nguyên liệu thấp ngay.");
+  } else if (hotItems) {
+    base.push("", command === "doanhthu" ? "Thanh toán cần xem:" : "Việc nóng:", hotItems);
+  }
+  base.push("", "AI chi tiết sẽ gửi sau vài giây.");
+  return compactTelegramText(base.join("\n"), 1200);
 }
 
 async function promptAiOpsTenantSelection(
@@ -1205,7 +1304,7 @@ async function handleTelegramSessionCallback(ctx: Context, token: string) {
   await ctx.answerCallbackQuery({ text: "Đang đọc dữ liệu..." });
   await ctx.editMessageReplyMarkup().catch(() => undefined);
   await ctx.editMessageText(`Đang đọc dữ liệu cho ${connectionLabel(claimed.connection)}...`).catch(() => undefined);
-  await runAiOpsForConnection(ctx, claimed.connection, payload.command, {
+  scheduleAiOpsForConnection(ctx, claimed.connection, payload.command, {
     intent: payload.intent,
     permission: payload.permission,
     route: payload.route,
@@ -1310,6 +1409,7 @@ async function executeAiOpsCommand(input: {
 async function buildAiOpsKeyboard(connection: TelegramConnection, spec: AiOpsRequestSpec, result: AiOpsResult) {
   const keyboard = new InlineKeyboard();
   const linkedActions = (result.actions ?? []).filter((action) => typeof action.href === "string" && action.href.startsWith("/dashboard")).slice(0, 2);
+  const callbacks = await signedMenuCallbacks(connection, ["briefings", "ops_board"]);
 
   for (const action of linkedActions) {
     keyboard.url(compactTelegramText(action.label ?? "Mở action", 32), absoluteAppUrl(action.href!));
@@ -1317,8 +1417,8 @@ async function buildAiOpsKeyboard(connection: TelegramConnection, spec: AiOpsReq
   if (linkedActions.length > 0) keyboard.row();
 
   keyboard.url(spec.actionLabel, absoluteAppUrl(spec.route));
-  keyboard.text("Brief", await signedMenuCallback(connection, "briefings")).row();
-  keyboard.text("Tổng quan", await signedMenuCallback(connection, "ops_board"));
+  keyboard.text("Brief", callbacks.briefings).row();
+  keyboard.text("Tổng quan", callbacks.ops_board);
   return keyboard;
 }
 
@@ -1499,6 +1599,11 @@ async function signedMenuCallback(connection: TelegramConnection, action: Telegr
     ttlSeconds: numberEnv("TELEGRAM_MENU_SESSION_TTL_SECONDS", 300)
   });
   return `${TELEGRAM_SESSION_CALLBACK_PREFIX}${token}`;
+}
+
+async function signedMenuCallbacks<TAction extends TelegramMenuAction>(connection: TelegramConnection, actions: TAction[]) {
+  const entries = await Promise.all(actions.map(async (action) => [action, await signedMenuCallback(connection, action)] as const));
+  return Object.fromEntries(entries) as Record<TAction, string>;
 }
 
 function absoluteAppUrl(path: string) {

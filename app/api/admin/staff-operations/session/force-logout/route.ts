@@ -4,6 +4,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { staffSessionForceLogoutSchema } from "@/lib/validators";
+import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { forceStaffSessionLogout } from "@/features/staff/services/staff-session-service";
 
 export const preferredRegion = "sin1";
@@ -73,14 +74,14 @@ export async function POST(request: Request) {
       request.json().catch(() => ({}))
     ]);
     const input = staffSessionForceLogoutSchema.parse(payload);
-    return success(
-      await forceStaffSessionLogout({
-        restaurantId: session.restaurantId,
-        restaurantSlug: session.restaurant.slug,
-        actorUserId: session.userId,
-        input
-      })
-    );
+    const data = await forceStaffSessionLogout({
+      restaurantId: session.restaurantId,
+      restaurantSlug: session.restaurant.slug,
+      actorUserId: session.userId,
+      input
+    });
+    await invalidateStaffOperationsBundleCache(session.restaurantId);
+    return success(data);
   } catch (error) {
     return failure(error);
   }

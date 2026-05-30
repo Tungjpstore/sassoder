@@ -316,6 +316,14 @@ export const pinLoginSchema = z.object({
   pin: z.string().trim().regex(/^\d{4,8}$/)
 });
 
+export const staffEmployeeCodeSchema = z.preprocess(
+  (value) => {
+    if (typeof value !== "string") return value;
+    return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  },
+  z.string().regex(/^[A-Z0-9]{10,14}$/, "Mã nhân viên không hợp lệ.")
+);
+
 const strongPasswordSchema = z
   .string()
   .min(authPasswordMinLength, "Mật khẩu cần ít nhất 10 ký tự.")
@@ -323,6 +331,26 @@ const strongPasswordSchema = z
   .regex(authPasswordPolicyPatterns.lowercase, "Mật khẩu cần có chữ thường.")
   .regex(authPasswordPolicyPatterns.uppercase, "Mật khẩu cần có chữ hoa.")
   .regex(authPasswordPolicyPatterns.number, "Mật khẩu cần có chữ số.");
+
+export const staffAppLoginSchema = z.object({
+  employeeCode: staffEmployeeCodeSchema,
+  password: z.string().min(1, "Vui lòng nhập mật khẩu app.").max(authPasswordMaxLength)
+});
+
+export const staffAppPasswordChangeSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Vui lòng nhập mật khẩu hiện tại.").max(authPasswordMaxLength),
+    newPassword: strongPasswordSchema,
+    confirmPassword: z.string().min(1, "Vui lòng xác nhận mật khẩu mới.").max(authPasswordMaxLength)
+  })
+  .refine((value) => value.newPassword === value.confirmPassword, {
+    message: "Xác nhận mật khẩu mới chưa khớp.",
+    path: ["confirmPassword"]
+  })
+  .refine((value) => value.currentPassword !== value.newPassword, {
+    message: "Mật khẩu mới cần khác mật khẩu hiện tại.",
+    path: ["newPassword"]
+  });
 
 export const forgotPasswordSchema = z.object({
   email: authEmailSchema
@@ -752,7 +780,7 @@ export const inventoryMovementSchema = z.object({
 
 export const inventorySupplierSchema = z.object({
   name: z.string().trim().min(2).max(160),
-  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/, "Số điện thoại nhân viên không hợp lệ."),
   address: z.string().trim().max(240).optional().or(z.literal("")),
   defaultLeadDays: z.coerce.number().int().min(0).max(120).optional(),
   isPreferred: z.coerce.boolean().optional()
@@ -878,6 +906,12 @@ export const inventoryImportRowsSchema = z.object({
   )
 });
 
+const staffDateOfBirthSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày sinh không hợp lệ.")
+  .refine((value) => value >= "1900-01-01" && value <= new Date().toISOString().slice(0, 10), "Ngày sinh không hợp lệ.");
+
 export const staffInviteSchema = z.object({
   email: z.preprocess(
     (value) => {
@@ -897,6 +931,8 @@ export const staffInviteSchema = z.object({
   ),
   pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
   fullName: z.string().trim().min(2).max(120),
+  dateOfBirth: staffDateOfBirthSchema,
+  hometown: z.string().trim().min(2, "Vui lòng nhập quê quán.").max(120),
   phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
   roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/).default("waiter"),
   branchId: z.string().uuid().optional().or(z.literal("")),
@@ -915,6 +951,8 @@ export const staffUserSchema = z.object({
 export const staffProfileSchema = z.object({
   userId: z.string().uuid(),
   fullName: z.string().trim().min(2).max(120),
+  dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
+  hometown: z.string().trim().max(120).optional().or(z.literal("")),
   phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
   username: z.string().trim().regex(/^[a-z0-9._-]{3,40}$/).optional().or(z.literal("")),
   pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
@@ -932,6 +970,33 @@ export const staffAccountStateSchema = z.object({
   reason: z.string().trim().max(240).optional().or(z.literal(""))
 });
 
+export const staffAppPasswordResetSchema = z.object({
+  userId: z.string().uuid(),
+  reason: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffAppPasswordBulkResetSchema = z.object({
+  userIds: jsonArrayInput(z.string().uuid(), 200).refine((value) => value.length >= 1, "Cần chọn ít nhất một nhân viên để cấp lại mật khẩu."),
+  reason: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffSelfProfileSchema = z.object({
+  fullName: z.string().trim().min(2).max(120),
+  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
+  hometown: z.string().trim().max(120).optional().or(z.literal("")),
+  avatarUrl: z.string().trim().url("Link ảnh đại diện không hợp lệ.").optional().or(z.literal(""))
+});
+
+export const staffIncidentReportSchema = z.object({
+  staffMemberId: z.string().uuid(),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  title: z.string().trim().min(2).max(120),
+  description: z.string().trim().min(5).max(1000),
+  severity: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  attachmentUrl: z.string().trim().url("Link đính kèm không hợp lệ.").optional().or(z.literal(""))
+});
+
 export const staffRolePermissionUpdateSchema = z.object({
   roleId: z.string().uuid(),
   permissions: z.array(z.enum(STAFF_PERMISSION_KEYS)).min(1).max(STAFF_PERMISSION_KEYS.length)
@@ -944,6 +1009,13 @@ export const staffRoleCloneSchema = z.object({
 });
 
 const deviceFingerprintSchema = z.string().trim().regex(/^[a-zA-Z0-9._:-]{12,160}$/);
+const attendanceTrustBooleanSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "on", "yes"].includes(normalized)) return true;
+  if (["false", "0", "off", "no", ""].includes(normalized)) return false;
+  return value;
+}, z.boolean());
 
 export const staffSessionHeartbeatSchema = z.object({
   branchId: z.string().uuid().optional().or(z.literal("")),
@@ -978,16 +1050,26 @@ export const staffAttendanceWifiNetworkRegisterSchema = z.object({
 const shiftTimeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Giờ ca phải theo định dạng HH:mm.");
 const shiftDateSchema = z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày phân ca không hợp lệ.");
 
-export const staffShiftTemplateSchema = z
-  .object({
-    name: z.string().trim().min(2).max(120),
-    branchId: z.string().uuid().optional().or(z.literal("")),
-    startTime: shiftTimeSchema,
-    endTime: shiftTimeSchema,
-    allowedLateMinutes: z.coerce.number().int().min(0).max(180).default(10),
-    overtimeThresholdMinutes: z.coerce.number().int().min(0).max(720).default(30),
-    attendanceRadiusMeters: z.coerce.number().int().min(50).max(150).default(80),
-    recurringWeekdays: jsonArrayInput(z.coerce.number().int().min(0).max(6), 7).default([])
+const staffShiftTemplateBaseSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  branchId: z.string().uuid().optional().or(z.literal("")),
+  startTime: shiftTimeSchema,
+  endTime: shiftTimeSchema,
+  allowedLateMinutes: z.coerce.number().int().min(0).max(180).default(10),
+  overtimeThresholdMinutes: z.coerce.number().int().min(0).max(720).default(30),
+  attendanceRadiusMeters: z.coerce.number().int().min(50).max(150).default(80),
+  recurringWeekdays: jsonArrayInput(z.coerce.number().int().min(0).max(6), 7).default([])
+});
+
+export const staffShiftTemplateSchema = staffShiftTemplateBaseSchema
+  .refine((value) => value.startTime !== value.endTime, {
+    message: "Giờ bắt đầu và kết thúc ca không được trùng nhau.",
+    path: ["endTime"]
+  });
+
+export const staffShiftTemplateUpdateSchema = staffShiftTemplateBaseSchema
+  .extend({
+    shiftId: z.string().uuid("Ca làm cần sửa không hợp lệ.")
   })
   .refine((value) => value.startTime !== value.endTime, {
     message: "Giờ bắt đầu và kết thúc ca không được trùng nhau.",
@@ -999,6 +1081,10 @@ export const staffShiftAssignmentSchema = z.object({
   shiftId: z.string().uuid(),
   scheduledDate: shiftDateSchema,
   note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
+export const staffShiftAssignmentUpdateSchema = staffShiftAssignmentSchema.extend({
+  shiftAssignmentId: z.string().uuid("Ca phân công cần sửa không hợp lệ.")
 });
 
 export const staffShiftAssignmentCancelSchema = z.object({
@@ -1136,23 +1222,29 @@ export const staffDocumentCreateSchema = z.object({
   documentName: z.string().trim().min(2).max(160),
   documentType: z.enum(["identity_card", "health_certificate", "contract", "training", "other"]).default("other"),
   fileUrl: z.string().trim().url("Link tài liệu không hợp lệ.").optional().or(z.literal("")),
+  status: z.enum(["complete", "missing", "expired"]).default("complete"),
   note: z.string().trim().max(500).optional().or(z.literal(""))
 });
 
-export const staffDeviceCreateSchema = z.object({
-  staffMemberId: z.string().uuid().optional().or(z.literal("")),
-  deviceName: z.string().trim().min(2).max(160),
-  deviceType: z.enum(["phone", "tablet", "pos", "cash_drawer", "other"]).default("other"),
-  serialNumber: z.string().trim().max(120).optional().or(z.literal("")),
-  deviceFingerprint: deviceFingerprintSchema.optional().or(z.literal("")),
-  trustedForAttendance: z.coerce.boolean().optional().default(false),
-  issuedAt: shiftDateSchema,
-  note: z.string().trim().max(500).optional().or(z.literal(""))
-});
+export const staffDeviceCreateSchema = z
+  .object({
+    staffMemberId: z.string().uuid().optional().or(z.literal("")),
+    deviceName: z.string().trim().min(2).max(160),
+    deviceType: z.enum(["phone", "tablet", "pos", "cash_drawer", "other"]).default("other"),
+    serialNumber: z.string().trim().max(120).optional().or(z.literal("")),
+    deviceFingerprint: deviceFingerprintSchema.optional().or(z.literal("")),
+    trustedForAttendance: attendanceTrustBooleanSchema.optional().default(false),
+    issuedAt: shiftDateSchema,
+    note: z.string().trim().max(500).optional().or(z.literal(""))
+  })
+  .refine((value) => !value.trustedForAttendance || Boolean(value.deviceFingerprint), {
+    message: "Thiết bị cần fingerprint trước khi duyệt chấm công.",
+    path: ["deviceFingerprint"]
+  });
 
 export const staffDeviceTrustUpdateSchema = z.object({
   deviceId: z.string().uuid(),
-  trustedForAttendance: z.coerce.boolean(),
+  trustedForAttendance: attendanceTrustBooleanSchema,
   reason: z.string().trim().max(240).optional().or(z.literal(""))
 });
 
@@ -1256,4 +1348,36 @@ export const attendanceApprovalReviewSchema = z
         path: ["note"]
       });
     }
+  });
+
+const attendanceManualDateTimeSchema = z.string().trim().regex(
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})?$/,
+  "Thời gian công phải theo định dạng ngày giờ hợp lệ."
+);
+
+function parseAttendanceManualDateTimeMs(value: string) {
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  const withSeconds = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?$/.test(value)
+    ? value.replace(/(Z|[+-]\d{2}:\d{2})?$/, ":00$1")
+    : value;
+  const normalized = hasExplicitTimezone ? withSeconds : `${withSeconds}+07:00`;
+  return new Date(normalized).getTime();
+}
+
+export const attendanceManualAdjustmentSchema = z
+  .object({
+    attendanceLogId: z.string().uuid("Bản ghi công cần sửa không hợp lệ."),
+    staffMemberId: z.string().uuid("Nhân sự cần sửa công không hợp lệ."),
+    clockInAt: attendanceManualDateTimeSchema,
+    clockOutAt: attendanceManualDateTimeSchema.optional().or(z.literal("")),
+    note: z.string().trim().min(2, "Sửa công cần ghi lý do.").max(240)
+  })
+  .refine((value) => {
+    if (!value.clockOutAt) return true;
+    const clockInAt = parseAttendanceManualDateTimeMs(value.clockInAt);
+    const clockOutAt = parseAttendanceManualDateTimeMs(value.clockOutAt);
+    return Number.isFinite(clockInAt) && Number.isFinite(clockOutAt) && clockOutAt > clockInAt;
+  }, {
+    message: "Giờ kết ca phải sau giờ vào ca.",
+    path: ["clockOutAt"]
   });

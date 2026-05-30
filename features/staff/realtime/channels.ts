@@ -6,7 +6,6 @@ export const STAFF_OPERATIONS_REALTIME_TABLES = [
   "attendance_logs",
   "attendance_approval_requests",
   "staff_activity_logs",
-  "staff_sessions",
   "notifications"
 ] as const;
 

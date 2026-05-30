@@ -33,10 +33,19 @@ export type StaffOpsMember = {
   id: string;
   userId: string;
   email: string;
+  employeeCode: string | null;
+  employeeNumber: number | null;
   fullName: string;
+  avatarUrl: string | null;
+  dateOfBirth: string | null;
+  hometown: string | null;
   phone: string | null;
   username: string | null;
   hasPin: boolean;
+  mustChangeAppPassword: boolean;
+  appPasswordAttempts: number;
+  appPasswordLockedUntil: string | null;
+  appPasswordLastFailedAt: string | null;
   roleCode: StaffRoleTemplateCode | string;
   roleTitle: string;
   roleProfile: StaffPermissionProfile;
@@ -62,7 +71,9 @@ export type StaffOpsAttendanceFeedItem = {
   id: string;
   staffMemberId: string;
   fullName: string;
+  branchId: string | null;
   branchName: string | null;
+  shiftName: string | null;
   state: "on_time" | "late" | "early_leave" | "overtime" | "absent";
   source: "gps" | "qr" | "wifi" | "manual" | "offline_sync";
   approvalState: "auto_approved" | "pending" | "approved" | "rejected";
@@ -279,8 +290,15 @@ export type StaffOpsOverview = {
   paidToday: number;
 };
 
+export type StaffOpsConfigReadiness = {
+  attendanceQrSecretConfigured: boolean;
+  attendanceQrSecretRequired: boolean;
+  missingRequiredEnv: string[];
+};
+
 export type StaffOperationsBundle = {
   generatedAt: string;
+  opsConfig: StaffOpsConfigReadiness;
   overview: StaffOpsOverview;
   roles: StaffOpsRoleSummary[];
   branches: StaffOpsBranchSummary[];
