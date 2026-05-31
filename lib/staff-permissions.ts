@@ -488,14 +488,48 @@ function withDefaultEligibleStaffPermissions(permissions: StaffPermissionKey[]) 
   return Array.from(new Set([...permissions, ...DEFAULT_ELIGIBLE_STAFF_PERMISSIONS]));
 }
 
+const legacyPermissionAliases: Partial<Record<StaffPermissionKey, StaffPermissionKey[]>> = {
+  "orders.manage": ["orders.view", "orders.update", "orders.cancel", "orders.reopen", "tables.manage"],
+  "menu.manage": ["menu.view", "menu.edit"],
+  "payments.manage": ["payments.view", "payments.confirm", "payments.refund", "reports.view"],
+  "staff.manage": [
+    "staff.view",
+    "staff.create",
+    "staff.edit",
+    "staff.suspend",
+    "staff.archive",
+    "staff.roles",
+    "attendance.view",
+    "attendance.edit",
+    "attendance.approve",
+    "shifts.view",
+    "shifts.manage",
+    "shifts.assign",
+    "shifts.override",
+    "approvals.review",
+    "presence.view",
+    "activity_logs.view"
+  ],
+  "settings.manage": ["settings.view", "notifications.manage"]
+};
+
+export function expandStaffPermissionAliases(permissions: StaffPermissionKey[]) {
+  const expanded = new Set<StaffPermissionKey>();
+  permissions.forEach((permission) => {
+    expanded.add(permission);
+    legacyPermissionAliases[permission]?.forEach((alias) => expanded.add(alias));
+  });
+  return [...expanded];
+}
+
 export function normalizeStaffPermissions(
   value: unknown,
   fallback: StaffPermissionProfile | StaffRoleTemplateCode | string | null | undefined
 ) {
   const defaultPermissions = fallbackPermissions(fallback);
-  if (!Array.isArray(value)) return withDefaultEligibleStaffPermissions(defaultPermissions);
+  if (!Array.isArray(value)) return withDefaultEligibleStaffPermissions(expandStaffPermissionAliases(defaultPermissions));
 
   const allowed = new Set<string>(STAFF_PERMISSION_KEYS);
   const permissions = value.filter((item): item is StaffPermissionKey => typeof item === "string" && allowed.has(item));
-  return withDefaultEligibleStaffPermissions(permissions.length ? permissions : defaultPermissions);
+  return withDefaultEligibleStaffPermissions(expandStaffPermissionAliases(permissions.length ? permissions : defaultPermissions));
 }

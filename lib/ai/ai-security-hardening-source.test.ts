@@ -99,3 +99,46 @@ test("AI security events capture blocked tools and approval replay attempts", ()
   assert.match(migration, /revoke all on public\.ai_security_events from authenticated/);
   assert.match(migration, /grant select, insert, update, delete on public\.ai_security_events to service_role/);
 });
+
+test("AI security event feed is tenant-scoped and visible to admin surfaces only", () => {
+  const service = read("services/ai-security-event-service.ts");
+  const route = read("app/api/admin/ai/security-events/route.ts");
+  const page = read("app/dashboard/ai-production/page.tsx");
+
+  assert.match(service, /from\("ai_security_events"\)/);
+  assert.match(service, /\.eq\("restaurant_id", input\.restaurantId\)/);
+  assert.match(service, /sensitiveKeyPattern/);
+  assert.match(service, /sensitiveValuePattern/);
+  assert.match(service, /return \{ schemaReady: false, events: \[\], highRiskCount: 0 \}/);
+  assert.match(route, /assertSameOriginRequest\(request\)/);
+  assert.match(route, /requireOperationalDashboardApiSession\(\{ adminOnly: true, feature: "ai_owner_assistant" \}\)/);
+  assert.match(page, /listRecentAiSecurityEvents\(\{ restaurantId: session\.restaurantId, limit: 8 \}\)/);
+  assert.match(page, /<SecurityEventPanel feed=\{securityEventFeed\} \/>/);
+});
+
+test("AI schema snapshot includes production indexes, triggers and service-role-only audit tables", () => {
+  const schema = read("supabase/schema.sql");
+
+  for (const indexName of [
+    "ai_conversations_restaurant_surface_idx",
+    "ai_conversations_customer_session_idx",
+    "ai_conversations_user_surface_thread_idx",
+    "ai_conversations_customer_surface_thread_idx",
+    "ai_messages_conversation_idx",
+    "ai_messages_restaurant_created_idx",
+    "ai_logs_restaurant_task_idx",
+    "ai_feedback_restaurant_created_idx",
+    "ai_owner_agent_approval_tokens_scope_idx",
+    "ai_security_events_restaurant_created_idx",
+    "ai_security_events_type_severity_idx"
+  ]) {
+    assert.match(schema, new RegExp(`create index ${indexName}`));
+  }
+
+  assert.match(schema, /create trigger ai_conversations_set_updated_at/);
+  assert.match(schema, /create trigger ai_owner_agent_approval_tokens_set_updated_at/);
+  assert.match(schema, /revoke all on public\.ai_owner_agent_approval_tokens from authenticated/);
+  assert.match(schema, /revoke all on public\.ai_security_events from authenticated/);
+  assert.match(schema, /grant select, insert, update, delete on public\.ai_owner_agent_approval_tokens to service_role/);
+  assert.match(schema, /grant select, insert, update, delete on public\.ai_security_events to service_role/);
+});

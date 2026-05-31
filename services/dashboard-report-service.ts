@@ -148,6 +148,12 @@ export type AdminPaymentTransaction = {
   createdAt: string;
   itemCount: number;
   itemSummary: string;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    lineTotal: number;
+  }>;
 };
 
 export type AdminReport = {
@@ -303,25 +309,33 @@ export async function getAdminReport(restaurantId: string, options: AdminReportO
     paymentTransactions: currentMonthOrders
       .filter((order) => order.status !== "cancelled")
       .slice(0, 50)
-      .map((order) => ({
-        id: order.id,
-        tableName: orderLocationLabel(order),
-        method: order.payment_method,
-        status: order.status,
-        paymentStatus: order.payment_status ?? null,
-        amount: order.total,
-        createdAt: order.created_at,
-        itemCount: (order.items ?? []).reduce((sum, item) => sum + item.quantity, 0),
-        itemSummary:
-          (order.items ?? [])
-            .slice(0, 4)
-            .map((item) => {
-              const menuItem = firstOrNull(item.menuItem);
-              return menuItem ? `${item.quantity}x ${menuItem.name}` : null;
-            })
-            .filter(Boolean)
-            .join(", ") || "Chưa có món"
-      })),
+      .map((order) => {
+        const items = (order.items ?? [])
+          .map((item) => {
+            const menuItem = firstOrNull(item.menuItem);
+            if (!menuItem) return null;
+            return {
+              name: menuItem.name,
+              quantity: item.quantity,
+              price: item.price,
+              lineTotal: item.price * item.quantity
+            };
+          })
+          .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+        return {
+          id: order.id,
+          tableName: orderLocationLabel(order),
+          method: order.payment_method,
+          status: order.status,
+          paymentStatus: order.payment_status ?? null,
+          amount: order.total,
+          createdAt: order.created_at,
+          itemCount: items.reduce((sum, item) => sum + item.quantity, 0),
+          itemSummary: items.slice(0, 4).map((item) => `${item.quantity}x ${item.name}`).join(", ") || "Chưa có món",
+          items
+        };
+      }),
     dailyRevenue: [...dailyMap.entries()].map(([date, value]) => ({
       date,
       label: sameDayLabel(new Date(date)),

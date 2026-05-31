@@ -4,7 +4,7 @@ import { attendanceApprovalReviewSchema } from "@/lib/validators";
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
-import { reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
+import { authorizeAttendanceManagementSession, reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 
 export const preferredRegion = "sin1";
@@ -74,14 +74,14 @@ export async function POST(request: Request, context: RouteContext) {
     const [{ approvalId }, session, payload] = await Promise.all([
       context.params,
       requireOperationalDashboardApiSession({
-        adminOnly: true,
         feature: "staff_management",
-        permission: ["attendance.approve", "approvals.review"]
+        permission: ["attendance.approve", "approvals.review"],
+        permissionMode: "any"
       }),
       request.json().catch(() => ({}))
     ]);
     const input = attendanceApprovalReviewSchema.parse(payload);
-    const data = await reviewAttendanceApproval({ session, approvalId, input });
+    const data = await reviewAttendanceApproval({ session: authorizeAttendanceManagementSession(session), approvalId, input });
     await invalidateStaffOperationsBundleCache(session.restaurantId);
     return success(data);
   } catch (error) {

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { buildStaffAttendanceMachine } from "@/features/staff/components/mobile/staff-attendance-machine";
+import { normalizeStaffPermissions } from "@/lib/staff-permissions";
 import {
   attendanceApprovalReviewSchema,
   attendanceClockInSchema,
@@ -181,6 +184,104 @@ test("attendance QR schemas require real branch tokens", () => {
   assert.equal(wifiParsed.source, "wifi");
 });
 
+test("staff attendance machine does not auto-submit stale QR unless QR is selected", () => {
+  const base = {
+    activeAttendance: null,
+    selectedBranchId: branchId,
+    selectedBranchName: "LogiVN Cầu Giấy",
+    canUseGps: true,
+    qrReady: true,
+    deviceTrust: null,
+    hasFingerprint: true,
+    isOnline: true,
+    queueLength: 0,
+    syncing: false,
+    processing: false
+  };
+
+  const defaultMachine = buildStaffAttendanceMachine(base);
+  assert.equal(defaultMachine.source, "gps");
+  assert.equal(defaultMachine.primaryLabel, "Vào ca");
+
+  const wifiMachine = buildStaffAttendanceMachine({ ...base, selectedSource: "wifi" });
+  assert.equal(wifiMachine.source, "wifi");
+  assert.equal(wifiMachine.canSubmit, true);
+
+  const qrMachine = buildStaffAttendanceMachine({ ...base, selectedSource: "qr", qrReady: false });
+  assert.equal(qrMachine.source, "qr");
+  assert.equal(qrMachine.canSubmit, true);
+  assert.equal(qrMachine.primaryLabel, "Quét QR");
+});
+
+test("staff mobile attendance QR UI has a real scanner path and stale-token recovery", () => {
+  const source = readFileSync("features/staff/components/staff-mobile-redesign-workspace.tsx", "utf8");
+
+  assert.match(source, /function QrScannerSheet/);
+  assert.match(source, /decodeQrFromCanvasSource/);
+  assert.match(source, /import\("jsqr"\)/);
+  assert.match(source, /setQrScannerOpen\(true\)/);
+  assert.match(source, /clearQrTokenAfterFailure/);
+  assert.match(source, /clearStaffQrParamsFromUrl/);
+  assert.match(source, /selectedClockSource/);
+});
+
+test("legacy full staff permissions unlock granular HR actions", () => {
+  const permissions = normalizeStaffPermissions(["staff.manage"], "service");
+
+  assert.ok(permissions.includes("staff.view"));
+  assert.ok(permissions.includes("staff.create"));
+  assert.ok(permissions.includes("staff.edit"));
+  assert.ok(permissions.includes("staff.archive"));
+  assert.ok(permissions.includes("attendance.edit"));
+  assert.ok(permissions.includes("shifts.assign"));
+});
+
+test("staff HR workspace access and actions are permission-first, not ADMIN-only", () => {
+  const staffPageSource = readFileSync("app/dashboard/staff/page.tsx", "utf8");
+  const dashboardPageSource = readFileSync("app/dashboard/page.tsx", "utf8");
+  const actionsSource = readFileSync("app/dashboard/actions/staff.ts", "utf8");
+  const dashboardAccessSource = readFileSync("lib/dashboard-access.ts", "utf8");
+  const permissionServiceSource = readFileSync("services/staff-permission-service.ts", "utf8");
+
+  assert.match(staffPageSource, /requireDashboardPermissionAccess\("staff_management", \["staff\.view", "staff\.manage"\]\)/);
+  assert.doesNotMatch(staffPageSource, /requireDashboardAdminAccess\("staff_management"\)/);
+  assert.match(dashboardPageSource, /canOpenHrWorkspace/);
+  assert.match(dashboardPageSource, /redirect\(\(await canOpenHrWorkspace\(session\)\) \? "\/dashboard\/staff" : "\/dashboard\/staff\/mobile"\)/);
+  assert.match(actionsSource, /requireOperationalStaffSession\("staff_management"\)/);
+  assert.doesNotMatch(actionsSource, /requireOperationalAdminSession\("staff_management"\)/);
+  assert.match(actionsSource, /assertStaffActionPermission\(session, "staff\.create"\)/);
+  assert.match(actionsSource, /assertStaffActionPermission\(session, "staff\.edit"\)/);
+  assert.match(dashboardAccessSource, /assertStaffActionPermission\(access\.session, permission/);
+  assert.match(permissionServiceSource, /accountPermissions/);
+  assert.match(permissionServiceSource, /adminBaselinePermissions/);
+  assert.match(permissionServiceSource, /mergeEffectivePermissions\(rolePermissions, accountPermissions\)/);
+});
+
+test("staff operations APIs use granular HR permissions without ADMIN-only gates", () => {
+  const routeFiles = [
+    "app/api/admin/staff-operations/route.ts",
+    "app/api/admin/staff-operations/attendance-qr-tokens/route.ts",
+    "app/api/admin/staff-operations/attendance-qr-tokens/qr-image/route.ts",
+    "app/api/admin/staff-operations/attendance-wifi-networks/route.ts",
+    "app/api/admin/staff-operations/session/force-logout/route.ts",
+    "app/api/admin/staff-operations/activity/export/route.ts",
+    "app/api/admin/staff-operations/timesheets/export/route.ts",
+    "app/api/admin/attendance/approvals/[approvalId]/review/route.ts"
+  ];
+
+  const routeSources = routeFiles.map((file) => [file, readFileSync(file, "utf8")] as const);
+  for (const [file, source] of routeSources) {
+    assert.doesNotMatch(source, /adminOnly:\s*true/, file);
+    assert.doesNotMatch(source, /adminOnly:\s*scope === "admin"/, file);
+    assert.match(source, /permission:/, file);
+  }
+
+  assert.match(readFileSync("app/api/admin/staff-operations/route.ts", "utf8"), /permission: scope === "self" \? "attendance\.clock" : "staff\.view"/);
+  assert.match(readFileSync("app/api/admin/staff-operations/activity/export/route.ts", "utf8"), /permission: "activity_logs\.export"/);
+  assert.match(readFileSync("app/api/admin/staff-operations/timesheets/export/route.ts", "utf8"), /permission: "activity_logs\.export"/);
+  assert.match(readFileSync("app/api/admin/attendance/approvals/[approvalId]/review/route.ts", "utf8"), /permissionMode: "any"/);
+});
+
 test("staff device trust schema supports attendance binding", () => {
   const parsed = staffDeviceTrustUpdateSchema.parse({
     deviceId: staffMemberId,
@@ -315,6 +416,12 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /source !== "offline_sync"[\s\S]*maxTrustedClientCaptureAgeMs/);
   assert.match(attendanceSource, /return new Date\(now\)/);
   assert.match(attendanceSource, /assertClockOutAfterClockIn/);
+  assert.match(attendanceSource, /authorizeAttendanceManagementSession/);
+  assert.match(attendanceSource, /attendanceManagementAuthorized/);
+  assert.match(attendanceSource, /function canManageAttendance/);
+  assert.doesNotMatch(attendanceSource, /source === "manual" && session\.role !== "ADMIN"/);
+  assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để sửa công/);
+  assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để duyệt chấm công/);
   assert.match(attendanceSource, /attendance\.adjusted/);
   assert.match(attendanceSource, /manual_attendance_edit/);
   assert.match(attendanceSource, /GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị/);

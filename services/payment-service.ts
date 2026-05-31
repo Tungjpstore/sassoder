@@ -1,6 +1,7 @@
 import { AppError } from "@/lib/response";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
 import { shouldReturnOnlineOrderToKitchenAfterPayment } from "@/lib/orders/order-state-machine";
+import { resolveManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
 import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitlement";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -931,13 +932,21 @@ function nestedName(value: unknown) {
   return name ? String(name) : null;
 }
 
-export async function confirmPayment(restaurantId: string, orderId: string, actorUserId?: string | null) {
+export async function confirmPayment(
+  restaurantId: string,
+  orderId: string,
+  actorUserId?: string | null,
+  requestedPaymentMethod?: PaymentMethod | null
+) {
   const supabase = createAdminSupabaseClient();
   const typedOrder = await getMerchantPaymentOrder(supabase, restaurantId, orderId);
   const bill = firstOrNull(typedOrder.bill);
 
   if (bill) {
-    const billPaymentMethod = bill.payment_method ?? typedOrder.payment_method;
+    const billPaymentMethod = resolveManualConfirmationMethod({
+      currentMethod: bill.payment_method ?? typedOrder.payment_method,
+      requestedMethod: requestedPaymentMethod
+    });
     if (bill.status === "paid") {
       if (billPaymentMethod) {
         await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(billPaymentMethod));
@@ -976,15 +985,15 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
     if (bill.status !== "waiting_confirm" && bill.status !== "waiting_payment") {
       throw new AppError("Hóa đơn bàn chưa ở trạng thái chờ xác nhận thanh toán", 400);
     }
-    if (!bill.payment_method) {
+    if (!billPaymentMethod) {
       throw new AppError("Hóa đơn bàn chưa chọn phương thức thanh toán", 400);
     }
-    await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(bill.payment_method));
+    await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(billPaymentMethod));
 
     const now = new Date().toISOString();
     const { data: updatedBill, error: billError } = await supabase
       .from("table_bills")
-      .update({ status: "paid", paid_at: now, closed_at: now })
+      .update({ status: "paid", payment_method: billPaymentMethod, paid_at: now, closed_at: now })
       .eq("id", bill.id)
       .eq("restaurant_id", restaurantId)
       .in("status", ["waiting_confirm", "waiting_payment"])
@@ -1000,14 +1009,14 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
           restaurantId,
           billId: currentBill.id,
           billStatus: "paid",
-          paymentMethod: currentBill.payment_method ?? bill.payment_method,
+          paymentMethod: currentBill.payment_method ?? billPaymentMethod,
           paidAt: currentBill.paid_at ?? now
         });
         await ensureConfirmedPaymentLog(supabase, {
           orderId,
           billId: currentBill.id,
           amount: currentBill.total,
-          method: currentBill.payment_method ?? bill.payment_method,
+          method: currentBill.payment_method ?? billPaymentMethod,
           source: "merchant_bill_manual_confirm"
         });
         await completeReservationForBill(restaurantId, currentBill.id);
@@ -1017,7 +1026,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
           orderId,
           billId: currentBill.id,
           amount: currentBill.total,
-          method: currentBill.payment_method ?? bill.payment_method,
+          method: currentBill.payment_method ?? billPaymentMethod,
           customerName: typedOrder.customer_name ?? null,
           actorUserId
         });
@@ -1031,14 +1040,14 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
       restaurantId,
       billId: bill.id,
       billStatus: "paid",
-      paymentMethod: bill.payment_method,
+      paymentMethod: billPaymentMethod,
       paidAt: updatedBill.paid_at ?? now
     });
     await ensureConfirmedPaymentLog(supabase, {
       orderId,
       billId: bill.id,
       amount: bill.total,
-      method: bill.payment_method,
+      method: billPaymentMethod,
       source: "merchant_bill_manual_confirm"
     });
     await completeReservationForBill(restaurantId, bill.id);
@@ -1048,7 +1057,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
       orderId,
       billId: bill.id,
       amount: bill.total,
-      method: bill.payment_method,
+      method: billPaymentMethod,
       customerName: typedOrder.customer_name ?? null,
       actorUserId
     });
@@ -1058,12 +1067,16 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
   }
 
   if (isPaidOrder(typedOrder)) {
-    if (typedOrder.payment_method) {
-      await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
+    const paidPaymentMethod = resolveManualConfirmationMethod({
+      currentMethod: typedOrder.payment_method,
+      requestedMethod: requestedPaymentMethod
+    });
+    if (paidPaymentMethod) {
+      await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(paidPaymentMethod));
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         amount: typedOrder.total,
-        method: typedOrder.payment_method,
+        method: paidPaymentMethod,
         source: "merchant_manual_confirm"
       });
       await enqueuePaymentReceivedNotification({
@@ -1072,7 +1085,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
         orderId,
         billId: typedOrder.bill_id ?? null,
         amount: typedOrder.total,
-        method: typedOrder.payment_method,
+        method: paidPaymentMethod,
         customerName: typedOrder.customer_name ?? null,
         actorUserId
       });
@@ -1090,10 +1103,15 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
   if (!canConfirmPayment) {
     throw new AppError("Đơn hàng chưa ở trạng thái chờ xác nhận thanh toán", 400);
   }
-  if (!typedOrder.payment_method) {
+  const paymentMethod = resolveManualConfirmationMethod({
+    currentMethod: typedOrder.payment_method,
+    requestedMethod: requestedPaymentMethod
+  });
+
+  if (!paymentMethod) {
     throw new AppError("Đơn hàng chưa chọn phương thức thanh toán", 400);
   }
-  await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(typedOrder.payment_method));
+  await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(paymentMethod));
 
   const now = new Date().toISOString();
   const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
@@ -1107,6 +1125,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
     .from("orders")
     .update({
       status: shouldReturnToKitchen ? "pending" : "paid",
+      payment_method: paymentMethod,
       payment_status: "paid",
       paid_at: now
     })
@@ -1123,7 +1142,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
       await ensureConfirmedPaymentLog(supabase, {
         orderId,
         amount: currentOrder.total,
-        method: currentOrder.payment_method ?? typedOrder.payment_method,
+        method: currentOrder.payment_method ?? paymentMethod,
         source: "merchant_manual_confirm"
       });
       await enqueuePaymentReceivedNotification({
@@ -1132,7 +1151,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
         orderId,
         billId: currentOrder.bill_id ?? typedOrder.bill_id ?? null,
         amount: currentOrder.total,
-        method: currentOrder.payment_method ?? typedOrder.payment_method,
+        method: currentOrder.payment_method ?? paymentMethod,
         customerName: currentOrder.customer_name ?? typedOrder.customer_name ?? null,
         actorUserId
       });
@@ -1144,7 +1163,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
   await ensureConfirmedPaymentLog(supabase, {
     orderId,
     amount: typedOrder.total,
-    method: typedOrder.payment_method,
+    method: paymentMethod,
     source: "merchant_manual_confirm"
   });
   await enqueuePaymentReceivedNotification({
@@ -1153,7 +1172,7 @@ export async function confirmPayment(restaurantId: string, orderId: string, acto
     orderId,
     billId: typedOrder.bill_id ?? null,
     amount: typedOrder.total,
-    method: typedOrder.payment_method,
+    method: paymentMethod,
     customerName: typedOrder.customer_name ?? null,
     actorUserId
   });

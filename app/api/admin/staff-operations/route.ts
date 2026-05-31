@@ -50,7 +50,6 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const scope = url.searchParams.get("scope") === "self" ? "self" : "admin";
     const session = await requireOperationalDashboardApiSession({
-      adminOnly: scope === "admin",
       feature: "staff_management",
       permission: scope === "self" ? "attendance.clock" : "staff.view"
     });

@@ -4,6 +4,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { headers } from "next/headers";
 import { AppError } from "@/lib/response";
 import { checkPersistentAuthRateLimit } from "@/lib/auth-rate-limit";
+import { createSlug } from "@/lib/slug";
 import { buildStaffPinAttemptRateLimitInputs, buildStaffPinUnknownRateLimitInput } from "@/lib/staff-pin-abuse";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
@@ -16,6 +17,7 @@ const pinLockMs = 10 * 60 * 1000;
 type StaffPinRestaurantRow = {
   id: string;
   slug: string;
+  staff_code: string | null;
   name: string;
   platform_status: "active" | "deleted" | null;
 };
@@ -135,13 +137,15 @@ async function createSupabaseSessionFromVerifiedPin(email: string) {
 }
 
 async function resolveRestaurantBySlug(supabase: any, restaurantSlug: string) {
-  const slug = restaurantSlug.trim().toLowerCase();
-  if (!slug) throw new AppError("Cần mã quán để đăng nhập bằng PIN.", 422);
+  const identifier = restaurantSlug.trim();
+  const slug = createSlug(identifier);
+  const staffCode = identifier.toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (!slug && !staffCode) throw new AppError("Cần mã quán để đăng nhập bằng PIN.", 422);
 
   const result = await supabase
     .from("restaurants")
-    .select("id,slug,name,platform_status")
-    .eq("slug", slug)
+    .select("id,slug,staff_code,name,platform_status")
+    .or(`slug.eq.${slug},staff_code.eq.${staffCode}`)
     .maybeSingle();
 
   if (result.error) throw new AppError("Không tải được quán để đăng nhập PIN.", 400);

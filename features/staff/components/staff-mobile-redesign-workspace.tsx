@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import {
   BarChart3,
   Bell,
@@ -17,6 +17,7 @@ import {
   MapPin,
   RefreshCw,
   Send,
+  X,
   UserRound,
   Wifi,
   WifiOff,
@@ -61,6 +62,79 @@ type GpsPoint = {
   lng: number;
   accuracyMeters?: number;
 };
+
+type StaffQrScanPayload = {
+  token: string;
+  branchId: string | null;
+};
+
+type BarcodeDetectorConstructor = new (options?: { formats?: string[] }) => {
+  detect(source: CanvasImageSource): Promise<Array<{ rawValue?: string }>>;
+};
+
+type JsQrDecoder = (
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  options?: { inversionAttempts?: "dontInvert" | "onlyInvert" | "attemptBoth" | "invertFirst" }
+) => { data: string } | null;
+
+let jsQrDecoderPromise: Promise<JsQrDecoder> | null = null;
+
+function loadJsQrDecoder() {
+  jsQrDecoderPromise ??= import("jsqr").then((module) => module.default as JsQrDecoder);
+  return jsQrDecoderPromise;
+}
+
+async function decodeQrFromCanvasSource(source: CanvasImageSource, sourceWidth: number, sourceHeight: number) {
+  if (typeof document === "undefined" || sourceWidth <= 0 || sourceHeight <= 0) return "";
+
+  const maxSize = 760;
+  const scale = Math.min(1, maxSize / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(1, Math.round(sourceWidth * scale));
+  const height = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return "";
+  context.drawImage(source, 0, 0, width, height);
+
+  const imageData = context.getImageData(0, 0, width, height);
+  const jsQr = await loadJsQrDecoder();
+  return jsQr(imageData.data, width, height, { inversionAttempts: "attemptBoth" })?.data.trim() ?? "";
+}
+
+function loadImageElement(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Không đọc được ảnh QR."));
+    };
+    image.src = url;
+  });
+}
+
+async function decodeQrFromImageFile(file: File) {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    try {
+      return await decodeQrFromCanvasSource(bitmap, bitmap.width, bitmap.height);
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  const image = await loadImageElement(file);
+  return decodeQrFromCanvasSource(image, image.naturalWidth || image.width, image.naturalHeight || image.height);
+}
 
 type RequestDraft = {
   kind: "leave_request" | "shift_swap" | "overtime";
@@ -140,6 +214,56 @@ function readGpsPosition(): Promise<GpsPoint> {
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 20_000 }
     );
   });
+}
+
+function normalizePlainText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function parseStaffQrScanValue(value: string): StaffQrScanPayload | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const extractToken = (candidate: string | null | undefined) => {
+    const token = candidate?.trim() ?? "";
+    return /^stqr_[a-zA-Z0-9_-]{20,}$/.test(token) ? token : "";
+  };
+
+  try {
+    const url = new URL(raw, window.location.origin);
+    const token = extractToken(url.searchParams.get("qr") ?? url.searchParams.get("token"));
+    if (token) {
+      return {
+        token,
+        branchId: url.searchParams.get("branch")?.trim() || null
+      };
+    }
+  } catch {
+    // Raw QR token or copied text is handled below.
+  }
+
+  const directToken = extractToken(raw);
+  if (directToken) return { token: directToken, branchId: null };
+
+  const tokenMatch = raw.match(/stqr_[a-zA-Z0-9_-]{20,}/);
+  if (tokenMatch?.[0]) return { token: tokenMatch[0], branchId: null };
+  return null;
+}
+
+function clearStaffQrParamsFromUrl() {
+  const url = new URL(window.location.href);
+  const hadQrParams = url.searchParams.has("qr") || url.searchParams.has("branch");
+  url.searchParams.delete("qr");
+  url.searchParams.delete("branch");
+  if (hadQrParams) window.history.replaceState(null, "", url);
+}
+
+function isQrAttendanceError(error: unknown) {
+  const message = normalizePlainText(error instanceof Error ? error.message : String(error ?? ""));
+  return message.includes("qr") || message.includes("ma qr") || message.includes("sai chi nhanh") || message.includes("het han") || message.includes("da duoc su dung");
 }
 
 function initials(name: string) {
@@ -269,7 +393,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const [activeTab, setActiveTab] = useState<StaffAppTab>("home");
   const [selectedBranchId, setSelectedBranchId] = useState(initialBundle.members[0]?.primaryBranchId ?? initialBundle.branches[0]?.id ?? "");
   const [message, setMessage] = useState<{ tone: "success" | "warning" | "neutral"; text: string } | null>(null);
+  const [selectedClockSource, setSelectedClockSource] = useState<ClockSource>(initialBundle.premium.gpsAttendance ? "gps" : "wifi");
   const [qrToken, setQrToken] = useState("");
+  const [qrInput, setQrInput] = useState("");
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [deviceFingerprint, setDeviceFingerprint] = useState("");
   const [deviceTrust, setDeviceTrust] = useState<StaffSessionHeartbeatResult["deviceTrust"] | null>(null);
   const [nowMs, setNowMs] = useState(() => new Date(initialBundle.generatedAt).getTime());
@@ -307,12 +434,14 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const pendingOfflineClockOut = offlineQueue.queue.some((item) => item.action === "clock_out" && (!activeAttendance?.id || item.attendanceLogId === activeAttendance.id));
   const attendanceBlockedByOffline = pendingOfflineClockIn || pendingOfflineClockOut;
   const qrReady = Boolean(qrToken.trim());
+  const fallbackClockSource: ClockSource = bundle.premium.gpsAttendance ? "gps" : "wifi";
   const attendanceMachine = useMemo(
     () => buildStaffAttendanceMachine({
       activeAttendance,
       selectedBranchId,
       selectedBranchName,
       canUseGps: bundle.premium.gpsAttendance,
+      selectedSource: selectedClockSource,
       qrReady,
       deviceTrust,
       hasFingerprint: Boolean(deviceFingerprint),
@@ -321,7 +450,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       syncing: offlineQueue.syncing,
       processing: processingAttendance
     }),
-    [activeAttendance, bundle.premium.gpsAttendance, deviceFingerprint, deviceTrust, offlineQueue.isOnline, offlineQueue.queue.length, offlineQueue.syncing, processingAttendance, qrReady, selectedBranchId, selectedBranchName]
+    [activeAttendance, bundle.premium.gpsAttendance, deviceFingerprint, deviceTrust, offlineQueue.isOnline, offlineQueue.queue.length, offlineQueue.syncing, processingAttendance, qrReady, selectedBranchId, selectedBranchName, selectedClockSource]
   );
 
   const todayAssignments = useMemo(
@@ -342,6 +471,31 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     [bundle.attendanceFeed, staff]
   );
 
+  const applyQrScanValue = useCallback((value: string) => {
+    const parsed = parseStaffQrScanValue(value);
+    if (!parsed) {
+      setMessage({ tone: "warning", text: "Không đọc được mã QR chấm công. Hãy quét lại mã tại quán hoặc dán link QR." });
+      return false;
+    }
+
+    setQrToken(parsed.token);
+    setQrInput("");
+    setSelectedClockSource("qr");
+    setQrScannerOpen(false);
+    setActiveTab("attendance");
+    if (parsed.branchId) setSelectedBranchId(parsed.branchId);
+    clearStaffQrParamsFromUrl();
+    setMessage({ tone: "success", text: "Đã nhận QR chấm công. Bấm Vào ca/Kết ca để xác thực." });
+    return true;
+  }, []);
+
+  function clearQrTokenAfterFailure() {
+    setQrToken("");
+    setQrInput("");
+    setSelectedClockSource(fallbackClockSource);
+    clearStaffQrParamsFromUrl();
+  }
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const fingerprint = getDeviceFingerprint();
@@ -352,14 +506,14 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       const nextQrToken = url.searchParams.get("qr")?.trim() ?? "";
       const nextBranchId = url.searchParams.get("branch")?.trim() ?? "";
       if (nextQrToken) {
-        setQrToken(nextQrToken);
-        setActiveTab("attendance");
-        setMessage({ tone: "success", text: "Đã nhận QR chấm công tại quán." });
+        applyQrScanValue(window.location.href);
+      } else if (nextBranchId) {
+        setSelectedBranchId(nextBranchId);
+        clearStaffQrParamsFromUrl();
       }
-      if (nextBranchId) setSelectedBranchId(nextBranchId);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [applyQrScanValue]);
 
   useEffect(() => {
     if (!deviceFingerprint || !enableHeartbeat) return undefined;
@@ -414,7 +568,9 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       return;
     }
     if (source === "qr" && !qrToken.trim()) {
-      setMessage({ tone: "warning", text: "Bạn cần quét QR tại quán trước khi dùng chế độ QR." });
+      setSelectedClockSource("qr");
+      setQrScannerOpen(true);
+      setMessage({ tone: "warning", text: "Mở khung quét QR để lấy mã mới tại đúng chi nhánh." });
       return;
     }
     if (source === "wifi" && !offlineQueue.isOnline) {
@@ -446,7 +602,13 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         const queued = offlineQueue.enqueue({ action, branchId: selectedBranchId, attendanceLogId: activeAttendance?.id, source: "gps", lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, capturedAt, deviceInfo });
         setMessage({ tone: "warning", text: queued.error ?? "Mạng yếu. Thao tác đã được lưu vào hàng đợi offline." });
       } else {
-        setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
+        if (source === "qr" && isQrAttendanceError(error)) {
+          clearQrTokenAfterFailure();
+          setQrScannerOpen(true);
+          setMessage({ tone: "warning", text: "QR này không còn hợp lệ cho chi nhánh/ca hiện tại. Hãy quét lại mã mới hoặc chuyển sang GPS/WiFi." });
+        } else {
+          setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
+        }
       }
     } finally {
       setProcessingAttendance(false);
@@ -637,6 +799,12 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   selectedBranchName={selectedBranchName}
                   branches={bundle.branches}
                   onBranchChange={setSelectedBranchId}
+                  selectedSource={selectedClockSource}
+                  onSourceChange={setSelectedClockSource}
+                  onOpenQrScanner={() => {
+                    setSelectedClockSource("qr");
+                    setQrScannerOpen(true);
+                  }}
                   onClock={runClockAction}
                   processing={processingAttendance || forcedLogout || attendanceBlockedByOffline}
                   gpsEnabled={bundle.premium.gpsAttendance}
@@ -662,6 +830,12 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   selectedBranchName={selectedBranchName}
                   branches={bundle.branches}
                   onBranchChange={setSelectedBranchId}
+                  selectedSource={selectedClockSource}
+                  onSourceChange={setSelectedClockSource}
+                  onOpenQrScanner={() => {
+                    setSelectedClockSource("qr");
+                    setQrScannerOpen(true);
+                  }}
                   onClock={runClockAction}
                   processing={processingAttendance || forcedLogout || attendanceBlockedByOffline}
                   gpsEnabled={bundle.premium.gpsAttendance}
@@ -686,6 +860,17 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
           <AppCard className="p-5"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Chấm công</p><div className="mt-3 flex items-center justify-between"><div><p className="text-xl font-black text-[#2B2B2B]">{activeAttendance ? "Đang trong ca" : "Chưa vào ca"}</p><p className="mt-1 text-xs font-semibold text-[#5E5A54]">{activeAttendance ? activeDuration : selectedBranchName}</p></div><StatusPill tone={activeAttendance ? "success" : "neutral"}>{mounted && offlineQueue.isOnline ? "Online" : "Offline"}</StatusPill></div></AppCard>
         </aside>
       </section>
+
+      <QrScannerSheet
+        open={qrScannerOpen}
+        branchName={selectedBranchName}
+        qrInput={qrInput}
+        qrReady={qrReady}
+        onInputChange={setQrInput}
+        onApplyInput={() => applyQrScanValue(qrInput)}
+        onScanValue={applyQrScanValue}
+        onClose={() => setQrScannerOpen(false)}
+      />
 
       <nav className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-50 grid h-[88px] grid-cols-5 border-t px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2" aria-label="Staff app navigation">
         {tabs.map((tab) => {
@@ -715,6 +900,9 @@ function ClockControlCard({
   selectedBranchName,
   branches,
   onBranchChange,
+  selectedSource,
+  onSourceChange,
+  onOpenQrScanner,
   onClock,
   processing,
   gpsEnabled,
@@ -732,6 +920,9 @@ function ClockControlCard({
   selectedBranchName: string;
   branches: StaffOperationsBundle["branches"];
   onBranchChange: (value: string) => void;
+  selectedSource: ClockSource;
+  onSourceChange: (value: ClockSource) => void;
+  onOpenQrScanner: () => void;
   onClock: (source: ClockSource) => void;
   processing: boolean;
   gpsEnabled: boolean;
@@ -744,6 +935,11 @@ function ClockControlCard({
   const PrimaryIcon = machine.source === "qr" ? Fingerprint : machine.source === "wifi" ? Wifi : MapPin;
   const stateTone = machine.state === "blocked" ? "danger" : machine.state.includes("needs") || machine.state === "queued_offline" ? "warning" : activeAttendance ? "success" : "neutral";
   const sourceDisabled = processing || !machine.canSubmit;
+  const sourceOptions: Array<{ key: ClockSource; label: string; icon: LucideIcon; disabled: boolean }> = [
+    { key: "gps", label: "GPS", icon: MapPin, disabled: !gpsEnabled },
+    { key: "wifi", label: "WiFi", icon: Wifi, disabled: !online },
+    { key: "qr", label: qrReady ? "QR sẵn" : "Quét QR", icon: Fingerprint, disabled: false }
+  ];
 
   return (
     <AppCard className="overflow-hidden p-0">
@@ -781,10 +977,26 @@ function ClockControlCard({
           <PrimaryIcon size={19} /> {processing ? "Đang xử lý..." : machine.primaryLabel}
         </ShellButton>
 
-        <div className="grid grid-cols-3 gap-2">
-          <ShellButton variant="secondary" disabled={sourceDisabled || !gpsEnabled} onClick={() => onClock("gps")} className="px-2 text-xs"><MapPin size={17} /> GPS</ShellButton>
-          <ShellButton variant="secondary" disabled={sourceDisabled || !online} onClick={() => onClock("wifi")} className="px-2 text-xs"><Wifi size={17} /> WiFi</ShellButton>
-          <ShellButton variant="secondary" disabled={sourceDisabled || !qrReady} onClick={() => onClock("qr")} className="px-2 text-xs"><Fingerprint size={17} /> QR</ShellButton>
+        <div className="grid grid-cols-3 gap-2" aria-label="Chọn phương thức chấm công">
+          {sourceOptions.map((option) => {
+            const Icon = option.icon;
+            const active = selectedSource === option.key;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                aria-pressed={active}
+                disabled={processing || option.disabled}
+                onClick={() => {
+                  onSourceChange(option.key);
+                  if (option.key === "qr") onOpenQrScanner();
+                }}
+                className={cn("inline-flex min-h-12 items-center justify-center gap-1.5 rounded-xl border px-2 text-xs font-black transition active:scale-[0.99] disabled:opacity-55", active ? "border-[#0F4D3A] bg-[#E5EEE2] text-[#0F4D3A]" : "border-[#D8D1C7] bg-white text-[#2B2B2B]")}
+              >
+                <Icon size={17} /> {option.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#5E5A54]">
@@ -794,6 +1006,152 @@ function ClockControlCard({
         </div>
       </div>
     </AppCard>
+  );
+}
+
+function QrScannerSheet({
+  open,
+  branchName,
+  qrInput,
+  qrReady,
+  onInputChange,
+  onApplyInput,
+  onScanValue,
+  onClose
+}: {
+  open: boolean;
+  branchName: string;
+  qrInput: string;
+  qrReady: boolean;
+  onInputChange: (value: string) => void;
+  onApplyInput: () => boolean;
+  onScanValue: (value: string) => boolean;
+  onClose: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const stopRef = useRef(false);
+  const [scannerMessage, setScannerMessage] = useState("");
+  const [cameraActive, setCameraActive] = useState(false);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    let frameId = 0;
+    const resetId = window.setTimeout(() => {
+      setCameraActive(false);
+      setScannerMessage("");
+    }, 0);
+    stopRef.current = false;
+    const BarcodeDetector = (window as typeof window & { BarcodeDetector?: BarcodeDetectorConstructor }).BarcodeDetector;
+
+    async function startScanner() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setScannerMessage("Thiết bị chưa cấp quyền camera. Dán link QR hoặc chọn ảnh QR để tiếp tục.");
+        return;
+      }
+
+      try {
+        if (!BarcodeDetector) {
+          setScannerMessage("Đang dùng chế độ quét tương thích. Giữ QR trong khung vài giây hoặc dán link bên dưới.");
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (stopRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        setCameraActive(true);
+        const video = videoRef.current;
+        if (!video) return;
+        video.srcObject = stream;
+        await video.play();
+        const detector = BarcodeDetector ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
+
+        const scan = async () => {
+          if (stopRef.current || !videoRef.current) return;
+          try {
+            const videoElement = videoRef.current;
+            if (videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+              let rawValue = "";
+              if (detector) {
+                const codes = await detector.detect(videoElement);
+                rawValue = codes.find((code) => code.rawValue)?.rawValue ?? "";
+              }
+              if (!rawValue && videoElement.videoWidth && videoElement.videoHeight) {
+                rawValue = await decodeQrFromCanvasSource(videoElement, videoElement.videoWidth, videoElement.videoHeight);
+              }
+              if (rawValue && onScanValue(rawValue)) return;
+            }
+          } catch {
+            setScannerMessage((current) => current || "Camera chưa đọc được QR. Giữ mã trong khung hoặc dán link QR bên dưới.");
+          }
+          frameId = window.setTimeout(scan, 500);
+        };
+        void scan();
+      } catch {
+        setScannerMessage("Không mở được camera. Hãy cấp quyền camera hoặc dán link QR từ màn hình tại quán.");
+      }
+    }
+
+    void startScanner();
+
+    return () => {
+      stopRef.current = true;
+      window.clearTimeout(resetId);
+      window.clearTimeout(frameId);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setCameraActive(false);
+    };
+  }, [onScanValue, open]);
+
+  async function scanImage(file: File | null) {
+    if (!file) return;
+    try {
+      setScannerMessage("Đang đọc ảnh QR...");
+      const rawValue = await decodeQrFromImageFile(file);
+      if (!rawValue || !onScanValue(rawValue)) setScannerMessage("Ảnh này chưa có QR chấm công hợp lệ.");
+    } catch {
+      setScannerMessage("Không đọc được ảnh QR. Hãy chụp rõ hơn hoặc dán link QR.");
+    }
+  }
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[70] grid items-end bg-[#1F1D1A]/60 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-8 backdrop-blur-sm sm:items-center sm:px-6" role="dialog" aria-modal="true" aria-label="Quét QR chấm công">
+      <section className="mx-auto w-full max-w-md overflow-hidden rounded-[24px] border border-[#D8D1C7] bg-[#FFFDF8] shadow-[0_24px_70px_rgba(31,29,26,0.28)]">
+        <header className="flex items-center justify-between gap-3 border-b border-[#E5DDD2] p-4">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">QR chấm công</p>
+            <h2 className="truncate text-xl font-black text-[#2B2B2B]">{branchName}</h2>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#F0ECE6] text-[#2B2B2B]" aria-label="Đóng quét QR"><X size={20} /></button>
+        </header>
+        <div className="grid gap-4 p-4">
+          <div className="relative aspect-square overflow-hidden rounded-2xl border border-[#D8D1C7] bg-[#151713]">
+            <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
+            <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-white/85 shadow-[0_0_0_999px_rgba(0,0,0,0.22)]" />
+            <div className="absolute inset-x-4 bottom-4 rounded-xl bg-black/50 px-3 py-2 text-center text-xs font-bold text-white">
+              {cameraActive ? "Đưa QR vào giữa khung" : "Đang mở camera hoặc dùng ô nhập bên dưới"}
+            </div>
+          </div>
+          {scannerMessage ? <MessageBar message={{ tone: "warning", text: scannerMessage }} /> : null}
+          {qrReady ? <MessageBar message={{ tone: "success", text: "Đã có QR trong phiên này. Quét lại nếu vừa đổi chi nhánh hoặc mã đã hết hạn." }} /> : null}
+          <div className="grid gap-2">
+            <input value={qrInput} onChange={(event) => onInputChange(event.target.value)} className="staff-redesign-input" placeholder="Dán link QR hoặc mã stqr_..." />
+            <div className="grid grid-cols-2 gap-2">
+              <ShellButton variant="secondary" onClick={onApplyInput}>Dùng mã này</ShellButton>
+              <label className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-xl border border-[#D8D1C7] bg-white px-4 text-base font-black text-[#2B2B2B]">
+                Chọn ảnh
+                <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => { void scanImage(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} />
+              </label>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 

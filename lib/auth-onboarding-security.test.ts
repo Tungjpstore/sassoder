@@ -5,6 +5,7 @@ import test from "node:test";
 const callbackSource = readFileSync("app/auth/callback/route.ts", "utf8");
 const emailStatusRouteSource = readFileSync("app/api/auth/email-status/route.ts", "utf8");
 const staffPinServiceSource = readFileSync("features/staff/services/staff-pin-service.ts", "utf8");
+const onboardingFlowSource = readFileSync("components/dashboard/restaurant-onboarding-flow.tsx", "utf8");
 const restaurantServiceSource = readFileSync("services/restaurant-service.ts", "utf8");
 const onboardingRpcMigration = readFileSync("supabase/migrations/20260517160000_atomic_restaurant_onboarding_rpc.sql", "utf8");
 const authServiceSource = readFileSync("services/auth-service.ts", "utf8");
@@ -46,6 +47,19 @@ test("staff PIN login rate-limits every valid PIN attempt before member lookup",
   assert.ok(lookupIndex > budgetIndex);
   assert.ok(unknownFailureIndex > noMemberIndex);
   assert.match(loginBlock, /throw new AppError\("PIN hoặc mã quán không đúng\.", 401\)/);
+});
+
+test("onboarding and staff login share restaurant identity semantics", () => {
+  const resolverBlock = sourceBlock(staffPinServiceSource, "async function resolveRestaurantBySlug", "async function assertStaffPinAttemptBudget");
+
+  assert.match(onboardingFlowSource, /import \{ createSlug \} from "@\/lib\/slug"/);
+  assert.match(onboardingFlowSource, /\/api\/restaurants\/slug\?slug=/);
+  assert.match(onboardingFlowSource, /name="slug" value=\{slug\}/);
+  assert.match(onboardingFlowSource, /slugReady/);
+  assert.match(resolverBlock, /createSlug\(identifier\)/);
+  assert.match(resolverBlock, /staffCode = identifier\.toUpperCase\(\)\.replace/);
+  assert.match(resolverBlock, /\.select\("id,slug,staff_code,name,platform_status"\)/);
+  assert.match(resolverBlock, /slug\.eq\.\$\{slug\},staff_code\.eq\.\$\{staffCode\}/);
 });
 
 test("unknown staff PIN audit logs never include raw PIN material", () => {

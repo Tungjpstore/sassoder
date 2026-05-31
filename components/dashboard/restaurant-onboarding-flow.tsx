@@ -35,6 +35,7 @@ import { onboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
 import { buildOnboardingRunway, formatDraftSavedLabel } from "@/lib/onboarding-runway";
+import { createSlug } from "@/lib/slug";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
 import type { AddressAutocompletePrediction } from "@/services/maps/types";
 import { InteractiveStorePreview } from "@/components/dashboard/interactive-store-preview";
@@ -89,6 +90,7 @@ type OnboardingDraft = {
   version: 2;
   updatedAt: number;
   name: string;
+  slug: string;
   businessPresetId: string;
   customBusinessType: string;
   provinceCode: string;
@@ -112,6 +114,7 @@ type OnboardingDraft = {
 type StoredOnboardingDraft = Partial<Omit<OnboardingDraft, "version">> & {
   version?: 1 | 2;
 };
+type MobileOnboardingStepId = "identity" | "location" | "plan" | "review" | "tables" | "menu";
 type OcrDraft = {
   categories: Array<{
     name: string;
@@ -344,17 +347,6 @@ function planNarrative(plan: OnboardingPlan) {
 
 function planFeatureCount(plan: OnboardingPlan) {
   return planFeatureList(plan).length;
-}
-
-function createSlug(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/đ/g, "d")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 70);
 }
 
 function formatTableName(index: number) {
@@ -712,8 +704,12 @@ export function RestaurantOnboardingFlow({
   const placeSessionTokenRef = useRef(createMapSessionToken());
   const [state, action, pending] = useActionState(onboardingAction, undefined);
   const [step, setStep] = useState(0);
+  const [mobileStep, setMobileStep] = useState<MobileOnboardingStepId>("identity");
   const [furthestStep, setFurthestStep] = useState(0);
   const [name, setName] = useState("");
+  const [slugInput, setSlugInput] = useState("quan-moi");
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [slugStatus, setSlugStatus] = useState<"idle" | "checking" | "available" | "taken" | "invalid" | "error">("idle");
   const [businessPresetId, setBusinessPresetId] = useState("cafe");
   const [customBusinessType, setCustomBusinessType] = useState("");
   const [provinces, setProvinces] = useState<AdminProvince[]>([]);
@@ -756,7 +752,10 @@ export function RestaurantOnboardingFlow({
   const [launchMessageIndex, setLaunchMessageIndex] = useState(0);
   const selectedPreset = businessPresets.find((item) => item.id === businessPresetId) ?? businessPresets[0];
   const selectedPlan = plans.find((plan) => plan.code === planCode) ?? plans[0] ?? null;
-  const slug = createSlug(name) || "quan-moi";
+  const suggestedSlug = createSlug(name) || "quan-moi";
+  const displayedSlugInput = slugEdited ? slugInput : suggestedSlug;
+  const slug = createSlug(displayedSlugInput) || suggestedSlug;
+  const slugReady = slugStatus === "available";
   const progress = [22, 42, 70, 88, 100][step] ?? 22;
   const selectedProvince = provinces.find((item) => item.code === provinceCode) ?? null;
   const selectedWard = wards.find((item) => item.code === wardCode) ?? null;
@@ -772,7 +771,9 @@ export function RestaurantOnboardingFlow({
   const hasStructuredAddress =
     selectedAddress.trim().length >= 8 ||
     Boolean(finalAddress.trim().length >= 8 && (hasPinnedLocation || provinceCode || wardCode));
-  const canContinueInfo = name.trim().length >= 2 && hasBusinessType && hasStructuredAddress && /^[0-9+() .-]{6,24}$/.test(hotline.trim());
+  const hasValidHotline = /^[0-9+() .-]{6,24}$/.test(hotline.trim());
+  const canContinueIdentity = name.trim().length >= 2 && slugReady && hasBusinessType && hasValidHotline;
+  const canContinueInfo = canContinueIdentity && hasStructuredAddress;
   const dashboardPlanCode = selectedPlan?.code ?? planCode;
   const ocrDraftItems = useMemo(() => flattenOcrDraft(menuOcrDraft), [menuOcrDraft]);
   const confirmedMenuItemsJson = useMemo(() => JSON.stringify(confirmedMenuItems), [confirmedMenuItems]);
@@ -797,10 +798,42 @@ export function RestaurantOnboardingFlow({
   const draftStatusLabel = formatDraftSavedLabel(draftSavedAt, draftStatusTick || draftSavedAt);
   const missingInfoLabels = [
     name.trim().length >= 2 ? "" : "tên quán",
+    slugReady ? "" : "mã quán",
     hasBusinessType ? "" : "loại hình",
     hasStructuredAddress ? "" : "địa chỉ",
-    /^[0-9+() .-]{6,24}$/.test(hotline.trim()) ? "" : "hotline"
+    hasValidHotline ? "" : "hotline"
   ].filter(Boolean);
+  const mobileSteps: Array<{ id: MobileOnboardingStepId; label: string; progress: number }> = [
+    { id: "identity", label: "Định danh", progress: 16 },
+    { id: "location", label: "Vị trí", progress: 32 },
+    { id: "plan", label: "Gói", progress: 50 },
+    { id: "review", label: "Rà lại", progress: 66 },
+    { id: "tables", label: "Bàn", progress: 82 },
+    { id: "menu", label: "Menu", progress: 100 }
+  ];
+  const mobileStepIndex = Math.max(0, mobileSteps.findIndex((item) => item.id === mobileStep));
+  const mobileCurrentStep = mobileSteps[mobileStepIndex] ?? mobileSteps[0];
+  const mobileHasMenu = confirmedMenuItems.length > 0 || itemName.trim().length >= 2;
+  const mobileCanContinue =
+    mobileStep === "identity"
+      ? canContinueIdentity
+      : mobileStep === "location"
+        ? canContinueInfo
+        : mobileStep === "plan"
+          ? Boolean(selectedPlan)
+          : mobileStep === "tables"
+            ? tableCount > 0
+            : true;
+  const mobileMissingReason =
+    mobileStep === "identity"
+      ? missingInfoLabels.filter((label) => label !== "địa chỉ").slice(0, 2).join(", ")
+      : mobileStep === "location" && !hasStructuredAddress
+        ? "địa chỉ"
+        : mobileStep === "plan" && !selectedPlan
+          ? "gói vận hành"
+          : mobileStep === "menu" && !mobileHasMenu
+            ? "một món đầu tiên"
+            : "";
 
   useEffect(() => {
     const draft = readOnboardingDraft(draftKey);
@@ -808,6 +841,11 @@ export function RestaurantOnboardingFlow({
     queueMicrotask(() => {
       if (draft) {
         setName(draft.name ?? "");
+        const draftSlug = typeof draft.slug === "string" ? createSlug(draft.slug) : "";
+        if (draftSlug) {
+          setSlugInput(draftSlug);
+          setSlugEdited(true);
+        }
         setBusinessPresetId(draft.businessPresetId ?? "cafe");
         setCustomBusinessType(draft.customBusinessType ?? "");
         setProvinceCode(draft.provinceCode ?? "");
@@ -861,6 +899,41 @@ export function RestaurantOnboardingFlow({
   }, []);
 
   useEffect(() => {
+    if (!draftHydrated) return;
+    if (!/^[a-z0-9-]{2,80}$/.test(slug)) {
+      queueMicrotask(() => setSlugStatus("invalid"));
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setSlugStatus("checking");
+      try {
+        const response = await fetch(`/api/restaurants/slug?slug=${encodeURIComponent(slug)}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+        const payload = (await response.json()) as { ok?: boolean; available?: boolean; slug?: string };
+        if (!payload.ok || payload.slug !== slug) {
+          setSlugStatus("error");
+          return;
+        }
+        setSlugStatus(payload.available ? "available" : "taken");
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("[onboarding] slug availability check failed", error);
+          setSlugStatus("error");
+        }
+      }
+    }, 350);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [draftHydrated, slug]);
+
+  useEffect(() => {
     if (!provinceCode) {
       queueMicrotask(() => setWards([]));
       return;
@@ -907,6 +980,7 @@ export function RestaurantOnboardingFlow({
       version: 2,
       updatedAt,
       name,
+      slug,
       businessPresetId,
       customBusinessType,
       provinceCode,
@@ -950,6 +1024,7 @@ export function RestaurantOnboardingFlow({
     confirmedMenuItems,
     locationAccuracy,
     name,
+    slug,
     planCode,
     province,
     provinceCode,
@@ -1012,6 +1087,38 @@ export function RestaurantOnboardingFlow({
   function selectPlan(plan: OnboardingPlan) {
     setPlanCode(plan.code);
     if (plan.code === "premium") setTableCount((value) => Math.max(value, 24));
+  }
+
+  function openMobileStep(nextStep: MobileOnboardingStepId) {
+    setMobileStep(nextStep);
+  }
+
+  function advanceMobile() {
+    const nextStep = mobileSteps[mobileStepIndex + 1];
+    if (nextStep) setMobileStep(nextStep.id);
+  }
+
+  function retreatMobile() {
+    const previousStep = mobileSteps[mobileStepIndex - 1];
+    if (previousStep) setMobileStep(previousStep.id);
+  }
+
+  function mobileStepFromRunwayTarget(targetStep: number): MobileOnboardingStepId {
+    if (targetStep === 1) return "plan";
+    if (targetStep === 3) return "tables";
+    if (targetStep === 4) return "menu";
+    return "identity";
+  }
+
+  function handleMenuOcrImage(file: File | null) {
+    if (file && file.size > 5 * 1024 * 1024) {
+      setMenuOcrError("Ảnh menu tối đa 5MB. Vui lòng chụp/nén lại ảnh rõ hơn.");
+      setMenuOcrImage(null);
+      return;
+    }
+
+    setMenuOcrError("");
+    setMenuOcrImage(file);
   }
 
   function clearSelectedAddress() {
@@ -1174,7 +1281,18 @@ export function RestaurantOnboardingFlow({
           : step === 4
             ? "Sẵn sàng tạo dashboard thật cho quán"
             : "Có thể tiếp tục bước tiếp theo";
-
+  const slugStatusCopy =
+    slugStatus === "checking"
+      ? "Đang kiểm tra mã quán..."
+      : slugStatus === "available"
+        ? "Mã quán khả dụng."
+        : slugStatus === "taken"
+          ? "Mã quán đã có người dùng."
+          : slugStatus === "invalid"
+            ? "Mã quán cần 2-80 ký tự a-z, 0-9 hoặc dấu gạch nối."
+            : slugStatus === "error"
+              ? "Chưa kiểm tra được mã quán."
+              : "";
   const storePreview = (
     <InteractiveStorePreview
       name={name}
@@ -1231,7 +1349,237 @@ export function RestaurantOnboardingFlow({
         <input type="hidden" name="brandDescription" value="" />
         <input type="hidden" name="generatedLogoUrl" value="" />
 
-        <header className={`dashboard-onboarding-header shrink-0 rounded-lg border ${sectionLine} bg-white p-3`}>
+        <section className="onboarding-mobile-shell md:hidden" aria-label="Tạo quán mới trên mobile">
+          <header className="onboarding-mobile-brandbar">
+            <div className="flex min-w-0 items-center justify-between gap-3">
+              <LogiVNLogo href="/" className="h-7" priority />
+              <span className="onboarding-mobile-pill">{draftSavedAt > 0 ? "Nháp đã lưu" : "Tạo quán"}</span>
+            </div>
+            <div className="onboarding-mobile-progress-row">
+              <span>{mobileCurrentStep.label}</span>
+              <strong>{mobileCurrentStep.progress}%</strong>
+            </div>
+            <div className="onboarding-mobile-rail" aria-hidden="true">
+              {mobileSteps.map((item, index) => (
+                <span key={item.id} className={index <= mobileStepIndex ? "is-active" : ""} />
+              ))}
+            </div>
+          </header>
+
+          <div className="onboarding-mobile-screen">
+            {mobileStep === "identity" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 1</p>
+                <h1>Định danh quán</h1>
+                <label className="onboarding-mobile-field">
+                  <span>Tên quán</span>
+                  <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nhập tên quán" />
+                </label>
+                <label className="onboarding-mobile-field">
+                  <span>Mã quán</span>
+                  <span className="onboarding-mobile-input-wrap">
+                    <input
+                      value={displayedSlugInput}
+                      onChange={(event) => {
+                        setSlugEdited(true);
+                        setSlugInput(createSlug(event.target.value));
+                      }}
+                      placeholder="quan-cua-ban"
+                    />
+                    {slugStatus === "checking" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    {slugStatus === "available" ? <CheckCircle2 className="h-4 w-4" /> : null}
+                  </span>
+                </label>
+                <div className={`onboarding-mobile-inline-status ${slugReady ? "is-ok" : "is-warning"}`}>
+                  <span>{slug}.logivn.com</span>
+                  <strong>{slugStatus === "available" ? "Khả dụng" : slugStatus === "checking" ? "Đang kiểm tra" : slugStatus === "taken" ? "Đã dùng" : "Cần kiểm tra"}</strong>
+                </div>
+                <div className="onboarding-mobile-chip-grid" aria-label="Loại hình quán">
+                  {businessPresets.map((preset) => {
+                    const Icon = preset.icon;
+                    const active = businessPresetId === preset.id;
+                    return (
+                      <button key={preset.id} type="button" onClick={() => setBusinessPresetId(preset.id)} className={active ? "is-active" : ""} aria-pressed={active}>
+                        <Icon className="h-4 w-4" />
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedPreset.value === "OTHER" ? (
+                  <label className="onboarding-mobile-field">
+                    <span>Danh mục riêng</span>
+                    <input value={customBusinessType} onChange={(event) => setCustomBusinessType(event.target.value)} placeholder="Bakery, pub, homestay cafe..." />
+                  </label>
+                ) : null}
+                <label className="onboarding-mobile-field">
+                  <span>Hotline</span>
+                  <input value={hotline} onChange={(event) => setHotline(event.target.value)} placeholder="0901234567" inputMode="tel" />
+                </label>
+              </div>
+            ) : null}
+
+            {mobileStep === "location" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 1b</p>
+                <h1>Ghim nơi bán</h1>
+                <label className="onboarding-mobile-field">
+                  <span>Địa chỉ hoặc mốc gần quán</span>
+                  <input
+                    value={streetAddress}
+                    onChange={(event) => {
+                      setStreetAddress(event.target.value);
+                      clearSelectedAddress();
+                    }}
+                    placeholder="12 Nguyễn Huệ, Quận 1"
+                  />
+                </label>
+                <div className="onboarding-mobile-two-actions">
+                  <button type="button" onClick={() => void handleUseCurrentPosition()} disabled={locationPending}>
+                    {locationPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
+                    GPS
+                  </button>
+                  <button type="button" onClick={() => void searchAddressSuggestions()} disabled={addressSearching || finalAddress.trim().length < 6}>
+                    {addressSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                    Tìm
+                  </button>
+                </div>
+                {addressResults.length > 0 ? (
+                  <div className="onboarding-mobile-list" aria-label="Gợi ý địa chỉ">
+                    {addressResults.slice(0, 3).map((result, index) => (
+                      <button key={result.id} type="button" onClick={() => void chooseAddressSuggestion(result)}>
+                        <span>{index + 1}</span>
+                        <strong>{result.shortLabel || result.address}</strong>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                <details className="onboarding-mobile-details">
+                  <summary>Tỉnh/xã thủ công</summary>
+                  <div className="grid gap-2 pt-3">
+                    <select value={provinceCode} onChange={(event) => chooseProvince(event.target.value)}>
+                      <option value="">{adminLoading ? "Đang tải..." : "Chọn tỉnh/thành"}</option>
+                      {provinces.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+                    </select>
+                    <select value={wardCode} onChange={(event) => chooseWard(event.target.value)} disabled={!provinceCode || adminLoading}>
+                      <option value="">{provinceCode ? "Chọn xã/phường" : "Chọn tỉnh trước"}</option>
+                      {wards.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
+                    </select>
+                    <input value={district} onChange={(event) => { setDistrict(event.target.value); clearSelectedAddress(); }} placeholder="Huyện cũ / thôn ấp" />
+                  </div>
+                </details>
+                {locationError || addressError ? <p className="onboarding-mobile-warning">{locationError || addressError}</p> : null}
+                {hasPinnedLocation ? <p className="onboarding-mobile-success">{locationQualityLabel(locationAccuracy)}</p> : null}
+              </div>
+            ) : null}
+
+            {mobileStep === "plan" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 2</p>
+                <h1>Gói vận hành</h1>
+                <div className="onboarding-mobile-recommendation">Phù hợp hiện tại: <strong>{selectedPlan?.name ?? "Pro"}</strong></div>
+                <div className="onboarding-mobile-plan-list">
+                  {plans.map((plan) => {
+                    const active = plan.code === planCode;
+                    return (
+                      <article key={plan.id} className={active ? "is-active" : ""}>
+                        <div>
+                          <h2>{plan.name}</h2>
+                          <p>{formatVnd(plan.monthly_price)}/tháng · dùng thử {plan.trial_days} ngày</p>
+                          <p>{planFeaturePreview(plan).slice(0, 3).join(" · ")}</p>
+                        </div>
+                        <button type="button" onClick={() => selectPlan(plan)}>{active ? "Đã chọn" : "Chọn"}</button>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {mobileStep === "review" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 3</p>
+                <h1>{setupDoneCount}/{setupTasks.length} mục sẵn sàng</h1>
+                <div className="onboarding-mobile-review-list">
+                  {setupTasks.map((item) => (
+                    <button key={item.id} type="button" onClick={() => openMobileStep(mobileStepFromRunwayTarget(item.targetStep))}>
+                      <span>{item.label}</span>
+                      {item.done ? <CheckCircle2 className="h-5 w-5" /> : <span className="onboarding-mobile-empty-dot" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {mobileStep === "tables" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 4</p>
+                <h1>Bàn & QR</h1>
+                <div className="onboarding-mobile-stepper">
+                  <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))}>-</button>
+                  <strong>{tableCount}</strong>
+                  <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))}>+</button>
+                </div>
+                <div className="onboarding-mobile-preset-grid">
+                  {[6, 10, 16, 24].map((count) => (
+                    <button key={count} type="button" onClick={() => setTableCount(count)} className={tableCount === count ? "is-active" : ""}>{count}</button>
+                  ))}
+                </div>
+                <div className="onboarding-mobile-table-preview">
+                  {[0, 1, 2].map((index) => <span key={index}>{formatTableName(index)}</span>)}
+                </div>
+                <p className="onboarding-mobile-success">QR sẵn sau khi tạo quán.</p>
+              </div>
+            ) : null}
+
+            {mobileStep === "menu" ? (
+              <div className="onboarding-mobile-pane">
+                <p className="onboarding-mobile-eyebrow">Bước 5</p>
+                <h1>Menu đầu tiên</h1>
+                <div className="onboarding-mobile-segment"><span className="is-active">Nhập nhanh</span><span>AI menu</span></div>
+                <label className="onboarding-mobile-field"><span>Tên món</span><input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Cà phê sữa đá" /></label>
+                <label className="onboarding-mobile-field"><span>Giá</span><input value={itemPrice} onChange={(event) => setItemPrice(event.target.value.replace(/\D/g, ""))} placeholder="28000" inputMode="numeric" /></label>
+                <label className="onboarding-mobile-field"><span>Danh mục</span><input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} placeholder="Cà phê" /></label>
+                <details className="onboarding-mobile-details">
+                  <summary>AI đọc ảnh menu</summary>
+                  <div className="grid gap-2 pt-3">
+                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => handleMenuOcrImage(event.target.files?.[0] ?? null)} />
+                    <textarea value={menuOcrText} onChange={(event) => setMenuOcrText(event.target.value)} placeholder="Dán menu thô" />
+                    <button type="button" onClick={() => void runMenuOcr()} disabled={menuOcrLoading || (!menuOcrText.trim() && !menuOcrImage)}>{menuOcrLoading ? "Đang đọc..." : "Quét menu"}</button>
+                  </div>
+                </details>
+                {menuOcrError ? <p className="onboarding-mobile-warning">{menuOcrError}</p> : null}
+                {ocrDraftItems.length > 0 ? (
+                  <div className="onboarding-mobile-list" aria-label="Món AI đã đọc">
+                    {ocrDraftItems.slice(0, 3).map((item) => (
+                      <button key={`${item.categoryName}-${item.name}-${item.price}`} type="button" onClick={() => setConfirmedMenuItems(ocrDraftItems)}>
+                        <strong>{item.name}</strong>
+                        <span>{formatVnd(item.price)}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {ocrDraftItems.length > 0 ? <button type="button" className="onboarding-mobile-confirm" onClick={() => setConfirmedMenuItems(ocrDraftItems)}>Xác nhận {ocrDraftItems.length} món</button> : null}
+                <p className="onboarding-mobile-success">Đã xác nhận: {confirmedMenuItems.length || (itemName.trim() ? 1 : 0)} món.</p>
+                {state?.error ? <p className="onboarding-mobile-warning">{state.error}</p> : null}
+              </div>
+            ) : null}
+          </div>
+
+          <footer className="onboarding-mobile-actionbar">
+            {mobileMissingReason ? <p>Cần thêm {mobileMissingReason}</p> : <p>{launching ? launchMessages[launchMessageIndex] : "Sẵn sàng tiếp tục"}</p>}
+            <div>
+              <button type="button" onClick={retreatMobile} disabled={mobileStepIndex === 0 || launching}>Quay lại</button>
+              {mobileStep === "menu" ? (
+                <button type="submit" disabled={launching || !canSubmitOnboarding}>{launching ? "Đang tạo..." : "Tạo dashboard"}</button>
+              ) : (
+                <button type="button" onClick={advanceMobile} disabled={!mobileCanContinue || launching}>Tiếp tục</button>
+              )}
+            </div>
+          </footer>
+        </section>
+
+        <header className={`dashboard-onboarding-header hidden shrink-0 rounded-lg border ${sectionLine} bg-white p-3 md:block`}>
           <div className="dashboard-onboarding-hero-bar grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-stretch">
             <div className="flex min-w-0 gap-3">
               <div className="dashboard-onboarding-logo-mark shrink-0 rounded-md border border-[#d8dee9] bg-white px-2 py-1">
@@ -1307,7 +1655,7 @@ export function RestaurantOnboardingFlow({
           </div>
         </header>
 
-        <section className="dashboard-onboarding-main min-h-0 flex-1">
+        <section className="dashboard-onboarding-main hidden min-h-0 flex-1 md:block">
           <div className={`dashboard-onboarding-frame flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${sectionLine} bg-white`}>
             <AnimatePresence mode="wait">
               {step === 0 && (
@@ -1331,6 +1679,7 @@ export function RestaurantOnboardingFlow({
                   <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
                     <StepSupportPanel step={0} preview={storePreview}>
                       <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
+                      <SupportLine label="Mã quán" value={slug} active={slugReady} />
                       <SupportLine label="Loại hình" value={selectedPreset.label} active />
                       <SupportLine label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
                       <SupportLine label="GPS" value={hasPinnedLocation ? "Đã ghim" : "Có thể chỉnh sau"} active={hasPinnedLocation} />
@@ -1338,7 +1687,36 @@ export function RestaurantOnboardingFlow({
                     <div className="grid min-w-0 content-start gap-4">
                     <label className="grid gap-2 text-sm font-black">
                       Tên quán
-                      <input value={name} onChange={(event) => setName(event.target.value)} className={fieldClass} placeholder="Nhập tên quán" />
+                      <input
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                        className={fieldClass}
+                        placeholder="Nhập tên quán"
+                      />
+                    </label>
+                    <label className="grid gap-2 text-sm font-black">
+                      Mã quán & đường dẫn riêng
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                        <span className="relative min-w-0">
+                          <input
+                            value={displayedSlugInput}
+                            onChange={(event) => {
+                              setSlugEdited(true);
+                              setSlugInput(createSlug(event.target.value));
+                            }}
+                            className={`${fieldClass} pr-10 font-mono uppercase tracking-[0.04em]`}
+                            placeholder="quan-cua-ban"
+                          />
+                          {slugStatus === "checking" ? <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#98a2b3]" /> : null}
+                          {slugStatus === "available" ? <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#0F4D3A]" /> : null}
+                        </span>
+                        <span className="min-h-11 rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 py-2 font-mono text-xs font-black text-[#475467] sm:flex sm:items-center">
+                          {slug}.logivn.com
+                        </span>
+                      </div>
+                      {slugStatusCopy ? (
+                        <span className={`text-xs font-bold ${slugReady ? "text-[#0F4D3A]" : "text-[#9a4a17]"}`}>{slugStatusCopy}</span>
+                      ) : null}
                     </label>
                     <div className="grid gap-2">
                       <p className="text-sm font-black">Loại hình</p>

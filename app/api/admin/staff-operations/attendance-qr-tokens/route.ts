@@ -77,7 +77,6 @@ export async function POST(request: Request) {
     assertSameOriginRequest(request, { requireOrigin: true });
     const [session, payload, baseUrl] = await Promise.all([
       requireOperationalDashboardApiSession({
-        adminOnly: true,
         feature: "staff_management",
         permission: "attendance.edit"
       }),

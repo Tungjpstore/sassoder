@@ -1,7 +1,7 @@
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
-import { adminOrderIdSchema } from "@/lib/validators";
+import { adminOrderIdSchema, paymentMethodSchema } from "@/lib/validators";
 import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { withVpsDistributedLock } from "@/lib/vps/backbone";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
@@ -10,6 +10,15 @@ import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cac
 import { auditRequestContext, writeAuditLog } from "@/services/audit-log-service";
 import { getOrderLifecycleSnapshot } from "@/services/order-service";
 import { confirmPayment } from "@/services/payment-service";
+
+async function readPaymentMethodOverride(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+
+  const body = (await request.json().catch(() => null)) as { paymentMethod?: unknown } | null;
+  if (!body || body.paymentMethod == null) return null;
+  return paymentMethodSchema.parse(body.paymentMethod);
+}
 
 export const preferredRegion = "sin1";
 
@@ -20,6 +29,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       permission: "payments.confirm"
     });
     const { orderId } = adminOrderIdSchema.parse(await params);
+    const paymentMethod = await readPaymentMethodOverride(request);
     await assertStaffCanAccessOrder(session, orderId);
     const data = await withVpsDistributedLock(
       {
@@ -30,7 +40,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       },
       async () => {
         const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
-        const confirmed = await confirmPayment(session.restaurantId, orderId, session.userId);
+        const confirmed = await confirmPayment(session.restaurantId, orderId, session.userId, paymentMethod);
         const requestContext = auditRequestContext(request);
         await writeAuditLog({
           restaurantId: session.restaurantId,

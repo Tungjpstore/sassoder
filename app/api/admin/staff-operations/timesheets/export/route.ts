@@ -16,8 +16,8 @@ function minutesToHours(minutes: number) {
 export async function GET() {
   try {
     const session = await requireOperationalDashboardApiSession({
-      adminOnly: true,
-      feature: "staff_management"
+      feature: "staff_management",
+      permission: "activity_logs.export"
     });
     const bundle = await getStaffOperationsBundle(session.restaurantId, session.userId);
 

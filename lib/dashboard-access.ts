@@ -2,7 +2,10 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { AppError } from "@/lib/response";
+import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import { getRestaurantEntitlement, hasFeature, type PlanFeatureKey } from "@/services/subscription-service";
+import type { StaffPermissionKey } from "@/lib/staff-permissions";
 
 function billingRedirectUrl(feature?: PlanFeatureKey) {
   const searchParams = new URLSearchParams({
@@ -37,6 +40,20 @@ export async function requireDashboardAdminAccess(feature?: PlanFeatureKey) {
   const access = await requireDashboardAccess(feature);
   if (access.session.role !== "ADMIN") {
     redirect("/dashboard/staff/mobile");
+  }
+
+  return access;
+}
+
+export async function requireDashboardPermissionAccess(feature: PlanFeatureKey | undefined, permission: StaffPermissionKey | StaffPermissionKey[]) {
+  const access = await requireDashboardAccess(feature);
+  if (access.session.role === "ADMIN") return access;
+
+  try {
+    await assertStaffActionPermission(access.session, permission, { mode: "any" });
+  } catch (error) {
+    if (error instanceof AppError && error.status === 403) redirect("/dashboard/staff/mobile");
+    throw error;
   }
 
   return access;

@@ -5,7 +5,7 @@ import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { firstForwardedIp } from "@/lib/attendance-network";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
-import { clockInStaffAttendance } from "@/features/attendance/services/attendance-service";
+import { authorizeAttendanceManagementSession, clockInStaffAttendance } from "@/features/attendance/services/attendance-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { assertActiveStaffDeviceSession } from "@/features/staff/services/staff-session-service";
 
@@ -89,7 +89,8 @@ export async function POST(request: Request) {
       permission: input.source === "manual" ? ["attendance.clock", "attendance.edit"] : "attendance.clock"
     });
     await assertActiveStaffDeviceSession({ session, deviceFingerprint: deviceFingerprint(input.deviceInfo) });
-    const data = await clockInStaffAttendance({ session, input: { ...input, network: requestNetwork(request) } });
+    const attendanceSession = input.source === "manual" ? authorizeAttendanceManagementSession(session) : session;
+    const data = await clockInStaffAttendance({ session: attendanceSession, input: { ...input, network: requestNetwork(request) } });
     await invalidateStaffOperationsBundleCache(session.restaurantId);
     return success(data);
   } catch (error) {

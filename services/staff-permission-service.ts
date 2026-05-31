@@ -6,6 +6,7 @@ import {
   DEFAULT_ELIGIBLE_STAFF_PERMISSIONS,
   STAFF_ROLE_TEMPLATES,
   getStaffPermissionPreset,
+  getStaffRoleTemplate,
   mapPermissionProfileToRoleTemplateCode,
   normalizeStaffPermissions,
   staffPermissionLabel,
@@ -59,6 +60,10 @@ function normalizeRequiredPermissions(permission: StaffPermissionKey | StaffPerm
 
 function withDefaultEligibleStaffPermissions(permissions: StaffPermissionKey[]) {
   return Array.from(new Set([...permissions, ...DEFAULT_ELIGIBLE_STAFF_PERMISSIONS]));
+}
+
+function mergeEffectivePermissions(...permissionSets: StaffPermissionKey[][]) {
+  return withDefaultEligibleStaffPermissions(Array.from(new Set(permissionSets.flat())));
 }
 
 async function readPermissionsForRole({
@@ -143,7 +148,9 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
 
   const fallbackRoleCode = user.role === "ADMIN" ? "owner" : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service");
   const roleCode = member?.role_code ?? fallbackRoleCode;
-  const permissions = member
+  const adminBaselinePermissions = user.role === "ADMIN" ? getStaffRoleTemplate("manager").permissions : [];
+  const accountPermissions = mergeEffectivePermissions(normalizeStaffPermissions(user.permissions, fallbackRoleCode), adminBaselinePermissions);
+  const rolePermissions = member
     ? await readPermissionsForRole({
         supabase,
         restaurantId: session.restaurantId,
@@ -151,7 +158,8 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
         roleCode,
         fallbackProfile: user.permission_profile ?? fallbackRoleCode
       })
-    : withDefaultEligibleStaffPermissions(normalizeStaffPermissions(user.permissions, fallbackRoleCode));
+    : accountPermissions;
+  const permissions = mergeEffectivePermissions(rolePermissions, accountPermissions);
 
   return {
     staffMemberId: member?.id ?? null,

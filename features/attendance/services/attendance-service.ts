@@ -17,6 +17,7 @@ type DashboardSession = {
   userId: string;
   restaurantId: string;
   role: "ADMIN" | "STAFF";
+  attendanceManagementAuthorized?: boolean;
 };
 
 type AttendanceSource = "gps" | "qr" | "wifi" | "manual" | "offline_sync";
@@ -25,6 +26,14 @@ type AttendanceNetworkContext = {
   ipAddress?: string | null;
   userAgent?: string | null;
 };
+
+export function authorizeAttendanceManagementSession<T extends DashboardSession>(session: T): T & { attendanceManagementAuthorized: true } {
+  return { ...session, attendanceManagementAuthorized: true };
+}
+
+function canManageAttendance(session: DashboardSession) {
+  return session.role === "ADMIN" || session.attendanceManagementAuthorized === true;
+}
 
 type AttendanceCaptureInput = {
   staffMemberId?: string | "";
@@ -531,7 +540,7 @@ async function readStaffMember(supabase: any, session: DashboardSession, staffMe
 
   const staff = result.data as StaffMemberRow | null;
   if (!staff) throw new AppError("Tài khoản này chưa có hồ sơ nhân sự vận hành.", 403);
-  if (staffMemberId && staff.user_id !== session.userId && session.role !== "ADMIN") {
+  if (staffMemberId && staff.user_id !== session.userId && !canManageAttendance(session)) {
     throw new AppError("Bạn không có quyền chấm công thay nhân sự khác.", 403);
   }
   if (staff.employment_status !== "active" || staff.archived_at) {
@@ -550,7 +559,7 @@ function assertAttendanceActorScope({
   source: AttendanceSource;
 }) {
   if (staff.user_id === session.userId) return;
-  if (session.role !== "ADMIN") throw new AppError("Bạn không có quyền chấm công thay nhân sự khác.", 403);
+  if (!canManageAttendance(session)) throw new AppError("Bạn không có quyền chấm công thay nhân sự khác.", 403);
   if (source !== "manual") {
     throw new AppError("Chấm công thay nhân sự khác phải dùng nguồn thủ công để tránh dùng sai GPS thiết bị.", 422);
   }
@@ -1358,7 +1367,7 @@ function assertSourceAllowed({
   session: DashboardSession;
   isPremium: boolean;
 }) {
-  if (source === "manual" && session.role !== "ADMIN") {
+  if (source === "manual" && !canManageAttendance(session)) {
     throw new AppError("Chấm công thủ công cần quyền quản trị.", 403);
   }
 
@@ -2009,7 +2018,7 @@ export async function adjustStaffAttendanceLog({
   session: DashboardSession;
   input: AttendanceManualAdjustmentInput;
 }) {
-  if (session.role !== "ADMIN") throw new AppError("Cần quyền quản trị để sửa công.", 403);
+  if (!canManageAttendance(session)) throw new AppError("Cần quyền quản trị để sửa công.", 403);
 
   const supabase = createAdminSupabaseClient() as any;
   const existingResult = await supabase
@@ -2127,7 +2136,7 @@ export async function reviewAttendanceApproval({
   approvalId: string;
   input: AttendanceApprovalReviewInput;
 }) {
-  if (session.role !== "ADMIN") throw new AppError("Cần quyền quản trị để duyệt chấm công.", 403);
+  if (!canManageAttendance(session)) throw new AppError("Cần quyền quản trị để duyệt chấm công.", 403);
 
   const supabase = createAdminSupabaseClient() as any;
   const approvalResult = await supabase

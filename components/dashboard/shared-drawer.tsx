@@ -38,7 +38,7 @@ export function DashboardDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
+    <div className="fixed inset-0 isolate z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
       <button
         type="button"
         tabIndex={-1}
@@ -53,7 +53,7 @@ export function DashboardDrawer({
         aria-labelledby={titleId}
         aria-describedby={subtitle ? subtitleId : undefined}
         tabIndex={-1}
-        className={`drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
+        className={`drawer-panel absolute inset-y-0 right-0 z-10 flex h-dvh max-h-dvh w-full flex-col border-l border-[var(--border)] bg-[var(--surface)] ${widthMap[width]}`}
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
           <div>

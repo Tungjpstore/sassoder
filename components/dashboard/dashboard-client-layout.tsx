@@ -268,6 +268,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
 
   // client states
   const [activeTab, setActiveTab] = useState<"tables" | "orders" | "inventory">("tables");
+  const [activeMobileFlow, setActiveMobileFlow] = useState<"shift" | "alerts" | "orders" | "ai">("shift");
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
@@ -302,6 +303,34 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
         : activationRunway?.stage === "configure"
           ? "border-amber-200 bg-amber-50 text-amber-800"
           : "border-red-200 bg-red-50 text-red-800";
+
+  const mobileAlerts = [
+    {
+      icon: ClipboardList,
+      label: operations.pending > 0 ? `${operations.pending} đơn cần nhận ngay` : "Không có đơn mới bị treo",
+      tone: operations.pending > 0 ? "danger" : "ok",
+      href: "/dashboard/orders"
+    },
+    {
+      icon: WalletCards,
+      label: paymentWaiting > 0 ? `${paymentWaiting} bill chờ xác nhận tiền` : "Dòng tiền trong ca sạch",
+      tone: paymentWaiting > 0 ? "warning" : "ok",
+      href: "/dashboard/payments"
+    },
+    {
+      icon: Warehouse,
+      label: inventory.schemaReady ? `${inventory.lowStockCount} món sắp hết nguyên liệu` : "Kho chưa bật định mức",
+      tone: inventory.schemaReady && inventory.lowStockCount > 0 ? "warning" : "ok",
+      href: "/dashboard/inventory"
+    }
+  ] as const;
+
+  const mobileFlowTabs = [
+    { id: "shift", label: "Ca bán", value: compactVnd(operations.todayRevenue), icon: Gauge },
+    { id: "alerts", label: "Cần xử lý", value: operations.pending + paymentWaiting + (inventory.schemaReady ? inventory.lowStockCount : 0), icon: CircleDot },
+    { id: "orders", label: "Đơn", value: recentActionOrders.length, icon: ClipboardList },
+    { id: "ai", label: "AI", value: salesForecast.trend === "behind" ? "Chậm" : "Ổn", icon: RadioTower }
+  ] as const;
 
   return (
     <div className="grid gap-3">
@@ -351,119 +380,130 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
           ))}
         </div>
 
-        <div className="mobile-reference-card">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <p className="mobile-card-label">Doanh thu trong ca</p>
-            <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">24 giờ</span>
-          </div>
-          <div className="mobile-bar-chart">
-            {hourlyRevenueToday.slice(-7).map((row) => {
-              const height = Math.max(row.revenue > 0 ? 18 : 6, Math.round((row.revenue / maxHourlyRevenue) * 100));
-              return (
-                <span key={row.label} className="mobile-bar-col">
-                  <span className="mobile-bar" style={{ height: `${height}%` }} />
-                  <span className="mobile-bar-label">{row.label.split(":")[0]}</span>
-                </span>
-              );
-            })}
-          </div>
+        <div className="mobile-flow-tabs" role="tablist" aria-label="Luồng dashboard mobile">
+          {mobileFlowTabs.map((flow) => {
+            const Icon = flow.icon;
+            const isActive = activeMobileFlow === flow.id;
+            return (
+              <button
+                key={flow.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveMobileFlow(flow.id)}
+                className={`mobile-flow-tab ${isActive ? "is-active" : ""}`}
+              >
+                <Icon size={15} />
+                <span>{flow.label}</span>
+                <strong>{flow.value}</strong>
+              </button>
+            );
+          })}
         </div>
 
-        <div className="mobile-reference-card">
-          <div className="flex items-center justify-between gap-3">
-            <p className="mobile-card-label">Cảnh báo</p>
-            <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
-              Xem tất cả
-            </Link>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {[
-              {
-                icon: ClipboardList,
-                label: operations.pending > 0 ? `${operations.pending} đơn cần nhận ngay` : "Không có đơn mới bị treo",
-                tone: operations.pending > 0 ? "danger" : "ok",
-                href: "/dashboard/orders"
-              },
-              {
-                icon: WalletCards,
-                label: paymentWaiting > 0 ? `${paymentWaiting} bill chờ xác nhận tiền` : "Dòng tiền trong ca sạch",
-                tone: paymentWaiting > 0 ? "warning" : "ok",
-                href: "/dashboard/payments"
-              },
-              {
-                icon: Warehouse,
-                label: inventory.schemaReady ? `${inventory.lowStockCount} món sắp hết nguyên liệu` : "Kho chưa bật định mức",
-                tone: inventory.schemaReady && inventory.lowStockCount > 0 ? "warning" : "ok",
-                href: "/dashboard/inventory"
-              }
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link key={item.label} href={item.href} className={`mobile-alert-row is-${item.tone}`}>
-                  <Icon size={15} />
-                  <span className="min-w-0 truncate">{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="mobile-action-dock" aria-label="Thao tác nhanh trong ca">
-          <Link href="/dashboard/orders" className="mobile-green-cta">
-            <ClipboardList size={16} />
-            Xử lý đơn
-          </Link>
-          <Link href="/dashboard/kitchen" className="mobile-soft-action">
-            <ChefHat size={16} />
-            Bếp
-          </Link>
-          <Link href="/dashboard/tables" className="mobile-soft-action">
-            <QrCode size={16} />
-            Bàn
-          </Link>
-        </div>
-
-        <div className="mobile-reference-card mobile-ai-strip">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--primary)] text-white">
-            <RadioTower size={17} />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold text-[var(--foreground)]">Trợ lý AI - LogiBot</span>
-            <span className="mt-0.5 block line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">
-              {bestSeller ? `${bestSeller.name} đang bán chạy. ${salesForecast.actions[0] ?? salesForecast.summary}` : salesForecast.summary}
-            </span>
-            <span className="mobile-ai-prompt-row mt-2">
-              <Link href="/dashboard/logibot-ai">Doanh thu</Link>
-              <Link href="/dashboard/logibot-ai">Món bán chạy</Link>
-              <Link href="/dashboard/logibot-ai">Tồn kho</Link>
-            </span>
-          </span>
-        </div>
-
-        <div className="mobile-reference-card">
-          <div className="flex items-center justify-between gap-3">
-            <p className="mobile-card-label">Đơn cần nhìn</p>
-            <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
-              Tất cả
-            </Link>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {recentActionOrders.length === 0 ? (
-              <div className="rounded-xl bg-[#faf6ee] p-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-                Không có đơn đang mở.
+        <div className="mobile-flow-screen" role="tabpanel">
+          {activeMobileFlow === "shift" ? (
+            <div className="mobile-reference-card mobile-flow-card">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="mobile-card-label">Nhịp ca</p>
+                <span className="text-[11px] font-semibold text-[var(--muted-foreground)]">24 giờ</span>
               </div>
-            ) : (
-              recentActionOrders.slice(0, 4).map((order) => (
-                <Link key={order.id} href="/dashboard/orders" className="mobile-order-row">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--foreground)]">#{order.id.slice(0, 6).toUpperCase()} · {order.tableName}</span>
-                    <span className="mt-0.5 block truncate text-xs font-medium text-[var(--muted-foreground)]">{order.itemSummary}</span>
-                  </span>
-                  <span className="shrink-0 text-right text-[11px] font-semibold text-[var(--accent-strong)]">{formatOrderTime(order.createdAt)}</span>
+              <div className="mobile-bar-chart">
+                {hourlyRevenueToday.slice(-7).map((row) => {
+                  const height = Math.max(row.revenue > 0 ? 18 : 6, Math.round((row.revenue / maxHourlyRevenue) * 100));
+                  return (
+                    <span key={row.label} className="mobile-bar-col">
+                      <span className="mobile-bar" style={{ height: `${height}%` }} />
+                      <span className="mobile-bar-label">{row.label.split(":")[0]}</span>
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="mobile-action-dock mt-3" aria-label="Thao tác nhanh trong ca">
+                <Link href="/dashboard/orders" className="mobile-green-cta">
+                  <ClipboardList size={16} />
+                  Xử lý đơn
                 </Link>
-              ))
-            )}
-          </div>
+                <Link href="/dashboard/kitchen" className="mobile-soft-action">
+                  <ChefHat size={16} />
+                  Bếp
+                </Link>
+                <Link href="/dashboard/tables" className="mobile-soft-action">
+                  <QrCode size={16} />
+                  Bàn
+                </Link>
+              </div>
+            </div>
+          ) : null}
+
+          {activeMobileFlow === "alerts" ? (
+            <div className="mobile-reference-card mobile-flow-card">
+              <div className="flex items-center justify-between gap-3">
+                <p className="mobile-card-label">Cần xử lý</p>
+                <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
+                  Tất cả
+                </Link>
+              </div>
+              <div className="mt-2 grid gap-2">
+                {mobileAlerts.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <Link key={item.label} href={item.href} className={`mobile-alert-row is-${item.tone}`}>
+                      <Icon size={15} />
+                      <span className="min-w-0 truncate">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {activeMobileFlow === "orders" ? (
+            <div className="mobile-reference-card mobile-flow-card">
+              <div className="flex items-center justify-between gap-3">
+                <p className="mobile-card-label">Đơn cần nhìn</p>
+                <Link href="/dashboard/orders" className="inline-flex min-h-10 items-center text-[11px] font-semibold text-[var(--primary)]">
+                  Tất cả
+                </Link>
+              </div>
+              <div className="mt-2 grid gap-2">
+                {recentActionOrders.length === 0 ? (
+                  <div className="rounded-xl bg-[#faf6ee] p-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
+                    Không có đơn đang mở.
+                  </div>
+                ) : (
+                  recentActionOrders.slice(0, 4).map((order) => (
+                    <Link key={order.id} href="/dashboard/orders" className="mobile-order-row">
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-[var(--foreground)]">#{order.id.slice(0, 6).toUpperCase()} · {order.tableName}</span>
+                        <span className="mt-0.5 block truncate text-xs font-medium text-[var(--muted-foreground)]">{order.itemSummary}</span>
+                      </span>
+                      <span className="shrink-0 text-right text-[11px] font-semibold text-[var(--accent-strong)]">{formatOrderTime(order.createdAt)}</span>
+                    </Link>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {activeMobileFlow === "ai" ? (
+            <div className="mobile-reference-card mobile-ai-strip mobile-flow-card">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--primary)] text-white">
+                <RadioTower size={17} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[var(--foreground)]">LogiBot</span>
+                <span className="mt-0.5 block line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">
+                  {bestSeller ? `${bestSeller.name} bán chạy. ${salesForecast.actions[0] ?? salesForecast.summary}` : salesForecast.summary}
+                </span>
+                <span className="mobile-ai-prompt-row mt-2">
+                  <Link href="/dashboard/logibot-ai">Doanh thu</Link>
+                  <Link href="/dashboard/logibot-ai">Món bán chạy</Link>
+                  <Link href="/dashboard/logibot-ai">Tồn kho</Link>
+                </span>
+              </span>
+            </div>
+          ) : null}
         </div>
       </section>
 

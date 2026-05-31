@@ -29,7 +29,13 @@ import {
   staffShiftTemplateUpdateSchema,
   staffUserSchema
 } from "@/lib/validators";
-import { adjustStaffAttendanceLog, clockInStaffAttendance, clockOutStaffAttendance, reviewAttendanceApproval } from "@/features/attendance/services/attendance-service";
+import {
+  adjustStaffAttendanceLog,
+  authorizeAttendanceManagementSession,
+  clockInStaffAttendance,
+  clockOutStaffAttendance,
+  reviewAttendanceApproval
+} from "@/features/attendance/services/attendance-service";
 import { cloneStaffRole, updateStaffRolePermissions } from "@/features/roles/services/role-service";
 import {
   assignStaffShift,
@@ -56,7 +62,7 @@ import {
   updateRestaurantUserRole
 } from "@/services/restaurant-service";
 import { assertRestaurantResourceLimit } from "@/services/subscription-service";
-import { requireOperationalAdminSession } from "./shared";
+import { requireOperationalStaffSession } from "./shared";
 
 export type StaffActionState = {
   error?: string;
@@ -102,6 +108,10 @@ function createInternalStaffEmail({ restaurantId, fullName }: { restaurantId: st
   return `${staffToken}.${restaurantToken}.${suffix}@staff.logivn.vn`;
 }
 
+function merchantAttendanceSession(session: Awaited<ReturnType<typeof requireOperationalStaffSession>>) {
+  return authorizeAttendanceManagementSession(session);
+}
+
 async function revalidateStaffDashboards(restaurantId: string) {
   await invalidateStaffOperationsBundleCache(restaurantId);
   revalidatePath("/dashboard/staff");
@@ -110,7 +120,7 @@ async function revalidateStaffDashboards(restaurantId: string) {
 
 export async function createStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffInviteSchema.parse({
       email: formData.get("email"),
       password: formData.get("password"),
@@ -162,7 +172,7 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
 
 export async function updateStaffProfileAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffProfileSchema.parse({
       userId: formData.get("userId"),
       fullName: formData.get("fullName"),
@@ -207,7 +217,7 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
 
 export async function resetStaffAppPasswordAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffAppPasswordResetSchema.parse({
       userId: formData.get("userId"),
       reason: formData.get("reason")
@@ -234,7 +244,7 @@ export async function resetStaffAppPasswordAction(_prevState: StaffActionState |
 
 export async function resetStaffAppPasswordsAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffAppPasswordBulkResetSchema.parse({
       userIds: formData.get("userIds"),
       reason: formData.get("reason")
@@ -269,7 +279,7 @@ export async function resetStaffAppPasswordsAction(_prevState: StaffActionState 
 
 export async function setStaffAccountStateAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffAccountStateSchema.parse({
       userId: formData.get("userId"),
       nextState: formData.get("nextState"),
@@ -304,7 +314,7 @@ export async function setStaffAccountStateAction(_prevState: StaffActionState | 
 
 export async function updateStaffRoleAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffRoleSchema.parse({
       userId: formData.get("userId"),
       permissionProfile: formData.get("permissionProfile")
@@ -327,7 +337,7 @@ export async function updateStaffRoleAction(_prevState: StaffActionState | undef
 
 export async function updateStaffRolePermissionsAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffRolePermissionUpdateSchema.parse({
       roleId: formData.get("roleId"),
       permissions: formData.getAll("permissions")
@@ -349,7 +359,7 @@ export async function updateStaffRolePermissionsAction(_prevState: StaffActionSt
 
 export async function cloneStaffRoleAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffRoleCloneSchema.parse({
       sourceRoleId: formData.get("sourceRoleId"),
       name: formData.get("name"),
@@ -372,7 +382,7 @@ export async function cloneStaffRoleAction(_prevState: StaffActionState | undefi
 
 export async function deleteStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffUserSchema.parse({
       userId: formData.get("userId")
     });
@@ -395,7 +405,7 @@ export async function deleteStaffAction(_prevState: StaffActionState | undefined
 
 export async function createStaffShiftTemplateAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffShiftTemplateSchema.parse({
       name: formData.get("name"),
       branchId: formData.get("branchId"),
@@ -423,7 +433,7 @@ export async function createStaffShiftTemplateAction(_prevState: StaffActionStat
 
 export async function updateStaffShiftTemplateAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffShiftTemplateUpdateSchema.parse({
       shiftId: formData.get("shiftId"),
       name: formData.get("name"),
@@ -452,7 +462,7 @@ export async function updateStaffShiftTemplateAction(_prevState: StaffActionStat
 
 export async function assignStaffShiftAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffShiftAssignmentSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       shiftId: formData.get("shiftId"),
@@ -476,7 +486,7 @@ export async function assignStaffShiftAction(_prevState: StaffActionState | unde
 
 export async function updateStaffShiftAssignmentAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffShiftAssignmentUpdateSchema.parse({
       shiftAssignmentId: formData.get("shiftAssignmentId"),
       staffMemberId: formData.get("staffMemberId"),
@@ -501,7 +511,7 @@ export async function updateStaffShiftAssignmentAction(_prevState: StaffActionSt
 
 export async function cancelStaffShiftAssignmentAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffShiftAssignmentCancelSchema.parse({
       shiftAssignmentId: formData.get("shiftAssignmentId"),
       note: formData.get("note")
@@ -523,7 +533,7 @@ export async function cancelStaffShiftAssignmentAction(_prevState: StaffActionSt
 
 export async function manualClockInStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = attendanceClockInSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       branchId: formData.get("branchId"),
@@ -539,7 +549,7 @@ export async function manualClockInStaffAction(_prevState: StaffActionState | un
     await assertStaffActionPermission(session, "attendance.edit");
 
     await clockInStaffAttendance({
-      session,
+      session: merchantAttendanceSession(session),
       input: parsed
     });
 
@@ -552,7 +562,7 @@ export async function manualClockInStaffAction(_prevState: StaffActionState | un
 
 export async function manualClockOutStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = attendanceClockOutSchema.parse({
       attendanceLogId: formData.get("attendanceLogId"),
       staffMemberId: formData.get("staffMemberId"),
@@ -568,7 +578,7 @@ export async function manualClockOutStaffAction(_prevState: StaffActionState | u
     await assertStaffActionPermission(session, "attendance.edit");
 
     await clockOutStaffAttendance({
-      session,
+      session: merchantAttendanceSession(session),
       input: parsed
     });
 
@@ -581,7 +591,7 @@ export async function manualClockOutStaffAction(_prevState: StaffActionState | u
 
 export async function adjustStaffAttendanceAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = attendanceManualAdjustmentSchema.parse({
       attendanceLogId: formData.get("attendanceLogId"),
       staffMemberId: formData.get("staffMemberId"),
@@ -592,7 +602,7 @@ export async function adjustStaffAttendanceAction(_prevState: StaffActionState |
     await assertStaffActionPermission(session, "attendance.edit");
 
     await adjustStaffAttendanceLog({
-      session,
+      session: merchantAttendanceSession(session),
       input: parsed
     });
 
@@ -605,7 +615,7 @@ export async function adjustStaffAttendanceAction(_prevState: StaffActionState |
 
 export async function createStaffReviewAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffReviewCreateSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       periodLabel: formData.get("periodLabel"),
@@ -629,7 +639,7 @@ export async function createStaffReviewAction(_prevState: StaffActionState | und
 
 export async function createStaffContractAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffContractCreateSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       contractType: formData.get("contractType") || undefined,
@@ -666,7 +676,7 @@ export async function createStaffContractAction(_prevState: StaffActionState | u
 
 export async function createStaffDocumentAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffDocumentCreateSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       documentName: formData.get("documentName"),
@@ -692,7 +702,7 @@ export async function createStaffDocumentAction(_prevState: StaffActionState | u
 
 export async function createStaffDeviceAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffDeviceCreateSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       deviceName: formData.get("deviceName"),
@@ -720,7 +730,7 @@ export async function createStaffDeviceAction(_prevState: StaffActionState | und
 
 export async function updateStaffDeviceTrustAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffDeviceTrustUpdateSchema.parse({
       deviceId: formData.get("deviceId"),
       trustedForAttendance: formData.get("trustedForAttendance") === "true",
@@ -743,7 +753,7 @@ export async function updateStaffDeviceTrustAction(_prevState: StaffActionState 
 
 export async function reviewAttendanceApprovalAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const approvalId = z.string().uuid("Yêu cầu duyệt không hợp lệ.").parse(formData.get("approvalId"));
     const parsed = attendanceApprovalReviewSchema.parse({
       decision: formData.get("decision"),
@@ -752,7 +762,7 @@ export async function reviewAttendanceApprovalAction(_prevState: StaffActionStat
     await assertStaffActionPermission(session, ["attendance.approve", "approvals.review"], { mode: "any" });
 
     await reviewAttendanceApproval({
-      session,
+      session: merchantAttendanceSession(session),
       approvalId,
       input: parsed
     });
@@ -766,7 +776,7 @@ export async function reviewAttendanceApprovalAction(_prevState: StaffActionStat
 
 export async function forceStaffSessionsLogoutAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
-    const session = await requireOperationalAdminSession("staff_management");
+    const session = await requireOperationalStaffSession("staff_management");
     const parsed = staffSessionForceLogoutSchema.parse({
       staffMemberId: formData.get("staffMemberId"),
       sessionId: formData.get("sessionId"),

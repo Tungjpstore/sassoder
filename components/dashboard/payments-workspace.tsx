@@ -342,7 +342,9 @@ export function PaymentsWorkspace({
       const response = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, {
         method: "POST",
         cache: "no-store",
-        credentials: "same-origin"
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentMethod: target?.method ?? "QR" })
       });
       const json = await response.json();
       if (!json.ok) throw new Error(json.error ?? "Không xác nhận được thanh toán");
@@ -356,7 +358,7 @@ export function PaymentsWorkspace({
           method: confirmedPayload.method ?? current[orderId]?.method ?? target?.method ?? "QR"
         }
       }));
-      setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
+      setNotice("Đã xác nhận đã nhận tiền. Nếu khách mất phiên hoặc thoát màn hình thanh toán, hệ thống vẫn chốt bill và đồng bộ về bếp.");
       setLastSyncedAt(new Date());
       router.refresh();
       window.setTimeout(() => router.refresh(), 900);
@@ -687,7 +689,7 @@ export function PaymentsWorkspace({
                       className="shadow-none hover:shadow-none sm:col-span-2"
                     >
                       {mutatingId === selected.id ? <Loader2 className="animate-spin" size={16} /> : <CheckCircle2 size={16} />}
-                      {paymentState === "paid" ? "Đã thanh toán" : "Xác nhận thanh toán"}
+                      {paymentState === "paid" ? "Đã thanh toán" : "Xác nhận đã nhận tiền"}
                     </Button>
                     <Button type="button" variant="secondary" onClick={() => window.print()} className="shadow-none hover:shadow-none">
                       <Printer size={16} />
@@ -745,10 +747,24 @@ export function PaymentsWorkspace({
 
                 <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
                   <h3 className="text-sm font-semibold text-[var(--foreground)]">Chi tiết đơn trong bill</h3>
-                  <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm">
-                    <p className="text-[var(--muted-foreground)]">Hóa đơn gồm</p>
-                    <p className="mt-1 font-semibold text-[var(--foreground)]">{selected.itemSummary}</p>
-                  </div>
+                  {(selected.items ?? []).length > 0 ? (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] text-sm">
+                      {(selected.items ?? []).map((item, index) => (
+                        <div key={`${item.name}-${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-[var(--border)] px-4 py-3 last:border-b-0">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-[var(--foreground)]">{item.name}</p>
+                            <p className="mt-1 text-xs text-[var(--muted-foreground)]">{item.quantity} x {formatVnd(item.price)}</p>
+                          </div>
+                          <p className="font-semibold tabular-nums text-[var(--foreground)]">{formatVnd(item.lineTotal)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 text-sm">
+                      <p className="text-[var(--muted-foreground)]">Hóa đơn gồm</p>
+                      <p className="mt-1 font-semibold text-[var(--foreground)]">{selected.itemSummary}</p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">

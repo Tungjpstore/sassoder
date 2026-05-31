@@ -47,6 +47,7 @@ export function buildStaffAttendanceMachine({
   selectedBranchId,
   selectedBranchName,
   canUseGps,
+  selectedSource,
   qrReady,
   deviceTrust,
   hasFingerprint,
@@ -59,6 +60,7 @@ export function buildStaffAttendanceMachine({
   selectedBranchId: string;
   selectedBranchName: string;
   canUseGps: boolean;
+  selectedSource?: StaffAttendanceSource;
   qrReady: boolean;
   deviceTrust: StaffSessionHeartbeatResult["deviceTrust"] | null;
   hasFingerprint: boolean;
@@ -68,10 +70,11 @@ export function buildStaffAttendanceMachine({
   processing: boolean;
 }): StaffAttendanceMachine {
   const action: StaffAttendanceAction = activeAttendance ? "clock_out" : "clock_in";
-  const source: StaffAttendanceSource = qrReady ? "qr" : canUseGps ? "gps" : "wifi";
+  const source: StaffAttendanceSource = selectedSource ?? (canUseGps ? "gps" : "wifi");
   const deviceBlocked = Boolean(deviceTrust?.blocked || deviceTrust?.status === "blocked");
   const deviceNeedsApproval = Boolean(deviceTrust?.approvalRequired && !deviceTrust.trustedForAttendance);
-  const shortSourceLabel = qrReady ? "QR" : canUseGps ? "GPS" : "WiFi";
+  const shortSourceLabel = source === "qr" ? "QR" : source === "gps" ? "GPS" : "WiFi";
+  const sourceReady = source === "qr" ? qrReady : source === "gps" ? canUseGps : isOnline;
   const readiness: StaffReadinessItem[] = [
     {
       label: "Chi nhánh",
@@ -80,8 +83,8 @@ export function buildStaffAttendanceMachine({
     },
     {
       label: "Nguồn chấm",
-      value: qrReady ? "QR tại quán" : canUseGps ? "GPS" : "WiFi quán",
-      tone: canUseGps || qrReady || isOnline ? "success" : "warning"
+      value: source === "qr" ? (qrReady ? "QR tại quán" : "Cần quét QR") : source === "gps" ? "GPS" : "WiFi quán",
+      tone: sourceReady ? "success" : "warning"
     },
     {
       label: "Thiết bị",
@@ -140,17 +143,32 @@ export function buildStaffAttendanceMachine({
     };
   }
 
-  if (!canUseGps && !qrReady && !isOnline) {
+  if (source === "qr" && !qrReady) {
+    return {
+      state: "needs_location_or_qr",
+      action,
+      source,
+      canSubmit: true,
+      primaryLabel: "Quét QR",
+      shortSourceLabel,
+      title: "Cần quét QR tại quán",
+      detail: "Mở camera hoặc dán link QR mới nhất tại đúng chi nhánh.",
+      recoveryLabel: "Quét QR trước khi vào/kết ca",
+      readiness
+    };
+  }
+
+  if ((source === "gps" && !canUseGps) || (source === "wifi" && !isOnline)) {
     return {
       state: "needs_location_or_qr",
       action,
       source,
       canSubmit: false,
-      primaryLabel: "Cần mạng quán",
+      primaryLabel: source === "gps" ? "GPS chưa bật" : "Cần online",
       shortSourceLabel,
-      title: "Cần WiFi hoặc QR",
-      detail: "Kết nối WiFi quán hoặc quét QR tại chi nhánh.",
-      recoveryLabel: "Kết nối lại mạng quán",
+      title: source === "gps" ? "GPS chưa khả dụng" : "Cần WiFi/mạng quán",
+      detail: source === "gps" ? "Gói hiện tại hoặc quyền vị trí chưa cho phép GPS." : "Kết nối mạng quán hoặc chuyển sang GPS/QR.",
+      recoveryLabel: source === "gps" ? "Bật GPS hoặc chọn QR/WiFi" : "Kết nối lại mạng quán",
       readiness
     };
   }

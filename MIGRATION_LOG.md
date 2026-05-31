@@ -4,8 +4,8 @@
 
 Current release evidence no longer matches the 2026-05-20 pending-batch snapshot:
 
-- Local SQL migration files: 108.
-- Latest local migration: `20260529105500_staff_attendance_daily_qr_wifi.sql`.
+- Local SQL migration files: 110.
+- Latest local migration: `20260530103818_staff_identity_password_login.sql`.
 - Duplicate migration versions: none found.
 - `supabase db push --dry-run --linked --yes`: pass, `Remote database is up to date`.
 - `supabase branches list --project-ref tfhqatvevbrbzaaqjhfa -o json`: only default `main` branch exists.
@@ -18,8 +18,8 @@ Last updated: 2026-05-20
 
 ## Current Snapshot
 
-- Local SQL migration files: 98
-- Tracked migration files: 98
+- Local SQL migration files: 110
+- Tracked migration files: 110
 - Untracked migration files: 0
 - Current integration branch: `codex/p0-production-clean`
 - Current local commit: `879cfbf`

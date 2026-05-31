@@ -5,7 +5,6 @@ import {
   ArrowDownUp,
   AudioLines,
   BadgePercent,
-  BarChart3,
   Bell,
   Boxes,
   BrainCircuit,
@@ -179,6 +178,28 @@ type SubmitButtonProps = ButtonProps & {
   pendingLabel?: ReactNode;
 };
 
+type WorkbenchNavItem = {
+  tab: WorkbenchTab;
+  label: string;
+  icon: LucideIcon;
+};
+
+type WorkbenchNavGroup = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  primaryTab: WorkbenchTab;
+  tabs: WorkbenchNavItem[];
+};
+
+type InventoryQuickAction = {
+  label: string;
+  value: string;
+  icon: LucideIcon;
+  tone: "green" | "yellow" | "red" | "blue";
+  onClick: () => void;
+};
+
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
 
 type InventoryOcrResponse = {
@@ -217,6 +238,65 @@ const lossMovementTypes: Array<{ value: LossMovementType; label: string; hint: s
   { value: "supplier_return", label: "Trả nhà cung cấp", hint: "Xuất giảm do trả lại NCC, giữ audit theo lô." },
   { value: "internal_use", label: "Dùng nội bộ", hint: "Dùng cho training, R&D, sampling hoặc phục vụ nội bộ." },
   { value: "adjust_decrease", label: "Mất lệch / điều chỉnh giảm", hint: "Dùng khi phát hiện lệch tồn nhưng chưa qua phiên kiểm kê." }
+];
+
+const defaultWorkbenchNavGroup: WorkbenchNavGroup = {
+  id: "intake",
+  label: "Nhập & mua",
+  icon: PackagePlus,
+  primaryTab: "intake",
+  tabs: [
+    { tab: "intake", label: "AI nhập kho", icon: Sparkles },
+    { tab: "purchasing", label: "NCC & PO", icon: Truck }
+  ]
+};
+
+const workbenchNavGroups: WorkbenchNavGroup[] = [
+  defaultWorkbenchNavGroup,
+  {
+    id: "stock",
+    label: "Tồn kho",
+    icon: Warehouse,
+    primaryTab: "stock",
+    tabs: [
+      { tab: "stock", label: "Stock board", icon: Warehouse },
+      { tab: "ingredients", label: "Nguyên liệu", icon: Boxes }
+    ]
+  },
+  {
+    id: "risk",
+    label: "Cảnh báo/HSD",
+    icon: Bell,
+    primaryTab: "alerts",
+    tabs: [
+      { tab: "alerts", label: "Cảnh báo", icon: Bell },
+      { tab: "waste", label: "Hao hụt & HSD", icon: Trash2 }
+    ]
+  },
+  {
+    id: "counting",
+    label: "Kiểm kê",
+    icon: ClipboardList,
+    primaryTab: "counting",
+    tabs: [{ tab: "counting", label: "Kiểm kê", icon: ClipboardList }]
+  },
+  {
+    id: "transfers",
+    label: "Điều chuyển",
+    icon: ArrowDownUp,
+    primaryTab: "transfers",
+    tabs: [
+      { tab: "transfers", label: "Điều chuyển", icon: ArrowDownUp },
+      { tab: "balancing", label: "Cân bằng kho", icon: GitBranch }
+    ]
+  },
+  {
+    id: "cost",
+    label: "Giá vốn món",
+    icon: ClipboardCheck,
+    primaryTab: "recipes",
+    tabs: [{ tab: "recipes", label: "Định mức món", icon: ClipboardCheck }]
+  }
 ];
 
 function formatQuantity(value: number, unit: string) {
@@ -636,12 +716,13 @@ export function InventoryWorkspaceV2({
   const [intakeMode, setIntakeMode] = useState<IntakeMode>("text");
   const [rawIntake, setRawIntake] = useState("");
   const [draftRows, setDraftRows] = useState<IntakeDraftRow[]>([]);
-  const [parserMessage, setParserMessage] = useState("Chưa có dữ liệu. Dán nội dung thật, tải file hoặc dùng OCR để bắt đầu.");
+  const [parserMessage, setParserMessage] = useState("0 dòng nháp.");
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [aiOcrLoading, setAiOcrLoading] = useState(false);
   const [aiOcrError, setAiOcrError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [showOperationalDetails, setShowOperationalDetails] = useState(false);
   const [showAdvancedInsights, setShowAdvancedInsights] = useState(false);
   const [isParsing, startTransition] = useTransition();
   const [isRefreshing, startRefreshTransition] = useTransition();
@@ -934,6 +1015,59 @@ export function InventoryWorkspaceV2({
   const reorderSuggestions = intelligence.reorderSuggestions.slice(0, 6);
   const urgentActions = intelligence.actionQueue.slice(0, 3);
   const importTotalValue = draftRows.reduce((total, row) => total + row.quantity * row.referenceUnitCost, 0);
+  const activeWorkbenchGroup = workbenchNavGroups.find((group) => group.tabs.some((item) => item.tab === activeTab)) ?? defaultWorkbenchNavGroup;
+  const controlSignalCount =
+    reorderSuggestions.length +
+    costInsights.riskyItems.length +
+    inventoryAnalytics.actionQueue.length +
+    auditReport.riskyMovements.length +
+    branchBalancingReport.transferSuggestions.length;
+  const stockSignalCount = stockRiskInsights.lowOrOutCount + stockRiskInsights.expiredCount + stockRiskInsights.expiringCount + warehouse.openAlertCount;
+  const operationalSignalCount = urgentActions.length + stockSignalCount + controlSignalCount;
+  const quickActions: InventoryQuickAction[] = [
+    {
+      label: "Nhập kho",
+      value: `${draftRows.length.toLocaleString("vi-VN")} dòng nháp`,
+      icon: PackagePlus,
+      tone: draftRows.length > 0 ? "green" : "blue",
+      onClick: () => setActiveTab("intake")
+    },
+    {
+      label: "Thêm nguyên liệu",
+      value: `${ingredients.length.toLocaleString("vi-VN")} đang dùng`,
+      icon: Boxes,
+      tone: "green",
+      onClick: () => setDrawer({ mode: "create" })
+    },
+    {
+      label: "Kiểm kê",
+      value: `${warehouse.countSessionCount.toLocaleString("vi-VN")} phiên`,
+      icon: ClipboardList,
+      tone: warehouse.countSessionCount > 0 ? "blue" : "green",
+      onClick: () => setActiveTab("counting")
+    },
+    {
+      label: "Đặt hàng",
+      value: `${intelligence.reorderSuggestions.length.toLocaleString("vi-VN")} gợi ý`,
+      icon: Truck,
+      tone: intelligence.reorderSuggestions.length > 0 ? "yellow" : "green",
+      onClick: () => setActiveTab("purchasing")
+    },
+    {
+      label: "Điều chuyển",
+      value: `${warehouse.transferCount.toLocaleString("vi-VN")} phiếu`,
+      icon: ArrowDownUp,
+      tone: warehouse.transferCount > 0 ? "blue" : "green",
+      onClick: () => setActiveTab("transfers")
+    },
+    {
+      label: "Cảnh báo",
+      value: `${warehouse.openAlertCount.toLocaleString("vi-VN")} mở`,
+      icon: Bell,
+      tone: warehouse.openAlertCount > 0 ? "red" : "green",
+      onClick: () => setActiveTab("alerts")
+    }
+  ];
   const healthSegments = [
     {
       label: "An toàn",
@@ -1068,92 +1202,72 @@ export function InventoryWorkspaceV2({
         lastSyncedAt={lastSyncedAt}
         isRefreshing={isRefreshing}
         onRefresh={refreshInventory}
+        actions={quickActions}
       />
 
       <section className="inventory-summary-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
-          icon={BrainCircuit}
-          label="Sức khỏe kho AI"
-          value={`${intelligence.healthScore}/100`}
-          caption={intelligence.healthScore >= 75 ? "Tốt, tiếp tục theo dõi cảnh báo sớm." : "Cần xử lý các việc AI đề xuất."}
-          tone={intelligence.healthScore >= 75 ? "green" : intelligence.healthScore >= 50 ? "yellow" : "red"}
-          circularScore={intelligence.healthScore}
-        />
-        <SummaryCard icon={ShieldCheck} label="Giá trị tồn kho" value={formatVnd(snapshot.totalReferenceValue)} caption="Theo giá vốn hiện tại." tone="blue" />
-        <SummaryCard
-          icon={Boxes}
-          label="Nguyên liệu"
-          value={snapshot.activeIngredientCount.toLocaleString("vi-VN")}
-          caption={`${snapshot.lowStockCount.toLocaleString("vi-VN")} cảnh báo cần xem.`}
-          tone={snapshot.lowStockCount > 0 ? "yellow" : "green"}
+          icon={PackageCheck}
+          label="Tồn khả dụng"
+          value={formatVnd(inventoryAnalytics.workingCapital.availableValue)}
+          caption="Có thể dùng ngay theo tồn hiện tại."
+          tone="green"
         />
         <SummaryCard
-          icon={ClipboardCheck}
-          label="Recipe coverage"
-          value={`${snapshot.recipeReadyItemCount}/${snapshot.menuItemCount} món`}
-          caption={recipeBacklog.length > 0 ? "Cần bổ sung định mức để trừ kho chính xác." : "Định mức đã sẵn sàng."}
-          tone={recipeBacklog.length > 0 ? "red" : "green"}
+          icon={AlertTriangle}
+          label="Rủi ro tồn"
+          value={stockRiskInsights.riskyRows.length.toLocaleString("vi-VN")}
+          caption={`${formatVnd(stockRiskInsights.riskValue)} cần theo dõi.`}
+          tone={stockRiskInsights.riskyRows.length > 0 ? "yellow" : "green"}
+        />
+        <SummaryCard
+          icon={Bell}
+          label="Cảnh báo mở"
+          value={warehouse.openAlertCount.toLocaleString("vi-VN")}
+          caption={`${snapshot.lowStockCount.toLocaleString("vi-VN")} SKU thấp/hết.`}
+          tone={warehouse.openAlertCount > 0 ? "red" : "green"}
+        />
+        <SummaryCard
+          icon={Truck}
+          label="Đang mua / về"
+          value={`${warehouse.openPurchaseOrderCount.toLocaleString("vi-VN")} / ${stockRiskInsights.incomingCount.toLocaleString("vi-VN")}`}
+          caption="PO mở / dòng incoming."
+          tone={warehouse.openPurchaseOrderCount > 0 || stockRiskInsights.incomingCount > 0 ? "blue" : "green"}
         />
       </section>
-
-      <WarehouseOperationsStrip warehouse={warehouse} />
-
-      <StockRiskCockpit insights={stockRiskInsights} />
-
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow">Ưu tiên hành động hôm nay</p>
-              <h2 className="dashboard-section-title mt-1">Nhìn 3 giây biết cần làm gì</h2>
-            </div>
-            <Badge tone={urgentActions.length > 0 ? "yellow" : "green"}>{urgentActions.length} việc cần xử lý</Badge>
-          </div>
-          <div className="grid gap-3 lg:grid-cols-2">
-            {urgentActions.length === 0 ? (
-              <EmptyState icon={CheckCircle2} title="Không có việc gấp" description="Kho đang ổn. Hãy tiếp tục nhập hàng và chốt định mức khi có món mới." />
-            ) : (
-              urgentActions.map((item) => (
-                <ActionCard key={item.id} priority={item.priority} title={item.title} detail={item.detail} value={item.valueLabel} />
-              ))
-            )}
-          </div>
-        </div>
-        <InventoryHealthBreakdown segments={healthSegments} />
-      </section>
-
-      <InventoryAdvancedInsightsHub
-        open={showAdvancedInsights}
-        onToggle={() => setShowAdvancedInsights((current) => !current)}
-        reorderSuggestions={reorderSuggestions}
-        ingredients={ingredients}
-        costInsights={costInsights}
-        recipeBacklog={recipeBacklog}
-        inventoryAnalytics={inventoryAnalytics}
-        auditReport={auditReport}
-        branchBalancingReport={branchBalancingReport}
-        purchasePlan={purchasePlan}
-        stockRiskInsights={stockRiskInsights}
-      />
 
       <section className="dashboard-workbench-surface rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
-        <div className="dashboard-segmented-scroll flex flex-nowrap gap-2 overflow-x-auto border-b border-[var(--border)] pb-3">
-          <WorkbenchButton active={activeTab === "intake"} icon={Sparkles} label="AI nhập kho" onClick={() => setActiveTab("intake")} />
-          <WorkbenchButton active={activeTab === "ingredients"} icon={Boxes} label="Quản lý nguyên liệu" onClick={() => setActiveTab("ingredients")} />
-          <WorkbenchButton active={activeTab === "stock"} icon={Warehouse} label="Stock board" onClick={() => setActiveTab("stock")} />
-          <WorkbenchButton active={activeTab === "waste"} icon={Trash2} label="Hao hụt & HSD" onClick={() => setActiveTab("waste")} />
-          <WorkbenchButton active={activeTab === "counting"} icon={ClipboardList} label="Kiểm kê" onClick={() => setActiveTab("counting")} />
-          <WorkbenchButton active={activeTab === "transfers"} icon={ArrowDownUp} label="Điều chuyển" onClick={() => setActiveTab("transfers")} />
-          <WorkbenchButton active={activeTab === "balancing"} icon={GitBranch} label="Cân bằng kho" onClick={() => setActiveTab("balancing")} />
-          <WorkbenchButton active={activeTab === "purchasing"} icon={Truck} label="NCC & PO" onClick={() => setActiveTab("purchasing")} />
-          <WorkbenchButton active={activeTab === "recipes"} icon={ClipboardCheck} label="Giá vốn món" onClick={() => setActiveTab("recipes")} />
-          <WorkbenchButton active={activeTab === "alerts"} icon={Bell} label="Cảnh báo" onClick={() => setActiveTab("alerts")} />
-          <WorkbenchButton active={activeTab === "analytics"} icon={BarChart3} label="Analytics" onClick={() => setActiveTab("analytics")} />
-          <WorkbenchButton active={activeTab === "audit"} icon={ShieldCheck} label="Audit" onClick={() => setActiveTab("audit")} />
-          <WorkbenchButton active={activeTab === "ledger"} icon={ReceiptText} label="Nhật ký kho" onClick={() => setActiveTab("ledger")} />
+        <div className="dashboard-segmented-scroll flex flex-nowrap gap-2 overflow-x-auto border-b border-[var(--border)] pb-3" role="tablist" aria-label="Nhóm nghiệp vụ kho">
+          {workbenchNavGroups.map((group) => (
+            <WorkbenchButton
+              key={group.id}
+              active={group.id === activeWorkbenchGroup.id}
+              icon={group.icon}
+              label={group.label}
+              tabId={`inventory-tab-${group.id}`}
+              panelId="inventory-workbench-panel"
+              onClick={() => setActiveTab(group.primaryTab)}
+            />
+          ))}
         </div>
 
-        <div className="pt-4">
+        {activeWorkbenchGroup.tabs.length > 1 ? (
+          <div className="dashboard-segmented-scroll mt-3 flex flex-nowrap gap-2 overflow-x-auto rounded-2xl bg-[var(--soft-surface)] p-2" role="tablist" aria-label={`${activeWorkbenchGroup.label} chi tiết`}>
+            {activeWorkbenchGroup.tabs.map((item) => (
+              <WorkbenchSubnavButton
+                key={item.tab}
+                active={activeTab === item.tab}
+                icon={item.icon}
+                label={item.label}
+                tabId={`inventory-tab-${item.tab}`}
+                panelId="inventory-workbench-panel"
+                onClick={() => setActiveTab(item.tab)}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        <div id="inventory-workbench-panel" role="tabpanel" aria-live="polite" className="pt-4">
           {activeTab === "intake" ? (
             <AiInventoryIntake
               fileInputRef={fileInputRef}
@@ -1216,6 +1330,55 @@ export function InventoryWorkspaceV2({
         </div>
       </section>
 
+      <InventoryOperationalDetails
+        open={showOperationalDetails}
+        onToggle={() => setShowOperationalDetails((current) => !current)}
+        signalCount={operationalSignalCount}
+        urgentCount={urgentActions.length}
+        stockSignalCount={stockSignalCount}
+        controlSignalCount={controlSignalCount}
+      >
+        <WarehouseOperationsStrip warehouse={warehouse} />
+
+        <StockRiskCockpit insights={stockRiskInsights} />
+
+        <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="dashboard-eyebrow">Ưu tiên hành động hôm nay</p>
+                <h2 className="dashboard-section-title mt-1">Hành động hôm nay</h2>
+              </div>
+              <Badge tone={urgentActions.length > 0 ? "yellow" : "green"}>{urgentActions.length} việc cần xử lý</Badge>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {urgentActions.length === 0 ? (
+                <EmptyState icon={CheckCircle2} title="Không có việc gấp" description="Kho đang ổn, không có cảnh báo cần xử lý ngay." />
+              ) : (
+                urgentActions.map((item) => (
+                  <ActionCard key={item.id} priority={item.priority} title={item.title} detail={item.detail} value={item.valueLabel} />
+                ))
+              )}
+            </div>
+          </div>
+          <InventoryHealthBreakdown segments={healthSegments} />
+        </section>
+
+        <InventoryAdvancedInsightsHub
+          open={showAdvancedInsights}
+          onToggle={() => setShowAdvancedInsights((current) => !current)}
+          reorderSuggestions={reorderSuggestions}
+          ingredients={ingredients}
+          costInsights={costInsights}
+          recipeBacklog={recipeBacklog}
+          inventoryAnalytics={inventoryAnalytics}
+          auditReport={auditReport}
+          branchBalancingReport={branchBalancingReport}
+          purchasePlan={purchasePlan}
+          stockRiskInsights={stockRiskInsights}
+        />
+      </InventoryOperationalDetails>
+
       {drawer ? <IngredientDrawer drawer={drawer} categories={categories} onClose={() => setDrawer(null)} /> : null}
     </div>
   );
@@ -1227,7 +1390,8 @@ function InventoryPageHeader({
   realtimeState,
   lastSyncedAt,
   isRefreshing,
-  onRefresh
+  onRefresh,
+  actions
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -1235,14 +1399,13 @@ function InventoryPageHeader({
   lastSyncedAt: Date | null;
   isRefreshing: boolean;
   onRefresh: () => void;
+  actions: InventoryQuickAction[];
 }) {
   return (
     <section className="inventory-page-header rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Trang chủ / Kho hàng</p>
-          <h1 className="dashboard-page-title mt-1">Kho hàng</h1>
-          <p className="dashboard-body-copy mt-1 max-w-2xl">Tối ưu nhập hàng, cảnh báo sớm và kiểm soát nguyên liệu cho quán.</p>
+          <h1 className="dashboard-page-title">Kho hàng</h1>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-white/80 px-3 py-2 text-xs font-black text-[var(--muted-foreground)] shadow-sm">
@@ -1257,7 +1420,7 @@ function InventoryPageHeader({
               type="button"
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="inline-grid h-11 w-11 place-items-center rounded-xl text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50"
+              className="inline-grid h-12 w-12 place-items-center rounded-xl text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
               aria-label="Làm mới kho"
               title="Làm mới kho"
             >
@@ -1266,9 +1429,33 @@ function InventoryPageHeader({
           </div>
           <label className="relative min-w-0 sm:w-96">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
-            <Input className="h-11 rounded-2xl bg-white pl-9" value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Tìm nguyên liệu, nhóm, vị trí..." />
+            <Input
+              aria-label="Tìm nguyên liệu, nhóm hoặc vị trí kho"
+              className="h-12 rounded-2xl bg-white pl-9"
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder="Tìm nguyên liệu, nhóm, vị trí..."
+            />
           </label>
         </div>
+      </div>
+      <div className="dashboard-segmented-scroll mt-4 flex flex-nowrap gap-2 overflow-x-auto" role="toolbar" aria-label="Lệnh nhanh kho">
+        {actions.map((action) => {
+          const Icon = action.icon;
+
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={action.onClick}
+              className={`inline-flex h-12 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${quickActionToneClass(action.tone)}`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{action.label}</span>
+              <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-black opacity-80">{action.value}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -1334,6 +1521,48 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
+function InventoryOperationalDetails({
+  open,
+  onToggle,
+  signalCount,
+  urgentCount,
+  stockSignalCount,
+  controlSignalCount,
+  children
+}: {
+  open: boolean;
+  onToggle: () => void;
+  signalCount: number;
+  urgentCount: number;
+  stockSignalCount: number;
+  controlSignalCount: number;
+  children: ReactNode;
+}) {
+  const detailsId = "inventory-operational-details";
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="dashboard-eyebrow">Chi tiết quản trị</p>
+          <h2 className="dashboard-section-title mt-1">Tín hiệu ẩn</h2>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={signalCount > 0 ? "yellow" : "green"}>{signalCount.toLocaleString("vi-VN")} tín hiệu</Badge>
+          <Badge tone={urgentCount > 0 ? "red" : "green"}>{urgentCount.toLocaleString("vi-VN")} việc gấp</Badge>
+          <Badge tone={stockSignalCount > 0 ? "yellow" : "green"}>{stockSignalCount.toLocaleString("vi-VN")} tồn kho</Badge>
+          <Badge tone={controlSignalCount > 0 ? "blue" : "green"}>{controlSignalCount.toLocaleString("vi-VN")} kiểm soát</Badge>
+          <Button type="button" variant={open ? "primary" : "secondary"} onClick={onToggle} aria-expanded={open} aria-controls={detailsId} className="h-12 rounded-2xl">
+            {open ? <X className="h-4 w-4" /> : <Layers3 className="h-4 w-4" />}
+            {open ? "Thu gọn" : "Mở chi tiết"}
+          </Button>
+        </div>
+      </div>
+      {open ? <div id={detailsId} className="mt-4 grid gap-4">{children}</div> : null}
+    </section>
+  );
+}
+
 function InventoryAdvancedInsightsHub({
   open,
   onToggle,
@@ -1359,6 +1588,7 @@ function InventoryAdvancedInsightsHub({
   purchasePlan: InventoryPurchasePlan;
   stockRiskInsights: InventoryStockRiskInsights;
 }) {
+  const insightsId = "inventory-advanced-insights";
   const insightCount =
     reorderSuggestions.length +
     costInsights.riskyItems.length +
@@ -1372,14 +1602,11 @@ function InventoryAdvancedInsightsHub({
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
             <p className="dashboard-eyebrow">Phân tích nâng cao</p>
-            <h2 className="dashboard-section-title mt-1">Ẩn bớt số liệu, mở khi cần đào sâu</h2>
-            <p className="mt-1 max-w-2xl text-sm font-semibold text-[var(--muted-foreground)]">
-              Gồm kế hoạch mua hàng, giá vốn, analytics, audit, cân bằng chi nhánh và checklist chốt ca.
-            </p>
+            <h2 className="dashboard-section-title mt-1">Tín hiệu kiểm soát</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={insightCount > 0 ? "yellow" : "green"}>{insightCount.toLocaleString("vi-VN")} tín hiệu</Badge>
-            <Button type="button" variant={open ? "primary" : "secondary"} onClick={onToggle} className="h-11 rounded-2xl">
+            <Button type="button" variant={open ? "primary" : "secondary"} onClick={onToggle} aria-expanded={open} aria-controls={insightsId} className="h-12 rounded-2xl">
               {open ? <X className="h-4 w-4" /> : <Layers3 className="h-4 w-4" />}
               {open ? "Thu gọn" : "Mở phân tích"}
             </Button>
@@ -1388,7 +1615,7 @@ function InventoryAdvancedInsightsHub({
       </section>
 
       {open ? (
-        <div className="grid gap-5">
+        <div id={insightsId} className="grid gap-5">
           <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -2671,14 +2898,71 @@ function InventoryHealthBreakdown({ segments }: { segments: Array<{ label: strin
   );
 }
 
-function WorkbenchButton({ active, icon: Icon, label, onClick }: { active: boolean; icon: LucideIcon; label: string; onClick: () => void }) {
+function quickActionToneClass(tone: InventoryQuickAction["tone"]) {
+  if (tone === "red") return "border-red-200 bg-red-50 text-red-800 hover:bg-red-100";
+  if (tone === "yellow") return "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100";
+  if (tone === "blue") return "border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100";
+  return "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
+}
+
+function WorkbenchButton({
+  active,
+  icon: Icon,
+  label,
+  tabId,
+  panelId,
+  onClick
+}: {
+  active: boolean;
+  icon: LucideIcon;
+  label: string;
+  tabId: string;
+  panelId: string;
+  onClick: () => void;
+}) {
   return (
     <button
+      id={tabId}
       type="button"
+      role="tab"
       onClick={onClick}
-      aria-pressed={active}
-      className={`inline-flex h-11 shrink-0 snap-start items-center gap-2 rounded-xl px-3 text-sm font-black transition sm:rounded-2xl sm:px-4 ${
+      aria-selected={active}
+      aria-controls={panelId}
+      className={`inline-flex h-12 shrink-0 snap-start items-center gap-2 rounded-xl px-3 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] sm:rounded-2xl sm:px-4 ${
         active ? "bg-[var(--primary)] text-white shadow-sm" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+    </button>
+  );
+}
+
+function WorkbenchSubnavButton({
+  active,
+  icon: Icon,
+  label,
+  tabId,
+  panelId,
+  onClick
+}: {
+  active: boolean;
+  icon: LucideIcon;
+  label: string;
+  tabId: string;
+  panelId: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      id={tabId}
+      type="button"
+      role="tab"
+      onClick={onClick}
+      aria-selected={active}
+      aria-controls={panelId}
+      className={`inline-flex h-12 shrink-0 items-center gap-2 rounded-xl px-3 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${
+        active ? "bg-white text-[var(--foreground)] shadow-sm" : "text-[var(--muted-foreground)] hover:bg-white/70 hover:text-[var(--foreground)]"
       }`}
     >
       <Icon className="h-4 w-4" />
@@ -2736,7 +3020,7 @@ function AiInventoryIntake({
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">AI nhập kho</p>
-            <h2 className="mt-1 text-xl font-black">Text, file, giọng nói hoặc OCR</h2>
+            <h2 className="mt-1 text-xl font-black">Nhập kho đa nguồn</h2>
           </div>
           <BrainCircuit className="h-6 w-6 text-[var(--primary)]" />
         </div>
@@ -2751,19 +3035,19 @@ function AiInventoryIntake({
           className="mt-3 min-h-36 rounded-2xl bg-[var(--soft-surface)] text-sm"
           value={rawIntake}
           onChange={(event) => setRawIntake(event.target.value)}
-          placeholder="Ví dụ: Ly giấy 500ml, cái, 500, min 120, giá 650, nhóm Bao bì"
+          placeholder="Tên, đơn vị, số lượng, min, giá, nhóm"
         />
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button type="button" onClick={onParse} disabled={isParsing} className="rounded-xl">
+          <Button type="button" onClick={onParse} disabled={isParsing} className="h-12 rounded-xl">
             <Sparkles className="h-4 w-4" /> Phân tích dữ liệu
           </Button>
-          <Button type="button" variant="secondary" onClick={onAdvancedRead} disabled={aiOcrLoading} className="rounded-xl">
+          <Button type="button" variant="secondary" onClick={onAdvancedRead} disabled={aiOcrLoading} className="h-12 rounded-xl">
             <BrainCircuit className="h-4 w-4" /> {aiOcrLoading ? "Đang đọc..." : "AI đọc nâng cao"}
           </Button>
-          <Button type="button" variant="secondary" onClick={onVoice} className="rounded-xl">
+          <Button type="button" variant="secondary" onClick={onVoice} className="h-12 rounded-xl">
             <AudioLines className="h-4 w-4" /> {isListening ? "Đang nghe..." : "Nhập giọng nói"}
           </Button>
-          <Button type="button" variant="ghost" onClick={() => fileInputRef.current?.click()} className="rounded-xl">
+          <Button type="button" variant="ghost" onClick={() => fileInputRef.current?.click()} className="h-12 rounded-xl">
             <FileJson className="h-4 w-4" /> File / OCR
           </Button>
         </div>
@@ -2782,7 +3066,7 @@ function AiInventoryIntake({
         </div>
         <div className="min-h-72 overflow-hidden rounded-2xl border border-[var(--border)]">
           {draftRows.length === 0 ? (
-            <EmptyState icon={FileText} title="Chưa có bảng nháp" description="Sau khi phân tích text, file, voice hoặc OCR, dữ liệu nhập kho sẽ xuất hiện ở đây để bạn xác nhận." />
+            <EmptyState icon={FileText} title="Chưa có bảng nháp" description="Bảng nháp đang trống." />
           ) : (
             <div className="max-h-72 divide-y divide-[var(--border)] overflow-auto">
               {draftRows.map((row, index) => (
@@ -2799,7 +3083,7 @@ function AiInventoryIntake({
         </div>
         {importState?.error ? <p className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">{importState.error}</p> : null}
         {importState?.success ? <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">{importState.success}</p> : null}
-        <SubmitButton disabled={draftRows.length === 0 || importPending} pendingLabel="Đang nhập vào kho..." className="mt-3 w-full rounded-2xl">
+        <SubmitButton disabled={draftRows.length === 0 || importPending} pendingLabel="Đang nhập vào kho..." className="mt-3 h-12 w-full rounded-2xl">
           <PackagePlus className="h-4 w-4" /> Nhập vào kho thật
         </SubmitButton>
       </form>
@@ -5393,7 +5677,7 @@ function ModeButton({ active, icon: Icon, label, onClick }: { active: boolean; i
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-2xl border px-3 py-3 text-xs font-black transition ${
+      className={`min-h-12 rounded-2xl border px-3 py-3 text-xs font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${
         active ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--border)] bg-white text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
       }`}
     >

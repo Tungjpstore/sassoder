@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AdminDashboardClientLayout } from "@/components/dashboard/dashboard-client-layout";
+import { AppError } from "@/lib/response";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
@@ -17,7 +18,9 @@ import { persistAiRecommendationsFromOperationDeck } from "@/services/ai-recomme
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
 import { getAdminDashboardOverview } from "@/services/dashboard-overview-service";
 import { getInventorySnapshot } from "@/services/inventory-service";
+import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import { Warehouse, ClipboardList, WalletCards, ChefHat, Banknote, ReceiptText, QrCode, RadioTower, TrendingUp, Gauge, UsersRound } from "lucide-react";
+import type { SessionProfile } from "@/types/domain";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +50,16 @@ function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
+async function canOpenHrWorkspace(session: SessionProfile) {
+  try {
+    await assertStaffActionPermission(session, ["staff.view", "staff.manage"], { mode: "any" });
+    return true;
+  } catch (error) {
+    if (error instanceof AppError && error.status === 403) return false;
+    throw error;
+  }
+}
+
 export default async function AdminPage({
   searchParams
 }: {
@@ -54,7 +67,7 @@ export default async function AdminPage({
 }) {
   const params = await searchParams;
   const { session, entitlement } = await requireDashboardAccess("core_dashboard");
-  if (session.role === "STAFF") redirect("/dashboard/staff/mobile");
+  if (session.role === "STAFF") redirect((await canOpenHrWorkspace(session)) ? "/dashboard/staff" : "/dashboard/staff/mobile");
   const showOnboardedWelcome = firstParam(params?.onboarded) === "1";
 
   return (

@@ -14,7 +14,6 @@ function safeSize(value: string | null) {
 export async function GET(request: Request) {
   try {
     await requireOperationalDashboardApiSession({
-      adminOnly: true,
       feature: "staff_management",
       permission: "attendance.edit"
     });

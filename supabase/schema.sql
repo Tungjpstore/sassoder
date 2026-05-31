@@ -1268,6 +1268,31 @@ create index registration_intents_user_pending_idx
 create index registration_intents_email_pending_idx
   on public.registration_intents (email, created_at desc)
   where consumed_at is null;
+create index ai_conversations_restaurant_surface_idx
+  on public.ai_conversations (restaurant_id, surface, updated_at desc);
+create index ai_conversations_customer_session_idx
+  on public.ai_conversations (restaurant_id, customer_session_id, updated_at desc)
+  where customer_session_id is not null;
+create index ai_conversations_user_surface_thread_idx
+  on public.ai_conversations (restaurant_id, user_id, surface, updated_at desc)
+  where user_id is not null;
+create index ai_conversations_customer_surface_thread_idx
+  on public.ai_conversations (restaurant_id, customer_session_id, surface, updated_at desc)
+  where customer_session_id is not null;
+create index ai_messages_conversation_idx
+  on public.ai_messages (conversation_id, created_at asc);
+create index ai_messages_restaurant_created_idx
+  on public.ai_messages (restaurant_id, created_at desc);
+create index ai_logs_restaurant_task_idx
+  on public.ai_logs (restaurant_id, task_type, created_at desc);
+create index ai_feedback_restaurant_created_idx
+  on public.ai_feedback (restaurant_id, created_at desc);
+create index ai_owner_agent_approval_tokens_scope_idx
+  on public.ai_owner_agent_approval_tokens (restaurant_id, user_id, domain, command, status, expires_at desc);
+create index ai_security_events_restaurant_created_idx
+  on public.ai_security_events (restaurant_id, created_at desc);
+create index ai_security_events_type_severity_idx
+  on public.ai_security_events (event_type, severity, created_at desc);
 create index report_schedules_due_idx
   on public.report_schedules (enabled, next_run_at)
   where enabled = true;
@@ -1443,6 +1468,22 @@ alter table public.delivery_quote_metric_logs enable row level security;
 alter table public.delivery_couriers enable row level security;
 alter table public.courier_locations enable row level security;
 alter table public.delivery_tracking_events enable row level security;
+
+revoke all on public.ai_conversations from anon;
+revoke all on public.ai_messages from anon;
+revoke all on public.ai_logs from anon;
+revoke all on public.ai_feedback from anon;
+revoke all on public.ai_owner_agent_approval_tokens from anon;
+revoke all on public.ai_owner_agent_approval_tokens from authenticated;
+revoke all on public.ai_security_events from anon;
+revoke all on public.ai_security_events from authenticated;
+
+grant select, insert, update on public.ai_conversations to authenticated;
+grant select, insert on public.ai_messages to authenticated;
+grant select, insert on public.ai_logs to authenticated;
+grant select, insert on public.ai_feedback to authenticated;
+grant select, insert, update, delete on public.ai_owner_agent_approval_tokens to service_role;
+grant select, insert, update, delete on public.ai_security_events to service_role;
 
 create or replace function app_private.current_restaurant_id()
 returns uuid
@@ -1659,6 +1700,14 @@ for each row execute function public.set_updated_at();
 
 create trigger inventory_count_lines_set_updated_at
 before update on public.inventory_count_lines
+for each row execute function public.set_updated_at();
+
+create trigger ai_conversations_set_updated_at
+before update on public.ai_conversations
+for each row execute function public.set_updated_at();
+
+create trigger ai_owner_agent_approval_tokens_set_updated_at
+before update on public.ai_owner_agent_approval_tokens
 for each row execute function public.set_updated_at();
 
 create or replace function public.apply_inventory_movement(

@@ -25,6 +25,8 @@ import type {
   AiProductionReadinessStatus
 } from "@/lib/ai/production-readiness";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
+import type { AiSecurityEventFeed, AiSecurityEventSeverity } from "@/services/ai-security-event-service";
+import { listRecentAiSecurityEvents } from "@/services/ai-security-event-service";
 import { getAiProductionReadinessDeck } from "@/services/ai-production-readiness-service";
 
 export const dynamic = "force-dynamic";
@@ -51,6 +53,12 @@ function severityLabel(severity: AiProductionReadinessSeverity) {
   if (severity === "pass") return "Pass";
   if (severity === "warn") return "Warn";
   return "Block";
+}
+
+function securitySeverityTone(severity: AiSecurityEventSeverity) {
+  if (severity === "critical" || severity === "high") return "red";
+  if (severity === "medium") return "yellow";
+  return "green";
 }
 
 function guardrailTone(status: AiProductionGuardrail["status"]) {
@@ -132,9 +140,61 @@ function GuardrailPanel({
   );
 }
 
+function SecurityEventPanel({ feed }: { feed: AiSecurityEventFeed }) {
+  return (
+    <section className="dashboard-panel p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="dashboard-eyebrow inline-flex items-center gap-2">
+            <ShieldCheck size={15} />
+            AI security stream
+          </p>
+          <h2 className="dashboard-section-title mt-1">Blocked actions và audit events</h2>
+        </div>
+        <Badge tone={feed.schemaReady ? (feed.highRiskCount ? "red" : "green") : "yellow"}>
+          {feed.schemaReady ? `${feed.highRiskCount} high risk` : "schema pending"}
+        </Badge>
+      </div>
+
+      {!feed.schemaReady ? (
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
+          <p className="text-sm font-bold text-[var(--foreground)]">Security event stream chưa migrate</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">
+            Bảng ai_security_events chưa sẵn sàng ở database hiện tại; guardrail vẫn chặn tại runtime và sẽ ghi audit sau khi migrate.
+          </p>
+        </div>
+      ) : feed.events.length === 0 ? (
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
+          <p className="text-sm font-bold text-[var(--foreground)]">Không có sự kiện bảo mật mới</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">Tool isolation, approval token và OCR guardrail đang sạch trong cửa sổ gần nhất.</p>
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2">
+          {feed.events.map((event) => (
+            <div key={event.id} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-bold text-[var(--foreground)]">{event.eventType}</p>
+                  <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">
+                    {event.surface} · {new Date(event.createdAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                  </p>
+                </div>
+                <Badge tone={securitySeverityTone(event.severity)}>{event.severity}</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default async function AiProductionPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
-  const deck = await getAiProductionReadinessDeck(session.restaurantId);
+  const [deck, securityEventFeed] = await Promise.all([
+    getAiProductionReadinessDeck(session.restaurantId),
+    listRecentAiSecurityEvents({ restaurantId: session.restaurantId, limit: 8 })
+  ]);
   const metricCards = [
     { label: "Score", value: `${deck.summary.score}%`, detail: statusLabel(deck.summary.status), icon: Rocket, tone: statusTone(deck.summary.status) },
     { label: "Blockers", value: deck.summary.blockers, detail: "Điểm chặn deploy AI", icon: LockKeyhole, tone: deck.summary.blockers ? "red" : "green" },
@@ -215,6 +275,8 @@ export default async function AiProductionPage() {
           <GuardrailPanel title="Cost routing và fallback" icon={Coins} guardrails={deck.costGuardrails} />
           <GuardrailPanel title="Security và privacy" icon={ShieldCheck} guardrails={deck.securityGuardrails} />
         </div>
+
+        <SecurityEventPanel feed={securityEventFeed} />
 
         <section className="dashboard-panel p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
