@@ -912,6 +912,18 @@ const staffDateOfBirthSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày sinh không hợp lệ.")
   .refine((value) => value >= "1900-01-01" && value <= new Date().toISOString().slice(0, 10), "Ngày sinh không hợp lệ.");
 
+const nullableTextInput = (value: unknown) => (value === null || value === undefined ? "" : value);
+
+const staffPinInputSchema = z.preprocess(
+  nullableTextInput,
+  z.string().trim().regex(/^\d{4,8}$/, "Mã PIN phải gồm 4-8 chữ số.").optional().or(z.literal(""))
+);
+
+const staffPhoneInputSchema = z.preprocess(
+  nullableTextInput,
+  z.string().trim().regex(/^[0-9+() .-]{6,24}$/, "Số điện thoại không hợp lệ.").optional().or(z.literal(""))
+);
+
 export const staffInviteSchema = z.object({
   email: z.preprocess(
     (value) => {
@@ -929,11 +941,11 @@ export const staffInviteSchema = z.object({
     },
     z.string().min(8, "Mật khẩu nhân sự cần ít nhất 8 ký tự.").optional()
   ),
-  pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
-  fullName: z.string().trim().min(2).max(120),
+  pin: staffPinInputSchema,
+  fullName: z.string().trim().min(2, "Vui lòng nhập họ tên nhân viên.").max(120, "Họ tên tối đa 120 ký tự."),
   dateOfBirth: staffDateOfBirthSchema,
   hometown: z.string().trim().min(2, "Vui lòng nhập quê quán.").max(120),
-  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  phone: staffPhoneInputSchema,
   roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/).default("waiter"),
   branchId: z.string().uuid().optional().or(z.literal("")),
   notes: z.string().trim().max(500).optional().or(z.literal(""))
@@ -953,14 +965,14 @@ export const staffProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
   hometown: z.string().trim().max(120).optional().or(z.literal("")),
-  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  phone: staffPhoneInputSchema,
   username: z.string().trim().regex(/^[a-z0-9._-]{3,40}$/).optional().or(z.literal("")),
-  pin: z.string().trim().regex(/^\d{4,8}$/).optional().or(z.literal("")),
+  pin: staffPinInputSchema,
   roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/),
   branchId: z.string().uuid().optional().or(z.literal("")),
   employmentStatus: z.enum(["active", "suspended", "resigned"]).default("active"),
   emergencyContactName: z.string().trim().max(120).optional().or(z.literal("")),
-  emergencyContactPhone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  emergencyContactPhone: staffPhoneInputSchema,
   notes: z.string().trim().max(500).optional().or(z.literal(""))
 });
 
@@ -982,7 +994,7 @@ export const staffAppPasswordBulkResetSchema = z.object({
 
 export const staffSelfProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
-  phone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/).optional().or(z.literal("")),
+  phone: staffPhoneInputSchema,
   dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
   hometown: z.string().trim().max(120).optional().or(z.literal("")),
   avatarUrl: z.string().trim().url("Link ảnh đại diện không hợp lệ.").optional().or(z.literal(""))

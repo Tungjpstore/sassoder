@@ -8,6 +8,7 @@ import {
   staffDeviceCreateSchema,
   staffDeviceTrustUpdateSchema,
   staffDocumentCreateSchema,
+  staffInviteSchema,
   staffOperationalRequestSchema,
   staffSessionForceLogoutSchema,
   staffShiftAssignmentSchema,
@@ -19,6 +20,26 @@ const staffMemberId = "11111111-1111-4111-8111-111111111111";
 const branchId = "22222222-2222-4222-8222-222222222222";
 const shiftAssignmentId = "33333333-3333-4333-8333-333333333333";
 const targetStaffMemberId = "44444444-4444-4444-8444-444444444444";
+
+test("staff invite schema accepts add-staff form payload without optional pin field", () => {
+  const parsed = staffInviteSchema.parse({
+    email: null,
+    password: null,
+    pin: null,
+    fullName: "Nguyễn Văn A",
+    dateOfBirth: "1998-05-20",
+    hometown: "Nam Định",
+    phone: "0912 345 678",
+    roleCode: "manager",
+    branchId: "",
+    notes: "part-time cuối tuần"
+  });
+
+  assert.equal(parsed.pin, "");
+  assert.equal(parsed.email, undefined);
+  assert.equal(parsed.password, undefined);
+  assert.equal(parsed.phone, "0912 345 678");
+});
 
 test("staff request schema accepts payroll-ready leave requests", () => {
   const parsed = staffOperationalRequestSchema.parse({

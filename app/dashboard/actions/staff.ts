@@ -75,7 +75,7 @@ export type StaffActionState = {
 function staffActionError(error: unknown) {
   if (error instanceof ZodError) {
     return error.issues
-      .map((issue) => issue.message)
+      .map((issue) => issue.message === "Invalid input" ? "Dữ liệu nhân viên chưa hợp lệ. Vui lòng kiểm tra các trường bắt buộc." : issue.message)
       .filter(Boolean)
       .join(" ") || "Dữ liệu nhân sự không hợp lệ. Vui lòng kiểm tra lại form.";
   }

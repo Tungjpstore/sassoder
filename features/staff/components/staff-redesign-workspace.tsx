@@ -893,9 +893,9 @@ function StaffDesktopTable({ members, bundle, onOpenMember, onNavigate }: { memb
                 <td className="px-5 py-3">
                   <button type="button" onClick={() => onOpenMember(member.id)} className="flex min-h-10 items-center gap-3 text-left">
                     <Avatar name={member.fullName} active={label === "Đang làm"} />
-                    <span>
-                      <span className="block text-base font-black text-[#2B2B2B]">{member.fullName}</span>
-                      <span className="block text-sm font-semibold text-[#4B4945]">EMP-{member.id.slice(0, 4).toUpperCase()}</span>
+                      <span>
+                        <span className="block text-base font-black text-[#2B2B2B]">{member.fullName}</span>
+                      <span className="block font-mono text-sm font-black text-[#0F4D3A]">Mã NV: {member.employeeCode ?? "Chưa đồng bộ"}</span>
                     </span>
                   </button>
                 </td>
@@ -933,6 +933,7 @@ function StaffMobileCard({ member, bundle, onOpen, onAttendance }: { member: Sta
           <Avatar name={member.fullName} size="md" />
           <span className="min-w-0">
             <span className="block truncate text-lg font-black leading-tight text-[#2B2B2B]">{member.fullName}</span>
+            <span className="mt-1 block truncate font-mono text-sm font-black text-[#0F4D3A]">Mã NV: {member.employeeCode ?? "Chưa đồng bộ"}</span>
             <span className="mt-1 block truncate text-sm font-medium text-[#3F3D39]">{member.roleTitle} • {member.primaryBranchName ?? "Chưa gán"}</span>
           </span>
         </button>
@@ -1278,7 +1279,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
                 <StatusChip tone={statusTone(status)}>{status}</StatusChip>
                 <StatusChip tone={credentialTone(member)}>{credentialLabel(member)}</StatusChip>
               </div>
-              <p className="mt-2 flex flex-wrap items-center gap-3 text-sm font-bold text-[#3F3D39]"><span>{member.employeeCode ?? `EMP-${member.id.slice(0, 4).toUpperCase()}`}</span><span>{member.roleTitle || roleLabel(member.roleCode)}</span><span>{member.primaryBranchName ?? "Chưa gán chi nhánh"}</span></p>
+              <p className="mt-2 flex flex-wrap items-center gap-3 text-sm font-bold text-[#3F3D39]"><span className="font-mono font-black text-[#0F4D3A]">Mã NV: {member.employeeCode ?? "Chưa đồng bộ"}</span><span>{member.roleTitle || roleLabel(member.roleCode)}</span><span>{member.primaryBranchName ?? "Chưa gán chi nhánh"}</span></p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[440px]">
@@ -1463,6 +1464,14 @@ function StaffProfileTab({
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-xl font-black text-[#2B2B2B]">Tài khoản</h2>
           <StatusChip tone={credentialTone(member)}>{credentialLabel(member)}</StatusChip>
+        </div>
+        <div className="mt-4 rounded-xl border border-[#D8D1C7] bg-[#F5F8F1] p-4">
+          <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Mã nhân viên đăng nhập</p>
+          <div className="mt-2 flex min-w-0 items-center justify-between gap-3">
+            <p className="min-w-0 break-all font-mono text-xl font-black text-[#0F4D3A]">{member.employeeCode ?? "Chưa đồng bộ"}</p>
+            {member.employeeCode ? <CopyTextButton value={member.employeeCode} label="Sao chép mã nhân viên" /> : null}
+          </div>
+          <p className="mt-2 text-xs font-semibold leading-relaxed text-[#5E5A54]">Dùng mã này để đăng nhập app nhân viên. Nhân viên cũ trước đợt nâng cấp có thể lấy mã tại hồ sơ này.</p>
         </div>
         <div className="mt-4 grid gap-3">
           <form action={passwordAction} className="grid gap-2">
