@@ -291,7 +291,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
     }
   ] as const;
 
-  const commandSignals = [
+  const shiftSignals = [
     {
       label: "Sức khoẻ ca",
       value: `${serviceHealthScore}%`,
@@ -374,7 +374,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       salesForecast={salesForecast}
       showActivationPanel={showActivationPanel}
       priorityCards={priorityCards}
-      commandSignals={commandSignals}
+      shiftSignals={shiftSignals}
       activationRunway={activationRunway}
     />
   );

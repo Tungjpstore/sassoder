@@ -1,6 +1,7 @@
 import "server-only";
 
 import { assertServerFeatureAccess } from "@/lib/billing/feature-gates";
+import { buildSubscriptionExpiryWarning } from "@/lib/billing/subscription-warning";
 import { isSubscriptionUsable } from "@/lib/billing/subscription-transitions";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
@@ -373,16 +374,11 @@ async function readRestaurantEntitlement(restaurantId: string) {
     periodEnd,
     daysLeft,
     features,
-    warning:
-      allowed && !pendingButStillUsable && daysLeft <= 7
-        ? {
-            severity: daysLeft <= 1 ? "danger" : "warning",
-            message:
-              daysLeft <= 0
-                ? "Gói LogiVN hết hạn hôm nay. Vui lòng gia hạn để tránh gián đoạn vận hành."
-                : `Gói LogiVN còn ${daysLeft} ngày. Hãy gia hạn sớm để ca bán không bị gián đoạn.`
-          }
-        : null
+    warning: buildSubscriptionExpiryWarning({
+      allowed,
+      pendingButStillUsable,
+      daysLeft
+    })
   };
 }
 

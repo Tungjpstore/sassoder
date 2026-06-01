@@ -109,6 +109,7 @@ Confirm these are present in the target Vercel/Supabase environment before deplo
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `NEXT_PUBLIC_APP_URL`
 - `STAFF_ATTENDANCE_QR_SECRET`
+- `STAFF_ATTENDANCE_SESSION_SECRET`
 - `STAFF_PIN_PEPPER`
 
 Required only when the related production path is enabled:

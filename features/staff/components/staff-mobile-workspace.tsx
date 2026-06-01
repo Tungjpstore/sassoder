@@ -50,6 +50,8 @@ type GpsPoint = {
   accuracyMeters?: number;
 };
 
+const staffGpsMaxAccuracyMeters = 80;
+
 function getDeviceFingerprint() {
   const key = "logivn:staff-device-fingerprint:v1";
   try {
@@ -73,20 +75,32 @@ function readGpsPosition(): Promise<GpsPoint> {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        const accuracyMeters = Math.round(position.coords.accuracy);
+        if (!Number.isFinite(accuracyMeters) || accuracyMeters > staffGpsMaxAccuracyMeters) {
+          reject(new Error(`GPS sai số ${Number.isFinite(accuracyMeters) ? `${accuracyMeters}m` : "quá cao"}. Hãy đứng thoáng hơn tại chi nhánh hoặc dùng QR/WiFi.`));
+          return;
+        }
+
         resolve({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          accuracyMeters: Math.round(position.coords.accuracy)
+          accuracyMeters
         });
       },
-      () => reject(new Error("Không lấy được vị trí GPS. Hãy bật quyền vị trí hoặc dùng QR fallback.")),
+      () => reject(new Error("Không lấy được vị trí GPS. Hãy bật quyền vị trí chính xác trước khi chấm công.")),
       {
         enableHighAccuracy: true,
-        timeout: 12_000,
-        maximumAge: 20_000
+        timeout: 15_000,
+        maximumAge: 0
       }
     );
   });
+}
+
+function isPendingAttendanceResult(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const result = value as { approval?: unknown; attendance?: { approval_state?: string; approvalState?: string } };
+  return Boolean(result.approval) || result.attendance?.approval_state === "pending" || result.attendance?.approvalState === "pending";
 }
 
 function initialTab() {
@@ -125,6 +139,7 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
   const [markingRead, setMarkingRead] = useState(false);
   const [qrToken, setQrToken] = useState("");
   const [deviceFingerprint, setDeviceFingerprint] = useState("");
+  const [attendanceSessionToken, setAttendanceSessionToken] = useState("");
   const [deviceTrust, setDeviceTrust] = useState<StaffSessionHeartbeatResult["deviceTrust"] | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
@@ -228,6 +243,21 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
         ? "OT hợp lệ từ 15 đến 720 phút."
         : null;
 
+  const refreshAttendanceSessionToken = useCallback(async (fingerprint: string) => {
+    const result = await sendStaffSessionHeartbeat({
+      branchId: selectedBranchId,
+      sessionType: "mobile",
+      loginMethod: "pin",
+      deviceFingerprint: fingerprint,
+      deviceName: navigator.userAgent.slice(0, 90),
+      metadata: { screen: "staff_mobile" }
+    });
+    if (result.deviceTrust) setDeviceTrust(result.deviceTrust);
+    if (result.attendanceSessionToken) setAttendanceSessionToken(result.attendanceSessionToken);
+    if (result.forcedLogout) setMessage({ tone: "warning", text: "Phiên thiết bị đã bị quản lý đăng xuất." });
+    return result.attendanceSessionToken ?? "";
+  }, [selectedBranchId]);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const fingerprint = getDeviceFingerprint();
@@ -251,25 +281,14 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
   useEffect(() => {
     if (!deviceFingerprint) return undefined;
     const sendHeartbeat = () => {
-      void sendStaffSessionHeartbeat({
-        branchId: selectedBranchId,
-        sessionType: "mobile",
-        loginMethod: "pin",
-        deviceFingerprint,
-        deviceName: navigator.userAgent.slice(0, 90),
-        metadata: { screen: "staff_mobile" }
-      })
-        .then((result) => {
-          if (result.deviceTrust) setDeviceTrust(result.deviceTrust);
-          if (result.forcedLogout) setMessage({ tone: "warning", text: "Phiên thiết bị đã bị quản lý đăng xuất." });
-        })
+      void refreshAttendanceSessionToken(deviceFingerprint)
         .catch(() => undefined);
     };
 
     sendHeartbeat();
     const timer = window.setInterval(sendHeartbeat, 60_000);
     return () => window.clearInterval(timer);
-  }, [deviceFingerprint, selectedBranchId]);
+  }, [deviceFingerprint, refreshAttendanceSessionToken]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
@@ -296,20 +315,24 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
     const action = activeAttendance ? "clock_out" : "clock_in";
     const capturedAt = new Date().toISOString();
     let gps: GpsPoint | undefined;
+    let deviceInfo: Record<string, unknown> | undefined;
     const fingerprint = deviceFingerprint || getDeviceFingerprint();
     if (!deviceFingerprint) setDeviceFingerprint(fingerprint);
-    const deviceInfo = {
-      userAgent: navigator.userAgent,
-      mode: "mobile_pwa",
-      deviceFingerprint: fingerprint,
-      deviceTrustStatus: deviceTrust?.status ?? null
-    };
 
     try {
-      if (source === "gps") gps = await readGpsPosition();
+      const sessionToken = attendanceSessionToken || await refreshAttendanceSessionToken(fingerprint);
+      if (!sessionToken) throw new Error("Phiên thiết bị chưa sẵn sàng. Vui lòng chờ vài giây rồi thử lại.");
+      deviceInfo = {
+        userAgent: navigator.userAgent,
+        mode: "mobile_pwa",
+        deviceFingerprint: fingerprint,
+        attendanceSessionToken: sessionToken,
+        deviceTrustStatus: deviceTrust?.status ?? null
+      };
+      gps = await readGpsPosition();
 
-      if (action === "clock_in") {
-        await clockInAttendance({
+      const result = action === "clock_in"
+        ? await clockInAttendance({
           staffMemberId: staff.id,
           branchId: selectedBranchId,
           source,
@@ -319,9 +342,8 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           accuracyMeters: gps?.accuracyMeters,
           qrToken: source === "qr" ? qrToken.trim() : undefined,
           deviceInfo
-        });
-      } else {
-        await clockOutAttendance({
+        })
+        : await clockOutAttendance({
           attendanceLogId: activeAttendance?.id,
           staffMemberId: staff.id,
           branchId: selectedBranchId,
@@ -333,9 +355,13 @@ export function StaffMobileWorkspace({ initialBundle, restaurantId, restaurantNa
           qrToken: source === "qr" ? qrToken.trim() : undefined,
           deviceInfo
         });
-      }
 
-      setMessage({ tone: "success", text: action === "clock_in" ? "Đã check-in." : "Đã kết ca." });
+      setMessage({
+        tone: isPendingAttendanceResult(result) ? "warning" : "success",
+        text: isPendingAttendanceResult(result)
+          ? "Đã ghi nhận nhưng đang chờ quản lý duyệt trước khi tính công."
+          : action === "clock_in" ? "Đã check-in." : "Đã kết ca."
+      });
       await refreshBundle();
     } catch (error) {
       const canQueue = shouldQueueAttendanceOffline({

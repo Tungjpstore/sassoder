@@ -370,18 +370,18 @@ function WorkflowQueue({
         <div>
           <p className="dashboard-eyebrow inline-flex items-center gap-2">
             <GitBranch size={15} />
-            Automation queue
+            Luồng AI
           </p>
-          <h2 className="dashboard-section-title mt-1">Workflow đang chờ chủ quán quyết định</h2>
+          <h2 className="dashboard-section-title mt-1">Luồng đang chờ duyệt</h2>
         </div>
         <Badge tone={schemaReady ? (workflows.length ? "green" : "blue") : "yellow"}>
-          {schemaReady ? `${workflows.length} workflow` : "Cần schema"}
+          {schemaReady ? `${workflows.length} luồng` : "Cần schema"}
         </Badge>
       </div>
 
       {!schemaReady ? (
         <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-          Cần schema automation runs để lưu trạng thái duyệt, ẩn và hoàn tất workflow AI.
+          Cần schema automation runs để lưu trạng thái duyệt và hoàn tất.
         </div>
       ) : workflows.length ? (
         <div className="mt-3 grid gap-3 xl:grid-cols-2">
@@ -457,7 +457,7 @@ function WorkflowQueue({
         </div>
       ) : (
         <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-          Chưa có workflow đang chờ duyệt. Khi AI phát hiện việc có thể tự động hóa, queue sẽ xuất hiện ở đây.
+          Chưa có luồng đang chờ duyệt.
         </div>
       )}
     </section>
@@ -471,9 +471,9 @@ function FutureCapabilitiesPanel({ capabilities }: { capabilities: AiFutureCapab
         <div>
           <p className="dashboard-eyebrow inline-flex items-center gap-2">
             <WandSparkles size={15} />
-            Future AI
+            Kênh mới
           </p>
-          <h2 className="dashboard-section-title mt-1">Voice/Vision readiness hooks</h2>
+          <h2 className="dashboard-section-title mt-1">Voice/Vision</h2>
         </div>
         <Badge tone={capabilities.some((capability) => capability.enabled) ? "green" : "neutral"}>
           {capabilities.filter((capability) => capability.enabled).length} enabled
@@ -559,9 +559,9 @@ export default async function AiControlPage() {
       tone: recommendationsResult.schemaReady ? "green" : "yellow"
     },
     {
-      label: "Workflows",
+      label: "Luồng AI",
       value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.length : "--",
-      detail: workflowRunsResult.schemaReady ? "Workflow cần xử lý" : "Cần schema automation",
+      detail: workflowRunsResult.schemaReady ? "Luồng cần xử lý" : "Cần schema automation",
       icon: GitBranch,
       tone: workflowRunsResult.schemaReady ? "green" : "yellow"
     },
@@ -573,9 +573,9 @@ export default async function AiControlPage() {
       tone: memoriesResult.schemaReady ? "green" : "yellow"
     },
     {
-      label: "Future AI",
+      label: "Kênh mới",
       value: futureCapabilities.filter((capability) => capability.enabled).length,
-      detail: "Voice/Vision flags",
+      detail: "Voice/Vision",
       icon: ShieldCheck,
       tone: futureCapabilities.some((capability) => capability.enabled) ? "green" : "blue"
     }
@@ -587,7 +587,7 @@ export default async function AiControlPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Trung tâm kiểm soát provider, memory, đề xuất và automation AI"
+      subtitle="Provider, bộ nhớ, đề xuất và tự động hóa AI"
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">

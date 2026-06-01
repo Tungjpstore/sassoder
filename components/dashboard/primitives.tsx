@@ -19,7 +19,7 @@ export function DashboardPanel({
   children: ReactNode;
   className?: string;
 }) {
-  return <section className={cn("dashboard-panel p-4", className)}>{children}</section>;
+  return <section className={cn("dashboard-panel dashboard-operational-panel p-4", className)}>{children}</section>;
 }
 
 export function DashboardSectionHeader({
@@ -40,7 +40,7 @@ export function DashboardSectionHeader({
       <div className="min-w-0">
         {eyebrow ? <p className="dashboard-eyebrow text-[var(--muted-foreground)]">{eyebrow}</p> : null}
         <h2 className="dashboard-section-title mt-1">{title}</h2>
-        {description ? <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">{description}</p> : null}
+        {description ? <p className="dashboard-section-description mt-1 text-sm font-medium text-[var(--muted-foreground)]">{description}</p> : null}
       </div>
       {action ? <div className="dashboard-action-row flex shrink-0 flex-wrap gap-2">{action}</div> : null}
     </div>
@@ -65,7 +65,7 @@ export function DashboardPageHero({
   className?: string;
 }) {
   return (
-    <section className={cn("admin-hero-panel rounded-[14px] p-4", className)}>
+    <section className={cn("admin-hero-panel dashboard-page-hero rounded-[14px] p-4", className)}>
       <div className="relative z-[1] flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0">
           {badges ? <div className="flex flex-wrap items-center gap-2">{badges}</div> : null}
@@ -96,7 +96,7 @@ export function DashboardMetricCard({
   className?: string;
 }) {
   return (
-    <article className={cn("admin-stat-tile rounded-[14px] p-4", className)}>
+    <article className={cn("admin-stat-tile dashboard-metric-tile rounded-[14px] p-4", className)}>
       <div className="flex items-start justify-between gap-3">
         <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl border", metricToneClasses[tone])}>
           <Icon size={18} />

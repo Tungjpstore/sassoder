@@ -902,7 +902,7 @@ function StaffAiAssistantPanel({
   );
 }
 
-function StaffOperationsCockpit({
+function StaffOperationsPulse({
   bundle,
   members,
   approvals,
@@ -1256,7 +1256,7 @@ export function StaffOperationsWorkspace({ bundle, restaurantId, restaurantName,
       </section>
 
       <div className="hidden md:block">
-        <StaffOperationsCockpit
+        <StaffOperationsPulse
           bundle={bundle}
           members={visibleMembers}
           approvals={pendingApprovals}
@@ -1461,7 +1461,7 @@ export function StaffOperationsWorkspace({ bundle, restaurantId, restaurantName,
         />
       ) : null}
       {activeScreen === "branches" ? (
-        <BranchCommandCenterScreen
+        <BranchStatusScreen
           bundle={bundle}
           members={visibleMembers}
           approvals={pendingApprovals}
@@ -2039,7 +2039,7 @@ function PermissionsScreen({
         <section className="rounded-xl border border-[#E8DED0] bg-[#FFFCF6] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Permission command center</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Quyền truy cập</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Role nào đang có quyền nhạy cảm</h3>
             </div>
             <Pill tone={premiumCustomPermissions ? "green" : "orange"}>{premiumCustomPermissions ? "Custom on" : "Custom locked"}</Pill>
@@ -2352,7 +2352,7 @@ function ShiftsScreen({
         <section className="rounded-xl border border-[#E8DED0] bg-[#FFFCF6] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Shift command center</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Ca làm</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Sẵn sàng vận hành ca tuần này</h3>
             </div>
             <Pill tone={scheduleReadinessScore >= 90 ? "green" : scheduleReadinessScore >= 75 ? "orange" : "red"}>{scheduleReadinessScore}/100</Pill>
@@ -2875,11 +2875,11 @@ function AttendanceScreen({
     try {
       const result = await createStaffAttendanceQrToken({
         branchId: selectedQrBranch.id,
-        expiresInMinutes: 5,
+        expiresInMinutes: 1,
         mode: "daily_branch"
       });
       setQrToken(result);
-      setQrMessage({ tone: "success", text: `QR ${result.branchName} dùng trong ngày, hiệu lực tới ${shortTime(result.expiresAt)}.` });
+      setQrMessage({ tone: "success", text: `QR ${result.branchName} đã đổi mã mới, hiệu lực tới ${shortTime(result.expiresAt)}.` });
     } catch (error) {
       setQrMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể tạo QR chấm công." });
     } finally {
@@ -2990,7 +2990,7 @@ function AttendanceScreen({
               <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">QR & WiFi attendance</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Chấm công theo chi nhánh</h3>
             </div>
-            <Pill tone={qrToken ? "green" : "neutral"}>{qrToken?.mode === "daily_branch" ? "QR ngày" : qrToken ? shortTime(qrToken.expiresAt) : "Chưa tạo"}</Pill>
+            <Pill tone={qrToken ? "green" : "neutral"}>{qrToken ? shortTime(qrToken.expiresAt) : "Chưa tạo"}</Pill>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-[minmax(180px,1fr)_150px]">
             <select value={qrBranchId} onChange={(event) => setQrBranchId(event.target.value)} className="staff-field-input h-10">
@@ -3000,7 +3000,7 @@ function AttendanceScreen({
             </select>
             <button type="button" onClick={createQrToken} disabled={creatingQr || !selectedQrBranch} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-[#003F2D] px-3 text-[11px] font-black text-white disabled:opacity-50">
               <QrCode size={14} />
-              {creatingQr ? "Đang tạo..." : "Tạo QR ngày"}
+              {creatingQr ? "Đang tạo..." : "Tạo QR 90s"}
             </button>
           </div>
           {qrMessage ? (
@@ -3060,8 +3060,8 @@ function AttendanceScreen({
           ) : (
             <div className="text-center">
               <QrCode className="mx-auto text-[#0F4D3A]" size={28} />
-              <p className="mt-2 text-xs font-black text-[#0B3F31]">QR hôm nay</p>
-              <p className="mt-0.5 text-[10.5px] font-bold text-[#756E64]">Tự đổi mã theo ngày và chi nhánh.</p>
+              <p className="mt-2 text-xs font-black text-[#0B3F31]">QR 90 giây</p>
+              <p className="mt-0.5 text-[10.5px] font-bold text-[#756E64]">Đổi mã ngắn hạn theo chi nhánh.</p>
             </div>
           )}
         </aside>
@@ -3698,7 +3698,7 @@ function RequestsScreen({
         <section className="rounded-xl border border-[#E8DED0] bg-[#FFFCF6] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Approval queue</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Duyệt</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Cần quản lý xử lý</h3>
             </div>
             <Pill tone={pendingRequests.length ? "orange" : "green"}>{pendingRequests.length || "Trống"}</Pill>
@@ -4076,7 +4076,7 @@ function ActivityScreen({ activity }: { activity: StaffOpsActivityItem[] }) {
         <section className="rounded-xl border border-[#E8DED0] bg-[#FFFCF6] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Audit command center</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Nhật ký</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Truy vết rủi ro vận hành</h3>
             </div>
             <Pill tone={criticalActivity.length ? "red" : warningActivity.length ? "orange" : "green"}>
@@ -4888,7 +4888,7 @@ function LifecycleScreen({
         <section className="rounded-xl border border-[#E8DED0] bg-[#FFFCF6] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Lifecycle command center</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Vòng đời nhân sự</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Ai đã sẵn sàng lên ca, ai cần xử lý</h3>
             </div>
             <Pill tone={highRiskRows.length ? "orange" : "green"}>{highRiskRows.length || "Không rủi ro"}</Pill>
@@ -5758,9 +5758,9 @@ function DevicesScreen({
   );
 }
 
-type BranchCommandFilterKey = "all" | "pressure" | "coverage" | "payroll" | "risk";
+type BranchStatusFilterKey = "all" | "pressure" | "coverage" | "payroll" | "risk";
 
-function BranchCommandCenterScreen({
+function BranchStatusScreen({
   bundle,
   members,
   approvals,
@@ -5773,7 +5773,7 @@ function BranchCommandCenterScreen({
   onOpenMember: (memberId: string, screen?: StaffScreenKey) => void;
   onOpenScreen: (screen: StaffScreenKey) => void;
 }) {
-  const [branchFilter, setBranchFilter] = useState<BranchCommandFilterKey>("all");
+  const [branchFilter, setBranchFilter] = useState<BranchStatusFilterKey>("all");
   const [selectedBranchId, setSelectedBranchId] = useState(bundle.branches[0]?.id ?? "unassigned");
   const branchLookup = new Map(bundle.branches.map((branch) => [branch.id, branch]));
   const memberBranchName = (member: StaffOpsMember) => member.primaryBranchName ?? "Chưa gán chi nhánh";
@@ -5888,7 +5888,7 @@ function BranchCommandCenterScreen({
   const totalPressure = branchRows.filter((row) => row.pressureScore > 0).length;
   const totalPayrollPending = branchRows.reduce((sum, row) => sum + row.payrollPending, 0);
   const averageReadiness = branchRows.length ? Math.round(branchRows.reduce((sum, row) => sum + row.readinessScore, 0) / branchRows.length) : 100;
-  const filterOptions: Array<{ key: BranchCommandFilterKey; label: string; count: number }> = [
+  const filterOptions: Array<{ key: BranchStatusFilterKey; label: string; count: number }> = [
     { key: "all", label: "Tất cả", count: branchRows.length },
     { key: "pressure", label: "Áp lực", count: branchRows.filter((row) => row.pressureScore > 0 || row.approvals.length > 0).length },
     { key: "coverage", label: "Thiếu phủ ca", count: branchRows.filter((row) => row.coverageScore < 85 || row.confirmedCount < row.assignedCount).length },
@@ -5917,7 +5917,7 @@ function BranchCommandCenterScreen({
         <section className="rounded-xl border border-[#E8DED0] bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Branch command center</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Chi nhánh</p>
               <h3 className="mt-0.5 text-sm font-black text-[#0B3F31]">Ưu tiên điều phối trong ngày</h3>
             </div>
             <div className="flex flex-wrap gap-1.5">

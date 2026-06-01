@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, Search, X } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
@@ -80,7 +80,7 @@ const mobilePrimaryLinks = [
   { href: "/dashboard", label: "Tổng quan", icon: "todayShift" },
   { href: "/dashboard/orders", label: "Đơn hàng", icon: "orders" },
   { href: "/dashboard/tables", label: "Bàn/Bếp", icon: "tablesQr" },
-  { href: "/dashboard/analytics", label: "Báo cáo", icon: "analytics" },
+  { href: "/dashboard/payments", label: "Thu tiền", icon: "payments" },
 ] satisfies NavLink[];
 const mobileMoreLinks = allLinks.filter(
   (link) => !mobilePrimaryLinks.some((primary) => primary.href === link.href)
@@ -169,6 +169,67 @@ export function AdminDesktopNav() {
   );
 }
 
+export function AdminTabletRail({ restaurantName }: { restaurantName: string }) {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    const warmTimer = window.setTimeout(() => {
+      for (const href of warmDashboardRoutes) {
+        if (href !== pathname) prefetchDashboardRoute(router, href);
+      }
+    }, 650);
+    const kitchenTimer = pathname === "/dashboard/kitchen" ? undefined : window.setTimeout(prefetchKitchenOrders, 850);
+
+    return () => {
+      window.clearTimeout(warmTimer);
+      if (kitchenTimer) window.clearTimeout(kitchenTimer);
+    };
+  }, [pathname, router]);
+
+  return (
+    <aside className="dashboard-tablet-rail fixed inset-y-0 left-0 z-50 hidden w-[76px] flex-col border-r border-[var(--border)] bg-[var(--dashboard-shell)] px-2 py-3 text-[var(--foreground)] md:flex lg:hidden">
+      <Link
+        href="/dashboard"
+        className="mb-3 grid h-12 w-full place-items-center rounded-xl border border-[var(--border)] bg-[var(--dashboard-panel)] text-sm font-bold text-[var(--primary)]"
+        aria-label={`${restaurantName} - Tổng quan`}
+        title={restaurantName}
+      >
+        {restaurantName.charAt(0).toUpperCase()}
+      </Link>
+      <nav className="hide-scrollbar grid min-h-0 flex-1 content-start gap-3 overflow-y-auto" aria-label="Điều hướng tablet dashboard">
+        {navGroups.map((group) => (
+          <div key={group.id} className="grid gap-1.5 border-t border-[var(--border)] pt-3 first:border-t-0 first:pt-0">
+            {group.links.map((link) => {
+              const active = isActive(pathname, link.href);
+              const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
+
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onFocus={prefetchLink}
+                  onPointerEnter={prefetchLink}
+                  className={cn(
+                    "dashboard-tablet-rail-link grid h-12 w-full place-items-center rounded-xl border text-[var(--muted-foreground)] transition duration-150",
+                    active
+                      ? "border-[var(--primary)] bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.16)]"
+                      : "border-transparent hover:border-[var(--border)] hover:bg-[var(--dashboard-panel-muted)] hover:text-[var(--foreground)]"
+                  )}
+                  aria-label={link.label}
+                  title={link.label}
+                >
+                  <DashboardAssetIcon icon={link.icon} active={active} />
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
 export function AdminMobileMenuTrigger({ className }: { className?: string }) {
   return (
     <button
@@ -188,6 +249,8 @@ export function AdminMobileNav() {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const sheetRef = useRef<HTMLElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const activeGroupId = useMemo(() => navGroups.find((group) => group.links.some((link) => isActive(pathname, link.href)))?.id ?? navGroups[0].id, [pathname]);
   const [selectedGroupId, setSelectedGroupId] = useState(activeGroupId);
   const [query, setQuery] = useState("");
@@ -218,7 +281,30 @@ export function AdminMobileNav() {
     document.body.style.overflow = "hidden";
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const sheet = sheetRef.current;
+      if (!sheet) return;
+      const focusable = Array.from(
+        sheet.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((element) => element.offsetParent !== null);
+      if (!focusable.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
 
     document.addEventListener("keydown", handleKeyDown);
@@ -227,6 +313,11 @@ export function AdminMobileNav() {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    window.setTimeout(() => searchInputRef.current?.focus(), 0);
   }, [open]);
 
   useEffect(() => {
@@ -313,13 +404,15 @@ export function AdminMobileNav() {
             id="dashboard-mobile-more"
             role="dialog"
             aria-modal="true"
-            className="dashboard-mobile-menu-container absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] top-[calc(0.75rem+env(safe-area-inset-top))] mx-auto flex max-w-md flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
+            ref={sheetRef}
+            className="dashboard-mobile-menu-container absolute inset-x-2 bottom-[calc(0.75rem+env(safe-area-inset-bottom))] mx-auto flex max-h-[min(92svh,720px)] max-w-md flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
             aria-label="Tất cả chức năng dashboard"
           >
             <div className="shrink-0 border-b border-[var(--border)] px-3 py-2.5">
+              <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-[var(--outline)]/45" aria-hidden="true" />
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="dashboard-eyebrow">LogiVN mobile</p>
+                  <p className="dashboard-eyebrow">Menu</p>
                   <h2 className="dashboard-section-title">Thêm chức năng</h2>
                 </div>
                 <button
@@ -359,6 +452,7 @@ export function AdminMobileNav() {
               <label className="relative mt-2 block">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--outline)]" />
                 <input
+                  ref={searchInputRef}
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   name="dashboard-mobile-menu-search"

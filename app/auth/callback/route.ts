@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { dashboardLoginPathForNext, safeDashboardNextPath, safeProtectedDashboardNextPath } from "@/lib/auth-flow-routes";
-import { getDashboardDestinationForHost } from "@/lib/dashboard-destination";
+import { dashboardLoginPathForNext, safeDashboardNextPath } from "@/lib/auth-flow-routes";
+import { getPostLoginDashboardDestination } from "@/lib/auth-post-login";
 import {
   chunkedCookieNames,
   cookieNamesFromHeader,
@@ -12,7 +12,6 @@ import {
 import { createSupabaseOAuthCookieName } from "@/lib/supabase/oauth";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
-import { consumeRegistrationIntentForUser, getRestaurantForUser } from "@/services/restaurant-service";
 
 export const dynamic = "force-dynamic";
 
@@ -165,18 +164,6 @@ export async function GET(request: Request) {
     return redirectAuthError(request, "session", next, cleanupCookieNames);
   }
 
-  const restaurant =
-    (await consumeRegistrationIntentForUser({ userId: user.id, email: user.email })) ??
-    (await getRestaurantForUser(user.id, user.email));
-
-  if (restaurant) {
-    const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-    const protectedNext = safeProtectedDashboardNextPath(next);
-    if (protectedNext && protectedNext !== "/dashboard") {
-      return redirectUrl(request, protectedNext, cleanupCookieNames);
-    }
-    return redirectUrl(request, getDashboardDestinationForHost(restaurant.slug, host), cleanupCookieNames);
-  }
-
-  return redirectUrl(request, next === "/dashboard" ? "/dashboard/onboarding" : next, cleanupCookieNames);
+  const destination = await getPostLoginDashboardDestination({ request, user: { id: user.id, email: user.email }, next });
+  return redirectUrl(request, destination, cleanupCookieNames);
 }

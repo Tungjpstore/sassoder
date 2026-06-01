@@ -17,7 +17,7 @@ export default async function AdminOrdersPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Một nơi để nhận đơn, theo dõi bếp, xác nhận thanh toán và chốt đơn giao hàng."
+      subtitle="Đơn, bếp, thanh toán và giao hàng."
       showLiveActionCenter={false}
     >
       <Suspense fallback={<OrdersBoardSkeleton />}>

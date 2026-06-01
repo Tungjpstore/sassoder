@@ -1,25 +1,32 @@
 # LogiVN Migration Log
 
+## 2026-06-01 Tenant/RLS Addendum
+
+- Added local migration `20260601122332_harden_restaurant_members_view.sql` after live E2E proved `public.restaurant_members` could leak cross-tenant member rows when the view used definer privileges.
+- Applied the view hardening SQL directly with `supabase db query --linked --file supabase/migrations/20260601122332_harden_restaurant_members_view.sql` to avoid pushing unrelated parallel migration work in the same batch.
+- `supabase db push` history still needs reconciliation before the next production migration push; do not treat the 2026-05-29 dry-run evidence below as current for this new migration set.
+- Linked DB spot check found no public base tables with RLS disabled, and `npm run e2e:owner-onboarding` verifies owner A cannot read owner B via `restaurants`, `users`, or `restaurant_members`.
+
 ## 2026-05-29 Refresh
 
 Current release evidence no longer matches the 2026-05-20 pending-batch snapshot:
 
-- Local SQL migration files: 110.
-- Latest local migration: `20260530103818_staff_identity_password_login.sql`.
+- Local SQL migration files: 112.
+- Latest local migration: `20260601122332_harden_restaurant_members_view.sql`.
 - Duplicate migration versions: none found.
-- `supabase db push --dry-run --linked --yes`: pass, `Remote database is up to date`.
+- `supabase db push --dry-run --linked --yes`: stale 2026-05-29 evidence; rerun and reconcile migration history before using this as release evidence.
 - `supabase branches list --project-ref tfhqatvevbrbzaaqjhfa -o json`: only default `main` branch exists.
 - `supabase backups list --project-ref tfhqatvevbrbzaaqjhfa -o json`: `pitr_enabled=false`, `backups=[]`, `walg_enabled=true`.
 - Colima/Docker is reachable and a schema-only dump exists at `reports/release/pre-release-schema-20260529T105852Z.sql` (538092 bytes). `pg_dump` is not installed locally. PITR/full data rollback proof is still missing.
 
-Production migration apply is not currently pending, but production promotion remains NO-GO until backup/PITR proof, authenticated QA and monitoring sign-off are complete. Use `EXTERNAL_BLOCKERS_STATUS.md` and `npm run release:blockers` as the current evidence path.
+Production migration apply requires reconciliation after the 2026-06-01 tenant/RLS hotfix, and production promotion remains NO-GO until backup/PITR proof, authenticated QA and monitoring sign-off are complete. Use `EXTERNAL_BLOCKERS_STATUS.md` and `npm run release:blockers` as the current evidence path.
 
-Last updated: 2026-05-20
+Last updated: 2026-06-01
 
 ## Current Snapshot
 
-- Local SQL migration files: 110
-- Tracked migration files: 110
+- Local SQL migration files: 112
+- Tracked migration files: 112
 - Untracked migration files: 0
 - Current integration branch: `codex/p0-production-clean`
 - Current local commit: `879cfbf`
@@ -42,6 +49,8 @@ Production migration remains blocked until:
 
 | Migration | Area | Risk |
 | --- | --- | --- |
+| `20260601122332_harden_restaurant_members_view.sql` | Tenant/RLS hardening | P1: forces public view reads through caller RLS and revokes anon access. |
+| `20260601121000_staff_attendance_anti_fraud_hardening.sql` | Staff attendance anti-fraud | High: forward-only attendance integrity constraints and trusted network guardrails. |
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime publication | High: realtime blast radius and table publication scope. |
 | `20260519201100_users_lower_email_lookup_idx.sql` | RLS helper performance | P0: indexes lower(email) fallback used by tenant helper policies. |
 | `20260519190000_platform_admin_governance_hardening.sql` | Platform admin governance | High: admin RBAC, role permission cleanup, auditability. |

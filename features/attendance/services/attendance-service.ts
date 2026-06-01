@@ -27,12 +27,25 @@ type AttendanceNetworkContext = {
   userAgent?: string | null;
 };
 
+const maxGpsAccuracyMeters = 80;
+const minAttendanceRadiusMeters = 50;
+const maxAttendanceRadiusMeters = 150;
+
 export function authorizeAttendanceManagementSession<T extends DashboardSession>(session: T): T & { attendanceManagementAuthorized: true } {
   return { ...session, attendanceManagementAuthorized: true };
 }
 
 function canManageAttendance(session: DashboardSession) {
   return session.role === "ADMIN" || session.attendanceManagementAuthorized === true;
+}
+
+function isLocationBoundAttendanceSource(source: AttendanceSource) {
+  return source !== "manual";
+}
+
+function normalizeAttendanceRadiusMeters(value: number | null | undefined) {
+  if (!Number.isFinite(value)) return 80;
+  return Math.min(maxAttendanceRadiusMeters, Math.max(minAttendanceRadiusMeters, Math.round(Number(value))));
 }
 
 type AttendanceCaptureInput = {
@@ -354,21 +367,19 @@ function evaluateGps({
 }
 
 function assertGpsWithinAttendanceRadius({
-  session,
   source,
-  gps
+  gps,
+  accuracyMeters
 }: {
-  session: DashboardSession;
   source: AttendanceSource;
   gps: GpsEvaluation;
+  accuracyMeters?: number;
 }) {
-  if (source !== "gps" || session.role === "ADMIN") return;
+  if (!isLocationBoundAttendanceSource(source)) return;
 
   if (gps.distanceMeters === null) {
-    throw new AppError("GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị để xác minh chấm công.", 409);
+    throw new AppError("GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị để xác minh chấm công. Vui lòng bật định vị và cấu hình toạ độ chi nhánh.", 409);
   }
-
-  if (gps.valid) return;
 
   const distanceLabel =
     gps.distanceMeters === null
@@ -377,7 +388,17 @@ function assertGpsWithinAttendanceRadius({
         ? `${(gps.distanceMeters / 1000).toFixed(1)}km`
         : `${gps.distanceMeters}m`;
 
-  throw new AppError(`GPS ngoài phạm vi chấm công (${distanceLabel}/${gps.radiusMeters}m). Vui lòng đứng tại chi nhánh hoặc quét QR tại quán.`, 409);
+  if (!gps.valid) {
+    throw new AppError(`GPS ngoài phạm vi chấm công (${distanceLabel}/${gps.radiusMeters}m). Vui lòng đứng tại đúng chi nhánh để vào/kết ca.`, 409);
+  }
+
+  if (accuracyMeters === undefined) {
+    throw new AppError("GPS thiếu độ chính xác nên không thể xác minh chấm công. Vui lòng bật định vị chính xác trên thiết bị.", 409);
+  }
+
+  if (accuracyMeters > maxGpsAccuracyMeters) {
+    throw new AppError(`GPS sai số quá cao (${Math.round(accuracyMeters)}m). Hãy đứng thoáng hơn tại chi nhánh hoặc dùng QR/WiFi đã cấu hình.`, 409);
+  }
 }
 
 function computeClockInTiming(capturedAt: Date, shift: ShiftRow | null, scheduledDate: string | null) {
@@ -563,6 +584,26 @@ function assertAttendanceActorScope({
   if (source !== "manual") {
     throw new AppError("Chấm công thay nhân sự khác phải dùng nguồn thủ công để tránh dùng sai GPS thiết bị.", 422);
   }
+}
+
+function assertNotSelfManualAttendance(session: DashboardSession, staffUserId: string) {
+  if (session.userId === staffUserId) {
+    throw new AppError("Không thể tự chấm công thủ công hoặc tự sửa công của chính mình. Vui lòng để quản lý khác xử lý.", 403);
+  }
+}
+
+async function readStaffUserId(supabase: any, restaurantId: string, staffMemberId: string) {
+  const result = await supabase
+    .from("staff_members")
+    .select("user_id")
+    .eq("restaurant_id", restaurantId)
+    .eq("id", staffMemberId)
+    .maybeSingle();
+
+  if (result.error) throwDataError(result.error, "Không tải được nhân sự cần kiểm tra phê duyệt.");
+  const row = result.data as { user_id: string } | null;
+  if (!row?.user_id) throw new AppError("Không tìm thấy nhân sự cần phê duyệt.", 404);
+  return row.user_id;
 }
 
 async function readBranchAssignments(supabase: any, restaurantId: string, staffMemberId: string) {
@@ -1380,11 +1421,14 @@ function attendanceSourceApprovalReason(source: AttendanceSource, deviceTrust: S
   if (source === "offline_sync") {
     return "Dữ liệu chấm công offline cần quản lý đối soát trước khi tính công.";
   }
+  if (source === "gps" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
+    return "GPS chấm công cần thiết bị tin cậy hoặc quản lý đối soát trước khi tính công.";
+  }
   if (source === "qr" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
-    return "QR chấm công cần thiết bị tin cậy hoặc quản lý đối soát trước khi tính công.";
+    return "QR chấm công cần vị trí GPS hợp lệ và thiết bị tin cậy trước khi tính công.";
   }
   if (source === "wifi" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
-    return "WiFi chấm công cần thiết bị tin cậy hoặc quản lý đối soát trước khi tính công.";
+    return "WiFi chấm công cần IP quán, GPS hợp lệ và thiết bị tin cậy trước khi tính công.";
   }
   return null;
 }
@@ -1405,6 +1449,7 @@ export async function clockInStaffAttendance({
   const capturedAt = normalizeCapturedAt(input.capturedAt, source);
   const staff = await readStaffMember(supabase, session, input.staffMemberId || undefined);
   assertAttendanceActorScope({ session, staff, source });
+  if (source === "manual") assertNotSelfManualAttendance(session, staff.user_id);
 
   if (input.offlineQueueKey) {
     const duplicateResult = await supabase
@@ -1486,14 +1531,14 @@ export async function clockInStaffAttendance({
         staffMemberId: staff.id
       })
     : null;
-  const radiusMeters = shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters ?? 80;
+  const radiusMeters = normalizeAttendanceRadiusMeters(shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters);
   const gps = evaluateGps({
     lat: input.lat,
     lng: input.lng,
     branch,
     radiusMeters
   });
-  assertGpsWithinAttendanceRadius({ session, source, gps });
+  assertGpsWithinAttendanceRadius({ source, gps, accuracyMeters: input.accuracyMeters });
   const timing = computeClockInTiming(capturedAt, shiftContext.shift, shiftContext.assignment?.scheduled_date ?? null);
   const anomaly = scoreAnomalies({
     gps,
@@ -1763,6 +1808,7 @@ export async function clockOutStaffAttendance({
   const capturedAt = normalizeCapturedAt(input.capturedAt, source);
   const staff = await readStaffMember(supabase, session, input.staffMemberId || undefined);
   assertAttendanceActorScope({ session, staff, source });
+  if (source === "manual") assertNotSelfManualAttendance(session, staff.user_id);
   const attendance = await readOpenAttendance({
     supabase,
     session,
@@ -1813,14 +1859,14 @@ export async function clockOutStaffAttendance({
         staffMemberId: staff.id
       })
     : null;
-  const radiusMeters = shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters ?? 80;
+  const radiusMeters = normalizeAttendanceRadiusMeters(shiftContext.shift?.attendance_radius_meters ?? staff.gps_radius_meters);
   const gps = evaluateGps({
     lat: input.lat,
     lng: input.lng,
     branch,
     radiusMeters
   });
-  assertGpsWithinAttendanceRadius({ session, source, gps });
+  assertGpsWithinAttendanceRadius({ source, gps, accuracyMeters: input.accuracyMeters });
   const timing = computeClockOutTiming({
     clockInAt: attendance.clock_in_at,
     clockOutAt: capturedAt,
@@ -2032,6 +2078,7 @@ export async function adjustStaffAttendanceLog({
   if (existingResult.error) throwDataError(existingResult.error, "Không tải được bản ghi công cần sửa.");
   const existing = existingResult.data as AttendanceLogRow | null;
   if (!existing) throw new AppError("Không tìm thấy bản ghi công cần sửa.", 404);
+  assertNotSelfManualAttendance(session, existing.staff_user_id);
 
   const nextClockInAt = parseManualAdjustmentDateTime(input.clockInAt);
   const nextClockOutAt = input.clockOutAt ? parseManualAdjustmentDateTime(input.clockOutAt) : null;
@@ -2150,6 +2197,13 @@ export async function reviewAttendanceApproval({
   const approval = approvalResult.data as ApprovalRow | null;
   if (!approval) throw new AppError("Không tìm thấy yêu cầu phê duyệt.", 404);
   if (approval.status !== "pending") throw new AppError("Yêu cầu phê duyệt này đã được xử lý.", 409);
+  if (approval.requested_by === session.userId) {
+    throw new AppError("Không thể tự duyệt yêu cầu do chính mình tạo.", 403);
+  }
+  const approvalTargetUserId = await readStaffUserId(supabase, session.restaurantId, approval.staff_member_id);
+  if (approvalTargetUserId === session.userId) {
+    throw new AppError("Không thể tự duyệt công hoặc yêu cầu nhân sự của chính mình.", 403);
+  }
 
   const nextStatus = input.decision;
   const sideEffectPlan = await prepareOperationalApprovalSideEffect({

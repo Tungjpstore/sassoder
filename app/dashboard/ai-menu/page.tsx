@@ -243,16 +243,16 @@ export default async function AiMenuPage() {
       <div className="dashboard-ai-workspace grid gap-3">
         <AiOwnerActionLauncher variant="menu" />
         <AiOperatingLoop
-          title="Luồng AI Menu từ insight tới món nháp"
-          subtitle="Menu Studio không chỉ gợi ý: cơ hội menu đi vào hàng duyệt, sau đó AI có thể tạo món/combo nháp tạm ẩn để chủ quán kiểm tra."
+          title="Việc AI cho menu"
+          subtitle="Cơ hội menu, ảnh món và combo cần duyệt."
           primaryAction={{ href: "/dashboard/ai-execution", label: "Duyệt đề xuất menu" }}
           secondaryAction={{ href: "/dashboard/menu", label: "Mở menu thật" }}
           stages={[
             { id: "detect", value: menuDeck.opportunities.length, detail: "Cơ hội từ menu thật, top seller, ảnh, topping", href: "/dashboard/ai-menu", tone: menuDeck.opportunities.length ? "green" : "blue", active: true },
-            { id: "approve", value: recommendationsResult.recommendations.filter((recommendation) => ["combo", "upsell", "menu", "pricing"].includes(recommendation.type)).length, detail: "Recommendation menu đang mở", href: "/dashboard/ai-execution", tone: "yellow" },
-            { id: "act", value: menuDeck.summary.ready, detail: "Có thể xử lý hoặc đưa thành món/combo nháp", href: "/dashboard/ai-apply", tone: menuDeck.summary.ready ? "green" : "blue" },
-            { id: "verify", value: menuDeck.summary.blocked + menuDeck.summary.pausedItems, detail: "Blocked hoặc món tạm ngưng cần kiểm tra", href: "/dashboard/menu", tone: menuDeck.summary.blocked ? "red" : "yellow" },
-            { id: "audit", value: menuDeck.menuHealth.length, detail: "Health check để giữ menu sạch", href: "/dashboard/ai-menu", tone: "neutral" }
+            { id: "approve", value: recommendationsResult.recommendations.filter((recommendation) => ["combo", "upsell", "menu", "pricing"].includes(recommendation.type)).length, detail: "Đề xuất menu đang mở", href: "/dashboard/ai-execution", tone: "yellow" },
+            { id: "act", value: menuDeck.summary.ready, detail: "Có thể tạo món/combo nháp", href: "/dashboard/ai-apply", tone: menuDeck.summary.ready ? "green" : "blue" },
+            { id: "verify", value: menuDeck.summary.blocked + menuDeck.summary.pausedItems, detail: "Món cần kiểm tra", href: "/dashboard/menu", tone: menuDeck.summary.blocked ? "red" : "yellow" },
+            { id: "audit", value: menuDeck.menuHealth.length, detail: "Chất lượng menu", href: "/dashboard/ai-menu", tone: "neutral" }
           ]}
         />
         <div className="dashboard-ai-toolbar flex flex-wrap items-center justify-between gap-2">
@@ -299,7 +299,7 @@ export default async function AiMenuPage() {
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <WandSparkles size={15} />
-                Menu opportunities
+                Menu
               </p>
               <h2 className="dashboard-section-title mt-1">Việc AI đề xuất cho menu</h2>
             </div>
@@ -318,9 +318,9 @@ export default async function AiMenuPage() {
               <div>
                 <p className="dashboard-eyebrow inline-flex items-center gap-2">
                   <Copy size={15} />
-                  Prompt kits
+                  Nội dung
                 </p>
-                <h2 className="dashboard-section-title mt-1">Prompt ảnh, combo và copy menu</h2>
+                <h2 className="dashboard-section-title mt-1">Ảnh, combo và mô tả</h2>
               </div>
               <Badge tone={menuDeck.promptKits.length ? "green" : "yellow"}>{menuDeck.promptKits.length} kit</Badge>
             </div>
@@ -335,7 +335,7 @@ export default async function AiMenuPage() {
                       </div>
                       <Badge>{kit.channel}</Badge>
                     </div>
-                    <p className="mt-2 line-clamp-3 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{kit.prompt}</p>
+                    <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{kit.prompt}</p>
                   </article>
                 ))}
               </div>
@@ -376,9 +376,9 @@ export default async function AiMenuPage() {
                 <div>
                   <p className="dashboard-eyebrow inline-flex items-center gap-2">
                     <ShieldCheck size={15} />
-                    Guardrails
+                  An toàn
                   </p>
-                  <h2 className="dashboard-section-title mt-1">Luật an toàn menu</h2>
+                  <h2 className="dashboard-section-title mt-1">Kiểm trước khi bán</h2>
                 </div>
                 <Badge>Publish safe</Badge>
               </div>

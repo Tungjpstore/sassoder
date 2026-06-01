@@ -31,6 +31,7 @@ import {
   X
 } from "lucide-react";
 import { updateReservationSettingsAction } from "@/app/dashboard/actions";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { RestaurantVisitMapCard } from "@/components/location/restaurant-visit-map-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -640,10 +641,6 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
           Trễ hẹn cho phép
           <Input name="reservationArrivalGraceMinutes" type="number" min={0} max={240} defaultValue={settings.reservation_arrival_grace_minutes} />
         </label>
-      </div>
-
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">
-        Mẹo vận hành: bật cọc cố định cho giờ cao điểm, dùng buffer 15-30 phút để tránh khách sau bị đè lịch bàn.
       </div>
 
       {state?.error ? <p className="text-sm font-semibold text-[var(--accent-strong)]">{state.error}</p> : null}
@@ -2006,7 +2003,7 @@ export function ReservationsWorkspace({
               <div className="mt-4 grid gap-3">
                 {filter === "history" ? (
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm font-semibold text-[var(--muted-foreground)]">
-                    Sơ đồ bàn dùng cho lịch đang vận hành trong ngày. Chọn bộ lọc đang mở hoặc một trạng thái hiện hành để xem bàn giữ chỗ.
+                    Chọn trạng thái để xem bàn đang giữ lịch.
                   </div>
                 ) : null}
                 {floorGroups.map((group) => (
@@ -2140,29 +2137,17 @@ export function ReservationsWorkspace({
       </div>
 
       {drawer !== "closed" ? (
-        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
-          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng đặt bàn" onClick={() => setDrawer("closed")} />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="reservation-drawer-title"
-            className="drawer-panel ml-auto flex h-dvh max-h-dvh w-full max-w-xl flex-col border-l border-[var(--border)] bg-[var(--surface)]"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
-              <div>
-                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">
-                  {drawer === "settings" ? "Cấu hình" : drawer === "share" ? "Chia sẻ" : "Chi tiết"}
-                </p>
-                <h2 id="reservation-drawer-title" className="dashboard-section-title mt-1">
-                  {drawer === "settings" ? "Thiết lập đặt bàn" : drawer === "share" ? "Link đặt bàn" : "Chi tiết lịch đặt"}
-                </h2>
-              </div>
-              <button type="button" onClick={() => setDrawer("closed")} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] text-[var(--muted-foreground)]" aria-label="Đóng">
-                <X size={17} />
-              </button>
-            </div>
+        <DashboardDrawer
+          open
+          onClose={() => setDrawer("closed")}
+          title={drawer === "settings" ? "Thiết lập đặt bàn" : drawer === "share" ? "Link đặt bàn" : "Chi tiết lịch đặt"}
+          subtitle={drawer === "settings" ? "Cấu hình" : drawer === "share" ? "Chia sẻ" : "Chi tiết"}
+          closeLabel="Đóng đặt bàn"
+          width="lg"
+          contentClassName="p-0 sm:p-0"
+        >
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
+            <div className="px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {drawer === "settings" ? <SettingsDrawer settings={settings} /> : null}
 
               {drawer === "share" ? (
@@ -2674,8 +2659,7 @@ export function ReservationsWorkspace({
                 </div>
               ) : null}
             </div>
-          </aside>
-        </div>
+        </DashboardDrawer>
       ) : null}
     </>
   );

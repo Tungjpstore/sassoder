@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { CalendarDays, ChevronDown, CircleHelp, ExternalLink, Store } from "lucide-react";
+import { CalendarDays, ChevronDown, ExternalLink, Store } from "lucide-react";
 import { DashboardCopilotLayer } from "@/components/ai/dashboard-copilot-layer";
 import { CommandPalette, CommandPaletteTrigger } from "@/components/dashboard/command-palette";
 import { DashboardQuickActionsFab } from "@/components/dashboard/dashboard-quick-actions-fab";
 import { DashboardAssetIcon } from "@/components/dashboard/dashboard-icon-assets";
-import { AdminDesktopNav, AdminMobileMenuTrigger, AdminMobileNav } from "@/components/dashboard/dashboard-nav";
+import { AdminDesktopNav, AdminMobileMenuTrigger, AdminMobileNav, AdminTabletRail } from "@/components/dashboard/dashboard-nav";
 import { DarkModeToggle } from "@/components/dashboard/dark-mode-toggle";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { LogoutButton } from "@/components/dashboard/logout-button";
+import { DashboardSubscriptionNotice } from "@/components/dashboard/subscription-notice";
 import { ToastProvider } from "@/components/dashboard/toast-provider";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import type { getRestaurantEntitlement } from "@/services/subscription-service";
@@ -53,12 +54,13 @@ export function AdminShell({
       "features" in entitlement &&
       entitlement.features.ai_owner_assistant?.enabled
   );
+  const showBillingSidebarNotice = Boolean(entitlement && "planName" in entitlement && (!entitlement.allowed || entitlement.warning));
 
   return (
     <ToastProvider>
-      <main className="stitch-admin open-design-mobile admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)]">
+      <main className={`stitch-admin open-design-mobile admin-shell-bg dashboard-density relative isolate min-h-screen overflow-x-clip text-[var(--foreground)] ${focusMode ? "dashboard-focus-shell" : "dashboard-owner-shell"}`}>
         {/* ── Desktop sidebar ── */}
-        <aside className={`fixed inset-y-0 left-0 z-50 hidden w-[216px] flex-col overflow-hidden border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white)] text-[var(--foreground)] ${focusMode ? "md:hidden" : "md:flex"}`}>
+        <aside className={`dashboard-desktop-sidebar fixed inset-y-0 left-0 z-50 hidden w-[232px] flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--dashboard-shell)] text-[var(--foreground)] ${focusMode ? "lg:hidden" : "lg:flex"}`}>
           {/* Subtle gradient overlay */}
           <div
             className="pointer-events-none absolute inset-0"
@@ -70,7 +72,7 @@ export function AdminShell({
             </span>
           </Link>
           <AdminDesktopNav />
-          {entitlement && "planName" in entitlement ? (
+          {showBillingSidebarNotice && entitlement && "planName" in entitlement ? (
             <Link
               href="/dashboard/settings?section=billing"
               className="relative z-[1] mx-3 mt-auto block rounded-xl border border-[var(--primary)]/15 bg-[linear-gradient(135deg,var(--primary-soft),#fff)] p-3 transition hover:border-[var(--primary)]/35"
@@ -80,10 +82,10 @@ export function AdminShell({
               <span className="mt-1 block text-xs font-semibold text-[var(--muted-foreground)]">
                 {"daysLeft" in entitlement ? `Còn ${entitlement.daysLeft} ngày` : "Quản lý gói"}
               </span>
-              <span className="mt-2 inline-flex text-xs font-semibold text-[var(--primary)]">Nâng cấp gói</span>
+              <span className="mt-2 inline-flex text-xs font-semibold text-[var(--primary)]">{entitlement.allowed ? "Gia hạn gói" : "Mở gói"}</span>
             </Link>
           ) : null}
-          <div className={`relative z-[1] mx-3 ${entitlement && "planName" in entitlement ? "mt-2" : "mt-auto"} rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2.5`}>
+          <div className={`relative z-[1] mx-3 ${showBillingSidebarNotice ? "mt-2" : "mt-auto"} rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2.5`}>
             <div className="flex items-center gap-3">
               <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]">
                 <Store size={16} />
@@ -105,10 +107,11 @@ export function AdminShell({
             </span>
           </div>
         </aside>
+        {focusMode ? null : <AdminTabletRail restaurantName={restaurantName} />}
 
         {/* ── Main content ── */}
-        <section className={`relative ${focusMode ? "" : "md:pl-[216px]"}`}>
-          <header className="dashboard-mobile-topbar sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[rgba(255,247,235,0.9)] px-3 py-2 backdrop-blur-xl sm:px-4 md:px-5">
+        <section className={`relative ${focusMode ? "" : "md:pl-[76px] lg:pl-[232px]"}`}>
+          <header className="dashboard-mobile-topbar sticky top-0 z-[var(--z-dashboard-shell)] border-b border-[var(--border)] bg-[var(--dashboard-shell)] px-3 py-2 sm:px-4 md:px-5">
             <div className="flex min-h-11 items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-3">
                 <div className={focusMode ? "block" : "md:hidden"}>
@@ -120,11 +123,17 @@ export function AdminShell({
                   </p>
                   <p className="dashboard-mobile-title truncate text-sm font-semibold text-[var(--foreground)]">{title}</p>
                 </div>
+                <div className="hidden min-w-0 shrink-0 md:block">
+                  <p className="truncate text-[11px] font-semibold uppercase leading-4 text-[var(--muted-foreground)] lg:hidden">
+                    {restaurantName}
+                  </p>
+                  <p className="truncate text-sm font-semibold leading-5 text-[var(--foreground)] lg:text-base">{title}</p>
+                </div>
                 {topbarVariant === "overview" ? (
-                  <div className="hidden items-center gap-3 md:flex">
+                  <div className="hidden min-w-0 items-center gap-3 md:flex">
                     <Link
                       href="/dashboard/settings"
-                      className="inline-flex h-9 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)]/25"
+                      className="hidden h-11 min-w-[164px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--dashboard-panel)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)]/25 xl:inline-flex"
                     >
                       <Store size={16} className="text-[var(--primary)]" />
                       <span className="truncate">{restaurantName}</span>
@@ -132,7 +141,7 @@ export function AdminShell({
                     </Link>
                     <Link
                       href="/dashboard/analytics"
-                      className="inline-flex h-9 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25"
+                      className="hidden h-11 min-w-[188px] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--dashboard-panel)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 lg:inline-flex"
                     >
                       <CalendarDays size={15} className="text-[var(--muted-foreground)]" />
                       {today.replace(/^./, (char) => char.toUpperCase())}
@@ -159,31 +168,21 @@ export function AdminShell({
                 <div className="hidden sm:block">
                   <DarkModeToggle />
                 </div>
-                <button
-                  type="button"
-                  disabled
-                  className="hidden h-11 cursor-not-allowed items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-medium text-[var(--muted-foreground)] opacity-70 xl:inline-flex"
-                  aria-label="Trợ giúp"
-                  title="Trợ giúp sẽ được mở ở phiên bản tiếp theo"
-                >
-                  <CircleHelp size={16} />
-                  <span className="hidden xl:inline">Trợ giúp</span>
-                </button>
                 <Link
                   href="/dashboard/settings"
-                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 lg:inline-flex"
+                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--dashboard-panel)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 md:inline-flex"
                   aria-label="Cài đặt"
                 >
                   <DashboardAssetIcon icon="settings" size="sm" />
                 </Link>
                 <Link
                   href="/"
-                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 xl:inline-flex"
+                  className="hidden h-11 w-11 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--dashboard-panel)] text-[var(--muted-foreground)] transition hover:border-[var(--primary)]/25 xl:inline-flex"
                   aria-label="Mở trang chủ"
                 >
                   <ExternalLink size={16} />
                 </Link>
-                <div className="hidden h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 xl:flex">
+                <div className="hidden h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--dashboard-panel)] px-2 xl:flex">
                   <span className="grid h-7 w-7 place-items-center rounded-md bg-gradient-to-br from-[var(--primary)] to-[var(--primary-hover)] text-xs font-semibold text-[#FFF7EB]">
                     {restaurantName.charAt(0).toUpperCase()}
                   </span>
@@ -191,6 +190,9 @@ export function AdminShell({
                     <span className="block max-w-32 truncate text-sm font-semibold">{restaurantName}</span>
                   </span>
                   <ChevronDown size={16} className="text-[var(--outline)]" />
+                </div>
+                <div className="hidden md:block lg:hidden">
+                  <LogoutButton compact />
                 </div>
               </div>
               <div className="dashboard-mobile-logout md:hidden">
@@ -201,38 +203,19 @@ export function AdminShell({
           {focusMode ? null : <AdminMobileNav />}
           <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pb-5 md:pt-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
-              <section
-                className={`mb-3 rounded-xl border px-4 py-3 text-sm ${
-                  entitlement.allowed
-                    ? "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent)]"
-                    : "border-[var(--accent)]/35 bg-[var(--accent-soft)] text-[var(--accent)]"
-                }`}
-              >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="font-semibold">
-                      {entitlement.allowed ? entitlement.warning?.message : entitlement.reason ?? "Gói LogiVN chưa hợp lệ."}
-                    </p>
-                    <p className="mt-0.5 text-xs opacity-80">
-                      {"planName" in entitlement && entitlement.planName
-                        ? `${entitlement.planName} · ${"daysLeft" in entitlement ? entitlement.daysLeft : 0} ngày còn lại`
-                        : "Vui lòng kiểm tra gói trước khi vận hành."}
-                    </p>
-                  </div>
-                  <Link
-                    href="/dashboard/settings?section=billing"
-                    className="admin-glow-btn inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold"
-                  >
-                    Gia hạn gói
-                  </Link>
-                </div>
-              </section>
+              <DashboardSubscriptionNotice
+                kind={entitlement.allowed ? (entitlement.warning?.severity ?? "warning") : "blocked"}
+                message={entitlement.allowed ? entitlement.warning?.message ?? "Gói LogiVN cần chú ý." : entitlement.reason ?? "Gói LogiVN chưa hợp lệ."}
+                planName={"planName" in entitlement ? entitlement.planName : null}
+                daysLeft={"daysLeft" in entitlement ? entitlement.daysLeft : null}
+                actionLabel={entitlement.allowed ? "Gia hạn gói" : "Mở gói"}
+              />
             ) : null}
             {!hideHeading && (
-              <section className="admin-hero-panel relative mb-4 hidden overflow-hidden px-4 py-3.5 md:block">
+              <section className="dashboard-workspace-heading relative mb-3 hidden px-1 py-1 md:block">
                 <div className="relative z-[1]">
                   <h1 className="dashboard-page-title">{title}</h1>
-                  {subtitle && <p className="dashboard-body-copy mt-1 max-w-2xl md:truncate">{subtitle}</p>}
+                  {subtitle && <p className="sr-only">{subtitle}</p>}
                 </div>
               </section>
             )}

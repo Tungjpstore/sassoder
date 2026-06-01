@@ -119,11 +119,11 @@ function GuardrailPanel({
         <div>
           <p className="dashboard-eyebrow inline-flex items-center gap-2">
             <Icon size={15} />
-            Production guardrails
+            Luật chạy thật
           </p>
           <h2 className="dashboard-section-title mt-1">{title}</h2>
         </div>
-        <Badge>{guardrails.length} rules</Badge>
+        <Badge>{guardrails.length} luật</Badge>
       </div>
       <div className="mt-3 grid gap-2">
         {guardrails.map((guardrail) => (
@@ -160,13 +160,13 @@ function SecurityEventPanel({ feed }: { feed: AiSecurityEventFeed }) {
         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
           <p className="text-sm font-bold text-[var(--foreground)]">Security event stream chưa migrate</p>
           <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">
-            Bảng ai_security_events chưa sẵn sàng ở database hiện tại; guardrail vẫn chặn tại runtime và sẽ ghi audit sau khi migrate.
+            Bảng ai_security_events chưa sẵn sàng ở database hiện tại; luật bảo vệ vẫn chặn tại runtime và sẽ ghi audit sau khi migrate.
           </p>
         </div>
       ) : feed.events.length === 0 ? (
         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
           <p className="text-sm font-bold text-[var(--foreground)]">Không có sự kiện bảo mật mới</p>
-          <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">Tool isolation, approval token và OCR guardrail đang sạch trong cửa sổ gần nhất.</p>
+          <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">Tool isolation, approval token và luật OCR đang sạch trong cửa sổ gần nhất.</p>
         </div>
       ) : (
         <div className="mt-3 grid gap-2">
@@ -210,7 +210,7 @@ export default async function AiProductionPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Release gate cho provider, schema, chi phí, audit, security và apply guardrails của toàn bộ AI"
+      subtitle="Kiểm tra provider, schema, chi phí, audit và bảo mật AI"
       showLiveActionCenter={false}
     >
       <div className="grid gap-3">
@@ -258,9 +258,9 @@ export default async function AiProductionPage() {
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <MonitorCheck size={15} />
-                Release gate
+                Kiểm tra
               </p>
-              <h2 className="dashboard-section-title mt-1">Production checks</h2>
+              <h2 className="dashboard-section-title mt-1">Sẵn sàng chạy thật</h2>
             </div>
             <Badge tone={statusTone(deck.summary.status)}>{statusLabel(deck.summary.status)}</Badge>
           </div>
@@ -272,8 +272,8 @@ export default async function AiProductionPage() {
         </section>
 
         <div className="grid gap-3 xl:grid-cols-2">
-          <GuardrailPanel title="Cost routing và fallback" icon={Coins} guardrails={deck.costGuardrails} />
-          <GuardrailPanel title="Security và privacy" icon={ShieldCheck} guardrails={deck.securityGuardrails} />
+          <GuardrailPanel title="Chi phí & fallback" icon={Coins} guardrails={deck.costGuardrails} />
+          <GuardrailPanel title="Bảo mật & riêng tư" icon={ShieldCheck} guardrails={deck.securityGuardrails} />
         </div>
 
         <SecurityEventPanel feed={securityEventFeed} />

@@ -135,7 +135,7 @@ function ReadinessRow({ done, label, detail }: { done: boolean; label: string; d
   );
 }
 
-function MultiBranchCommandCenter({
+function MultiBranchDeliveryStatus({
   branches,
   summary
 }: {
@@ -153,14 +153,11 @@ function MultiBranchCommandCenter({
   const firstBranchStatus = summary.firstBranchToFix ? branchStatus(summary.firstBranchToFix) : null;
 
   return (
-    <div className="dashboard-branch-command-center rounded-[18px] border border-[#dcebdc] bg-[linear-gradient(135deg,#f7fbf5,#fff8ee)] p-4">
+    <div className="dashboard-branch-status-panel rounded-[18px] border border-[#dcebdc] bg-[linear-gradient(135deg,#f7fbf5,#fff8ee)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0f6944]">Multi-branch readiness</p>
-          <h4 className="mt-1 text-base font-black text-[#101813]">Trạng thái vận hành giao hàng toàn chuỗi</h4>
-          <p className="mt-1 max-w-2xl text-xs font-semibold leading-5 text-[#667166]">
-            Ưu tiên xử lý chi nhánh đang làm lệch quote giao hàng, thiếu giờ nhận đơn hoặc chi nhánh chính chưa sẵn sàng.
-          </p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0f6944]">Chi nhánh</p>
+          <h4 className="mt-1 text-base font-black text-[#101813]">Giao hàng toàn chuỗi</h4>
         </div>
         <div className="min-w-[116px] rounded-2xl border border-[#cfe8d8] bg-white px-4 py-3 text-center">
           <p className="text-[11px] font-black text-[#667166]">Sẵn sàng</p>
@@ -249,7 +246,7 @@ export function BranchDeliveryControls({ branches }: { branches: BranchDeliveryS
         </div>
       ) : (
         <div className="mt-4 grid gap-3">
-          <MultiBranchCommandCenter branches={branches} summary={summary} />
+          <MultiBranchDeliveryStatus branches={branches} summary={summary} />
 
           <div className="dashboard-branch-summary-grid grid gap-2 md:grid-cols-4">
             <SummaryCard icon={<Store size={16} />} label="Đang hoạt động" value={`${summary.activeCount}/${branches.length}`} tone="muted" />

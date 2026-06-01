@@ -234,7 +234,7 @@ export default async function AiSupportPage() {
         <AiOwnerActionLauncher variant="support" />
         <AiOperatingLoop
           title="Luồng AI Support có handoff"
-          subtitle="Kịch bản chăm sóc khách phải đi theo guardrail: chỉ dùng memory public, luồng nhạy cảm handoff, và mọi câu trả lời cần route kiểm tra."
+          subtitle="Kịch bản chăm sóc khách dùng memory public, chuyển người thật khi nhạy cảm và kiểm tra câu trả lời trước khi dùng."
           primaryAction={{ href: "/dashboard/ai-execution", label: "Duyệt kịch bản" }}
           secondaryAction={{ href: "/dashboard/settings", label: "Cập nhật thông tin quán" }}
           stages={[
@@ -287,7 +287,7 @@ export default async function AiSupportPage() {
                 <BotMessageSquare size={15} />
                 Support scenarios
               </p>
-              <h2 className="dashboard-section-title mt-1">Kịch bản hỗ trợ khách có guardrail</h2>
+              <h2 className="dashboard-section-title mt-1">Kịch bản hỗ trợ khách</h2>
             </div>
             <Badge tone={supportDeck.summary.ready ? "green" : "yellow"}>{supportDeck.summary.ready} ready</Badge>
           </div>
@@ -364,9 +364,9 @@ export default async function AiSupportPage() {
                 <div>
                   <p className="dashboard-eyebrow inline-flex items-center gap-2">
                     <ShieldCheck size={15} />
-                    Guardrails
+                    An toàn
                   </p>
-                  <h2 className="dashboard-section-title mt-1">Luật an toàn support</h2>
+                  <h2 className="dashboard-section-title mt-1">Kiểm trước khi trả lời</h2>
                 </div>
                 <Badge>Privacy</Badge>
               </div>

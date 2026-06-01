@@ -40,6 +40,8 @@ type StaffAttendanceQrTokenRow = {
   usage_count: number;
 };
 
+const dailyBranchQrValiditySeconds = 90;
+
 function isMissingQrTokenSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   const message = error.message ?? "";
@@ -59,7 +61,7 @@ function dailyQrSecret() {
   if (staffQrSecret) return staffQrSecret;
 
   if (process.env.NODE_ENV === "production") {
-    throw new AppError("Thiếu STAFF_ATTENDANCE_QR_SECRET để tạo QR chấm công hằng ngày.", 503);
+    throw new AppError("Thiếu STAFF_ATTENDANCE_QR_SECRET để tạo QR chấm công an toàn.", 503);
   }
 
   return process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || "logivn-dev-attendance-daily-qr-secret";
@@ -78,18 +80,19 @@ function dateKeyInVietnam(value: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function vietnamDayBoundary(dateKey: string, dayOffset = 0) {
-  const date = new Date(`${dateKey}T00:00:00+07:00`);
-  date.setUTCDate(date.getUTCDate() + dayOffset);
-  return date;
-}
-
-function createDailyRawAttendanceQrToken({ restaurantId, branchId, qrDate }: { restaurantId: string; branchId: string; qrDate: string }) {
+function createDailyRawAttendanceQrToken({ restaurantId, branchId, qrDate, nonce }: { restaurantId: string; branchId: string; qrDate: string; nonce: string }) {
   const signature = createHmac("sha256", dailyQrSecret())
-    .update(`${restaurantId}:${branchId}:${qrDate}:attendance`)
+    .update(`${restaurantId}:${branchId}:${qrDate}:${nonce}:attendance`)
     .digest("base64url")
     .slice(0, 48);
-  return `stqr_day_${qrDate.replace(/-/g, "")}_${signature}`;
+  return `stqr_day_${qrDate.replace(/-/g, "")}_${nonce}_${signature}`;
+}
+
+function resolveQrExpiry({ mode, now, expiresInMinutes }: { mode: "single_use" | "daily_branch"; now: Date; expiresInMinutes: number }) {
+  if (mode === "daily_branch") {
+    return new Date(now.getTime() + dailyBranchQrValiditySeconds * 1000);
+  }
+  return new Date(now.getTime() + expiresInMinutes * 60_000);
 }
 
 function normalizeBaseUrl(baseUrl: string) {
@@ -142,10 +145,11 @@ export async function createStaffAttendanceQrToken({
   const mode = input.mode ?? "daily_branch";
   const now = new Date();
   const qrDate = dateKeyInVietnam(now);
-  const validFrom = mode === "daily_branch" ? vietnamDayBoundary(qrDate) : now;
-  const expiresAt = mode === "daily_branch" ? vietnamDayBoundary(qrDate, 1) : new Date(now.getTime() + input.expiresInMinutes * 60_000);
+  const validFrom = now;
+  const expiresAt = resolveQrExpiry({ mode, now, expiresInMinutes: input.expiresInMinutes });
+  const nonce = randomBytes(12).toString("base64url");
   const token = mode === "daily_branch"
-    ? createDailyRawAttendanceQrToken({ restaurantId: session.restaurantId, branchId: branch.id, qrDate })
+    ? createDailyRawAttendanceQrToken({ restaurantId: session.restaurantId, branchId: branch.id, qrDate, nonce })
     : createRawAttendanceQrToken();
   const tokenHash = hashAttendanceQrToken(token);
   const attendanceUrl = buildAttendanceUrl({ baseUrl, branchId: branch.id, restaurantSlug: restaurant.slug, token });
@@ -165,7 +169,7 @@ export async function createStaffAttendanceQrToken({
 
     if (existingResult.error) {
       if (isMissingQrTokenSchema(existingResult.error)) {
-        throw new AppError("Chưa có migration QR chấm công hằng ngày. Vui lòng cập nhật database trước khi tạo mã.", 503);
+        throw new AppError("Chưa có migration QR chấm công rotating. Vui lòng cập nhật database trước khi tạo mã.", 503);
       }
       throw existingResult.error;
     }
@@ -177,10 +181,16 @@ export async function createStaffAttendanceQrToken({
           token_hash: tokenHash,
           valid_from: validFrom.toISOString(),
           expires_at: expiresAt.toISOString(),
+          consumed_at: null,
+          consumed_by_staff_member_id: null,
+          last_used_at: null,
+          usage_count: 0,
           metadata: {
             baseUrl: normalizeBaseUrl(baseUrl),
             qrDate,
-            resetPolicy: "daily_branch"
+            nonce,
+            resetPolicy: "rotating_90s",
+            rotationSeconds: dailyBranchQrValiditySeconds
           }
         })
         .eq("restaurant_id", session.restaurantId)
@@ -220,7 +230,9 @@ export async function createStaffAttendanceQrToken({
       metadata: {
         baseUrl: normalizeBaseUrl(baseUrl),
         qrDate: mode === "daily_branch" ? qrDate : null,
-        resetPolicy: mode === "daily_branch" ? "daily_branch" : "single_use"
+        nonce: mode === "daily_branch" ? nonce : null,
+        resetPolicy: mode === "daily_branch" ? "rotating_90s" : "single_use",
+        rotationSeconds: mode === "daily_branch" ? dailyBranchQrValiditySeconds : null
       }
     })
     .select("id,branch_id,expires_at,created_at")

@@ -19,7 +19,7 @@ export default function AiSupportError({
           </span>
           <h1 className="dashboard-page-title mt-3">Không tải được AI chăm sóc khách</h1>
           <p className="mx-auto mt-1 max-w-xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
-            FAQ, reply kit hoặc guardrail support đang bị gián đoạn. Tải lại trước khi bật kênh trả lời khách.
+            FAQ, reply kit hoặc luật trả lời khách đang bị gián đoạn. Tải lại trước khi bật kênh hỗ trợ.
           </p>
           {error.digest ? <p className="mt-2 text-xs font-semibold text-[var(--muted-foreground)]">Mã lỗi: {error.digest}</p> : null}
           <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">

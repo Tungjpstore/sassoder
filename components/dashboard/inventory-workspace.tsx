@@ -643,7 +643,7 @@ export function InventoryWorkspace({
         <div className="dashboard-panel p-3 md:p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Ingredient cockpit</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--primary)]">Nguyên liệu</p>
               <h2 className="mt-0.5 text-lg font-bold text-[var(--foreground)]">Thêm, sửa, xóa và định vị nguyên vật liệu</h2>
             </div>
             <div className="relative w-full sm:w-72">

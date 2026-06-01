@@ -19,7 +19,7 @@ export default function AiProductionError({
           </span>
           <h1 className="dashboard-page-title mt-3">Không tải được AI Production Readiness</h1>
           <p className="mx-auto mt-1 max-w-xl text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
-            Release gate AI đang bị gián đoạn. Tải lại trước khi kết luận trạng thái production.
+            Kiểm tra AI đang bị gián đoạn. Tải lại trước khi kết luận trạng thái chạy thật.
           </p>
           {error.digest ? <p className="mt-2 text-xs font-semibold text-[var(--muted-foreground)]">Mã lỗi: {error.digest}</p> : null}
           <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">

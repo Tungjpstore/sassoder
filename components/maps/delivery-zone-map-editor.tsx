@@ -338,7 +338,7 @@ export function DeliveryZoneMapEditor({
               type="button"
               onClick={toggleAddPointMode}
               className={cn(
-                "inline-flex h-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-black transition",
+                "inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl px-3 text-xs font-black transition",
                 addingPoint ? "bg-[#0f6944] text-white" : "border border-[#d7e5d9] bg-white text-[#0f6944]"
               )}
             >
@@ -349,7 +349,7 @@ export function DeliveryZoneMapEditor({
               type="button"
               onClick={finishAddPointMode}
               disabled={!addingPoint}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#d7e5d9] bg-white px-3 text-xs font-black text-[#0f6944] disabled:opacity-45"
+              className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl border border-[#d7e5d9] bg-white px-3 text-xs font-black text-[#0f6944] disabled:opacity-45"
             >
               <Check size={15} aria-hidden="true" />
               Hoàn tất
@@ -357,7 +357,7 @@ export function DeliveryZoneMapEditor({
             <button
               type="button"
               onClick={resetPolygon}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#f2d6af] bg-[#fff7eb] px-3 text-xs font-black text-[#bb5f12]"
+              className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl border border-[#f2d6af] bg-[#fff7eb] px-3 text-xs font-black text-[#bb5f12]"
             >
               <RotateCcw size={15} aria-hidden="true" />
               Tạo lại
@@ -366,7 +366,7 @@ export function DeliveryZoneMapEditor({
               type="button"
               onClick={removeLastPoint}
               disabled={points.length === 0}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#f5c8c8] bg-white px-3 text-xs font-black text-[#c53535] disabled:opacity-45"
+              className="inline-flex min-h-[56px] items-center justify-center gap-2 rounded-xl border border-[#f5c8c8] bg-white px-3 text-xs font-black text-[#c53535] disabled:opacity-45"
             >
               <Trash2 size={15} aria-hidden="true" />
               Xóa điểm cuối

@@ -325,11 +325,11 @@ function monitoringReadiness() {
 }
 
 function staffHrEnvReadiness() {
-  const requiredEnv = ["STAFF_ATTENDANCE_QR_SECRET", "STAFF_PIN_PEPPER"];
+  const requiredEnv = ["STAFF_ATTENDANCE_QR_SECRET", "STAFF_ATTENDANCE_SESSION_SECRET", "STAFF_PIN_PEPPER"];
   const missingLocalEnv = requiredEnv.filter((key) => !hasValue(key));
 
   if (missingLocalEnv.length === 0) {
-    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR and PIN secrets are configured for release preflight.", {
+    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR, session and PIN secrets are configured for release preflight.", {
       source: "local-release-env"
     });
     return;
@@ -339,13 +339,13 @@ function staffHrEnvReadiness() {
   const missingEnv = requiredEnv.filter((key) => !hasValue(key) && !vercelEnv.names.has(key));
 
   if (missingEnv.length === 0) {
-    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR and PIN secrets are configured in Vercel Production.", {
+    addCheck("staff-hr-secrets", "pass", "Staff HR attendance QR, session and PIN secrets are configured in Vercel Production.", {
       source: "vercel-production-env"
     });
     return;
   }
 
-  addCheck("staff-hr-secrets", "block", "Staff HR production secrets are incomplete; QR/PIN staff flows are not release-ready.", {
+  addCheck("staff-hr-secrets", "block", "Staff HR production secrets are incomplete; QR/session/PIN staff flows are not release-ready.", {
     missingEnv,
     missingLocalEnv,
     vercelEnvList: vercelEnv.error ? `unavailable: ${vercelEnv.error}` : "checked"

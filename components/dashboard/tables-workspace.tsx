@@ -26,11 +26,11 @@ import {
   Users,
   WalletCards,
   Wrench,
-  X
 } from "lucide-react";
 import { createTableAction, deleteTableAction, rotateTableQrAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -759,10 +759,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
               <Badge tone={counts.overdue ? "red" : counts.needs_confirm ? "yellow" : "green"}>{pressureLabel}</Badge>
               <Badge tone={qrDisabled ? "yellow" : "green"}>{qrDisabled ? `${qrDisabled} QR tắt` : "QR sẵn sàng"}</Badge>
             </div>
-            <h2 className="dashboard-page-title mt-3">Mặt sàn & QR vận hành</h2>
-            <p className="dashboard-body-copy mt-2 max-w-3xl">
-              Theo dõi trạng thái bàn theo khu vực, xử lý bàn đang chờ order/thanh toán và in QR đúng token để khách gọi món nhanh trong giờ cao điểm.
-            </p>
+            <h2 className="dashboard-page-title mt-3">Mặt sàn & QR</h2>
+            <p className="sr-only">Trạng thái bàn, QR và các việc cần xử lý trong ca.</p>
           </div>
           <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/80 p-3 text-sm font-semibold text-[var(--muted-foreground)] shadow-sm sm:min-w-[280px]">
             <div className="flex items-center justify-between gap-3">
@@ -804,9 +802,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
         <div className="dashboard-panel p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="dashboard-eyebrow">Floor control</p>
+              <p className="dashboard-eyebrow">Mặt sàn</p>
               <h2 className="dashboard-section-title mt-1">Điều phối mặt sàn</h2>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Các trạng thái cần chạm nhanh trong ca: nhận đơn, đẩy bếp, thu tiền và xử lý QR.</p>
             </div>
             <Badge tone={floorBlockedTables.length > 0 ? "yellow" : "green"}>
               {floorBlockedTables.length > 0 ? `${floorBlockedTables.length} bàn bị giới hạn` : "Sẵn sàng mở ca"}
@@ -888,8 +885,8 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="dashboard-section-title">Sơ đồ bàn realtime</h2>
-                <p className="dashboard-mobile-hide mt-1 max-w-2xl text-sm font-medium leading-6 text-[var(--muted-foreground)]">
-                  Bàn được nhóm theo khu vực, màu theo trạng thái vận hành. Bấm vào từng bàn để mở QR, chỉnh thông tin, xoay token hoặc xử lý bàn đang có hóa đơn.
+                <p className="sr-only">
+                  Bàn được nhóm theo khu vực và màu theo trạng thái.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -943,7 +940,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
                   className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] pl-10 pr-3 text-sm font-medium normal-case tracking-normal outline-none"
                 />
               </label>
-              <Button type="button" variant="secondary" className="self-end" onClick={() => {
+              <Button type="button" variant="secondary" className="h-12 min-h-12 self-end" onClick={() => {
                 setAreaFilter("all");
                 setStatusFilter("all");
                 setQuery("");
@@ -1134,26 +1131,16 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
 	        </div>
 
 	        {panelMode !== "closed" && (
-	          <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
-		            <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết bàn" onClick={closeDrawer} />
-		            <aside
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="table-drawer-title"
-                  className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[500px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
-                >
-	              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
-	                <div>
-	                  <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Bàn & QR</p>
-	                  <h3 id="table-drawer-title" className="dashboard-section-title mt-1">
-	                    {panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
-	                  </h3>
-	                </div>
-		                <button type="button" onClick={closeDrawer} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng chi tiết bàn">
-		                  <X size={18} />
-		                </button>
-	              </div>
-	              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
+	          <DashboardDrawer
+	            open
+	            onClose={closeDrawer}
+	            title={panelMode === "create" ? "Thêm bàn mới" : selected ? selected.name : "Chi tiết bàn"}
+	            subtitle="Bàn & QR"
+	            closeLabel="Đóng chi tiết bàn"
+	            width="md"
+	            contentClassName="p-0 sm:p-0"
+	          >
+	              <div className="px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
 	                {panelMode === "create" && (
 	                  <form action={createTableAction} className="grid gap-4">
 	                    <label className="grid gap-2 text-sm font-semibold">
@@ -1417,8 +1404,7 @@ export function TablesWorkspace({ restaurantId, restaurantSlug, restaurantName, 
 	                  </div>
 	                )}
 	              </div>
-	            </aside>
-	          </div>
+	          </DashboardDrawer>
 	        )}
 	      </section>
 

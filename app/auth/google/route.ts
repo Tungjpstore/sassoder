@@ -1,15 +1,13 @@
 import { NextResponse } from "next/server";
-import { randomUUID } from "crypto";
-import { getOAuthCallbackOrigin } from "@/lib/auth-redirect-origin";
 import { dashboardLoginPathForNext, safeDashboardNextPath } from "@/lib/auth-flow-routes";
+import { buildGoogleDirectAuthorizeRequest } from "@/lib/google-direct-oauth";
 import {
   cookieNamesFromHeader,
   getHostname,
   isSupabaseAuthFlowCookieName,
   shouldShareCookiesAcrossTenantDomains
 } from "@/lib/supabase/cookie-guards";
-import { createSupabaseOAuthCookieName } from "@/lib/supabase/oauth";
-import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
+import { expireSupabaseAuthFlowCookies, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 
 function isPrefetchRequest(request: Request) {
@@ -27,17 +25,25 @@ function noStoreRedirect(url: URL) {
   return response;
 }
 
+function setGoogleOAuthStateCookie(response: NextResponse, request: Request, stateCookie: { name: string; value: string; maxAge: number }) {
+  const requestUrl = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? requestUrl.host;
+  const hostname = getHostname(host);
+  const secure = requestUrl.protocol === "https:" || process.env.VERCEL_ENV === "production";
+
+  response.cookies.set(stateCookie.name, stateCookie.value, {
+    httpOnly: true,
+    secure,
+    sameSite: "lax",
+    path: "/auth/google",
+    maxAge: stateCookie.maxAge,
+    ...(shouldShareCookiesAcrossTenantDomains(hostname) ? { domain: `.${ROOT_DOMAIN}` } : {})
+  });
+}
+
 function authFlowCookieNames(request: Request) {
   const cookieHeader = request.headers.get("cookie") || "";
   return cookieNamesFromHeader(cookieHeader, isSupabaseAuthFlowCookieName);
-}
-
-function createOAuthKey() {
-  return randomUUID().replaceAll("-", "").slice(0, 16);
-}
-
-function safeOAuthKey(value: string | null) {
-  return value && /^[a-z0-9]{16}$/.test(value) ? value : createOAuthKey();
 }
 
 function appendExpiredAuthFlowCookies(response: NextResponse, request: Request) {
@@ -74,56 +80,26 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const next = safeDashboardNextPath(url.searchParams.get("next"), "/dashboard");
-  const googleInitErrorPath = dashboardLoginPathForNext(next, { authError: "google_init" });
-  const hasCleanOAuthCookies = url.searchParams.get("_oauth_clean") === "1";
-  const oauthKey = safeOAuthKey(url.searchParams.get("oauthKey"));
+  const googleConfigErrorPath = dashboardLoginPathForNext(next, { authError: "google_config" });
 
-  if (!hasCleanOAuthCookies) {
-    await expireSupabaseAuthSessionCookies();
+  await expireSupabaseAuthSessionCookies();
+  await expireSupabaseAuthFlowCookies();
 
-    const cleanUrl = new URL("/auth/google", request.url);
-    cleanUrl.searchParams.set("next", next);
-    cleanUrl.searchParams.set("_oauth_clean", "1");
-    cleanUrl.searchParams.set("oauthKey", oauthKey);
-    const response = noStoreRedirect(cleanUrl);
+  const authorizeRequest = buildGoogleDirectAuthorizeRequest(request, next);
+  if (!authorizeRequest) {
+    console.error("[auth/google] Missing Google direct OAuth configuration", {
+      hasClientId: Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID),
+      hasClientSecret: Boolean(process.env.GOOGLE_OAUTH_CLIENT_SECRET),
+      hasStateSecret: Boolean(process.env.GOOGLE_OAUTH_STATE_SECRET)
+    });
+
+    const response = noStoreRedirect(new URL(googleConfigErrorPath, request.url));
     appendExpiredAuthFlowCookies(response, request);
     return response;
   }
 
-  const callbackUrl = new URL("/auth/callback", getOAuthCallbackOrigin(request));
-  callbackUrl.searchParams.set("next", next);
-  callbackUrl.searchParams.set("oauthKey", oauthKey);
-
-  const supabase = await createServerSupabaseClient({
-    ignoreAuthSession: true,
-    cookieName: createSupabaseOAuthCookieName(oauthKey)
-  });
-  let oauthResult: Awaited<ReturnType<typeof supabase.auth.signInWithOAuth>>;
-
-  try {
-    oauthResult = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: callbackUrl.toString()
-      }
-    });
-  } catch (error) {
-    console.error("[auth/google] OAuth init exception", {
-      message: error instanceof Error ? error.message : String(error),
-      callbackOrigin: callbackUrl.origin
-    });
-    return noStoreRedirect(new URL(googleInitErrorPath, request.url));
-  }
-
-  const { data, error } = oauthResult;
-
-  if (error || !data.url) {
-    console.error("[auth/google] OAuth init failed", {
-      message: error?.message,
-      callbackOrigin: callbackUrl.origin
-    });
-    return noStoreRedirect(new URL(googleInitErrorPath, request.url));
-  }
-
-  return noStoreRedirect(new URL(data.url));
+  const response = noStoreRedirect(authorizeRequest.authorizeUrl);
+  setGoogleOAuthStateCookie(response, request, authorizeRequest.stateCookie);
+  appendExpiredAuthFlowCookies(response, request);
+  return response;
 }

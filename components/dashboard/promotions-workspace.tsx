@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, BarChart3, CheckCircle2, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, Truck, X } from "lucide-react";
+import { AlertTriangle, BarChart3, CheckCircle2, Eye, EyeOff, Gift, Percent, Plus, QrCode, Search, Send, Store, Tag, Ticket, Trash2, TrendingUp, Truck } from "lucide-react";
 import { createPromotionAction, deletePromotionAction, togglePromotionAction, togglePromotionDisplayAction, updatePromotionAction } from "@/app/dashboard/actions";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { DashboardMetricCard, DashboardSectionHeader } from "@/components/dashboard/primitives";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -202,7 +203,6 @@ export function PromotionsWorkspace({
           <DashboardSectionHeader
             className="mb-4"
             title="Danh sách khuyến mãi"
-            description="Màn chính chỉ giữ danh sách và chỉ số quan trọng. Mọi cấu hình chi tiết được mở trong drawer riêng."
             action={
               <Button type="button" onClick={openCreateDrawer} className="shadow-none hover:shadow-none">
                 <Plus size={16} />
@@ -415,26 +415,16 @@ export function PromotionsWorkspace({
       </section>
 
       {panelMode !== "closed" && (
-        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
-          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng khuyến mãi" onClick={closeDrawer} />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="promotion-drawer-title"
-            className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[480px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
-              <div>
-                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Khuyến mãi</p>
-                <h3 id="promotion-drawer-title" className="dashboard-section-title mt-1">
-                  {panelMode === "create" ? "Tạo chiến dịch mới" : selectedCampaign?.name ?? "Chi tiết chiến dịch"}
-                </h3>
-              </div>
-              <button type="button" onClick={closeDrawer} className="grid h-10 w-10 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]" aria-label="Đóng khuyến mãi">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
+        <DashboardDrawer
+          open
+          onClose={closeDrawer}
+          title={panelMode === "create" ? "Tạo chiến dịch mới" : selectedCampaign?.name ?? "Chi tiết chiến dịch"}
+          subtitle="Khuyến mãi"
+          closeLabel="Đóng khuyến mãi"
+          width="md"
+          contentClassName="p-0 sm:p-0"
+        >
+            <div className="px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {panelMode === "create" && (
                 <form action={createPromotionAction} className="grid gap-4">
                   <label className="grid gap-2 text-sm font-semibold">
@@ -758,8 +748,7 @@ export function PromotionsWorkspace({
                 </div>
               )}
             </div>
-          </aside>
-        </div>
+        </DashboardDrawer>
       )}
     </div>
   );

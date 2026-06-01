@@ -134,7 +134,7 @@ function PlanCard({ plan }: { plan: AiApplyPlan }) {
         </div>
         {plan.confirmationRequired ? (
           <span className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 py-1.5 text-[11px] font-bold text-[var(--muted-foreground)]">
-            Confirm-first
+            Xác nhận trước
           </span>
         ) : null}
       </div>
@@ -299,11 +299,11 @@ export default async function AiApplyPage() {
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <ShieldCheck size={15} />
-                Apply guardrails
+                Luật áp dụng
               </p>
               <h2 className="dashboard-section-title mt-1">Luật chống apply sai</h2>
             </div>
-            <Badge>{deck.guardrails.length} rules</Badge>
+            <Badge>{deck.guardrails.length} luật</Badge>
           </div>
           <div className="mt-3 grid gap-2 md:grid-cols-3">
             {deck.guardrails.map((guardrail) => (

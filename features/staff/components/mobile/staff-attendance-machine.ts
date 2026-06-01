@@ -83,7 +83,7 @@ export function buildStaffAttendanceMachine({
     },
     {
       label: "Nguồn chấm",
-      value: source === "qr" ? (qrReady ? "QR tại quán" : "Cần quét QR") : source === "gps" ? "GPS" : "WiFi quán",
+      value: source === "qr" ? (qrReady ? "QR + GPS" : "Cần quét QR") : source === "gps" ? "GPS" : "WiFi + GPS",
       tone: sourceReady ? "success" : "warning"
     },
     {
@@ -152,7 +152,7 @@ export function buildStaffAttendanceMachine({
       primaryLabel: "Quét QR",
       shortSourceLabel,
       title: "Cần quét QR tại quán",
-      detail: "Mở camera hoặc dán link QR mới nhất tại đúng chi nhánh.",
+      detail: "Mở camera quét mã mới nhất tại đúng chi nhánh, sau đó LogiVN sẽ xác minh GPS.",
       recoveryLabel: "Quét QR trước khi vào/kết ca",
       readiness
     };
@@ -167,7 +167,7 @@ export function buildStaffAttendanceMachine({
       primaryLabel: source === "gps" ? "GPS chưa bật" : "Cần online",
       shortSourceLabel,
       title: source === "gps" ? "GPS chưa khả dụng" : "Cần WiFi/mạng quán",
-      detail: source === "gps" ? "Gói hiện tại hoặc quyền vị trí chưa cho phép GPS." : "Kết nối mạng quán hoặc chuyển sang GPS/QR.",
+      detail: source === "gps" ? "Gói hiện tại hoặc quyền vị trí chưa cho phép GPS." : "Kết nối mạng quán và bật vị trí chính xác.",
       recoveryLabel: source === "gps" ? "Bật GPS hoặc chọn QR/WiFi" : "Kết nối lại mạng quán",
       readiness
     };

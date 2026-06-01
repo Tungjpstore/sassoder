@@ -228,20 +228,20 @@ export default async function AiExecutionPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Một nơi để chủ quán duyệt, ẩn hoặc mở đúng màn hình xử lý cho từng đề xuất"
+      subtitle="Duyệt, ẩn hoặc mở đề xuất AI."
       showLiveActionCenter={false}
     >
       <div className="grid gap-3">
         <AiOwnerActionLauncher variant="execution" />
         <AiOperatingLoop
-          title="Luồng duyệt quyết định AI"
-          subtitle="Tất cả đề xuất, workflow, menu/growth/support signal đều đi qua cùng một cửa: duyệt trước, tạo nháp sau, rồi hoàn tất có audit."
+          title="Hàng duyệt AI"
+          subtitle="Duyệt trước, thao tác sau."
           primaryAction={{ href: "/dashboard/ai-apply", label: "Áp dụng việc đã duyệt" }}
           secondaryAction={{ href: "/dashboard/ai-ops", label: "Quay lại vận hành" }}
           stages={[
-            { id: "detect", value: deck.summary.total, detail: "Tín hiệu đã gom từ Ops, Automation và Studio", href: "/dashboard/ai-ops", tone: deck.summary.total ? "green" : "blue" },
+            { id: "detect", value: deck.summary.total, detail: "Tín hiệu đã gom", href: "/dashboard/ai-ops", tone: deck.summary.total ? "green" : "blue" },
             { id: "approve", value: deck.summary.pending, detail: "Việc đang chờ chủ quán duyệt", href: "/dashboard/ai-execution", tone: deck.summary.pending ? "yellow" : "green", active: true },
-            { id: "act", value: deck.summary.approved, detail: "Việc đã duyệt để AI tạo nháp hoặc mở màn xử lý", href: "/dashboard/ai-apply", tone: deck.summary.approved ? "green" : "blue" },
+            { id: "act", value: deck.summary.approved, detail: "Việc đã duyệt", href: "/dashboard/ai-apply", tone: deck.summary.approved ? "green" : "blue" },
             { id: "verify", value: deck.summary.manual + deck.summary.blocked, detail: "Cần kiểm tra thủ công hoặc gỡ blocker", href: "/dashboard/ai-apply", tone: deck.summary.blocked ? "red" : "blue" },
             { id: "audit", value: deck.summary.completed, detail: "Đã hoàn tất/ẩn để queue sạch", href: "/dashboard/ai-apply", tone: "neutral" }
           ]}
@@ -290,7 +290,7 @@ export default async function AiExecutionPage() {
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <ClipboardCheck size={15} />
-                Approval queue
+              Hàng duyệt
               </p>
               <h2 className="dashboard-section-title mt-1">Quyết định AI cần xử lý</h2>
             </div>
@@ -308,30 +308,9 @@ export default async function AiExecutionPage() {
             </div>
           ) : (
             <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-              Chưa có quyết định AI đang mở. Khi các studio tạo recommendation, workflow hoặc opportunity, chúng sẽ gom về đây.
+              Chưa có quyết định AI đang mở.
             </div>
           )}
-        </section>
-
-        <section className="dashboard-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow inline-flex items-center gap-2">
-                <ShieldCheck size={15} />
-                Execution runbook
-              </p>
-              <h2 className="dashboard-section-title mt-1">Luật vận hành trước khi tự động hóa</h2>
-            </div>
-            <Badge>{deck.summary.confirmFirst} confirm-first</Badge>
-          </div>
-          <div className="mt-3 grid gap-2 md:grid-cols-3">
-            {deck.runbook.map((item) => (
-              <div key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
-                <p className="text-sm font-bold text-[var(--foreground)]">{item.title}</p>
-                <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{item.detail}</p>
-              </div>
-            ))}
-          </div>
         </section>
       </div>
     </AdminShell>

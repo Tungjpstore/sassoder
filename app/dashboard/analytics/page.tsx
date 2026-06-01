@@ -1,10 +1,9 @@
-import { ReceiptText, ShoppingBasket, TrendingUp, Users, WalletCards } from "lucide-react";
+import { ReceiptText, ShoppingBasket, Users, WalletCards } from "lucide-react";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AnalyticsExportActions } from "@/components/dashboard/analytics-export-actions";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
 import { getAdminReport } from "@/services/dashboard-report-service";
-import type { AdminReport } from "@/services/dashboard-report-service";
 import { getRestaurantAdminDashboard } from "@/services/restaurant-service";
 
 export const dynamic = "force-dynamic";
@@ -17,119 +16,6 @@ function percent(value: number, total: number) {
 function deltaLabel(value: number) {
   if (value === 0) return "Không đổi so với kỳ trước";
   return `${value > 0 ? "↑" : "↓"} ${Math.abs(value)}% so với kỳ trước`;
-}
-
-function reportTone(value: number): "green" | "yellow" | "red" {
-  if (value >= 85) return "green";
-  if (value >= 65) return "yellow";
-  return "red";
-}
-
-function AnalyticsCommandCenter({ report }: { report: AdminReport }) {
-  const revenueMomentum = report.monthRevenueDelta >= 0 ? 100 : Math.max(0, 100 + report.monthRevenueDelta);
-  const paidRatio = percent(report.paidOrders, Math.max(report.monthOrders, 1));
-  const unpaidRisk = report.unpaidAmount > 0 ? Math.min(30, Math.round(report.unpaidAmount / Math.max(report.monthRevenue, 1) * 100)) : 0;
-  const reportScore = Math.max(0, Math.min(100, Math.round((revenueMomentum + paidRatio + Math.max(0, 100 - unpaidRisk)) / 3)));
-  const bestCategory = [...report.categoryRows].sort((left, right) => right.revenue - left.revenue)[0] ?? null;
-  const bestPeak = [...report.peakHours].sort((left, right) => right.count - left.count)[0] ?? null;
-  const checks = [
-    {
-      id: "revenue",
-      label: "Doanh thu không giảm",
-      value: `${report.monthRevenueDelta}%`,
-      done: report.monthRevenueDelta >= 0
-    },
-    {
-      id: "orders",
-      label: "Số đơn không giảm",
-      value: `${report.monthOrdersDelta}%`,
-      done: report.monthOrdersDelta >= 0
-    },
-    {
-      id: "paid",
-      label: "Tỷ lệ đơn đã thu",
-      value: `${paidRatio}%`,
-      done: paidRatio >= 85
-    },
-    {
-      id: "unpaid",
-      label: "Tiền chưa thu thấp",
-      value: formatVnd(report.unpaidAmount),
-      done: report.unpaidAmount === 0
-    }
-  ];
-
-  return (
-    <section className="dashboard-panel dashboard-command-center dashboard-mobile-report-command mt-4 p-3">
-      <div className="grid gap-3 xl:grid-cols-[0.72fr_1.28fr]">
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow">Report command</p>
-              <h2 className="dashboard-section-title mt-1">Tóm tắt quyết định kinh doanh</h2>
-            </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${reportTone(reportScore) === "green" ? "bg-[var(--primary-soft)] text-[var(--primary)]" : reportTone(reportScore) === "yellow" ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]" : "bg-[var(--danger-soft)] text-[var(--tertiary)]"}`}>
-              Score {reportScore}/100
-            </span>
-          </div>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Momentum doanh thu</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{report.monthRevenueDelta}%</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Tỷ lệ đã thu</p>
-              <p className="metric-number mt-1 text-2xl font-semibold text-[var(--foreground)]">{paidRatio}%</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Danh mục mạnh</p>
-              <p className="mt-1 truncate text-sm font-semibold text-[var(--primary)]">{bestCategory?.name ?? "Chưa có"}</p>
-            </div>
-            <div className="rounded-lg bg-[var(--soft-surface)] p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Giờ cao điểm</p>
-              <p className="mt-1 truncate text-sm font-semibold text-[var(--primary)]">{bestPeak?.label ?? "Chưa có"}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Checklist đọc báo cáo</p>
-              <span className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs font-semibold text-[var(--muted-foreground)]">{checks.filter((item) => !item.done).length || "Xong"}</span>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {checks.map((item) => (
-                <div key={item.id} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
-                  <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
-                  <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${item.done ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]"}`}>{item.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-[var(--foreground)]">Gợi ý vận hành</p>
-              <TrendingUp size={17} className="text-[var(--primary)]" />
-            </div>
-            <div className="grid gap-2 text-sm font-semibold text-[var(--muted-foreground)]">
-              <p className="rounded-lg bg-[var(--soft-surface)] p-3">
-                {report.monthRevenueDelta < 0
-                  ? "Doanh thu đang giảm, ưu tiên xem giờ thấp điểm và món bán chậm để chạy combo."
-                  : "Doanh thu đang giữ nhịp, ưu tiên tăng ticket trung bình bằng upsell món mạnh."}
-              </p>
-              <p className="rounded-lg bg-[var(--soft-surface)] p-3">
-                {report.unpaidAmount > 0
-                  ? `Còn ${formatVnd(report.unpaidAmount)} chưa thu, nên đối soát trước khi đọc lợi nhuận.`
-                  : "Dòng tiền sạch, có thể dùng báo cáo để ra quyết định menu/nhân sự."}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
 }
 
 export default async function AdminAnalyticsPage() {
@@ -179,8 +65,6 @@ export default async function AdminAnalyticsPage() {
           );
         })}
       </section>
-
-      <AnalyticsCommandCenter report={report} />
 
       <section className="dashboard-analytics-split mt-4 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
         <div className="dashboard-panel dashboard-analytics-panel p-4">

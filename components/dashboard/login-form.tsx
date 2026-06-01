@@ -21,7 +21,9 @@ function getGoogleAuthErrorMessage(authError?: string) {
 
   const messages: Record<string, string> = {
     google_init: "Không khởi tạo được đăng nhập Google. Hệ thống đã dọn phiên cũ, vui lòng bấm lại một lần nữa.",
-    provider: "Google hoặc Supabase từ chối phiên đăng nhập.",
+    google_config: "Google OAuth trực tiếp chưa đủ Client ID/Secret trên môi trường này.",
+    google_state: "Phiên đăng nhập Google đã hết hạn hoặc không khớp. Vui lòng bấm đăng nhập lại.",
+    provider: "Google đã từ chối hoặc huỷ phiên đăng nhập.",
     missing_code: "Google callback thiếu mã xác thực.",
     callback: "Không đổi được mã Google thành phiên đăng nhập. Thường do cookie phiên cũ hoặc redirect OAuth chưa khớp.",
     session: "Đã nhận callback nhưng chưa tạo được phiên đăng nhập.",

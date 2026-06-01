@@ -193,22 +193,43 @@ await check("Google OAuth redirect contract", async () => {
   const startResponse = await fetchWithTimeout("/auth/google");
   expectStatus(startResponse, [302, 303, 307, 308], "GET /auth/google");
   assert(startResponse.headers.get("cache-control") === "no-store", "OAuth start redirect must be no-store");
+  const setCookie = startResponse.headers.get("set-cookie") || "";
+  assert(setCookie.includes("logivn_google_oauth_state="), "OAuth start did not set one-time state cookie");
+  assert(setCookie.includes("HttpOnly"), "OAuth state cookie must be HttpOnly");
+  assert(/SameSite=Lax/i.test(setCookie), "OAuth state cookie must be SameSite=Lax");
 
-  const cleanLocation = startResponse.headers.get("location") || "";
-  assert(cleanLocation.startsWith(`${baseUrl}/auth/google`), `OAuth clean redirect target was ${cleanLocation || "(empty)"}`);
-  assert(cleanLocation.includes("_oauth_clean=1"), "OAuth clean redirect did not include _oauth_clean=1");
-  assert(cleanLocation.includes("oauthKey="), "OAuth clean redirect did not include oauthKey");
-
-  const cleanResponse = await fetchWithTimeout(cleanLocation);
-  expectStatus(cleanResponse, [302, 303, 307, 308], "GET cleaned /auth/google");
-  const providerLocation = cleanResponse.headers.get("location") || "";
+  const providerLocation = startResponse.headers.get("location") || "";
   const providerUrl = new URL(providerLocation);
-  assert(providerUrl.hostname.endsWith(".supabase.co"), `OAuth provider host was ${providerUrl.hostname}`);
-  assert(providerUrl.pathname === "/auth/v1/authorize", `OAuth provider path was ${providerUrl.pathname}`);
-  assert(providerUrl.searchParams.get("provider") === "google", "OAuth provider parameter was not google");
-  const redirectTo = providerUrl.searchParams.get("redirect_to") || "";
-  assert(redirectTo.startsWith(`${baseUrl}/auth/callback`), `OAuth redirect_to was ${redirectTo || "(empty)"}`);
-  assert(cleanResponse.headers.get("set-cookie")?.includes("code-verifier"), "OAuth clean redirect did not set PKCE code verifier cookie");
+  assert(providerUrl.hostname === "accounts.google.com", `OAuth provider host was ${providerUrl.hostname}`);
+  assert(providerUrl.pathname === "/o/oauth2/v2/auth", `OAuth provider path was ${providerUrl.pathname}`);
+  assert(providerUrl.searchParams.get("response_type") === "code", "OAuth response_type was not code");
+  assert(providerUrl.searchParams.get("scope")?.includes("openid"), "OAuth scope did not include openid");
+  assert(!providerUrl.searchParams.has("prompt"), "OAuth default flow should not force account selection");
+  const redirectTo = providerUrl.searchParams.get("redirect_uri") || "";
+  assert(redirectTo === `${baseUrl}/auth/google/callback`, `OAuth redirect_uri was ${redirectTo || "(empty)"}`);
+  assert(providerUrl.searchParams.has("state"), "OAuth state was missing");
+  assert(providerUrl.searchParams.has("nonce"), "OAuth nonce was missing");
+});
+
+await check("Legacy Supabase Google OAuth route is disabled", async () => {
+  const response = await fetchWithTimeout("/auth/google/supabase");
+  expectStatus(response, 404, "GET /auth/google/supabase");
+  assert(response.headers.get("cache-control") === "no-store", "Legacy OAuth disabled response must be no-store");
+});
+
+await check("Google OAuth callback rejects forged state", async () => {
+  const response = await fetchWithTimeout("/auth/google/callback?code=fake&state=fake");
+  expectStatus(response, [302, 303, 307, 308], "GET forged /auth/google/callback");
+  assert(response.headers.get("cache-control") === "no-store", "Forged OAuth callback redirect must be no-store");
+
+  const location = response.headers.get("location") || "";
+  const redirectUrl = new URL(location, baseUrl);
+  assert(redirectUrl.pathname === "/dashboard/login", `Forged OAuth callback redirected to ${redirectUrl.pathname}`);
+  assert(redirectUrl.searchParams.get("authError") === "google_state", "Forged OAuth callback did not fail on google_state");
+
+  const setCookie = response.headers.get("set-cookie") || "";
+  assert(setCookie.includes("logivn_google_oauth_state=;"), "Forged OAuth callback did not clear state cookie");
+  assert(!/sb-[^=;]*-auth-token(?:\.\d+)?=[^;]/.test(setCookie), "Forged OAuth callback issued a Supabase session cookie");
 });
 
 const failed = checks.filter((item) => !item.ok);

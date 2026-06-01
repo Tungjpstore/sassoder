@@ -498,7 +498,7 @@ export function AdminLiveActionCenter({
         <section className="dashboard-minimal-card flex min-h-0 flex-col p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Realtime queue</p>
+              <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Cần xử lý</p>
               <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
             </div>
             <Badge tone={realtimeState === "connected" ? "green" : realtimeState === "error" ? "red" : "yellow"}>

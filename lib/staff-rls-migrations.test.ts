@@ -9,6 +9,7 @@ const adminWorkflowSql = readFileSync("supabase/migrations/20260516103000_staff_
 const qrDeviceTrustSql = readFileSync("supabase/migrations/20260518190204_staff_attendance_qr_device_trust.sql", "utf8");
 const hardeningSql = readFileSync("supabase/migrations/20260519103000_staff_operations_security_hardening.sql", "utf8");
 const dailyQrWifiSql = readFileSync("supabase/migrations/20260529105500_staff_attendance_daily_qr_wifi.sql", "utf8");
+const antiFraudSql = readFileSync("supabase/migrations/20260601121000_staff_attendance_anti_fraud_hardening.sql", "utf8");
 
 const coreHrTables = [
   "staff_members",
@@ -129,4 +130,26 @@ test("staff operations hardening blocks overlapping active shift assignments ato
   assert.match(hardeningSql, /tsrange\(new_start, new_end, '\[\)'\)/i);
   assert.match(hardeningSql, /create trigger prevent_shift_assignment_overlap/i);
   assert.match(hardeningSql, /using errcode = '23P01'/i);
+});
+
+test("staff attendance anti-fraud migration adds DB guardrails for new writes", () => {
+  assert.match(antiFraudSql, /attendance_logs_clock_order_hardening/i);
+  assert.match(antiFraudSql, /clock_out_at is null or clock_out_at > clock_in_at/i);
+  assert.match(antiFraudSql, /attendance_logs_anomaly_score_range_hardening/i);
+  assert.match(antiFraudSql, /anomaly_score between 0 and 100/i);
+  assert.match(antiFraudSql, /attendance_logs_clock_in_presence_proof_hardening/i);
+  assert.match(antiFraudSql, /created_at < timestamp with time zone '2026-06-01 00:00:00\+00'/i);
+  assert.match(antiFraudSql, /clock_in_source = 'manual'/i);
+  assert.match(antiFraudSql, /clock_in_accuracy_meters <= 80/i);
+  assert.match(antiFraudSql, /clock_in_distance_meters <= 150/i);
+  assert.match(antiFraudSql, /clock_in_device \? 'attendanceSessionToken'/i);
+  assert.match(antiFraudSql, /attendance_logs_clock_out_presence_proof_hardening/i);
+  assert.match(antiFraudSql, /clock_out_accuracy_meters <= 80/i);
+  assert.match(antiFraudSql, /clock_out_device \? 'attendanceSessionToken'/i);
+  assert.match(antiFraudSql, /staff_attendance_qr_tokens_usage_count_limit_hardening/i);
+  assert.match(antiFraudSql, /usage_limit is null or usage_count <= usage_limit/i);
+  assert.match(antiFraudSql, /staff_attendance_wifi_networks_exact_cidr_hardening/i);
+  assert.match(antiFraudSql, /masklen\(public_ip_cidr\) = 32/i);
+  assert.match(antiFraudSql, /masklen\(public_ip_cidr\) = 128/i);
+  assert.match(antiFraudSql, /attendance_logs_restaurant_staff_clock_in_hardening_idx/i);
 });

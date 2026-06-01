@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const callbackSource = readFileSync("app/auth/callback/route.ts", "utf8");
+const googleRouteSource = readFileSync("app/auth/google/route.ts", "utf8");
+const googleCallbackSource = readFileSync("app/auth/google/callback/route.ts", "utf8");
+const googleSupabaseFallbackSource = readFileSync("app/auth/google/supabase/route.ts", "utf8");
+const googleDirectOAuthSource = readFileSync("lib/google-direct-oauth.ts", "utf8");
+const postLoginSource = readFileSync("lib/auth-post-login.ts", "utf8");
 const emailStatusRouteSource = readFileSync("app/api/auth/email-status/route.ts", "utf8");
 const staffPinServiceSource = readFileSync("features/staff/services/staff-pin-service.ts", "utf8");
 const onboardingFlowSource = readFileSync("components/dashboard/restaurant-onboarding-flow.tsx", "utf8");
@@ -19,13 +24,61 @@ function sourceBlock(source: string, startMarker: string, endMarker: string) {
 }
 
 test("OAuth callback consumes onboarding intent before falling back to account merge", () => {
-  const consumeIndex = callbackSource.indexOf("consumeRegistrationIntentForUser({ userId: user.id, email: user.email })");
-  const fallbackIndex = callbackSource.indexOf("getRestaurantForUser(user.id, user.email)");
+  const consumeIndex = postLoginSource.indexOf("consumeRegistrationIntentForUser({ userId: user.id, email: user.email })");
+  const fallbackIndex = postLoginSource.indexOf("getRestaurantForUser(user.id, user.email)");
 
   assert.ok(consumeIndex > 0);
   assert.ok(fallbackIndex > consumeIndex);
-  assert.match(callbackSource, /safeProtectedDashboardNextPath\(next\)/);
-  assert.match(callbackSource, /next === "\/dashboard" \? "\/dashboard\/onboarding" : next/);
+  assert.match(postLoginSource, /safeProtectedDashboardNextPath\(next\)/);
+  assert.match(postLoginSource, /buildUrlForAuthReturnHost\(request, returnHost, getDashboardDestinationForHost\(restaurant\.slug, host\)\)/);
+  assert.match(postLoginSource, /next === "\/dashboard" \? "\/dashboard\/onboarding" : next/);
+  assert.match(callbackSource, /getPostLoginDashboardDestination/);
+});
+
+test("Google OAuth starts directly on Google and exchanges ID token with Supabase", () => {
+  assert.match(googleRouteSource, /buildGoogleDirectAuthorizeRequest/);
+  assert.doesNotMatch(googleRouteSource, /signInWithOAuth/);
+  assert.doesNotMatch(googleRouteSource, /new URL\("\/auth\/google\/supabase"/);
+  assert.match(googleRouteSource, /setGoogleOAuthStateCookie/);
+  assert.match(googleSupabaseFallbackSource, /legacySupabaseOAuthEnabled/);
+  assert.match(googleSupabaseFallbackSource, /GOOGLE_LEGACY_SUPABASE_OAUTH_ENABLED/);
+  assert.match(googleSupabaseFallbackSource, /signInWithOAuth/);
+  assert.match(googleDirectOAuthSource, /accounts\.google\.com\/o\/oauth2\/v2\/auth/);
+  assert.match(googleDirectOAuthSource, /oauth2\.googleapis\.com\/token/);
+  assert.match(googleDirectOAuthSource, /createHmac\("sha256"/);
+  assert.match(googleDirectOAuthSource, /createHash\("sha256"/);
+  assert.match(googleDirectOAuthSource, /hashGoogleOAuthNonce\(payload\.nonce\)/);
+  assert.match(googleDirectOAuthSource, /logivn_google_oauth_state/);
+  assert.match(googleDirectOAuthSource, /requiresExplicitGoogleOAuthStateSecret/);
+  assert.match(googleDirectOAuthSource, /process\.env\.NODE_ENV === "production"/);
+  assert.match(googleDirectOAuthSource, /url\.searchParams\.get\("prompt"\) === "select_account"/);
+  assert.match(googleCallbackSource, /readGoogleDirectOAuthState/);
+  assert.match(googleCallbackSource, /readGoogleDirectOAuthStateCookie/);
+  assert.match(googleCallbackSource, /isValidGoogleDirectOAuthStateCookie/);
+  assert.match(googleCallbackSource, /appendExpiredGoogleOAuthStateCookie/);
+  assert.match(googleCallbackSource, /exchangeGoogleCodeForTokens/);
+  assert.match(googleCallbackSource, /signInWithIdToken/);
+  assert.match(googleCallbackSource, /nonce: state\.nonce/);
+  assert.doesNotMatch(googleCallbackSource, /exchangeCodeForSession/);
+});
+
+test("Google OAuth return host is canonicalized before being signed into state", () => {
+  assert.match(postLoginSource, /normalizeTrustedAuthHost\(request\.headers\.get\("x-forwarded-host"\)\)/);
+  assert.match(postLoginSource, /normalizeTrustedAuthHost\(request\.headers\.get\("host"\)\)/);
+  assert.ok(postLoginSource.includes("/[\\s/@]/.test(host)"));
+  assert.match(postLoginSource, /isValidPort/);
+  assert.match(postLoginSource, /hasValidDnsHostname/);
+  assert.match(postLoginSource, /hostname\.endsWith\(`\.\$\{ROOT_DOMAIN\}`\)/);
+});
+
+test("production smoke rejects forged Google OAuth callback state", () => {
+  const productionSmokeSource = readFileSync("scripts/infra/production-smoke.mjs", "utf8");
+
+  assert.match(productionSmokeSource, /Google OAuth callback rejects forged state/);
+  assert.match(productionSmokeSource, /\/auth\/google\/callback\?code=fake&state=fake/);
+  assert.match(productionSmokeSource, /authError"\) === "google_state"/);
+  assert.match(productionSmokeSource, /logivn_google_oauth_state=;/);
+  assert.match(productionSmokeSource, /sb-\[\^=;\]\*-auth-token/);
 });
 
 test("public email status route does not expose account registration state", () => {

@@ -349,7 +349,7 @@ export default async function AiGrowthPage() {
                       </div>
                       <Badge>{kit.channel}</Badge>
                     </div>
-                    <p className="mt-2 line-clamp-3 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{kit.prompt}</p>
+                    <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{kit.prompt}</p>
                   </article>
                 ))}
               </div>
@@ -365,9 +365,9 @@ export default async function AiGrowthPage() {
               <div>
                 <p className="dashboard-eyebrow inline-flex items-center gap-2">
                   <ShieldCheck size={15} />
-                  Guardrails
+                  An toàn
                 </p>
-                <h2 className="dashboard-section-title mt-1">Luật an toàn tăng trưởng</h2>
+                <h2 className="dashboard-section-title mt-1">Kiểm trước khi chạy</h2>
               </div>
               <Badge>F&B</Badge>
             </div>

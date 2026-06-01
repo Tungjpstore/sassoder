@@ -4,14 +4,12 @@ import {
   Bot,
   BrainCircuit,
   CheckCircle2,
-  Clock3,
   EyeOff,
   GitBranch,
   ListChecks,
   LockKeyhole,
   PlayCircle,
   RefreshCw,
-  Route,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -184,16 +182,16 @@ function LiveWorkflowQueue({
             <GitBranch size={15} />
             Live execution
           </p>
-          <h2 className="dashboard-section-title mt-1">Workflow đang chờ quyết định</h2>
+          <h2 className="dashboard-section-title mt-1">Luồng đang chờ duyệt</h2>
         </div>
         <Badge tone={schemaReady ? (workflows.length ? "green" : "blue") : "yellow"}>
-          {schemaReady ? `${workflows.length} workflow` : "Cần schema"}
+          {schemaReady ? `${workflows.length} luồng` : "Cần schema"}
         </Badge>
       </div>
 
       {!schemaReady ? (
         <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-          Cần schema automation runs để lưu trạng thái duyệt, ẩn và hoàn tất workflow AI.
+          Cần schema automation runs để lưu trạng thái duyệt và hoàn tất.
         </div>
       ) : workflows.length ? (
         <div className="mt-3 grid gap-3 xl:grid-cols-2">
@@ -281,7 +279,7 @@ function LiveWorkflowQueue({
         </div>
       ) : (
         <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-          Chưa có workflow đang chờ duyệt. Khi Trợ lý vận hành phát hiện tồn thấp, giờ thấp điểm, thiếu nhân sự hoặc thanh toán treo, workflow sẽ vào đây.
+          Chưa có luồng đang chờ duyệt.
         </div>
       )}
     </section>
@@ -331,7 +329,7 @@ export default async function AiAutomationPage() {
       tone: playbookDeck.summary.criticalOpen ? "red" : "green"
     },
     {
-      label: "Confirm-first",
+      label: "Xác nhận trước",
       value: playbookDeck.summary.confirmFirst,
       detail: "Luồng cần chủ quán duyệt",
       icon: ShieldCheck,
@@ -347,7 +345,7 @@ export default async function AiAutomationPage() {
     {
       label: "Live queue",
       value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.length : "--",
-      detail: workflowRunsResult.schemaReady ? "Workflow đang mở" : "Cần schema",
+      detail: workflowRunsResult.schemaReady ? "Luồng đang mở" : "Cần schema",
       icon: PlayCircle,
       tone: workflowRunsResult.schemaReady ? "green" : "yellow"
     },
@@ -366,20 +364,20 @@ export default async function AiAutomationPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Bật workflow cho tồn kho thấp, giờ vắng, thiếu nhân sự, khách quay lại và bất thường vận hành"
+      subtitle="Luồng tự động hóa cho kho, doanh thu, nhân sự và khách quay lại"
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
         <AiOwnerActionLauncher variant="automation" />
         <AiOperatingLoop
-          title="Luồng tự động hóa vận hành"
-          subtitle="Automation không chạy rời rạc: playbook tạo tín hiệu, workflow vào hàng duyệt, apply layer tạo nháp/checklist rồi mới hoàn tất."
-          primaryAction={{ href: "/dashboard/ai-execution", label: "Duyệt workflow" }}
+          title="Tự động hóa hôm nay"
+          subtitle="Luồng có tín hiệu rõ, cần duyệt trước khi AI thao tác."
+          primaryAction={{ href: "/dashboard/ai-execution", label: "Duyệt luồng" }}
           secondaryAction={{ href: "/dashboard/ai-apply", label: "Áp dụng AI" }}
           stages={[
             { id: "detect", value: playbookDeck.summary.total, detail: "Playbook theo dõi kho, marketing, nhân sự, khách hàng", href: "/dashboard/ai-automation", tone: playbookDeck.summary.blocked ? "yellow" : "green", active: true },
-            { id: "approve", value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.filter((workflow) => workflow.lifecycle?.status !== "approved").length : "--", detail: "Workflow đang chờ quyết định", href: "/dashboard/ai-execution", tone: "yellow" },
-            { id: "act", value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.filter((workflow) => workflow.lifecycle?.status === "approved").length : "--", detail: "Workflow đã duyệt để xử lý", href: "/dashboard/ai-apply", tone: "green" },
+            { id: "approve", value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.filter((workflow) => workflow.lifecycle?.status !== "approved").length : "--", detail: "Luồng đang chờ duyệt", href: "/dashboard/ai-execution", tone: "yellow" },
+            { id: "act", value: workflowRunsResult.schemaReady ? workflowRunsResult.workflows.filter((workflow) => workflow.lifecycle?.status === "approved").length : "--", detail: "Luồng đã duyệt", href: "/dashboard/ai-apply", tone: "green" },
             { id: "verify", value: playbookDeck.summary.blocked, detail: "Thiếu provider, schema hoặc memory", href: "/dashboard/ai-control", tone: playbookDeck.summary.blocked ? "red" : "green" },
             { id: "audit", value: playbookDeck.summary.readyToAutomate, detail: "Luồng đủ nền để theo dõi định kỳ", href: "/dashboard/ai-production", tone: "blue" }
           ]}
@@ -400,7 +398,7 @@ export default async function AiAutomationPage() {
             </Link>
           </div>
           <Link href="/dashboard/ai-execution" className="dashboard-secondary-action">
-            Duyệt workflow
+            Duyệt luồng
             <ArrowRight size={15} />
           </Link>
         </div>
@@ -428,9 +426,9 @@ export default async function AiAutomationPage() {
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <WandSparkles size={15} />
-                Automation playbooks
+                Tự động hóa
               </p>
-              <h2 className="dashboard-section-title mt-1">Bản đồ tự động hóa theo luồng vận hành</h2>
+              <h2 className="dashboard-section-title mt-1">Luồng đang theo dõi</h2>
             </div>
             <Badge tone={playbookDeck.summary.blocked ? "yellow" : "green"}>
               {playbookDeck.summary.ready} ready
@@ -443,59 +441,7 @@ export default async function AiAutomationPage() {
           </div>
         </section>
 
-        <section className="dashboard-ai-split-grid grid gap-3 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)]">
-          <aside className="dashboard-panel p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="dashboard-eyebrow inline-flex items-center gap-2">
-                  <Route size={15} />
-                  Safety model
-                </p>
-                <h2 className="dashboard-section-title mt-1">Nguyên tắc triển khai</h2>
-              </div>
-              <Badge>Production</Badge>
-            </div>
-            <div className="mt-3 grid gap-2">
-              {[
-                ["Không tự trừ tiền hoặc sửa đơn", "AI chỉ mở checklist và yêu cầu xác nhận ở các hành động có rủi ro."],
-                ["Branch isolation", "Tất cả queue và playbook lấy dữ liệu theo restaurant session hiện tại."],
-                ["Explainable first", "Mỗi playbook phải có trigger, outcome, blocker và next action rõ ràng."],
-                ["Fallback human", "Luồng support, staffing và payment giữ manual/confirm-first cho tới khi có audit đủ dày."]
-              ].map(([title, detail]) => (
-                <div key={title} className="rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
-                  <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
-                  <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{detail}</p>
-                </div>
-              ))}
-            </div>
-          </aside>
-          <LiveWorkflowQueue workflows={workflowRunsResult.workflows} schemaReady={workflowRunsResult.schemaReady} />
-        </section>
-
-        <section className="dashboard-panel p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="dashboard-eyebrow inline-flex items-center gap-2">
-                <Clock3 size={15} />
-                Rollout map
-              </p>
-              <h2 className="dashboard-section-title mt-1">Đợt nâng cấp tiếp theo của tự động hóa</h2>
-            </div>
-            <Badge tone="blue">Next wave</Badge>
-          </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            {[
-              ["Rule builder", "Cho admin bật/tắt playbook, chỉnh ngưỡng giờ thấp điểm, tồn kho, SLA phục vụ."],
-              ["Approval inbox", "Gom recommendation, workflow và action checkpoint thành một hàng đợi duyệt duy nhất."],
-              ["Execution audit", "Lưu lịch sử AI đề xuất, ai duyệt, thay đổi nào đã được áp dụng và rollback note."]
-            ].map(([title, detail]) => (
-              <article key={title} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-                <p className="text-sm font-bold text-[var(--foreground)]">{title}</p>
-                <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{detail}</p>
-              </article>
-            ))}
-          </div>
-        </section>
+        <LiveWorkflowQueue workflows={workflowRunsResult.workflows} schemaReady={workflowRunsResult.schemaReady} />
       </div>
     </AdminShell>
   );

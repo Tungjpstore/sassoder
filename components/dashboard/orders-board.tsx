@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, CheckCircle2, ChefHat, Clock3, Filter, Flame, LocateFixed, MapPinned, MoreVertical, Navigation, QrCode, RadioTower, ReceiptText, RefreshCw, Search, ShoppingBag, TimerReset, Trash2, Truck, UserPlus, WalletCards, XCircle } from "lucide-react";
 import { buildDirectionsUrl, RouteMiniMap } from "@/components/customer/route-mini-map";
 import { useConfirmDialog } from "@/components/dashboard/confirm-dialog";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
@@ -1387,6 +1388,108 @@ export function OrdersBoard({
     return () => document.removeEventListener("keydown", handleShortcut);
   }, [hasSelectedGroup, selectedPaymentOrderId, shortcutPendingOrderId, shortcutServingOrderId]);
 
+  const selectedGroupDrawerFooter = selectedGroup ? (
+    <div className="dashboard-drawer-action-footer">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-semibold uppercase text-[var(--muted-foreground)]">
+            {selectedGroup.tableName}
+          </span>
+          <span className="metric-number mt-0.5 block text-lg font-semibold text-[var(--foreground)]">
+            {formatVnd(selectedGroup.total)}
+          </span>
+        </span>
+        <Badge tone={selectedGroup.overdueCount > 0 ? "red" : groupNeedsPayment(selectedGroup) ? "yellow" : statusTone(selectedGroup.status)}>
+          {selectedGroup.overdueCount > 0 ? "Quá giờ" : groupNeedsPayment(selectedGroup) ? "Chờ tiền" : orderStatusLabel(selectedGroup.status)}
+        </Badge>
+      </div>
+
+      <div className="mt-2 flex flex-wrap gap-2">
+        {shortcutPendingOrder ? (
+          <Button
+            type="button"
+            onClick={() => mutateOrder(shortcutPendingOrder.id, "accept", { minutes: 15 })}
+            disabled={mutatingOrderId === shortcutPendingOrder.id}
+            aria-keyshortcuts="A"
+            title={shortcutPendingActionCopy?.acceptTitle ?? "Nhận đơn nhanh"}
+            className="min-h-12 flex-1 shadow-none hover:shadow-none"
+          >
+            <Check size={16} />
+            {shortcutPendingActionCopy?.acceptLabel ?? "Nhận đơn"}
+          </Button>
+        ) : shortcutServingOrder ? (
+          <Button
+            type="button"
+            onClick={() => mutateOrder(shortcutServingOrder.id, "complete")}
+            disabled={mutatingOrderId === shortcutServingOrder.id}
+            aria-keyshortcuts="S"
+            title="Đánh dấu đã phục vụ"
+            className="min-h-12 flex-1 shadow-none hover:shadow-none"
+          >
+            <ChefHat size={16} />
+            Đã phục vụ
+          </Button>
+        ) : selectedPaymentOrder ? (
+          <Button
+            type="button"
+            onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
+            disabled={mutatingOrderId === selectedPaymentOrder.id}
+            aria-keyshortcuts="P"
+            title="Xác nhận thanh toán"
+            className="min-h-12 flex-1 shadow-none hover:shadow-none"
+          >
+            <CheckCircle2 size={16} />
+            Xác nhận thanh toán
+          </Button>
+        ) : null}
+
+        {shortcutServingOrder ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => mutateOrder(shortcutServingOrder.id, "timer", { minutes: 10 })}
+            disabled={mutatingOrderId === shortcutServingOrder.id}
+            aria-keyshortcuts="T"
+            title="Gia hạn bếp"
+            className="min-h-12 shadow-none hover:shadow-none"
+          >
+            <TimerReset size={16} />
+            +10 phút
+          </Button>
+        ) : null}
+
+        {selectedPaymentOrder && (shortcutPendingOrder || shortcutServingOrder) ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
+            disabled={mutatingOrderId === selectedPaymentOrder.id}
+            aria-keyshortcuts="P"
+            title="Xác nhận thanh toán"
+            className="min-h-12 shadow-none hover:shadow-none"
+          >
+            <CheckCircle2 size={16} />
+            Thu tiền
+          </Button>
+        ) : null}
+
+        {shortcutPendingOrder ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => mutateOrder(shortcutPendingOrder.id, "cancel")}
+            disabled={mutatingOrderId === shortcutPendingOrder.id}
+            title="Từ chối đơn"
+            className="min-h-12 shadow-none hover:shadow-none"
+          >
+            <XCircle size={16} />
+            {shortcutPendingActionCopy?.rejectLabel ?? "Từ chối"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="dashboard-operations-stack dashboard-orders-workspace grid gap-3">
       {confirmDialog}
@@ -1876,34 +1979,23 @@ export function OrdersBoard({
       </section>
 
       {selectedGroup ? (
-        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
-          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng chi tiết đơn" onClick={() => setSelectedGroupId(null)} />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="order-detail-drawer-title"
-            className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[520px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
-              <div className="min-w-0">
-                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Chi tiết hóa đơn</p>
-                <h2 id="order-detail-drawer-title" className="dashboard-section-title mt-1 truncate">#{selectedGroup.id.slice(0, 10).toUpperCase()}</h2>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Badge tone={statusTone(selectedGroup.status)}>{orderStatusLabel(selectedGroup.status)}</Badge>
-                  {selectedGroup.overdueCount > 0 && <Badge tone="yellow">{selectedGroup.overdueCount} đơn quá giờ</Badge>}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedGroupId(null)}
-                className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)]"
-                aria-label="Đóng chi tiết đơn"
-              >
-                <XCircle size={18} />
-              </button>
-            </div>
+        <DashboardDrawer
+          open
+          onClose={() => setSelectedGroupId(null)}
+          title={`#${selectedGroup.id.slice(0, 10).toUpperCase()}`}
+          subtitle="Chi tiết hóa đơn"
+          closeLabel="Đóng chi tiết đơn"
+          width="md"
+          headerMeta={
+            <>
+              <Badge tone={statusTone(selectedGroup.status)}>{orderStatusLabel(selectedGroup.status)}</Badge>
+              {selectedGroup.overdueCount > 0 ? <Badge tone="yellow">{selectedGroup.overdueCount} đơn quá giờ</Badge> : null}
+            </>
+          }
+          footer={selectedGroupDrawerFooter}
+        >
             {(error || notice) && (
-              <div className="grid shrink-0 gap-2 px-4 pt-3 sm:px-5">
+              <div className="mb-3 grid gap-2">
                 {error ? (
                   <div role="alert" className="rounded-xl border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
                     {error}
@@ -1917,7 +2009,6 @@ export function OrdersBoard({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-sm">
                 <div>
                   <p className="font-semibold text-[var(--foreground)]">{selectedGroup.tableName}</p>
@@ -2365,109 +2456,7 @@ export function OrdersBoard({
                   <span className="metric-number text-2xl font-semibold text-[var(--accent)]">{formatVnd(selectedGroup.total)}</span>
                 </div>
               </div>
-            </div>
-
-            <div className="shrink-0 border-t border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_92%,transparent)] px-4 py-3 backdrop-blur-xl sm:px-5">
-              <div className="flex items-center justify-between gap-3">
-                <span className="min-w-0">
-                  <span className="block truncate text-xs font-semibold uppercase text-[var(--muted-foreground)]">
-                    {selectedGroup.tableName}
-                  </span>
-                  <span className="metric-number mt-0.5 block text-lg font-semibold text-[var(--foreground)]">
-                    {formatVnd(selectedGroup.total)}
-                  </span>
-                </span>
-                <Badge tone={selectedGroup.overdueCount > 0 ? "red" : groupNeedsPayment(selectedGroup) ? "yellow" : statusTone(selectedGroup.status)}>
-                  {selectedGroup.overdueCount > 0 ? "Quá giờ" : groupNeedsPayment(selectedGroup) ? "Chờ tiền" : orderStatusLabel(selectedGroup.status)}
-                </Badge>
-              </div>
-
-              <div className="mt-2 flex flex-wrap gap-2">
-                {shortcutPendingOrder ? (
-                  <Button
-                    type="button"
-                    onClick={() => mutateOrder(shortcutPendingOrder.id, "accept", { minutes: 15 })}
-                    disabled={mutatingOrderId === shortcutPendingOrder.id}
-                    aria-keyshortcuts="A"
-                    title={shortcutPendingActionCopy?.acceptTitle ?? "Nhận đơn nhanh"}
-                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
-                  >
-                    <Check size={16} />
-                    {shortcutPendingActionCopy?.acceptLabel ?? "Nhận đơn"}
-                  </Button>
-                ) : shortcutServingOrder ? (
-                  <Button
-                    type="button"
-                    onClick={() => mutateOrder(shortcutServingOrder.id, "complete")}
-                    disabled={mutatingOrderId === shortcutServingOrder.id}
-                    aria-keyshortcuts="S"
-                    title="Đánh dấu đã phục vụ"
-                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
-                  >
-                    <ChefHat size={16} />
-                    Đã phục vụ
-                  </Button>
-                ) : selectedPaymentOrder ? (
-                  <Button
-                    type="button"
-                    onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
-                    disabled={mutatingOrderId === selectedPaymentOrder.id}
-                    aria-keyshortcuts="P"
-                    title="Xác nhận thanh toán"
-                    className="min-h-12 flex-1 shadow-none hover:shadow-none"
-                  >
-                    <CheckCircle2 size={16} />
-                    Xác nhận thanh toán
-                  </Button>
-                ) : null}
-
-                {shortcutServingOrder ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => mutateOrder(shortcutServingOrder.id, "timer", { minutes: 10 })}
-                    disabled={mutatingOrderId === shortcutServingOrder.id}
-                    aria-keyshortcuts="T"
-                    title="Gia hạn bếp"
-                    className="min-h-12 shadow-none hover:shadow-none"
-                  >
-                    <TimerReset size={16} />
-                    +10 phút
-                  </Button>
-                ) : null}
-
-                {selectedPaymentOrder && (shortcutPendingOrder || shortcutServingOrder) ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => mutateOrder(selectedPaymentOrder.id, "confirm-payment")}
-                    disabled={mutatingOrderId === selectedPaymentOrder.id}
-                    aria-keyshortcuts="P"
-                    title="Xác nhận thanh toán"
-                    className="min-h-12 shadow-none hover:shadow-none"
-                  >
-                    <CheckCircle2 size={16} />
-                    Thu tiền
-                  </Button>
-                ) : null}
-
-                {shortcutPendingOrder ? (
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => mutateOrder(shortcutPendingOrder.id, "cancel")}
-                    disabled={mutatingOrderId === shortcutPendingOrder.id}
-                    title="Từ chối đơn"
-                    className="min-h-12 shadow-none hover:shadow-none"
-                  >
-                    <XCircle size={16} />
-                    {shortcutPendingActionCopy?.rejectLabel ?? "Từ chối"}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </aside>
-        </div>
+        </DashboardDrawer>
       ) : null}
     </div>
   );

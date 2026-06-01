@@ -1050,7 +1050,7 @@ export const staffSessionForceLogoutSchema = z
 
 export const staffAttendanceQrTokenCreateSchema = z.object({
   branchId: z.string().uuid(),
-  expiresInMinutes: z.coerce.number().int().min(1).max(15).default(5),
+  expiresInMinutes: z.coerce.number().int().min(1).max(5).default(1),
   mode: z.enum(["single_use", "daily_branch"]).default("daily_branch")
 });
 
@@ -1272,6 +1272,15 @@ function hasPartialCoordinatePair(value: { lat?: number; lng?: number }) {
   return (value.lat === undefined && value.lng !== undefined) || (value.lat !== undefined && value.lng === undefined);
 }
 
+function isLocationBoundAttendanceSource(source: "gps" | "qr" | "wifi" | "manual" | "offline_sync") {
+  return source !== "manual";
+}
+
+function hasAttendanceDeviceFingerprint(value: { deviceInfo?: Record<string, unknown> }) {
+  const fingerprint = value.deviceInfo?.deviceFingerprint ?? value.deviceInfo?.fingerprint ?? value.deviceInfo?.device_fingerprint;
+  return typeof fingerprint === "string" && fingerprint.trim().length >= 12;
+}
+
 const attendanceCaptureBaseSchema = z.object({
   staffMemberId: z.string().uuid().optional().or(z.literal("")),
   branchId: z.string().uuid().optional().or(z.literal("")),
@@ -1299,11 +1308,27 @@ export const attendanceClockInSchema = attendanceCaptureBaseSchema
       });
     }
 
-    if (value.source === "gps" && (value.lat === undefined || value.lng === undefined)) {
+    if (isLocationBoundAttendanceSource(value.source) && (value.lat === undefined || value.lng === undefined)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Chấm công GPS cần vị trí thiết bị.",
         path: ["lat"]
+      });
+    }
+
+    if (isLocationBoundAttendanceSource(value.source) && value.accuracyMeters === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Chấm công GPS cần độ chính xác vị trí.",
+        path: ["accuracyMeters"]
+      });
+    }
+
+    if (value.source !== "manual" && !hasAttendanceDeviceFingerprint(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Chấm công cần fingerprint thiết bị để chống gian lận.",
+        path: ["deviceInfo"]
       });
     }
 
@@ -1330,11 +1355,27 @@ export const attendanceClockOutSchema = attendanceCaptureBaseSchema
       });
     }
 
-    if (value.source === "gps" && (value.lat === undefined || value.lng === undefined)) {
+    if (isLocationBoundAttendanceSource(value.source) && (value.lat === undefined || value.lng === undefined)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Kết ca GPS cần vị trí thiết bị.",
         path: ["lat"]
+      });
+    }
+
+    if (isLocationBoundAttendanceSource(value.source) && value.accuracyMeters === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Kết ca GPS cần độ chính xác vị trí.",
+        path: ["accuracyMeters"]
+      });
+    }
+
+    if (value.source !== "manual" && !hasAttendanceDeviceFingerprint(value)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Kết ca cần fingerprint thiết bị để chống gian lận.",
+        path: ["deviceInfo"]
       });
     }
 

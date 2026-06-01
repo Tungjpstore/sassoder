@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Banknote, Bike, Clock3, Compass, ExternalLink, MapPin, PackageCheck, QrCode, Settings2, ShoppingBag, Truck, X } from "lucide-react";
-import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { ArrowRight, Banknote, Bike, Clock3, Compass, ExternalLink, MapPin, PackageCheck, QrCode, Settings2, ShoppingBag, Truck } from "lucide-react";
 import { DashboardMetricCard } from "@/components/dashboard/primitives";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
@@ -144,7 +143,7 @@ function onlineOrderAgeMinutes(value: string, nowMs: number) {
   return Math.max(0, Math.floor((nowMs - new Date(value).getTime()) / 60_000));
 }
 
-function OnlineIntakeCommandCenter({
+function OnlineIntakeStatusPanel({
   restaurant,
   stats,
   recentOrders,
@@ -223,10 +222,10 @@ function OnlineIntakeCommandCenter({
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="dashboard-eyebrow">Online intake</p>
+              <p className="dashboard-eyebrow">Bán online</p>
               <h2 className="dashboard-section-title mt-1">Đầu vào pickup/delivery</h2>
             </div>
-            <Badge tone={intakeTone}>Ready {intakeScore}/100</Badge>
+            <Badge tone={intakeTone}>Sẵn sàng {intakeScore}/100</Badge>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2">
             <div className="rounded-lg bg-[var(--soft-surface)] p-3">
@@ -256,7 +255,7 @@ function OnlineIntakeCommandCenter({
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {checks.map((item) => (
-                <button key={item.id} type="button" onClick={item.action} className="flex min-h-12 items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
+                <button key={item.id} type="button" onClick={item.action} className="flex min-h-[48px] items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left transition hover:border-[var(--primary)]">
                   <span className="truncate text-xs font-semibold text-[var(--foreground)]">{item.label}</span>
                   <Badge tone={item.done ? "green" : "yellow"}>{item.value}</Badge>
                 </button>
@@ -309,17 +308,10 @@ export function OnlineWorkspace({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [drawer, setDrawerState] = useState<DrawerMode>(() => readDrawerMode(searchParams.get("panel")));
-  const settingsPanelRef = useRef<HTMLDivElement | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const readiness = useMemo(() => readinessItems({ restaurant, mapboxReady, menuItems, categories }), [restaurant, mapboxReady, menuItems, categories]);
   const topOrders = recentOrders.slice(0, 4);
-
-  useDialogFocusTrap({
-    containerRef: settingsPanelRef,
-    onClose: () => setDrawer("closed"),
-    open: drawer === "settings"
-  });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -391,10 +383,8 @@ export function OnlineWorkspace({
                 <Badge tone={restaurant.online_ordering_enabled ? "green" : "yellow"}>
                   {restaurant.online_ordering_enabled ? "Đang nhận khách online" : "Đang tắt bán online"}
                 </Badge>
-                <h1 className="dashboard-page-title mt-3">Bán online gọn nhẹ</h1>
-                <p className="dashboard-body-copy mt-2 max-w-2xl">
-                  Một nơi để bật link đặt món, cấu hình giao hàng, chia sẻ QR và theo dõi đơn khách đến lấy hoặc giao tận nơi.
-                </p>
+                <h1 className="dashboard-page-title mt-3">Bán online</h1>
+                <p className="sr-only">Bật link đặt món, cấu hình giao hàng, chia sẻ QR và theo dõi đơn online.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="secondary" onClick={() => setDrawer("settings")}>
@@ -422,7 +412,7 @@ export function OnlineWorkspace({
             </div>
           </section>
 
-          <OnlineIntakeCommandCenter
+          <OnlineIntakeStatusPanel
             restaurant={restaurant}
             stats={stats}
             recentOrders={recentOrders}
@@ -440,8 +430,7 @@ export function OnlineWorkspace({
             <div className="dashboard-panel p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-[var(--foreground)]">Đơn mới cần nhìn nhanh</h2>
-                  <p className="mt-1 text-sm text-[var(--muted-foreground)]">Giữ cho màn này gọn, chỉ hiển thị những đơn mới nhất và đáng chú ý.</p>
+                  <h2 className="text-lg font-semibold text-[var(--foreground)]">Đơn mới</h2>
                 </div>
                 <button type="button" onClick={() => setDrawer("orders")} className="inline-flex min-h-11 items-center text-sm font-semibold text-[var(--primary)]">
                   Xem đầy đủ
@@ -494,7 +483,7 @@ export function OnlineWorkspace({
             <div className="dashboard-panel p-4">
               <div className="flex items-center gap-2">
                 <Compass className="text-[var(--primary)]" size={18} />
-                <h2 className="text-lg font-semibold text-[var(--foreground)]">Checklist vận hành</h2>
+                <h2 className="text-lg font-semibold text-[var(--foreground)]">Điều kiện bán online</h2>
               </div>
               <div className="mt-4 grid gap-2">
                 {readiness.map((item) => (
@@ -503,7 +492,7 @@ export function OnlineWorkspace({
                       <p className="text-sm font-semibold text-[var(--foreground)]">{item.label}</p>
                       <span className="text-xs font-semibold text-[var(--primary)]">{item.value}</span>
                     </div>
-                    <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{item.helper}</p>
+                    <p className="sr-only">{item.helper}</p>
                   </div>
                 ))}
               </div>
@@ -579,55 +568,23 @@ export function OnlineWorkspace({
       </div>
 
       {drawer === "settings" ? (
-        <div
-          ref={settingsPanelRef}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="online-workspace-settings-title"
-          aria-describedby="online-workspace-settings-description"
-          tabIndex={-1}
-          className="fixed inset-0 z-[var(--z-dashboard-modal)] flex h-dvh flex-col overflow-hidden bg-[var(--background)] text-[var(--foreground)] focus:outline-none"
+        <DashboardDrawer
+          open
+          onClose={() => setDrawer("closed")}
+          title="Cấu hình bán online"
+          subtitle="Bán online"
+          width="lg"
+          closeLabel="Đóng cấu hình bán online"
+          contentClassName="px-3 sm:px-4"
         >
-          <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--surface)_94%,white_6%)] px-4 py-3 shadow-[0_10px_30px_rgba(15,23,18,0.08)] backdrop-blur-xl md:px-6">
-            <div className="flex min-w-0 items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setDrawer("closed")}
-                className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--primary)] transition hover:bg-[var(--soft-surface)]"
-              >
-                <ArrowLeft size={16} aria-hidden="true" />
-                Quay lại
-              </button>
-              <span className="dashboard-stat-icon h-10 w-10 shrink-0">
-                <Settings2 size={18} aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Online workspace</p>
-                <h2 id="online-workspace-settings-title" className="dashboard-section-title truncate">Cấu hình bán online</h2>
-                <p id="online-workspace-settings-description" className="mt-0.5 truncate text-sm font-medium text-[var(--muted-foreground)]">Màn hình đầy đủ cho map, vùng giao và phí ship</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setDrawer("closed")}
-              className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--muted-foreground)] transition hover:bg-[var(--soft-surface)] hover:text-[var(--primary)]"
-              aria-label="Thu nhỏ cấu hình bán online"
-            >
-              <X size={18} aria-hidden="true" />
-            </button>
-          </header>
-          <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 md:px-6 md:py-5">
-            <div className="mx-auto w-full max-w-[1680px]">
-              <OrderingSettingsForm settings={restaurant} onlineUrl={onlineUrl} />
-            </div>
-          </main>
-        </div>
+          <OrderingSettingsForm settings={restaurant} onlineUrl={onlineUrl} compact />
+        </DashboardDrawer>
       ) : drawer !== "closed" ? (
         <DashboardDrawer
           open
           onClose={() => setDrawer("closed")}
           title={drawerTitle(drawer)}
-          subtitle="Online workspace"
+          subtitle="Bán online"
           width="md"
         >
           {drawer === "qr" ? (

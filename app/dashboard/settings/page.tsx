@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { requestSubscriptionPaymentAction, updateReportScheduleAction, updateRestaurantSettingsAction } from "@/app/dashboard/actions";
 import { BillingWorkspace } from "@/components/billing/billing-workspace";
+import { SUBSCRIPTION_EXPIRY_NOTICE_DAYS } from "@/lib/billing/subscription-warning";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AiSetupStudio } from "@/components/dashboard/ai-setup-studio";
 import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-controls";
@@ -878,7 +879,7 @@ function BillingReadinessItem({ done, label, detail }: { done: boolean; label: s
   );
 }
 
-function BillingCommandCenter({
+function BillingStatusPanel({
   usable,
   daysLeft,
   accessStatusLabel,
@@ -908,7 +909,7 @@ function BillingCommandCenter({
   actionDetail: string;
 }) {
   const quotaPressure = (aiPercent ?? 0) >= 85 || (exportPercent ?? 0) >= 85;
-  const renewalReady = daysLeft > 7 || hasPendingPayment;
+  const renewalReady = daysLeft > SUBSCRIPTION_EXPIRY_NOTICE_DAYS || hasPendingPayment;
   const billingClean = failedCount === 0 && waitingCount === 0;
   const readinessScore = Math.min(
     100,
@@ -919,11 +920,8 @@ function BillingCommandCenter({
     <section className="mb-4 rounded-[22px] border border-[#E0E9DD] bg-[linear-gradient(135deg,#F3FAF4,#FFF7EB)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0F6B3F]">Billing readiness</p>
-          <h3 className="mt-1 text-base font-black text-[#151915]">Trung tâm quyết định gói & thanh toán</h3>
-          <p className="mt-1 max-w-2xl text-xs font-semibold leading-5 text-[#667069]">
-            Gom trạng thái truy cập, gia hạn, quota AI/export và lịch sử thanh toán để chủ quán biết bước tiếp theo ngay.
-          </p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0F6B3F]">Gói & thanh toán</p>
+          <h3 className="mt-1 text-base font-black text-[#151915]">Tình trạng gói hiện tại</h3>
         </div>
         <div className="grid min-w-[180px] grid-cols-[76px_minmax(0,1fr)] gap-2 rounded-[18px] border border-[#CFE8D8] bg-white p-3">
           <div>
@@ -947,7 +945,7 @@ function BillingCommandCenter({
           <BillingReadinessItem
             done={renewalReady}
             label="Gia hạn chu kỳ"
-            detail={hasPendingPayment ? "Đã có yêu cầu thanh toán chờ xác nhận." : daysLeft > 7 ? "Chưa cần can thiệp trước ca vận hành." : "Sắp hết hạn, nên tạo VietQR gia hạn."}
+            detail={hasPendingPayment ? "Đã có yêu cầu thanh toán chờ xác nhận." : daysLeft > SUBSCRIPTION_EXPIRY_NOTICE_DAYS ? "Chưa cần can thiệp trước ca vận hành." : "Sắp hết hạn, nên tạo VietQR gia hạn."}
           />
           <BillingReadinessItem
             done={!quotaPressure}
@@ -968,7 +966,7 @@ function BillingCommandCenter({
           {pendingChangeSummary ? (
             <p className="mt-3 rounded-xl bg-[#FFF5E8] px-3 py-2 text-[11px] font-bold leading-4 text-[#9B5417]">{pendingChangeSummary}</p>
           ) : null}
-          <Link href={actionHref} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[10px] bg-[#075C38] px-4 text-sm font-black text-white transition hover:bg-[#064D30]">
+          <Link href={actionHref} className="mt-3 inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#075C38] px-4 text-sm font-black text-white transition hover:bg-[#064D30]">
             Đi tới bước xử lý
             <ArrowRight size={15} aria-hidden="true" />
           </Link>
@@ -1035,7 +1033,7 @@ function SubscriptionSettingsPanel({
           label: "Tạo hoặc hoàn tất thanh toán để mở lại quyền",
           detail: "Gói hiện tại chưa usable, ưu tiên xử lý trước khi vận hành ca."
         }
-      : billing.daysLeft <= 7
+      : billing.daysLeft <= SUBSCRIPTION_EXPIRY_NOTICE_DAYS
         ? {
             href: billingStepHref("payment"),
             label: "Gia hạn trước khi hết chu kỳ",
@@ -1078,8 +1076,8 @@ function SubscriptionSettingsPanel({
 
   if (activeStep === "current") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
-        <div className="grid min-h-[520px] gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
+        <div className="grid min-h-0 gap-5 lg:min-h-[520px] xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid content-start gap-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
@@ -1180,7 +1178,7 @@ function SubscriptionSettingsPanel({
     );
   } else if (activeStep === "compare") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-base font-black text-[#151915]">So sánh gói</h3>
           <div className="inline-flex rounded-full border border-[#E3DBCF] bg-[#F8F3EA] p-1 text-[11px] font-black">
@@ -1263,9 +1261,9 @@ function SubscriptionSettingsPanel({
     );
   } else if (activeStep === "payment") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
         {pending ? (
-          <div className="grid min-h-[520px] items-center gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid min-h-0 items-center gap-6 lg:min-h-[520px] lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="grid gap-5">
               <div>
                 <h3 className="text-xl font-black text-[#151915]">Thanh toán gói {planShortName(pendingPlan ?? billing.currentPlan)}</h3>
@@ -1301,7 +1299,7 @@ function SubscriptionSettingsPanel({
             </div>
           </div>
         ) : (
-          <div className="grid min-h-[520px] content-center gap-4 text-center">
+          <div className="grid min-h-[280px] content-center gap-4 text-center lg:min-h-[520px]">
             <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[#EAF7EF] text-[#0F6B3F]">
               <QrCode size={24} aria-hidden="true" />
             </div>
@@ -1327,8 +1325,8 @@ function SubscriptionSettingsPanel({
     );
   } else if (activeStep === "processing") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
-        <div className="grid min-h-[520px] content-center gap-6">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
+        <div className="grid min-h-[320px] content-center gap-6 lg:min-h-[520px]">
           <div className="mx-auto grid h-28 w-28 place-items-center rounded-full bg-[#EAF7EF] text-[#0F6B3F] shadow-[inset_0_0_0_14px_#D8F0E1]">
             <Hourglass size={38} aria-hidden="true" />
           </div>
@@ -1360,7 +1358,7 @@ function SubscriptionSettingsPanel({
     );
   } else if (activeStep === "history") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
         <div className="mb-5 flex flex-wrap gap-2 text-[11px] font-black">
           <span className="rounded-full border border-[#CFE8D8] bg-[#EAF7EF] px-3 py-1.5 text-[#0F6B3F]">Tất cả {billing.paymentRequests.length}</span>
           <span className="rounded-full border border-[#E3DBCF] bg-white px-3 py-1.5 text-[#667069]">Thành công {confirmedCount}</span>
@@ -1401,7 +1399,7 @@ function SubscriptionSettingsPanel({
             </table>
           </div>
         ) : (
-          <div className="grid min-h-[430px] place-items-center rounded-[18px] border border-dashed border-[#DED6CA] bg-[#FFFDF8] text-center">
+          <div className="grid min-h-[260px] place-items-center rounded-[18px] border border-dashed border-[#DED6CA] bg-[#FFFDF8] text-center lg:min-h-[430px]">
             <div>
               <ReceiptText size={34} className="mx-auto text-[#9A9287]" aria-hidden="true" />
               <p className="mt-3 text-sm font-black text-[#151915]">Chưa có giao dịch</p>
@@ -1413,9 +1411,9 @@ function SubscriptionSettingsPanel({
     );
   } else if (activeStep === "detail") {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
         {selectedPayment ? (
-          <div className="grid min-h-[520px] gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="grid min-h-0 gap-5 lg:min-h-[520px] lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="grid content-start gap-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -1454,7 +1452,7 @@ function SubscriptionSettingsPanel({
             </aside>
           </div>
         ) : (
-          <div className="grid min-h-[520px] place-items-center text-center">
+          <div className="grid min-h-[280px] place-items-center text-center lg:min-h-[520px]">
             <div>
               <ReceiptText size={34} className="mx-auto text-[#9A9287]" aria-hidden="true" />
               <p className="mt-3 text-sm font-black text-[#151915]">Chưa có chi tiết giao dịch</p>
@@ -1466,8 +1464,8 @@ function SubscriptionSettingsPanel({
     );
   } else {
     pageContent = (
-      <BillingSurface className="h-full min-h-[520px] overflow-y-auto p-5 lg:p-6">
-        <div className="grid min-h-[520px] items-center gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
+        <div className="grid min-h-0 items-center gap-6 lg:min-h-[520px] lg:grid-cols-[360px_minmax(0,1fr)]">
           <div className="rounded-[22px] border border-[#E8E0D5] bg-[#FFF9EF] p-5 text-center">
             <SoftPill className="mx-auto border-[#F3D3AA] bg-[#FFF0DB] text-[#E37A1F]">
               <Crown size={13} className="mr-1" aria-hidden="true" />
@@ -1519,7 +1517,7 @@ function SubscriptionSettingsPanel({
   }
 
   return (
-    <section className="billing-flow-shell dashboard-operations-stack flex min-h-[calc(100dvh-132px)] flex-col rounded-[30px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:p-6">
+    <section className="billing-flow-shell dashboard-operations-stack flex min-h-0 flex-col rounded-[24px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:min-h-[calc(100dvh-132px)] lg:rounded-[30px] lg:p-6">
       {billingError ? (
         <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-[#F4D7AF] bg-[#FFF5E8] p-4 text-sm font-semibold leading-6 text-[#9B5417]">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -1541,7 +1539,7 @@ function SubscriptionSettingsPanel({
                 key={step.key}
                 href={billingStepHref(step.key, step.key === "detail" ? detailPaymentId : undefined)}
                 className={cn(
-                  "inline-flex min-h-12 min-w-[145px] shrink-0 items-center gap-2 rounded-[14px] border px-3 text-left transition",
+                  "inline-flex min-h-[56px] min-w-[145px] shrink-0 items-center gap-2 rounded-[14px] border px-3 text-left transition",
                   active ? "border-[#0F6B3F] bg-[#EAF7EF] text-[#0F6B3F]" : "border-transparent bg-[#FAF8F2] text-[#687169] hover:border-[#DCD3C6] hover:bg-white"
                 )}
               >
@@ -1556,7 +1554,7 @@ function SubscriptionSettingsPanel({
         </div>
       </nav>
 
-      <BillingCommandCenter
+      <BillingStatusPanel
         usable={billing.usable}
         daysLeft={billing.daysLeft}
         accessStatusLabel={accessStatusLabel}
@@ -1572,7 +1570,7 @@ function SubscriptionSettingsPanel({
         actionDetail={billingAction.detail}
       />
 
-      <div className="billing-flow-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain">{pageContent}</div>
+      <div className="billing-flow-scroll min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">{pageContent}</div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         {previousStep ? (
@@ -1618,7 +1616,7 @@ function SettingsHomeGrid({
       <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="admin-hero-panel relative overflow-hidden px-4 py-4">
           <div className="relative z-[1]">
-            <p className="dashboard-eyebrow">Settings cockpit</p>
+            <p className="dashboard-eyebrow">Cài đặt</p>
             <h1 className="dashboard-page-title mt-1">Cài đặt vận hành</h1>
             <p className="dashboard-body-copy mt-1 max-w-2xl">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
 
@@ -1656,7 +1654,7 @@ function SettingsHomeGrid({
         </div>
 
         <aside className="dashboard-panel p-4">
-          <p className="dashboard-eyebrow">Next actions</p>
+          <p className="dashboard-eyebrow">Việc tiếp theo</p>
           <h2 className="dashboard-section-title mt-1">Việc nên làm tiếp</h2>
 
           <div className="mt-3 grid gap-2">

@@ -181,7 +181,7 @@ type DashboardClientProps = {
   };
   showActivationPanel: boolean;
   priorityCards: ReadonlyArray<PriorityCard>;
-  commandSignals: readonly any[];
+  shiftSignals: readonly any[];
   activationRunway: any;
 };
 
@@ -262,7 +262,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
     salesForecast,
     showActivationPanel,
     priorityCards,
-    commandSignals,
+  shiftSignals,
     activationRunway
   } = props;
 
@@ -507,7 +507,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
         </div>
       </section>
 
-      {/* ── Desktop Layout (Redesigned 3-Zone Control Plane) ── */}
+      {/* ── Desktop Layout ── */}
       <div className="hidden gap-3 md:grid">
         {/* Main Content (Full Width) */}
         <div className="flex flex-col gap-3 min-w-0">
@@ -520,7 +520,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
                 </div>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="dashboard-eyebrow text-[var(--primary)]">Live operations</p>
+                    <p className="dashboard-eyebrow text-[var(--primary)]">Đang vận hành</p>
                     <span className="inline-flex min-h-6 items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-[10px] font-black text-emerald-800">
                       <span className="h-1.5 w-1.5 animate-ping rounded-full bg-emerald-600" />
                       Ca đồng bộ
@@ -554,7 +554,7 @@ export function AdminDashboardClientLayout(props: DashboardClientProps) {
 
           {/* Compact Operational Metrics Bar */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3.5 py-2.5">
-            {commandSignals.map((signal, idx) => (
+            {shiftSignals.map((signal, idx) => (
               <span key={signal.label} className="inline-flex items-center gap-1.5">
                 {idx > 0 && <span className="text-[var(--border)]">·</span>}
                 <span className={`text-xs font-bold tabular-nums ${signal.tone === 'red' ? 'text-[var(--accent-strong)]' : signal.tone === 'orange' ? 'text-[var(--accent)]' : 'text-[var(--foreground)]'}`}>{signal.value}</span>

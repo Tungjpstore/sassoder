@@ -735,7 +735,7 @@ function StaffListScreen({ bundle, search, onSearch, onOpenMember, onAdd, onNavi
     .filter((branch) => branch.coverageScore < 80 || branch.lateCount > 0 || branch.pendingApprovals > 0 || branch.suspiciousCount > 0)
     .sort((left, right) => (right.pendingApprovals * 4 + right.lateCount * 3 + right.suspiciousCount * 5 + Math.max(0, 80 - right.coverageScore)) - (left.pendingApprovals * 4 + left.lateCount * 3 + left.suspiciousCount * 5 + Math.max(0, 80 - left.coverageScore)))
     .slice(0, 3);
-  const commandMetrics = [
+  const staffSignals = [
     { label: "Đang mở ca", value: openSessionCount, detail: "phiên cần kết ca đúng giờ", tone: openSessionCount ? "success" : "neutral", icon: Fingerprint, view: "attendance" as StaffView },
     { label: "Nhận ca", value: `${confirmedToday}/${todayAssignments.length || 0}`, detail: "ca hôm nay đã xác nhận", tone: todayAssignments.length && confirmedToday < todayAssignments.length ? "warning" : "success", icon: CalendarClock, view: "shifts" as StaffView },
     { label: "Rủi ro công", value: highRiskAttendanceCount, detail: "bản ghi cần kiểm tra", tone: highRiskAttendanceCount ? "danger" : "success", icon: ShieldCheck, view: "attendance" as StaffView },
@@ -760,7 +760,7 @@ function StaffListScreen({ bundle, search, onSearch, onOpenMember, onAdd, onNavi
               <StatusChip tone="brand">Đồng bộ thật</StatusChip>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
-              {commandMetrics.map((item) => {
+              {staffSignals.map((item) => {
                 const Icon = item.icon;
                 return (
                   <button key={item.label} type="button" onClick={() => onNavigate(item.view)} className="min-h-[104px] rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-3 text-left transition hover:border-[#0F4D3A]/35 hover:bg-[#F9F7F0]">
@@ -2091,7 +2091,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
   async function generateQr() {
     setUtilityError("");
     if (qrConfigBlocked) {
-      setUtilityError("Thiếu STAFF_ATTENDANCE_QR_SECRET nên production chưa thể tạo QR chấm công hằng ngày.");
+      setUtilityError("Thiếu STAFF_ATTENDANCE_QR_SECRET nên production chưa thể tạo QR chấm công an toàn.");
       return;
     }
     if (!activeBranch?.id) {
@@ -2099,9 +2099,9 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
       return;
     }
     try {
-      setQrState(await createStaffAttendanceQrToken({ branchId: activeBranch.id, mode: "daily_branch" }));
+      setQrState(await createStaffAttendanceQrToken({ branchId: activeBranch.id, expiresInMinutes: 1, mode: "daily_branch" }));
     } catch (error) {
-      setUtilityError(error instanceof Error ? error.message : "Không thể tạo QR hôm nay.");
+      setUtilityError(error instanceof Error ? error.message : "Không thể tạo QR chấm công.");
     }
   }
   async function registerWifi() {
@@ -2158,7 +2158,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
           <div className="space-y-4">
             <Field label="Chi nhánh kiểm soát"><select value={utilityBranchId} onChange={(event) => setUtilityBranchId(event.target.value)} className="staff-redesign-input"><option value="">Chọn chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field>
             <div className="grid grid-cols-2 gap-3">
-              <StaffButton onClick={generateQr} disabled={qrConfigBlocked} className="w-full"><Fingerprint size={18} /> QR ngày</StaffButton>
+              <StaffButton onClick={generateQr} disabled={qrConfigBlocked} className="w-full"><Fingerprint size={18} /> QR 90s</StaffButton>
               <StaffButton variant="secondary" onClick={registerWifi} className="w-full"><Wifi size={18} /> Lưu WiFi</StaffButton>
             </div>
             {qrConfigBlocked ? <p className="rounded-xl border border-[#A33D10]/20 bg-[#FFF0D9] px-3 py-2 text-sm font-bold text-[#A33D10]">Thiếu QR secret cho production.</p> : null}
@@ -2168,9 +2168,9 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
             <div className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.1em] text-[#0F4D3A]">QR theo ngày</p>
-                  <h2 className="mt-1 text-xl font-black text-[#2B2B2B]">Mã chấm công theo ngày</h2>
-                  <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Reset theo ngày và theo chi nhánh để giảm dùng lại mã cũ.</p>
+                  <p className="text-xs font-black uppercase tracking-[0.1em] text-[#0F4D3A]">QR ngắn hạn</p>
+                  <h2 className="mt-1 text-xl font-black text-[#2B2B2B]">Mã chấm công 90 giây</h2>
+                  <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Mỗi lần tạo sẽ đổi mã mới theo chi nhánh để giảm chia sẻ mã.</p>
                 </div>
                 <StatusChip tone={qrState ? "success" : "neutral"}>{qrState ? "Đã tạo" : "Chưa tạo"}</StatusChip>
               </div>
@@ -2184,7 +2184,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
                     <div className="mt-3 flex items-center gap-2"><CopyTextButton value={qrState.attendanceUrl} label="Sao chép link QR" /><a href={qrState.attendanceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#0F4D3A]">Mở link</a></div>
                   </div>
                 </div>
-              ) : <p className="mt-4 rounded-lg border border-dashed border-[#D8D1C7] bg-white px-3 py-4 text-sm font-semibold text-[#5E5A54]">Chọn chi nhánh thật rồi tạo QR hôm nay.</p>}
+              ) : <p className="mt-4 rounded-lg border border-dashed border-[#D8D1C7] bg-white px-3 py-4 text-sm font-semibold text-[#5E5A54]">Chọn chi nhánh thật rồi tạo QR ngắn hạn.</p>}
             </div>
             <div className="rounded-xl border border-[#E5DDD2] bg-[#F9F7F0] p-4">
               <div className="flex items-start justify-between gap-3">
@@ -2765,7 +2765,7 @@ function MobileAttendanceManagementScreen({
         </div>
         <AttendanceAdjustmentPanel feed={todayFeed} adjustAction={adjustAction} adjusting={adjustingAttendance} compact />
         <label className="mt-4 grid gap-2 text-sm font-black text-[#2B2B2B]"><span>Chi nhánh tạo QR/WiFi</span><select value={utilityBranchId} onChange={(event) => onUtilityBranchChange(event.target.value)} className="staff-redesign-input"><option value="">Chọn chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-        <div className="mt-4 grid grid-cols-2 gap-3"><StaffButton onClick={generateQr} disabled={qrConfigBlocked}><Fingerprint size={17} /> QR ngày</StaffButton><StaffButton variant="secondary" onClick={registerWifi}><Wifi size={17} /> WiFi</StaffButton></div>
+        <div className="mt-4 grid grid-cols-2 gap-3"><StaffButton onClick={generateQr} disabled={qrConfigBlocked}><Fingerprint size={17} /> QR 90s</StaffButton><StaffButton variant="secondary" onClick={registerWifi}><Wifi size={17} /> WiFi</StaffButton></div>
         {qrConfigBlocked ? <p className="mt-3 rounded-xl bg-[#FFF0D9] p-3 text-sm font-bold text-[#A33D10]">Thiếu QR secret production.</p> : null}
         {utilityState.qrState ? <div className="mt-3 flex items-center gap-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]"><Image src={utilityState.qrState.qrImageUrl} alt={`QR chấm công ${utilityState.qrState.branchName}`} width={88} height={88} unoptimized className="h-[88px] w-[88px] rounded-lg bg-white object-contain" /><span>{utilityState.qrState.branchName}<br />Hết hạn {formatDateTime(utilityState.qrState.expiresAt)}</span></div> : null}
         {utilityState.utilityError || utilityState.wifiState ? <p className="mt-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]">{utilityState.utilityError || utilityState.wifiState?.publicIpCidr}</p> : null}

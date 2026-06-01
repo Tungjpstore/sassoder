@@ -405,9 +405,7 @@ export function PaymentsWorkspace({
               <Badge tone={bankCode && bankAccount ? "green" : "yellow"}>{bankCode && bankAccount ? "VietQR sẵn sàng" : "Thiếu cấu hình QR"}</Badge>
             </div>
             <h2 className="dashboard-page-title mt-3">Thanh toán</h2>
-            <p className="dashboard-body-copy mt-2 max-w-3xl">
-              Giao dịch mới nhất được đưa lên đầu để quán kiểm tra tiền, VietQR và bill cần xác nhận nhanh hơn.
-            </p>
+            <p className="sr-only">Giao dịch mới nhất, VietQR và bill cần xác nhận.</p>
           </div>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/85 p-3 shadow-sm">
             <div className="flex items-center justify-between gap-3 text-sm font-semibold text-[var(--muted-foreground)]">

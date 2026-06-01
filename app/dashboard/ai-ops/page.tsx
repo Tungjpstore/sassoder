@@ -272,21 +272,21 @@ export default async function AiOpsPage({
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Việc cần làm hôm nay: cảnh báo vận hành, doanh thu, chi nhánh, workflow và đề xuất cần duyệt"
+      subtitle="Cảnh báo, doanh thu, chi nhánh và đề xuất cần duyệt"
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
         <AiOwnerActionLauncher variant="ops" />
         <AiOperatingLoop
-          title="Bộ não vận hành thống nhất"
-          subtitle="Mọi AI card cũ được gom về một vòng vận hành duy nhất: phát hiện việc thật, duyệt quyết định, tạo nháp/thao tác, kiểm tra rồi hoàn tất."
+          title="Việc AI hôm nay"
+          subtitle="Cảnh báo thật, đề xuất cần duyệt và thao tác đã sẵn sàng."
           primaryAction={{ href: "/dashboard/ai-execution", label: "Mở hàng duyệt" }}
           secondaryAction={{ href: "/dashboard/ai-apply", label: "Áp dụng AI" }}
           stages={[
             {
               id: "detect",
               value: branchInsightsResult.insights.length + recommendationsResult.recommendations.length + persistedAutomation.workflows.length,
-              detail: "Insight, recommendation và workflow đang mở",
+              detail: "Tín hiệu và đề xuất đang mở",
               href: "/dashboard/ai-ops",
               tone: latest && latest.criticalCount > 0 ? "red" : "green",
               active: true
@@ -301,7 +301,7 @@ export default async function AiOpsPage({
             {
               id: "act",
               value: persistedAutomation.workflows.filter((workflow) => workflow.lifecycle?.status === "approved").length,
-              detail: "Workflow đã duyệt, sẵn sàng xử lý tiếp",
+              detail: "Luồng đã duyệt, sẵn sàng xử lý",
               href: "/dashboard/ai-apply",
               tone: "green"
             },
@@ -377,12 +377,12 @@ export default async function AiOpsPage({
             <div>
               <p className="dashboard-eyebrow inline-flex items-center gap-2">
                 <BrainCircuit size={15} />
-                AI workflows
+                AI
               </p>
-              <h2 className="dashboard-section-title mt-1">Workflow gợi ý cần xác nhận</h2>
+              <h2 className="dashboard-section-title mt-1">Việc cần xác nhận</h2>
             </div>
             <Badge tone={persistedAutomation.schemaReady ? (persistedAutomation.workflows.length ? "green" : "blue") : "yellow"}>
-              {persistedAutomation.schemaReady ? `${persistedAutomation.workflows.length} workflow` : "Cần schema"}
+              {persistedAutomation.schemaReady ? `${persistedAutomation.workflows.length} luồng` : "Cần schema"}
             </Badge>
           </div>
 
@@ -479,7 +479,7 @@ export default async function AiOpsPage({
             </div>
           ) : (
             <div className="mt-3 grid min-h-24 place-items-center rounded-xl border border-dashed border-[var(--border)] px-4 text-center text-sm font-semibold text-[var(--muted-foreground)]">
-              Chưa có workflow đủ rõ để đề xuất. Khi có tồn thấp, doanh thu yếu hoặc thiếu nhân sự, AI sẽ đưa checklist có xác nhận tại đây.
+              Chưa có luồng đủ rõ để đề xuất.
             </div>
           )}
         </section>

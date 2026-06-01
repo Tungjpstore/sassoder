@@ -59,6 +59,7 @@ import {
   upsertInventoryRecipeLineAction
 } from "@/app/dashboard/actions";
 import { useToast } from "@/components/dashboard/toast-provider";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -1703,7 +1704,7 @@ function InventoryAnalyticsCommandCenter({ analytics }: { analytics: InventoryAn
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Inventory analytics</p>
-          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Command center vận hành kho</h2>
+          <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Kho hôm nay</h2>
         </div>
         <Badge tone={riskTone}>Risk score {analytics.riskScore}/100</Badge>
       </div>
@@ -2650,7 +2651,7 @@ function StockRiskCockpit({
       <div className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Stock risk</p>
+            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Rủi ro tồn</p>
             <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Tồn kho cần chú ý</h2>
           </div>
           <Badge tone={totalSignals > 0 ? "red" : "green"}>{totalSignals} tín hiệu</Badge>
@@ -3181,20 +3182,17 @@ function IngredientTable({
 }
 
 function IngredientDrawer({ drawer, categories, onClose }: { drawer: DrawerState; categories: InventoryCategory[]; onClose: () => void }) {
+  if (!drawer) return null;
   const ingredient = drawer?.mode === "edit" ? drawer.ingredient : null;
   return (
-    <div className="fixed inset-0 z-[80]">
-      <button type="button" className="absolute inset-0 bg-slate-900/30 backdrop-blur-[2px]" aria-label="Đóng drawer" onClick={onClose} />
-      <aside className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col overflow-auto border-l border-[var(--border)] bg-white p-5 shadow-2xl">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">{ingredient ? "Sửa nguyên liệu" : "Thêm nguyên liệu"}</p>
-            <h2 className="mt-1 text-2xl font-black">{ingredient?.name ?? "Nguyên liệu mới"}</h2>
-          </div>
-          <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--soft-surface)]">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+    <DashboardDrawer
+      open
+      onClose={onClose}
+      title={ingredient?.name ?? "Nguyên liệu mới"}
+      subtitle={ingredient ? "Sửa nguyên liệu" : "Thêm nguyên liệu"}
+      width="md"
+      closeLabel="Đóng nguyên liệu"
+    >
         <form action={ingredient ? updateInventoryIngredientAction : createInventoryIngredientAction} className="grid gap-3">
           {ingredient ? <input type="hidden" name="ingredientId" value={ingredient.id} /> : null}
           {ingredient ? <input type="hidden" name="onHandQuantity" value={ingredient.onHandQuantity} /> : null}
@@ -3233,8 +3231,7 @@ function IngredientDrawer({ drawer, categories, onClose }: { drawer: DrawerState
             <input type="hidden" name="ingredientId" value={ingredient.id} />
           </form>
         ) : null}
-      </aside>
-    </div>
+    </DashboardDrawer>
   );
 }
 
@@ -3831,11 +3828,11 @@ function CountingControlCenter({
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Count command</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Kiểm kê</p>
           <h2 className="mt-1 text-xl font-black">Kiểm soát phiên kiểm kê và lệch tồn</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Badge tone={countReadinessTone}>Ready {countReadinessScore}/100</Badge>
+          <Badge tone={countReadinessTone}>Sẵn sàng {countReadinessScore}/100</Badge>
           <Badge tone={highVarianceDrafts.length > 0 ? "yellow" : "green"}>{highVarianceDrafts.length} dòng lệch</Badge>
         </div>
       </div>
@@ -3952,11 +3949,11 @@ function TransferControlCenter({
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Transfer command</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Chuyển kho</p>
           <h2 className="mt-1 text-xl font-black">Điều phối luồng chuyển kho</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Badge tone={transferTone}>Ready {transferScore}/100</Badge>
+          <Badge tone={transferTone}>Sẵn sàng {transferScore}/100</Badge>
           <Badge tone={routeReady ? "green" : "yellow"}>{routeLabel}</Badge>
         </div>
       </div>
@@ -4654,11 +4651,11 @@ function PurchasingCommandCenterDraft({
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Purchasing command</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Mua hàng</p>
           <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Điều phối mua hàng và nhận hàng</h2>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Badge tone={purchaseReadinessTone}>Ready {purchaseReadinessScore}/100</Badge>
+          <Badge tone={purchaseReadinessTone}>Sẵn sàng {purchaseReadinessScore}/100</Badge>
           <Badge tone={latePurchaseOrders.length > 0 ? "red" : "green"}>{latePurchaseOrders.length} PO trễ</Badge>
         </div>
       </div>
@@ -4908,7 +4905,7 @@ function PurchasingCommandCenter({
     <section className="rounded-3xl border border-[var(--border)] bg-white p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Purchasing command center</p>
+          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[var(--primary)]">Mua hàng</p>
           <h2 className="mt-1 text-xl font-black text-[var(--foreground)]">Điều phối mua hàng, NCC và nhận hàng</h2>
         </div>
         <div className="flex flex-wrap gap-2">

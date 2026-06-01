@@ -9,8 +9,7 @@ import {
   type LucideIcon,
   PlayCircle,
   ShieldCheck,
-  Sparkles,
-  TimerReset
+  Sparkles
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
@@ -38,7 +37,7 @@ const stageIcons: Record<AiOperatingLoopStageId, LucideIcon> = {
 const defaultStages: Record<AiOperatingLoopStageId, Omit<AiOperatingLoopStage, "value" | "detail" | "href">> = {
   detect: { id: "detect", label: "Phát hiện", tone: "blue" },
   approve: { id: "approve", label: "Duyệt", tone: "yellow" },
-  act: { id: "act", label: "Tạo nháp / thao tác", tone: "green" },
+  act: { id: "act", label: "Thao tác", tone: "green" },
   verify: { id: "verify", label: "Kiểm tra", tone: "blue" },
   audit: { id: "audit", label: "Hoàn tất", tone: "neutral" }
 };
@@ -81,15 +80,15 @@ export function AiOperatingLoop({
         <div className="border-b border-[var(--border)] bg-[var(--soft-surface)] p-4 xl:border-b-0 xl:border-r">
           <p className="dashboard-eyebrow inline-flex items-center gap-2">
             <Sparkles size={15} />
-            AI operation console
+            AI
           </p>
           <h2 className="dashboard-section-title mt-1">{title}</h2>
-          <p className="mt-2 max-w-2xl text-xs font-semibold leading-5 text-[var(--muted-foreground)]">{subtitle}</p>
+          <p className="sr-only">{subtitle}</p>
 
           <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
             <div className="flex items-start justify-between gap-3">
               <span>
-                <span className="block text-[11px] font-bold uppercase text-[var(--muted-foreground)]">Bước đang xử lý</span>
+                <span className="block text-[11px] font-bold uppercase text-[var(--muted-foreground)]">Đang xử lý</span>
                 <span className="mt-1 block text-base font-bold text-[var(--foreground)]">{activeStage?.label ?? "Theo dõi"}</span>
               </span>
               <Badge tone={activeStage?.tone ?? "neutral"}>{activeStage?.value ?? 0}</Badge>
@@ -104,7 +103,7 @@ export function AiOperatingLoop({
             </div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 py-2">
               <p className="text-[10px] font-bold uppercase text-[var(--muted-foreground)]">Chế độ</p>
-              <p className="mt-1 text-sm font-bold text-[var(--foreground)]">Confirm-first</p>
+              <p className="mt-1 text-sm font-bold text-[var(--foreground)]">Xác nhận trước</p>
             </div>
           </div>
 
@@ -151,26 +150,10 @@ export function AiOperatingLoop({
                     <strong className="metric-number text-2xl font-semibold tabular-nums text-[var(--foreground)]">{stage.value}</strong>
                     <Badge tone={stage.tone ?? "neutral"}>{stage.active ? "Đang làm" : "Mở"}</Badge>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">{stage.detail}</p>
+                  <p className="mt-1 line-clamp-1 text-xs font-semibold leading-5 text-[var(--muted-foreground)]">{stage.detail}</p>
                 </Link>
               );
             })}
-          </div>
-
-          <div className="mt-3 grid gap-2 md:grid-cols-3">
-            {[
-              ["Không tự publish", "Giá, menu public, khuyến mãi, thanh toán và khách hàng luôn cần xác nhận."],
-              ["Ưu tiên bản nháp", "AI tạo draft/task trước để chủ quán kiểm nhanh trong ca."],
-              ["Có đường quay lại", "Mỗi việc có màn đích, trạng thái hoàn tất và rollback note."]
-            ].map(([label, detail]) => (
-              <div key={label} className="flex items-start gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] px-3 py-2.5">
-                <TimerReset size={15} className="mt-0.5 shrink-0 text-[var(--primary)]" />
-                <span>
-                  <span className="block text-xs font-bold text-[var(--foreground)]">{label}</span>
-                  <span className="block text-[11px] font-medium leading-5 text-[var(--muted-foreground)]">{detail}</span>
-                </span>
-              </div>
-            ))}
           </div>
         </div>
       </div>

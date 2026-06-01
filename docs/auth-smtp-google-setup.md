@@ -33,7 +33,12 @@ Trong Google Cloud Console:
   - `https://logi.vn.com` nếu domain phụ này được cấu hình DNS/Vercel
   - `http://localhost:3000`
 - Authorized redirect URI:
-  - `https://tfhqatvevbrbzaaqjhfa.supabase.co/auth/v1/callback`
+  - `https://logivn.com/auth/google/callback`
+  - `http://localhost:3000/auth/google/callback` cho local dev
+
+Không dùng `https://tfhqatvevbrbzaaqjhfa.supabase.co/auth/v1/callback` cho luồng Google chính nữa. Route `/auth/google` hiện redirect trực tiếp sang Google, callback về `logivn.com`, rồi đổi Google `id_token` thành Supabase session bằng `signInWithIdToken`.
+
+Production yêu cầu đủ `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_STATE_SECRET`. Nếu thiếu, `/auth/google` fail closed về login với lỗi cấu hình thay vì tự rơi về Supabase OAuth. Route rollback `/auth/google/supabase` mặc định bị tắt; chỉ bật tạm bằng `GOOGLE_LEGACY_SUPABASE_OAUTH_ENABLED=1` khi cần quay lại luồng cũ.
 
 Sau đó lấy:
 
@@ -66,6 +71,7 @@ export SUPABASE_SMTP_SENDER_NAME="LogiVN"
 
 export GOOGLE_OAUTH_CLIENT_ID="..."
 export GOOGLE_OAUTH_CLIENT_SECRET="..."
+export GOOGLE_OAUTH_STATE_SECRET="..."
 
 node scripts/configure-supabase-auth.mjs
 ```
@@ -80,13 +86,13 @@ Script sẽ cấu hình:
 - Leaked password protection qua Have I Been Pwned nếu gói Supabase của project hỗ trợ
 - Template email có cả OTP 6 số và nút xác thực
 - Custom SMTP nếu đủ biến SMTP
-- Google OAuth nếu đủ Client ID/Secret
+- Google provider trong Supabase nếu đủ Client ID/Secret để Supabase xác thực `id_token`
 
-Lưu ý quan trọng cho OAuth PKCE: route `/auth/google` tạo `redirectTo` theo domain người dùng đang mở để cookie xác thực và callback cùng origin. Vì vậy:
+Lưu ý quan trọng cho Google OAuth trực tiếp: Google không cho wildcard redirect URI, nên callback production cố định ở `https://logivn.com/auth/google/callback`.
 
-- Người dùng mở `logivn.com` sẽ callback về `https://logivn.com/auth/callback`.
-- Người dùng mở `logi.vn.com` sẽ callback về `https://logi.vn.com/auth/callback` nếu domain phụ này được cấu hình DNS/Vercel.
-- Nếu mở từ subdomain quán `*.logivn.com`, callback quay về đúng subdomain đó để cookie PKCE luôn cùng origin.
+- Người dùng mở `logivn.com` sẽ callback về `https://logivn.com/auth/google/callback`.
+- Người dùng mở subdomain quán `*.logivn.com` vẫn callback về root `logivn.com`; state đã ký lưu host ban đầu, sau khi tạo Supabase session cookie domain `.logivn.com`, app chuyển tiếp về đúng dashboard/quán.
+- Callback Supabase PKCE `/auth/callback` vẫn giữ lại cho rollback/legacy nhưng không phải luồng Google chính.
 
 ## 4. Cấu Hình Thủ Công Trên Dashboard
 
@@ -105,7 +111,13 @@ Nếu không dùng script:
     - `http://localhost:3000/auth/confirm**`
 - Authentication > Providers:
   - Email: bật signup và confirmation.
-  - Google: bật provider, nhập Client ID/Secret.
+  - Google: bật provider, thêm Web Client ID của luồng direct vào trường `Client IDs` để Supabase chấp nhận `signInWithIdToken` từ Google direct OAuth.
+  - Giữ Client Secret OAuth cũ nếu vẫn muốn route rollback `/auth/google/supabase` tiếp tục chạy qua Supabase OAuth. Chỉ đổi secret trong Supabase khi Google OAuth client mới cũng đã có authorized redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`.
+- Vercel > Environment Variables:
+  - `GOOGLE_OAUTH_CLIENT_ID`
+  - `GOOGLE_OAUTH_CLIENT_SECRET`
+  - `GOOGLE_OAUTH_STATE_SECRET`
+  - `GOOGLE_LEGACY_SUPABASE_OAUTH_ENABLED=0` trong vận hành bình thường; chỉ đặt `1` khi rollback legacy OAuth.
 - Authentication > SMTP:
   - Bật custom SMTP và nhập thông tin SMTP.
   - Cấu hình hiện tại: Resend SMTP, sender `LogiVN <no-reply@chophanmem.com>`.
@@ -123,4 +135,4 @@ Nếu không dùng script:
 - Vào `/dashboard/register`, đăng ký một email thật.
 - Email phải có OTP 6 số và nút xác thực.
 - Nhập OTP tại `/dashboard/verify-email` phải tạo quán và chuyển vào dashboard.
-- Vào `/dashboard/login`, bấm `Đăng nhập bằng Google`, Google phải quay về `/auth/callback` rồi vào dashboard hoặc onboarding.
+- Vào `/dashboard/login`, bấm `Đăng nhập bằng Google`, URL đầu tiên phải là `accounts.google.com/o/oauth2/v2/auth`, `redirect_uri` phải là `https://logivn.com/auth/google/callback`, rồi quay vào dashboard hoặc onboarding.

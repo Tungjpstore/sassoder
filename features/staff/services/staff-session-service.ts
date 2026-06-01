@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHmac, timingSafeEqual } from "crypto";
 import type { z } from "zod";
 import { headers } from "next/headers";
 import { AppError } from "@/lib/response";
@@ -32,6 +33,17 @@ type StaffSessionRow = {
   last_seen_at: string;
 };
 
+type StaffAttendanceSessionTokenPayload = {
+  restaurantId: string;
+  userId: string;
+  staffMemberId: string;
+  staffSessionId: string;
+  deviceFingerprint: string;
+  issuedAt: string;
+};
+
+const attendanceSessionTokenMaxAgeMs = 26 * 60 * 60 * 1000;
+
 function isMissingSessionSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   const message = error.message ?? "";
@@ -59,6 +71,54 @@ function deviceNameFromInput(input: StaffSessionHeartbeatInput, userAgent: strin
 function scopedStaffLoginPath(restaurantSlug: string) {
   const slug = restaurantSlug.trim().toLowerCase();
   return /^[a-z0-9-]{2,80}$/.test(slug) ? `/staff/${slug}/login` : "/staff/login";
+}
+
+function attendanceSessionSecret() {
+  const secret =
+    process.env.STAFF_ATTENDANCE_SESSION_SECRET?.trim() ||
+    process.env.STAFF_ATTENDANCE_QR_SECRET?.trim() ||
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.NEXTAUTH_SECRET?.trim() ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new AppError("Thiếu STAFF_ATTENDANCE_SESSION_SECRET để ký phiên chấm công nhân viên.", 503);
+  }
+
+  return secret || "logivn-dev-staff-attendance-session-secret";
+}
+
+function encodeTokenPayload(payload: StaffAttendanceSessionTokenPayload) {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function signTokenPayload(encodedPayload: string) {
+  return createHmac("sha256", attendanceSessionSecret()).update(encodedPayload).digest("base64url");
+}
+
+function safeEqual(left: string, right: string) {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function createStaffAttendanceSessionToken(payload: StaffAttendanceSessionTokenPayload) {
+  const encodedPayload = encodeTokenPayload(payload);
+  return `sas_v1.${encodedPayload}.${signTokenPayload(encodedPayload)}`;
+}
+
+function verifyStaffAttendanceSessionToken(token: string) {
+  const [version, encodedPayload, signature] = token.split(".");
+  if (version !== "sas_v1" || !encodedPayload || !signature) return null;
+  if (!safeEqual(signTokenPayload(encodedPayload), signature)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as Partial<StaffAttendanceSessionTokenPayload>;
+    if (!payload.restaurantId || !payload.userId || !payload.staffMemberId || !payload.staffSessionId || !payload.deviceFingerprint || !payload.issuedAt) return null;
+    return payload as StaffAttendanceSessionTokenPayload;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveCurrentStaffMember({
@@ -229,6 +289,14 @@ export async function recordStaffSessionHeartbeat({
 
   return {
     sessionId: staffSession.id,
+    attendanceSessionToken: createStaffAttendanceSessionToken({
+      restaurantId: session.restaurantId,
+      userId: session.userId,
+      staffMemberId: staffMember.id,
+      staffSessionId: staffSession.id,
+      deviceFingerprint: input.deviceFingerprint,
+      issuedAt: now
+    }),
     forcedLogout: false,
     forcedLogoutAt: null,
     lastSeenAt: staffSession.last_seen_at,
@@ -238,18 +306,25 @@ export async function recordStaffSessionHeartbeat({
 
 export async function assertActiveStaffDeviceSession({
   session,
-  deviceFingerprint
+  deviceFingerprint,
+  attendanceSessionToken,
+  requireSignedToken = false
 }: {
   session: SessionProfile;
   deviceFingerprint?: string | null;
+  attendanceSessionToken?: string | null;
+  requireSignedToken?: boolean;
 }) {
   const fingerprint = deviceFingerprint?.trim();
-  if (!fingerprint) return;
+  if (!fingerprint) {
+    if (requireSignedToken) throw new AppError("Thiết bị chưa có fingerprint hợp lệ để chấm công.", 401);
+    return;
+  }
 
   const supabase = createAdminSupabaseClient() as any;
   const result = await supabase
     .from("staff_sessions")
-    .select("id,forced_logout_at")
+    .select("id,staff_member_id,forced_logout_at,last_seen_at")
     .eq("restaurant_id", session.restaurantId)
     .eq("staff_user_id", session.userId)
     .eq("device_fingerprint", fingerprint)
@@ -258,12 +333,41 @@ export async function assertActiveStaffDeviceSession({
     .maybeSingle();
 
   if (result.error) {
-    if (isMissingSessionSchema(result.error)) return;
+    if (isMissingSessionSchema(result.error)) {
+      if (requireSignedToken) throw new AppError("Chưa có schema phiên thiết bị để xác minh chấm công.", 503);
+      return;
+    }
     throw result.error;
   }
 
-  if (result.data?.forced_logout_at) {
+  const staffSession = result.data as (StaffSessionRow & { staff_member_id: string }) | null;
+  if (!staffSession) {
+    if (requireSignedToken) throw new AppError("Phiên thiết bị chưa được xác thực. Vui lòng mở lại app nhân viên.", 401);
+    return;
+  }
+
+  if (staffSession.forced_logout_at) {
     throw new AppError("Phiên thiết bị đã bị quản lý đăng xuất. Vui lòng đăng nhập lại.", 401);
+  }
+
+  if (!requireSignedToken) return;
+
+  const token = attendanceSessionToken?.trim();
+  if (!token) throw new AppError("Thiếu mã phiên thiết bị để xác minh chấm công.", 401);
+
+  const payload = verifyStaffAttendanceSessionToken(token);
+  const issuedAtMs = payload ? new Date(payload.issuedAt).getTime() : Number.NaN;
+  const expired = !Number.isFinite(issuedAtMs) || Date.now() - issuedAtMs > attendanceSessionTokenMaxAgeMs;
+  if (
+    !payload ||
+    expired ||
+    payload.restaurantId !== session.restaurantId ||
+    payload.userId !== session.userId ||
+    payload.staffMemberId !== staffSession.staff_member_id ||
+    payload.staffSessionId !== staffSession.id ||
+    payload.deviceFingerprint !== fingerprint
+  ) {
+    throw new AppError("Phiên thiết bị chấm công không hợp lệ hoặc đã hết hạn. Vui lòng mở lại app nhân viên.", 401);
   }
 }
 

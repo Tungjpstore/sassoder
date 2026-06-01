@@ -79,6 +79,7 @@ export type StaffSessionHeartbeatPayload = {
 
 export type StaffSessionHeartbeatResult = {
   sessionId: string;
+  attendanceSessionToken?: string;
   forcedLogout: boolean;
   forcedLogoutAt: string | null;
   lastSeenAt: string;

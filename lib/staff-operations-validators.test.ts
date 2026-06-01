@@ -6,6 +6,7 @@ import { normalizeStaffPermissions } from "@/lib/staff-permissions";
 import {
   attendanceApprovalReviewSchema,
   attendanceClockInSchema,
+  attendanceClockOutSchema,
   attendanceManualAdjustmentSchema,
   staffAttendanceQrTokenCreateSchema,
   staffDeviceCreateSchema,
@@ -149,12 +150,12 @@ test("attendance manual adjustment requires real log, staff and audit reason", (
 });
 
 test("attendance QR schemas require real branch tokens", () => {
-  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).expiresInMinutes, 5);
+  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).expiresInMinutes, 1);
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId }).mode, "daily_branch");
-  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId, expiresInMinutes: "10" }).expiresInMinutes, 10);
+  assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId, expiresInMinutes: "5" }).expiresInMinutes, 5);
   assert.equal(staffAttendanceQrTokenCreateSchema.parse({ branchId, mode: "single_use" }).mode, "single_use");
   assert.equal(staffAttendanceQrTokenCreateSchema.safeParse({ branchId, expiresInMinutes: 0 }).success, false);
-  assert.equal(staffAttendanceQrTokenCreateSchema.safeParse({ branchId, expiresInMinutes: 16 }).success, false);
+  assert.equal(staffAttendanceQrTokenCreateSchema.safeParse({ branchId, expiresInMinutes: 6 }).success, false);
 
   const missingQr = attendanceClockInSchema.safeParse({
     staffMemberId,
@@ -169,6 +170,9 @@ test("attendance QR schemas require real branch tokens", () => {
     staffMemberId,
     branchId,
     source: "qr",
+    lat: 21.01,
+    lng: 105.81,
+    accuracyMeters: 18,
     qrToken: "stqr_abcdefghijklmnopqrstuvwxyz1234567890",
     deviceInfo: { deviceFingerprint: "staff-device-abcdef" }
   });
@@ -179,9 +183,30 @@ test("attendance QR schemas require real branch tokens", () => {
     staffMemberId,
     branchId,
     source: "wifi",
+    lat: 21.01,
+    lng: 105.81,
+    accuracyMeters: 18,
     deviceInfo: { deviceFingerprint: "staff-device-abcdef" }
   });
   assert.equal(wifiParsed.source, "wifi");
+});
+
+test("attendance capture rejects weak anti-fraud payloads before writing logs", () => {
+  const base = {
+    staffMemberId,
+    branchId,
+    deviceInfo: { deviceFingerprint: "staff-device-abcdef" }
+  };
+
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "gps", lat: 21.01, lng: 105.81 }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "qr", qrToken: "stqr_abcdefghijklmnopqrstuvwxyz1234567890" }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "wifi" }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "offline_sync", accuracyMeters: 18 }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "offline_sync", lat: 21.01, lng: 105.81, accuracyMeters: 18 }).success, true);
+  assert.equal(attendanceClockOutSchema.safeParse({ ...base, source: "gps", lat: 21.01, lng: 105.81, accuracyMeters: 18 }).success, true);
+  assert.equal(attendanceClockOutSchema.safeParse({ ...base, source: "qr", qrToken: "stqr_abcdefghijklmnopqrstuvwxyz1234567890", lat: 21.01, lng: 105.81, accuracyMeters: 18, deviceInfo: {} }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "wifi", lat: 21.01, lng: 105.81, accuracyMeters: 18, deviceInfo: {} }).success, false);
+  assert.equal(attendanceClockInSchema.safeParse({ staffMemberId, branchId, source: "manual", deviceInfo: {} }).success, true);
 });
 
 test("staff attendance machine does not auto-submit stale QR unless QR is selected", () => {
@@ -223,6 +248,12 @@ test("staff mobile attendance QR UI has a real scanner path and stale-token reco
   assert.match(source, /clearQrTokenAfterFailure/);
   assert.match(source, /clearStaffQrParamsFromUrl/);
   assert.match(source, /selectedClockSource/);
+  assert.match(source, /staffGpsMaxAccuracyMeters\s*=\s*80/);
+  assert.match(source, /maximumAge:\s*0/);
+  assert.match(source, /gps = await readGpsPosition\(\)/);
+  assert.match(source, /attendanceSessionToken/);
+  assert.doesNotMatch(source, /Dán link QR|Chọn ảnh|Dùng mã này/);
+  assert.match(source, /Đã ghi nhận nhưng đang chờ quản lý duyệt/);
 });
 
 test("legacy full staff permissions unlock granular HR actions", () => {
@@ -388,7 +419,7 @@ test("staff operations workspace does not keep archived duplicate screen drafts"
   assert.doesNotMatch(source, /PermissionsScreenPreview|PermissionsScreenArchive/);
   assert.doesNotMatch(source, /BranchCommandCenterScreenLegacy|BranchCommandCenterScreenSearchDraft|BranchCommandCenterScreenArchive/);
   assert.match(source, /function PermissionsScreen\(/);
-  assert.match(source, /function BranchCommandCenterScreen\(/);
+  assert.match(source, /function BranchStatusScreen\(/);
 });
 
 test("staff operations exposes QR production readiness before creating daily codes", async () => {
@@ -406,10 +437,13 @@ test("staff operations exposes QR production readiness before creating daily cod
 });
 
 test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", async () => {
-  const [attendanceSource, qrSource, pinSource] = await Promise.all([
+  const [attendanceSource, qrSource, pinSource, sessionSource, clockInRoute, clockOutRoute] = await Promise.all([
     import("node:fs").then((fs) => fs.readFileSync("features/attendance/services/attendance-service.ts", "utf8")),
     import("node:fs").then((fs) => fs.readFileSync("features/attendance/services/attendance-qr-service.ts", "utf8")),
-    import("node:fs").then((fs) => fs.readFileSync("features/staff/services/staff-pin-service.ts", "utf8"))
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/services/staff-pin-service.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/services/staff-session-service.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("app/api/admin/attendance/clock-in/route.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("app/api/admin/attendance/clock-out/route.ts", "utf8"))
   ]);
 
   assert.match(attendanceSource, /maxTrustedClientCaptureAgeMs\s*=\s*15 \* 60 \* 1000/);
@@ -419,16 +453,36 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /authorizeAttendanceManagementSession/);
   assert.match(attendanceSource, /attendanceManagementAuthorized/);
   assert.match(attendanceSource, /function canManageAttendance/);
+  assert.match(attendanceSource, /maxGpsAccuracyMeters\s*=\s*80/);
+  assert.match(attendanceSource, /maxAttendanceRadiusMeters\s*=\s*150/);
+  assert.match(attendanceSource, /normalizeAttendanceRadiusMeters/);
+  assert.match(attendanceSource, /isLocationBoundAttendanceSource/);
+  assert.match(attendanceSource, /GPS sai số quá cao/);
+  assert.match(attendanceSource, /GPS chấm công cần thiết bị tin cậy/);
+  assert.match(attendanceSource, /QR chấm công cần vị trí GPS hợp lệ/);
+  assert.match(attendanceSource, /assertNotSelfManualAttendance/);
+  assert.match(attendanceSource, /Không thể tự duyệt công hoặc yêu cầu nhân sự của chính mình/);
   assert.doesNotMatch(attendanceSource, /source === "manual" && session\.role !== "ADMIN"/);
+  assert.doesNotMatch(attendanceSource, /source !== "gps" \|\| session\.role === "ADMIN"/);
   assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để sửa công/);
   assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để duyệt chấm công/);
   assert.match(attendanceSource, /attendance\.adjusted/);
   assert.match(attendanceSource, /manual_attendance_edit/);
   assert.match(attendanceSource, /GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị/);
   assert.match(qrSource, /\.is\("consumed_at", null\)/);
+  assert.match(qrSource, /dailyBranchQrValiditySeconds\s*=\s*90/);
+  assert.match(qrSource, /resetPolicy:\s*"rotating_90s"/);
+  assert.match(qrSource, /usage_count:\s*0/);
+  assert.doesNotMatch(qrSource, /vietnamDayBoundary/);
   assert.match(qrSource, /process\.env\.STAFF_ATTENDANCE_QR_SECRET\?\.trim\(\)/);
   assert.match(qrSource, /NODE_ENV === "production"[\s\S]*Thiếu STAFF_ATTENDANCE_QR_SECRET/);
   assert.match(qrSource, /Mã QR chấm công đã được sử dụng/);
+  assert.match(sessionSource, /STAFF_ATTENDANCE_SESSION_SECRET/);
+  assert.match(sessionSource, /createStaffAttendanceSessionToken/);
+  assert.match(sessionSource, /attendanceSessionToken/);
+  assert.match(sessionSource, /requireSignedToken/);
+  assert.match(clockInRoute, /requireSignedToken:\s*input\.source !== "manual"/);
+  assert.match(clockOutRoute, /requireSignedToken:\s*input\.source !== "manual"/);
   assert.match(pinSource, /buildStaffPinUnknownRateLimitInput/);
   assert.match(pinSource, /staff_auth\.pin_unknown_locked/);
 });

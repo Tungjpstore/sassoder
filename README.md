@@ -143,8 +143,10 @@ Trong Supabase Dashboard:
   - `https://logi.vn.com/auth/confirm**` nếu domain phụ này được cấu hình DNS/Vercel
   - `http://localhost:3000/auth/callback**`
   - `http://localhost:3000/auth/confirm**`
-- Với Google login, tạo OAuth Client trong Google Cloud, lấy Client ID/Secret và bật provider Google trong Supabase Auth.
-- Authorized redirect URI trên Google Cloud dùng callback của Supabase: `https://<project-ref>.supabase.co/auth/v1/callback`.
+- Với Google login trực tiếp, tạo OAuth Client trong Google Cloud, đưa `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_STATE_SECRET` lên Vercel, và thêm Web Client ID đó vào trường `Client IDs` của provider Google trong Supabase Auth để Supabase chấp nhận `signInWithIdToken`.
+- Authorized redirect URI trên Google Cloud dùng domain LogiVN: `https://logivn.com/auth/google/callback`. Có thể thêm `http://localhost:3000/auth/google/callback` cho local dev.
+- Không dùng callback `https://<project-ref>.supabase.co/auth/v1/callback` cho luồng Google chính, vì mục tiêu là màn hình Google hiển thị LogiVN thay vì Supabase project domain.
+- Production yêu cầu đủ `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_STATE_SECRET`; nếu thiếu, `/auth/google` fail closed về login với lỗi cấu hình. Route legacy `/auth/google/supabase` mặc định bị tắt và chỉ bật rollback bằng `GOOGLE_LEGACY_SUPABASE_OAUTH_ENABLED=1`.
 - Có thể cấu hình nhanh bằng `node scripts/configure-supabase-auth.mjs` sau khi export SMTP, Google OAuth và Supabase access token. Xem chi tiết tại `docs/auth-smtp-google-setup.md`.
 - Đặt `AUTH_RATE_LIMIT_SECRET` dài và riêng biệt trong Vercel để khóa rate limit đăng nhập/đăng ký/quên mật khẩu theo IP + email đã hash.
 
@@ -152,7 +154,8 @@ Luồng code hỗ trợ cả hai kiểu email:
 
 - OTP nhập tay tại `/dashboard/verify-email`.
 - Link xác thực có `token_hash` tại `/auth/confirm`.
-- OAuth/PKCE callback tại `/auth/callback`.
+- Google OAuth trực tiếp tại `/auth/google` -> `/auth/google/callback`, có one-time HttpOnly state cookie chống replay/CSRF, sau đó tạo Supabase session bằng `signInWithIdToken`.
+- OAuth/PKCE callback tại `/auth/callback` vẫn được giữ cho legacy Supabase OAuth nếu cần rollback.
 
 ## Luồng Thanh Toán
 

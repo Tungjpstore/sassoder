@@ -76,6 +76,27 @@ test("late migrations do not reopen public table policies to anon", () => {
   assert.deepEqual(offenders, []);
 });
 
+test("public views do not bypass tenant RLS", () => {
+  const latestDefinitions = new Map<string, { fileName: string; line: number; sql: string }>();
+
+  for (const fileName of migrationFiles) {
+    const sql = migrationSql(fileName);
+    for (const match of sql.matchAll(/create\s+(?:or\s+replace\s+)?view\s+public\.([a-z0-9_]+)[\s\S]*?;/gi)) {
+      latestDefinitions.set(match[1], {
+        fileName,
+        line: lineNumber(sql, match.index ?? 0),
+        sql: match[0]
+      });
+    }
+  }
+
+  const offenders = Array.from(latestDefinitions, ([viewName, definition]) => ({ viewName, ...definition }))
+    .filter((definition) => !/security_invoker\s*=\s*true/i.test(definition.sql))
+    .map((definition) => `${definition.fileName}:${definition.line}:${definition.viewName}`);
+
+  assert.deepEqual(offenders, []);
+});
+
 test("destructive data operations are explicitly allowlisted", () => {
   const destructiveDataLines: string[] = [];
 

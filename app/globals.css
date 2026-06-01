@@ -396,6 +396,17 @@ img {
   --dashboard-mobile-nav-height: calc(4.9rem + env(safe-area-inset-bottom));
   --dashboard-mobile-content-bottom: calc(var(--dashboard-mobile-nav-height) + 1rem);
   --dashboard-mobile-floating-bottom: calc(var(--dashboard-mobile-nav-height) + 0.85rem);
+  --dashboard-canvas: #f5f7f4;
+  --dashboard-shell: #fffffd;
+  --dashboard-panel: #fffefd;
+  --dashboard-panel-muted: #f2f5ef;
+  --dashboard-panel-strong: #ffffff;
+  --dashboard-line: rgba(31, 42, 36, 0.1);
+  --dashboard-shadow-sm: 0 8px 22px rgba(20, 31, 26, 0.055);
+  --dashboard-shadow-md: 0 16px 38px rgba(20, 31, 26, 0.08);
+  --dashboard-topbar-height: 60px;
+  --dashboard-tablet-rail-width: 76px;
+  --dashboard-sidebar-width: 232px;
   background: var(--background);
   color: var(--foreground);
 }
@@ -3147,7 +3158,7 @@ img {
 .dashboard-primary-action,
 .dashboard-secondary-action {
   display: inline-flex;
-  min-height: 44px;
+  min-height: 48px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -3212,6 +3223,29 @@ img {
 .dashboard-secondary-action:hover {
   border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
   background: color-mix(in srgb, var(--secondary-soft) 82%, transparent);
+}
+
+.dashboard-settings-fullscreen input[type="checkbox"],
+.dashboard-settings-fullscreen input[type="radio"],
+.dashboard-settings-content input[type="checkbox"],
+.dashboard-settings-content input[type="radio"] {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.dashboard-settings-fullscreen :where(button, select, textarea, a[class*="inline-flex"], a[class^="flex"], a[class*=" flex"], a[class^="grid"], a[class*=" grid"], input:not([type="checkbox"]):not([type="radio"])),
+.dashboard-settings-content :where(button, select, textarea, a[class*="inline-flex"], a[class^="flex"], a[class*=" flex"], a[class^="grid"], a[class*=" grid"], input:not([type="checkbox"]):not([type="radio"])) {
+  min-height: 56px !important;
+}
+
+.dashboard-settings-fullscreen input:not([type="hidden"]),
+.dashboard-settings-content input:not([type="hidden"]) {
+  min-width: 48px;
+}
+
+.dashboard-settings-content .dashboard-zone-map-editor .dashboard-map-control-dock button,
+.dashboard-settings-fullscreen .dashboard-zone-map-editor .dashboard-map-control-dock button {
+  min-height: 64px !important;
 }
 
 .admin-stat-tile {
@@ -5553,7 +5587,7 @@ img {
   .dashboard-secondary-action,
   .admin-glow-btn {
     width: 100%;
-    min-height: 2.875rem;
+    min-height: 48px;
   }
 
   .dashboard-action-row {
@@ -5702,7 +5736,7 @@ img {
 
 .dashboard-density [class*="bg-[#fff"],
 .dashboard-density [class*="bg-[#FFF"],
-.dashboard-density [class*="bg-white"] {
+.dashboard-density [class~="bg-white"] {
   background-color: var(--dashboard-glass-strong) !important;
 }
 
@@ -6090,7 +6124,8 @@ img {
 }
 
 .drawer-panel {
-  position: relative;
+  position: absolute;
+  inset: 0 0 0 auto;
   z-index: 10;
   max-height: 100dvh;
   overflow: hidden;
@@ -7849,7 +7884,7 @@ img {
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[var(--surface)]"],
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[var(--soft-surface)]"],
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[var(--surface-container)]"],
-.stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-white"],
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class~="bg-white"],
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[#fff"],
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[#FFF"],
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel [class*="bg-[#F2"],
@@ -7860,7 +7895,7 @@ img {
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[var(--surface)]"],
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[var(--soft-surface)]"],
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[var(--surface-container)]"],
-.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-white"],
+.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class~="bg-white"],
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[#fff"],
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[#FFF"],
 .stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel [class*="bg-[#F2"],
@@ -11032,12 +11067,12 @@ img {
 @keyframes dash-section-rise {
   from {
     opacity: 0;
-    transform: translateY(18px) scale(0.985);
+    transform: translateY(18px);
     filter: blur(4px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
     filter: blur(0);
   }
 }
@@ -11158,11 +11193,11 @@ img {
 @keyframes card-cascade-in {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.96);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -11451,5 +11486,394 @@ img {
   .staff-brand-page.dashboard-density .text-\[28px\],
   .staff-brand-page.dashboard-density .text-\[26px\] {
     font-size: 1rem !important;
+  }
+}
+
+/* Open Design operational dashboard refresh: solid shell, compact hierarchy, touch-first surfaces. */
+.stitch-admin.admin-shell-bg.dashboard-density {
+  --background: var(--dashboard-canvas);
+  --surface: var(--dashboard-panel);
+  --surface-strong: var(--dashboard-panel-strong);
+  --soft-surface: var(--dashboard-panel-muted);
+  --surface-container: var(--dashboard-panel-muted);
+  --border: var(--dashboard-line);
+  --shadow-soft: var(--dashboard-shadow-sm);
+  --shadow-lift: var(--dashboard-shadow-md);
+  --dashboard-glass-surface: var(--dashboard-panel);
+  --dashboard-glass-strong: var(--dashboard-panel-strong);
+  --dashboard-glass-muted: var(--dashboard-panel-muted);
+  --dashboard-glass-blur: 0px;
+  background: var(--dashboard-canvas) !important;
+}
+
+.dark-admin .stitch-admin.admin-shell-bg.dashboard-density {
+  --dashboard-canvas: #111814;
+  --dashboard-shell: #17211b;
+  --dashboard-panel: #1b2720;
+  --dashboard-panel-muted: #142018;
+  --dashboard-panel-strong: #223027;
+  --dashboard-line: rgba(214, 230, 209, 0.12);
+  --dashboard-shadow-sm: 0 12px 28px rgba(0, 0, 0, 0.24);
+  --dashboard-shadow-md: 0 18px 42px rgba(0, 0, 0, 0.34);
+  background: var(--dashboard-canvas) !important;
+}
+
+.dark-admin .stitch-admin.admin-shell-bg.dashboard-density::before {
+  background-image: linear-gradient(180deg, #111814 0%, #101711 54%, #0d130f 100%) !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density::before {
+  background-image: linear-gradient(180deg, #f8faf6 0%, #f3f6f1 44%, #eef3ec 100%) !important;
+  opacity: 1 !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density > aside,
+.stitch-admin.admin-shell-bg.dashboard-density header,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-tablet-rail,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-mobile-nav-shell,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-mobile-menu-container {
+  background: var(--dashboard-shell) !important;
+  background-color: var(--dashboard-shell) !important;
+  border-color: var(--dashboard-line) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-desktop-sidebar,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-tablet-rail {
+  box-shadow: 10px 0 28px rgba(20, 31, 26, 0.045) !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density header {
+  min-height: var(--dashboard-topbar-height);
+  box-shadow: 0 8px 22px rgba(20, 31, 26, 0.045) !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-workspace {
+  max-width: min(100%, 1480px);
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density :where(button, a, input, select, textarea, [role="button"], [role="link"]) {
+  touch-action: manipulation;
+}
+
+.dashboard-owner-shell :where(button, a, input, select, textarea, [role="button"], [role="link"]),
+.dashboard-focus-shell :where(button, a, input, select, textarea, [role="button"], [role="link"]) {
+  touch-action: manipulation;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density :where(button, [role="button"], input:not([type="checkbox"]):not([type="radio"]), select, textarea, a[class*="inline-flex"], a[class^="flex"], a[class*=" flex"], a[class^="grid"], a[class*=" grid"]):not(.dashboard-mobile-tab):not(.dashboard-tablet-rail-link):not(.admin-nav-link) {
+  min-height: 46px;
+}
+
+.dashboard-owner-shell :where(button, [role="button"], input:not([type="checkbox"]):not([type="radio"]), select, textarea, a[class*="inline-flex"], a[class^="flex"], a[class*=" flex"], a[class^="grid"], a[class*=" grid"]):not(.dashboard-mobile-tab):not(.dashboard-tablet-rail-link):not(.admin-nav-link),
+.dashboard-focus-shell :where(button, [role="button"], input:not([type="checkbox"]):not([type="radio"]), select, textarea, a[class*="inline-flex"], a[class^="flex"], a[class*=" flex"], a[class^="grid"], a[class*=" grid"]):not(.dashboard-mobile-tab):not(.dashboard-tablet-rail-link):not(.admin-nav-link) {
+  min-height: 46px !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density :where(button[aria-label], a[aria-label]) {
+  min-width: 46px;
+}
+
+.dashboard-owner-shell :where(button[aria-label], a[aria-label]),
+.dashboard-focus-shell :where(button[aria-label], a[aria-label]) {
+  min-width: 46px !important;
+}
+
+.dashboard-workspace-heading {
+  color: var(--foreground);
+}
+
+.dashboard-workspace-heading .dashboard-page-title {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-subpanel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-minimal-card,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-stat-tile,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-overview-card,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-command-surface,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-command-center,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-hero-action-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-workbench-surface,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-data-surface,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-analytics-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-menu-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-order-live-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-map-surface,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-kitchen-workspace > section,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-orders-workspace > section {
+  background: var(--dashboard-panel) !important;
+  background-color: var(--dashboard-panel) !important;
+  border-color: var(--dashboard-line) !important;
+  box-shadow: var(--dashboard-shadow-sm) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-panel:hover,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel:hover,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-stat-tile:hover,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-overview-card:hover {
+  background: var(--dashboard-panel-strong) !important;
+  border-color: color-mix(in srgb, var(--primary) 22%, var(--dashboard-line)) !important;
+  box-shadow: var(--dashboard-shadow-md) !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel::after,
+.stitch-admin.admin-shell-bg.dashboard-density .admin-stat-tile::after,
+.stitch-admin.admin-shell-bg.dashboard-density .motif-corner::before {
+  display: none !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density [class*="bg-[var(--surface)]"],
+.stitch-admin.admin-shell-bg.dashboard-density [class*="bg-[var(--surface-strong)]"],
+.stitch-admin.admin-shell-bg.dashboard-density [class~="bg-white"] {
+  background-color: var(--dashboard-panel) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density [class*="bg-[var(--soft-surface)]"],
+.stitch-admin.admin-shell-bg.dashboard-density [class*="bg-[var(--surface-container)]"] {
+  background-color: var(--dashboard-panel-muted) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-body-copy {
+  max-width: 64ch;
+  color: var(--muted-foreground);
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-section-description {
+  display: -webkit-box;
+  max-width: 56ch;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.stitch-admin.admin-shell-bg.dashboard-density .admin-hero-panel .dashboard-body-copy,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-command-center .dashboard-body-copy,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-hero-action-panel .dashboard-body-copy {
+  display: none !important;
+}
+
+.dashboard-tablet-rail-link {
+  min-width: 44px;
+}
+
+.dashboard-mobile-menu-container {
+  border-radius: 22px 22px 18px 18px !important;
+}
+
+@media (hover: none) {
+  .stitch-admin.admin-shell-bg.dashboard-density button,
+  .stitch-admin.admin-shell-bg.dashboard-density [role="button"],
+  .stitch-admin.admin-shell-bg.dashboard-density a[class*="inline-flex"],
+  .stitch-admin.admin-shell-bg.dashboard-density a[class^="flex"],
+  .stitch-admin.admin-shell-bg.dashboard-density input:not([type="checkbox"]):not([type="radio"]),
+  .stitch-admin.admin-shell-bg.dashboard-density select,
+  .stitch-admin.admin-shell-bg.dashboard-density textarea {
+    min-height: 46px;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .stitch-admin.admin-shell-bg.dashboard-density .dashboard-workspace {
+    padding-inline: 1rem !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .stitch-admin.admin-shell-bg.dashboard-density .dashboard-workspace {
+    padding-inline: 1.25rem !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .stitch-admin.admin-shell-bg.dashboard-density .dashboard-mobile-menu-container {
+    max-height: min(92svh, 720px) !important;
+  }
+}
+
+/* Unified dashboard surface system: drawers should read as one solid workspace layer, not stacked translucent cards. */
+.dashboard-drawer-root {
+  --dashboard-drawer-top-offset: 0px;
+  --dashboard-drawer-left-offset: 0px;
+  pointer-events: auto;
+}
+
+.dashboard-drawer-root .drawer-backdrop {
+  background: rgba(18, 27, 22, 0.12) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.stitch-admin .dashboard-drawer-root .drawer-panel,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel {
+  position: absolute !important;
+  inset: 0 0 0 auto !important;
+  isolation: isolate;
+  z-index: 10 !important;
+  contain: layout paint style;
+  background: var(--surface-strong) !important;
+  background-color: var(--surface-strong) !important;
+  background-image: none !important;
+  border-color: var(--border) !important;
+  box-shadow: -18px 0 54px rgba(24, 35, 28, 0.18) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transform: translate3d(0, 0, 0);
+}
+
+.dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] {
+  min-height: 0;
+  flex: 1 1 auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+}
+
+.dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] > .overflow-y-auto:first-child,
+.dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] > .overflow-auto:first-child {
+  min-height: auto !important;
+  overflow: visible !important;
+}
+
+.stitch-admin .dashboard-drawer-root .drawer-panel > div:first-child,
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel > div:first-child {
+  background: color-mix(in srgb, var(--surface-strong) 96%, var(--primary-soft)) !important;
+}
+
+.stitch-admin .dashboard-drawer-root .drawer-panel [class*="bg-[var(--surface)]"],
+.stitch-admin .dashboard-drawer-root .drawer-panel [class*="bg-[var(--soft-surface)]"],
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel [class*="bg-[var(--surface)]"],
+.stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel [class*="bg-[var(--soft-surface)]"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.dark-admin .dashboard-drawer-root .drawer-backdrop {
+  background: rgba(0, 0, 0, 0.34) !important;
+}
+
+.dark-admin .stitch-admin .dashboard-drawer-root .drawer-panel,
+.dark-admin .stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel {
+  background: var(--surface) !important;
+  background-color: var(--surface) !important;
+  box-shadow: -22px 0 70px rgba(0, 0, 0, 0.48) !important;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .dashboard-owner-shell .dashboard-drawer-root {
+    inset: 3.75rem 0 0 76px !important;
+    z-index: calc(var(--z-dashboard-shell) + 8) !important;
+  }
+
+  .dashboard-focus-shell .dashboard-drawer-root {
+    inset: 3.75rem 0 0 0 !important;
+    z-index: calc(var(--z-dashboard-shell) + 8) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel {
+    height: 100% !important;
+    max-height: 100% !important;
+    border-top: 1px solid var(--border) !important;
+    border-top-left-radius: 16px !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .dashboard-owner-shell .dashboard-drawer-root {
+    inset: 3.75rem 0 0 232px !important;
+    z-index: calc(var(--z-dashboard-shell) + 8) !important;
+  }
+
+  .dashboard-focus-shell .dashboard-drawer-root {
+    inset: 3.75rem 0 0 0 !important;
+    z-index: calc(var(--z-dashboard-shell) + 8) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel {
+    height: 100% !important;
+    max-height: 100% !important;
+    border-top: 1px solid var(--border) !important;
+    border-top-left-radius: 16px !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .dashboard-drawer-root {
+    inset: 0 !important;
+    display: flex !important;
+    align-items: flex-end !important;
+    justify-content: center !important;
+    z-index: var(--z-dashboard-drawer) !important;
+    pointer-events: none;
+  }
+
+  .dashboard-drawer-root .drawer-backdrop {
+    background: rgba(18, 27, 22, 0.28) !important;
+    pointer-events: auto;
+  }
+
+  .dashboard-drawer-root .drawer-panel {
+    inset: auto 0 0 0 !important;
+    height: min(92svh, calc(100dvh - 64px)) !important;
+    max-height: min(92svh, calc(100dvh - 64px)) !important;
+    width: min(100vw, 430px) !important;
+    max-width: min(100vw, 430px) !important;
+    margin-inline: auto !important;
+    border-left-width: 0 !important;
+    border-top: 1px solid var(--border) !important;
+    border-top-left-radius: 1.25rem !important;
+    border-top-right-radius: 1.25rem !important;
+    box-shadow: 0 -18px 54px rgba(24, 35, 28, 0.2) !important;
+    pointer-events: auto;
+    touch-action: pan-y;
+  }
+
+  .dashboard-drawer-root .drawer-panel > div:first-child,
+  .dashboard-drawer-root .drawer-panel > header:first-child {
+    border-top-left-radius: 1.25rem !important;
+    border-top-right-radius: 1.25rem !important;
+    padding-top: calc(0.875rem + env(safe-area-inset-top) * 0) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel > .min-h-0,
+  .dashboard-drawer-root .drawer-panel > main {
+    min-height: 0 !important;
+    overscroll-behavior: contain !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel[data-has-footer="true"] [data-dashboard-drawer-content] {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] > .overflow-y-auto:first-child,
+  .dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] > .overflow-auto:first-child {
+    padding-bottom: calc(5.5rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  .dashboard-drawer-root .drawer-panel[data-has-footer="true"] [data-dashboard-drawer-content] > .overflow-y-auto:first-child,
+  .dashboard-drawer-root .drawer-panel[data-has-footer="true"] [data-dashboard-drawer-content] > .overflow-auto:first-child {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom)) !important;
+  }
+
+  .dashboard-drawer-root .dashboard-drawer-action-footer {
+    box-shadow: 0 -10px 26px rgba(24, 35, 28, 0.08);
+  }
+
+  .dashboard-drawer-root .drawer-panel > .shrink-0:last-child {
+    background: var(--surface-strong) !important;
+    padding-bottom: calc(0.875rem + env(safe-area-inset-bottom)) !important;
   }
 }

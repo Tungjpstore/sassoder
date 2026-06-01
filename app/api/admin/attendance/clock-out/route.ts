@@ -3,7 +3,7 @@ import { ZodError } from "zod";
 import { attendanceClockOutSchema } from "@/lib/validators";
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
-import { firstForwardedIp } from "@/lib/attendance-network";
+import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { authorizeAttendanceManagementSession, clockOutStaffAttendance } from "@/features/attendance/services/attendance-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
@@ -66,16 +66,18 @@ function failure(error: unknown) {
 
 function requestNetwork(request: Request) {
   return {
-    ipAddress:
-      request.headers.get("cf-connecting-ip") ||
-      request.headers.get("x-real-ip") ||
-      firstForwardedIp(request.headers.get("x-forwarded-for")),
+    ipAddress: trustedClientIp(request),
     userAgent: request.headers.get("user-agent")?.slice(0, 500) || null
   };
 }
 
 function deviceFingerprint(deviceInfo: Record<string, unknown>) {
   const value = deviceInfo.deviceFingerprint;
+  return typeof value === "string" ? value : null;
+}
+
+function attendanceSessionToken(deviceInfo: Record<string, unknown>) {
+  const value = deviceInfo.attendanceSessionToken ?? deviceInfo.staffSessionToken;
   return typeof value === "string" ? value : null;
 }
 
@@ -88,7 +90,12 @@ export async function POST(request: Request) {
       feature: "staff_management",
       permission: input.source === "manual" ? ["attendance.clock", "attendance.edit"] : "attendance.clock"
     });
-    await assertActiveStaffDeviceSession({ session, deviceFingerprint: deviceFingerprint(input.deviceInfo) });
+    await assertActiveStaffDeviceSession({
+      session,
+      deviceFingerprint: deviceFingerprint(input.deviceInfo),
+      attendanceSessionToken: attendanceSessionToken(input.deviceInfo),
+      requireSignedToken: input.source !== "manual"
+    });
     const attendanceSession = input.source === "manual" ? authorizeAttendanceManagementSession(session) : session;
     const data = await clockOutStaffAttendance({ session: attendanceSession, input: { ...input, network: requestNetwork(request) } });
     await invalidateStaffOperationsBundleCache(session.restaurantId);

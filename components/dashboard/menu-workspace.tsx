@@ -24,8 +24,7 @@ import {
   Tags,
   TimerReset,
   Trash2,
-  Utensils,
-  X
+  Utensils
 } from "lucide-react";
 import {
   createCategoryAction,
@@ -44,6 +43,7 @@ import {
 } from "@/app/dashboard/actions";
 import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
 import { DashboardMetricCard } from "@/components/dashboard/primitives";
+import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -819,7 +819,7 @@ export function MenuWorkspace({
       <section className="dashboard-panel dashboard-menu-panel p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu operations</p>
+            <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu</p>
             <h2 className="dashboard-section-title mt-1">Danh sách món đang quản lý</h2>
             <p className="mt-1 text-sm text-[var(--muted-foreground)]">
               {availableItems} món đang bán · {pausedItems} món tạm hết · {categories.length} danh mục
@@ -1040,31 +1040,27 @@ export function MenuWorkspace({
       </section>
 
       {panelMode !== "closed" && (
-        <div className="fixed inset-0 z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
-          <button type="button" className="drawer-backdrop absolute inset-0 z-0" aria-label="Đóng bảng nổi" onClick={closePanel} />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="menu-workspace-drawer-title"
-            className="drawer-panel absolute inset-y-0 right-0 z-[1] flex h-dvh max-h-dvh w-full max-w-[460px] flex-col border-l border-[var(--border)] bg-[var(--surface)]"
-          >
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 py-3 sm:px-5 sm:py-4">
-              <div>
-                <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Menu</p>
-                <h3 id="menu-workspace-drawer-title" className="dashboard-section-title mt-1">
-                  {panelMode === "stats" && "Tổng quan menu"}
-                  {panelMode === "aiOcr" && "Nhập menu nhanh"}
-                  {panelMode === "createCategory" && "Thêm danh mục"}
-                  {panelMode === "createItem" && "Thêm món mới"}
-                  {panelMode === "editItem" && (selectedItem?.name ?? "Sửa món")}
-                </h3>
-              </div>
-              <button type="button" onClick={closePanel} className="grid h-11 w-11 place-items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] text-[var(--muted-foreground)]" aria-label="Đóng bảng nổi">
-                <X size={18} />
-              </button>
-            </div>
+        <DashboardDrawer
+          open
+          onClose={closePanel}
+          title={
+            panelMode === "stats"
+              ? "Tổng quan menu"
+              : panelMode === "aiOcr"
+                ? "Nhập menu nhanh"
+                : panelMode === "createCategory"
+                  ? "Thêm danh mục"
+                  : panelMode === "createItem"
+                    ? "Thêm món mới"
+                    : selectedItem?.name ?? "Sửa món"
+          }
+          subtitle="Menu"
+          closeLabel="Đóng bảng menu"
+          width="md"
+          contentClassName="p-0 sm:p-0"
+        >
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
+            <div className="px-4 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:px-5">
               {uploadError ? (
                 <div role="alert" className="mb-4 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-4 py-3 text-sm font-semibold text-[var(--accent-strong)]">
                   {uploadError}
@@ -1336,8 +1332,7 @@ export function MenuWorkspace({
                 </div>
               )}
             </div>
-          </aside>
-        </div>
+        </DashboardDrawer>
       )}
 
     </div>

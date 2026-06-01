@@ -3,18 +3,14 @@ import { ZodError } from "zod";
 import { registerStaffAttendanceWifiNetwork } from "@/features/attendance/services/attendance-wifi-service";
 import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-session";
 import { AppError } from "@/lib/response";
-import { firstForwardedIp } from "@/lib/attendance-network";
+import { trustedClientIp } from "@/lib/trusted-client-ip";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { staffAttendanceWifiNetworkRegisterSchema } from "@/lib/validators";
 
 export const preferredRegion = "sin1";
 
 function requestIp(request: Request) {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-real-ip") ||
-    firstForwardedIp(request.headers.get("x-forwarded-for"))
-  );
+  return trustedClientIp(request);
 }
 
 function success(data: Awaited<ReturnType<typeof registerStaffAttendanceWifiNetwork>>) {
