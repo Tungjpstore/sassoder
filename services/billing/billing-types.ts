@@ -73,6 +73,7 @@ export type BillingV2SubscriptionRow = {
   status: "trialing" | "active" | "grace" | "pending_payment" | "cancelled" | "expired" | "suspended";
   current_period_start: string | null;
   current_period_end: string | null;
+  grace_ends_at?: string | null;
   trial_started_at: string | null;
   trial_ends_at: string | null;
   plan?: BillingV2PlanRow | BillingV2PlanRow[] | null;

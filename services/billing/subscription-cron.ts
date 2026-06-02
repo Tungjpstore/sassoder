@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/response";
+import { DEFAULT_GRACE_PERIOD_DAYS } from "@/lib/billing/subscription-transitions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { addDays, dateOnly, daysUntil, firstOrNull, formatDateVi, isMissingSchemaError } from "./billing-utils";
 import type { SubscriptionReminderCandidateRow } from "./billing-types";
@@ -248,18 +249,61 @@ export async function expireStaleRestaurantSubscriptions({
 
   if (activeError) throw activeError;
 
+  const graceCutoff = addDays(new Date(), -DEFAULT_GRACE_PERIOD_DAYS).toISOString();
+  const { data: expiredPastDueSubscriptions, error: pastDueError } = await supabase
+    .from("restaurant_subscriptions")
+    .update({
+      status: "expired",
+      updated_at: now
+    })
+    .eq("status", "past_due")
+    .lt("current_period_end", graceCutoff)
+    .select("id,restaurant_id");
+
+  if (pastDueError) throw pastDueError;
+
+  const { data: expiredV2GraceSubscriptions, error: v2GraceError } = await supabase
+    .from("subscriptions")
+    .update({
+      status: "expired",
+      updated_at: now
+    })
+    .eq("status", "grace")
+    .lt("grace_ends_at", now)
+    .select("id,restaurant_id");
+
+  if (v2GraceError && !isMissingSchemaError(v2GraceError)) throw v2GraceError;
+
+  const { data: expiredV2GraceFallbackSubscriptions, error: v2GraceFallbackError } = await supabase
+    .from("subscriptions")
+    .update({
+      status: "expired",
+      updated_at: now
+    })
+    .eq("status", "grace")
+    .is("grace_ends_at", null)
+    .lt("current_period_end", graceCutoff)
+    .select("id,restaurant_id");
+
+  if (v2GraceFallbackError && !isMissingSchemaError(v2GraceFallbackError)) throw v2GraceFallbackError;
+
   const affectedRestaurantIds = new Set<string>();
   for (const row of expiredTrials ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const row of pastDueSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
+  for (const row of expiredPastDueSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
+  for (const row of expiredV2GraceSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
+  for (const row of expiredV2GraceFallbackSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const restaurantId of affectedRestaurantIds) invalidateRestaurantEntitlementCache(restaurantId);
 
   const result = {
     expiredTrials: expiredTrials?.length ?? 0,
     pastDueSubscriptions: pastDueSubscriptions?.length ?? 0,
+    expiredPastDueSubscriptions: expiredPastDueSubscriptions?.length ?? 0,
+    expiredV2GraceSubscriptions: (expiredV2GraceSubscriptions?.length ?? 0) + (expiredV2GraceFallbackSubscriptions?.length ?? 0),
     reminders
   };
 
-  if (result.expiredTrials || result.pastDueSubscriptions) {
+  if (result.expiredTrials || result.pastDueSubscriptions || result.expiredPastDueSubscriptions || result.expiredV2GraceSubscriptions) {
     await supabase.from("platform_audit_logs").insert({
       actor: "system-cron",
       action: "subscriptions_expired",

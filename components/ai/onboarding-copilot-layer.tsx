@@ -646,8 +646,8 @@ function buildPlanExplanation(): OnboardingAiResult {
       { id: "choose-premium", label: "Chọn Premium nếu cần AI/OCR", description: "Thêm OCR menu, ảnh món, đặt bàn/cọc và báo cáo nâng cao.", tone: "secondary" }
     ],
     metrics: [
-      { label: "Pro", value: "99k" },
-      { label: "Premium", value: "199k" }
+      { label: "Pro", value: "99K/tháng" },
+      { label: "Premium", value: "199K/tháng" }
     ]
   };
 }

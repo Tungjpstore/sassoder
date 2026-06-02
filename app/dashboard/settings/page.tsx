@@ -29,7 +29,6 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { requestSubscriptionPaymentAction, updateReportScheduleAction, updateRestaurantSettingsAction } from "@/app/dashboard/actions";
-import { BillingWorkspace } from "@/components/billing/billing-workspace";
 import { SUBSCRIPTION_EXPIRY_NOTICE_DAYS } from "@/lib/billing/subscription-warning";
 import { AdminShell } from "@/components/dashboard/app-shell";
 import { AiSetupStudio } from "@/components/dashboard/ai-setup-studio";
@@ -685,14 +684,14 @@ type BillingPlanView = BillingPortal["plans"][number];
 type BillingPaymentView = BillingPortal["paymentRequests"][number];
 type BillingStepKey = "current" | "compare" | "payment" | "processing" | "history" | "detail" | "manage";
 
-const billingSteps: Array<{ key: BillingStepKey; index: number; title: string; subtitle: string }> = [
-  { key: "current", index: 1, title: "Gói hiện tại", subtitle: "Xem nhanh gói đang dùng và mức sử dụng" },
-  { key: "compare", index: 2, title: "So sánh gói", subtitle: "Dễ dàng so sánh và chọn gói phù hợp" },
-  { key: "payment", index: 3, title: "Thanh toán", subtitle: "Thanh toán nhanh chóng qua VietQR" },
-  { key: "processing", index: 4, title: "Đang xử lý", subtitle: "Theo dõi trạng thái thanh toán" },
-  { key: "history", index: 5, title: "Lịch sử giao dịch", subtitle: "Tất cả giao dịch và hoá đơn của bạn" },
-  { key: "detail", index: 6, title: "Chi tiết giao dịch", subtitle: "Thông tin chi tiết của hoá đơn" },
-  { key: "manage", index: 7, title: "Quản lý gói", subtitle: "Nâng cấp, hạ cấp hoặc huỷ gói" }
+const billingSteps: Array<{ key: BillingStepKey; index: number; title: string; shortTitle: string; subtitle: string }> = [
+  { key: "current", index: 1, title: "Gói hiện tại", shortTitle: "Gói", subtitle: "Xem nhanh gói đang dùng và mức sử dụng" },
+  { key: "compare", index: 2, title: "So sánh gói", shortTitle: "So sánh", subtitle: "Dễ dàng so sánh và chọn gói phù hợp" },
+  { key: "payment", index: 3, title: "Thanh toán", shortTitle: "QR", subtitle: "Thanh toán nhanh chóng qua VietQR" },
+  { key: "processing", index: 4, title: "Đang xử lý", shortTitle: "Xử lý", subtitle: "Theo dõi trạng thái thanh toán" },
+  { key: "history", index: 5, title: "Lịch sử giao dịch", shortTitle: "Lịch sử", subtitle: "Tất cả giao dịch và hoá đơn của bạn" },
+  { key: "detail", index: 6, title: "Chi tiết giao dịch", shortTitle: "Chi tiết", subtitle: "Thông tin chi tiết của hoá đơn" },
+  { key: "manage", index: 7, title: "Quản lý gói", shortTitle: "Quản lý", subtitle: "Nâng cấp, hạ cấp hoặc huỷ gói" }
 ];
 
 function normalizeBillingStep(value: string | string[] | undefined): BillingStepKey {
@@ -777,7 +776,7 @@ function planShortName(plan: Pick<BillingPlanView, "name" | "code">) {
 }
 
 function limitLabel(limit: number | null | undefined, unit: string | undefined) {
-  if (limit === null || limit === undefined) return "Không giới hạn";
+  if (limit === null || limit === undefined) return "Theo chính sách gói";
   return `${new Intl.NumberFormat("vi-VN").format(limit)}${unit ? ` ${unit}` : ""}`;
 }
 
@@ -801,16 +800,16 @@ function periodProgress(start: string | null | undefined, end: string | null | u
 
 function BillingStepHeader({ index, title, subtitle }: { index: number; title: string; subtitle: string }) {
   return (
-    <div className="mb-4">
+    <div className="billing-step-header mb-3 min-w-0">
       <p className="text-sm font-semibold text-[var(--foreground)]">{index}. {title}</p>
-      <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">{subtitle}</p>
+      <p className="billing-step-header-subtitle mt-1 text-xs font-medium text-[var(--muted-foreground)]">{subtitle}</p>
     </div>
   );
 }
 
 function BillingSurface({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn("billing-flow-surface rounded-[24px] border border-[#E7E0D6] bg-[#FFFDF8] shadow-[0_18px_55px_rgba(21,30,24,0.06)]", className)}>
+    <section className={cn("billing-flow-surface rounded-[18px] border border-[var(--border)] bg-[var(--surface)] shadow-[0_14px_34px_rgba(21,30,24,0.055)]", className)}>
       {children}
     </section>
   );
@@ -851,14 +850,14 @@ function UsageMiniCard({
   tone?: "green" | "orange";
 }) {
   return (
-    <div className="rounded-[16px] border border-[#E8E0D5] bg-[#FFFDF8] p-3">
+    <div className="billing-usage-card rounded-[14px] border border-[#E8E0D5] bg-[#FFFDF8] p-3">
       <div className="flex items-center gap-2">
         <span className={cn("grid h-6 w-6 place-items-center rounded-full", tone === "green" ? "bg-[#E8F4EC] text-[#0F6B3F]" : "bg-[#FFF0DB] text-[#CF741B]")}>
           <Icon size={13} aria-hidden="true" />
         </span>
         <p className="truncate text-xs font-black text-[#323831]">{label}</p>
       </div>
-      <p className="mt-3 text-[15px] font-black tracking-[-0.02em] text-[#151915]">{value}</p>
+      <p className="mt-3 text-[15px] font-black tracking-normal text-[#151915]">{value}</p>
       <BillingProgress value={percent} tone={tone} />
       <p className="mt-2 text-[11px] font-semibold text-[#7A817B]">{meta}</p>
     </div>
@@ -867,13 +866,13 @@ function UsageMiniCard({
 
 function BillingReadinessItem({ done, label, detail }: { done: boolean; label: string; detail: string }) {
   return (
-    <div className="flex min-h-[74px] items-start gap-2 rounded-[14px] border border-[#E8E0D5] bg-white px-3 py-3">
+    <div className="billing-readiness-item flex min-h-[62px] items-center gap-2 rounded-[12px] border border-[#E8E0D5] bg-white px-2.5 py-2.5 sm:items-start sm:px-3">
       <span className={cn("mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full", done ? "bg-[#EAF7EF] text-[#0F6B3F]" : "bg-[#FFF5E8] text-[#B96618]")}>
         {done ? <Check size={14} aria-hidden="true" /> : <AlertTriangle size={14} aria-hidden="true" />}
       </span>
       <span className="min-w-0">
         <span className="block text-xs font-black text-[#151915]">{label}</span>
-        <span className="mt-1 block text-[11px] font-semibold leading-4 text-[#6F766F]">{detail}</span>
+        <span className="billing-readiness-detail mt-1 hidden text-[11px] font-semibold leading-4 text-[#6F766F] sm:block">{detail}</span>
       </span>
     </div>
   );
@@ -892,6 +891,7 @@ function BillingStatusPanel({
   exportPercent,
   actionHref,
   actionLabel,
+  actionShortLabel,
   actionDetail
 }: {
   usable: boolean;
@@ -906,6 +906,7 @@ function BillingStatusPanel({
   exportPercent: number | null;
   actionHref: string;
   actionLabel: string;
+  actionShortLabel: string;
   actionDetail: string;
 }) {
   const quotaPressure = (aiPercent ?? 0) >= 85 || (exportPercent ?? 0) >= 85;
@@ -917,26 +918,36 @@ function BillingStatusPanel({
   );
 
   return (
-    <section className="mb-4 rounded-[22px] border border-[#E0E9DD] bg-[linear-gradient(135deg,#F3FAF4,#FFF7EB)] p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.16em] text-[#0F6B3F]">Gói & thanh toán</p>
+    <section className="billing-status-panel mb-3 rounded-[18px] border border-[#E0E9DD] bg-[linear-gradient(135deg,#F6FBF4,#FFF9EF)] p-3 sm:p-4">
+      <div className="billing-status-top grid grid-cols-[minmax(0,1fr)_92px] gap-2 sm:grid-cols-[minmax(0,1fr)_180px] xl:grid-cols-[minmax(0,1fr)_190px_210px] xl:items-center">
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#0F6B3F]">Gói LogiVN</p>
           <h3 className="mt-1 text-base font-black text-[#151915]">Tình trạng gói hiện tại</h3>
+          <p className="billing-status-copy mt-1 text-xs font-semibold leading-5 text-[#667069]">{actionDetail}</p>
         </div>
-        <div className="grid min-w-[180px] grid-cols-[76px_minmax(0,1fr)] gap-2 rounded-[18px] border border-[#CFE8D8] bg-white p-3">
+        <div className="billing-status-meter grid grid-cols-1 gap-0.5 rounded-[14px] border border-[#CFE8D8] bg-white p-2.5 text-center sm:grid-cols-[64px_minmax(0,1fr)] sm:gap-2 sm:text-left">
           <div>
-            <p className="text-[11px] font-black text-[#667069]">Sẵn sàng</p>
-            <p className="mt-1 text-2xl font-black tracking-[-0.04em] text-[#0F6B3F]">{readinessScore}%</p>
+            <p className="text-[10px] font-black text-[#667069]">Sẵn sàng</p>
+            <p className="mt-1 text-xl font-black tracking-normal text-[#0F6B3F]">{readinessScore}%</p>
           </div>
-          <div className="grid content-center gap-1 text-[11px] font-bold text-[#667069]">
-            <span>{accessStatusLabel}</span>
+          <div className="billing-status-meter-copy grid content-center gap-0.5 text-[11px] font-bold text-[#667069]">
+            <span className="truncate">{accessStatusLabel}</span>
             <span>{daysLeft > 0 ? `Còn ${daysLeft} ngày` : "Cần gia hạn"}</span>
           </div>
         </div>
+        <Link href={actionHref} className="billing-status-action col-span-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] bg-[#075C38] px-4 text-sm font-black text-white transition hover:bg-[#064D30] sm:col-span-2 xl:col-span-1">
+          <span className="sm:hidden">{actionShortLabel}</span>
+          <span className="hidden sm:inline">{actionLabel}</span>
+          <ArrowRight size={15} aria-hidden="true" />
+        </Link>
       </div>
 
-      <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      {pendingChangeSummary ? (
+        <p className="mt-3 rounded-xl border border-[#F4D7AF] bg-[#FFF5E8] px-3 py-2 text-[11px] font-bold leading-4 text-[#9B5417]">{pendingChangeSummary}</p>
+      ) : null}
+
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)]">
+        <div className="billing-readiness-grid grid gap-2">
           <BillingReadinessItem
             done={usable}
             label="Quyền truy cập"
@@ -958,19 +969,6 @@ function BillingStatusPanel({
             detail={billingClean ? `Không có giao dịch kẹt. Thành công ${confirmedCount}.` : `${waitingCount} đang xử lý, ${failedCount} thất bại cần rà lại.`}
           />
         </div>
-
-        <aside className="rounded-[18px] border border-[#F3D3AA] bg-white p-3">
-          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#B96618]">Hành động tiếp theo</p>
-          <p className="mt-2 text-sm font-black leading-5 text-[#151915]">{actionLabel}</p>
-          <p className="mt-1 text-xs font-semibold leading-5 text-[#667069]">{actionDetail}</p>
-          {pendingChangeSummary ? (
-            <p className="mt-3 rounded-xl bg-[#FFF5E8] px-3 py-2 text-[11px] font-bold leading-4 text-[#9B5417]">{pendingChangeSummary}</p>
-          ) : null}
-          <Link href={actionHref} className="mt-3 inline-flex min-h-[56px] w-full items-center justify-center gap-2 rounded-[10px] bg-[#075C38] px-4 text-sm font-black text-white transition hover:bg-[#064D30]">
-            Đi tới bước xử lý
-            <ArrowRight size={15} aria-hidden="true" />
-          </Link>
-        </aside>
       </div>
     </section>
   );
@@ -1025,29 +1023,34 @@ function SubscriptionSettingsPanel({
     ? {
         href: billingStepHref("processing", pending.id),
         label: "Theo dõi thanh toán đang chờ xác nhận",
+        shortLabel: "Theo dõi CK",
         detail: `Yêu cầu ${pending.transfer_content} đang chờ kích hoạt gói.`
       }
     : !billing.usable
       ? {
           href: billingStepHref("payment"),
           label: "Tạo hoặc hoàn tất thanh toán để mở lại quyền",
+          shortLabel: "Mở lại gói",
           detail: "Gói hiện tại chưa usable, ưu tiên xử lý trước khi vận hành ca."
         }
       : billing.daysLeft <= SUBSCRIPTION_EXPIRY_NOTICE_DAYS
         ? {
             href: billingStepHref("payment"),
             label: "Gia hạn trước khi hết chu kỳ",
+            shortLabel: "Gia hạn",
             detail: billing.daysLeft > 0 ? `Còn ${billing.daysLeft} ngày, nên tạo VietQR gia hạn ngay.` : "Chu kỳ đã hết hạn, cần tạo thanh toán mới."
           }
         : quotaPressure
           ? {
               href: billingStepHref("compare"),
               label: "Rà quota và cân nhắc nâng gói",
+              shortLabel: "Rà quota",
               detail: `AI ${aiUsagePercent ?? 0}% · Export ${exportUsagePercent ?? 0}% trong chu kỳ hiện tại.`
             }
           : {
               href: billingStepHref("current"),
               label: "Gói đang ổn, tiếp tục theo dõi sử dụng",
+              shortLabel: "Theo dõi",
               detail: "Không có thanh toán kẹt hoặc quota vượt ngưỡng trong chu kỳ này."
             };
   const activeStepIndex = Math.max(0, billingSteps.findIndex((step) => step.key === activeStep));
@@ -1076,10 +1079,10 @@ function SubscriptionSettingsPanel({
 
   if (activeStep === "current") {
     pageContent = (
-      <BillingSurface className="min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
-        <div className="grid min-h-0 gap-5 lg:min-h-[520px] xl:grid-cols-[minmax(0,1fr)_360px]">
+      <BillingSurface className="billing-current-surface min-h-0 overflow-visible p-4 sm:p-5 lg:h-full lg:min-h-[520px] lg:overflow-y-auto lg:p-6">
+        <div className="billing-current-layout grid min-h-0 gap-5 lg:min-h-[520px] xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid content-start gap-5">
-            <div className="flex items-center justify-between gap-3">
+            <div className="billing-current-identity hidden items-center justify-between gap-3 sm:flex">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-xl bg-[#F2EEE5] text-sm font-black text-[#0F6B3F]">
                   {billing.restaurant.name.slice(0, 1).toUpperCase()}
@@ -1092,13 +1095,13 @@ function SubscriptionSettingsPanel({
               <SoftPill className="border-[#CFE8D8] bg-[#EAF7EF] text-[#0F6B3F]">{accessStatusLabel}</SoftPill>
             </div>
 
-            <div className="rounded-[22px] border border-[#E8E0D5] bg-[#FFF9EF] p-5">
+            <div className="billing-current-plan-card rounded-[22px] border border-[#E8E0D5] bg-[#FFF9EF] p-5">
               <SoftPill className="border-[#F3D3AA] bg-[#FFF0DB] text-[#E37A1F]">
                 <Crown size={13} className="mr-1" aria-hidden="true" />
                 {planShortName(billing.currentPlan)}
               </SoftPill>
-              <p className="mt-5 text-[34px] font-black tracking-[-0.05em] text-[#111713]">{formatVnd(billing.currentPlan.monthly_price)}<span className="ml-1 text-sm font-bold tracking-normal text-[#7A817B]">/ tháng</span></p>
-              <p className="mt-4 text-sm font-semibold text-[#6F766F]">
+              <p className="billing-plan-price mt-5 text-[34px] font-black tracking-normal text-[#111713]">{formatVnd(billing.currentPlan.monthly_price)}<span className="ml-1 text-sm font-bold tracking-normal text-[#7A817B]">/ tháng</span></p>
+              <p className="billing-renewal-date mt-4 text-sm font-semibold text-[#6F766F]">
                 Gia hạn vào <strong className="text-[#151915]">{formatBillingDate(currentPeriodEnd)}</strong>
                 {billing.daysLeft > 0 ? ` (còn ${billing.daysLeft} ngày)` : ""}
               </p>
@@ -1125,19 +1128,19 @@ function SubscriptionSettingsPanel({
             <div>
               <p className="text-sm font-black text-[#151915]">Sử dụng tài nguyên</p>
               <p className="mt-1 text-xs font-medium text-[#7A817B]">Chu kỳ hiện tại: {formatBillingDate(currentPeriodStart)} - {formatBillingDate(currentPeriodEnd)}</p>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="billing-usage-grid mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <UsageMiniCard
                   icon={QrCode}
                   label="Bàn"
                   value={`${tableCount}/${limitLabel(tableFeature?.limit, tableFeature?.unit)}`}
-                  meta={tableFeature?.limit ? `${usagePercent(tableCount, tableFeature.limit)}%` : "Không giới hạn"}
+                  meta={tableFeature?.limit ? `${usagePercent(tableCount, tableFeature.limit)}%` : "Theo chính sách gói"}
                   percent={usagePercent(tableCount, tableFeature?.limit)}
                 />
                 <UsageMiniCard
                   icon={Users}
                   label="Nhân viên"
                   value={`${staffCount}/${limitLabel(staffFeature?.limit, staffFeature?.unit)}`}
-                  meta={staffFeature?.limit ? `${usagePercent(staffCount, staffFeature.limit)}%` : "Không giới hạn"}
+                  meta={staffFeature?.limit ? `${usagePercent(staffCount, staffFeature.limit)}%` : "Theo chính sách gói"}
                   percent={usagePercent(staffCount, staffFeature?.limit)}
                 />
                 <UsageMiniCard
@@ -1159,7 +1162,7 @@ function SubscriptionSettingsPanel({
             </div>
           </div>
 
-          <aside className="rounded-[22px] border border-[#E8E0D5] bg-white p-5">
+          <aside className="billing-benefits-panel rounded-[22px] border border-[#E8E0D5] bg-white p-5">
             <p className="text-sm font-black text-[#151915]">Quyền lợi gói {planShortName(billing.currentPlan)}</p>
             <div className="mt-4 grid gap-3">
               {currentBenefits.map((feature) => (
@@ -1211,8 +1214,8 @@ function SubscriptionSettingsPanel({
                   </span>
                 ) : null}
                 <div className="text-center">
-                  <p className="text-[15px] font-black tracking-[-0.01em] text-[#151915]">{planShortName(plan)}</p>
-                  <p className={cn("mt-3 text-[28px] font-black tracking-[-0.04em]", isPremium ? "text-[#E37A1F]" : "text-[#111713]")}>
+                  <p className="text-[15px] font-black tracking-normal text-[#151915]">{planShortName(plan)}</p>
+                  <p className={cn("mt-3 text-[28px] font-black tracking-normal", isPremium ? "text-[#E37A1F]" : "text-[#111713]")}>
                     {formatVnd(plan.monthly_price)}
                   </p>
                   <p className="text-xs font-bold text-[#7A817B]">/ tháng</p>
@@ -1220,7 +1223,7 @@ function SubscriptionSettingsPanel({
 
                 <form action={requestSubscriptionPaymentAction} className="mt-5 grid gap-3">
                   <input type="hidden" name="planCode" value={plan.code} />
-                  <select name="months" defaultValue="1" className="h-10 rounded-[10px] border border-[#E3DBCF] bg-[#FFFDF8] px-3 text-sm font-bold text-[#151915]">
+                  <select name="months" defaultValue="1" className="h-11 rounded-[10px] border border-[#E3DBCF] bg-[#FFFDF8] px-3 text-sm font-bold text-[#151915]">
                     <option value="1">1 tháng</option>
                     <option value="3">3 tháng</option>
                     <option value="6">6 tháng</option>
@@ -1276,7 +1279,7 @@ function SubscriptionSettingsPanel({
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
                   <p className="text-xs font-semibold text-[#7A817B]">Số tiền thanh toán</p>
-                  <p className="mt-1 text-[30px] font-black tracking-[-0.04em] text-[#111713]">{formatVnd(pending.amount)}</p>
+                  <p className="mt-1 text-[30px] font-black tracking-normal text-[#111713]">{formatVnd(pending.amount)}</p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-[#7A817B]">Ngân hàng nhận</p>
@@ -1285,15 +1288,15 @@ function SubscriptionSettingsPanel({
                 </div>
                 <div className="sm:col-span-2">
                   <p className="text-xs font-semibold text-[#7A817B]">Nội dung chuyển khoản</p>
-                  <p className="mt-2 inline-flex max-w-full rounded-[10px] bg-[#F3EFE6] px-3 py-2 font-mono text-xs font-black text-[#151915]">{pending.transfer_content}</p>
+                  <p className="mt-2 inline-flex max-w-full break-all rounded-[10px] bg-[#F3EFE6] px-3 py-2 font-mono text-xs font-black text-[#151915]">{pending.transfer_content}</p>
                 </div>
               </div>
-              <Link href={billingStepHref("processing")} className="inline-flex min-h-11 w-fit items-center justify-center rounded-[10px] bg-[#075C38] px-5 text-sm font-black text-white transition hover:bg-[#064D30]">
+              <Link href={billingStepHref("processing")} className="inline-flex min-h-11 w-full items-center justify-center rounded-[10px] bg-[#075C38] px-5 text-sm font-black text-white transition hover:bg-[#064D30] sm:w-fit">
                 Tôi đã thanh toán
               </Link>
             </div>
             <div className="rounded-[22px] border border-[#E8E0D5] bg-white p-4 text-center">
-              <Image src={pending.qrUrl} alt="QR thanh toán gói LogiVN" width={260} height={260} className="mx-auto rounded-[14px]" />
+              <Image src={pending.qrUrl} alt="QR thanh toán gói LogiVN" width={240} height={240} className="billing-payment-qr mx-auto h-auto max-w-full rounded-[14px]" />
               <p className="mt-4 text-[11px] font-semibold text-[#7A817B]">Tạo lúc</p>
               <p className="text-xs font-black text-[#151915]">{formatBillingDateTime(pending.created_at)}</p>
             </div>
@@ -1366,7 +1369,31 @@ function SubscriptionSettingsPanel({
           <span className="rounded-full border border-[#E3DBCF] bg-white px-3 py-1.5 text-[#667069]">Thất bại {failedCount}</span>
         </div>
         {billing.paymentRequests.length ? (
-          <div className="overflow-x-auto">
+          <>
+            <div className="billing-history-mobile grid gap-3 md:hidden">
+              {billing.paymentRequests.slice(0, 8).map((payment) => {
+                const plan = billing.plans.find((item) => item.id === payment.plan_id) ?? billing.currentPlan;
+
+                return (
+                  <article key={payment.id} className="rounded-[14px] border border-[#E8E0D5] bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-black text-[#151915]">{planShortName(plan)}</p>
+                        <p className="mt-1 text-xs font-semibold text-[#667069]">{formatBillingDate(payment.confirmed_at ?? payment.created_at)}</p>
+                      </div>
+                      <PaymentStatusPill status={payment.status} />
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#F0E9DE] pt-3">
+                      <p className="text-base font-black text-[#151915]">{formatVnd(payment.amount)}</p>
+                      <Link href={billingStepHref("detail", payment.id)} className="inline-flex min-h-11 items-center rounded-[10px] border border-[#DED6CA] bg-white px-3 text-xs font-black text-[#0F6B3F] transition hover:border-[#0F6B3F]">
+                        Xem
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="billing-history-table hidden overflow-x-auto md:block">
             <table className="w-full min-w-[640px] text-left text-xs">
               <thead className="text-[#7A817B]">
                 <tr className="border-b border-[#ECE5DB]">
@@ -1388,7 +1415,7 @@ function SubscriptionSettingsPanel({
                       <td className="py-4 pr-4 font-black text-[#151915]">{formatVnd(payment.amount)}</td>
                       <td className="py-4 pr-4"><PaymentStatusPill status={payment.status} /></td>
                       <td className="py-4 text-right">
-                        <Link href={billingStepHref("detail", payment.id)} className="inline-flex h-8 items-center rounded-full border border-[#DED6CA] bg-white px-3 text-[11px] font-black text-[#0F6B3F] transition hover:border-[#0F6B3F]">
+                        <Link href={billingStepHref("detail", payment.id)} className="inline-flex min-h-10 items-center rounded-full border border-[#DED6CA] bg-white px-3 text-[11px] font-black text-[#0F6B3F] transition hover:border-[#0F6B3F]">
                           Xem
                         </Link>
                       </td>
@@ -1397,7 +1424,8 @@ function SubscriptionSettingsPanel({
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         ) : (
           <div className="grid min-h-[260px] place-items-center rounded-[18px] border border-dashed border-[#DED6CA] bg-[#FFFDF8] text-center lg:min-h-[430px]">
             <div>
@@ -1415,9 +1443,9 @@ function SubscriptionSettingsPanel({
         {selectedPayment ? (
           <div className="grid min-h-0 gap-5 lg:min-h-[520px] lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="grid content-start gap-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-mono text-base font-black text-[#151915]">#{selectedPayment.transfer_content}</p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <p className="break-all font-mono text-base font-black text-[#151915]">#{selectedPayment.transfer_content}</p>
                   <p className="mt-1 text-xs font-semibold text-[#7A817B]">{formatBillingDateTime(selectedPayment.created_at)}</p>
                 </div>
                 <PaymentStatusPill status={selectedPayment.status} />
@@ -1425,11 +1453,11 @@ function SubscriptionSettingsPanel({
               <div className="rounded-[18px] border border-[#E8E0D5] bg-[#FFFDF8] p-4">
                 <p className="text-sm font-black text-[#151915]">Thông tin thanh toán</p>
                 <div className="mt-4 grid gap-3 text-xs font-semibold text-[#667069]">
-                  <p className="flex justify-between gap-4"><span>Gói dịch vụ</span><strong className="text-[#151915]">{planShortName(selectedPaymentPlan)}</strong></p>
-                  <p className="flex justify-between gap-4"><span>Chu kỳ</span><strong className="text-[#151915]">{selectedPayment.months} tháng</strong></p>
-                  <p className="flex justify-between gap-4"><span>Phương thức</span><strong className="text-[#151915]">{selectedPayment.method}</strong></p>
-                  <p className="flex justify-between gap-4"><span>Mã giao dịch</span><strong className="break-all text-right font-mono text-[#151915]">{selectedPayment.transfer_content}</strong></p>
-                  <p className="flex justify-between gap-4"><span>Ngày xác nhận</span><strong className="text-right text-[#151915]">{formatBillingDateTime(selectedPayment.confirmed_at)}</strong></p>
+                  <p className="billing-detail-row flex justify-between gap-4"><span>Gói dịch vụ</span><strong className="text-[#151915]">{planShortName(selectedPaymentPlan)}</strong></p>
+                  <p className="billing-detail-row flex justify-between gap-4"><span>Chu kỳ</span><strong className="text-[#151915]">{selectedPayment.months} tháng</strong></p>
+                  <p className="billing-detail-row flex justify-between gap-4"><span>Phương thức</span><strong className="text-[#151915]">{selectedPayment.method}</strong></p>
+                  <p className="billing-detail-row flex justify-between gap-4"><span>Mã giao dịch</span><strong className="break-all text-right font-mono text-[#151915]">{selectedPayment.transfer_content}</strong></p>
+                  <p className="billing-detail-row flex justify-between gap-4"><span>Ngày xác nhận</span><strong className="text-right text-[#151915]">{formatBillingDateTime(selectedPayment.confirmed_at)}</strong></p>
                 </div>
               </div>
               {selectedPayment.rejected_reason ? (
@@ -1441,9 +1469,9 @@ function SubscriptionSettingsPanel({
             <aside className="rounded-[18px] border border-[#E8E0D5] bg-[#FFFDF8] p-4">
               <p className="text-sm font-black text-[#151915]">Chi tiết hoá đơn</p>
               <div className="mt-4 grid gap-3 text-xs font-semibold text-[#667069]">
-                <p className="flex justify-between gap-4"><span>Tạm tính</span><strong className="text-[#151915]">{formatVnd(selectedPayment.amount)}</strong></p>
-                <p className="flex justify-between gap-4"><span>VAT (0%)</span><strong className="text-[#151915]">{formatVnd(0)}</strong></p>
-                <p className="flex justify-between gap-4 border-t border-[#E8E0D5] pt-3 text-sm"><span>Tổng cộng</span><strong className="text-[#151915]">{formatVnd(selectedPayment.amount)}</strong></p>
+                <p className="billing-detail-row flex justify-between gap-4"><span>Tạm tính</span><strong className="text-[#151915]">{formatVnd(selectedPayment.amount)}</strong></p>
+                <p className="billing-detail-row flex justify-between gap-4"><span>VAT (0%)</span><strong className="text-[#151915]">{formatVnd(0)}</strong></p>
+                <p className="billing-detail-row flex justify-between gap-4 border-t border-[#E8E0D5] pt-3 text-sm"><span>Tổng cộng</span><strong className="text-[#151915]">{formatVnd(selectedPayment.amount)}</strong></p>
               </div>
               <button type="button" disabled className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-[10px] border border-[#DED6CA] bg-white px-4 text-sm font-black text-[#A59D91]">
                 <Download size={16} aria-hidden="true" />
@@ -1471,7 +1499,7 @@ function SubscriptionSettingsPanel({
               <Crown size={13} className="mr-1" aria-hidden="true" />
               {planShortName(billing.currentPlan)}
             </SoftPill>
-            <p className="mt-5 text-[28px] font-black tracking-[-0.04em] text-[#111713]">{formatVnd(billing.currentPlan.monthly_price)}</p>
+            <p className="mt-5 text-[28px] font-black tracking-normal text-[#111713]">{formatVnd(billing.currentPlan.monthly_price)}</p>
             <p className="text-xs font-bold text-[#7A817B]">/ tháng</p>
             <SoftPill className="mt-4 border-[#CFE8D8] bg-[#EAF7EF] text-[#0F6B3F]">{accessStatusLabel}</SoftPill>
             <p className="mt-5 text-xs font-semibold text-[#6F766F]">Gia hạn vào</p>
@@ -1517,7 +1545,7 @@ function SubscriptionSettingsPanel({
   }
 
   return (
-    <section className="billing-flow-shell dashboard-operations-stack flex min-h-0 flex-col rounded-[24px] bg-[#FAF8F2] p-3 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:min-h-[calc(100dvh-132px)] lg:rounded-[30px] lg:p-6">
+    <section className="billing-flow-shell billing-flow-shell-v2 dashboard-operations-stack flex min-h-0 flex-col rounded-[18px] border border-[var(--border)] bg-[var(--surface-container)] p-2.5 text-[#151915] sm:p-4 lg:h-[calc(100dvh-132px)] lg:min-h-[calc(100dvh-132px)] lg:p-5">
       {billingError ? (
         <div className="mb-4 flex items-start gap-3 rounded-[18px] border border-[#F4D7AF] bg-[#FFF5E8] p-4 text-sm font-semibold leading-6 text-[#9B5417]">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
@@ -1525,28 +1553,30 @@ function SubscriptionSettingsPanel({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="billing-flow-head flex flex-wrap items-start justify-between gap-3">
         <BillingStepHeader index={activeStepMeta.index} title={activeStepMeta.title} subtitle={activeStepMeta.subtitle} />
         <SoftPill className="border-[#CFE8D8] bg-[#EAF7EF] text-[#0F6B3F]">{accessStatusLabel}</SoftPill>
       </div>
 
-      <nav aria-label="Billing flow" className="mb-4 overflow-hidden rounded-[20px] border border-[#E7E0D6] bg-[#FFFDF8] p-2">
-        <div className="dashboard-segmented-scroll flex gap-2 overflow-x-auto pb-1">
+      <nav aria-label="Billing flow" className="billing-step-nav mb-3 overflow-hidden rounded-[16px] border border-[#E7E0D6] bg-[#FFFDF8] p-1.5">
+        <div className="dashboard-segmented-scroll flex gap-2 overflow-x-auto pb-1 md:grid md:grid-cols-7 md:overflow-visible md:pb-0">
           {billingSteps.map((step) => {
             const active = step.key === activeStep;
             return (
               <Link
                 key={step.key}
                 href={billingStepHref(step.key, step.key === "detail" ? detailPaymentId : undefined)}
+                aria-current={active ? "step" : undefined}
                 className={cn(
-                  "inline-flex min-h-[56px] min-w-[145px] shrink-0 items-center gap-2 rounded-[14px] border px-3 text-left transition",
+                  "billing-step-link inline-flex min-h-11 min-w-[88px] shrink-0 items-center gap-1.5 rounded-[12px] border px-2 text-left transition sm:min-w-[122px] md:w-full md:min-w-0 md:px-2",
                   active ? "border-[#0F6B3F] bg-[#EAF7EF] text-[#0F6B3F]" : "border-transparent bg-[#FAF8F2] text-[#687169] hover:border-[#DCD3C6] hover:bg-white"
                 )}
               >
-                <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-black", active ? "bg-[#0F6B3F] text-white" : "bg-white text-[#7A817B]")}>{step.index}</span>
+                <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-black sm:h-7 sm:w-7 sm:text-xs", active ? "bg-[#0F6B3F] text-white" : "bg-white text-[#7A817B]")}>{step.index}</span>
                 <span className="min-w-0">
-                  <span className="block truncate text-xs font-black">{step.title}</span>
-                  <span className="block truncate text-[10px] font-semibold opacity-70">{step.subtitle}</span>
+                  <span className="block truncate text-[11px] font-black sm:hidden">{step.shortTitle}</span>
+                  <span className="hidden truncate text-xs font-black sm:block">{step.title}</span>
+                  <span className="billing-step-subtitle hidden truncate text-[10px] font-semibold opacity-70">{step.subtitle}</span>
                 </span>
               </Link>
             );
@@ -1567,12 +1597,13 @@ function SubscriptionSettingsPanel({
         exportPercent={exportUsagePercent}
         actionHref={billingAction.href}
         actionLabel={billingAction.label}
+        actionShortLabel={billingAction.shortLabel}
         actionDetail={billingAction.detail}
       />
 
       <div className="billing-flow-scroll min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">{pageContent}</div>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="billing-foot-nav mt-3 flex flex-wrap items-center justify-between gap-3">
         {previousStep ? (
           <Link href={billingStepHref(previousStep, previousStep === "detail" ? detailPaymentId : undefined)} className="inline-flex min-h-11 items-center justify-center rounded-[10px] border border-[#DED6CA] bg-white px-4 text-sm font-black text-[#151915] transition hover:border-[#0F6B3F] hover:text-[#0F6B3F]">
             <ArrowLeft size={16} aria-hidden="true" />
@@ -1618,7 +1649,7 @@ function SettingsHomeGrid({
           <div className="relative z-[1]">
             <p className="dashboard-eyebrow">Cài đặt</p>
             <h1 className="dashboard-page-title mt-1">Cài đặt vận hành</h1>
-            <p className="dashboard-body-copy mt-1 max-w-2xl">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
+            <p className="dashboard-body-copy mt-1 hidden max-w-2xl sm:block">Chọn đúng vùng, chỉnh nhanh, quay lại tổng quan.</p>
 
             <div className="mt-3 flex flex-wrap gap-2">
               {[
@@ -1714,7 +1745,7 @@ function SettingsHomeGrid({
                           {summary.label}
                         </span>
                       </span>
-                      <span className="mt-1 block text-xs leading-5 text-[var(--muted-foreground)]">{summary.detail}</span>
+                  <span className="mt-1 hidden text-xs leading-5 text-[var(--muted-foreground)] sm:block">{summary.detail}</span>
                     </span>
                     <ArrowRight size={16} className="mt-0.5 shrink-0 text-[var(--muted-foreground)] transition group-hover:text-[var(--primary)]" />
                   </Link>
@@ -1945,6 +1976,9 @@ export default async function AdminSettingsPage({
       restaurantId={session.restaurantId}
       entitlement={entitlement}
       subtitle="Chỉnh nhanh theo từng vùng vận hành"
+      showQuickActionsFab={false}
+      showDashboardCopilot={false}
+      showLiveActionCenter={false}
     >
       <section className="dashboard-operations-stack min-h-[calc(100vh-128px)]">
         {activeSection && activeMeta ? (
@@ -1958,7 +1992,7 @@ export default async function AdminSettingsPage({
                   <div className="min-w-0">
                     <p className="dashboard-eyebrow text-[var(--muted-foreground)]">Cài đặt vận hành</p>
                     <h2 className="dashboard-page-title mt-1">{activeMeta.label}</h2>
-                    <p className="dashboard-body-copy mt-1 max-w-2xl">{activeMeta.description}</p>
+                    <p className="dashboard-body-copy mt-1 hidden max-w-2xl sm:block">{activeMeta.description}</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">

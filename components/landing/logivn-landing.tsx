@@ -249,7 +249,7 @@ const homepageFaqItems = [
   {
     question: "Gói Pro 99K và Premium 199K khác nhau như thế nào?",
     answer:
-      "Pro phù hợp để bắt đầu với QR ordering, quản lý đơn và dashboard cơ bản. Premium dành cho quán cần nhiều tự động hóa hơn như AI nâng cao, đặt bàn, báo cáo và các tính năng vận hành mở rộng."
+      "Pro phù hợp để bắt đầu với 20 bàn, 10 nhân viên, 500 món menu, QR ordering và dashboard cơ bản. Premium mở rộng lên 300 bàn, 50 nhân viên, 2.000 món menu, đặt bàn, báo cáo và AI nâng cao."
   },
   {
     question: "Quán có được dùng thử trước khi trả phí không?",

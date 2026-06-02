@@ -34,6 +34,7 @@ import type { LucideIcon } from "lucide-react";
 import { onboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { getOnboardingTableLimit } from "@/lib/billing/plan-limits";
 import { buildOnboardingRunway, formatDraftSavedLabel } from "@/lib/onboarding-runway";
 import { createSlug } from "@/lib/slug";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
@@ -238,20 +239,21 @@ const iconFieldClass = `${fieldClass} pl-10`;
 const sectionLine = "border-[#d8dee9]";
 const fallbackPlanFeatures: Record<string, string[]> = {
   pro: [
-    "Menu QR không giới hạn cho quán nhỏ",
-    "Quản lý bàn, QR và đơn theo thời gian thực",
+    "Tối đa 20 bàn và QR theo bàn",
+    "10 tài khoản nhân viên cho ca vận hành đầu tiên",
     "Dashboard doanh thu, món bán chạy và nguồn đơn",
     "Thanh toán VietQR và đối soát bill cơ bản",
-    "Thiết lập pickup/delivery cơ bản",
+    "Tối đa 500 món menu và pickup/delivery cơ bản",
     "Checklist setup và hướng dẫn vận hành ngày đầu"
   ],
   premium: [
-    "Tất cả tính năng của PRO",
+    "Tất cả tính năng của Pro",
+    "Mở rộng đến 300 bàn và 50 nhân viên",
     "AI gợi ý menu, vận hành và cơ hội tăng trưởng",
     "Báo cáo nâng cao cho doanh thu, giờ cao điểm và chi nhánh",
-    "Phân quyền nhân viên chi tiết hơn",
+    "Tối đa 2.000 món menu và phân quyền chi tiết hơn",
     "QR branding, trải nghiệm khách cao cấp hơn",
-    "Sẵn sàng mở rộng nhiều chi nhánh"
+    "Sẵn sàng mở rộng theo giới hạn vận hành an toàn"
   ]
 };
 
@@ -260,7 +262,7 @@ const planVisualFeatures: Record<string, { icon: LucideIcon; title: string; subt
     {
       icon: QrCode,
       title: "Menu QR & Gọi món",
-      subtext: "Quét gọi món tại bàn không giới hạn"
+      subtext: "Tối đa 20 bàn trong gói Pro"
     },
     {
       icon: Clock3,
@@ -293,7 +295,7 @@ const planVisualFeatures: Record<string, { icon: LucideIcon; title: string; subt
     {
       icon: Store,
       title: "Mở rộng chuỗi chi nhánh",
-      subtext: "Quản trị nhiều cơ sở, phân quyền sâu"
+      subtext: "300 bàn, 50 nhân viên theo giới hạn vận hành"
     },
     {
       icon: Smartphone,
@@ -329,7 +331,7 @@ function planFeatureGroups(plan: OnboardingPlan) {
       items: features.slice(3, 6)
     },
     {
-      title: plan.code.toLowerCase() === "premium" ? "AI & mở rộng" : "Sẵn sàng nâng cấp",
+      title: plan.code.toLowerCase() === "premium" ? "AI nâng cao" : "Sẵn sàng nâng cấp",
       items: features.slice(6)
     }
   ].filter((group) => group.items.length > 0);
@@ -339,7 +341,7 @@ function planNarrative(plan: OnboardingPlan) {
   const isPremium = plan.code.toLowerCase() === "premium";
   return {
     badge: isPremium ? "Khuyến nghị cho tăng trưởng" : "Bắt đầu gọn nhẹ",
-    fit: isPremium ? "Quán đông khách, cần AI, báo cáo sâu hoặc chuẩn bị mở thêm chi nhánh." : "Quán mới triển khai QR ordering, cần setup nhanh và chi phí dễ kiểm soát.",
+    fit: isPremium ? "Quán đông khách, cần đến 300 bàn, 50 nhân viên, đặt bàn, báo cáo sâu hoặc AI nâng cao." : "Quán mới triển khai QR ordering, cần setup nhanh và chi phí dễ kiểm soát.",
     promise: isPremium ? "Tự động hoá nhiều quyết định vận hành hơn sau ngày đầu." : "Có đủ nền móng để bán, nhận đơn và theo dõi doanh thu.",
     decision: isPremium ? "Chọn nếu muốn đi nhanh hơn với AI" : "Chọn nếu muốn khởi động chắc chắn"
   };
@@ -568,7 +570,7 @@ function PlanFeaturesModal({
             <div className={`dashboard-plan-modal-stat rounded-md border px-3 py-2 ${isPremium ? "border-[#F28C28]/35 bg-[#fff7ed]" : "border-[#0F4D3A]/20 bg-[#eef7f2]"}`}>
               <p className="text-[11px] font-bold text-[#667085]">Phù hợp</p>
               <p className={`mt-1 text-sm font-black ${isPremium ? "text-[#9a4a17]" : "text-[#0F4D3A]"}`}>
-                {isPremium ? "AI & mở rộng" : "QR ordering ngày đầu"}
+                {isPremium ? "AI nâng cao" : "QR ordering ngày đầu"}
               </p>
             </div>
           </div>
@@ -752,6 +754,9 @@ export function RestaurantOnboardingFlow({
   const [launchMessageIndex, setLaunchMessageIndex] = useState(0);
   const selectedPreset = businessPresets.find((item) => item.id === businessPresetId) ?? businessPresets[0];
   const selectedPlan = plans.find((plan) => plan.code === planCode) ?? plans[0] ?? null;
+  const selectedPlanCode = selectedPlan?.code ?? planCode;
+  const selectedPlanTableLimit = getOnboardingTableLimit(selectedPlanCode);
+  const tablePresetOptions = [6, 10, 16, 24].filter((count) => count <= selectedPlanTableLimit);
   const suggestedSlug = createSlug(name) || "quan-moi";
   const displayedSlugInput = slugEdited ? slugInput : suggestedSlug;
   const slug = createSlug(displayedSlugInput) || suggestedSlug;
@@ -774,7 +779,7 @@ export function RestaurantOnboardingFlow({
   const hasValidHotline = /^[0-9+() .-]{6,24}$/.test(hotline.trim());
   const canContinueIdentity = name.trim().length >= 2 && slugReady && hasBusinessType && hasValidHotline;
   const canContinueInfo = canContinueIdentity && hasStructuredAddress;
-  const dashboardPlanCode = selectedPlan?.code ?? planCode;
+  const dashboardPlanCode = selectedPlanCode;
   const ocrDraftItems = useMemo(() => flattenOcrDraft(menuOcrDraft), [menuOcrDraft]);
   const confirmedMenuItemsJson = useMemo(() => JSON.stringify(confirmedMenuItems), [confirmedMenuItems]);
   const setupRunway = useMemo(
@@ -861,8 +866,10 @@ export function RestaurantOnboardingFlow({
         setHotline(draft.hotline ?? "");
         const draftPlanCode = draft.planCode && plans.some((plan) => plan.code === draft.planCode) ? draft.planCode : null;
         const nextPlanCode = initialAvailablePlanCode === "premium" ? initialAvailablePlanCode : (draftPlanCode ?? initialAvailablePlanCode);
+        const nextTableLimit = getOnboardingTableLimit(nextPlanCode);
+        const nextTableCount = Number.isInteger(draft.tableCount) ? Number(draft.tableCount) : (nextPlanCode === "premium" ? 24 : 10);
         setPlanCode(nextPlanCode);
-        setTableCount(Number.isInteger(draft.tableCount) ? Number(draft.tableCount) : (nextPlanCode === "premium" ? 24 : 10));
+        setTableCount(Math.min(nextTableLimit, Math.max(1, nextTableCount)));
         setItemName(draft.itemName ?? "Cà phê sữa đá");
         setItemPrice(draft.itemPrice ?? "28000");
         setItemCategory(draft.itemCategory ?? "Cà phê");
@@ -1085,8 +1092,9 @@ export function RestaurantOnboardingFlow({
   }
 
   function selectPlan(plan: OnboardingPlan) {
+    const nextTableLimit = getOnboardingTableLimit(plan.code);
     setPlanCode(plan.code);
-    if (plan.code === "premium") setTableCount((value) => Math.max(value, 24));
+    setTableCount((value) => Math.min(nextTableLimit, Math.max(1, plan.code === "premium" ? Math.max(value, 24) : value)));
   }
 
   function openMobileStep(nextStep: MobileOnboardingStepId) {
@@ -1518,10 +1526,11 @@ export function RestaurantOnboardingFlow({
                 <div className="onboarding-mobile-stepper">
                   <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))}>-</button>
                   <strong>{tableCount}</strong>
-                  <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))}>+</button>
+                  <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))}>+</button>
                 </div>
+                <p className="onboarding-mobile-success">Giới hạn gói: tối đa {selectedPlanTableLimit} bàn.</p>
                 <div className="onboarding-mobile-preset-grid">
-                  {[6, 10, 16, 24].map((count) => (
+                  {tablePresetOptions.map((count) => (
                     <button key={count} type="button" onClick={() => setTableCount(count)} className={tableCount === count ? "is-active" : ""}>{count}</button>
                   ))}
                 </div>
@@ -1908,8 +1917,8 @@ export function RestaurantOnboardingFlow({
                     {plans.map((plan) => {
                       const active = planCode === plan.code;
                       const isPremium = plan.code.toLowerCase() === "premium";
-                      const previewFeatures = planFeaturePreview(plan);
                       const narrative = planNarrative(plan);
+                      const planTableLimit = getOnboardingTableLimit(plan.code);
                       return (
                         <article
                           key={plan.code}
@@ -1932,6 +1941,10 @@ export function RestaurantOnboardingFlow({
                             <span className="text-sm font-bold text-[#667085]"> /tháng</span>
                           </p>
                           <p className="mt-2 text-xs font-black text-[#0F4D3A]">Dùng thử {plan.trial_days} ngày · {planFeatureCount(plan)} tính năng</p>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-black text-[#111827]">
+                            <span className="rounded-md border border-[#d8dee9]/60 bg-white px-3 py-2">Tối đa {planTableLimit} bàn</span>
+                            <span className="rounded-md border border-[#d8dee9]/60 bg-white px-3 py-2">{isPremium ? "50 nhân viên" : "10 nhân viên"}</span>
+                          </div>
                           <p className="mt-3 rounded-md border border-[#d8dee9]/60 bg-[#fbfcfb] px-3 py-2 text-xs font-black leading-relaxed text-[#556379] uppercase tracking-[0.04em]">
                             Khách hàng nhận được: {narrative.promise}
                           </p>
@@ -2133,9 +2146,12 @@ export function RestaurantOnboardingFlow({
                       <div className="flex flex-wrap items-center gap-2">
                         <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
                         <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
-                        <button type="button" onClick={() => setTableCount((value) => Math.min(300, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
+                        <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
                         <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
                           {selectedPlan?.name ?? planCode}
+                        </span>
+                        <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
+                          Tối đa {selectedPlanTableLimit} bàn
                         </span>
                       </div>
                       <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">

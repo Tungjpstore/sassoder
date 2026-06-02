@@ -34,6 +34,7 @@ import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { OnboardingCopilotLayer } from "@/components/ai/onboarding-copilot-layer";
 import { PasswordPolicyList } from "@/components/dashboard/password-policy-list";
 import { isAuthPasswordPolicySatisfied } from "@/lib/auth-password-policy";
+import { getOnboardingTableLimit } from "@/lib/billing/plan-limits";
 import { createSlug } from "@/lib/slug";
 import { buildTenantUrl, ROOT_DOMAIN } from "@/lib/tenant-domain";
 
@@ -80,7 +81,7 @@ const emptyDraft: Draft = {
   slug: "",
   slugTouched: false,
   businessType: "CAFE",
-  tableCount: 24,
+  tableCount: 20,
   bankCode: "",
   bankAccount: "",
   bankAccountName: "",
@@ -158,8 +159,9 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
     : !registerEmailReady
       ? "invalid"
       : registerEmailCheck.email === normalizedRegisterEmail
-        ? registerEmailCheck.status
-        : "checking";
+      ? registerEmailCheck.status
+      : "checking";
+  const selectedTableLimit = getOnboardingTableLimit(planCode);
 
   // AI Copilot state & callbacks
   const aiState = useMemo(
@@ -175,7 +177,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
     }),
     [setupStep, restaurantName, slug, businessType, tableCount, planCode, bankCode, bankAccount]
   );
-  const handleAiTableCount = useCallback((count: number) => setTableCount(count), []);
+  const handleAiTableCount = useCallback((count: number) => setTableCount(Math.min(selectedTableLimit, Math.max(1, count))), [selectedTableLimit]);
   const handleAiBusinessType = useCallback((type: string) => setBusinessType(type), []);
 
   useEffect(() => {
@@ -187,11 +189,12 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
         setSlug(draft.slug);
         setSlugTouched(draft.slugTouched);
         setBusinessType(draft.businessType);
-        setTableCount(draft.tableCount);
+        const nextPlanCode = draft.planCode === "premium" ? "premium" : initialPlanCode;
+        setTableCount(Math.min(getOnboardingTableLimit(nextPlanCode), Math.max(1, draft.tableCount)));
         setBankCode(draft.bankCode);
         setBankAccount(draft.bankAccount);
         setBankAccountName(draft.bankAccountName);
-        setPlanCode(draft.planCode === "premium" ? "premium" : initialPlanCode);
+        setPlanCode(nextPlanCode);
       } finally {
         setDraftLoaded(true);
       }
@@ -300,13 +303,13 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
       password === confirmPassword &&
       acceptedTerms
     );
-  const canSubmit = accountReady && restaurantName.trim().length >= 2 && tableCount >= 1 && tableCount <= 300;
+  const canSubmit = accountReady && restaurantName.trim().length >= 2 && tableCount >= 1 && tableCount <= selectedTableLimit;
   const visibleError = clientError || state?.error;
   const canGoNext =
     (isRegisterMode && step === 0 && accountReady) ||
     (setupStep === 0 && restaurantName.trim().length >= 2) ||
     setupStep === 1 ||
-    (setupStep === 2 && tableCount >= 1 && tableCount <= 300);
+    (setupStep === 2 && tableCount >= 1 && tableCount <= selectedTableLimit);
 
   function nextStep() {
     setClientError("");
@@ -333,7 +336,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
   }
 
   function changeTableCount(delta: number) {
-    setTableCount((current) => Math.min(300, Math.max(1, current + delta)));
+    setTableCount((current) => Math.min(selectedTableLimit, Math.max(1, current + delta)));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -675,7 +678,11 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   <button
                     key={plan.code}
                     type="button"
-                    onClick={() => setPlanCode(plan.code as "pro" | "premium")}
+                    onClick={() => {
+                      const nextPlanCode = plan.code as "pro" | "premium";
+                      setPlanCode(nextPlanCode);
+                      setTableCount((current) => Math.min(getOnboardingTableLimit(nextPlanCode), Math.max(1, current)));
+                    }}
                     className={`rounded-lg border p-3 text-left transition ${
                       planCode === plan.code
                         ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-strong)]"
@@ -684,7 +691,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   >
                     <span className="block text-sm font-black">{plan.name}</span>
                     <span className="mt-1 block text-xs font-bold text-[var(--accent)]">
-                      {plan.price} · mọi tài khoản bắt đầu bằng dùng thử Pro 30 ngày
+                      {plan.price} · dùng thử 30 ngày
                     </span>
                     <span className="mt-2 block text-xs leading-5 text-[var(--muted-foreground)]">{plan.helper}</span>
                   </button>
@@ -795,7 +802,11 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                     <button
                       key={code}
                       type="button"
-                      onClick={() => setPlanCode(code as "pro" | "premium")}
+                      onClick={() => {
+                        const nextPlanCode = code as "pro" | "premium";
+                        setPlanCode(nextPlanCode);
+                        setTableCount((current) => Math.min(getOnboardingTableLimit(nextPlanCode), Math.max(1, current)));
+                      }}
                       className={`h-10 rounded-lg px-4 text-sm font-black transition ${
                         planCode === code ? "bg-[var(--primary)] text-white" : "text-[var(--muted-foreground)] hover:text-[var(--primary)]"
                       }`}
@@ -972,7 +983,7 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                   </button>
                   <input
                     value={tableCount}
-                    onChange={(event) => setTableCount(Math.min(300, Math.max(1, Number(event.target.value) || 1)))}
+                    onChange={(event) => setTableCount(Math.min(selectedTableLimit, Math.max(1, Number(event.target.value) || 1)))}
                     className="w-24 bg-transparent text-center text-[48px] font-extrabold leading-[56px] tracking-normal text-[var(--primary)] outline-none"
                     inputMode="numeric"
                     aria-label="Số bàn"

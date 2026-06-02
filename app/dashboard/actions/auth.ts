@@ -5,6 +5,7 @@ import { buildAppUrl } from "@/lib/app-url";
 import { authEmailDeliveryUnavailableMessage, isAuthEmailDeliveryConfigured } from "@/lib/auth-email-delivery";
 import { safeDashboardNextPath, safeProtectedDashboardNextPath, verifyEmailPath } from "@/lib/auth-flow-routes";
 import { buildOnboardingIntentPath, buildOnboardingIntentParams, normalizeOnboardingPlan } from "@/lib/auth-onboarding-intent";
+import { validateOnboardingTableCount } from "@/lib/billing/plan-limits";
 import { AppError } from "@/lib/response";
 import { getSessionProfile } from "@/lib/session";
 import {
@@ -293,6 +294,12 @@ export async function registerOnboardingAction(_prevState: { error?: string } | 
     return { error: "Vui lòng kiểm tra tài khoản, tên quán, đường dẫn, số bàn và thông tin ngân hàng." };
   }
 
+  const tableLimit = validateOnboardingTableCount({
+    planCode: parsed.data.planCode,
+    tableCount: parsed.data.tableCount
+  });
+  if (!tableLimit.ok) return { error: tableLimit.message };
+
   if (!(await checkActionRateLimit(`register:${parsed.data.email.toLowerCase()}`, 5, 10 * 60_000))) {
     return { error: "Bạn tạo tài khoản quá nhanh. Vui lòng thử lại sau vài phút." };
   }
@@ -346,7 +353,7 @@ export async function registerOnboardingAction(_prevState: { error?: string } | 
         bankCode: parsed.data.bankCode || undefined,
         bankAccount: parsed.data.bankAccount || undefined,
         bankAccountName: parsed.data.bankAccountName || undefined,
-        planCode: parsed.data.planCode || undefined
+        planCode: tableLimit.planCode
       }
     });
 

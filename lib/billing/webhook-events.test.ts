@@ -33,7 +33,29 @@ test("billing webhook events normalize provider fields and stable idempotency ke
   assert.equal(event.transferCode, "LOGIVN-ABC");
   assert.equal(event.status, "failed");
   assert.equal(event.amount, 99000);
+  assert.equal(event.currency, null);
   assert.equal(getBillingWebhookEventKey(event, null), "evt_123");
+});
+
+test("billing webhook fallback idempotency keys keep lifecycle statuses distinct", () => {
+  const detected = normalizeBillingWebhookEvent({
+    provider: "payos",
+    provider_reference: "pay_123",
+    status: "detected",
+    amount: 99000,
+    currency: "vnd"
+  });
+  const confirmed = normalizeBillingWebhookEvent({
+    provider: "payos",
+    provider_reference: "pay_123",
+    status: "confirmed",
+    amount: 99000,
+    currency: "vnd"
+  });
+
+  assert.equal(detected.currency, "VND");
+  assert.equal(getBillingWebhookEventKey(detected, null), "payos:pay_123:detected:99000:VND");
+  assert.equal(getBillingWebhookEventKey(confirmed, null), "payos:pay_123:confirmed:99000:VND");
 });
 
 test("billing webhook events reject missing payment identity", () => {

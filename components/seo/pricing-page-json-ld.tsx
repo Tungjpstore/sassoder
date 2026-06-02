@@ -8,9 +8,14 @@ export const pricingFaqItems: Array<{ question: string; answer: string }> = [
       "Mỗi quán có thể dùng thử LogiVN trong 30 ngày để thiết lập menu, QR theo bàn, nhận đơn realtime và làm quen với quy trình vận hành."
   },
   {
+    question: "Gói Pro bao gồm bao nhiêu bàn, nhân viên và món menu?",
+    answer:
+      "Gói LogiVN Pro bao gồm tối đa 20 bàn, 10 nhân viên và 500 món menu, phù hợp để quán bắt đầu QR ordering và vận hành bán thật với chi phí gọn."
+  },
+  {
     question: "Khi nào nên chọn gói Premium?",
     answer:
-      "Premium phù hợp khi quán cần đặt bàn, nhận cọc, nhập menu nhanh từ ảnh, báo cáo nâng cao hoặc muốn tự động hóa sâu hơn so với gói Pro."
+      "Premium phù hợp khi quán cần mở rộng đến 300 bàn, 50 nhân viên, 2.000 món menu, đặt bàn, nhận cọc, nhập menu nhanh từ ảnh, báo cáo nâng cao hoặc tự động hóa sâu hơn so với gói Pro."
   },
   {
     question: "Có thể xem demo LogiVN trước khi chọn gói không?",

@@ -28,15 +28,15 @@ const pricingSignals = [
 const planIntentCopy: Record<string, { badge: string; bestFor: string; roi: string; unlocks: string[] }> = {
   pro: {
     badge: "Bắt đầu nhanh",
-    bestFor: "Quán cafe, trà sữa, quán ăn nhỏ cần thay menu giấy và nhận order tại bàn nhanh hơn.",
+    bestFor: "Quán cafe, trà sữa, quán ăn nhỏ cần tối đa 20 bàn, 10 nhân viên và 500 món menu để thay menu giấy nhanh hơn.",
     roi: "Tối ưu chi phí ở giai đoạn đầu: đủ QR, đơn realtime, dashboard và VietQR để kiểm tra độ hợp với quán.",
-    unlocks: ["QR ordering", "Order tại bàn", "VietQR", "Dashboard cơ bản"]
+    unlocks: ["20 bàn", "10 nhân viên", "500 món menu", "Dashboard cơ bản"]
   },
   premium: {
     badge: "Đề xuất tăng trưởng",
-    bestFor: "Quán đã có nhịp order ổn định và muốn thêm AI, đặt bàn, báo cáo sâu, quy trình nhân sự và tồn kho.",
+    bestFor: "Quán đã có nhịp order ổn định, cần đến 300 bàn, 50 nhân viên, 2.000 món menu, AI, đặt bàn và báo cáo sâu.",
     roi: "Tăng đòn bẩy vận hành: AI giúp đọc doanh thu, dự đoán giờ cao điểm, gợi ý combo và giảm thao tác thủ công.",
-    unlocks: ["AI assistant", "Reservation", "Reports nâng cao", "Tồn kho & nhân sự"]
+    unlocks: ["300 bàn", "50 nhân viên", "2.000 món menu", "AI nâng cao"]
   },
   enterprise: {
     badge: "Nhiều chi nhánh",
@@ -47,12 +47,15 @@ const planIntentCopy: Record<string, { badge: string; bestFor: string; roi: stri
 };
 
 const comparisonRows = [
+  { feature: "Số bàn", pro: "20", premium: "300" },
+  { feature: "Nhân viên", pro: "10", premium: "50" },
+  { feature: "Món menu", pro: "500", premium: "2.000" },
   { feature: "QR ordering tại bàn", pro: "Có", premium: "Có" },
   { feature: "Đặt món online", pro: "Có", premium: "Có" },
   { feature: "Thanh toán VietQR", pro: "Có", premium: "Có" },
   { feature: "AI assistant vận hành", pro: "Cơ bản", premium: "Nâng cao" },
-  { feature: "Đặt bàn, nhận cọc", pro: "Giới hạn", premium: "Đầy đủ" },
-  { feature: "Báo cáo, tồn kho, nhân sự", pro: "Cốt lõi", premium: "Mở rộng" }
+  { feature: "Đặt bàn, nhận cọc", pro: "Khóa", premium: "Có" },
+  { feature: "Báo cáo, tồn kho, nhân sự", pro: "Cốt lõi", premium: "Nâng cao" }
 ];
 
 const roiScenarios = [

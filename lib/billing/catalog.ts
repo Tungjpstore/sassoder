@@ -8,7 +8,7 @@ export const featureCatalog: Record<BillingFeatureKey, FeatureDescriptor> = {
     group: "core",
     badge: "PRO",
     upgradeHeadline: "Mở rộng số lượng bàn khi quán tăng trưởng",
-    upgradeBullets: ["Không bị chặn khi tăng layout", "Phù hợp quán đông bàn hoặc nhiều tầng", "Giữ gọi món QR mượt khi mở rộng"]
+    upgradeBullets: ["Tăng layout trong giới hạn gói", "Phù hợp quán đông bàn hoặc nhiều tầng", "Giữ gọi món QR mượt khi mở rộng"]
   },
   staff: {
     key: "staff",
@@ -16,7 +16,7 @@ export const featureCatalog: Record<BillingFeatureKey, FeatureDescriptor> = {
     description: "Tài khoản vận hành, phân vai và kiểm soát ca làm.",
     group: "core",
     badge: "PRO",
-    upgradeHeadline: "Thêm nhân sự mà không lo giới hạn cứng",
+    upgradeHeadline: "Thêm nhân sự theo quy mô vận hành",
     upgradeBullets: ["Mở rộng theo ca", "Phân vai sâu hơn", "Sẵn sàng cho vận hành nhiều người"]
   },
   qr_ordering: {
@@ -236,13 +236,13 @@ export const planCatalog: Record<"pro" | "premium", BillingPlanDefinition> = {
     accent: "from-[#0F4D3A] via-[#1F6A53] to-[#F28C28]",
     heroLabel: "Tối ưu cho quán đang tăng trưởng",
     summary: "Đủ mạnh cho gọi món QR, bán online, trợ lý cơ bản và vận hành hằng ngày.",
-    highlights: ["20 bàn", "10 nhân viên", "Gọi món QR", "Trợ lý cơ bản", "Xuất PDF giới hạn"],
+    highlights: ["20 bàn", "10 nhân viên", "500 món menu", "Gọi món QR", "Xuất PDF giới hạn"],
     entitlements: {
       tables: { included: true, limit: 20, unit: "bàn" },
       staff: { included: true, limit: 10, unit: "nhân viên" },
       qr_ordering: { included: true },
       payment_qr: { included: true },
-      menu_management: { included: true },
+      menu_management: { included: true, limit: 500, unit: "món" },
       online_ordering: { included: true },
       basic_analytics: { included: true },
       ai_menu_generation: { included: true, quota: { key: "ai_menu_generation", label: "Tạo menu thông minh", limit: 60, unit: "lượt", window: "monthly" } },
@@ -271,14 +271,14 @@ export const planCatalog: Record<"pro" | "premium", BillingPlanDefinition> = {
     price: 199_000,
     accent: "from-[#0B2F25] via-[#0F4D3A] to-[#F28C28]",
     heroLabel: "Cho quán muốn trợ lý sâu hơn và tự động hóa mạnh hơn",
-    summary: "Mở khóa báo cáo thông minh, marketing thông minh, tự động hóa, nhận diện nâng cao và quyền không giới hạn thực tế hơn.",
-    highlights: ["Không giới hạn bàn", "Không giới hạn nhân viên", "Báo cáo thông minh", "Marketing thông minh", "Quy trình tự động"],
+    summary: "Mở khóa báo cáo thông minh, marketing thông minh, tự động hóa, nhận diện nâng cao và giới hạn vận hành lớn hơn.",
+    highlights: ["300 bàn", "50 nhân viên", "2.000 món menu", "Báo cáo thông minh", "Quy trình tự động"],
     entitlements: {
-      tables: { included: true, limit: null, unit: "bàn", label: "Không giới hạn" },
-      staff: { included: true, limit: null, unit: "nhân viên", label: "Không giới hạn" },
+      tables: { included: true, limit: 300, unit: "bàn" },
+      staff: { included: true, limit: 50, unit: "nhân viên" },
       qr_ordering: { included: true },
       payment_qr: { included: true },
-      menu_management: { included: true },
+      menu_management: { included: true, limit: 2000, unit: "món" },
       online_ordering: { included: true },
       basic_analytics: { included: true },
       ai_menu_generation: { included: true, quota: { key: "ai_menu_generation", label: "Tạo menu thông minh", limit: 300, unit: "lượt", window: "monthly" } },

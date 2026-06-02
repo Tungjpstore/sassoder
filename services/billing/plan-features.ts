@@ -74,7 +74,7 @@ const fallbackCapabilities: Record<"pro" | "premium", Partial<Record<PlanFeature
   pro: {
     core_dashboard: { enabled: true, limitValue: null },
     menu_management: { enabled: true, limitValue: 500 },
-    table_qr: { enabled: true, limitValue: 300 },
+    table_qr: { enabled: true, limitValue: 20 },
     order_realtime: { enabled: true, limitValue: null },
     kitchen_screen: { enabled: true, limitValue: null },
     vietqr_payments: { enabled: true, limitValue: null },
@@ -89,7 +89,7 @@ const fallbackCapabilities: Record<"pro" | "premium", Partial<Record<PlanFeature
     inventory_management: { enabled: true, limitValue: null },
     advanced_reports: { enabled: false, limitValue: null },
     scheduled_reports: { enabled: true, limitValue: 3 },
-    staff_management: { enabled: true, limitValue: 8 },
+    staff_management: { enabled: true, limitValue: 10 },
     bulk_qr_export: { enabled: true, limitValue: null },
     priority_support: { enabled: false, limitValue: null },
     ai_owner_assistant: { enabled: true, limitValue: 300 },
@@ -103,7 +103,7 @@ const fallbackCapabilities: Record<"pro" | "premium", Partial<Record<PlanFeature
   premium: {
     core_dashboard: { enabled: true, limitValue: null },
     menu_management: { enabled: true, limitValue: 2000 },
-    table_qr: { enabled: true, limitValue: 1000 },
+    table_qr: { enabled: true, limitValue: 300 },
     order_realtime: { enabled: true, limitValue: null },
     kitchen_screen: { enabled: true, limitValue: null },
     vietqr_payments: { enabled: true, limitValue: null },
@@ -132,6 +132,11 @@ const fallbackCapabilities: Record<"pro" | "premium", Partial<Record<PlanFeature
 };
 
 export const legacyBillingFeatureMap: Partial<Record<PlanFeatureKey, BillingFeatureKey>> = {
+  table_qr: "tables",
+  staff_management: "staff",
+  vietqr_payments: "payment_qr",
+  online_ordering: "online_ordering",
+  menu_management: "menu_management",
   ai_owner_assistant: "advanced_ai_assistant",
   ai_customer_assistant: "ai_chatbot",
   ai_branding_studio: "ai_branding",

@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/response";
+import { validateOnboardingTableCount } from "@/lib/billing/plan-limits";
 import { createSlug } from "@/lib/slug";
 import {
   STAFF_ROLE_TEMPLATES,
@@ -1228,6 +1229,9 @@ function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload 
     throw new AppError("Dữ liệu đăng ký đã hết hạn hoặc không hợp lệ", 400);
   }
 
+  const tableLimit = validateOnboardingTableCount({ planCode, tableCount });
+  if (!tableLimit.ok) throw new AppError(tableLimit.message, 402);
+
   return {
     name,
     slug,
@@ -1246,7 +1250,7 @@ function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload 
     bankCode,
     bankAccount,
     bankAccountName,
-    planCode
+    planCode: tableLimit.planCode
   };
 }
 
@@ -1554,6 +1558,12 @@ export async function completeRestaurantOnboarding(input: {
   const existingRestaurant = await getRestaurantRowForUser(input.userId, input.email);
   if (existingRestaurant) return existingRestaurant;
 
+  const tableLimit = validateOnboardingTableCount({
+    planCode: input.planCode,
+    tableCount: input.tableCount
+  });
+  if (!tableLimit.ok) throw new AppError(tableLimit.message, 402);
+
   const supabase = createAdminSupabaseClient();
   const slug = await createUniqueRestaurantSlug(input.name, input.slug);
   const customBusinessType = input.customBusinessType?.trim();
@@ -1640,7 +1650,7 @@ export async function completeRestaurantOnboarding(input: {
       : null,
     p_categories: categories,
     p_menu_items: menuItems,
-    p_plan_code: input.planCode === "premium" ? "premium" : "pro"
+    p_plan_code: tableLimit.planCode
   });
 
   if (onboardingError || !rpcRestaurant) {

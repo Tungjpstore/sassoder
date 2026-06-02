@@ -46,7 +46,7 @@ const fallbackSiteConfig = {
       name: "LogiVN Pro",
       subtitle: "Dành cho quán cafe, nhà hàng nhỏ và vừa",
       price: "99.000đ",
-      items: ["QR menu theo bàn", "Quản lý đơn theo thời gian thực", "Trợ lý thông minh cho chủ quán", "Hỗ trợ khách gọi món", "Dùng thử 30 ngày"],
+      items: ["20 bàn và QR theo bàn", "10 nhân viên", "500 món menu", "Trợ lý thông minh cơ bản", "Dùng thử 30 ngày"],
       action: "Dùng thử miễn phí",
       featured: true
     },
@@ -55,7 +55,7 @@ const fallbackSiteConfig = {
       name: "LogiVN Premium",
       subtitle: "Dành cho mô hình cần tự động hóa sâu hơn",
       price: "199.000đ",
-      items: ["Tất cả tính năng Pro", "Nhập menu nhanh từ ảnh", "Tạo hình ảnh menu và nhận diện quán", "Đặt bàn và nhận cọc", "Báo cáo nâng cao"],
+      items: ["300 bàn và 50 nhân viên", "2.000 món menu", "Nhập menu nhanh từ ảnh", "Đặt bàn và nhận cọc", "Báo cáo nâng cao"],
       action: "Dùng thử miễn phí",
       featured: false
     },

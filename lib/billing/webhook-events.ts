@@ -19,6 +19,7 @@ export type BillingWebhookEvent = {
   transferCode: string | null;
   status: BillingWebhookStatus;
   amount: number | null;
+  currency: string | null;
   occurredAt: string;
   payload: Record<string, unknown>;
 };
@@ -52,6 +53,7 @@ export function normalizeBillingWebhookEvent(payload: unknown): BillingWebhookEv
   }
 
   const amount = Number(record.amount);
+  const currency = optionalString(record.currency)?.toUpperCase() ?? null;
   const occurredAt = optionalString(record.occurredAt ?? record.occurred_at) ?? new Date().toISOString();
   return {
     eventId: optionalString(record.eventId ?? record.event_id ?? record.id),
@@ -60,6 +62,7 @@ export function normalizeBillingWebhookEvent(payload: unknown): BillingWebhookEv
     transferCode,
     status: normalizeStatus(record.status),
     amount: Number.isFinite(amount) && amount >= 0 ? amount : null,
+    currency,
     occurredAt,
     payload: record
   };
@@ -78,7 +81,12 @@ export function verifyBillingWebhookSignature(rawBody: string, headerValue: stri
 }
 
 export function getBillingWebhookEventKey(event: BillingWebhookEvent, signatureHeader: string | null) {
-  return event.eventId ?? event.providerReference ?? event.transferCode ?? optionalString(signatureHeader) ?? createBillingWebhookSignature(JSON.stringify(event.payload), event.provider);
+  if (event.eventId) return event.eventId;
+  const paymentIdentity = event.providerReference ?? event.transferCode;
+  if (paymentIdentity) {
+    return [event.provider, paymentIdentity, event.status, event.amount ?? "unknown", event.currency ?? "unknown"].join(":");
+  }
+  return optionalString(signatureHeader) ?? createBillingWebhookSignature(JSON.stringify(event.payload), event.provider);
 }
 
 export function mapBillingWebhookPaymentStatus(status: BillingWebhookStatus): BillingWebhookPaymentStatus {

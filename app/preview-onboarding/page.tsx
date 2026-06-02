@@ -6,7 +6,7 @@ const previewPlans = [
     code: "pro",
     name: "Pro",
     description: null,
-    monthly_price: 199000,
+    monthly_price: 99000,
     trial_days: 14,
     features: []
   },
@@ -15,7 +15,7 @@ const previewPlans = [
     code: "premium",
     name: "Premium",
     description: null,
-    monthly_price: 399000,
+    monthly_price: 199000,
     trial_days: 14,
     features: []
   }

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getAuthUser, getSessionProfile } from "@/lib/session";
+import { validateOnboardingTableCount } from "@/lib/billing/plan-limits";
 import { onboardingSchema } from "@/lib/validators";
 import { completeRestaurantOnboarding } from "@/services/restaurant-service";
 import { getDashboardDestination } from "./shared";
@@ -43,6 +44,12 @@ export async function onboardingAction(_prevState: { error?: string } | undefine
     return { error: "Vui lòng kiểm tra tên quán, đường dẫn, số bàn và thông tin ngân hàng." };
   }
 
+  const tableLimit = validateOnboardingTableCount({
+    planCode: parsed.data.planCode,
+    tableCount: parsed.data.tableCount
+  });
+  if (!tableLimit.ok) return { error: tableLimit.message };
+
   let completed = false;
   try {
     const restaurant = await completeRestaurantOnboarding({
@@ -73,7 +80,7 @@ export async function onboardingAction(_prevState: { error?: string } | undefine
       bankCode: parsed.data.bankCode || undefined,
       bankAccount: parsed.data.bankAccount || undefined,
       bankAccountName: parsed.data.bankAccountName || undefined,
-      planCode: parsed.data.planCode || undefined
+      planCode: tableLimit.planCode
     });
     revalidatePath("/dashboard");
     completed = Boolean(restaurant.id);

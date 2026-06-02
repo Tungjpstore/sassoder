@@ -1,4 +1,5 @@
 import type { BillingPlanCode } from "@/lib/billing/types";
+import { getSubscriptionGraceEnd } from "@/lib/billing/subscription-transitions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { firstOrNull, isMissingSchemaError, monthEndIso, normalizeBillingPlanCode } from "./billing-utils";
 import type { BillingV2PaymentRow, BillingV2SubscriptionRow, PaymentRow, RestaurantRow, SubscriptionRow } from "./billing-types";
@@ -8,7 +9,7 @@ export async function readBillingV2Bridge(restaurantId: string) {
   const [subscriptionResult, paymentResult] = await Promise.all([
     supabase
       .from("subscriptions")
-      .select("id,restaurant_id,plan_id,status,current_period_start,current_period_end,trial_started_at,trial_ends_at,plan:subscription_plans(id,code,name,description,monthly_price,metadata)")
+      .select("id,restaurant_id,plan_id,status,current_period_start,current_period_end,grace_ends_at,trial_started_at,trial_ends_at,plan:subscription_plans(id,code,name,description,monthly_price,metadata)")
       .eq("restaurant_id", restaurantId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
@@ -49,6 +50,10 @@ function mapLegacySubscriptionStatusToBillingStatus(status: SubscriptionRow["sta
   }
 
   return status === "past_due" ? "grace" : "active";
+}
+
+function getLegacyBillingGraceEnd(subscription: SubscriptionRow) {
+  return subscription.status === "past_due" ? getSubscriptionGraceEnd(subscription) : null;
 }
 
 export async function mirrorLegacySubscriptionToBillingV2({
@@ -98,6 +103,7 @@ export async function mirrorLegacySubscriptionToBillingV2({
       started_at: subscription.created_at,
       current_period_start: subscription.current_period_start,
       current_period_end: subscription.current_period_end,
+      grace_ends_at: getLegacyBillingGraceEnd(subscription),
       trial_started_at: subscription.trial_started_at,
       trial_ends_at: subscription.trial_ends_at,
       metadata,
@@ -183,6 +189,7 @@ export async function mirrorLegacyPaymentRequestToBillingV2({
           started_at: subscription.created_at,
           current_period_start: subscription.current_period_start,
           current_period_end: subscription.current_period_end,
+          grace_ends_at: getLegacyBillingGraceEnd(subscription),
           trial_started_at: subscription.trial_started_at,
           trial_ends_at: subscription.trial_ends_at,
           metadata: {
@@ -406,6 +413,7 @@ export async function mirrorLegacyPaymentFinalStateToBillingV2(paymentId: string
         status: paymentStatus === "confirmed" ? "active" : undefined,
         current_period_start: (legacySubscription as SubscriptionRow).current_period_start,
         current_period_end: (legacySubscription as SubscriptionRow).current_period_end,
+        grace_ends_at: paymentStatus === "confirmed" ? null : getLegacyBillingGraceEnd(legacySubscription as SubscriptionRow),
         updated_at: new Date().toISOString()
       })
       .eq("id", v2Subscription.id);

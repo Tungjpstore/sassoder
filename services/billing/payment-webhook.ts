@@ -19,6 +19,8 @@ type BillingWebhookPaymentRow = {
   id: string;
   restaurant_id: string;
   invoice_id: string | null;
+  amount: number;
+  currency: string;
   status: BillingWebhookPaymentStatus;
   metadata: unknown;
 };
@@ -33,7 +35,7 @@ async function readPaymentForWebhook(event: BillingWebhookEvent) {
   const supabase = createAdminSupabaseClient() as any;
   let query = supabase
     .from("payments")
-    .select("id,restaurant_id,invoice_id,status,metadata")
+    .select("id,restaurant_id,invoice_id,amount,currency,status,metadata")
     .is("deleted_at", null)
     .limit(1);
 
@@ -41,6 +43,16 @@ async function readPaymentForWebhook(event: BillingWebhookEvent) {
   const { data, error } = await query.maybeSingle();
   if (error) throw error;
   return data as BillingWebhookPaymentRow | null;
+}
+
+function assertConfirmedWebhookAmountMatchesPayment(payment: BillingWebhookPaymentRow, event: BillingWebhookEvent) {
+  if (event.status !== "confirmed") return;
+  if (event.amount === null || event.amount !== payment.amount) {
+    throw new AppError("Billing webhook amount does not match the expected payment amount.", 422);
+  }
+  if (event.currency && event.currency !== payment.currency.toUpperCase()) {
+    throw new AppError("Billing webhook currency does not match the expected payment currency.", 422);
+  }
 }
 
 async function hasProcessedWebhook(paymentId: string, eventKey: string) {
@@ -55,7 +67,7 @@ async function hasProcessedWebhook(paymentId: string, eventKey: string) {
   return Boolean(data?.id);
 }
 
-async function writeWebhookLog({
+async function claimWebhookLog({
   paymentId,
   event,
   eventKey
@@ -67,13 +79,44 @@ async function writeWebhookLog({
   const supabase = createAdminSupabaseClient() as any;
   const { error } = await supabase.from("billing_payment_logs").insert({
     payment_id: paymentId,
-    event_type: `webhook_${event.status}`,
+    event_type: `webhook_${event.status}_claimed`,
     actor_type: "provider",
     actor_id: event.provider,
     request_signature: eventKey,
     payload: event.payload
   });
-  if (error && error.code !== "23505") throw error;
+  if (error?.code === "23505") return false;
+  if (error) throw error;
+  return true;
+}
+
+async function finalizeWebhookLog({
+  paymentId,
+  eventKey,
+  status
+}: {
+  paymentId: string;
+  eventKey: string;
+  status: BillingWebhookStatus;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { error } = await supabase
+    .from("billing_payment_logs")
+    .update({ event_type: `webhook_${status}` })
+    .eq("payment_id", paymentId)
+    .eq("request_signature", eventKey);
+  if (error) throw error;
+}
+
+async function releaseWebhookClaim(paymentId: string, eventKey: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { error } = await supabase
+    .from("billing_payment_logs")
+    .delete()
+    .eq("payment_id", paymentId)
+    .eq("request_signature", eventKey)
+    .like("event_type", "%_claimed");
+  if (error) throw error;
 }
 
 async function updateV2PaymentFromWebhook(payment: BillingWebhookPaymentRow, event: BillingWebhookEvent) {
@@ -82,8 +125,11 @@ async function updateV2PaymentFromWebhook(payment: BillingWebhookPaymentRow, eve
     currentStatus: payment.status,
     webhookStatus: event.status
   });
+
+  if (nextStatus === payment.status) return nextStatus;
+
   const nextConfirmedAt = nextStatus === "confirmed" ? event.occurredAt : undefined;
-  const { error: paymentError } = await supabase
+  const { data: updatedPayments, error: paymentError } = await supabase
     .from("payments")
     .update({
       status: nextStatus,
@@ -98,10 +144,22 @@ async function updateV2PaymentFromWebhook(payment: BillingWebhookPaymentRow, eve
       },
       updated_at: new Date().toISOString()
     })
-    .eq("id", payment.id);
+    .eq("id", payment.id)
+    .eq("status", payment.status)
+    .select("id,status");
   if (paymentError) throw paymentError;
+  if ((updatedPayments ?? []).length === 0) {
+    const { data: currentPayment, error: currentError } = await supabase
+      .from("payments")
+      .select("id,restaurant_id,invoice_id,amount,currency,status,metadata")
+      .eq("id", payment.id)
+      .maybeSingle();
+    if (currentError) throw currentError;
+    if (!currentPayment) throw new AppError("Billing payment was not found while applying webhook.", 404);
+    return updateV2PaymentFromWebhook(currentPayment as BillingWebhookPaymentRow, event);
+  }
 
-  if (!payment.invoice_id || nextStatus === payment.status) return;
+  if (!payment.invoice_id) return nextStatus;
   const { error: invoiceError } = await supabase
     .from("invoices")
     .update({
@@ -111,6 +169,7 @@ async function updateV2PaymentFromWebhook(payment: BillingWebhookPaymentRow, eve
     })
     .eq("id", payment.invoice_id);
   if (invoiceError) throw invoiceError;
+  return nextStatus;
 }
 
 async function closeLegacyPaymentFromWebhook(payment: BillingWebhookPaymentRow, event: BillingWebhookEvent) {
@@ -165,17 +224,22 @@ export async function applyBillingPaymentWebhook({
   if (await hasProcessedWebhook(payment.id, eventKey)) {
     return { duplicate: true, paymentId: payment.id, status: payment.status };
   }
+  assertConfirmedWebhookAmountMatchesPayment(payment, event);
 
-  await updateV2PaymentFromWebhook(payment, event);
-  await closeLegacyPaymentFromWebhook(payment, event);
-  await writeWebhookLog({ paymentId: payment.id, event, eventKey });
+  const claimed = await claimWebhookLog({ paymentId: payment.id, event, eventKey });
+  if (!claimed) return { duplicate: true, paymentId: payment.id, status: payment.status };
 
-  return {
-    duplicate: false,
-    paymentId: payment.id,
-    status: resolveBillingWebhookPaymentStatus({
-      currentStatus: payment.status,
-      webhookStatus: event.status
-    })
-  };
+  try {
+    const nextStatus = await updateV2PaymentFromWebhook(payment, event);
+    await closeLegacyPaymentFromWebhook(payment, event);
+    await finalizeWebhookLog({ paymentId: payment.id, eventKey, status: event.status });
+    return {
+      duplicate: false,
+      paymentId: payment.id,
+      status: nextStatus
+    };
+  } catch (error) {
+    await releaseWebhookClaim(payment.id, eventKey);
+    throw error;
+  }
 }

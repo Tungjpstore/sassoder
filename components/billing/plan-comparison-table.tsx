@@ -4,8 +4,9 @@ import { planCatalog } from "@/lib/billing/catalog";
 import { PremiumBadge } from "@/components/billing/premium-badge";
 
 const rows = [
-  { label: "Số bàn", pro: "20", premium: "Không giới hạn" },
-  { label: "Nhân viên", pro: "10", premium: "Không giới hạn" },
+  { label: "Số bàn", pro: "20", premium: "300" },
+  { label: "Nhân viên", pro: "10", premium: "50" },
+  { label: "Món menu", pro: "500", premium: "2.000" },
   { label: "Gọi món QR", pro: true, premium: true },
   { label: "Tạo menu thông minh", pro: "60 lượt/tháng", premium: "300 lượt/tháng" },
   { label: "Trợ lý hỏi đáp", pro: "500 lượt/tháng", premium: "5000 lượt/tháng" },
