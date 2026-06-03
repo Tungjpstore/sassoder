@@ -48,7 +48,7 @@ const fallbackSiteConfig = {
       price: "99.000đ",
       items: ["20 bàn và QR theo bàn", "10 nhân viên", "500 món menu", "Trợ lý thông minh cơ bản", "Dùng thử 30 ngày"],
       action: "Dùng thử miễn phí",
-      featured: true
+      featured: false
     },
     {
       code: "premium",
@@ -57,7 +57,7 @@ const fallbackSiteConfig = {
       price: "199.000đ",
       items: ["300 bàn và 50 nhân viên", "2.000 món menu", "Nhập menu nhanh từ ảnh", "Đặt bàn và nhận cọc", "Báo cáo nâng cao"],
       action: "Dùng thử miễn phí",
-      featured: false
+      featured: true
     },
     {
       code: "enterprise",
@@ -147,7 +147,7 @@ async function readPlatformSiteConfig() {
       price: plan.monthly_price > 0 ? formatPrice(plan.monthly_price) : "Liên hệ",
       items: [...readFeatures(plan.features).slice(0, 4), `Dùng thử ${plan.trial_days} ngày`],
       action: "Dùng thử miễn phí",
-      featured: plan.code === "pro" || index === 0
+      featured: plan.code === "premium" || (!plansResult.data?.some((item: any) => item.code === "premium") && index === 0)
     })) as PlatformSitePlan[];
 
     return {

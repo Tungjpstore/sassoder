@@ -201,6 +201,19 @@ export function formatTelegramCard(event: OperationalTelegramEvent): FormattedTe
     };
   }
 
+  if (event.type === "staff.incident_reported") {
+    const title = staffIncidentTitle(event.staffIncident.severity);
+    const staff = event.staffIncident.staffName ? `\n👤 ${escapeHtml(event.staffIncident.staffName)}` : "";
+    const employeeCode = event.staffIncident.employeeCode ? ` · ${escapeHtml(event.staffIncident.employeeCode)}` : "";
+    const detail = `\n📝 ${escapeHtml(compactText(event.staffIncident.description, 260))}`;
+    const attachment = event.staffIncident.attachmentUrl ? `\n📎 ${escapeHtml(event.staffIncident.attachmentUrl)}` : "";
+    return {
+      title: testTitle(test, title),
+      body: `${testPrefix(test)}${staffIncidentIcon(event.staffIncident.severity)} <b>${escapeHtml(title)}</b>${staff}${employeeCode}\n⚑ ${escapeHtml(event.staffIncident.title)}${detail}${attachment}`,
+      viewPath: viewPath(test, `/dashboard/staff?incidentId=${event.staffIncident.id}`)
+    };
+  }
+
   if (event.type === "platform.alert") {
     const title = `${alertIcon(event.alert.severity)} ${event.alert.title}`;
     const summary = event.alert.summary ? `\n${escapeHtml(event.alert.summary)}` : "";
@@ -478,6 +491,18 @@ function staffReviewTitle(decision?: string) {
   if (decision === "approved") return "Yêu cầu nhân sự đã duyệt";
   if (decision === "rejected") return "Yêu cầu nhân sự bị từ chối";
   return "Yêu cầu nhân sự đã xử lý";
+}
+
+function staffIncidentTitle(severity: string) {
+  if (severity === "urgent") return "Sự cố nhân sự khẩn cấp";
+  if (severity === "high") return "Sự cố nhân sự cần xử lý";
+  return "Báo cáo sự cố nhân sự";
+}
+
+function staffIncidentIcon(severity: string) {
+  if (severity === "urgent") return "🚨";
+  if (severity === "high") return "⚠️";
+  return "🧑‍🍳";
 }
 
 function staffRequestDetail(requestType: string, payload: Record<string, unknown>) {

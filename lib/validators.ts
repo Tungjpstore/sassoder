@@ -996,8 +996,7 @@ export const staffSelfProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   phone: staffPhoneInputSchema,
   dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
-  hometown: z.string().trim().max(120).optional().or(z.literal("")),
-  avatarUrl: z.string().trim().url("Link ảnh đại diện không hợp lệ.").optional().or(z.literal(""))
+  hometown: z.string().trim().max(120).optional().or(z.literal(""))
 });
 
 export const staffIncidentReportSchema = z.object({
@@ -1005,8 +1004,7 @@ export const staffIncidentReportSchema = z.object({
   branchId: z.string().uuid().optional().or(z.literal("")),
   title: z.string().trim().min(2).max(120),
   description: z.string().trim().min(5).max(1000),
-  severity: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
-  attachmentUrl: z.string().trim().url("Link đính kèm không hợp lệ.").optional().or(z.literal(""))
+  severity: z.enum(["low", "normal", "high", "urgent"]).default("normal")
 });
 
 export const staffRolePermissionUpdateSchema = z.object({

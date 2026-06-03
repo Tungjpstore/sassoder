@@ -16,6 +16,7 @@ type AuthenticatedUser = {
 export function getSafeAuthReturnHost(request: Request) {
   const requestUrl = new URL(request.url);
   const host =
+    normalizeTrustedAuthHost(requestUrl.searchParams.get("returnHost")) ??
     normalizeTrustedAuthHost(request.headers.get("x-forwarded-host")) ??
     normalizeTrustedAuthHost(request.headers.get("host")) ??
     normalizeTrustedAuthHost(requestUrl.host);

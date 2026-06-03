@@ -90,12 +90,14 @@ export async function POST(request: Request) {
       feature: "staff_management",
       permission: input.source === "manual" ? ["attendance.clock", "attendance.edit"] : "attendance.clock"
     });
-    await assertActiveStaffDeviceSession({
-      session,
-      deviceFingerprint: deviceFingerprint(input.deviceInfo),
-      attendanceSessionToken: attendanceSessionToken(input.deviceInfo),
-      requireSignedToken: input.source !== "manual"
-    });
+    if (input.source !== "manual") {
+      await assertActiveStaffDeviceSession({
+        session,
+        deviceFingerprint: deviceFingerprint(input.deviceInfo),
+        attendanceSessionToken: attendanceSessionToken(input.deviceInfo),
+        requireSignedToken: true
+      });
+    }
     const attendanceSession = input.source === "manual" ? authorizeAttendanceManagementSession(session) : session;
     const data = await clockOutStaffAttendance({ session: attendanceSession, input: { ...input, network: requestNetwork(request) } });
     await invalidateStaffOperationsBundleCache(session.restaurantId);

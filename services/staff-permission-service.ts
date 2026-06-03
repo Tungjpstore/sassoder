@@ -146,10 +146,10 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
     throw new AppError("Hồ sơ nhân sự đang bị khoá hoặc đã nghỉ.", 403);
   }
 
-  const fallbackRoleCode = user.role === "ADMIN" ? "owner" : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service");
+  const fallbackRoleCode = user.role === "ADMIN" ? mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "manager") : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service");
   const roleCode = member?.role_code ?? fallbackRoleCode;
-  const adminBaselinePermissions = user.role === "ADMIN" ? getStaffRoleTemplate("manager").permissions : [];
-  const accountPermissions = mergeEffectivePermissions(normalizeStaffPermissions(user.permissions, fallbackRoleCode), adminBaselinePermissions);
+  const accountFallback = member ? null : fallbackRoleCode;
+  const accountPermissions = mergeEffectivePermissions(normalizeStaffPermissions(user.permissions, accountFallback));
   const rolePermissions = member
     ? await readPermissionsForRole({
         supabase,

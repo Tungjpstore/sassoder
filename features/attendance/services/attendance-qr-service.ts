@@ -48,6 +48,11 @@ function isMissingQrTokenSchema(error: { code?: string; message?: string } | nul
   return error.code === "PGRST204" || error.code === "42P01" || /staff_attendance_qr_tokens|token_hash|consumed_at|token_mode|qr_date/i.test(message);
 }
 
+function isMissingQrConsumeRpc(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return error.code === "PGRST202" || /consume_staff_attendance_qr_token/i.test(error.message ?? "");
+}
+
 function hashAttendanceQrToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
@@ -306,28 +311,40 @@ export async function validateStaffAttendanceQrToken({
     throw new AppError("Mã QR chấm công đã đạt giới hạn sử dụng trong ngày.", 409);
   }
 
-  let updateQuery = supabase
-    .from("staff_attendance_qr_tokens")
-    .update({
-      consumed_at: tokenMode === "daily_branch" ? qrToken.consumed_at : usedAt.toISOString(),
-      consumed_by_staff_member_id: tokenMode === "daily_branch" ? qrToken.consumed_by_staff_member_id : staffMemberId,
-      last_used_at: usedAt.toISOString(),
-      usage_count: (qrToken.usage_count ?? 0) + 1,
-      metadata: {
-        lastClock: clock,
-        lastStaffMemberId: staffMemberId,
-        lastUsedMode: tokenMode,
-        qrDate: qrToken.qr_date
-      }
+  let updateResult = await supabase
+    .rpc("consume_staff_attendance_qr_token", {
+      p_restaurant_id: restaurantId,
+      p_token_id: qrToken.id,
+      p_staff_member_id: staffMemberId,
+      p_used_at: usedAt.toISOString(),
+      p_clock: clock
     })
-    .eq("restaurant_id", restaurantId)
-    .eq("id", qrToken.id);
-
-  if (tokenMode !== "daily_branch") updateQuery = updateQuery.is("consumed_at", null);
-
-  const updateResult = await updateQuery
-    .select("id")
     .maybeSingle();
+
+  if (isMissingQrConsumeRpc(updateResult.error)) {
+    let updateQuery = supabase
+      .from("staff_attendance_qr_tokens")
+      .update({
+        consumed_at: tokenMode === "daily_branch" ? qrToken.consumed_at : usedAt.toISOString(),
+        consumed_by_staff_member_id: tokenMode === "daily_branch" ? qrToken.consumed_by_staff_member_id : staffMemberId,
+        last_used_at: usedAt.toISOString(),
+        usage_count: (qrToken.usage_count ?? 0) + 1,
+        metadata: {
+          lastClock: clock,
+          lastStaffMemberId: staffMemberId,
+          lastUsedMode: tokenMode,
+          qrDate: qrToken.qr_date
+        }
+      })
+      .eq("restaurant_id", restaurantId)
+      .eq("id", qrToken.id);
+
+    if (tokenMode !== "daily_branch") updateQuery = updateQuery.is("consumed_at", null);
+
+    updateResult = await updateQuery
+      .select("id")
+      .maybeSingle();
+  }
 
   if (updateResult.error && !isMissingQrTokenSchema(updateResult.error)) {
     throw updateResult.error;

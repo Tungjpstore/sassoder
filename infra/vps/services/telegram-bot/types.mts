@@ -279,6 +279,18 @@ const staffRequestPayloadSchema = z.object({
   requestedPayload: z.record(z.string(), z.unknown()).nullable().optional()
 });
 
+const staffIncidentPayloadSchema = z.object({
+  id: z.string().uuid(),
+  staffMemberId: z.string().uuid(),
+  staffName: z.string().max(120).nullable().optional(),
+  employeeCode: z.string().max(40).nullable().optional(),
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(1200),
+  severity: z.enum(["low", "normal", "high", "urgent"]),
+  status: z.enum(["open", "reviewing", "resolved", "dismissed"]).optional(),
+  attachmentUrl: z.string().url().max(500).nullable().optional()
+});
+
 export const staffRequestCreatedEventSchema = baseEventSchema.extend({
   type: z.literal("staff.request_created"),
   staffRequest: staffRequestPayloadSchema
@@ -287,6 +299,11 @@ export const staffRequestCreatedEventSchema = baseEventSchema.extend({
 export const staffRequestReviewedEventSchema = baseEventSchema.extend({
   type: z.literal("staff.request_reviewed"),
   staffRequest: staffRequestPayloadSchema
+});
+
+export const staffIncidentReportedEventSchema = baseEventSchema.extend({
+  type: z.literal("staff.incident_reported"),
+  staffIncident: staffIncidentPayloadSchema
 });
 
 export const platformAlertEventSchema = baseEventSchema.extend({
@@ -334,6 +351,7 @@ export const telegramNotificationJobSchema = z.discriminatedUnion("type", [
   serviceRequestResolvedEventSchema,
   staffRequestCreatedEventSchema,
   staffRequestReviewedEventSchema,
+  staffIncidentReportedEventSchema,
   platformAlertEventSchema,
   directTelegramMessageSchema
 ]);

@@ -167,8 +167,8 @@ export function buildStaffAttendanceMachine({
       primaryLabel: source === "gps" ? "GPS chưa bật" : "Cần online",
       shortSourceLabel,
       title: source === "gps" ? "GPS chưa khả dụng" : "Cần WiFi/mạng quán",
-      detail: source === "gps" ? "Gói hiện tại hoặc quyền vị trí chưa cho phép GPS." : "Kết nối mạng quán và bật vị trí chính xác.",
-      recoveryLabel: source === "gps" ? "Bật GPS hoặc chọn QR/WiFi" : "Kết nối lại mạng quán",
+      detail: source === "gps" ? "Gói hiện tại hoặc quyền vị trí chưa cho phép GPS." : "Kết nối mạng quán và bật vị trí chính xác. WiFi vẫn cần GPS để chống chấm hộ từ xa.",
+      recoveryLabel: source === "gps" ? "Bật GPS chính xác" : "Kết nối WiFi quán và bật GPS",
       readiness
     };
   }

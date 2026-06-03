@@ -10,6 +10,7 @@ const qrDeviceTrustSql = readFileSync("supabase/migrations/20260518190204_staff_
 const hardeningSql = readFileSync("supabase/migrations/20260519103000_staff_operations_security_hardening.sql", "utf8");
 const dailyQrWifiSql = readFileSync("supabase/migrations/20260529105500_staff_attendance_daily_qr_wifi.sql", "utf8");
 const antiFraudSql = readFileSync("supabase/migrations/20260601121000_staff_attendance_anti_fraud_hardening.sql", "utf8");
+const avatarOpenRecoverySql = readFileSync("supabase/migrations/20260602143000_staff_avatar_and_open_attendance_recovery.sql", "utf8");
 
 const coreHrTables = [
   "staff_members",
@@ -152,4 +153,20 @@ test("staff attendance anti-fraud migration adds DB guardrails for new writes", 
   assert.match(antiFraudSql, /masklen\(public_ip_cidr\) = 32/i);
   assert.match(antiFraudSql, /masklen\(public_ip_cidr\) = 128/i);
   assert.match(antiFraudSql, /attendance_logs_restaurant_staff_clock_in_hardening_idx/i);
+});
+
+test("staff avatar and open attendance recovery migration is additive", () => {
+  assert.match(avatarOpenRecoverySql, /'staff-avatars'/i);
+  assert.match(avatarOpenRecoverySql, /file_size_limit[\s\S]*3145728/i);
+  assert.match(avatarOpenRecoverySql, /array\['image\/jpeg', 'image\/png', 'image\/webp'\]/i);
+  assert.match(avatarOpenRecoverySql, /public can read staff avatars/i);
+  assert.match(avatarOpenRecoverySql, /staff can upload own restaurant avatars/i);
+  assert.match(avatarOpenRecoverySql, /sm\.user_id = auth\.uid\(\)/i);
+  assert.match(avatarOpenRecoverySql, /sm\.id::text = \(storage\.foldername\(name\)\)\[2\]/i);
+  assert.match(avatarOpenRecoverySql, /attendance_logs_open_by_staff_idx/i);
+  assert.match(avatarOpenRecoverySql, /where clock_out_at is null/i);
+  assert.match(avatarOpenRecoverySql, /create or replace function public\.consume_staff_attendance_qr_token/i);
+  assert.match(avatarOpenRecoverySql, /usage_count = coalesce\(token\.usage_count, 0\) \+ 1/i);
+  assert.match(avatarOpenRecoverySql, /grant execute on function public\.consume_staff_attendance_qr_token/i);
+  assert.doesNotMatch(avatarOpenRecoverySql, /create unique index/i);
 });

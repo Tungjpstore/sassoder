@@ -210,6 +210,7 @@ export type MarkStaffNotificationsReadInput = {
   userId: string;
   notificationId?: string;
   all?: boolean;
+  includeShared?: boolean;
 };
 
 type StaffReviewRow = {
@@ -292,8 +293,9 @@ export async function markStaffNotificationsRead(input: MarkStaffNotificationsRe
       read_at: new Date().toISOString()
     })
     .eq("restaurant_id", input.restaurantId)
-    .or(`user_id.is.null,user_id.eq.${input.userId}`)
     .eq("status", "unread");
+
+  query = input.includeShared ? query.or(`user_id.is.null,user_id.eq.${input.userId}`) : query.eq("user_id", input.userId);
 
   if (!input.all) {
     query = query.eq("id", input.notificationId);
@@ -720,6 +722,7 @@ export async function getStaffOperationsBundle(
     shifts,
     shiftAssignments,
     attendanceRows,
+    openAttendanceRows,
     approvalRows,
     activityRows,
     legacyAuditRows,
@@ -769,6 +772,15 @@ export async function getStaffOperationsBundle(
         .select("id,staff_member_id,staff_user_id,branch_id,shift_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
         .eq("restaurant_id", restaurantId)
         .gte("clock_in_at", sevenDaysAgo.toISOString())
+        .order("clock_in_at", { ascending: false })
+        .limit(100)
+    ),
+    readOptionalRows<AttendanceRow>(
+      supabase
+        .from("attendance_logs")
+        .select("id,staff_member_id,staff_user_id,branch_id,shift_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
+        .eq("restaurant_id", restaurantId)
+        .is("clock_out_at", null)
         .order("clock_in_at", { ascending: false })
         .limit(100)
     ),
@@ -895,7 +907,11 @@ export async function getStaffOperationsBundle(
   const today = new Date().toISOString().slice(0, 10);
   const attendanceTodayByMemberId = new Map<string, AttendanceRow>();
   const todayAttendanceMemberIds = new Set<string>();
-  const todayAttendanceRows = attendanceRows.filter((attendance) => dayKey(attendance.clock_in_at) === today);
+  const attendanceRowsWithOpen = [...openAttendanceRows, ...attendanceRows].reduce((rows, attendance) => {
+    if (!rows.some((item) => item.id === attendance.id)) rows.push(attendance);
+    return rows;
+  }, [] as AttendanceRow[]);
+  const todayAttendanceRows = attendanceRowsWithOpen.filter((attendance) => dayKey(attendance.clock_in_at) === today);
   todayAttendanceRows.forEach((attendance) => {
       todayAttendanceMemberIds.add(attendance.staff_member_id);
       if (!attendanceTodayByMemberId.has(attendance.staff_member_id)) {
@@ -911,7 +927,7 @@ export async function getStaffOperationsBundle(
     }
   });
 
-  attendanceRows.forEach((attendance) => {
+  attendanceRowsWithOpen.forEach((attendance) => {
     if (attendance.late_minutes > 0) {
       lateCountByMemberId.set(attendance.staff_member_id, (lateCountByMemberId.get(attendance.staff_member_id) ?? 0) + 1);
     }
@@ -1001,7 +1017,7 @@ export async function getStaffOperationsBundle(
   });
 
   const recentAttendanceRowsById = new Map<string, AttendanceRow>();
-  [...todayAttendanceRows, ...attendanceRows.filter((attendance) => dayKey(attendance.clock_in_at) !== today).slice(0, 24)].forEach((attendance) => {
+  [...openAttendanceRows, ...todayAttendanceRows, ...attendanceRowsWithOpen.filter((attendance) => dayKey(attendance.clock_in_at) !== today).slice(0, 24)].forEach((attendance) => {
     recentAttendanceRowsById.set(attendance.id, attendance);
   });
 

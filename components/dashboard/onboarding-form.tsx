@@ -666,13 +666,15 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                     code: "pro",
                     name: "LogiVN Pro",
                     price: "99.000đ/tháng",
-                    helper: "QR, đơn theo thời gian thực, bán online và trợ lý vận hành cơ bản"
+                    helper: "20 bàn, 10 nhân viên, 500 món menu",
+                    detail: "QR ordering, VietQR, online ordering và dashboard cơ bản"
                   },
                   {
                     code: "premium",
                     name: "LogiVN Premium",
                     price: "199.000đ/tháng",
-                    helper: "Đặt bàn, nhận cọc, nhập menu nhanh từ ảnh, tạo ảnh món và báo cáo nâng cao"
+                    helper: "300 bàn, 50 nhân viên, 2.000 món menu",
+                    detail: "Đặt bàn, nhận cọc, OCR menu, AI ảnh món và báo cáo nâng cao"
                   }
                 ].map((plan) => (
                   <button
@@ -683,17 +685,24 @@ export function OnboardingForm({ email = "", mode = "onboarding", initialPlanCod
                       setPlanCode(nextPlanCode);
                       setTableCount((current) => Math.min(getOnboardingTableLimit(nextPlanCode), Math.max(1, current)));
                     }}
-                    className={`rounded-lg border p-3 text-left transition ${
+                    className={`rounded-[22px] border p-4 text-left shadow-[0_12px_32px_rgba(15,42,31,0.06)] transition ${
                       planCode === plan.code
-                        ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-strong)]"
+                        ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-strong)] ring-2 ring-[var(--primary)]/10"
                         : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:border-[var(--primary)]"
                     }`}
                   >
-                    <span className="block text-sm font-black">{plan.name}</span>
-                    <span className="mt-1 block text-xs font-bold text-[var(--accent)]">
-                      {plan.price} · dùng thử 30 ngày
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-black">{plan.name}</span>
+                      <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-[var(--primary)]">
+                        {plan.code === "premium" ? "Scale" : "Starter"}
+                      </span>
                     </span>
-                    <span className="mt-2 block text-xs leading-5 text-[var(--muted-foreground)]">{plan.helper}</span>
+                    <span className="mt-3 block text-xl font-black text-[var(--primary-strong)]">{plan.price}</span>
+                    <span className="mt-1 block text-xs font-black text-[var(--accent)]">Dùng thử 30 ngày</span>
+                    <span className="mt-3 block rounded-xl border border-[var(--border)] bg-white/70 px-3 py-2 text-xs font-black text-[var(--foreground)]">
+                      {plan.helper}
+                    </span>
+                    <span className="mt-2 block text-xs leading-5 text-[var(--muted-foreground)]">{plan.detail}</span>
                   </button>
                 ))}
               </div>

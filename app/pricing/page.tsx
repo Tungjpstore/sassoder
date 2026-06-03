@@ -122,6 +122,17 @@ type PublicPricingPlan = {
   features: string[];
 };
 
+type PlanDisplayDetails = {
+  eyebrow: string;
+  badge: string;
+  summary: string;
+  limits: string[];
+  capabilities: string[];
+  securityNote: string;
+  secondaryHref: string;
+  secondaryLabel: string;
+};
+
 function readPrice(value: string) {
   if (value.toLocaleLowerCase("vi-VN").includes("liên hệ")) return 0;
   return Number(value.replace(/[^\d]/g, "")) || 0;
@@ -169,6 +180,45 @@ function getPlanIntent(planCode: string | null) {
     bestFor: "Phù hợp với quán muốn bắt đầu số hóa gọi món và vận hành trên một dashboard rõ ràng.",
     roi: "Giữ chi phí phần mềm dễ hiểu, chỉ nâng cấp khi quán thực sự cần thêm tính năng.",
     unlocks: ["QR ordering", "VietQR", "Dashboard", "Báo cáo"]
+  };
+}
+
+function getPlanDisplayDetails(plan: PublicPricingPlan): PlanDisplayDetails {
+  if (plan.code === "premium") {
+    return {
+      eyebrow: "Scale plan",
+      badge: "Đề xuất",
+      summary: "Cho quán đã có nhịp vận hành thật và cần AI, đặt bàn, báo cáo sâu cùng giới hạn lớn hơn.",
+      limits: ["300 bàn", "50 nhân viên", "2.000 món menu", "200 promotions"],
+      capabilities: ["Đặt bàn và nhận cọc", "AI/OCR menu và ảnh món", "Báo cáo nâng cao", "Phân quyền vận hành sâu"],
+      securityNote: "Giới hạn Premium được kiểm tra ở server action, service và trigger DB.",
+      secondaryHref: "/demo",
+      secondaryLabel: "Xem demo Premium"
+    };
+  }
+
+  if (plan.code === "enterprise") {
+    return {
+      eyebrow: "Custom rollout",
+      badge: "Tư vấn",
+      summary: "Cho chuỗi cần triển khai nhiều chi nhánh, tích hợp riêng và chính sách vận hành theo hợp đồng.",
+      limits: ["Nhiều chi nhánh", "Tích hợp riêng", "SLA hỗ trợ", "Quyền riêng"],
+      capabilities: ["Tư vấn rollout", "Thiết kế phạm vi riêng", "Đồng bộ dữ liệu", "Hỗ trợ ưu tiên"],
+      securityNote: "Phạm vi quyền được cấu hình theo hợp đồng và audit riêng.",
+      secondaryHref: "/waitlist",
+      secondaryLabel: "Trao đổi nhu cầu"
+    };
+  }
+
+  return {
+    eyebrow: "Starter plan",
+    badge: "Gọn để bắt đầu",
+    summary: "Cho quán muốn đưa QR ordering, VietQR, menu và dashboard vào vận hành với chi phí dễ kiểm soát.",
+    limits: ["20 bàn", "10 nhân viên", "500 món menu", "20 promotions"],
+    capabilities: ["QR ordering tại bàn", "Đặt món online", "VietQR và đối soát", "Dashboard cơ bản"],
+    securityNote: "Giới hạn Pro được khóa fail-closed, kể cả khi gọi API trực tiếp.",
+    secondaryHref: "/waitlist",
+    secondaryLabel: "Cần tư vấn thêm"
   };
 }
 
@@ -330,42 +380,53 @@ export default async function PricingPage() {
               const href = getPlanHref(plan.code, siteConfig.brand.email);
               const isContact = plan.monthly_price <= 0;
               const intent = getPlanIntent(plan.code);
+              const details = getPlanDisplayDetails(plan);
 
               return (
                 <article className={`lp-plan-card ${featured ? "is-featured" : ""}`} key={plan.id}>
-                  {featured ? <span className="lp-badge">{intent.badge}</span> : null}
+                  <div className="lp-plan-topbar">
+                    <span>{details.eyebrow}</span>
+                    <b>{featured ? details.badge : intent.badge}</b>
+                  </div>
 
                   <div className="lp-plan-head">
                     <p>{planCodeLabel(plan.code)}</p>
                     <h3>{plan.name}</h3>
-                    <span>{plan.description}</span>
+                    <span>{details.summary}</span>
+                  </div>
+
+                  <div className="lp-plan-price-row">
+                    <strong className="lp-price">
+                      {isContact ? "Liên hệ" : formatVnd(plan.monthly_price)}
+                      {isContact ? null : <small>/ tháng</small>}
+                    </strong>
+                    <span>Dùng thử {plan.trial_days} ngày</span>
+                  </div>
+
+                  <div className="lp-plan-limits" aria-label={`Giới hạn chính của ${plan.name}`}>
+                    {details.limits.map((limit) => (
+                      <span key={limit}>{limit}</span>
+                    ))}
                   </div>
 
                   <div className="lp-plan-fit">
-                    <strong>Phù hợp với</strong>
+                    <strong>Vị trí gói</strong>
                     <p>{intent.bestFor}</p>
                   </div>
 
-                  <strong className="lp-price">
-                    {isContact ? "Liên hệ" : formatVnd(plan.monthly_price)}
-                    {isContact ? null : <small>/ tháng</small>}
-                  </strong>
-                  <p className="lp-trial">Dùng thử {plan.trial_days} ngày</p>
-
-                  <div className="lp-plan-unlocks" aria-label={`Tính năng nổi bật của ${plan.name}`}>
-                    {intent.unlocks.map((unlock) => (
-                      <span key={unlock}>{unlock}</span>
+                  <div className="lp-plan-stack" aria-label={`Tính năng chính của ${plan.name}`}>
+                    {details.capabilities.map((feature) => (
+                      <span key={feature}>
+                        <Check size={15} />
+                        {feature}
+                      </span>
                     ))}
                   </div>
 
-                  <ul>
-                    {plan.features.slice(0, 8).map((feature) => (
-                      <li key={feature}>
-                        <Check size={16} />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
+                  <p className="lp-plan-security">
+                    <ShieldCheck size={16} />
+                    {details.securityNote}
+                  </p>
 
                   <p className="lp-roi-note">{intent.roi}</p>
 
@@ -378,8 +439,8 @@ export default async function PricingPage() {
                       <Link className={`lp-btn ${featured ? "lp-btn-primary" : "lp-btn-tertiary"}`} href={href}>
                         {isContact ? "Liên hệ tư vấn" : "Dùng thử gói này"}
                       </Link>
-                      <Link className="lp-plan-secondary-link" href={featured ? "/demo" : "/waitlist"}>
-                        {featured ? "Xem demo Premium trước" : "Chưa chắc? vào waitlist"}
+                      <Link className="lp-plan-secondary-link" href={details.secondaryHref}>
+                        {details.secondaryLabel}
                         <ArrowRight size={14} />
                       </Link>
                     </>
@@ -874,8 +935,7 @@ const styles = `
 }
 
 .lp-stage-card-top span,
-.lp-plan-head p,
-.lp-badge {
+.lp-plan-head p {
   color: var(--lp-orange);
   font-size: 11px;
   font-weight: 800;
@@ -939,7 +999,7 @@ const styles = `
 .lp-plan-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
   margin-top: 28px;
 }
 
@@ -948,37 +1008,79 @@ const styles = `
   display: flex;
   min-height: 100%;
   flex-direction: column;
-  padding: 24px;
-  border: 1px solid var(--lp-line);
-  border-radius: 30px;
-  background: rgba(255, 255, 255, 0.64);
-  box-shadow: var(--lp-shadow-soft);
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid rgba(15, 77, 58, 0.14);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 251, 248, 0.78));
+  box-shadow: 0 18px 46px rgba(15, 42, 31, 0.08);
 }
 
 .lp-plan-card.is-featured {
-  border-color: rgba(242, 140, 40, 0.34);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(248, 238, 221, 0.98));
+  border-color: rgba(15, 77, 58, 0.32);
+  background: linear-gradient(180deg, #0F4D3A 0%, #153F33 26%, #FFFFFF 26.2%, #FFFFFF 100%);
+  box-shadow: 0 28px 80px rgba(15, 42, 31, 0.18);
 }
 
-.lp-badge {
-  position: absolute;
-  right: 22px;
-  top: 22px;
+.lp-plan-topbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lp-plan-topbar span,
+.lp-plan-topbar b {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
-  padding: 0 12px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--lp-green);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.lp-plan-topbar b {
+  border-color: rgba(242, 140, 40, 0.28);
+  color: #9a4a17;
+  background: rgba(255, 247, 237, 0.92);
+}
+
+.lp-plan-card.is-featured .lp-plan-topbar span {
+  border-color: rgba(255, 255, 255, 0.24);
+  color: rgba(255, 248, 239, 0.86);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lp-plan-card.is-featured .lp-plan-topbar b {
+  border-color: rgba(242, 140, 40, 0.34);
+  background: #F28C28;
   color: #FFF8EF;
-  background: var(--lp-green);
 }
 
 .lp-plan-head h3 {
-  margin-top: 10px;
+  margin-top: 14px;
   color: var(--lp-green-strong);
-  font-size: 34px;
-  line-height: 0.98;
+  font-size: 32px;
+  line-height: 1;
   letter-spacing: 0;
+}
+
+.lp-plan-card.is-featured .lp-plan-head p,
+.lp-plan-card.is-featured .lp-plan-head h3,
+.lp-plan-card.is-featured .lp-plan-head span {
+  color: #FFF8EF;
+}
+
+.lp-plan-card.is-featured .lp-plan-head span {
+  color: rgba(255, 248, 239, 0.76);
 }
 
 .lp-plan-head span,
@@ -993,12 +1095,29 @@ const styles = `
   font-weight: 600;
 }
 
+.lp-plan-price-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.lp-plan-price-row > span {
+  max-width: 112px;
+  color: var(--lp-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 800;
+  text-align: right;
+}
+
 .lp-plan-fit {
-  margin-top: 18px;
+  margin-top: 14px;
   padding: 14px;
   border: 1px solid rgba(15, 77, 58, 0.1);
-  border-radius: 18px;
-  background: rgba(15, 77, 58, 0.05);
+  border-radius: 14px;
+  background: rgba(15, 77, 58, 0.045);
 }
 
 .lp-plan-fit strong {
@@ -1016,53 +1135,71 @@ const styles = `
 
 .lp-price {
   display: block;
-  margin-top: 22px;
+  margin-top: 0;
   color: var(--lp-green-strong);
   font-size: 34px;
   line-height: 1;
   font-weight: 800;
 }
 
-.lp-plan-unlocks {
-  display: flex;
-  flex-wrap: wrap;
+.lp-plan-limits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-top: 16px;
 }
 
-.lp-plan-unlocks span {
+.lp-plan-limits span {
   display: inline-flex;
-  min-height: 32px;
+  min-height: 42px;
   align-items: center;
-  padding: 0 10px;
-  border-radius: 999px;
+  justify-content: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 12px;
   color: var(--lp-green);
-  background: rgba(15, 77, 58, 0.08);
+  background: rgba(15, 77, 58, 0.055);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 900;
+  text-align: center;
 }
 
-.lp-plan-card ul {
+.lp-plan-stack {
   display: grid;
   gap: 10px;
-  margin: 22px 0 0;
-  padding: 0;
-  list-style: none;
+  margin-top: 16px;
 }
 
-.lp-plan-card li {
+.lp-plan-stack span,
+.lp-plan-security {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   color: var(--lp-green);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.45;
   font-weight: 700;
+}
+
+.lp-plan-stack span {
+  min-height: 42px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(15, 77, 58, 0.1);
+}
+
+.lp-plan-security {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #254236;
+  font-size: 13px;
 }
 
 .lp-plan-card .lp-btn {
   width: 100%;
-  margin-top: 18px;
+  margin-top: auto;
 }
 
 .lp-plan-secondary-link {

@@ -116,6 +116,18 @@ type OperationalStaffRequestSnapshot = {
   requestedPayload?: Record<string, unknown> | null;
 };
 
+type OperationalStaffIncidentSnapshot = {
+  id: string;
+  staffMemberId: string;
+  staffName?: string | null;
+  employeeCode?: string | null;
+  title: string;
+  description: string;
+  severity: "low" | "normal" | "high" | "urgent";
+  status?: "open" | "reviewing" | "resolved" | "dismissed";
+  attachmentUrl?: string | null;
+};
+
 export type OperationalEvent =
   | (BaseOperationalEvent & {
       type: "order.created";
@@ -220,6 +232,10 @@ export type OperationalEvent =
   | (BaseOperationalEvent & {
       type: "staff.request_reviewed";
       staffRequest: OperationalStaffRequestSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "staff.incident_reported";
+      staffIncident: OperationalStaffIncidentSnapshot;
     })
   | (BaseOperationalEvent & {
       type: "service_request.created";
@@ -443,6 +459,7 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "sla.warning" ||
     type === "service_request.created" ||
     type === "staff.request_created" ||
+    type === "staff.incident_reported" ||
     type === "platform.alert"
   ) {
     return 1;

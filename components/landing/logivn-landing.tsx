@@ -11,6 +11,7 @@ import {
   MapPin,
   Phone,
   QrCode,
+  ShieldCheck,
   Sparkles,
   Store,
   Utensils,
@@ -268,6 +269,36 @@ function getPlanHref(planCode: string | undefined, email: string) {
   }
 
   return "/dashboard/register?plan=pro";
+}
+
+function getLandingPlanDetails(planCode: string | undefined) {
+  if (planCode === "premium") {
+    return {
+      eyebrow: "Scale plan",
+      badge: "Đề xuất",
+      limits: ["300 bàn", "50 nhân viên", "2.000 món", "200 promotions"],
+      features: ["Đặt bàn và nhận cọc", "AI/OCR menu và ảnh món", "Báo cáo nâng cao", "Phân quyền vận hành sâu"],
+      note: "Giới hạn Premium được khóa ở backend và database."
+    };
+  }
+
+  if (planCode === "enterprise") {
+    return {
+      eyebrow: "Custom rollout",
+      badge: "Tư vấn",
+      limits: ["Nhiều chi nhánh", "Tích hợp riêng", "SLA hỗ trợ", "Quyền riêng"],
+      features: ["Rollout theo chi nhánh", "Tư vấn quy trình", "Tích hợp dữ liệu", "Hỗ trợ ưu tiên"],
+      note: "Phạm vi quyền được cấu hình riêng theo hợp đồng."
+    };
+  }
+
+  return {
+    eyebrow: "Starter plan",
+    badge: "Khởi động",
+    limits: ["20 bàn", "10 nhân viên", "500 món", "20 promotions"],
+    features: ["QR ordering tại bàn", "VietQR và đối soát", "Đặt món online", "Dashboard cơ bản"],
+    note: "Giới hạn Pro được kiểm tra fail-closed ở server và database."
+  };
 }
 
 function Logo({
@@ -767,26 +798,39 @@ export function LogiVNLanding({ siteConfig }: { siteConfig: PlatformSiteConfig }
             <div className="lv-pricing-grid">
               {plans.map((plan) => {
                 const href = getPlanHref(plan.code, siteBrand.email);
+                const details = getLandingPlanDetails(plan.code);
 
                 return (
                   <article className={`lv-price-card ${plan.featured ? "lv-price-featured" : ""}`} key={plan.name}>
-                    {plan.featured ? <span className="lv-popular">Phổ biến</span> : null}
+                    <div className="lv-price-topbar">
+                      <span>{details.eyebrow}</span>
+                      <b>{plan.featured ? details.badge : plan.code === "pro" ? "Khởi động" : "Tùy chọn"}</b>
+                    </div>
                     <div className="lv-price-heading">
                       <h3>{plan.name}</h3>
                       <p>{plan.subtitle}</p>
                     </div>
-                    <strong>
+                    <strong className="lv-price-value">
                       {plan.price}
                       {plan.price !== "Liên hệ" ? <small>/ tháng</small> : null}
                     </strong>
-                    <ul>
-                      {plan.items.slice(0, 5).map((item) => (
-                        <li key={item}>
-                          <Check size={16} />
-                          {item}
-                        </li>
+                    <div className="lv-price-limits" aria-label={`Giới hạn chính của ${plan.name}`}>
+                      {details.limits.map((item) => (
+                        <span key={item}>{item}</span>
                       ))}
-                    </ul>
+                    </div>
+                    <div className="lv-price-features" aria-label={`Tính năng chính của ${plan.name}`}>
+                      {details.features.map((item) => (
+                        <span key={item}>
+                          <Check size={15} />
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="lv-price-security">
+                      <ShieldCheck size={16} />
+                      {details.note}
+                    </p>
                     <CtaLink className={`lv-btn ${plan.featured ? "lv-btn-orange" : "lv-btn-green"}`} href={href}>
                       {plan.action}
                     </CtaLink>
@@ -2276,7 +2320,7 @@ const styles = `
 .lv-pricing-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 18px;
   margin-top: 28px;
 }
 
@@ -2285,41 +2329,78 @@ const styles = `
   display: flex;
   min-height: 100%;
   flex-direction: column;
-  padding: 24px;
-  border: 1px solid var(--lv-line);
-  border-radius: 30px;
-  background: rgba(255, 255, 255, 0.64);
-  box-shadow: var(--lv-shadow-soft);
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid rgba(15, 77, 58, 0.14);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 251, 248, 0.8));
+  box-shadow: 0 18px 46px rgba(15, 42, 31, 0.08);
 }
 
 .lv-price-featured {
-  border-color: rgba(242, 140, 40, 0.34);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(248, 238, 221, 0.98));
+  border-color: rgba(15, 77, 58, 0.32);
+  background: linear-gradient(180deg, #0F4D3A 0%, #153F33 25%, #FFFFFF 25.2%, #FFFFFF 100%);
+  box-shadow: 0 28px 80px rgba(15, 42, 31, 0.18);
 }
 
-.lv-popular {
-  position: absolute;
-  right: 22px;
-  top: 22px;
+.lv-price-topbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lv-price-topbar span,
+.lv-price-topbar b {
   display: inline-flex;
   min-height: 30px;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 10px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
   border-radius: 999px;
-  color: #FFF8EF;
-  background: var(--lv-green);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--lv-green);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
   text-transform: uppercase;
+}
+
+.lv-price-topbar b {
+  border-color: rgba(242, 140, 40, 0.28);
+  background: rgba(255, 247, 237, 0.92);
+  color: #9a4a17;
+}
+
+.lv-price-featured .lv-price-topbar span {
+  border-color: rgba(255, 255, 255, 0.24);
+  color: rgba(255, 248, 239, 0.86);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lv-price-featured .lv-price-topbar b {
+  border-color: rgba(242, 140, 40, 0.34);
+  background: #F28C28;
+  color: #FFF8EF;
 }
 
 .lv-price-heading h3 {
   font-family: Georgia, "Times New Roman", serif;
   color: var(--lv-green-strong);
-  font-size: 34px;
-  line-height: 0.98;
+  margin-top: 14px;
+  font-size: 32px;
+  line-height: 1;
   letter-spacing: 0;
+}
+
+.lv-price-featured .lv-price-heading h3,
+.lv-price-featured .lv-price-heading p {
+  color: #FFF8EF;
+}
+
+.lv-price-featured .lv-price-heading p {
+  color: rgba(255, 248, 239, 0.76);
 }
 
 .lv-price-heading p {
@@ -2330,7 +2411,7 @@ const styles = `
   font-weight: 600;
 }
 
-.lv-price-card strong {
+.lv-price-value {
   display: block;
   margin-top: 24px;
   color: var(--lv-green-strong);
@@ -2339,28 +2420,65 @@ const styles = `
   font-weight: 800;
 }
 
-.lv-price-card small {
+.lv-price-value small {
   font-size: 14px;
   font-weight: 700;
   color: var(--lv-muted);
 }
 
-.lv-price-card ul {
+.lv-price-limits {
   display: grid;
-  gap: 10px;
-  margin: 24px 0 0;
-  padding: 0;
-  list-style: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
 }
 
-.lv-price-card li {
+.lv-price-limits span {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 77, 58, 0.1);
+  border-radius: 12px;
+  color: var(--lv-green);
+  background: rgba(15, 77, 58, 0.055);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.lv-price-features {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.lv-price-features span,
+.lv-price-security {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   color: var(--lv-green);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.45;
   font-weight: 700;
+}
+
+.lv-price-features span {
+  min-height: 42px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(15, 77, 58, 0.1);
+}
+
+.lv-price-security {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(15, 77, 58, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #254236;
+  font-size: 13px;
 }
 
 .lv-price-card .lv-btn {
@@ -3374,32 +3492,21 @@ const styles = `
     border-radius: 22px;
   }
 
-  .lv-popular {
-    right: 16px;
-    top: 16px;
-    min-height: 26px;
-    font-size: 10.5px;
-  }
-
   .lv-price-heading h3,
-  .lv-price-card strong {
+  .lv-price-value {
     font-size: 25px;
   }
 
   .lv-price-heading p,
-  .lv-price-card li,
   .lv-pricing-note span {
     font-size: 13px;
     line-height: 1.5;
   }
 
-  .lv-price-card strong,
-  .lv-price-card ul {
+  .lv-price-value,
+  .lv-price-limits,
+  .lv-price-features {
     margin-top: 16px;
-  }
-
-  .lv-price-card ul {
-    gap: 8px;
   }
 
   .lv-pricing-note {

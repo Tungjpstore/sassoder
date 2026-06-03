@@ -75,8 +75,7 @@ export async function POST(request: Request, context: RouteContext) {
       context.params,
       requireOperationalDashboardApiSession({
         feature: "staff_management",
-        permission: ["attendance.approve", "approvals.review"],
-        permissionMode: "any"
+        permission: "attendance.approve"
       }),
       request.json().catch(() => ({}))
     ]);

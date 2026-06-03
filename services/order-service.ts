@@ -1657,6 +1657,23 @@ export async function listPublicOrderHistory(input: {
 
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const customerSessionId = input.customerSessionId;
+
+  const { data: activeBill, error: billError } = await supabase
+    .from("table_bills")
+    .select("id")
+    .eq("restaurant_id", restaurant.id)
+    .eq("table_id", table.id)
+    .in("status", ["open", "waiting_payment", "waiting_confirm"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  throwIfSupabaseError(billError);
+
+  if (!activeBill) {
+    return [];
+  }
+
   const [sessionOrders, tableOpenOrders] = await Promise.all([
     customerSessionId
       ? runOrderSelectWithBranchFallback((select) =>
@@ -1665,6 +1682,7 @@ export async function listPublicOrderHistory(input: {
             .select(select)
             .eq("restaurant_id", restaurant.id)
             .eq("table_id", table.id)
+            .eq("bill_id", activeBill.id)
             .eq("customer_session_id", customerSessionId)
             .gte("created_at", since)
             .order("created_at", { ascending: false })
@@ -1677,6 +1695,7 @@ export async function listPublicOrderHistory(input: {
         .select(select)
         .eq("restaurant_id", restaurant.id)
         .eq("table_id", table.id)
+        .eq("bill_id", activeBill.id)
         .in("status", activePublicStatuses)
         .order("created_at", { ascending: false })
         .limit(30)

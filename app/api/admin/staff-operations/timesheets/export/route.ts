@@ -17,7 +17,7 @@ export async function GET() {
   try {
     const session = await requireOperationalDashboardApiSession({
       feature: "staff_management",
-      permission: "activity_logs.export"
+      permission: ["attendance.view", "activity_logs.export"]
     });
     const bundle = await getStaffOperationsBundle(session.restaurantId, session.userId);
 

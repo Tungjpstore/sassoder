@@ -271,6 +271,25 @@ function assertClockOutAfterClockIn(clockInAt: string, clockOutAt: Date) {
   }
 }
 
+function formatAttendanceOpenConflict(clockInAt: string) {
+  const startedAt = new Date(clockInAt);
+  const valid = Number.isFinite(startedAt.getTime());
+  const startedLabel = valid
+    ? new Intl.DateTimeFormat("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(startedAt)
+    : "trước đó";
+  const stale = valid && Date.now() - startedAt.getTime() > 18 * 60 * 60 * 1000;
+  return stale
+    ? `Nhân sự đang có phiên chấm công mở tồn đọng từ ${startedLabel}. Vui lòng kết ca hoặc nhờ quản lý kết ca hộ trước khi vào ca mới.`
+    : `Nhân sự đang có phiên chấm công mở từ ${startedLabel}. Vui lòng kết ca trước khi vào ca mới.`;
+}
+
 function parseClientCapturedAt(value: string | undefined) {
   if (!value) return null;
   const capturedAt = new Date(value);
@@ -1341,6 +1360,7 @@ async function createAttendanceSourceApproval({
   staff,
   branch,
   attendanceLogId,
+  requestType = "attendance_edit",
   reason,
   payload
 }: {
@@ -1349,6 +1369,7 @@ async function createAttendanceSourceApproval({
   staff: StaffMemberRow;
   branch: BranchRow;
   attendanceLogId: string;
+  requestType?: "attendance_edit" | "manual_clock_in";
   reason: string;
   payload: Record<string, unknown>;
 }) {
@@ -1357,7 +1378,7 @@ async function createAttendanceSourceApproval({
     .select("id")
     .eq("restaurant_id", session.restaurantId)
     .eq("attendance_log_id", attendanceLogId)
-    .eq("request_type", "attendance_edit")
+    .eq("request_type", requestType)
     .eq("status", "pending")
     .maybeSingle();
 
@@ -1371,7 +1392,7 @@ async function createAttendanceSourceApproval({
       attendance_log_id: attendanceLogId,
       staff_member_id: staff.id,
       branch_id: branch.id,
-      request_type: "attendance_edit",
+      request_type: requestType,
       status: "pending",
       reason,
       requested_payload: payload,
@@ -1399,6 +1420,67 @@ async function createAttendanceSourceApproval({
   return result.data as { id: string };
 }
 
+async function createManualAdjustmentApproval({
+  supabase,
+  session,
+  attendance,
+  reason,
+  payload
+}: {
+  supabase: any;
+  session: DashboardSession;
+  attendance: AttendanceLogRow;
+  reason: string;
+  payload: Record<string, unknown>;
+}) {
+  const existingResult = await supabase
+    .from("attendance_approval_requests")
+    .select("id")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("attendance_log_id", attendance.id)
+    .eq("request_type", "attendance_edit")
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (existingResult.error) throwDataError(existingResult.error, "Không kiểm tra được yêu cầu duyệt sửa công.");
+  if (existingResult.data?.id) return existingResult.data as { id: string };
+
+  const result = await supabase
+    .from("attendance_approval_requests")
+    .insert({
+      restaurant_id: session.restaurantId,
+      attendance_log_id: attendance.id,
+      staff_member_id: attendance.staff_member_id,
+      branch_id: attendance.branch_id,
+      request_type: "attendance_edit",
+      status: "pending",
+      reason,
+      requested_payload: payload,
+      requested_by: session.userId
+    })
+    .select("id")
+    .single();
+
+  if (result.error) throwDataError(result.error, "Không tạo được yêu cầu duyệt sửa công.");
+
+  const target = await readStaffNotificationTarget(supabase, session.restaurantId, attendance.staff_member_id);
+  await insertNotification({
+    supabase,
+    restaurantId: session.restaurantId,
+    type: "attendance_manual_adjustment_review_requested",
+    title: "Cần duyệt sửa công thủ công",
+    body: `${target?.full_name ?? "Nhân sự"} có bản ghi công vừa được sửa và cần đối soát trước khi tính lương.`,
+    payload: {
+      approvalId: result.data.id,
+      attendanceLogId: attendance.id,
+      staffMemberId: attendance.staff_member_id,
+      branchId: attendance.branch_id
+    }
+  });
+
+  return result.data as { id: string };
+}
+
 function assertSourceAllowed({
   source,
   session,
@@ -1418,6 +1500,9 @@ function assertSourceAllowed({
 }
 
 function attendanceSourceApprovalReason(source: AttendanceSource, deviceTrust: StaffAttendanceDeviceTrust) {
+  if (source === "manual") {
+    return "Chấm công thủ công cần người có quyền khác đối soát trước khi tính lương.";
+  }
   if (source === "offline_sync") {
     return "Dữ liệu chấm công offline cần quản lý đối soát trước khi tính công.";
   }
@@ -1429,6 +1514,13 @@ function attendanceSourceApprovalReason(source: AttendanceSource, deviceTrust: S
   }
   if (source === "wifi" && !deviceTrust.trustedForAttendance && !deviceTrust.approvalRequired) {
     return "WiFi chấm công cần IP quán, GPS hợp lệ và thiết bị tin cậy trước khi tính công.";
+  }
+  return null;
+}
+
+function longWorkShiftApprovalReason(workMinutes: number | null | undefined) {
+  if ((workMinutes ?? 0) > 16 * 60) {
+    return "Phiên công kéo dài quá 16 giờ, cần quản lý đối soát trước khi tính lương.";
   }
   return null;
 }
@@ -1471,14 +1563,16 @@ export async function clockInStaffAttendance({
 
   const openResult = await supabase
     .from("attendance_logs")
-    .select("id")
+    .select("id,clock_in_at")
     .eq("restaurant_id", session.restaurantId)
     .eq("staff_member_id", staff.id)
     .is("clock_out_at", null)
+    .order("clock_in_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (openResult.error) throwDataError(openResult.error, "Không kiểm tra được phiên chấm công hiện tại.");
   if (openResult.data?.id) {
-    throw new AppError("Nhân sự đang có phiên chấm công mở. Vui lòng kết ca trước.", 409);
+    throw new AppError(formatAttendanceOpenConflict(String(openResult.data.clock_in_at ?? "")), 409);
   }
 
   const branchContext = await resolveBranch({
@@ -1666,6 +1760,7 @@ export async function clockInStaffAttendance({
       staff,
       branch,
       attendanceLogId: attendance.id,
+      requestType: source === "manual" ? "manual_clock_in" : "attendance_edit",
       reason: sourceApprovalReason,
       payload: {
         source,
@@ -1753,7 +1848,7 @@ async function readOpenAttendance({
     .eq("staff_member_id", staff.id);
 
   if (attendanceLogId) query = query.eq("id", attendanceLogId).maybeSingle();
-  else query = query.is("clock_out_at", null).maybeSingle();
+  else query = query.is("clock_out_at", null).order("clock_in_at", { ascending: false }).limit(1).maybeSingle();
 
   const result = await query;
   if (result.error) throwDataError(result.error, "Không tải được phiên chấm công.");
@@ -1884,7 +1979,8 @@ export async function clockOutStaffAttendance({
   const shiftOverrideReason = branchContext.approvalReason ?? (!shiftContext.assignment ? "Phiên chấm công không khớp ca đã gán, ghi nhận như ca đột xuất." : null);
   const deviceApprovalReason = deviceTrust.approvalRequired ? deviceTrust.message : null;
   const sourceApprovalReason = attendanceSourceApprovalReason(source, deviceTrust);
-  const approvalState = attendance.approval_state === "pending" || !gps.valid || shiftOverrideReason || deviceApprovalReason || sourceApprovalReason ? "pending" : attendance.approval_state;
+  const longShiftApprovalReason = longWorkShiftApprovalReason(timing.workMinutes);
+  const approvalState = attendance.approval_state === "pending" || !gps.valid || shiftOverrideReason || deviceApprovalReason || sourceApprovalReason || longShiftApprovalReason ? "pending" : attendance.approval_state;
   const anomalyFlags = mergeAnomalyFlags(attendance.anomaly_flags ?? [], anomaly.flags, deviceTrust.flags);
   const anomalyScore = Math.min(100, Math.max(attendance.anomaly_score ?? 0, anomaly.score + (deviceTrust.approvalRequired ? 25 : 0)));
   const clockOutDevice = {
@@ -2000,6 +2096,26 @@ export async function clockOutStaffAttendance({
     });
   }
 
+  if (longShiftApprovalReason) {
+    approval = await createAttendanceSourceApproval({
+      supabase,
+      session,
+      staff,
+      branch,
+      attendanceLogId: attendance.id,
+      reason: longShiftApprovalReason,
+      payload: {
+        source,
+        clock: "out",
+        capturedAt: capturedAt.toISOString(),
+        attendanceLogId: attendance.id,
+        clockInAt: attendance.clock_in_at,
+        workMinutes: timing.workMinutes,
+        anomalyFlags
+      }
+    });
+  }
+
   await insertActivityLog({
     supabase,
     session,
@@ -2023,6 +2139,7 @@ export async function clockOutStaffAttendance({
       shiftOverrideReason,
       deviceApprovalReason,
       sourceApprovalReason,
+      longShiftApprovalReason,
       deviceTrust,
       anomalyScore,
       anomalyFlags
@@ -2092,6 +2209,8 @@ export async function adjustStaffAttendanceLog({
       .eq("staff_member_id", input.staffMemberId)
       .is("clock_out_at", null)
       .neq("id", existing.id)
+      .order("clock_in_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (openResult.error) throwDataError(openResult.error, "Không kiểm tra được phiên công đang mở.");
@@ -2124,7 +2243,7 @@ export async function adjustStaffAttendanceLog({
       clock_out_at: nextClockOutAt ? nextClockOutAt.toISOString() : null,
       clock_out_source: nextClockOutAt ? "manual" : null,
       attendance_state: clockOutTiming.state,
-      approval_state: "approved",
+      approval_state: "pending",
       late_minutes: clockInTiming.lateMinutes,
       early_leave_minutes: clockOutTiming.earlyLeaveMinutes,
       overtime_minutes: clockOutTiming.overtimeMinutes,
@@ -2141,6 +2260,22 @@ export async function adjustStaffAttendanceLog({
 
   if (updateResult.error) throwDataError(updateResult.error, "Không lưu được sửa công.");
   const updatedAttendance = updateResult.data as AttendanceLogRow;
+
+  const approval = await createManualAdjustmentApproval({
+    supabase,
+    session,
+    attendance: updatedAttendance,
+    reason: input.note,
+    payload: {
+      source: "manual_adjustment",
+      previousClockInAt: existing.clock_in_at,
+      previousClockOutAt: existing.clock_out_at,
+      nextClockInAt: updatedAttendance.clock_in_at,
+      nextClockOutAt: updatedAttendance.clock_out_at,
+      scheduledDate,
+      anomalyFlags
+    }
+  });
 
   await insertActivityLog({
     supabase,
@@ -2170,7 +2305,8 @@ export async function adjustStaffAttendanceLog({
   });
 
   return {
-    attendance: updatedAttendance
+    attendance: updatedAttendance,
+    approval
   };
 }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { dashboardLoginPathForNext, safeDashboardNextPath } from "@/lib/auth-flow-routes";
 import { buildGoogleDirectAuthorizeRequest } from "@/lib/google-direct-oauth";
+import { getAppUrl } from "@/lib/app-url";
 import {
   cookieNamesFromHeader,
   getHostname,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/supabase/cookie-guards";
 import { expireSupabaseAuthFlowCookies, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
+
 
 function isPrefetchRequest(request: Request) {
   const purpose = request.headers.get("purpose") || request.headers.get("sec-purpose") || "";
@@ -79,6 +81,23 @@ export async function GET(request: Request) {
   }
 
   const url = new URL(request.url);
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
+  const hostname = getHostname(host);
+
+  const canonicalUrl = new URL(getAppUrl());
+  const canonicalHostname = getHostname(canonicalUrl.host);
+
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+
+  if (!isLocal && hostname !== canonicalHostname) {
+    const redirectUrl = new URL("/auth/google", canonicalUrl);
+    url.searchParams.forEach((value, key) => {
+      redirectUrl.searchParams.set(key, value);
+    });
+    redirectUrl.searchParams.set("returnHost", host);
+    return noStoreRedirect(redirectUrl);
+  }
+
   const next = safeDashboardNextPath(url.searchParams.get("next"), "/dashboard");
   const googleConfigErrorPath = dashboardLoginPathForNext(next, { authError: "google_config" });
 

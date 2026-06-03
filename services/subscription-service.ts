@@ -353,7 +353,7 @@ async function readRestaurantEntitlement(restaurantId: string) {
   });
   const allowed = isSubscriptionUsable(sub);
   const periodEnd = getSubscriptionAccessEnd(sub);
-  const daysLeft = daysUntil(periodEnd);
+  const daysLeft = allowed ? daysUntil(periodEnd) : 0;
   const pendingButStillUsable = sub.status === "pending_payment" && allowed;
   return {
     allowed,

@@ -34,7 +34,9 @@ import type { LucideIcon } from "lucide-react";
 import { onboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { featureCatalog, planCatalog } from "@/lib/billing/catalog";
 import { getOnboardingTableLimit } from "@/lib/billing/plan-limits";
+import type { BillingFeatureKey, BillingPlanCode } from "@/lib/billing/types";
 import { buildOnboardingRunway, formatDraftSavedLabel } from "@/lib/onboarding-runway";
 import { createSlug } from "@/lib/slug";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
@@ -77,6 +79,8 @@ type OnboardingPlan = {
 
 type PlanCode = string;
 type AddressSuggestion = AddressAutocompletePrediction;
+type PlanDisplayMode = "decision" | "compare" | "ai";
+type PlanEntitlementState = "included" | "trial" | "locked";
 type AdminProvince = {
   code: string;
   name: string;
@@ -257,94 +261,185 @@ const fallbackPlanFeatures: Record<string, string[]> = {
   ]
 };
 
-const planVisualFeatures: Record<string, { icon: LucideIcon; title: string; subtext: string; isAi?: boolean }[]> = {
-  pro: [
-    {
-      icon: QrCode,
-      title: "Menu QR & Gọi món",
-      subtext: "Tối đa 20 bàn trong gói Pro"
-    },
-    {
-      icon: Clock3,
-      title: "Vận hành Real-time",
-      subtext: "Đồng bộ đơn hàng, bếp & bàn ăn"
-    },
-    {
-      icon: CreditCard,
-      title: "Thanh toán VietQR",
-      subtext: "Tự sinh mã chuyển khoản & đối soát"
-    },
-    {
-      icon: Layers3,
-      title: "Báo cáo cơ bản",
-      subtext: "Theo dõi doanh thu & món bán chạy"
-    }
-  ],
-  premium: [
-    {
-      icon: Sparkles,
-      title: "AI Co-Pilot & Insights",
-      subtext: "Tự động gợi ý menu & phân tích bán chéo",
-      isAi: true
-    },
-    {
-      icon: BadgeCheck,
-      title: "Báo cáo chuyên sâu",
-      subtext: "Dự báo giờ cao điểm, kiểm soát chi phí"
-    },
-    {
-      icon: Store,
-      title: "Mở rộng chuỗi chi nhánh",
-      subtext: "300 bàn, 50 nhân viên theo giới hạn vận hành"
-    },
-    {
-      icon: Smartphone,
-      title: "Trải nghiệm thương hiệu",
-      subtext: "Trang gọi món tùy biến logo & giao diện"
-    }
-  ]
-};
+const planDisplayModes: Array<{ id: PlanDisplayMode; label: string; compactLabel: string; caption: string; icon: LucideIcon }> = [
+  { id: "decision", label: "Tổng quan", compactLabel: "Tổng quan", caption: "Lý do chọn nhanh", icon: BadgeCheck },
+  { id: "compare", label: "So sánh", compactLabel: "So sánh", caption: "Giới hạn & quota", icon: Layers3 },
+  { id: "ai", label: "AI & mở rộng", compactLabel: "AI", caption: "Premium delta", icon: Sparkles }
+];
+
+const modalFeatureGroups: Array<{ title: string; keys: BillingFeatureKey[] }> = [
+  {
+    title: "Nền tảng bán hàng",
+    keys: ["tables", "staff", "qr_ordering", "payment_qr", "menu_management", "online_ordering", "branding_basic", "advanced_permissions"]
+  },
+  {
+    title: "AI, báo cáo & xuất dữ liệu",
+    keys: ["basic_analytics", "export_pdf", "ai_menu_generation", "ai_chatbot", "ai_image_generation", "ai_analytics", "advanced_ai_assistant", "realtime_insight"]
+  },
+  {
+    title: "Tăng trưởng & nhận diện",
+    keys: ["advanced_reports", "ai_marketing", "ai_branding", "loyalty_system", "advanced_qr_branding", "custom_domain"]
+  },
+  {
+    title: "Tự động hóa & mở rộng",
+    keys: ["advanced_automation", "ai_automation", "automation_workflow"]
+  }
+];
+
+const planCompareKeys: BillingFeatureKey[] = [
+  "tables",
+  "staff",
+  "menu_management",
+  "ai_menu_generation",
+  "ai_chatbot",
+  "ai_image_generation",
+  "ai_analytics",
+  "advanced_reports",
+  "automation_workflow",
+  "custom_domain"
+];
+
+const planAiKeys: BillingFeatureKey[] = [
+  "ai_menu_generation",
+  "ai_chatbot",
+  "ai_image_generation",
+  "ai_analytics",
+  "ai_marketing",
+  "advanced_ai_assistant",
+  "automation_workflow"
+];
 
 function formatVnd(value: number) {
   return `${new Intl.NumberFormat("vi-VN").format(value)}đ`;
 }
 
-function planFeatureList(plan: OnboardingPlan) {
-  const fromPlan = plan.features.map((feature) => feature.trim()).filter(Boolean);
-  const fallback = fallbackPlanFeatures[plan.code.toLowerCase()] ?? fallbackPlanFeatures.pro;
-  return fromPlan.length > 0 ? fromPlan : fallback;
+function formatFeatureNumber(value: number) {
+  return new Intl.NumberFormat("vi-VN").format(value);
 }
 
-function planFeaturePreview(plan: OnboardingPlan) {
-  return planFeatureList(plan).slice(0, 3);
+function normalizeBillingPlanCode(value: string): BillingPlanCode {
+  return value.toLowerCase() === "premium" ? "premium" : "pro";
+}
+
+function billingPlanFor(plan: OnboardingPlan) {
+  return planCatalog[normalizeBillingPlanCode(plan.code)];
+}
+
+function planDisplayName(plan: OnboardingPlan) {
+  return billingPlanFor(plan).name;
+}
+
+function quotaWindowLabel(window: "daily" | "monthly" | "lifetime") {
+  if (window === "daily") return "ngày";
+  if (window === "lifetime") return "trọn đời";
+  return "tháng";
+}
+
+function entitlementState(planCode: BillingPlanCode, featureKey: BillingFeatureKey): PlanEntitlementState {
+  const entitlement = planCatalog[planCode].entitlements[featureKey];
+  if (entitlement.included) return "included";
+  if (entitlement.accessMode === "trial") return "trial";
+  return "locked";
+}
+
+function entitlementLabel(planCode: BillingPlanCode, featureKey: BillingFeatureKey, compact = false) {
+  const entitlement = planCatalog[planCode].entitlements[featureKey];
+  if (entitlement.included) {
+    if (typeof entitlement.limit === "number" && entitlement.unit) return `${formatFeatureNumber(entitlement.limit)} ${entitlement.unit}`;
+    if (entitlement.quota) {
+      const limit = entitlement.quota.limit === null ? "không giới hạn" : formatFeatureNumber(entitlement.quota.limit);
+      return `${limit} ${entitlement.quota.unit}/${quotaWindowLabel(entitlement.quota.window)}`;
+    }
+    return compact ? "Có" : "Có trong gói";
+  }
+
+  if (entitlement.accessMode === "trial" && entitlement.quota) {
+    const limit = entitlement.quota.limit === null ? "không giới hạn" : formatFeatureNumber(entitlement.quota.limit);
+    return compact ? `Trial ${limit} ${entitlement.quota.unit}` : `Dùng thử ${limit} ${entitlement.quota.unit}/${quotaWindowLabel(entitlement.quota.window)}`;
+  }
+
+  return compact ? "Premium" : entitlement.preview ? `Mở khóa ở Premium: ${entitlement.preview}` : "Chỉ có ở Premium";
+}
+
+function entitlementBadgeLabel(state: PlanEntitlementState) {
+  if (state === "included") return "Có trong gói";
+  if (state === "trial") return "Dùng thử";
+  return "Premium";
+}
+
+function entitlementDetailValue(planCode: BillingPlanCode, featureKey: BillingFeatureKey) {
+  const state = entitlementState(planCode, featureKey);
+  if (state === "locked") return "Nâng cấp Premium";
+  return entitlementLabel(planCode, featureKey);
+}
+
+function entitlementDetailDescription(planCode: BillingPlanCode, featureKey: BillingFeatureKey) {
+  const entitlement = planCatalog[planCode].entitlements[featureKey];
+  if (!entitlement.included && entitlement.preview) return entitlement.preview;
+  return featureCatalog[featureKey].description;
+}
+
+function planFeatureList(plan: OnboardingPlan) {
+  const catalog = billingPlanFor(plan);
+  const catalogItems = modalFeatureGroups.flatMap((group) =>
+    group.keys.flatMap((featureKey) => {
+      const state = entitlementState(catalog.code, featureKey);
+      if (state === "locked") return [];
+      return `${featureCatalog[featureKey].label}: ${entitlementLabel(catalog.code, featureKey)}`;
+    })
+  );
+  const fromPlan = plan.features.map((feature) => feature.trim()).filter(Boolean);
+  const fallback = fallbackPlanFeatures[plan.code.toLowerCase()] ?? fallbackPlanFeatures.pro;
+  return catalogItems.length > 0 ? catalogItems : fromPlan.length > 0 ? fromPlan : fallback;
 }
 
 function planFeatureGroups(plan: OnboardingPlan) {
-  const features = planFeatureList(plan);
-  return [
-    {
-      title: "Bán hàng tại quán",
-      items: features.slice(0, 3)
-    },
-    {
-      title: "Quản trị & báo cáo",
-      items: features.slice(3, 6)
-    },
-    {
-      title: plan.code.toLowerCase() === "premium" ? "AI nâng cao" : "Sẵn sàng nâng cấp",
-      items: features.slice(6)
-    }
-  ].filter((group) => group.items.length > 0);
+  const catalog = billingPlanFor(plan);
+  return modalFeatureGroups.map((group) => {
+    const items = group.keys.map((featureKey) => {
+      const state = entitlementState(catalog.code, featureKey);
+      return {
+        key: featureKey,
+        label: featureCatalog[featureKey].label,
+        value: entitlementDetailValue(catalog.code, featureKey),
+        description: entitlementDetailDescription(catalog.code, featureKey),
+        state,
+        badge: entitlementBadgeLabel(state)
+      };
+    });
+
+    return {
+      title: group.title,
+      includedCount: items.filter((item) => item.state !== "locked").length,
+      totalCount: items.length,
+      items
+    };
+  });
 }
 
 function planNarrative(plan: OnboardingPlan) {
-  const isPremium = plan.code.toLowerCase() === "premium";
+  const catalog = billingPlanFor(plan);
+  const isPremium = catalog.code === "premium";
   return {
     badge: isPremium ? "Khuyến nghị cho tăng trưởng" : "Bắt đầu gọn nhẹ",
-    fit: isPremium ? "Quán đông khách, cần đến 300 bàn, 50 nhân viên, đặt bàn, báo cáo sâu hoặc AI nâng cao." : "Quán mới triển khai QR ordering, cần setup nhanh và chi phí dễ kiểm soát.",
-    promise: isPremium ? "Tự động hoá nhiều quyết định vận hành hơn sau ngày đầu." : "Có đủ nền móng để bán, nhận đơn và theo dõi doanh thu.",
-    decision: isPremium ? "Chọn nếu muốn đi nhanh hơn với AI" : "Chọn nếu muốn khởi động chắc chắn"
+    fit: catalog.summary,
+    promise: isPremium ? "AI, báo cáo sâu, automation và giới hạn vận hành lớn hơn." : "QR ordering, menu, VietQR, online, kho và AI cơ bản để bán thật ngay.",
+    decision: isPremium ? "Chọn Premium nếu muốn tăng tốc bằng AI và mở rộng đội ngũ" : "Chọn Pro nếu muốn khởi động chắc chắn với chi phí gọn"
   };
+}
+
+function planModeRows(plan: OnboardingPlan, mode: PlanDisplayMode) {
+  const catalog = billingPlanFor(plan);
+  if (mode === "decision") {
+    return catalog.highlights.slice(0, 5).map((item) => ({ label: item, value: "", state: "included" as const }));
+  }
+
+  const keys = mode === "ai" ? planAiKeys : planCompareKeys;
+  return keys.map((featureKey) => ({
+    label: featureCatalog[featureKey].label,
+    value: entitlementLabel(catalog.code, featureKey, true),
+    state: entitlementState(catalog.code, featureKey)
+  }));
 }
 
 function planFeatureCount(plan: OnboardingPlan) {
@@ -503,6 +598,66 @@ function OnboardingButton({
   );
 }
 
+function PlanDisplayModeToggle({
+  mode,
+  onChange,
+  compact = false
+}: {
+  mode: PlanDisplayMode;
+  onChange: (mode: PlanDisplayMode) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`dashboard-plan-mode-toggle ${compact ? "is-compact" : ""}`} role="tablist" aria-label="Chọn chế độ hiển thị gói">
+      {planDisplayModes.map((item) => {
+        const active = mode === item.id;
+        const Icon = item.icon;
+        return (
+          <button key={item.id} type="button" role="tab" aria-selected={active} className={active ? "is-active" : ""} onClick={() => onChange(item.id)}>
+            <Icon className="h-4 w-4" />
+            <span>{compact ? item.compactLabel : item.label}</span>
+            {!compact ? <small>{item.caption}</small> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PlanModeContent({ plan, mode, compact = false }: { plan: OnboardingPlan; mode: PlanDisplayMode; compact?: boolean }) {
+  const rows = planModeRows(plan, mode);
+  const visibleRows = compact && mode !== "decision" ? rows.slice(0, 5) : rows;
+  const catalog = billingPlanFor(plan);
+
+  if (mode === "decision") {
+    return (
+      <div className={`dashboard-plan-mode-content is-decision ${compact ? "is-compact" : ""}`}>
+        <p className="dashboard-plan-mode-summary">{catalog.heroLabel}</p>
+        <div className="dashboard-plan-highlight-list">
+          {rows.map((row) => (
+            <span key={row.label}>
+              <CheckCircle2 className="h-4 w-4" />
+              {row.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`dashboard-plan-mode-content ${compact ? "is-compact" : ""}`}>
+      {visibleRows.map((row) => (
+        <div key={row.label} className={`dashboard-plan-entitlement-row is-${row.state}`}>
+          <span>{row.label}</span>
+          <strong>{row.value}</strong>
+        </div>
+      ))}
+      {visibleRows.length < rows.length ? <p className="dashboard-plan-mode-more">+{rows.length - visibleRows.length} mục trong chi tiết gói</p> : null}
+    </div>
+  );
+}
+
 function PlanFeaturesModal({
   plan,
   allPlans,
@@ -543,10 +698,10 @@ function PlanFeaturesModal({
             <div className="min-w-0">
               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">{narrative.badge}</p>
               <h3 id="plan-features-title" className="mt-1 text-2xl font-black">
-                Toàn bộ tính năng gói {plan.name}
+                Toàn bộ tính năng gói {planDisplayName(plan)}
               </h3>
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-[#667085]">
-                Popup này giúp chủ quán chọn bằng quyền lợi vận hành thật: bán hàng, báo cáo, AI, nhân sự và mở rộng.
+                Đối chiếu trực tiếp theo quyền lợi vận hành thật: bán hàng, AI, báo cáo, quota, nhân sự và các phần cần Premium để mở khóa.
               </p>
             </div>
             <button
@@ -583,15 +738,27 @@ function PlanFeaturesModal({
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {groups.map((group) => (
               <div key={group.title} className="dashboard-plan-feature-group rounded-lg border border-[#d8dee9] bg-white p-3">
-                <p className="flex items-center gap-2 text-sm font-black text-[#111827]">
-                  <Sparkles className="h-4 w-4 text-[#0F4D3A]" />
-                  {group.title}
-                </p>
+                <div className="dashboard-plan-feature-group-head flex items-start justify-between gap-3">
+                  <p className="flex min-w-0 items-center gap-2 text-sm font-black text-[#111827]">
+                    <Sparkles className="h-4 w-4 shrink-0 text-[#0F4D3A]" />
+                    {group.title}
+                  </p>
+                  <span className="dashboard-plan-feature-count">{group.includedCount}/{group.totalCount}</span>
+                </div>
                 <ul className="mt-3 grid gap-2">
                   {group.items.map((feature) => (
-                    <li key={feature} className="flex gap-2 text-sm font-semibold leading-5 text-[#475467]">
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#0F4D3A]" />
-                      <span>{feature}</span>
+                    <li key={feature.key} className={`dashboard-plan-feature-item is-${feature.state}`}>
+                      <span className="dashboard-plan-feature-icon">
+                        {feature.state === "included" ? <CheckCircle2 className="h-4 w-4" /> : feature.state === "trial" ? <Clock3 className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="dashboard-plan-feature-title-row">
+                          <strong>{feature.label}</strong>
+                          <em>{feature.badge}</em>
+                        </span>
+                        <span className="dashboard-plan-feature-value">{feature.value}</span>
+                        <span className="dashboard-plan-feature-description">{feature.description}</span>
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -613,7 +780,7 @@ function PlanFeaturesModal({
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#0F4D3A]">{item.code}</p>
-                        <p className="mt-1 text-base font-black text-[#111827]">{item.name}</p>
+                        <p className="mt-1 text-base font-black text-[#111827]">{planDisplayName(item)}</p>
                       </div>
                       {active ? <BadgeCheck className="h-5 w-5 text-[#0F4D3A]" /> : null}
                     </div>
@@ -639,7 +806,7 @@ function PlanFeaturesModal({
             onClick={onSelect}
             className="dashboard-onboarding-primary-button inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e]"
           >
-            Chọn {plan.name}
+            Chọn {planDisplayName(plan)}
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -734,6 +901,7 @@ export function RestaurantOnboardingFlow({
   const [locationError, setLocationError] = useState("");
   const [hotline, setHotline] = useState("");
   const [planCode, setPlanCode] = useState<PlanCode>(initialAvailablePlanCode);
+  const [planDisplayMode, setPlanDisplayMode] = useState<PlanDisplayMode>("decision");
   const [tableCount, setTableCount] = useState(initialAvailablePlanCode === "premium" ? 24 : 10);
   const [itemName, setItemName] = useState("Cà phê sữa đá");
   const [itemPrice, setItemPrice] = useState("28000");
@@ -1485,18 +1653,27 @@ export function RestaurantOnboardingFlow({
               <div className="onboarding-mobile-pane">
                 <p className="onboarding-mobile-eyebrow">Bước 2</p>
                 <h1>Gói vận hành</h1>
-                <div className="onboarding-mobile-recommendation">Phù hợp hiện tại: <strong>{selectedPlan?.name ?? "Pro"}</strong></div>
+                <div className="onboarding-mobile-recommendation">Đang chọn: <strong>{selectedPlan ? planDisplayName(selectedPlan) : "LogiVN Pro"}</strong></div>
+                <PlanDisplayModeToggle mode={planDisplayMode} onChange={setPlanDisplayMode} compact />
                 <div className="onboarding-mobile-plan-list">
                   {plans.map((plan) => {
                     const active = plan.code === planCode;
+                    const catalog = billingPlanFor(plan);
+                    const isPremium = catalog.code === "premium";
+                    const narrative = planNarrative(plan);
                     return (
-                      <article key={plan.id} className={active ? "is-active" : ""}>
+                      <article key={plan.id} className={`${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""}`}>
                         <div>
-                          <h2>{plan.name}</h2>
-                          <p>{formatVnd(plan.monthly_price)}/tháng · dùng thử {plan.trial_days} ngày</p>
-                          <p>{planFeaturePreview(plan).slice(0, 3).join(" · ")}</p>
+                          <span className="onboarding-mobile-plan-badge">{narrative.badge}</span>
+                          <h2>{planDisplayName(plan)}</h2>
+                          <p className="onboarding-mobile-plan-price">{formatVnd(plan.monthly_price)}/tháng · thử {plan.trial_days} ngày</p>
+                          <p>{narrative.promise}</p>
                         </div>
-                        <button type="button" onClick={() => selectPlan(plan)}>{active ? "Đã chọn" : "Chọn"}</button>
+                        <PlanModeContent plan={plan} mode={planDisplayMode} compact />
+                        <div className="onboarding-mobile-plan-actions">
+                          <button type="button" onClick={() => setFeaturePlan(plan)}>Chi tiết</button>
+                          <button type="button" className="is-primary" onClick={() => selectPlan(plan)}>{active ? "Đã chọn" : "Chọn"}</button>
+                        </div>
                       </article>
                     );
                   })}
@@ -1634,7 +1811,7 @@ export function RestaurantOnboardingFlow({
             <div className="dashboard-onboarding-status-card">
               <Layers3 className="h-4 w-4 text-[#0F4D3A]" />
               <span>Gói</span>
-              <strong>{selectedPlan?.name ?? "Chưa chọn"}</strong>
+              <strong>{selectedPlan ? planDisplayName(selectedPlan) : "Chưa chọn"}</strong>
             </div>
             <div className="dashboard-onboarding-status-card">
               <Smartphone className="h-4 w-4 text-[#0F4D3A]" />
@@ -1893,7 +2070,7 @@ export function RestaurantOnboardingFlow({
                   />
                   <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
                     <StepSupportPanel step={1} preview={storePreview}>
-                      <SupportLine label="Đang chọn" value={selectedPlan?.name ?? "Chưa chọn"} active={Boolean(selectedPlan)} />
+                      <SupportLine label="Đang chọn" value={selectedPlan ? planDisplayName(selectedPlan) : "Chưa chọn"} active={Boolean(selectedPlan)} />
                       <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
                       <SupportLine label="Chi phí" value={selectedPlan ? formatVnd(selectedPlan.monthly_price) : "-"} active={Boolean(selectedPlan)} />
                       <SupportLine label="Bàn khởi tạo" value={`${tableCount} bàn`} active />
@@ -1908,10 +2085,7 @@ export function RestaurantOnboardingFlow({
                             {selectedPlanNarrative?.fit ?? "Mở popup tính năng để xem toàn bộ quyền lợi trước khi tiếp tục."}
                           </p>
                         </div>
-                        <div className="grid shrink-0 grid-cols-2 gap-2 text-xs sm:min-w-[220px]">
-                          <span className="rounded-md border border-white bg-white px-3 py-2 font-black text-[#0F4D3A]">{plans.length || 0} gói</span>
-                          <span className="rounded-md border border-white bg-white px-3 py-2 font-black text-[#9a4a17]">Trial {selectedPlan?.trial_days ?? 0} ngày</span>
-                        </div>
+                        <PlanDisplayModeToggle mode={planDisplayMode} onChange={setPlanDisplayMode} />
                       </div>
                     </div>
                     {plans.map((plan) => {
@@ -1923,74 +2097,47 @@ export function RestaurantOnboardingFlow({
                         <article
                           key={plan.code}
                           aria-current={active ? "true" : undefined}
-                          className={`dashboard-plan-card rounded-lg border bg-white p-4 text-left transition premium-glow-border ${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""} ${
-                            active ? "border-[#0F4D3A] shadow-[0_18px_42px_rgba(15,77,58,0.10)]" : "border-[#d8dee9] hover:border-[#0F4D3A]/35"
+                          className={`dashboard-plan-card overflow-hidden rounded-[24px] border bg-white p-5 text-left transition premium-glow-border ${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""} ${
+                            active ? "border-[#0F4D3A] shadow-[0_24px_62px_rgba(15,77,58,0.16)]" : "border-[#d8dee9] shadow-[0_14px_38px_rgba(15,42,31,0.06)] hover:border-[#0F4D3A]/35"
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-h-8 items-center justify-between gap-3">
+                            <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-[10px] font-black uppercase tracking-[0.12em] ${isPremium ? "bg-[#F28C28] text-white" : "bg-[#eef7f2] text-[#0F4D3A]"}`}>
+                              {isPremium ? "Scale plan" : "Starter plan"}
+                            </span>
+                            <span className={`inline-flex min-h-8 items-center rounded-full border px-3 text-[10px] font-black uppercase tracking-[0.12em] ${active ? "border-[#0F4D3A]/20 bg-[#0F4D3A] text-white" : "border-[#d8dee9] bg-[#fbfcfb] text-[#667085]"}`}>
+                              {active ? "Đang chọn" : narrative.badge}
+                            </span>
+                          </div>
+                          <div className="mt-4 flex items-start justify-between gap-3">
                             <div>
                               <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">{plan.code}</p>
-                              <h3 className="mt-1 text-xl font-black">{plan.name}</h3>
+                              <h3 className="mt-1 text-xl font-black">{planDisplayName(plan)}</h3>
                             </div>
-                            <span className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] ${isPremium ? "bg-[#F28C28]/12 text-[#9a4a17]" : "bg-[#eef7f2] text-[#0F4D3A]"}`}>
-                              {narrative.badge}
-                            </span>
+                            <ShieldCheck className={`mt-1 h-5 w-5 shrink-0 ${isPremium ? "text-[#F28C28]" : "text-[#0F4D3A]"}`} />
                           </div>
                           <p className="mt-3 text-3xl font-black">
                             {formatVnd(plan.monthly_price)}
                             <span className="text-sm font-bold text-[#667085]"> /tháng</span>
                           </p>
                           <p className="mt-2 text-xs font-black text-[#0F4D3A]">Dùng thử {plan.trial_days} ngày · {planFeatureCount(plan)} tính năng</p>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-black text-[#111827]">
-                            <span className="rounded-md border border-[#d8dee9]/60 bg-white px-3 py-2">Tối đa {planTableLimit} bàn</span>
-                            <span className="rounded-md border border-[#d8dee9]/60 bg-white px-3 py-2">{isPremium ? "50 nhân viên" : "10 nhân viên"}</span>
+                          <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-black text-[#111827]">
+                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{planTableLimit} bàn</span>
+                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "50 nhân viên" : "10 nhân viên"}</span>
+                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "2.000 món" : "500 món"}</span>
+                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "AI nâng cao" : "AI cơ bản"}</span>
                           </div>
-                          <p className="mt-3 rounded-md border border-[#d8dee9]/60 bg-[#fbfcfb] px-3 py-2 text-xs font-black leading-relaxed text-[#556379] uppercase tracking-[0.04em]">
-                            Khách hàng nhận được: {narrative.promise}
+                          <p className="mt-4 rounded-xl border border-[#0F4D3A]/12 bg-[#eef7f2] px-3 py-3 text-xs font-black leading-relaxed text-[#254236]">
+                            {narrative.promise}
                           </p>
-                          <div className="mt-4 grid gap-2.5">
-                            {(planVisualFeatures[plan.code.toLowerCase()] ?? []).map((feat, idx) => {
-                              const FeatIcon = feat.icon;
-                              return (
-                                <div
-                                  key={idx}
-                                  className={`flex items-start gap-3 rounded-lg border p-3 transition-all duration-200 ${
-                                    feat.isAi
-                                      ? "border-[#F28C28]/25 bg-[#fff7ed]/40 hover:bg-[#fff7ed]/70 shadow-[0_4px_12px_rgba(242,140,40,0.04)]"
-                                      : "border-[#d8dee9]/50 bg-white hover:bg-[#f6faf7]/40"
-                                  }`}
-                                >
-                                  <span className={`grid h-8.5 w-8.5 shrink-0 place-items-center rounded-lg ${
-                                    feat.isAi
-                                      ? "bg-gradient-to-tr from-[#F28C28] to-[#ea580c] text-white shadow-sm"
-                                      : "bg-[#eef7f2] text-[#0F4D3A]"
-                                  }`}>
-                                    <FeatIcon className="h-4.5 w-4.5" />
-                                  </span>
-                                  <div className="min-w-0">
-                                    <h4 className="flex flex-wrap items-center gap-1.5 text-sm font-black text-[#111827]">
-                                      {feat.title}
-                                      {feat.isAi && (
-                                        <span className="inline-block rounded bg-[#F28C28]/15 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-[#9a4a17] animate-pulse">
-                                          Trợ lý AI
-                                        </span>
-                                      )}
-                                    </h4>
-                                    <p className="mt-0.5 text-[11px] font-semibold leading-normal text-[#667085]">
-                                      {feat.subtext}
-                                    </p>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                          <PlanModeContent plan={plan} mode={planDisplayMode} />
                           <button
                             type="button"
                             onClick={() => setFeaturePlan(plan)}
                             className="dashboard-plan-feature-button mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-[#0F4D3A]/18 bg-[#eef7f2] px-3 text-sm font-black text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 hover:bg-[#e5f3ec]"
                           >
                             <Info className="h-4 w-4" />
-                            Xem tất cả tính năng
+                            Xem chi tiết gói
                           </button>
                           <button
                             type="button"
@@ -1998,7 +2145,7 @@ export function RestaurantOnboardingFlow({
                             aria-pressed={active}
                             className={`dashboard-plan-select-button mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-md text-sm font-black ${active ? "bg-[#0F4D3A] text-white" : "bg-white text-[#0F4D3A] ring-1 ring-[#0F4D3A]/20 hover:bg-[#eef7f2]"}`}
                           >
-                            Chọn {plan.name}
+                            Chọn {planDisplayName(plan)}
                             {active ? <CheckCircle2 className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
                           </button>
                         </article>
@@ -2027,7 +2174,7 @@ export function RestaurantOnboardingFlow({
                                 className="grid gap-1 rounded-md border border-[#d8dee9] bg-[#fbfcfb] p-3 text-left transition hover:border-[#0F4D3A]/35 hover:bg-[#f6faf7]"
                               >
                                 <span className="flex items-center justify-between gap-3 text-sm font-black text-[#111827]">
-                                  {plan.name}
+                                  {planDisplayName(plan)}
                                   <span className="text-[#0F4D3A]">{formatVnd(plan.monthly_price)}</span>
                                 </span>
                                 <span className="text-xs font-semibold leading-5 text-[#667085]">{narrative.fit}</span>
@@ -2148,7 +2295,7 @@ export function RestaurantOnboardingFlow({
                         <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
                         <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
                         <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
-                          {selectedPlan?.name ?? planCode}
+                          {selectedPlan ? planDisplayName(selectedPlan) : planCode}
                         </span>
                         <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
                           Tối đa {selectedPlanTableLimit} bàn

@@ -256,6 +256,65 @@ test("staff mobile attendance QR UI has a real scanner path and stale-token reco
   assert.match(source, /Đã ghi nhận nhưng đang chờ quản lý duyệt/);
 });
 
+test("staff mobile self-service uses file avatar upload and Telegram-ready incident events", () => {
+  const mobileSource = readFileSync("features/staff/components/staff-mobile-redesign-workspace.tsx", "utf8");
+  const clientSource = readFileSync("features/staff/api/client.ts", "utf8");
+  const avatarRouteSource = readFileSync("app/api/admin/staff-operations/profile/avatar/route.ts", "utf8");
+  const selfServiceSource = readFileSync("features/staff/services/staff-self-service.ts", "utf8");
+  const eventBusSource = readFileSync("services/operational-event-bus.ts", "utf8");
+  const telegramSource = readFileSync("services/telegram-connection-service.ts", "utf8");
+  const telegramWorkerTypesSource = readFileSync("infra/vps/services/telegram-bot/types.mts", "utf8");
+  const telegramWorkerFormatterSource = readFileSync("infra/vps/services/telegram-bot/formatters.mts", "utf8");
+  const telegramWorkerServerSource = readFileSync("infra/vps/services/telegram-bot/server.mts", "utf8");
+
+  assert.match(mobileSource, /type="file"/);
+  assert.match(mobileSource, /accept="image\/jpeg,image\/png,image\/webp"/);
+  assert.match(mobileSource, /uploadStaffSelfAvatar/);
+  assert.doesNotMatch(mobileSource, /placeholder="Link ảnh đại diện"/);
+  assert.match(clientSource, /\/api\/admin\/staff-operations\/profile\/avatar/);
+  assert.match(avatarRouteSource, /request\.formData\(\)/);
+  assert.match(avatarRouteSource, /uploadStaffSelfAvatar/);
+  assert.match(selfServiceSource, /uploadStaffAvatarFile/);
+  assert.match(selfServiceSource, /staff_self\.avatar_uploaded/);
+  assert.doesNotMatch(selfServiceSource, /avatar_url: input\.avatarUrl/);
+  assert.doesNotMatch(clientSource, /avatarUrl\?: string/);
+  assert.doesNotMatch(clientSource, /attachmentUrl\?: string/);
+  assert.match(selfServiceSource, /employment_status,archived_at/);
+  assert.match(selfServiceSource, /Hồ sơ nhân sự không còn hoạt động/);
+  assert.match(selfServiceSource, /Bạn chỉ có thể gửi báo cáo cho chi nhánh đang được phân công/);
+  assert.match(selfServiceSource, /type: "staff\.incident_reported"/);
+  assert.match(eventBusSource, /type: "staff\.incident_reported"/);
+  assert.match(telegramSource, /staff\.incident_reported/);
+  assert.match(telegramWorkerTypesSource, /staffIncidentReportedEventSchema/);
+  assert.match(telegramWorkerTypesSource, /type: z\.literal\("staff\.incident_reported"\)/);
+  assert.match(telegramWorkerFormatterSource, /event\.type === "staff\.incident_reported"/);
+  assert.match(telegramWorkerFormatterSource, /staffIncidentTitle/);
+  assert.match(telegramWorkerServerSource, /event\.type === "staff\.incident_reported"\) return "staff\.view"/);
+  assert.doesNotMatch(mobileSource, /Link ảnh\/tài liệu nếu có/);
+});
+
+test("staff notification read action cannot clear shared restaurant alerts for staff users", () => {
+  const serviceSource = readFileSync("features/staff/services/staff-operations-service.ts", "utf8");
+  const routeSource = readFileSync("app/api/admin/staff-operations/notifications/read/route.ts", "utf8");
+
+  assert.match(serviceSource, /includeShared\?: boolean/);
+  assert.match(serviceSource, /input\.includeShared \? query\.or\(`user_id\.is\.null,user_id\.eq\.\$\{input\.userId\}`\) : query\.eq\("user_id", input\.userId\)/);
+  assert.match(routeSource, /includeShared: session\.role === "ADMIN"/);
+});
+
+test("staff operations bundle includes stale open attendance outside the recent window", () => {
+  const serviceSource = readFileSync("features/staff/services/staff-operations-service.ts", "utf8");
+  const mobileSource = readFileSync("features/staff/components/staff-mobile-redesign-workspace.tsx", "utf8");
+
+  assert.match(serviceSource, /openAttendanceRows/);
+  assert.match(serviceSource, /\.is\("clock_out_at", null\)/);
+  assert.match(serviceSource, /attendanceRowsWithOpen/);
+  assert.match(serviceSource, /\.\.\.openAttendanceRows, \.\.\.todayAttendanceRows/);
+  assert.match(mobileSource, /staleOpenAttendance/);
+  assert.match(mobileSource, /Phiên công chưa kết từ/);
+  assert.match(mobileSource, /báo quản lý kết ca hộ/);
+});
+
 test("legacy full staff permissions unlock granular HR actions", () => {
   const permissions = normalizeStaffPermissions(["staff.manage"], "service");
 
@@ -284,7 +343,8 @@ test("staff HR workspace access and actions are permission-first, not ADMIN-only
   assert.match(actionsSource, /assertStaffActionPermission\(session, "staff\.edit"\)/);
   assert.match(dashboardAccessSource, /assertStaffActionPermission\(access\.session, permission/);
   assert.match(permissionServiceSource, /accountPermissions/);
-  assert.match(permissionServiceSource, /adminBaselinePermissions/);
+  assert.doesNotMatch(permissionServiceSource, /adminBaselinePermissions/);
+  assert.match(permissionServiceSource, /const accountFallback = member \? null : fallbackRoleCode/);
   assert.match(permissionServiceSource, /mergeEffectivePermissions\(rolePermissions, accountPermissions\)/);
 });
 
@@ -309,8 +369,9 @@ test("staff operations APIs use granular HR permissions without ADMIN-only gates
 
   assert.match(readFileSync("app/api/admin/staff-operations/route.ts", "utf8"), /permission: scope === "self" \? "attendance\.clock" : "staff\.view"/);
   assert.match(readFileSync("app/api/admin/staff-operations/activity/export/route.ts", "utf8"), /permission: "activity_logs\.export"/);
-  assert.match(readFileSync("app/api/admin/staff-operations/timesheets/export/route.ts", "utf8"), /permission: "activity_logs\.export"/);
-  assert.match(readFileSync("app/api/admin/attendance/approvals/[approvalId]/review/route.ts", "utf8"), /permissionMode: "any"/);
+  assert.match(readFileSync("app/api/admin/staff-operations/timesheets/export/route.ts", "utf8"), /permission: \["attendance\.view", "activity_logs\.export"\]/);
+  assert.match(readFileSync("app/api/admin/attendance/approvals/[approvalId]/review/route.ts", "utf8"), /permission: "attendance\.approve"/);
+  assert.doesNotMatch(readFileSync("app/api/admin/attendance/approvals/[approvalId]/review/route.ts", "utf8"), /permissionMode: "any"/);
 });
 
 test("staff device trust schema supports attendance binding", () => {
@@ -460,6 +521,11 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /GPS sai số quá cao/);
   assert.match(attendanceSource, /GPS chấm công cần thiết bị tin cậy/);
   assert.match(attendanceSource, /QR chấm công cần vị trí GPS hợp lệ/);
+  assert.match(attendanceSource, /Chấm công thủ công cần người có quyền khác đối soát/);
+  assert.match(attendanceSource, /longWorkShiftApprovalReason/);
+  assert.match(attendanceSource, /Phiên công kéo dài quá 16 giờ/);
+  assert.match(attendanceSource, /createManualAdjustmentApproval/);
+  assert.match(attendanceSource, /approval_state: "pending"/);
   assert.match(attendanceSource, /assertNotSelfManualAttendance/);
   assert.match(attendanceSource, /Không thể tự duyệt công hoặc yêu cầu nhân sự của chính mình/);
   assert.doesNotMatch(attendanceSource, /source === "manual" && session\.role !== "ADMIN"/);
@@ -469,6 +535,8 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /attendance\.adjusted/);
   assert.match(attendanceSource, /manual_attendance_edit/);
   assert.match(attendanceSource, /GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị/);
+  assert.match(attendanceSource, /formatAttendanceOpenConflict/);
+  assert.match(attendanceSource, /order\("clock_in_at", \{ ascending: false \}\)[\s\S]*limit\(1\)[\s\S]*maybeSingle\(\)/);
   assert.match(qrSource, /\.is\("consumed_at", null\)/);
   assert.match(qrSource, /dailyBranchQrValiditySeconds\s*=\s*90/);
   assert.match(qrSource, /resetPolicy:\s*"rotating_90s"/);
@@ -477,14 +545,30 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(qrSource, /process\.env\.STAFF_ATTENDANCE_QR_SECRET\?\.trim\(\)/);
   assert.match(qrSource, /NODE_ENV === "production"[\s\S]*Thiếu STAFF_ATTENDANCE_QR_SECRET/);
   assert.match(qrSource, /Mã QR chấm công đã được sử dụng/);
+  assert.match(qrSource, /consume_staff_attendance_qr_token/);
+  assert.match(qrSource, /isMissingQrConsumeRpc/);
   assert.match(sessionSource, /STAFF_ATTENDANCE_SESSION_SECRET/);
   assert.match(sessionSource, /createStaffAttendanceSessionToken/);
   assert.match(sessionSource, /attendanceSessionToken/);
   assert.match(sessionSource, /requireSignedToken/);
-  assert.match(clockInRoute, /requireSignedToken:\s*input\.source !== "manual"/);
-  assert.match(clockOutRoute, /requireSignedToken:\s*input\.source !== "manual"/);
+  assert.match(clockInRoute, /if \(input\.source !== "manual"\)/);
+  assert.match(clockInRoute, /requireSignedToken:\s*true/);
+  assert.match(clockOutRoute, /if \(input\.source !== "manual"\)/);
+  assert.match(clockOutRoute, /requireSignedToken:\s*true/);
   assert.match(pinSource, /buildStaffPinUnknownRateLimitInput/);
   assert.match(pinSource, /staff_auth\.pin_unknown_locked/);
+});
+
+test("staff mobile attendance copy does not imply QR or WiFi can bypass GPS", async () => {
+  const [machineSource, mobileSource] = await Promise.all([
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/components/mobile/staff-attendance-machine.ts", "utf8")),
+    import("node:fs").then((fs) => fs.readFileSync("features/staff/components/staff-mobile-redesign-workspace.tsx", "utf8"))
+  ]);
+
+  assert.doesNotMatch(mobileSource, /dùng QR\/WiFi/);
+  assert.match(mobileSource, /QR\/WiFi vẫn cần GPS chính xác/);
+  assert.match(machineSource, /WiFi vẫn cần GPS/);
+  assert.match(machineSource, /Bật GPS chính xác/);
 });
 
 test("offline attendance queue never converts QR or WiFi scans into offline sync", async () => {

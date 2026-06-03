@@ -1524,6 +1524,7 @@ function requiredPermissionForEvent(event: OperationalTelegramEvent) {
   if (event.type === "staff.checked_in") return "attendance.view";
   if (event.type === "service_request.created" || event.type === "service_request.resolved") return "orders.view";
   if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") return "approvals.review";
+  if (event.type === "staff.incident_reported") return "staff.view";
   if (event.type === "platform.alert") return "notifications.manage";
   return "notifications.manage";
 }
@@ -1555,6 +1556,7 @@ function resourceForEvent(event: OperationalTelegramEvent, actionType: TelegramA
   }
   if (event.type === "service_request.created" || event.type === "service_request.resolved") return { type: "service_request", id: event.serviceRequest.id };
   if (event.type === "staff.request_created" || event.type === "staff.request_reviewed") return { type: "staff_request", id: event.staffRequest.id };
+  if (event.type === "staff.incident_reported") return { type: "staff_incident", id: event.staffIncident.id };
   if (event.type === "sla.warning") return { type: "order", id: event.sla.orderId };
   return { type: actionType.split(".")[0], id: event.eventId };
 }

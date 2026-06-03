@@ -287,12 +287,58 @@ export async function expireStaleRestaurantSubscriptions({
 
   if (v2GraceFallbackError && !isMissingSchemaError(v2GraceFallbackError)) throw v2GraceFallbackError;
 
+  // Hết hạn gói thử nghiệm V2
+  const { data: expiredV2Trials, error: v2TrialError } = await supabase
+    .from("subscriptions")
+    .update({
+      status: "expired",
+      updated_at: now
+    })
+    .eq("status", "trialing")
+    .lt("trial_ends_at", now)
+    .select("id,restaurant_id");
+
+  if (v2TrialError && !isMissingSchemaError(v2TrialError)) throw v2TrialError;
+
+  // Chuyển gói active V2 sang grace
+  const { data: activeV2Subscriptions, error: activeV2QueryError } = await supabase
+    .from("subscriptions")
+    .select("id,restaurant_id,current_period_end")
+    .eq("status", "active")
+    .lt("current_period_end", now);
+
+  if (activeV2QueryError && !isMissingSchemaError(activeV2QueryError)) throw activeV2QueryError;
+
+  const transitionedV2GraceSubscriptions: { id: string; restaurant_id: string }[] = [];
+  if (activeV2Subscriptions && activeV2Subscriptions.length > 0) {
+    for (const sub of activeV2Subscriptions) {
+      const currentPeriodEnd = new Date(sub.current_period_end);
+      const graceEndsAt = addDays(currentPeriodEnd, 7).toISOString();
+      const { data: updatedSub, error: updateError } = await supabase
+        .from("subscriptions")
+        .update({
+          status: "grace",
+          grace_ends_at: graceEndsAt,
+          updated_at: now
+        })
+        .eq("id", sub.id)
+        .select("id,restaurant_id")
+        .single();
+
+      if (updateError && !isMissingSchemaError(updateError)) throw updateError;
+      if (updatedSub) transitionedV2GraceSubscriptions.push(updatedSub);
+    }
+  }
+
   const affectedRestaurantIds = new Set<string>();
   for (const row of expiredTrials ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const row of pastDueSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const row of expiredPastDueSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const row of expiredV2GraceSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
   for (const row of expiredV2GraceFallbackSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
+  for (const row of expiredV2Trials ?? []) affectedRestaurantIds.add(row.restaurant_id);
+  for (const row of transitionedV2GraceSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
+
   for (const restaurantId of affectedRestaurantIds) invalidateRestaurantEntitlementCache(restaurantId);
 
   const result = {
@@ -300,10 +346,19 @@ export async function expireStaleRestaurantSubscriptions({
     pastDueSubscriptions: pastDueSubscriptions?.length ?? 0,
     expiredPastDueSubscriptions: expiredPastDueSubscriptions?.length ?? 0,
     expiredV2GraceSubscriptions: (expiredV2GraceSubscriptions?.length ?? 0) + (expiredV2GraceFallbackSubscriptions?.length ?? 0),
+    expiredV2Trials: expiredV2Trials?.length ?? 0,
+    transitionedV2GraceSubscriptions: transitionedV2GraceSubscriptions.length,
     reminders
   };
 
-  if (result.expiredTrials || result.pastDueSubscriptions || result.expiredPastDueSubscriptions || result.expiredV2GraceSubscriptions) {
+  if (
+    result.expiredTrials ||
+    result.pastDueSubscriptions ||
+    result.expiredPastDueSubscriptions ||
+    result.expiredV2GraceSubscriptions ||
+    result.expiredV2Trials ||
+    result.transitionedV2GraceSubscriptions
+  ) {
     await supabase.from("platform_audit_logs").insert({
       actor: "system-cron",
       action: "subscriptions_expired",

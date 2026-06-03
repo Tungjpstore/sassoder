@@ -157,7 +157,6 @@ export type StaffSelfProfilePayload = {
   phone?: string;
   dateOfBirth?: string;
   hometown?: string;
-  avatarUrl?: string;
 };
 
 export type StaffIncidentReportPayload = {
@@ -166,7 +165,10 @@ export type StaffIncidentReportPayload = {
   title: string;
   description: string;
   severity?: "low" | "normal" | "high" | "urgent";
-  attachmentUrl?: string;
+};
+
+export type StaffSelfAvatarUploadResult = {
+  avatarUrl: string;
 };
 
 async function parseOperationalResponse<T>(response: Response, fallback: string) {
@@ -256,6 +258,24 @@ export async function createStaffRequest(payload: StaffRequestCreatePayload) {
 
 export async function updateStaffSelfProfile(payload: StaffSelfProfilePayload) {
   return postOperational("/api/admin/staff-operations/profile", payload, "Không thể cập nhật hồ sơ nhân viên.");
+}
+
+export async function uploadStaffSelfAvatar(file: File) {
+  const formData = new FormData();
+  formData.append("avatar", file);
+
+  let response: Response;
+  try {
+    response = await fetch("/api/admin/staff-operations/profile/avatar", {
+      method: "POST",
+      cache: "no-store",
+      body: formData
+    });
+  } catch {
+    throw new StaffOperationsApiError("Thiết bị đang mất kết nối. Vui lòng thử tải ảnh lại khi mạng ổn định.", { network: true });
+  }
+
+  return parseOperationalResponse<StaffSelfAvatarUploadResult>(response, "Không thể tải ảnh đại diện.");
 }
 
 export async function reportStaffIncident(payload: StaffIncidentReportPayload) {

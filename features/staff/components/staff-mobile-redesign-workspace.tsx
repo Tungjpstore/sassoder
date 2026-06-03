@@ -35,6 +35,7 @@ import {
   runStaffMobileQuickAction,
   sendStaffSessionHeartbeat,
   updateStaffSelfProfile,
+  uploadStaffSelfAvatar,
   type StaffIncidentReportPayload,
   type StaffSelfProfilePayload,
   type StaffRequestCreatePayload,
@@ -118,13 +119,12 @@ type RequestDraft = {
   targetStaffMemberId: string;
 };
 
-type ProfileDraft = StaffSelfProfilePayload;
+type ProfileDraft = StaffSelfProfilePayload & { avatarUrl?: string };
 
 type IncidentDraft = {
   title: string;
   description: string;
   severity: NonNullable<StaffIncidentReportPayload["severity"]>;
-  attachmentUrl: string;
 };
 
 const tabs: Array<{ key: StaffAppTab; label: string; icon: LucideIcon }> = [
@@ -178,7 +178,7 @@ function readGpsPosition(): Promise<GpsPoint> {
       (position) => {
         const accuracyMeters = Math.round(position.coords.accuracy);
         if (!Number.isFinite(accuracyMeters) || accuracyMeters > staffGpsMaxAccuracyMeters) {
-          reject(new Error(`GPS sai số ${Number.isFinite(accuracyMeters) ? `${accuracyMeters}m` : "quá cao"}. Hãy đứng thoáng hơn tại chi nhánh hoặc dùng QR/WiFi.`));
+          reject(new Error(`GPS sai số ${Number.isFinite(accuracyMeters) ? `${accuracyMeters}m` : "quá cao"}. Hãy đứng thoáng hơn tại chi nhánh, bật định vị chính xác rồi thử lại.`));
           return;
         }
 
@@ -188,7 +188,7 @@ function readGpsPosition(): Promise<GpsPoint> {
           accuracyMeters
         });
       },
-      () => reject(new Error("Không lấy được vị trí GPS. Hãy bật quyền vị trí hoặc dùng QR/WiFi tại quán.")),
+      () => reject(new Error("Không lấy được vị trí GPS. QR/WiFi vẫn cần GPS chính xác để chống chấm công từ xa.")),
       { enableHighAccuracy: true, timeout: 15_000, maximumAge: 0 }
     );
   });
@@ -276,6 +276,16 @@ function durationBetween(start: string | null | undefined, end: string | null | 
   return hours ? `${hours}h ${rest}p` : `${rest}p`;
 }
 
+function openAttendanceAgeHours(item: StaffOpsAttendanceFeedItem | null, nowMs: number) {
+  if (!item?.clockInAt || item.clockOutAt) return 0;
+  const diff = nowMs - new Date(item.clockInAt).getTime();
+  return Number.isFinite(diff) && diff > 0 ? Math.floor(diff / 3_600_000) : 0;
+}
+
+function isStaleOpenAttendance(item: StaffOpsAttendanceFeedItem | null, nowMs: number) {
+  return openAttendanceAgeHours(item, nowMs) >= 18;
+}
+
 function activeAttendanceForMember(bundle: StaffOperationsBundle, staffMemberId: string) {
   return bundle.attendanceFeed.find((item) => item.staffMemberId === staffMemberId && !item.clockOutAt) ?? null;
 }
@@ -327,8 +337,7 @@ function initialIncidentDraft(): IncidentDraft {
   return {
     title: "",
     description: "",
-    severity: "normal",
-    attachmentUrl: ""
+    severity: "normal"
   };
 }
 
@@ -391,6 +400,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const [incidentDraft, setIncidentDraft] = useState<IncidentDraft>(initialIncidentDraft);
   const [submittingRequest, setSubmittingRequest] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [submittingIncident, setSubmittingIncident] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [forcedLogout, setForcedLogout] = useState(false);
@@ -398,6 +408,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const staff = bundle.members[0] ?? null;
   const today = todayInputValue();
   const activeAttendance = staff ? activeAttendanceForMember(bundle, staff.id) : null;
+  const staleOpenAttendance = isStaleOpenAttendance(activeAttendance, nowMs);
   const latestAttendance = staff ? bundle.attendanceFeed.find((item) => item.staffMemberId === staff.id) ?? null : null;
   const selectedBranchName = bundle.branches.find((branch) => branch.id === selectedBranchId)?.name ?? staff?.primaryBranchName ?? "Chi nhánh";
 
@@ -694,6 +705,36 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     })();
   }
 
+  function uploadAvatar(file: File | null) {
+    if (!file) return;
+    if (!/^image\/(jpeg|jpg|png|webp)$/i.test(file.type)) {
+      setMessage({ tone: "warning", text: "Ảnh đại diện chỉ hỗ trợ JPG, PNG hoặc WebP." });
+      return;
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      setMessage({ tone: "warning", text: "Ảnh đại diện không được vượt quá 3MB." });
+      return;
+    }
+    if (forcedLogout) {
+      setMessage({ tone: "warning", text: "Phiên đã bị quản lý đăng xuất. Vui lòng đăng nhập lại." });
+      return;
+    }
+
+    setUploadingAvatar(true);
+    void (async () => {
+      try {
+        const result = await uploadStaffSelfAvatar(file);
+        setProfileDraft((current) => ({ ...current, avatarUrl: result.avatarUrl }));
+        setMessage({ tone: "success", text: "Đã cập nhật ảnh đại diện." });
+        await refreshBundle();
+      } catch (error) {
+        setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể tải ảnh đại diện." });
+      } finally {
+        setUploadingAvatar(false);
+      }
+    })();
+  }
+
   function submitIncident() {
     if (!staff) return;
     if (forcedLogout) {
@@ -712,8 +753,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
           branchId: selectedBranchId || undefined,
           title: incidentDraft.title,
           description: incidentDraft.description,
-          severity: incidentDraft.severity,
-          attachmentUrl: incidentDraft.attachmentUrl || undefined
+          severity: incidentDraft.severity
         });
         setMessage({ tone: "success", text: "Đã gửi báo cáo sự cố cho quản lý." });
         setIncidentDraft(initialIncidentDraft());
@@ -773,6 +813,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         <div className="min-w-0 space-y-5">
           {message ? <MessageBar message={message} /> : null}
           {attendanceBlockedByOffline ? <MessageBar message={{ tone: "warning", text: pendingOfflineClockIn ? "Có check-in offline đang chờ đồng bộ." : "Có kết ca offline đang chờ đồng bộ." }} /> : null}
+          {staleOpenAttendance && activeAttendance ? <MessageBar message={{ tone: "warning", text: `Phiên công chưa kết từ ${formatDate(activeAttendance.clockInAt)} lúc ${shortTime(activeAttendance.clockInAt)}. Hãy kết ca hoặc báo quản lý kết ca hộ trước khi vào ca mới.` }} /> : null}
           {activeTab === "home" ? (
             <HomeTab
               staffName={staff.fullName}
@@ -785,6 +826,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                 <ClockControlCard
                   machine={attendanceMachine}
                   activeAttendance={activeAttendance}
+                  staleOpenAttendance={staleOpenAttendance}
+                  nowMs={nowMs}
                   latestAttendance={latestAttendance}
                   activeDuration={activeDuration}
                   selectedBranchId={selectedBranchId}
@@ -816,6 +859,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                 <ClockControlCard
                   machine={attendanceMachine}
                   activeAttendance={activeAttendance}
+                  staleOpenAttendance={staleOpenAttendance}
+                  nowMs={nowMs}
                   latestAttendance={latestAttendance}
                   activeDuration={activeDuration}
                   selectedBranchId={selectedBranchId}
@@ -844,7 +889,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
             />
           ) : null}
           {activeTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
-          {activeTab === "reports" ? <ProfileTab staff={staff} bundle={bundle} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} submittingIncident={submittingIncident} /> : null}
+          {activeTab === "reports" ? <ProfileTab staff={staff} bundle={bundle} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
         </div>
 
         <aside className="hidden min-w-0 space-y-5 lg:block">
@@ -883,6 +928,8 @@ function MiniStat({ label, value }: { label: string; value: ReactNode }) {
 function ClockControlCard({
   machine,
   activeAttendance,
+  staleOpenAttendance,
+  nowMs,
   latestAttendance,
   activeDuration,
   selectedBranchId,
@@ -903,6 +950,8 @@ function ClockControlCard({
 }: {
   machine: StaffAttendanceMachine;
   activeAttendance: StaffOpsAttendanceFeedItem | null;
+  staleOpenAttendance: boolean;
+  nowMs: number;
   latestAttendance: StaffOpsAttendanceFeedItem | null;
   activeDuration: string;
   selectedBranchId: string;
@@ -924,6 +973,11 @@ function ClockControlCard({
   const PrimaryIcon = machine.source === "qr" ? Fingerprint : machine.source === "wifi" ? Wifi : MapPin;
   const stateTone = machine.state === "blocked" ? "danger" : machine.state.includes("needs") || machine.state === "queued_offline" ? "warning" : activeAttendance ? "success" : "neutral";
   const sourceDisabled = processing || !machine.canSubmit;
+  const activeDetail = staleOpenAttendance && activeAttendance
+    ? `Chưa kết từ ${formatDate(activeAttendance.clockInAt)} · ${activeDuration}`
+    : activeAttendance
+      ? `${shortTime(activeAttendance.clockInAt)} · ${activeDuration}`
+      : machine.detail;
   const sourceOptions: Array<{ key: ClockSource; label: string; icon: LucideIcon; disabled: boolean }> = [
     { key: "gps", label: "GPS", icon: MapPin, disabled: !gpsEnabled },
     { key: "wifi", label: "WiFi+GPS", icon: Wifi, disabled: !online },
@@ -937,7 +991,7 @@ function ClockControlCard({
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.12em] text-white/70">Chấm công</p>
             <h2 className="mt-1 truncate text-xl font-black">{machine.title}</h2>
-            <p className="mt-1 line-clamp-1 text-sm font-semibold text-white/78">{activeAttendance ? `${shortTime(activeAttendance.clockInAt)} · ${activeDuration}` : machine.detail}</p>
+            <p className="mt-1 line-clamp-1 text-sm font-semibold text-white/78">{activeDetail}</p>
           </div>
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
             <PrimaryIcon size={22} aria-hidden="true" />
@@ -961,6 +1015,12 @@ function ClockControlCard({
           <span>{shortTime(activeAttendance?.clockInAt ?? latestAttendance?.clockInAt)}</span>
           <span className="border-l border-[#D8D1C7] pl-3 text-right">{activeAttendance ? activeDuration : shortTime(latestAttendance?.clockOutAt)}</span>
         </div>
+
+        {staleOpenAttendance && activeAttendance ? (
+          <div className="rounded-xl border border-[#F2D2B2] bg-[#FFF8EB] px-3 py-2 text-xs font-bold leading-5 text-[#93540A]">
+            Phiên này đã mở hơn {openAttendanceAgeHours(activeAttendance, nowMs)} giờ. Nếu không phải ca hiện tại, hãy bấm kết ca hoặc báo quản lý kết ca hộ để tránh lệch công/lương.
+          </div>
+        ) : null}
 
         <ShellButton disabled={sourceDisabled} onClick={() => onClock(machine.source)} className="min-h-14 w-full">
           <PrimaryIcon size={19} /> {processing ? "Đang xử lý..." : machine.primaryLabel}
@@ -1234,7 +1294,7 @@ function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubm
   );
 }
 
-function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onSubmitProfile, onSubmitIncident, savingProfile, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; submittingIncident: boolean }) {
+function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onAvatarFile, onSubmitProfile, onSubmitIncident, savingProfile, uploadingAvatar, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onAvatarFile: (file: File | null) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; uploadingAvatar: boolean; submittingIncident: boolean }) {
   const timesheet = bundle.timesheets.find((item) => item.staffMemberId === staff.id);
   const attendanceCount = timesheet?.attendanceCount ?? 0;
   const score = timesheet?.attendanceScore ?? 100;
@@ -1264,7 +1324,21 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
           <input value={profileDraft.fullName} onChange={(event) => onProfileDraftChange({ fullName: event.target.value })} className="staff-redesign-input" placeholder="Họ tên" />
           <input value={profileDraft.phone ?? ""} onChange={(event) => onProfileDraftChange({ phone: event.target.value })} className="staff-redesign-input" placeholder="Số điện thoại" />
           <div className="grid grid-cols-2 gap-3"><input type="date" value={profileDraft.dateOfBirth ?? ""} onChange={(event) => onProfileDraftChange({ dateOfBirth: event.target.value })} className="staff-redesign-input" /><input value={profileDraft.hometown ?? ""} onChange={(event) => onProfileDraftChange({ hometown: event.target.value })} className="staff-redesign-input" placeholder="Quê quán" /></div>
-          <label className="relative block"><Camera className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#5E5A54]" size={18} /><input value={profileDraft.avatarUrl ?? ""} onChange={(event) => onProfileDraftChange({ avatarUrl: event.target.value })} className="staff-redesign-input pl-10" placeholder="Link ảnh đại diện" /></label>
+          <label className="grid min-h-14 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-[#D8D1C7] bg-white px-4 text-sm font-black text-[#2B2B2B] active:scale-[0.99]">
+            <Camera className="text-[#0F4D3A]" size={18} />
+            <span className="min-w-0 truncate">{uploadingAvatar ? "Đang tải ảnh..." : profileDraft.avatarUrl ? "Đổi ảnh đại diện" : "Tải ảnh đại diện"}</span>
+            <span className="rounded-full bg-[#E5EEE2] px-2 py-1 text-[11px] text-[#0F4D3A]">JPG/PNG</span>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              disabled={uploadingAvatar}
+              onChange={(event) => {
+                onAvatarFile(event.currentTarget.files?.[0] ?? null);
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
           <ShellButton onClick={onSubmitProfile} disabled={savingProfile}><Check size={18} /> {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}</ShellButton>
           <ShellButton variant="secondary" onClick={() => { window.location.assign(`/staff/change-password?next=${encodeURIComponent("/dashboard/staff/mobile?tab=reports")}`); }}><LockKeyhole size={18} /> Đổi mật khẩu app</ShellButton>
         </div>
@@ -1276,7 +1350,7 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
           <input value={incidentDraft.title} onChange={(event) => onIncidentDraftChange({ title: event.target.value })} className="staff-redesign-input" placeholder="Tiêu đề sự cố" />
           <select value={incidentDraft.severity} onChange={(event) => onIncidentDraftChange({ severity: event.target.value as IncidentDraft["severity"] })} className="staff-redesign-input"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select>
           <textarea value={incidentDraft.description} onChange={(event) => onIncidentDraftChange({ description: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-base font-semibold outline-none" placeholder="Mô tả để quản lý xử lý" />
-          <input value={incidentDraft.attachmentUrl} onChange={(event) => onIncidentDraftChange({ attachmentUrl: event.target.value })} className="staff-redesign-input" placeholder="Link ảnh/tài liệu nếu có" />
+          <p className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-3 py-2 text-xs font-bold leading-5 text-[#5E5A54]">Báo cáo sẽ được lưu vào Staff và gửi cảnh báo Telegram cho quản lý nếu quán đã kết nối bot.</p>
           <ShellButton onClick={onSubmitIncident} disabled={submittingIncident}><Send size={18} /> {submittingIncident ? "Đang gửi..." : "Gửi cho quản lý"}</ShellButton>
         </div>
       </AppCard>

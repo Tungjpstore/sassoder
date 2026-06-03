@@ -80,7 +80,8 @@ export async function POST(request: Request) {
       restaurantId: session.restaurantId,
       userId: session.userId,
       notificationId: input.notificationId,
-      all: input.all
+      all: input.all,
+      includeShared: session.role === "ADMIN"
     });
     await invalidateStaffOperationsBundleCache(session.restaurantId);
 

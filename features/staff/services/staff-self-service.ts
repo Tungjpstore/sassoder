@@ -2,7 +2,9 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { publishOperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { uploadStaffAvatarFile } from "@/features/staff/services/staff-avatar-service";
 import type { SessionProfile } from "@/types/domain";
 
 function isMissingStaffSelfServiceSchema(error: { code?: string; message?: string } | null | undefined) {
@@ -14,13 +16,16 @@ function isMissingStaffSelfServiceSchema(error: { code?: string; message?: strin
 async function resolveOwnStaffMember(supabase: any, session: SessionProfile) {
   const result = await supabase
     .from("staff_members")
-    .select("id,full_name,employee_code")
+    .select("id,full_name,employee_code,employment_status,archived_at")
     .eq("restaurant_id", session.restaurantId)
     .eq("user_id", session.userId)
     .maybeSingle();
 
   if (result.error) throw new AppError("Không tải được hồ sơ nhân viên.", 400);
   if (!result.data) throw new AppError("Tài khoản chưa được gán hồ sơ nhân viên.", 404);
+  if (result.data.archived_at || result.data.employment_status !== "active") {
+    throw new AppError("Hồ sơ nhân sự không còn hoạt động.", 403);
+  }
   const branchResult = await supabase
     .from("staff_branch_assignments")
     .select("branch_id,is_primary,assignment_status,ended_at")
@@ -38,6 +43,8 @@ async function resolveOwnStaffMember(supabase: any, session: SessionProfile) {
     id: string;
     full_name: string;
     employee_code: string | null;
+    employment_status: "active" | "suspended" | "resigned";
+    archived_at: string | null;
     branch: Array<{ branch_id: string; is_primary: boolean; assignment_status: string; ended_at: string | null }>;
   };
 }
@@ -52,7 +59,6 @@ export async function updateStaffSelfProfile({
     phone?: string | null;
     dateOfBirth?: string | null;
     hometown?: string | null;
-    avatarUrl?: string | null;
   };
 }) {
   const supabase = createAdminSupabaseClient() as any;
@@ -63,8 +69,7 @@ export async function updateStaffSelfProfile({
       full_name: input.fullName,
       phone: input.phone || null,
       date_of_birth: input.dateOfBirth || null,
-      hometown: input.hometown || null,
-      avatar_url: input.avatarUrl || null
+      hometown: input.hometown || null
     })
     .eq("restaurant_id", session.restaurantId)
     .eq("id", member.id)
@@ -91,6 +96,49 @@ export async function updateStaffSelfProfile({
   return result.data;
 }
 
+export async function uploadStaffSelfAvatar({
+  session,
+  file
+}: {
+  session: SessionProfile;
+  file: FormDataEntryValue | null;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const member = await resolveOwnStaffMember(supabase, session);
+  const avatarUrl = await uploadStaffAvatarFile({
+    restaurantId: session.restaurantId,
+    staffMemberId: member.id,
+    file
+  });
+
+  const result = await supabase
+    .from("staff_members")
+    .update({ avatar_url: avatarUrl })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", member.id)
+    .select("id,avatar_url")
+    .single();
+
+  if (result.error) {
+    if (isMissingStaffSelfServiceSchema(result.error)) throw new AppError("Schema ảnh đại diện nhân viên chưa sẵn sàng.", 400);
+    throw new AppError(result.error.message, 400);
+  }
+
+  await writeStaffActivityLog({
+    restaurantId: session.restaurantId,
+    actorUserId: session.userId,
+    entityType: "staff_member",
+    entityId: member.id,
+    action: "staff_self.avatar_uploaded",
+    severity: "info",
+    reason: "Nhân viên tải ảnh đại diện từ staff app.",
+    afterState: result.data,
+    metadata: { source: "staff_mobile_profile", uploadType: "file" }
+  });
+
+  return { avatarUrl };
+}
+
 export async function createStaffIncidentReport({
   session,
   input
@@ -102,14 +150,17 @@ export async function createStaffIncidentReport({
     title: string;
     description: string;
     severity: "low" | "normal" | "high" | "urgent";
-    attachmentUrl?: string | null;
   };
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const member = await resolveOwnStaffMember(supabase, session);
   if (member.id !== input.staffMemberId) throw new AppError("Bạn chỉ có thể gửi báo cáo cho hồ sơ của chính mình.", 403);
 
-  const activeBranch = member.branch?.find((branch) => branch.assignment_status === "active" && !branch.ended_at && branch.is_primary) ?? member.branch?.find((branch) => branch.assignment_status === "active" && !branch.ended_at);
+  const activeBranches = member.branch?.filter((branch) => branch.assignment_status === "active" && !branch.ended_at) ?? [];
+  const activeBranch = activeBranches.find((branch) => branch.is_primary) ?? activeBranches[0];
+  if (input.branchId && !activeBranches.some((branch) => branch.branch_id === input.branchId)) {
+    throw new AppError("Bạn chỉ có thể gửi báo cáo cho chi nhánh đang được phân công.", 403);
+  }
   const branchId = input.branchId || activeBranch?.branch_id || null;
 
   const result = await supabase
@@ -121,7 +172,7 @@ export async function createStaffIncidentReport({
       title: input.title,
       description: input.description,
       severity: input.severity,
-      attachment_url: input.attachmentUrl || null,
+      attachment_url: null,
       status: "open"
     })
     .select("id,title,severity,status,created_at")
@@ -161,6 +212,32 @@ export async function createStaffIncidentReport({
       }
     })
   ]);
+
+  void publishOperationalEvent({
+    type: "staff.incident_reported",
+    eventId: `staff.incident_reported:${result.data.id}`,
+    restaurantId: session.restaurantId,
+    branchId,
+    source: "staff",
+    actor: { type: "staff", userId: session.userId, role: session.role },
+    staffIncident: {
+      id: result.data.id,
+      staffMemberId: member.id,
+      staffName: member.full_name,
+      employeeCode: member.employee_code,
+      title: input.title,
+      description: input.description,
+      severity: input.severity,
+      status: result.data.status,
+      attachmentUrl: null
+    }
+  }).catch((error) => {
+    console.error("[staff-self-service] telegram staff incident event failed", {
+      restaurantId: session.restaurantId,
+      incidentReportId: result.data.id,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  });
 
   return result.data;
 }

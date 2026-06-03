@@ -4,7 +4,11 @@ import { buildPaymentPolicySummary, isSubscriptionUsable } from "@/lib/billing/s
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { asRecord, vietQrUrl } from "./billing-utils";
-import { mirrorLegacyPaymentFinalStateToBillingV2, mirrorLegacyPaymentRequestToBillingV2 } from "./billing-v2-bridge";
+import {
+  mirrorLegacyPaymentFinalStateToBillingV2,
+  mirrorLegacyPaymentRequestToBillingV2,
+  mirrorLegacySubscriptionToBillingV2
+} from "./billing-v2-bridge";
 import type { PaymentRow, PlanRow } from "./billing-types";
 import { getActivePlanByCode, getBillingSettings, getOrCreateSubscription, getRestaurant } from "./subscription-core";
 
@@ -147,13 +151,26 @@ export async function createSubscriptionPaymentRequest({
   });
 
   const subscriptionStillUsable = isSubscriptionUsable(subscription);
-  await supabase
+  const updatedStatus = subscriptionStillUsable ? subscription.status : "pending_payment";
+
+  const { data: updatedSub, error: updateSubError } = await supabase
     .from("restaurant_subscriptions")
     .update({
-      status: subscriptionStillUsable ? subscription.status : "pending_payment",
+      status: updatedStatus,
       updated_at: new Date().toISOString()
     })
-    .eq("id", subscription.id);
+    .eq("id", subscription.id)
+    .select()
+    .single();
+
+  if (updateSubError) throw updateSubError;
+
+  if (updatedSub) {
+    await mirrorLegacySubscriptionToBillingV2({
+      subscription: updatedSub as any,
+      planCode: currentPlan.code
+    });
+  }
 
   return {
     ...(data as PaymentRow),

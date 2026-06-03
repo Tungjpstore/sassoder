@@ -759,7 +759,7 @@ export async function reviewAttendanceApprovalAction(_prevState: StaffActionStat
       decision: formData.get("decision"),
       note: formData.get("note")
     });
-    await assertStaffActionPermission(session, ["attendance.approve", "approvals.review"], { mode: "any" });
+    await assertStaffActionPermission(session, "attendance.approve");
 
     await reviewAttendanceApproval({
       session: merchantAttendanceSession(session),
