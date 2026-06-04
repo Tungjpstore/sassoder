@@ -1095,16 +1095,16 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
       key: "cloudflare-r2",
       name: "Cloudflare R2 storage",
       category: "storage",
-      envNames: ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_ENDPOINT"],
+      envNames: ["BACKUP_R2_GATEWAY_URL", "BACKUP_R2_GATEWAY_TOKEN", "R2_BUCKET", "BACKUP_R2_PREFIX"],
       required: false,
       secretHandling: "Secret nằm ở Vercel/Cloudflare; admin.logivn.com chỉ hiển thị masked metadata và trạng thái.",
-      note: "Dùng làm S3-compatible target cho backup và là bước chuyển platform assets sau này."
+      note: "Production backup đi qua Cloudflare Worker gateway vào R2; S3-compatible access keys chỉ là adapter mở rộng sau này."
     }),
     buildIntegrationHealth({
       key: "backup-dr",
       name: "Backup & DR",
       category: "ops",
-      envNames: ["BACKUP_ENCRYPTION_KEY", "BACKUP_METADATA_SIGNING_KEY", "DEV_TELEGRAM_CHAT_ID"],
+      envNames: ["BACKUP_STORAGE_ADAPTER", "BACKUP_ENCRYPTION_KEY", "BACKUP_METADATA_SIGNING_KEY", "DEV_TELEGRAM_CHAT_ID"],
       required: process.env.NODE_ENV === "production",
       secretHandling: "Encryption/signing keys chỉ ở env/VPS, không lưu trong R2 và không hiển thị trong Control Center.",
       note: "VPS backup worker tạo pg_dump custom, Redis/config archives, metadata có chữ ký, R2 upload và Telegram report."

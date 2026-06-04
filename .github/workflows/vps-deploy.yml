@@ -264,6 +264,9 @@ jobs:
 
           echo "[logivn-actions] Running production readiness gate"
           APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only </dev/null
+
+          echo "[logivn-actions] Running backup restore test"
+          APP_ROOT="$APP_ROOT" ENV_FILE="$APP_ROOT/.env" infra/vps/scripts/backup.sh --restore-test </dev/null
           REMOTE
 
       - name: Deployment summary

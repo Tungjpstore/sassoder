@@ -50,11 +50,7 @@ backup_env_ready() {
 
   local adapter=${BACKUP_STORAGE_ADAPTER:-}
   if [ -z "$adapter" ]; then
-    if [ -n "${BACKUP_R2_GATEWAY_URL:-}" ]; then
-      adapter=worker
-    else
-      adapter=s3
-    fi
+    adapter=worker
   fi
 
   case "$adapter" in

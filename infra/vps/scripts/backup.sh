@@ -102,11 +102,7 @@ fi
 
 BACKUP_R2_GATEWAY_URL=${BACKUP_R2_GATEWAY_URL%/}
 if [ -z "$BACKUP_STORAGE_ADAPTER" ]; then
-  if [ -n "$BACKUP_R2_GATEWAY_URL" ]; then
-    BACKUP_STORAGE_ADAPTER="worker"
-  else
-    BACKUP_STORAGE_ADAPTER="s3"
-  fi
+  BACKUP_STORAGE_ADAPTER="worker"
 fi
 case "$BACKUP_STORAGE_ADAPTER" in
   worker|gateway|r2-gateway|r2_gateway) BACKUP_STORAGE_ADAPTER="worker" ;;
@@ -434,7 +430,13 @@ validate_runtime() {
       *) printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$BACKUP_POSTGRES_DUMP_RUNNER" >&2; return 1 ;;
     esac
   fi
-  if [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" = "true" ]; then require_command pg_restore; fi
+  if [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" = "true" ]; then
+    case "$BACKUP_POSTGRES_DUMP_RUNNER" in
+      docker) require_command docker ;;
+      local) require_command pg_restore ;;
+      *) printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$BACKUP_POSTGRES_DUMP_RUNNER" >&2; return 1 ;;
+    esac
+  fi
   if [ "$RESTORE_TEST_ONLY" != "true" ] && should_backup_storage_payload; then require_command node; fi
 
   local missing=()
@@ -980,6 +982,38 @@ record_restore_test() {
   supabase_request POST "backup_restore_tests" "$body" >/dev/null 2>&1 || true
 }
 
+pg_restore_list_to_file() {
+  local dump_file=$1
+  local list_file=$2
+
+  if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
+    docker run --rm \
+      -v "$WORK_DIR:/restore" \
+      "$BACKUP_POSTGRES_DOCKER_IMAGE" \
+      pg_restore --list "/restore/$(basename "$dump_file")" > "$list_file"
+    return 0
+  fi
+
+  pg_restore --list "$dump_file" > "$list_file"
+}
+
+pg_restore_database() {
+  local dump_file=$1
+  local target_url=$2
+
+  if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
+    docker run --rm \
+      -e RESTORE_TEST_DATABASE_URL="$target_url" \
+      -v "$WORK_DIR:/restore" \
+      "$BACKUP_POSTGRES_DOCKER_IMAGE" \
+      sh -c 'pg_restore --clean --if-exists --no-owner --no-acl --dbname "$RESTORE_TEST_DATABASE_URL" "$1"' \
+      sh "/restore/$(basename "$dump_file")"
+    return 0
+  fi
+
+  pg_restore --clean --if-exists --no-owner --no-acl --dbname "$target_url" "$dump_file"
+}
+
 run_restore_test() {
   [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] || return 0
   record_event "restore_test_started" "info" "restore_test" "Starting restore test pipeline"
@@ -999,16 +1033,15 @@ run_restore_test() {
     -pass env:BACKUP_ENCRYPTION_KEY \
     -in "$encrypted" \
     -out "$dump_file"
-  pg_restore --list "$dump_file" > "$list_file"
+  pg_restore_list_to_file "$dump_file" "$list_file"
 
   if [ "$BACKUP_RESTORE_TEST_MODE" = "restore" ]; then
     if [ -z "${RESTORE_TEST_DATABASE_URL:-}" ]; then
       record_restore_test "skipped" "$object_key" "RESTORE_TEST_DATABASE_URL is required for restore mode" true false false
       return 0
     fi
-    require_command pg_restore
+    pg_restore_database "$dump_file" "$RESTORE_TEST_DATABASE_URL"
     require_command psql
-    pg_restore --clean --if-exists --no-owner --no-acl --dbname "$RESTORE_TEST_DATABASE_URL" "$dump_file"
     psql "$RESTORE_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c "select table_name from information_schema.tables where table_schema = 'public' and table_name in ('restaurants','orders','payments','reservations','users') order by table_name;" >/dev/null
     record_restore_test "success" "$object_key" "Restore test completed against staging database" true true true
   else
