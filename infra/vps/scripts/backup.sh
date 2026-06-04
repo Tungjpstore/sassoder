@@ -64,7 +64,7 @@ BACKUP_APPLICATION_METADATA_ENABLED=${BACKUP_APPLICATION_METADATA_ENABLED:-true}
 BACKUP_RESTORE_TEST_ENABLED=${BACKUP_RESTORE_TEST_ENABLED:-true}
 BACKUP_RESTORE_TEST_MODE=${BACKUP_RESTORE_TEST_MODE:-docker}
 BACKUP_RESTORE_TEST_SCHEMA=${BACKUP_RESTORE_TEST_SCHEMA:-public}
-BACKUP_RESTORE_CRITICAL_TABLES=${BACKUP_RESTORE_CRITICAL_TABLES:-restaurants,orders,payments,reservations}
+BACKUP_RESTORE_CRITICAL_TABLES=${BACKUP_RESTORE_CRITICAL_TABLES:-restaurants,orders,payment_logs,reservations}
 BACKUP_RESTORE_TEST_STRICT=${BACKUP_RESTORE_TEST_STRICT:-false}
 DEV_TELEGRAM_ALERTS_ENABLED=${DEV_TELEGRAM_ALERTS_ENABLED:-true}
 R2_REGION=${R2_REGION:-auto}
@@ -1055,26 +1055,6 @@ restore_test_schema_name() {
   printf '%s' "$schema"
 }
 
-restore_critical_table_count() {
-  restore_critical_table_names | awk 'NF { count++ } END { print count + 0 }'
-}
-
-restore_critical_table_sql_list() {
-  local table
-  local output=""
-  while IFS= read -r table; do
-    if [ -n "$output" ]; then output="$output,"; fi
-    output="$output'$table'"
-  done < <(restore_critical_table_names)
-
-  if [ -z "$output" ]; then
-    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
-    return 1
-  fi
-
-  printf '%s' "$output"
-}
-
 psql_query_restore_database() {
   local target_url=$1
   local sql=$2
@@ -1093,21 +1073,31 @@ psql_query_restore_database() {
 
 verify_remote_restore_database() {
   local target_url=$1
-  local expected_count table_list found_count schema table
+  local expected_count=0 found_count=0 exists schema table missing=""
 
   schema=$(restore_test_schema_name)
-  expected_count=$(restore_critical_table_count)
-  table_list=$(restore_critical_table_sql_list)
-  found_count=$(psql_query_restore_database "$target_url" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name in ($table_list);" | tail -n 1)
 
-  if [ "$found_count" != "$expected_count" ]; then
-    printf 'Critical table verification failed: expected %s, found %s\n' "$expected_count" "$found_count" >&2
+  while IFS= read -r table; do
+    expected_count=$((expected_count + 1))
+    exists=$(psql_query_restore_database "$target_url" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name = '$table';" | tail -n 1)
+    if [ "$exists" != "1" ]; then
+      if [ -n "$missing" ]; then missing="$missing,"; fi
+      missing="$missing$table"
+      continue
+    fi
+    found_count=$((found_count + 1))
+    psql_query_restore_database "$target_url" "select count(*) from $schema.$table;" >/dev/null
+  done < <(restore_critical_table_names)
+
+  if [ "$expected_count" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
     return 1
   fi
 
-  while IFS= read -r table; do
-    psql_query_restore_database "$target_url" "select count(*) from $schema.$table;" >/dev/null
-  done < <(restore_critical_table_names)
+  if [ -n "$missing" ]; then
+    printf 'Critical table verification failed: missing %s (expected %s, found %s)\n' "$missing" "$expected_count" "$found_count" >&2
+    return 1
+  fi
 }
 
 docker_restore_psql() {
@@ -1121,21 +1111,31 @@ docker_restore_psql() {
 verify_docker_restore_database() {
   local container=$1
   local password=$2
-  local expected_count table_list found_count schema table
+  local expected_count=0 found_count=0 exists schema table missing=""
 
   schema=$(restore_test_schema_name)
-  expected_count=$(restore_critical_table_count)
-  table_list=$(restore_critical_table_sql_list)
-  found_count=$(docker_restore_psql "$container" "$password" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name in ($table_list);" | tail -n 1)
 
-  if [ "$found_count" != "$expected_count" ]; then
-    printf 'Critical table verification failed: expected %s, found %s\n' "$expected_count" "$found_count" >&2
+  while IFS= read -r table; do
+    expected_count=$((expected_count + 1))
+    exists=$(docker_restore_psql "$container" "$password" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name = '$table';" | tail -n 1)
+    if [ "$exists" != "1" ]; then
+      if [ -n "$missing" ]; then missing="$missing,"; fi
+      missing="$missing$table"
+      continue
+    fi
+    found_count=$((found_count + 1))
+    docker_restore_psql "$container" "$password" "select count(*) from $schema.$table;" >/dev/null
+  done < <(restore_critical_table_names)
+
+  if [ "$expected_count" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
     return 1
   fi
 
-  while IFS= read -r table; do
-    docker_restore_psql "$container" "$password" "select count(*) from $schema.$table;" >/dev/null
-  done < <(restore_critical_table_names)
+  if [ -n "$missing" ]; then
+    printf 'Critical table verification failed: missing %s (expected %s, found %s)\n' "$missing" "$expected_count" "$found_count" >&2
+    return 1
+  fi
 }
 
 run_docker_restore_database() {
@@ -1217,17 +1217,24 @@ run_restore_test() {
 
   case "$BACKUP_RESTORE_TEST_MODE" in
     docker|ephemeral)
-      run_docker_restore_database "$dump_file"
-      record_restore_test "success" "$object_key" "Restore test completed in an ephemeral Docker Postgres database" true true true
+      if run_docker_restore_database "$dump_file"; then
+        record_restore_test "success" "$object_key" "Restore test completed in an ephemeral Docker Postgres database" true true true
+      else
+        record_restore_test "failed" "$object_key" "Ephemeral Docker Postgres restore failed critical-table verification" true false false
+        return 1
+      fi
       ;;
     restore)
       if [ -z "${RESTORE_TEST_DATABASE_URL:-}" ]; then
         record_restore_test "skipped" "$object_key" "RESTORE_TEST_DATABASE_URL is required for restore mode" true false false
         return 0
       fi
-      pg_restore_database "$dump_file" "$RESTORE_TEST_DATABASE_URL"
-      verify_remote_restore_database "$RESTORE_TEST_DATABASE_URL"
-      record_restore_test "success" "$object_key" "Restore test completed against staging database" true true true
+      if pg_restore_database "$dump_file" "$RESTORE_TEST_DATABASE_URL" && verify_remote_restore_database "$RESTORE_TEST_DATABASE_URL"; then
+        record_restore_test "success" "$object_key" "Restore test completed against staging database" true true true
+      else
+        record_restore_test "failed" "$object_key" "Staging database restore failed critical-table verification" true false false
+        return 1
+      fi
       ;;
     list)
       record_restore_test "success" "$object_key" "pg_restore --list succeeded; set BACKUP_RESTORE_TEST_MODE=docker for full ephemeral restore" true false false
