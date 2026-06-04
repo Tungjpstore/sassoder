@@ -55,6 +55,8 @@ BACKUP_ENCRYPTION_ITERATIONS=${BACKUP_ENCRYPTION_ITERATIONS:-200000}
 BACKUP_POSTGRES_ENABLED=${BACKUP_POSTGRES_ENABLED:-true}
 BACKUP_POSTGRES_DUMP_RUNNER=${BACKUP_POSTGRES_DUMP_RUNNER:-docker}
 BACKUP_POSTGRES_DOCKER_IMAGE=${BACKUP_POSTGRES_DOCKER_IMAGE:-postgres:17-alpine}
+BACKUP_RESTORE_TEST_DOCKER_IMAGE=${BACKUP_RESTORE_TEST_DOCKER_IMAGE:-postgis/postgis:17-3.5-alpine}
+BACKUP_RESTORE_TEST_DOCKER_PLATFORM=${BACKUP_RESTORE_TEST_DOCKER_PLATFORM:-}
 BACKUP_REDIS_ENABLED=${BACKUP_REDIS_ENABLED:-true}
 BACKUP_VPS_CONFIGS_ENABLED=${BACKUP_VPS_CONFIGS_ENABLED:-true}
 BACKUP_STORAGE_MANIFEST_ENABLED=${BACKUP_STORAGE_MANIFEST_ENABLED:-true}
@@ -1060,9 +1062,14 @@ psql_query_restore_database() {
   local sql=$2
 
   if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
+    local -a platform_args=()
+    if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
+      platform_args=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+    fi
     docker run --rm \
+      "${platform_args[@]}" \
       -e RESTORE_TEST_DATABASE_URL="$target_url" \
-      "$BACKUP_POSTGRES_DOCKER_IMAGE" \
+      "$BACKUP_RESTORE_TEST_DOCKER_IMAGE" \
       sh -c 'psql "$RESTORE_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "$1"' \
       sh "$sql"
     return $?
@@ -1108,6 +1115,53 @@ docker_restore_psql() {
     psql -U postgres -d restore_test -v ON_ERROR_STOP=1 -At -c "$sql"
 }
 
+bootstrap_docker_restore_database() {
+  local container=$1
+  local password=$2
+
+  docker exec -i -e PGPASSWORD="$password" "$container" \
+    psql -U postgres -d restore_test -v ON_ERROR_STOP=1 <<'SQL'
+create schema if not exists extensions;
+create extension if not exists postgis with schema extensions;
+create extension if not exists pgcrypto with schema extensions;
+create schema if not exists auth;
+create schema if not exists realtime;
+create schema if not exists storage;
+create schema if not exists vault;
+
+do $$
+begin
+  create role anon nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role authenticated nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role service_role nologin bypassrls;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role authenticator nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;
+  end if;
+end $$;
+SQL
+}
+
 verify_docker_restore_database() {
   local container=$1
   local password=$2
@@ -1141,16 +1195,21 @@ verify_docker_restore_database() {
 run_docker_restore_database() {
   local dump_file=$1
   local container password ready=false attempt schema
+  local -a platform_args=()
   container="logivn-restore-test-${RUN_ID//[^A-Za-z0-9_.-]/-}"
   password=$(openssl rand -hex 24)
   schema=$(restore_test_schema_name)
+  if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
+    platform_args=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+  fi
 
   docker rm -f "$container" >/dev/null 2>&1 || true
   if ! docker run -d \
+    "${platform_args[@]}" \
     --name "$container" \
     -e POSTGRES_PASSWORD="$password" \
     -e POSTGRES_DB=restore_test \
-    "$BACKUP_POSTGRES_DOCKER_IMAGE" >/dev/null; then
+    "$BACKUP_RESTORE_TEST_DOCKER_IMAGE" >/dev/null; then
     return 1
   fi
 
@@ -1168,12 +1227,17 @@ run_docker_restore_database() {
     return 1
   fi
 
+  if ! bootstrap_docker_restore_database "$container" "$password"; then
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    return 1
+  fi
+
   if ! docker cp "$dump_file" "$container:/tmp/restore-test-postgres.dump"; then
     docker rm -f "$container" >/dev/null 2>&1 || true
     return 1
   fi
 
-  local restore_args=(--clean --if-exists --no-owner --no-acl -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  local restore_args=(--no-owner --no-acl -U postgres -d restore_test /tmp/restore-test-postgres.dump)
   if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
     restore_args=(--exit-on-error "${restore_args[@]}")
   fi
