@@ -77,6 +77,30 @@ backup_env_ready() {
   fi
 }
 
+ensure_postgres_backup_client() {
+  if [ "${BACKUP_POSTGRES_ENABLED:-true}" != "true" ]; then
+    return 0
+  fi
+
+  if command -v pg_dump >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    printf 'pg_dump is required for Postgres backup, and apt-get is unavailable to install postgresql-client.\n' >&2
+    return 1
+  fi
+
+  if ! sudo -n true >/dev/null 2>&1; then
+    printf 'pg_dump is required for Postgres backup, and passwordless sudo is unavailable to install postgresql-client.\n' >&2
+    return 1
+  fi
+
+  log "Installing PostgreSQL client tools for runtime backup"
+  sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
+  sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-client
+}
+
 backup_runtime_data() {
   if [ "$RUN_BACKUP" = "false" ]; then
     log "Skipping runtime backup before deploy"
@@ -92,6 +116,8 @@ backup_runtime_data() {
     log "Skipping runtime backup before deploy; backup env is not complete yet"
     return
   fi
+
+  ensure_postgres_backup_client
 
   log "Running runtime backup before deploy"
   APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$VPS_DIR/scripts/backup.sh"
