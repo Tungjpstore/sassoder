@@ -353,7 +353,7 @@ Events:
 - Supabase Storage bucket manifests and optional payload archives
 - signed metadata records uploaded to private Cloudflare R2 through the Worker gateway
 
-`install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries.
+`install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries. It writes `CRON_TZ=$BACKUP_TIMEZONE` and `TZ=$BACKUP_TIMEZONE` into `/etc/cron.d/logivn-vps`, so backup schedules stay pinned to `Asia/Ho_Chi_Minh` unless `/opt/logivn/.env` intentionally overrides `BACKUP_TIMEZONE`.
 
 Run a backup immediately after the first successful deploy:
 
@@ -361,6 +361,8 @@ Run a backup immediately after the first successful deploy:
 APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --manual --actor sre --reason "first production backup"
 APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --restore-test
 ```
+
+The default restore test mode is `docker`: the script downloads the latest encrypted Postgres artifact, decrypts it locally, restores the archive into a throwaway Postgres container, verifies `BACKUP_RESTORE_CRITICAL_TABLES` inside `BACKUP_RESTORE_TEST_SCHEMA`, records `backup_restore_tests`, and removes the container. `BACKUP_RESTORE_TEST_STRICT=false` lets the check tolerate non-critical managed-extension restore warnings while still failing if critical app tables cannot be restored and counted. Use `BACKUP_RESTORE_TEST_MODE=restore` only with an approved staging database URL; never point it at production.
 
 For disaster recovery, use `RESTORE_RUNBOOK.md` to download, verify, and decrypt the approved R2 artifact first. `restore-redis-backup.sh` remains a local Redis-volume helper after the decrypted Redis archive has been selected. A real restore requires an explicit confirmation environment variable and creates a pre-restore Redis volume backup before replacing data:
 

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Run restore from a controlled ops host with `curl`, `node`, `openssl`, `pg_restore`, and `psql` installed. The production path uses the Cloudflare Worker R2 gateway, not AWS services.
+Run restore from a controlled ops host with `curl`, `node`, `openssl`, `pg_restore`, and `psql` installed. The production path uses the Cloudflare Worker R2 gateway, not AWS services. The VPS scheduled restore test uses `BACKUP_RESTORE_TEST_MODE=docker`, which restores the archive into an ephemeral Postgres container, verifies critical app tables in `BACKUP_RESTORE_TEST_SCHEMA`, and removes the container after schema and row-count checks pass.
 
 Required env:
 
@@ -12,6 +12,10 @@ export BACKUP_R2_GATEWAY_TOKEN="..."
 export BACKUP_ENCRYPTION_KEY="..."
 export BACKUP_METADATA_SIGNING_KEY="..."
 export RESTORE_TEST_DATABASE_URL="postgresql://...staging..."
+export BACKUP_RESTORE_TEST_MODE="docker"
+export BACKUP_RESTORE_TEST_SCHEMA="public"
+export BACKUP_RESTORE_CRITICAL_TABLES="restaurants,orders,payments,reservations"
+export BACKUP_RESTORE_TEST_STRICT="false"
 ```
 
 Helper functions:
@@ -81,6 +85,14 @@ pg_restore --list postgres.dump | head -40
 ```
 
 ## Staging Restore
+
+The automated VPS restore test should be run first because it does not require a staging database and never points at production:
+
+```bash
+APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --restore-test
+```
+
+For a dedicated staging database, switch to `BACKUP_RESTORE_TEST_MODE=restore` and set `RESTORE_TEST_DATABASE_URL` to the approved non-production target. Keep `BACKUP_RESTORE_TEST_STRICT=false` for ephemeral Docker checks because managed Supabase dumps can include extension or platform objects that are irrelevant to app-owned `public` tables; set it to `true` only when the restore target has all required platform extensions.
 
 ```bash
 pg_restore --clean --if-exists --no-owner --no-acl \
