@@ -165,7 +165,7 @@ async function listObjects(request: Request, env: Env) {
   });
 }
 
-export default {
+const worker = {
   async fetch(request: Request, env: Env) {
     if (!(await isAuthorized(request, env))) return unauthorized();
 
@@ -189,3 +189,5 @@ export default {
     return jsonResponse({ error: "method_not_allowed" }, { status: 405 });
   }
 };
+
+export default worker;
