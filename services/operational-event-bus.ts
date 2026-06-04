@@ -24,6 +24,80 @@ type PlatformOperationalEvent = Omit<BaseOperationalEvent, "restaurantId" | "ten
   source?: "system" | "devops" | "telegram" | "dashboard";
 };
 
+type PlatformTenantSnapshot = {
+  id: string;
+  name: string;
+  slug?: string | null;
+  businessType?: string | null;
+  tableCount?: number | null;
+  contactEmail?: string | null;
+  hotline?: string | null;
+  address?: string | null;
+  platformStatus?: "active" | "suspended" | "deleted" | string | null;
+  createdAt?: string | null;
+  planCode?: string | null;
+  planName?: string | null;
+  subscriptionStatus?: string | null;
+  trialEndsAt?: string | null;
+  currentPeriodEnd?: string | null;
+  requestedPlanCode?: string | null;
+  hasBankAccount?: boolean;
+  hasLocation?: boolean;
+  initialMenuItemCount?: number | null;
+};
+
+type PlatformSubscriptionPaymentSnapshot = {
+  id: string;
+  restaurantId: string;
+  restaurantName?: string | null;
+  restaurantSlug?: string | null;
+  subscriptionId?: string | null;
+  planCode?: string | null;
+  planName?: string | null;
+  fromPlanCode?: string | null;
+  fromPlanName?: string | null;
+  amount: number;
+  months: number;
+  transferContent?: string | null;
+  billingAction?: "renew" | "upgrade" | "downgrade" | string | null;
+  effectiveSummary?: string | null;
+  effectiveAt?: string | null;
+  subscriptionStatus?: string | null;
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
+  trialEndsAt?: string | null;
+  createdAt?: string | null;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  rejectedReason?: string | null;
+};
+
+type PlatformTenantStatusSnapshot = {
+  restaurantId: string;
+  restaurantName?: string | null;
+  restaurantSlug?: string | null;
+  previousStatus?: string | null;
+  status: "active" | "suspended" | "deleted";
+  reason?: string | null;
+  actor?: string | null;
+  changedAt?: string | null;
+};
+
+type PlatformSubscriptionStatusSnapshot = {
+  id: string;
+  restaurantId: string;
+  restaurantName?: string | null;
+  restaurantSlug?: string | null;
+  previousStatus?: string | null;
+  status: string;
+  planCode?: string | null;
+  planName?: string | null;
+  currentPeriodEnd?: string | null;
+  trialEndsAt?: string | null;
+  reason?: string | null;
+  changedAt?: string | null;
+};
+
 type OperationalOrderSnapshot = {
   id: string;
   displayCode?: string;
@@ -268,6 +342,36 @@ export type OperationalEvent =
         area?: "api" | "web" | "telegram" | "queue" | "database" | "ai" | "billing" | "security" | "other";
       };
     })
+  | (PlatformOperationalEvent & {
+      type: "platform.tenant.created";
+      restaurantId: string;
+      tenant: PlatformTenantSnapshot;
+    })
+  | (PlatformOperationalEvent & {
+      type: "platform.subscription.approval_requested";
+      restaurantId: string;
+      payment: PlatformSubscriptionPaymentSnapshot;
+    })
+  | (PlatformOperationalEvent & {
+      type: "platform.subscription.confirmed";
+      restaurantId: string;
+      payment: PlatformSubscriptionPaymentSnapshot;
+    })
+  | (PlatformOperationalEvent & {
+      type: "platform.subscription.rejected";
+      restaurantId: string;
+      payment: PlatformSubscriptionPaymentSnapshot;
+    })
+  | (PlatformOperationalEvent & {
+      type: "platform.tenant.status_changed";
+      restaurantId: string;
+      tenantStatus: PlatformTenantStatusSnapshot;
+    })
+  | (PlatformOperationalEvent & {
+      type: "platform.subscription.status_changed";
+      restaurantId: string;
+      subscription: PlatformSubscriptionStatusSnapshot;
+    })
   | (BaseOperationalEvent & {
       type: "sla.warning";
       sla: {
@@ -460,7 +564,12 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "service_request.created" ||
     type === "staff.request_created" ||
     type === "staff.incident_reported" ||
-    type === "platform.alert"
+    type === "platform.alert" ||
+    type === "platform.subscription.approval_requested" ||
+    type === "platform.subscription.confirmed" ||
+    type === "platform.subscription.rejected" ||
+    type === "platform.tenant.status_changed" ||
+    type === "platform.subscription.status_changed"
   ) {
     return 1;
   }
@@ -471,7 +580,8 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "reservation.created" ||
     type === "staff.checked_in" ||
     type === "inventory.low" ||
-    type === "menu.item_availability_suggested"
+    type === "menu.item_availability_suggested" ||
+    type === "platform.tenant.created"
   ) {
     return 2;
   }
@@ -479,7 +589,7 @@ function eventPriority(type: OperationalEvent["type"]) {
 }
 
 function platformTenantId(event: OperationalEvent) {
-  return event.type === "platform.alert" ? "platform" : "";
+  return event.type.startsWith("platform.") ? event.restaurantId ?? "platform" : "";
 }
 
 function isMissingOutboxSchema(error: { code?: string; message?: string } | null | undefined) {

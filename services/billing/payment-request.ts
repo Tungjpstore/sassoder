@@ -11,6 +11,7 @@ import {
 } from "./billing-v2-bridge";
 import type { PaymentRow, PlanRow } from "./billing-types";
 import { getActivePlanByCode, getBillingSettings, getOrCreateSubscription, getRestaurant } from "./subscription-core";
+import { notifyPlatformSubscriptionApprovalRequested } from "@/services/platform-telegram-events";
 
 export async function createSubscriptionPaymentRequest({
   restaurantId,
@@ -78,6 +79,16 @@ export async function createSubscriptionPaymentRequest({
         transferContent: pending.transfer_content,
         billingAction,
         legacyPaymentId: pending.id
+      });
+      await notifyPlatformSubscriptionApprovalRequested({
+        restaurant,
+        subscription,
+        currentPlan,
+        targetPlan,
+        payment: pending,
+        billingAction,
+        effectiveSummary: policy.summary,
+        effectiveAt: policy.effectiveAt
       });
       return {
         ...pending,
@@ -171,6 +182,17 @@ export async function createSubscriptionPaymentRequest({
       planCode: currentPlan.code
     });
   }
+
+  await notifyPlatformSubscriptionApprovalRequested({
+    restaurant,
+    subscription: (updatedSub as any) ?? subscription,
+    currentPlan,
+    targetPlan,
+    payment: data as PaymentRow,
+    billingAction,
+    effectiveSummary: policy.summary,
+    effectiveAt: policy.effectiveAt
+  });
 
   return {
     ...(data as PaymentRow),

@@ -7,11 +7,16 @@ import { Menu, Search, X } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
 import { prefetchKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
 import { cn } from "@/lib/utils";
+import type { PlanFeatureKey, getRestaurantEntitlement } from "@/services/subscription-service";
+
+type DashboardEntitlement = Awaited<ReturnType<typeof getRestaurantEntitlement>>;
 
 type NavLink = {
   href: string;
   label: string;
   icon: DashboardIconId;
+  featureKey?: PlanFeatureKey;
+  premiumHint?: string;
 };
 
 type NavGroup = {
@@ -43,7 +48,7 @@ const navGroups: NavGroup[] = [
     title: "Bán hàng",
     links: [
       { href: "/dashboard/online", label: "Đặt online", icon: "onlineOrders" },
-      { href: "/dashboard/reservations", label: "Đặt bàn", icon: "reservations" },
+      { href: "/dashboard/reservations", label: "Đặt bàn", icon: "reservations", featureKey: "reservations", premiumHint: "Premium mở đặt bàn trước và nhận cọc." },
       { href: "/dashboard/promotions", label: "Khuyến mãi", icon: "promotions" },
     ],
   },
@@ -52,7 +57,7 @@ const navGroups: NavGroup[] = [
     title: "Quản lý",
     links: [
       { href: "/dashboard/menu", label: "Menu món", icon: "menuItems" },
-      { href: "/dashboard/inventory", label: "Kho hàng", icon: "inventory" },
+      { href: "/dashboard/inventory", label: "Kho hàng", icon: "inventory", featureKey: "inventory_premium", premiumHint: "Premium mở PO, lô/HSD, OCR và AI tối ưu kho." },
       { href: "/dashboard/staff", label: "Nhân viên", icon: "staff" },
     ],
   },
@@ -60,7 +65,7 @@ const navGroups: NavGroup[] = [
     id: "dashboard-mobile-group-system",
     title: "Hệ thống",
     links: [
-      { href: "/dashboard/analytics", label: "Báo cáo", icon: "analytics" },
+      { href: "/dashboard/analytics", label: "Báo cáo", icon: "analytics", featureKey: "advanced_reports", premiumHint: "Premium mở báo cáo nâng cao và insight thông minh." },
       { href: "/dashboard/settings", label: "Cài đặt", icon: "settings" },
     ],
   },
@@ -117,7 +122,27 @@ function isMobilePrimaryActive(pathname: string, href: string) {
   return isActive(pathname, href);
 }
 
-export function AdminDesktopNav() {
+function shouldShowPremiumBadge(link: NavLink, entitlement?: DashboardEntitlement) {
+  if (!link.featureKey || !link.premiumHint) return false;
+  if (!entitlement || !("planCode" in entitlement)) return false;
+  if (entitlement.planCode === "premium") return false;
+  return true;
+}
+
+function PremiumNavBadge({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full border border-[#F2B36E]/55 bg-[#FFF2DF] font-black uppercase tracking-normal text-[#A95712]",
+        compact ? "px-1.5 py-0.5 text-[8px]" : "ml-auto px-2 py-0.5 text-[9px]"
+      )}
+    >
+      Premium
+    </span>
+  );
+}
+
+export function AdminDesktopNav({ entitlement }: { entitlement?: DashboardEntitlement }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -145,6 +170,7 @@ export function AdminDesktopNav() {
           {group.links.map((link) => {
             const active = isActive(pathname, link.href);
             const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
+            const showPremium = shouldShowPremiumBadge(link, entitlement);
             return (
               <Link
                 key={link.href}
@@ -157,9 +183,11 @@ export function AdminDesktopNav() {
                     ? "bg-[var(--primary)] text-white shadow-[0_14px_28px_rgba(15,77,58,0.18)]"
                     : "text-[var(--muted-foreground)] hover:bg-[var(--primary-soft)] hover:text-[var(--foreground)]"
                 )}
+                title={showPremium ? link.premiumHint : undefined}
               >
                 <DashboardAssetIcon icon={link.icon} active={active} />
-                {link.label}
+                <span className="min-w-0 flex-1 truncate">{link.label}</span>
+                {showPremium ? <PremiumNavBadge /> : null}
               </Link>
             );
           })}
@@ -169,7 +197,7 @@ export function AdminDesktopNav() {
   );
 }
 
-export function AdminTabletRail({ restaurantName }: { restaurantName: string }) {
+export function AdminTabletRail({ restaurantName, entitlement }: { restaurantName: string; entitlement?: DashboardEntitlement }) {
   const pathname = usePathname();
   const router = useRouter();
 
@@ -203,6 +231,7 @@ export function AdminTabletRail({ restaurantName }: { restaurantName: string }) 
             {group.links.map((link) => {
               const active = isActive(pathname, link.href);
               const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
+              const showPremium = shouldShowPremiumBadge(link, entitlement);
 
               return (
                 <Link
@@ -211,15 +240,16 @@ export function AdminTabletRail({ restaurantName }: { restaurantName: string }) 
                   onFocus={prefetchLink}
                   onPointerEnter={prefetchLink}
                   className={cn(
-                    "dashboard-tablet-rail-link grid h-12 w-full place-items-center rounded-xl border text-[var(--muted-foreground)] transition duration-150",
+                    "dashboard-tablet-rail-link relative grid h-12 w-full place-items-center rounded-xl border text-[var(--muted-foreground)] transition duration-150",
                     active
                       ? "border-[var(--primary)] bg-[var(--primary)] text-white shadow-[0_10px_24px_rgba(15,77,58,0.16)]"
                       : "border-transparent hover:border-[var(--border)] hover:bg-[var(--dashboard-panel-muted)] hover:text-[var(--foreground)]"
                   )}
                   aria-label={link.label}
-                  title={link.label}
+                  title={showPremium ? `${link.label} · ${link.premiumHint}` : link.label}
                 >
                   <DashboardAssetIcon icon={link.icon} active={active} />
+                  {showPremium ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-[#F2983A] ring-2 ring-[var(--dashboard-shell)]" aria-hidden="true" /> : null}
                 </Link>
               );
             })}
@@ -245,7 +275,7 @@ export function AdminMobileMenuTrigger({ className }: { className?: string }) {
   );
 }
 
-export function AdminMobileNav() {
+export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitlement }) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -507,6 +537,7 @@ export function AdminMobileNav() {
                     {group.links.map((link) => {
                       const active = isActive(pathname, link.href);
                       const prefetchLink = () => prefetchDashboardNavTarget(router, link.href);
+                      const showPremium = shouldShowPremiumBadge(link, entitlement);
 
                       return (
                         <Link
@@ -523,7 +554,8 @@ export function AdminMobileNav() {
                           )}
                         >
                           <DashboardAssetIcon icon={link.icon} active={active} />
-                          <span className="min-w-0 truncate">{link.label}</span>
+                          <span className="min-w-0 flex-1 truncate">{link.label}</span>
+                          {showPremium ? <PremiumNavBadge compact /> : null}
                         </Link>
                       );
                     })}

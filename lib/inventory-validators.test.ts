@@ -112,6 +112,21 @@ test("inventory purchase order rows parse multi-line PO drafts", () => {
   ]);
 });
 
+test("inventory purchase order rows enforce the database line limit", () => {
+  const row = {
+    ingredientId,
+    orderQuantity: 1,
+    orderUnit: "kg",
+    unitCost: 1000,
+    expirationDate: "2026-06-30",
+    batchCode: "LOT-A",
+    note: "test"
+  };
+
+  assert.doesNotThrow(() => inventoryPurchaseOrderRowsSchema.parse({ rows: JSON.stringify(Array.from({ length: 100 }, () => row)) }));
+  assert.throws(() => inventoryPurchaseOrderRowsSchema.parse({ rows: JSON.stringify(Array.from({ length: 101 }, () => row)) }));
+});
+
 test("inventory purchase order receipt rows parse partial receiving drafts", () => {
   const parsed = inventoryPurchaseOrderReceiptRowsSchema.parse({
     rows: JSON.stringify([
@@ -136,6 +151,20 @@ test("inventory purchase order receipt rows parse partial receiving drafts", () 
       note: "giao thiếu"
     }
   ]);
+});
+
+test("inventory purchase order receipt rows enforce the database line limit", () => {
+  const row = {
+    purchaseOrderLineId,
+    receivedQuantity: 1,
+    unitCost: 1000,
+    expirationDate: "2026-06-15",
+    batchCode: "RECV-1",
+    note: "test"
+  };
+
+  assert.doesNotThrow(() => inventoryPurchaseOrderReceiptRowsSchema.parse({ rows: JSON.stringify(Array.from({ length: 100 }, () => row)) }));
+  assert.throws(() => inventoryPurchaseOrderReceiptRowsSchema.parse({ rows: JSON.stringify(Array.from({ length: 101 }, () => row)) }));
 });
 
 test("inventory count rows preserve per-line location for multi-location count drafts", () => {

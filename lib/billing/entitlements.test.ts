@@ -17,9 +17,12 @@ function quota(key: string, used: number, limit: number): QuotaSnapshot {
 
 test("pro plan keeps core ordering features active", () => {
   const access = resolveFeatureAccess("pro", "qr_ordering");
+  const orderRealtimeAccess = resolveFeatureAccess("pro", "order_realtime");
 
   assert.equal(access.state, "active");
   assert.equal(access.includedInPlan, true);
+  assert.equal(orderRealtimeAccess.state, "active");
+  assert.equal(orderRealtimeAccess.includedInPlan, true);
 });
 
 test("pro trial features become unavailable after trial use", () => {
@@ -63,6 +66,15 @@ test("quota-backed features become unavailable when usage reaches the plan limit
 test("premium-only features are locked on pro and active on premium", () => {
   assert.equal(resolveFeatureAccess("pro", "advanced_reports").state, "locked_plan");
   assert.equal(resolveFeatureAccess("premium", "advanced_reports").state, "active");
+  assert.equal(resolveFeatureAccess("pro", "inventory_basic").state, "active");
+  assert.equal(resolveFeatureAccess("pro", "inventory_premium").state, "locked_plan");
+  assert.equal(resolveFeatureAccess("pro", "inventory_ai_ocr").state, "locked_plan");
+  assert.equal(resolveFeatureAccess("premium", "inventory_premium").state, "active");
+  assert.equal(resolveFeatureAccess("premium", "inventory_ai_ocr").state, "active");
+  assert.equal(resolveFeatureAccess("premium", "inventory_ai_ocr").usage?.key, "inventory_ai_ocr");
+  assert.equal(resolveFeatureAccess("premium", "inventory_ai_ocr").usage?.limit, 300);
+  assert.equal(resolveFeatureAccess("premium", "inventory_ai_intelligence").state, "active");
+  assert.equal(resolveFeatureAccess("premium", "inventory_ai_intelligence").usage?.limit, 120);
 });
 
 test("server feature gate allows active access and rejects locked or exhausted access", () => {

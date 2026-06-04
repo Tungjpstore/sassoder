@@ -21,18 +21,19 @@ type AiOwnerAction = {
   detail: string;
   icon: LucideIcon;
   tone?: "green" | "yellow" | "blue" | "red" | "neutral";
+  premium?: boolean;
 };
 
 const actionsByVariant: Record<string, AiOwnerAction[]> = {
   ops: [
     { href: "/dashboard/ai-execution", title: "Duyệt việc AI đề xuất", detail: "Xem các việc đáng làm hôm nay và bấm duyệt.", icon: ClipboardCheck, tone: "yellow" },
-    { href: "/dashboard/ai-automation", title: "Bật tự động hóa", detail: "Tạo workflow tồn kho, giờ vắng, nhân sự và khách hàng.", icon: GitBranch, tone: "green" },
-    { href: "/dashboard/ai-growth", title: "Tạo chương trình bán hàng", detail: "Viết ưu đãi/caption theo tình hình quán.", icon: Megaphone, tone: "blue" },
+    { href: "/dashboard/ai-automation", title: "Bật tự động hóa", detail: "Tạo workflow tồn kho, giờ vắng, nhân sự và khách hàng.", icon: GitBranch, tone: "green", premium: true },
+    { href: "/dashboard/ai-growth", title: "Tạo chương trình bán hàng", detail: "Viết ưu đãi/caption theo tình hình quán.", icon: Megaphone, tone: "blue", premium: true },
     { href: "/dashboard/ai-menu", title: "Tối ưu menu", detail: "Tạo combo, topping, mô tả và ảnh món.", icon: Utensils, tone: "green" }
   ],
   execution: [
     { href: "/dashboard/ai-apply", title: "Áp dụng việc đã duyệt", detail: "Chuyển đề xuất đã duyệt thành checklist thao tác.", icon: FileCheck2, tone: "green" },
-    { href: "/dashboard/ai-automation", title: "Duyệt workflow", detail: "Bật/tắt các workflow cần xác nhận.", icon: GitBranch, tone: "yellow" },
+    { href: "/dashboard/ai-automation", title: "Duyệt workflow", detail: "Bật/tắt các workflow cần xác nhận.", icon: GitBranch, tone: "yellow", premium: true },
     { href: "/dashboard/ai-menu", title: "Xử lý menu", detail: "Mở đúng khu vực menu để áp dụng đề xuất.", icon: PackagePlus, tone: "blue" }
   ],
   apply: [
@@ -47,7 +48,7 @@ const actionsByVariant: Record<string, AiOwnerAction[]> = {
   ],
   menu: [
     { href: "/dashboard/menu", title: "Sửa menu thật", detail: "Mở màn hình menu để đổi món, giá, ảnh và topping.", icon: Utensils, tone: "green" },
-    { href: "/dashboard/ai-growth", title: "Tạo campaign từ menu", detail: "Biến món bán chạy thành combo hoặc bài đăng.", icon: Megaphone, tone: "blue" },
+    { href: "/dashboard/ai-growth", title: "Tạo campaign từ menu", detail: "Biến món bán chạy thành combo hoặc bài đăng.", icon: Megaphone, tone: "blue", premium: true },
     { href: "/dashboard/ai-execution", title: "Đưa vào hàng duyệt", detail: "Duyệt các đề xuất menu trước khi áp dụng.", icon: ClipboardCheck, tone: "yellow" }
   ],
   growth: [
@@ -57,19 +58,22 @@ const actionsByVariant: Record<string, AiOwnerAction[]> = {
   ],
   support: [
     { href: "/dashboard/settings", title: "Cập nhật thông tin quán", detail: "Giờ mở cửa, hotline, chính sách và FAQ cho chatbot.", icon: BotMessageSquare, tone: "green" },
-    { href: "/dashboard/reservations", title: "Kiểm tra đặt bàn", detail: "Chuẩn hóa câu trả lời về booking và tình trạng bàn.", icon: ClipboardCheck, tone: "blue" },
+    { href: "/dashboard/reservations", title: "Kiểm tra đặt bàn", detail: "Chuẩn hóa câu trả lời về booking và tình trạng bàn.", icon: ClipboardCheck, tone: "blue", premium: true },
     { href: "/dashboard/ai-execution", title: "Duyệt kịch bản hỗ trợ", detail: "Luồng nhạy cảm cần chủ quán xác nhận trước.", icon: CheckCircle2, tone: "yellow" }
   ]
 };
 
 export function AiOwnerActionLauncher({
   variant,
-  title = "Thao tác nhanh theo ca"
+  title = "Thao tác nhanh theo ca",
+  planCode
 }: {
   variant: keyof typeof actionsByVariant;
   title?: string;
+  planCode?: string | null;
 }) {
   const actions = actionsByVariant[variant] ?? actionsByVariant.ops;
+  const showPremiumBadges = planCode !== "premium";
 
   return (
     <section className="dashboard-panel p-3">
@@ -87,6 +91,7 @@ export function AiOwnerActionLauncher({
         <div className="grid gap-2 md:grid-cols-3">
           {actions.map((action) => {
           const Icon = action.icon;
+          const showPremium = showPremiumBadges && action.premium;
           return (
             <Link
               key={`${action.href}-${action.title}`}
@@ -97,8 +102,9 @@ export function AiOwnerActionLauncher({
                 <Icon size={16} />
               </span>
               <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--foreground)]">
+                <span className="flex flex-wrap items-center gap-1.5 text-sm font-bold text-[var(--foreground)]">
                   {action.title}
+                  {showPremium ? <span className="rounded-full border border-[#F2B36E]/55 bg-[#FFF2DF] px-2 py-0.5 text-[9px] font-black uppercase tracking-normal text-[#A95712]">Premium</span> : null}
                   <ArrowRight className="shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100" size={14} />
                 </span>
                 <span className="mt-0.5 block line-clamp-2 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{action.detail}</span>

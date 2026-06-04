@@ -1033,6 +1033,7 @@ export async function executeOwnerAgentCommand(input: ExecuteOwnerAgentCommandIn
       message: input.message
     });
   } else if (command === "create_purchase_order_draft") {
+    await assertFeatureEntitlement(input.restaurantId, "inventory_procurement");
     execution = await executeInventoryDraft({
       restaurantId: input.restaurantId,
       userId: input.userId

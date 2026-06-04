@@ -19,6 +19,7 @@ import { getOwnerOperationalSnapshot } from "@/services/ai/runtime";
 import { createInventoryPurchaseOrder } from "@/services/inventory-service";
 import { createCategory, createMenuItem, listMenuForAdmin } from "@/services/menu-service";
 import { createPromotion } from "@/services/promotion-service";
+import { assertFeatureEntitlement } from "@/services/subscription-service";
 import type { AiRecommendationStatus } from "@/lib/ai/recommendation-engine";
 import type { AiOperationInsightLifecycleStatus } from "@/lib/ai/operation-insights";
 
@@ -237,6 +238,8 @@ export async function applyAiRecommendationDraftAction(formData: FormData) {
   }
 
   if (recommendation.type === "inventory") {
+    await assertFeatureEntitlement(session.restaurantId, "inventory_ai_intelligence");
+    await assertFeatureEntitlement(session.restaurantId, "inventory_procurement");
     const created = await createPurchaseOrderDraftFromRecommendation({
       restaurantId: session.restaurantId,
       actorUserId: session.userId,

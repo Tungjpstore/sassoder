@@ -221,7 +221,7 @@ export default async function AiApplyPage() {
       showLiveActionCenter={false}
     >
       <div className="grid gap-3">
-        <AiOwnerActionLauncher variant="apply" />
+        <AiOwnerActionLauncher variant="apply" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Luồng áp dụng an toàn"
           subtitle="Đây là nơi AI có thể tạo bản nháp thật: promotion chưa public, món/combo tạm ẩn, PO nháp hoặc checklist xử lý có rollback."

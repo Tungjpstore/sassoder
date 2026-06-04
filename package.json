@@ -48,7 +48,7 @@
     "seo:week5": "node scripts/seo/week5-indexing-authority.mjs",
     "seo:sitemap": "next-sitemap --config next-sitemap.config.js",
     "lhci": "node scripts/seo/run-lhci.mjs",
-    "supabase:schema": "echo 'Run supabase/schema.sql in the Supabase SQL editor'",
+    "supabase:schema": "echo 'Use Supabase migrations as the bootstrap source; supabase/schema.sql is a legacy snapshot, not production inventory bootstrap.'",
     "supabase:seed": "echo 'Run supabase/seed.sql after creating the demo auth user'"
   },
   "dependencies": {

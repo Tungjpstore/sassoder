@@ -18,7 +18,7 @@ const inventoryOcrSchema = z
 export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request);
-    const session = await requireOperationalDashboardApiSession({ adminOnly: true, feature: "inventory_management" });
+    const session = await requireOperationalDashboardApiSession({ adminOnly: true, feature: "inventory_ai_ocr" });
     const body = inventoryOcrSchema.parse(await request.json());
     return ok(
       await generateInventoryOcrDraft({

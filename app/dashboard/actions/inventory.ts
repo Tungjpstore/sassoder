@@ -65,7 +65,7 @@ export type InventoryImportActionState = {
 };
 
 export async function createInventoryCategoryAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_basic");
   const parsed = inventoryCategorySchema.parse({
     name: formData.get("name")
   });
@@ -75,7 +75,7 @@ export async function createInventoryCategoryAction(formData: FormData) {
 }
 
 export async function createInventorySupplierAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_procurement");
   const parsed = inventorySupplierSchema.parse({
     name: formData.get("name"),
     phone: formData.get("phone"),
@@ -89,7 +89,7 @@ export async function createInventorySupplierAction(formData: FormData) {
 }
 
 export async function createInventoryPurchaseOrderAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_procurement");
   const parsed = inventoryPurchaseOrderSchema.parse({
     supplierId: formData.get("supplierId"),
     locationId: formData.get("locationId"),
@@ -146,7 +146,7 @@ export async function createInventoryPurchaseOrderAction(formData: FormData) {
 }
 
 export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_procurement");
   const parsed = inventoryPurchaseOrderIdSchema.parse({
     purchaseOrderId: formData.get("purchaseOrderId")
   });
@@ -174,13 +174,13 @@ export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
 }
 
 export async function refreshInventoryAlertsAction(_formData?: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_alerts");
   await refreshInventoryAlerts(session.restaurantId);
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
 export async function applyInventoryCountAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
   const parsed = inventoryCountSchema.parse({
     title: formData.get("title"),
     locationId: formData.get("locationId"),
@@ -231,7 +231,7 @@ export async function applyInventoryCountAction(formData: FormData) {
 }
 
 export async function createInventoryTransferAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
   const parsed = inventoryTransferSchema.parse({
     fromLocationId: formData.get("fromLocationId"),
     toLocationId: formData.get("toLocationId"),
@@ -284,7 +284,7 @@ export async function createInventoryTransferAction(formData: FormData) {
 }
 
 export async function processInventoryTransferAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
   const parsed = inventoryTransferWorkflowSchema.parse({
     transferId: formData.get("transferId"),
     action: formData.get("action"),
@@ -307,7 +307,7 @@ export async function processInventoryTransferAction(formData: FormData) {
 }
 
 export async function updateInventoryAlertStatusAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_alerts");
   const parsed = inventoryAlertStatusSchema.parse({
     alertId: formData.get("alertId"),
     status: formData.get("status")
@@ -322,7 +322,7 @@ export async function updateInventoryAlertStatusAction(formData: FormData) {
 }
 
 export async function createInventoryIngredientAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_basic");
   const parsed = inventoryIngredientSchema.parse({
     categoryId: formData.get("categoryId"),
     name: formData.get("name"),
@@ -353,7 +353,7 @@ export async function createInventoryIngredientAction(formData: FormData) {
 }
 
 export async function updateInventoryIngredientAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_basic");
   const parsed = updateInventoryIngredientSchema.parse({
     ingredientId: formData.get("ingredientId"),
     categoryId: formData.get("categoryId"),
@@ -384,7 +384,7 @@ export async function updateInventoryIngredientAction(formData: FormData) {
 }
 
 export async function deactivateInventoryIngredientAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_basic");
   const parsed = inventoryIngredientIdSchema.parse({
     ingredientId: formData.get("ingredientId")
   });
@@ -394,7 +394,7 @@ export async function deactivateInventoryIngredientAction(formData: FormData) {
 }
 
 export async function recordInventoryMovementAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_basic");
   const parsed = inventoryMovementSchema.parse({
     ingredientId: formData.get("ingredientId"),
     movementType: formData.get("movementType"),
@@ -428,7 +428,7 @@ export async function importInventoryIntakeAction(
   _prevState: InventoryImportActionState | undefined,
   formData: FormData
 ): Promise<InventoryImportActionState> {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_procurement");
   const parsed = inventoryImportRowsSchema.safeParse({
     rows: formData.get("rowsJson")
   });
@@ -454,7 +454,7 @@ export async function importInventoryIntakeAction(
 }
 
 export async function upsertInventoryRecipeLineAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_premium");
   const parsed = inventoryRecipeLineSchema.parse({
     menuItemId: formData.get("menuItemId"),
     ingredientId: formData.get("ingredientId"),
@@ -467,7 +467,7 @@ export async function upsertInventoryRecipeLineAction(formData: FormData) {
 }
 
 export async function deleteInventoryRecipeLineAction(formData: FormData) {
-  const session = await requireOperationalAdminSession("inventory_management");
+  const session = await requireOperationalAdminSession("inventory_premium");
   const parsed = inventoryRecipeLineIdSchema.parse({
     recipeLineId: formData.get("recipeLineId")
   });

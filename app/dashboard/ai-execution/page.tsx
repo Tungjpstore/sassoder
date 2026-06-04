@@ -232,7 +232,7 @@ export default async function AiExecutionPage() {
       showLiveActionCenter={false}
     >
       <div className="grid gap-3">
-        <AiOwnerActionLauncher variant="execution" />
+        <AiOwnerActionLauncher variant="execution" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Hàng duyệt AI"
           subtitle="Duyệt trước, thao tác sau."

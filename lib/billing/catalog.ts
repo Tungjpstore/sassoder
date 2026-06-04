@@ -55,6 +55,51 @@ export const featureCatalog: Record<BillingFeatureKey, FeatureDescriptor> = {
     upgradeHeadline: "Mở rộng kênh doanh thu ngoài tại quán",
     upgradeBullets: ["Đến lấy + giao hàng", "Giảm thao tác thủ công", "Đồng bộ với bảng quản lý"]
   },
+  order_realtime: {
+    key: "order_realtime",
+    label: "Đơn hàng realtime",
+    description: "Bảng đơn hàng, bếp, thanh toán và cập nhật trạng thái theo thời gian thực.",
+    group: "core",
+    badge: "PRO",
+    upgradeHeadline: "Giữ đơn hàng realtime là quyền vận hành nền tảng",
+    upgradeBullets: ["Theo dõi đơn ngay khi khách gửi", "Đồng bộ bếp và thanh toán", "Không khóa sai khi quán đang ở gói Pro"]
+  },
+  inventory_basic: {
+    key: "inventory_basic",
+    label: "Kho cơ bản",
+    description: "Danh sách nguyên liệu, tồn cơ bản và cảnh báo thiếu hàng cho quán nhỏ.",
+    group: "inventory",
+    badge: "PRO",
+    upgradeHeadline: "Giữ kho đơn giản cho mọi chủ quán",
+    upgradeBullets: ["Theo dõi nguyên liệu chính", "Nhìn hàng sắp thiếu", "Ghi nhận nhập/xuất cơ bản"]
+  },
+  inventory_premium: {
+    key: "inventory_premium",
+    label: "Trung tâm vận hành kho",
+    description: "PO, nhà cung cấp, lô/HSD, kiểm kê, điều chuyển, hao hụt và kiểm soát cost.",
+    group: "inventory",
+    badge: "PREMIUM",
+    upgradeHeadline: "Biến kho thành trung tâm kiểm soát thất thoát và giá vốn",
+    upgradeBullets: ["Đề xuất mua hàng theo tồn thấp", "Theo dõi lô, HSD và điều chuyển", "Kiểm soát hao hụt, variance và food cost"]
+  },
+  inventory_ai_ocr: {
+    key: "inventory_ai_ocr",
+    label: "AI đọc hóa đơn kho",
+    description: "Đọc hóa đơn nhập hàng và dựng nháp nhập kho bằng AI.",
+    group: "inventory",
+    badge: "AI",
+    upgradeHeadline: "Rút ngắn nhập kho bằng AI đọc hóa đơn",
+    upgradeBullets: ["Đọc hóa đơn nhập hàng", "Tạo nháp nguyên liệu và số lượng", "Giảm lỗi nhập tay giờ cao điểm"]
+  },
+  inventory_ai_intelligence: {
+    key: "inventory_ai_intelligence",
+    label: "AI tối ưu tồn kho",
+    description: "AI gợi ý PO, phát hiện bất thường và tóm tắt việc cần làm trong kho.",
+    group: "inventory",
+    badge: "AI",
+    upgradeHeadline: "Để AI chỉ ra kho cần mua gì và rủi ro nào đáng xử lý",
+    upgradeBullets: ["Gợi ý PO từ tồn thấp", "Phát hiện waste, price spike và thiếu hàng", "Tóm tắt ưu tiên vận hành kho"]
+  },
   basic_analytics: {
     key: "basic_analytics",
     label: "Analytics cơ bản",
@@ -244,6 +289,11 @@ export const planCatalog: Record<"pro" | "premium", BillingPlanDefinition> = {
       payment_qr: { included: true },
       menu_management: { included: true, limit: 500, unit: "món" },
       online_ordering: { included: true },
+      order_realtime: { included: true },
+      inventory_basic: { included: true },
+      inventory_premium: { included: false, accessMode: "locked_plan", preview: "PO, kiểm kê, điều chuyển, lô/HSD, alerts và cost control nâng cao." },
+      inventory_ai_ocr: { included: false, accessMode: "locked_plan", preview: "AI đọc hóa đơn nhập kho và tạo nháp nhập hàng." },
+      inventory_ai_intelligence: { included: false, accessMode: "locked_plan", preview: "AI gợi ý PO, phát hiện bất thường và tóm tắt ưu tiên kho." },
       basic_analytics: { included: true },
       ai_menu_generation: { included: true, quota: { key: "ai_menu_generation", label: "Tạo menu thông minh", limit: 60, unit: "lượt", window: "monthly" } },
       ai_chatbot: { included: true, quota: { key: "ai_chatbot", label: "Trợ lý hỏi đáp", limit: 500, unit: "lượt", window: "monthly" } },
@@ -280,6 +330,11 @@ export const planCatalog: Record<"pro" | "premium", BillingPlanDefinition> = {
       payment_qr: { included: true },
       menu_management: { included: true, limit: 2000, unit: "món" },
       online_ordering: { included: true },
+      order_realtime: { included: true },
+      inventory_basic: { included: true },
+      inventory_premium: { included: true },
+      inventory_ai_ocr: { included: true, quota: { key: "inventory_ai_ocr", label: "AI đọc hóa đơn kho", limit: 300, unit: "lượt", window: "monthly" } },
+      inventory_ai_intelligence: { included: true, quota: { key: "inventory_ai_intelligence", label: "AI tối ưu tồn kho", limit: 120, unit: "lượt", window: "monthly" } },
       basic_analytics: { included: true },
       ai_menu_generation: { included: true, quota: { key: "ai_menu_generation", label: "Tạo menu thông minh", limit: 300, unit: "lượt", window: "monthly" } },
       ai_chatbot: { included: true, quota: { key: "ai_chatbot", label: "Trợ lý hỏi đáp", limit: 5000, unit: "lượt", window: "monthly" } },

@@ -35,7 +35,17 @@ import {
   type PlatformSubscriptionPayment,
   type PlatformTenantAction
 } from "./repository.mjs";
-import { platformTelegramJobSchema, type PlatformAlertJob, type PlatformTelegramConnection } from "./types.mjs";
+import {
+  platformTelegramJobSchema,
+  type PlatformAlertJob,
+  type PlatformSubscriptionApprovalRequestedJob,
+  type PlatformSubscriptionConfirmedJob,
+  type PlatformSubscriptionRejectedJob,
+  type PlatformSubscriptionStatusChangedJob,
+  type PlatformTelegramConnection,
+  type PlatformTenantCreatedJob,
+  type PlatformTenantStatusChangedJob
+} from "./types.mjs";
 
 const PLATFORM_TELEGRAM_QUEUE = "platform.telegram.notifications";
 const PLATFORM_CALLBACK_PREFIX = "p:";
@@ -43,12 +53,15 @@ const BASE_QUEUE_NAMES = queueNames as string[];
 const QUEUE_CONTROL_NAMES = new Set<string>([...BASE_QUEUE_NAMES, ...BASE_QUEUE_NAMES.map((name) => `${name}.dlq`)]);
 const PLATFORM_MENU_ACTIONS = [
   "menu",
+  "inbox",
   "payments",
+  "payment.detail",
   "payment.confirm.prompt",
   "payment.confirm",
   "payment.reject.prompt",
   "payment.reject",
   "tenants",
+  "tenant.detail",
   "tenant.suspend.prompt",
   "tenant.suspend",
   "tenant.restore.prompt",
@@ -113,6 +126,7 @@ if (bot) {
     await handleStart(ctx, typeof ctx.match === "string" ? ctx.match.trim() : "");
   });
   bot.command("menu", (ctx) => replyWithPlatformMenu(ctx));
+  bot.command("inbox", (ctx) => replyWithPlatformInbox(ctx));
   bot.command("payments", (ctx) => replyWithPayments(ctx));
   bot.command("tenants", (ctx) => replyWithTenants(ctx));
   bot.command("health", (ctx) => replyWithHealth(ctx));
@@ -234,32 +248,136 @@ listen(app, servicePort(3650), logger);
 async function processPlatformTelegramJob(job: Job) {
   const parsed = platformTelegramJobSchema.parse(job.data);
   if (parsed.type === "platform.alert") return deliverPlatformAlert(parsed);
+  if (parsed.type === "platform.tenant.created") return deliverPlatformTenantCreated(parsed);
+  if (parsed.type === "platform.subscription.approval_requested") return deliverPlatformSubscriptionApprovalRequested(parsed);
+  if (parsed.type === "platform.subscription.confirmed") return deliverPlatformSubscriptionConfirmed(parsed);
+  if (parsed.type === "platform.subscription.rejected") return deliverPlatformSubscriptionRejected(parsed);
+  if (parsed.type === "platform.tenant.status_changed") return deliverPlatformTenantStatusChanged(parsed);
+  if (parsed.type === "platform.subscription.status_changed") return deliverPlatformSubscriptionStatusChanged(parsed);
   return { delivered: false, skipped: 1 };
 }
 
 async function deliverPlatformAlert(event: PlatformAlertJob) {
   const recipients = await getPlatformAlertRecipients(scopeForAlert(event));
   const text = formatPlatformAlert(event);
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text,
+    keyboard: (recipient) => platformIncidentKeyboard(recipient),
+    targetType: "platform_alert",
+    targetId: event.eventId,
+    metadata: { severity: event.alert.severity, area: event.alert.area ?? null }
+  });
+}
+
+async function deliverPlatformTenantCreated(event: PlatformTenantCreatedJob) {
+  const recipients = await getPlatformAlertRecipients("tenants.read");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformTenantCreated(event),
+    keyboard: (recipient) => platformTenantCreatedKeyboard(recipient, event),
+    targetType: "restaurant",
+    targetId: event.restaurantId,
+    metadata: { slug: event.tenant.slug ?? null, planCode: event.tenant.planCode ?? event.tenant.requestedPlanCode ?? null }
+  });
+}
+
+async function deliverPlatformSubscriptionApprovalRequested(event: PlatformSubscriptionApprovalRequestedJob) {
+  const recipients = await getPlatformAlertRecipients("billing.approve");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformSubscriptionApprovalRequested(event),
+    keyboard: (recipient) => platformSubscriptionApprovalKeyboard(recipient, event),
+    targetType: "subscription_payment",
+    targetId: event.payment.id,
+    metadata: { restaurantId: event.restaurantId, billingAction: event.payment.billingAction ?? null, amount: event.payment.amount }
+  });
+}
+
+async function deliverPlatformSubscriptionConfirmed(event: PlatformSubscriptionConfirmedJob) {
+  const recipients = await getPlatformAlertRecipients("billing.approve");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformSubscriptionResolved("Đã duyệt gói", event),
+    keyboard: (recipient) => platformSubscriptionResolvedKeyboard(recipient, event),
+    targetType: "subscription_payment",
+    targetId: event.payment.id,
+    metadata: { restaurantId: event.restaurantId, billingAction: event.payment.billingAction ?? null, resolvedBy: event.payment.resolvedBy ?? null }
+  });
+}
+
+async function deliverPlatformSubscriptionRejected(event: PlatformSubscriptionRejectedJob) {
+  const recipients = await getPlatformAlertRecipients("billing.approve");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformSubscriptionResolved("Đã từ chối gói", event),
+    keyboard: (recipient) => platformSubscriptionResolvedKeyboard(recipient, event),
+    targetType: "subscription_payment",
+    targetId: event.payment.id,
+    metadata: { restaurantId: event.restaurantId, billingAction: event.payment.billingAction ?? null, reason: event.payment.rejectedReason ?? null }
+  });
+}
+
+async function deliverPlatformTenantStatusChanged(event: PlatformTenantStatusChangedJob) {
+  const recipients = await getPlatformAlertRecipients("tenants.read");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformTenantStatusChanged(event),
+    keyboard: (recipient) => platformTenantStatusKeyboard(recipient, event),
+    targetType: "restaurant",
+    targetId: event.restaurantId,
+    metadata: { status: event.tenantStatus.status, actor: event.tenantStatus.actor ?? null }
+  });
+}
+
+async function deliverPlatformSubscriptionStatusChanged(event: PlatformSubscriptionStatusChangedJob) {
+  const recipients = await getPlatformAlertRecipients("billing.approve");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformSubscriptionStatusChanged(event),
+    keyboard: (recipient) => platformSubscriptionStatusKeyboard(recipient, event),
+    targetType: "restaurant_subscription",
+    targetId: event.subscription.id,
+    metadata: { status: event.subscription.status, previousStatus: event.subscription.previousStatus ?? null, restaurantId: event.restaurantId }
+  });
+}
+
+async function deliverPlatformEvent(input: {
+  eventType: string;
+  recipients: PlatformTelegramConnection[];
+  text: string;
+  keyboard: (recipient: PlatformTelegramConnection) => Promise<InlineKeyboard>;
+  targetType: string;
+  targetId: string;
+  metadata?: Record<string, unknown>;
+}) {
   let sent = 0;
-  for (const recipient of recipients) {
-    await sendPlatformMessage(recipient.telegram_chat_id, text, {
+  for (const recipient of input.recipients) {
+    await sendPlatformMessage(recipient.telegram_chat_id, input.text, {
       parse_mode: "HTML",
-      reply_markup: await platformIncidentKeyboard(recipient)
+      reply_markup: await input.keyboard(recipient)
     });
     await recordPlatformTelegramAudit({
       connection: recipient,
-      action: event.type,
+      action: input.eventType,
       outcome: "sent",
-      targetType: "platform_alert",
-      targetId: event.eventId,
-      metadata: { severity: event.alert.severity, area: event.alert.area ?? null }
+      targetType: input.targetType,
+      targetId: input.targetId,
+      metadata: input.metadata ?? {}
     });
     sent += 1;
-    deliveryCounter.inc({ event_type: event.type, status: "sent" });
+    deliveryCounter.inc({ event_type: input.eventType, status: "sent" });
     await delay(numberEnv("PLATFORM_TELEGRAM_SEND_INTERVAL_MS", 100));
   }
-  if (sent === 0) deliveryCounter.inc({ event_type: event.type, status: "skipped" });
-  return { delivered: sent > 0, sent, recipients: recipients.length };
+  if (sent === 0) deliveryCounter.inc({ event_type: input.eventType, status: "skipped" });
+  return { delivered: sent > 0, sent, recipients: input.recipients.length };
 }
 
 async function handleStart(ctx: Context, token: string) {
@@ -323,39 +441,67 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     await replyWithConnectAction(ctx);
     return;
   }
-  const keyboard = new InlineKeyboard()
-    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
-    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
-    .row()
-    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
-    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
-    .row()
-    .text("Webhook", await signedPlatformCallback(connection, "webhook"))
-    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
-    .row()
-    .text("Bảo mật", await signedPlatformCallback(connection, "security"))
-    .text("Ngắt", await signedPlatformCallback(connection, "disconnect"))
-    .row()
-    .url("Admin Ops", platformAdminUrl("/ops"))
-    .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
-    .row()
-    .url("Grafana", readEnv("PLATFORM_GRAFANA_URL", "https://monitor.logivn.com/grafana/"))
-    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
   const [pendingPayments, tenantActions, queueRows] = await Promise.all([
     listPendingSubscriptionPayments(6).catch(() => []),
     listPlatformTenantActions(6).catch(() => []),
     queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[])
   ]);
   const queueFailures = queueRows.reduce((sum, row) => sum + row.failed, 0);
+  const keyboard = new InlineKeyboard()
+    .text("Inbox", await signedPlatformCallback(connection, "inbox"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
+    .row()
+    .text(`Duyệt gói (${pendingPayments.length})`, await signedPlatformCallback(connection, "payments"))
+    .text(`Quán (${tenantActions.length})`, await signedPlatformCallback(connection, "tenants"))
+    .row()
+    .text(queueFailures ? `Queue lỗi (${queueFailures})` : "Queue", await signedPlatformCallback(connection, "queues"))
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .row()
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
+    .text("Bảo mật", await signedPlatformCallback(connection, "security"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"))
+    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
   await ctx.reply([
     "LogiVN DevOps",
     "",
-    `Bạn: ${connectionLabel(connection)}`,
-    `Việc mở: ${countLabel(pendingPayments.length, 6)} gói · ${countLabel(tenantActions.length, 6)} quán · ${queueFailures} queue lỗi`,
     `Ưu tiên: ${platformMenuPriority(pendingPayments[0], tenantActions[0])}`,
+    `Đang chờ: ${countLabel(pendingPayments.length, 6)} gói · ${countLabel(tenantActions.length, 6)} quán · ${queueFailures} queue lỗi`,
+    `Tài khoản: ${connection.role} · ${connection.status}`,
     "",
-    "Chọn nút để xử lý ngay."
+    "Chọn Inbox để xử lý theo thứ tự ưu tiên."
   ].join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithPlatformInbox(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = preferredConnection ?? (await connectionForContext(ctx));
+  if (!connection) {
+    await replyWithConnectAction(ctx);
+    return;
+  }
+
+  const [pendingPayments, tenantActions, queueRows] = await Promise.all([
+    hasPlatformScope(connection, "billing.approve") ? listPendingSubscriptionPayments(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "tenants.read") ? listPlatformTenantActions(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "queues.read") ? queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[]) : Promise.resolve([])
+  ]);
+  const failedRows = queueRows.filter((row) => row.failed > 0).slice(0, 3);
+  const keyboard = new InlineKeyboard();
+
+  if (pendingPayments.length) keyboard.text("Duyệt gói", await signedPlatformCallback(connection, "payments"));
+  if (tenantActions.length) keyboard.text("Quán", await signedPlatformCallback(connection, "tenants"));
+  if (pendingPayments.length || tenantActions.length) keyboard.row();
+  if (failedRows.length) keyboard.text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
+  keyboard
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
+    .row()
+    .text("Làm mới", await signedPlatformCallback(connection, "inbox"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"))
+    .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
+
+  await ctx.reply(formatPlatformInbox({ pendingPayments, tenantActions, failedRows }), { reply_markup: keyboard });
 }
 
 async function replyWithHelp(ctx: Context) {
@@ -363,12 +509,14 @@ async function replyWithHelp(ctx: Context) {
   const keyboard = connection
     ? new InlineKeyboard()
         .text("Mở menu", await signedPlatformCallback(connection, "menu"))
-        .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+        .text("Inbox", await signedPlatformCallback(connection, "inbox"))
         .row()
+        .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
         .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+        .row()
         .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     : new InlineKeyboard().url("Admin Ops", platformAdminUrl("/ops"));
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/inbox - việc platform cần xử lý", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -392,27 +540,48 @@ async function replyWithPayments(ctx: Context, preferredConnection?: PlatformTel
   const payments = await listPendingSubscriptionPayments(6);
   const keyboard = new InlineKeyboard();
 
-  for (const [index, payment] of payments.slice(0, 4).entries()) {
-    keyboard
-      .text(`Duyệt #${index + 1}`, await signedPlatformCallback(connection, "payment.confirm.prompt", { paymentId: payment.id }))
-      .text(`Từ chối #${index + 1}`, await signedPlatformCallback(connection, "payment.reject.prompt", { paymentId: payment.id }))
-      .row();
-  }
+  await appendPaymentSelectors(keyboard, connection, payments.slice(0, 4));
 
   keyboard
     .text("Làm mới", await signedPlatformCallback(connection, "payments"))
-    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
     .row()
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .url("Mở thu phí", platformAdminUrl("/payments"));
 
   const lines = [
     "Duyệt gói",
     "",
-    payments.length ? `${countLabel(payments.length, 6)} giao dịch cần quyết định.` : "Không có giao dịch chờ xác minh.",
+    payments.length ? `${countLabel(payments.length, 6)} giao dịch chờ xác minh.` : "Không có giao dịch chờ xác minh.",
+    payments.length ? "Bấm số để mở chi tiết, sau đó duyệt hoặc từ chối." : "",
     "",
-    ...payments.slice(0, 5).map(formatPaymentListRow)
-  ];
+    ...(payments.length ? payments.slice(0, 4).map(formatPaymentListRow) : ["Tất cả giao dịch đã được xử lý."])
+  ].filter(Boolean);
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithPaymentDetail(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "billing.approve");
+  if (!approvedConnection) return;
+  const paymentId = payloadString(payload, "paymentId");
+  if (!paymentId) {
+    await replyWithPaymentsReload(ctx, approvedConnection, "Thiếu giao dịch cần xem.");
+    return;
+  }
+  const payment = await getPendingSubscriptionPayment(paymentId);
+  if (!payment) {
+    await replyWithPaymentsReload(ctx, approvedConnection, "Giao dịch không còn chờ duyệt.");
+    return;
+  }
+  const keyboard = new InlineKeyboard()
+    .text("Duyệt", await signedPlatformCallback(approvedConnection, "payment.confirm.prompt", { paymentId }))
+    .text("Từ chối", await signedPlatformCallback(approvedConnection, "payment.reject.prompt", { paymentId }))
+    .row()
+    .text("Danh sách", await signedPlatformCallback(approvedConnection, "payments"))
+    .text("Menu", await signedPlatformCallback(approvedConnection, "menu"))
+    .row()
+    .url("Mở thu phí", platformAdminUrl("/payments"));
+  await ctx.reply(formatPaymentDecisionPrompt("Chi tiết giao dịch", payment, "Chọn Duyệt hoặc Từ chối. Bot sẽ hỏi xác nhận trước khi ghi dữ liệu."), { reply_markup: keyboard });
 }
 
 async function replyWithPaymentConfirmPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
@@ -489,38 +658,57 @@ async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTele
   const connection = await requireConnection(ctx, preferredConnection, "tenants.read");
   if (!connection) return;
   const tenants = await listPlatformTenantActions(6);
-  const canManage = hasPlatformScope(connection, "tenants.manage");
   const keyboard = new InlineKeyboard();
 
-  for (const [index, tenant] of tenants.slice(0, 4).entries()) {
-    keyboard.url(`Mở #${index + 1}`, tenantDashboardUrl(tenant.slug)).row();
-    if (canManage) {
-      if (tenant.platformStatus === "active") {
-        keyboard
-          .text(`Tạm dừng #${index + 1}`, await signedPlatformCallback(connection, "tenant.suspend.prompt", { restaurantId: tenant.id }))
-          .text(`Xóa mềm #${index + 1}`, await signedPlatformCallback(connection, "tenant.delete.prompt", { restaurantId: tenant.id }))
-          .row();
-      } else {
-        keyboard.text(`Mở lại #${index + 1}`, await signedPlatformCallback(connection, "tenant.restore.prompt", { restaurantId: tenant.id })).row();
-      }
-    }
-  }
+  await appendTenantSelectors(keyboard, connection, tenants.slice(0, 4));
 
   keyboard
     .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
-    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
     .row()
-    .url("Thêm quán", appUrl("/dashboard/register?source=devops_bot"))
+    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
     .url("Mở danh sách quán", platformAdminUrl("/tenants"));
 
   const lines = [
     "Quản lý quán",
     "",
-    tenants.length ? `${countLabel(tenants.length, 6)} quán cần quyết định hoặc theo dõi.` : "Chưa có quán cần xử lý.",
+    tenants.length ? `${countLabel(tenants.length, 6)} quán cần theo dõi.` : "Chưa có quán cần xử lý.",
+    tenants.length ? "Bấm số để mở hồ sơ và thao tác." : "",
     "",
-    ...tenants.slice(0, 5).map(formatTenantListRow)
-  ];
+    ...(tenants.length ? tenants.slice(0, 4).map(formatTenantListRow) : ["Danh sách đang sạch."])
+  ].filter(Boolean);
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithTenantDetail(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "tenants.read");
+  if (!approvedConnection) return;
+  const restaurantId = payloadString(payload, "restaurantId");
+  if (!restaurantId) {
+    await replyWithTenantsReload(ctx, approvedConnection, "Thiếu quán cần xem.");
+    return;
+  }
+  const tenant = await getPlatformTenantAction(restaurantId);
+  if (!tenant) {
+    await replyWithTenantsReload(ctx, approvedConnection, "Không tìm thấy quán cần xem.");
+    return;
+  }
+  const keyboard = new InlineKeyboard().url("Mở dashboard", tenantDashboardUrl(tenant.slug));
+  if (hasPlatformScope(approvedConnection, "tenants.manage")) {
+    if (tenant.platformStatus === "active") {
+      keyboard
+        .row()
+        .text("Tạm dừng", await signedPlatformCallback(approvedConnection, "tenant.suspend.prompt", { restaurantId: tenant.id }))
+        .text("Xóa mềm", await signedPlatformCallback(approvedConnection, "tenant.delete.prompt", { restaurantId: tenant.id }));
+    } else {
+      keyboard.row().text("Mở lại", await signedPlatformCallback(approvedConnection, "tenant.restore.prompt", { restaurantId: tenant.id }));
+    }
+  }
+  keyboard
+    .row()
+    .text("Danh sách", await signedPlatformCallback(approvedConnection, "tenants"))
+    .text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(formatTenantDetail(tenant), { reply_markup: keyboard });
 }
 
 async function replyWithTenantStatusPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>, status: "active" | "suspended" | "deleted") {
@@ -772,12 +960,15 @@ async function confirmDisconnect(ctx: Context, connection: PlatformTelegramConne
 
 async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction, connection: PlatformTelegramConnection, payload: Record<string, unknown> = {}) {
   if (action === "menu") return replyWithPlatformMenu(ctx, connection);
+  if (action === "inbox") return replyWithPlatformInbox(ctx, connection);
   if (action === "payments") return replyWithPayments(ctx, connection);
+  if (action === "payment.detail") return replyWithPaymentDetail(ctx, connection, payload);
   if (action === "payment.confirm.prompt") return replyWithPaymentConfirmPrompt(ctx, connection, payload);
   if (action === "payment.confirm") return confirmPaymentFromTelegram(ctx, connection, payload);
   if (action === "payment.reject.prompt") return replyWithPaymentRejectPrompt(ctx, connection, payload);
   if (action === "payment.reject") return rejectPaymentFromTelegram(ctx, connection, payload);
   if (action === "tenants") return replyWithTenants(ctx, connection);
+  if (action === "tenant.detail") return replyWithTenantDetail(ctx, connection, payload);
   if (action === "tenant.suspend.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "suspended");
   if (action === "tenant.suspend") return updateTenantFromTelegram(ctx, connection, payload, "suspended");
   if (action === "tenant.restore.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "active");
@@ -827,6 +1018,58 @@ async function platformIncidentKeyboard(connection: PlatformTelegramConnection) 
     .text("Hàng đợi", await signedPlatformCallback(connection, "queues"));
 }
 
+async function platformTenantCreatedKeyboard(connection: PlatformTelegramConnection, event: PlatformTenantCreatedJob) {
+  const keyboard = new InlineKeyboard()
+    .url("Mở quán", tenantDashboardUrl(event.tenant.slug ?? ""))
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"));
+  if (hasPlatformScope(connection, "tenants.manage")) {
+    keyboard.row().text("Tạm dừng", await signedPlatformCallback(connection, "tenant.suspend.prompt", { restaurantId: event.restaurantId }));
+  }
+  return keyboard.row().url("Admin tenants", platformAdminUrl("/tenants"));
+}
+
+async function platformSubscriptionApprovalKeyboard(connection: PlatformTelegramConnection, event: PlatformSubscriptionApprovalRequestedJob) {
+  return new InlineKeyboard()
+    .text("Duyệt", await signedPlatformCallback(connection, "payment.confirm.prompt", { paymentId: event.payment.id }))
+    .text("Từ chối", await signedPlatformCallback(connection, "payment.reject.prompt", { paymentId: event.payment.id }))
+    .row()
+    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+    .url("Mở quán", tenantDashboardUrl(event.payment.restaurantSlug ?? ""))
+    .row()
+    .url("Admin billing", platformAdminUrl("/payments"));
+}
+
+async function platformSubscriptionResolvedKeyboard(
+  connection: PlatformTelegramConnection,
+  event: PlatformSubscriptionConfirmedJob | PlatformSubscriptionRejectedJob
+) {
+  return new InlineKeyboard()
+    .text("Duyệt tiếp", await signedPlatformCallback(connection, "payments"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
+    .row()
+    .url("Mở quán", tenantDashboardUrl(event.payment.restaurantSlug ?? ""))
+    .url("Admin billing", platformAdminUrl("/payments"));
+}
+
+async function platformTenantStatusKeyboard(connection: PlatformTelegramConnection, event: PlatformTenantStatusChangedJob) {
+  const keyboard = new InlineKeyboard()
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+    .url("Mở quán", tenantDashboardUrl(event.tenantStatus.restaurantSlug ?? ""));
+  if (hasPlatformScope(connection, "tenants.manage") && event.tenantStatus.status !== "active") {
+    keyboard.row().text("Mở lại", await signedPlatformCallback(connection, "tenant.restore.prompt", { restaurantId: event.restaurantId }));
+  }
+  return keyboard.row().text("Menu", await signedPlatformCallback(connection, "menu"));
+}
+
+async function platformSubscriptionStatusKeyboard(connection: PlatformTelegramConnection, event: PlatformSubscriptionStatusChangedJob) {
+  return new InlineKeyboard()
+    .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+    .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+    .row()
+    .url("Mở quán", tenantDashboardUrl(event.subscription.restaurantSlug ?? ""))
+    .url("Admin billing", platformAdminUrl("/payments"));
+}
+
 async function replyWithConnectAction(ctx: Context) {
   const keyboard = new InlineKeyboard().url("Mở Admin Ops", platformAdminUrl("/ops"));
   await ctx.reply("DevOps Bot chưa kết nối hoặc quyền đã bị thu hồi.", { reply_markup: keyboard });
@@ -851,6 +1094,22 @@ async function replyWithTenantsReload(ctx: Context, connection: PlatformTelegram
     .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
     .text("Menu", await signedPlatformCallback(connection, "menu"));
   await ctx.reply(`${message} Tải lại danh sách quán hiện tại.`, { reply_markup: keyboard });
+}
+
+async function appendPaymentSelectors(keyboard: InlineKeyboard, connection: PlatformTelegramConnection, payments: PlatformSubscriptionPayment[]) {
+  for (const [index, payment] of payments.entries()) {
+    keyboard.text(`#${index + 1}`, await signedPlatformCallback(connection, "payment.detail", { paymentId: payment.id }));
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (payments.length && payments.length % 4 !== 0) keyboard.row();
+}
+
+async function appendTenantSelectors(keyboard: InlineKeyboard, connection: PlatformTelegramConnection, tenants: PlatformTenantAction[]) {
+  for (const [index, tenant] of tenants.entries()) {
+    keyboard.text(`#${index + 1}`, await signedPlatformCallback(connection, "tenant.detail", { restaurantId: tenant.id }));
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (tenants.length && tenants.length % 4 !== 0) keyboard.row();
 }
 
 function queueAttentionRows(summary: Record<string, any>): QueueAttentionRow[] {
@@ -910,6 +1169,30 @@ function formatQueueRetryResult(result: Record<string, unknown>) {
   return ["Đã retry job", "", `Queue: ${result.queueName ?? "unknown"}`, `Job: ${shortId(String(result.jobId ?? ""))}`].join("\n");
 }
 
+function formatPlatformInbox(input: {
+  pendingPayments: PlatformSubscriptionPayment[];
+  tenantActions: PlatformTenantAction[];
+  failedRows: QueueAttentionRow[];
+}) {
+  const paymentLines = input.pendingPayments.slice(0, 3).map((payment, index) => `P${index + 1}. ${paymentRestaurantLabel(payment)} · ${formatVnd(payment.amount)} · ${paymentPlanLabel(payment)}`);
+  const tenantLines = input.tenantActions.slice(0, 3).map((tenant, index) => `T${index + 1}. ${tenantRestaurantLabel(tenant)} · ${tenant.platformStatus} · ${tenant.riskFlags[0] ?? tenant.subscriptionStatus ?? "theo dõi"}`);
+  const queueLines = input.failedRows.slice(0, 3).map((row, index) => `Q${index + 1}. ${shortQueueName(row.name)} · lỗi/DLQ ${row.failed} · chờ ${row.backlog}`);
+  const hasWork = paymentLines.length || tenantLines.length || queueLines.length;
+
+  return [
+    "LogiVN DevOps Inbox",
+    "",
+    `Cần duyệt: ${input.pendingPayments.length} gói`,
+    `Tenant cần xem: ${input.tenantActions.length}`,
+    `Queue lỗi: ${input.failedRows.reduce((sum, row) => sum + row.failed, 0)}`,
+    "",
+    ...(paymentLines.length ? ["Duyệt gói", ...paymentLines, ""] : []),
+    ...(tenantLines.length ? ["Tenant", ...tenantLines, ""] : []),
+    ...(queueLines.length ? ["Queue", ...queueLines, ""] : []),
+    hasWork ? "Chọn nhóm việc bên dưới để xử lý. Chi tiết và action nằm trong từng màn." : "Không có việc platform khẩn ở thời điểm này."
+  ].join("\n").trim();
+}
+
 function shortQueueName(value: string) {
   return value
     .replace("telegram.notifications", "tenant.tg")
@@ -929,12 +1212,11 @@ function platformMenuPriority(payment?: PlatformSubscriptionPayment, tenant?: Pl
 }
 
 function formatPaymentListRow(payment: PlatformSubscriptionPayment, index: number) {
+  const period = formatPaymentPeriod(payment)?.replace(/^Kỳ hiện tại: /, "Kỳ: ") ?? "Kỳ: chưa rõ";
   return [
-    `${index + 1}. ${paymentRestaurantLabel(payment)}`,
-    `   ${billingActionLabel(payment.billingAction)} · ${paymentPlanLabel(payment)} · ${payment.months} tháng · ${formatVnd(payment.amount)}`,
-    `   CK: ${payment.transferContent || shortId(payment.id)}`,
-    `   Tạo: ${formatShortDate(payment.createdAt)} (${formatAge(payment.createdAt)})`,
-    payment.effectiveSummary ? `   Hiệu lực: ${truncateVisible(payment.effectiveSummary, 120)}` : null
+    `#${index + 1} ${truncateVisible(paymentRestaurantLabel(payment), 52)} · ${formatVnd(payment.amount)}`,
+    `   ${billingActionLabel(payment.billingAction)} · ${paymentPlanLabel(payment)} · ${payment.months} tháng`,
+    `   CK ${payment.transferContent || shortId(payment.id)} · ${formatAge(payment.createdAt)} · ${period}`
   ].filter(Boolean).join("\n");
 }
 
@@ -957,13 +1239,29 @@ function formatPaymentDecisionPrompt(title: string, payment: PlatformSubscriptio
 }
 
 function formatTenantListRow(tenant: PlatformTenantAction, index: number) {
+  const risk = tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "ổn định";
   return [
-    `${index + 1}. ${tenantRestaurantLabel(tenant)}`,
-    `   Trạng thái: ${tenant.platformStatus} · Gói: ${tenant.planName} · ${tenant.subscriptionStatus ?? "chưa có gói"}`,
-    `   Kỳ/trial: ${formatTenantPeriod(tenant)}`,
-    `   Tạo: ${formatShortDate(tenant.createdAt)} (${formatAge(tenant.createdAt)})`,
-    `   Cờ rủi ro: ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "không có"}`
+    `#${index + 1} ${truncateVisible(tenantRestaurantLabel(tenant), 54)}`,
+    `   ${tenant.platformStatus} · ${tenant.planName} · ${tenant.subscriptionStatus ?? "chưa có gói"}`,
+    `   ${formatTenantPeriod(tenant)} · ${formatAge(tenant.createdAt)} · ${risk}`
   ].join("\n");
+}
+
+function formatTenantDetail(tenant: PlatformTenantAction) {
+  return [
+    "Hồ sơ quán",
+    "",
+    tenantRestaurantLabel(tenant),
+    `Trạng thái: ${tenant.platformStatus}`,
+    `Gói: ${tenant.planName} · ${tenant.subscriptionStatus ?? "chưa có gói"}`,
+    `Kỳ/trial: ${formatTenantPeriod(tenant)}`,
+    `Tạo: ${formatShortDate(tenant.createdAt)} (${formatAge(tenant.createdAt)})`,
+    `Cờ rủi ro: ${tenant.riskFlags.length ? tenant.riskFlags.join(", ") : "không có"}`,
+    tenant.suspendedReason ? `Lý do hiện tại: ${truncateVisible(tenant.suspendedReason, 120)}` : null,
+    tenant.deletedAt ? `Xóa mềm: ${formatShortDate(tenant.deletedAt)}` : null,
+    "",
+    "Chọn thao tác bên dưới. Các thay đổi trạng thái đều có bước xác nhận."
+  ].filter(Boolean).join("\n");
 }
 
 function formatTenantDecisionPrompt(actionLabel: string, tenant: PlatformTenantAction, impact: string) {
@@ -1027,8 +1325,48 @@ function billingActionLabel(value: string | null) {
   return "Thanh toán";
 }
 
+function subscriptionRequestTitle(value?: string | null) {
+  if (value === "renew") return "Gia hạn gói cần duyệt";
+  if (value === "upgrade") return "Nâng gói cần duyệt";
+  if (value === "downgrade") return "Hạ gói cần duyệt";
+  return "Thanh toán gói cần duyệt";
+}
+
+function paymentPlanEventLabel(payment: { planName?: string | null; planCode?: string | null; billingAction?: string | null }) {
+  const plan = payment.planName || payment.planCode || "Gói SaaS";
+  const code = payment.planName && payment.planCode ? ` (${payment.planCode})` : "";
+  return `${billingActionLabel(payment.billingAction ?? null)} · ${plan}${code}`;
+}
+
+function formatPaymentEventPeriod(payment: {
+  currentPeriodStart?: string | null;
+  currentPeriodEnd?: string | null;
+  trialEndsAt?: string | null;
+}) {
+  if (payment.currentPeriodStart || payment.currentPeriodEnd) return `Kỳ: ${formatDateRange(payment.currentPeriodStart ?? null, payment.currentPeriodEnd ?? null)}`;
+  if (payment.trialEndsAt) return `Trial đến: ${formatShortDate(payment.trialEndsAt)}`;
+  return null;
+}
+
+function platformTenantLabel(name: string, slug?: string | null) {
+  return slug ? `${name} (${slug})` : name;
+}
+
+function tenantStatusIcon(status: string) {
+  if (status === "active") return "✅";
+  if (status === "suspended") return "⏸️";
+  return "🗑️";
+}
+
+function subscriptionStatusIcon(status: string) {
+  if (status === "active" || status === "trialing") return "✅";
+  if (status === "past_due" || status === "pending_payment" || status === "grace") return "⚠️";
+  if (status === "expired" || status === "cancelled" || status === "suspended") return "⛔";
+  return "ℹ️";
+}
+
 function formatDateRange(start: string | null, end: string | null) {
-  if (start && end) return `${formatShortDate(start)} -> ${formatShortDate(end)}`;
+  if (start && end) return `${formatShortDate(start)} đến ${formatShortDate(end)}`;
   if (end) return `đến ${formatShortDate(end)}`;
   if (start) return `từ ${formatShortDate(start)}`;
   return "chưa có";
@@ -1075,6 +1413,7 @@ async function configurePlatformCommands() {
   if (!bot) return;
   await bot.api.setMyCommands([
     { command: "menu", description: "Mở trung tâm thao tác" },
+    { command: "inbox", description: "Việc platform cần xử lý" },
     { command: "payments", description: "Duyệt gói chủ quán" },
     { command: "tenants", description: "Quản lý quán nhanh" },
     { command: "health", description: "Kiểm tra hệ thống" },
@@ -1092,6 +1431,107 @@ function formatPlatformAlert(event: PlatformAlertJob) {
   const area = event.alert.area ? ` · ${escapeHtml(event.alert.area)}` : "";
   const summary = event.alert.summary ? `\n${escapeHtml(event.alert.summary)}` : "";
   return `${alertIcon(event.alert.severity)} <b>${escapeHtml(event.alert.title)}</b>\n${event.alert.severity.toUpperCase()}${area}${summary}`;
+}
+
+function formatPlatformTenantCreated(event: PlatformTenantCreatedJob) {
+  const tenant = event.tenant;
+  const plan = tenant.planName || tenant.planCode || tenant.requestedPlanCode || "chưa rõ";
+  const readiness = [
+    tenant.hasLocation ? "đã có vị trí" : "thiếu vị trí",
+    tenant.hasBankAccount ? "đã có ngân hàng" : "thiếu ngân hàng"
+  ].join(" · ");
+  return htmlLines([
+    `🆕 <b>Quán mới đăng ký</b>`,
+    "",
+    `Quán: <b>${escapeHtml(platformTenantLabel(tenant.name, tenant.slug))}</b>`,
+    tenant.contactEmail ? `Email chủ: ${escapeHtml(tenant.contactEmail)}` : null,
+    tenant.hotline ? `Hotline: ${escapeHtml(tenant.hotline)}` : null,
+    `Mô hình: ${escapeHtml(tenant.businessType ?? "chưa rõ")} · ${Number(tenant.tableCount ?? 0)} bàn`,
+    `Gói: ${escapeHtml(plan)} · ${escapeHtml(tenant.subscriptionStatus ?? "chưa rõ")}`,
+    tenant.currentPeriodEnd || tenant.trialEndsAt ? `Kỳ/trial: ${escapeHtml(formatDateRange(null, tenant.currentPeriodEnd ?? tenant.trialEndsAt ?? null))}` : null,
+    `Thiết lập: ${escapeHtml(readiness)} · ${Number(tenant.initialMenuItemCount ?? 0)} món seed`,
+    tenant.address ? `Địa chỉ: ${escapeHtml(truncateVisible(tenant.address, 120))}` : null,
+    `Tạo: ${escapeHtml(formatShortDate(tenant.createdAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Chọn nút để mở hồ sơ hoặc xử lý tenant ngay."
+  ]);
+}
+
+function formatPlatformSubscriptionApprovalRequested(event: PlatformSubscriptionApprovalRequestedJob) {
+  const payment = event.payment;
+  return htmlLines([
+    `💳 <b>${escapeHtml(subscriptionRequestTitle(payment.billingAction))}</b>`,
+    "",
+    `Quán: <b>${escapeHtml(platformTenantLabel(payment.restaurantName ?? "Không rõ quán", payment.restaurantSlug))}</b>`,
+    `Gói: ${escapeHtml(paymentPlanEventLabel(payment))} · ${payment.months} tháng`,
+    payment.fromPlanName || payment.fromPlanCode ? `Từ gói: ${escapeHtml(payment.fromPlanName ?? payment.fromPlanCode ?? "")}` : null,
+    `Số tiền: <b>${escapeHtml(formatVnd(payment.amount))}</b>`,
+    payment.transferContent ? `Nội dung CK: <code>${escapeHtml(payment.transferContent)}</code>` : null,
+    payment.subscriptionStatus ? `Trạng thái hiện tại: ${escapeHtml(payment.subscriptionStatus)}` : null,
+    formatPaymentEventPeriod(payment),
+    payment.effectiveSummary ? `Hiệu lực: ${escapeHtml(truncateVisible(payment.effectiveSummary, 180))}` : null,
+    `Tạo: ${escapeHtml(formatShortDate(payment.createdAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Cần duyệt hoặc từ chối để chủ quán không phải chờ trên dashboard."
+  ]);
+}
+
+function formatPlatformSubscriptionResolved(
+  title: string,
+  event: PlatformSubscriptionConfirmedJob | PlatformSubscriptionRejectedJob
+) {
+  const payment = event.payment;
+  return htmlLines([
+    `${event.type === "platform.subscription.confirmed" ? "✅" : "⛔"} <b>${escapeHtml(title)}</b>`,
+    "",
+    `Quán: <b>${escapeHtml(platformTenantLabel(payment.restaurantName ?? "Không rõ quán", payment.restaurantSlug))}</b>`,
+    `Gói: ${escapeHtml(paymentPlanEventLabel(payment))} · ${payment.months} tháng · ${escapeHtml(formatVnd(payment.amount))}`,
+    payment.transferContent ? `Nội dung CK: <code>${escapeHtml(payment.transferContent)}</code>` : null,
+    event.type === "platform.subscription.confirmed" ? formatPaymentEventPeriod(payment) : null,
+    payment.rejectedReason ? `Lý do: ${escapeHtml(truncateVisible(payment.rejectedReason, 180))}` : null,
+    payment.resolvedBy ? `Người xử lý: ${escapeHtml(payment.resolvedBy)}` : null,
+    `Xử lý: ${escapeHtml(formatShortDate(payment.resolvedAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Audit đã ghi, có thể mở billing để kiểm tra tiếp."
+  ]);
+}
+
+function formatPlatformTenantStatusChanged(event: PlatformTenantStatusChangedJob) {
+  const status = event.tenantStatus;
+  return htmlLines([
+    `${tenantStatusIcon(status.status)} <b>Tenant đổi trạng thái</b>`,
+    "",
+    `Quán: <b>${escapeHtml(platformTenantLabel(status.restaurantName ?? "Không rõ quán", status.restaurantSlug))}</b>`,
+    status.previousStatus ? `Trước: ${escapeHtml(status.previousStatus)}` : null,
+    `Hiện tại: <b>${escapeHtml(status.status)}</b>`,
+    status.reason ? `Lý do: ${escapeHtml(truncateVisible(status.reason, 160))}` : null,
+    status.actor ? `Actor: ${escapeHtml(status.actor)}` : null,
+    `Thời điểm: ${escapeHtml(formatShortDate(status.changedAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Có thể mở tenant hoặc rollback trạng thái nếu cần."
+  ]);
+}
+
+function formatPlatformSubscriptionStatusChanged(event: PlatformSubscriptionStatusChangedJob) {
+  const subscription = event.subscription;
+  const plan = subscription.planName || subscription.planCode || "Gói SaaS";
+  return htmlLines([
+    `${subscriptionStatusIcon(subscription.status)} <b>Gói đổi trạng thái</b>`,
+    "",
+    `Quán: <b>${escapeHtml(platformTenantLabel(subscription.restaurantName ?? "Không rõ quán", subscription.restaurantSlug))}</b>`,
+    `Gói: ${escapeHtml(plan)}`,
+    subscription.previousStatus ? `Trước: ${escapeHtml(subscription.previousStatus)}` : null,
+    `Hiện tại: <b>${escapeHtml(subscription.status)}</b>`,
+    subscription.currentPeriodEnd || subscription.trialEndsAt ? `Kỳ/trial: ${escapeHtml(formatDateRange(null, subscription.currentPeriodEnd ?? subscription.trialEndsAt ?? null))}` : null,
+    subscription.reason ? `Lý do: ${escapeHtml(truncateVisible(subscription.reason, 180))}` : null,
+    `Thời điểm: ${escapeHtml(formatShortDate(subscription.changedAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Nên rà soát payment chờ duyệt hoặc tenant bị ảnh hưởng."
+  ]);
+}
+
+function htmlLines(lines: Array<string | null | undefined>) {
+  return lines.filter((line) => line !== null && line !== undefined).join("\n");
 }
 
 function serviceChecks() {

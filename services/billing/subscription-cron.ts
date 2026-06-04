@@ -1,6 +1,7 @@
 import { AppError } from "@/lib/response";
 import { DEFAULT_GRACE_PERIOD_DAYS } from "@/lib/billing/subscription-transitions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { notifyPlatformSubscriptionStatusChanged } from "@/services/platform-telegram-events";
 import { addDays, dateOnly, daysUntil, firstOrNull, formatDateVi, isMissingSchemaError } from "./billing-utils";
 import type { SubscriptionReminderCandidateRow } from "./billing-types";
 
@@ -340,6 +341,42 @@ export async function expireStaleRestaurantSubscriptions({
   for (const row of transitionedV2GraceSubscriptions ?? []) affectedRestaurantIds.add(row.restaurant_id);
 
   for (const restaurantId of affectedRestaurantIds) invalidateRestaurantEntitlementCache(restaurantId);
+
+  await Promise.all([
+    ...(expiredTrials ?? []).map((row: { id: string; restaurant_id: string }) =>
+      notifyPlatformSubscriptionStatusChanged({
+        subscriptionId: row.id,
+        restaurantId: row.restaurant_id,
+        previousStatus: "trialing",
+        status: "expired",
+        reason: "Trial đã hết hạn.",
+        changedAt: now,
+        source: "system"
+      })
+    ),
+    ...(pastDueSubscriptions ?? []).map((row: { id: string; restaurant_id: string }) =>
+      notifyPlatformSubscriptionStatusChanged({
+        subscriptionId: row.id,
+        restaurantId: row.restaurant_id,
+        previousStatus: "active",
+        status: "past_due",
+        reason: "Kỳ thanh toán đã quá hạn.",
+        changedAt: now,
+        source: "system"
+      })
+    ),
+    ...(expiredPastDueSubscriptions ?? []).map((row: { id: string; restaurant_id: string }) =>
+      notifyPlatformSubscriptionStatusChanged({
+        subscriptionId: row.id,
+        restaurantId: row.restaurant_id,
+        previousStatus: "past_due",
+        status: "expired",
+        reason: "Quá thời gian grace sau past_due.",
+        changedAt: now,
+        source: "system"
+      })
+    )
+  ]);
 
   const result = {
     expiredTrials: expiredTrials?.length ?? 0,

@@ -75,6 +75,7 @@ const TELEGRAM_MENU_ACTIONS = [
   "menu",
   "help",
   "status",
+  "inbox",
   "ops_board",
   "hot_orders",
   "payments",
@@ -169,6 +170,10 @@ if (bot) {
 
   bot.command("ops", async (ctx) => {
     await replyWithOpsBoard(ctx);
+  });
+
+  bot.command("inbox", async (ctx) => {
+    await replyWithUnifiedInbox(ctx);
   });
 
   bot.command("ca", async (ctx) => {
@@ -586,6 +591,7 @@ async function buildKeyboard(
 
   if (actions.length > 0) keyboard.row();
   if (viewPath) keyboard.url("Xem", absoluteAppUrl(viewPath));
+  keyboard.text("Inbox", await signedMenuCallback(connection, "inbox"));
   return keyboard;
 }
 
@@ -684,6 +690,7 @@ async function configureTelegramCommands() {
   if (!bot) return;
   await bot.api.setMyCommands([
     { command: "menu", description: "Mở trung tâm vận hành" },
+    { command: "inbox", description: "Việc cần xử lý ngay" },
     { command: "ops", description: "Xem bảng điều hành realtime" },
     { command: "ca", description: "Ca làm và việc của nhân viên" },
     { command: "don", description: "Đơn cần xử lý" },
@@ -796,6 +803,10 @@ async function handleTelegramMenuAction(ctx: Context, action: TelegramMenuAction
     await replyWithConnectionStatus(ctx);
     return;
   }
+  if (action === "inbox") {
+    await replyWithUnifiedInbox(ctx, connection);
+    return;
+  }
   if (action === "ops_board") {
     await replyWithOpsBoard(ctx, connection);
     return;
@@ -828,10 +839,10 @@ async function replyWithOpsBoard(ctx: Context, preferredConnection?: TelegramCon
   }
 
   const board = await getTelegramOpsBoard(connection);
-  const callbacks = await signedMenuCallbacks(connection, ["ops_board", "tinhhinh", "hot_orders", "payments", "reservations", "staff", "menu_ops", "incidents"]);
+  const callbacks = await signedMenuCallbacks(connection, ["inbox", "ops_board", "tinhhinh", "hot_orders", "payments", "reservations", "staff", "menu_ops", "incidents"]);
   const counts = board.counts;
   const keyboard = new InlineKeyboard()
-    .text("Làm mới", callbacks.ops_board)
+    .text("Inbox", callbacks.inbox)
     .text("AI tóm tắt", callbacks.tinhhinh)
     .row()
     .text("Đơn nóng", callbacks.hot_orders)
@@ -865,6 +876,37 @@ async function replyWithOpsBoard(ctx: Context, preferredConnection?: TelegramCon
   );
 }
 
+async function replyWithUnifiedInbox(ctx: Context, preferredConnection?: TelegramConnection) {
+  const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
+  if (!connection) {
+    await replyWithOpsMenu(ctx, "Chưa có kết nối Telegram.");
+    return;
+  }
+
+  const [board, inbox] = await Promise.all([
+    getTelegramOpsBoard(connection),
+    getTelegramOpsInbox(connection, "all")
+  ]);
+  const callbacks = await signedMenuCallbacks(connection, ["inbox", "ops_board", "tinhhinh", "hot_orders", "payments", "reservations", "staff"]);
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", callbacks.inbox)
+    .text("AI tóm tắt", callbacks.tinhhinh)
+    .row();
+
+  await appendInboxSelectors(keyboard, connection, "all", inbox.slice(0, 8));
+  keyboard
+    .text("Đơn", callbacks.hot_orders)
+    .text("Thanh toán", callbacks.payments)
+    .row()
+    .text("Đặt bàn", callbacks.reservations)
+    .text("Nhân sự", callbacks.staff)
+    .row()
+    .text("Tổng quan", callbacks.ops_board)
+    .url("Dashboard", absoluteAppUrl("/dashboard"));
+
+  await ctx.reply(formatUnifiedInbox(board, inbox), { reply_markup: keyboard });
+}
+
 async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops">, preferredConnection?: TelegramConnection) {
   const connection = preferredConnection ?? (await firstConnectionForContext(ctx));
   if (!connection) {
@@ -875,27 +917,47 @@ async function replyWithOpsSlice(ctx: Context, action: Extract<TelegramMenuActio
   const board = await getTelegramOpsBoard(connection);
   const inbox = await getTelegramOpsInbox(connection, action);
   const callbacks = await signedMenuCallbacks(connection, [action, "ops_board"]);
-  const inboxActionRows = await Promise.all(
-    inbox.slice(0, 4).map(async (item) => {
-      const actions = actionsForInboxItem(item).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType])).slice(0, 2);
-      const tokens = await Promise.all(actions.map((actionType) => createCallbackTokenForInboxItem(item, actionType, connection)));
-      return { item, actions, tokens };
-    })
-  );
   const keyboard = new InlineKeyboard()
     .text("Làm mới", callbacks[action])
     .text("Tổng quan", callbacks.ops_board)
     .row();
 
-  for (const row of inboxActionRows) {
-    for (const [index, actionType] of row.actions.entries()) {
-      keyboard.text(`${labelForAction(actionType)} ${shortId(row.item.id)}`, row.tokens[index]);
-    }
-    if (row.actions.length > 0) keyboard.row();
-  }
+  await appendInboxSelectors(keyboard, connection, action, inbox.slice(0, 6));
   keyboard.url("Mở Dashboard", absoluteAppUrl(routeForOpsSlice(action)));
 
   await ctx.reply(formatOpsSlice(action, board, inbox), { reply_markup: keyboard });
+}
+
+async function replyWithOpsItemDetail(ctx: Context, connection: TelegramConnection, slice: TelegramOpsInboxSlice, itemId: string) {
+  const inbox = await getTelegramOpsInbox(connection, slice);
+  const item = inbox.find((candidate) => candidate.id === itemId) ?? (slice === "all" ? null : (await getTelegramOpsInbox(connection, "all")).find((candidate) => candidate.id === itemId));
+  if (!item) {
+    const callbacks = await signedMenuCallbacks(connection, [sliceMenuAction(slice), "inbox"]);
+    await ctx.reply("Việc này đã được xử lý hoặc không còn trong phạm vi của bạn.", {
+      reply_markup: new InlineKeyboard().text("Tải lại", callbacks[sliceMenuAction(slice)]).text("Inbox", callbacks.inbox)
+    });
+    return;
+  }
+
+  const actions = actionsForInboxItem(item).filter((actionType) => hasPermission(connection, requiredPermissionByAction[actionType])).slice(0, 4);
+  const actionTokens = await Promise.all(actions.map((actionType) => createCallbackTokenForInboxItem(item, actionType, connection)));
+  const callbacks = await signedMenuCallbacks(connection, [sliceMenuAction(slice), "inbox", "ops_board"]);
+  const keyboard = new InlineKeyboard();
+
+  for (const [index, actionType] of actions.entries()) {
+    keyboard.text(labelForAction(actionType), actionTokens[index]);
+    if ((index + 1) % 2 === 0) keyboard.row();
+  }
+  if (actions.length % 2 !== 0) keyboard.row();
+
+  keyboard
+    .text("Danh sách", callbacks[sliceMenuAction(slice)])
+    .text("Inbox", callbacks.inbox)
+    .row()
+    .text("Tổng quan", callbacks.ops_board)
+    .url("Dashboard", absoluteAppUrl(routeForInboxItem(item)));
+
+  await ctx.reply(formatOpsItemDetail(item), { reply_markup: keyboard });
 }
 
 async function firstConnectionForContext(ctx: Context) {
@@ -906,9 +968,11 @@ async function firstConnectionForContext(ctx: Context) {
 
 async function buildTenantOpsMenuKeyboard(keyboard: InlineKeyboard, connection: TelegramConnection) {
   if (connection.role === "ADMIN") {
-    const callbacks = await signedMenuCallbacks(connection, ["ops_board", "hot_orders", "payments", "reservations", "staff", "menu_ops", "tinhhinh", "tonkho", "briefings", "incidents", "status"]);
+    const callbacks = await signedMenuCallbacks(connection, ["inbox", "ops_board", "hot_orders", "payments", "reservations", "staff", "menu_ops", "tinhhinh", "tonkho", "briefings", "incidents", "status"]);
     keyboard
+      .text("Inbox", callbacks.inbox)
       .text("Hôm nay", callbacks.ops_board)
+      .row()
       .text("Đơn nóng", callbacks.hot_orders)
       .row()
       .text("Thanh toán", callbacks.payments)
@@ -929,16 +993,18 @@ async function buildTenantOpsMenuKeyboard(keyboard: InlineKeyboard, connection: 
     return;
   }
 
-  const staffActions: TelegramMenuAction[] = ["staff_shift", "hot_orders", "staff", "status"];
+  const staffActions: TelegramMenuAction[] = ["inbox", "staff_shift", "hot_orders", "staff", "status"];
   if (hasPermission(connection, "payments.view")) staffActions.push("payments");
   if (hasPermission(connection, "inventory.view")) staffActions.push("tonkho");
   const callbacks = await signedMenuCallbacks(connection, staffActions);
 
   keyboard
+    .text("Inbox", callbacks.inbox)
     .text("Ca", callbacks.staff_shift)
-    .text("Đơn", callbacks.hot_orders)
     .row()
+    .text("Đơn", callbacks.hot_orders)
     .text("Bàn gọi", callbacks.staff)
+    .row()
     .text("Yêu cầu", callbacks.staff)
     .row();
 
@@ -1047,6 +1113,132 @@ async function replyWithOpenIncidents(ctx: Context, preferredConnection?: Telegr
   await ctx.reply(compactTelegramText(lines.join("\n"), 1600), { reply_markup: keyboard });
 }
 
+async function appendInboxSelectors(keyboard: InlineKeyboard, connection: TelegramConnection, slice: TelegramOpsInboxSlice, items: TelegramOpsInboxItem[]) {
+  for (const [index, item] of items.entries()) {
+    keyboard.text(`#${index + 1}`, await createOpsItemDetailToken(connection, slice, item));
+    if ((index + 1) % 4 === 0) keyboard.row();
+  }
+  if (items.length && items.length % 4 !== 0) keyboard.row();
+}
+
+async function createOpsItemDetailToken(connection: TelegramConnection, slice: TelegramOpsInboxSlice, item: TelegramOpsInboxItem) {
+  const token = await createTelegramSession({
+    connection,
+    state: "idle",
+    payload: { purpose: "ops_item_detail", slice, itemId: item.id },
+    ttlSeconds: numberEnv("TELEGRAM_MENU_SESSION_TTL_SECONDS", 300)
+  });
+  return `${TELEGRAM_SESSION_CALLBACK_PREFIX}${token}`;
+}
+
+function formatUnifiedInbox(board: Awaited<ReturnType<typeof getTelegramOpsBoard>>, inbox: TelegramOpsInboxItem[]) {
+  const counts = board.counts;
+  const lines = inbox.length
+    ? inbox.slice(0, 8).map((item, index) => formatInboxListLine(item, index))
+    : ["Không có việc cần xử lý ngay trong phạm vi này."];
+  return compactTelegramText(
+    [
+      `Inbox vận hành · ${board.scopeLabel}`,
+      "",
+      `Khẩn: ${counts.lateOrders} SLA · ${counts.waitingPayments} thanh toán · ${counts.openServiceRequests} bàn gọi`,
+      `Hôm nay: ${counts.pendingOrders} đơn mới · ${counts.todayReservations} đặt bàn · ${counts.pendingStaffRequests} nhân sự`,
+      "",
+      ...lines,
+      "",
+      inbox.length ? "Bấm số để mở chi tiết và thao tác." : "Bấm AI tóm tắt nếu muốn rà soát toàn bộ vận hành."
+    ].join("\n"),
+    1800
+  );
+}
+
+function formatInboxListLine(item: TelegramOpsInboxItem, index: number) {
+  const age = item.createdAt ? ` · ${formatAge(item.createdAt)}` : "";
+  const detail = item.detail ? `\n   ${compactTelegramText(item.detail, 140)}` : "";
+  return `#${index + 1} ${inboxKindLabel(item.kind)} · ${item.title}${age}${detail}`;
+}
+
+function formatOpsItemDetail(item: TelegramOpsInboxItem) {
+  const stateLines = inboxStateLines(item);
+  const age = item.createdAt ? `Tạo: ${formatShortDate(item.createdAt)} (${formatAge(item.createdAt)})` : null;
+  return compactTelegramText(
+    [
+      `${inboxKindLabel(item.kind)} · ${item.title}`,
+      "",
+      item.detail || null,
+      age,
+      stateLines.length ? "" : null,
+      ...stateLines,
+      "",
+      "Chọn thao tác bên dưới. Các hành động nhạy cảm sẽ được ghi audit."
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n"),
+    1800
+  );
+}
+
+function inboxStateLines(item: TelegramOpsInboxItem) {
+  const state = item.state;
+  if (item.kind === "order") {
+    return [
+      state.status ? `Đơn: ${state.status}` : null,
+      state.paymentStatus ? `Thanh toán: ${state.paymentStatus}` : null,
+      state.fulfillmentType ? `Kênh: ${state.fulfillmentType}` : null,
+      state.deliveryStatus && state.deliveryStatus !== "none" ? `Giao hàng: ${state.deliveryStatus}` : null,
+      state.deliveryAddress ? `Địa chỉ: ${state.deliveryAddress}` : null,
+      state.late ? "Rủi ro: trễ SLA" : null
+    ].filter((line): line is string => Boolean(line));
+  }
+  if (item.kind === "payment") {
+    return [
+      state.paymentMethod ? `Phương thức: ${state.paymentMethod}` : null,
+      state.paymentStatus ? `Trạng thái tiền: ${state.paymentStatus}` : null,
+      state.customerPhone ? `SĐT khách: ${state.customerPhone}` : null,
+      state.deliveryAddress ? `Địa chỉ: ${state.deliveryAddress}` : null
+    ].filter((line): line is string => Boolean(line));
+  }
+  if (item.kind === "reservation") {
+    return [
+      state.startsAt ? `Giờ: ${formatShortDate(String(state.startsAt))}` : null,
+      state.depositStatus ? `Cọc: ${state.depositStatus}` : null,
+      state.customerPhone ? `SĐT khách: ${state.customerPhone}` : null,
+      state.customerNote ? `Ghi chú: ${state.customerNote}` : null
+    ].filter((line): line is string => Boolean(line));
+  }
+  if (item.kind === "staff_request") {
+    return [state.requestType ? `Loại yêu cầu: ${state.requestType}` : null, state.status ? `Trạng thái: ${state.status}` : null].filter((line): line is string => Boolean(line));
+  }
+  if (item.kind === "service_request") {
+    return [state.type ? `Loại: ${state.type}` : null, state.status ? `Trạng thái: ${state.status}` : null].filter((line): line is string => Boolean(line));
+  }
+  if (item.kind === "menu_item") return [`Đang bán: ${state.available === true ? "có" : "không"}`];
+  return [];
+}
+
+function inboxKindLabel(kind: TelegramOpsInboxItem["kind"]) {
+  const labels: Record<TelegramOpsInboxItem["kind"], string> = {
+    order: "Đơn",
+    payment: "Thanh toán",
+    reservation: "Đặt bàn",
+    service_request: "Bàn gọi",
+    staff_request: "Nhân sự",
+    menu_item: "Menu"
+  };
+  return labels[kind];
+}
+
+function sliceMenuAction(slice: TelegramOpsInboxSlice): TelegramMenuAction {
+  return slice === "all" ? "inbox" : slice;
+}
+
+function routeForInboxItem(item: TelegramOpsInboxItem) {
+  if (item.kind === "payment" || item.kind === "order") return `/dashboard/orders?orderId=${item.id}`;
+  if (item.kind === "reservation") return `/dashboard/reservations?reservationId=${item.id}`;
+  if (item.kind === "staff_request") return `/dashboard/staff?approvalId=${item.id}`;
+  if (item.kind === "menu_item") return `/dashboard/menu?itemId=${item.id}`;
+  return "/dashboard";
+}
+
 function formatOpsSlice(
   action: Extract<TelegramMenuAction, "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops">,
   board: Awaited<ReturnType<typeof getTelegramOpsBoard>>,
@@ -1054,7 +1246,7 @@ function formatOpsSlice(
 ) {
   const counts = board.counts;
   const inboxLines = inbox.length
-    ? ["", "Cần xử lý:", ...inbox.slice(0, 5).map((item) => `- ${item.title}${item.detail ? ` · ${item.detail}` : ""}`)]
+    ? ["", "Cần xử lý:", ...inbox.slice(0, 6).map(formatInboxListLine), "", "Bấm số để mở chi tiết và thao tác."]
     : ["", "Không có việc nóng trong phạm vi này."];
   if (action === "hot_orders") {
     return compactTelegramText(
@@ -1300,6 +1492,13 @@ async function handleTelegramSessionCallback(ctx: Context, token: string) {
     return;
   }
 
+  const itemPayload = opsItemDetailPayloadSchema.safeParse(claimed.session.payload);
+  if (itemPayload.success) {
+    await ctx.answerCallbackQuery({ text: "Đang mở chi tiết..." });
+    await replyWithOpsItemDetail(ctx, claimed.connection, itemPayload.data.slice, itemPayload.data.itemId);
+    return;
+  }
+
   const payload = aiOpsSessionPayloadSchema.parse(claimed.session.payload);
   await ctx.answerCallbackQuery({ text: "Đang đọc dữ liệu..." });
   await ctx.editMessageReplyMarkup().catch(() => undefined);
@@ -1362,6 +1561,12 @@ const aiOpsSessionPayloadSchema = z.object({
 const menuActionPayloadSchema = z.object({
   purpose: z.literal("menu_action"),
   action: z.enum(TELEGRAM_MENU_ACTIONS)
+});
+
+const opsItemDetailPayloadSchema = z.object({
+  purpose: z.literal("ops_item_detail"),
+  slice: z.enum(["all", "hot_orders", "payments", "reservations", "staff", "menu_ops"]),
+  itemId: z.string().uuid()
 });
 
 function aiOpsSessionPayload(command: AiOpsCommand, spec: AiOpsRequestSpec) {
@@ -1814,6 +2019,29 @@ function telegramBackoffStrategy(attemptsMade: number, _type?: string, error?: E
 
 function shortId(id: string) {
   return id.replaceAll("-", "").slice(0, 6).toUpperCase();
+}
+
+function formatShortDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "không rõ";
+  return date.toLocaleString("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatAge(value: string) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) return "không rõ";
+  const minutes = Math.max(0, Math.floor((Date.now() - time) / 60_000));
+  if (minutes < 1) return "vừa xong";
+  if (minutes < 60) return `${minutes} phút trước`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} giờ trước`;
+  return `${Math.floor(hours / 24)} ngày trước`;
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, jobName: string) {

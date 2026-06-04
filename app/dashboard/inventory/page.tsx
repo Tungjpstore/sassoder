@@ -4,11 +4,12 @@ import { InventoryWorkspaceV2 } from "@/components/dashboard/inventory-workspace
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { getInventoryWorkspaceData } from "@/services/inventory-service";
+import { hasFeature } from "@/services/subscription-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminInventoryPage() {
-  const { session, entitlement } = await requireDashboardAccess("inventory_management");
+  const { session, entitlement } = await requireDashboardAccess("inventory_basic");
   return (
     <AdminShell
       title="Kho hàng"
@@ -19,13 +20,36 @@ export default async function AdminInventoryPage() {
       hideHeading
     >
       <Suspense fallback={<InventoryWorkspaceSkeleton />}>
-        <InventoryWorkspaceContent restaurantId={session.restaurantId} />
+        <InventoryWorkspaceContent
+          restaurantId={session.restaurantId}
+          inventoryFeatures={{
+            basic: hasFeature(entitlement, "inventory_basic"),
+            procurement: hasFeature(entitlement, "inventory_procurement"),
+            warehouseAdvanced: hasFeature(entitlement, "inventory_warehouse_advanced"),
+            alerts: hasFeature(entitlement, "inventory_alerts"),
+            premium: hasFeature(entitlement, "inventory_premium"),
+            aiOcr: hasFeature(entitlement, "inventory_ai_ocr")
+          }}
+        />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function InventoryWorkspaceContent({ restaurantId }: { restaurantId: string }) {
+async function InventoryWorkspaceContent({
+  restaurantId,
+  inventoryFeatures
+}: {
+  restaurantId: string;
+  inventoryFeatures: {
+    basic: boolean;
+    procurement: boolean;
+    warehouseAdvanced: boolean;
+    alerts: boolean;
+    premium: boolean;
+    aiOcr: boolean;
+  };
+}) {
   const inventory = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "inventory",
@@ -42,6 +66,7 @@ async function InventoryWorkspaceContent({ restaurantId }: { restaurantId: strin
       recipeMenuItems={inventory.recipeMenuItems}
       intelligence={inventory.intelligence}
       warehouse={inventory.warehouse}
+      inventoryFeatures={inventoryFeatures}
     />
   );
 }

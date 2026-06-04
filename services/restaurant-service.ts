@@ -18,6 +18,7 @@ import { hashStaffPin, staffPinLookupHash } from "@/features/staff/services/staf
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { searchAddress } from "@/services/maps/geocoding/geocoder-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
+import { notifyPlatformTenantCreated } from "@/services/platform-telegram-events";
 import { isPublicTenantActive } from "@/services/tenant-status-guard";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
@@ -1697,6 +1698,13 @@ export async function completeRestaurantOnboarding(input: {
       console.error("Failed to persist onboarding AI logo", error);
     }
   }
+
+  await notifyPlatformTenantCreated({
+    restaurant: onboardedRestaurant,
+    requestedPlanCode: tableLimit.planCode,
+    initialMenuItemCount: menuItems.length,
+    source: "dashboard"
+  });
 
   return onboardedRestaurant;
 }

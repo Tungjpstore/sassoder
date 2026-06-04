@@ -117,6 +117,10 @@ export const eventRoutes = {
     route("staff.notifications", "staff.request_reviewed", "normal"),
     route("telegram.notifications", "staff.request_reviewed", "low")
   ],
+  "staff.incident_reported": [
+    route("staff.requests", "staff.incident_reported", "critical"),
+    route("telegram.notifications", "staff.incident_reported", "critical")
+  ],
   "sla.warning": [
     route("orders.sla", "sla.warning", "critical"),
     route("telegram.notifications", "sla.warning", "critical")
@@ -131,6 +135,24 @@ export const eventRoutes = {
   ],
   "platform.alert": [
     route("platform.telegram.notifications", "platform.alert", "critical")
+  ],
+  "platform.tenant.created": [
+    route("platform.telegram.notifications", "platform.tenant.created", "high")
+  ],
+  "platform.subscription.approval_requested": [
+    route("platform.telegram.notifications", "platform.subscription.approval_requested", "critical")
+  ],
+  "platform.subscription.confirmed": [
+    route("platform.telegram.notifications", "platform.subscription.confirmed", "critical")
+  ],
+  "platform.subscription.rejected": [
+    route("platform.telegram.notifications", "platform.subscription.rejected", "critical")
+  ],
+  "platform.tenant.status_changed": [
+    route("platform.telegram.notifications", "platform.tenant.status_changed", "critical")
+  ],
+  "platform.subscription.status_changed": [
+    route("platform.telegram.notifications", "platform.subscription.status_changed", "critical")
   ]
 };
 
@@ -472,7 +494,7 @@ function buildJobId({ queueName, name, data }) {
 function operationalTenantId(data) {
   const tenantId = tenantIdFromJobData(data);
   if (tenantId) return tenantId;
-  return data?.type === "platform.alert" ? "platform" : "";
+  return typeof data?.type === "string" && data.type.startsWith("platform.") ? "platform" : "";
 }
 
 function jobIdForParts(...parts) {

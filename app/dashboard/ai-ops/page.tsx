@@ -276,7 +276,7 @@ export default async function AiOpsPage({
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
-        <AiOwnerActionLauncher variant="ops" />
+        <AiOwnerActionLauncher variant="ops" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Việc AI hôm nay"
           subtitle="Cảnh báo thật, đề xuất cần duyệt và thao tác đã sẵn sàng."

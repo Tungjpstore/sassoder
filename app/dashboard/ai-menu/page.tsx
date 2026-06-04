@@ -241,7 +241,7 @@ export default async function AiMenuPage() {
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
-        <AiOwnerActionLauncher variant="menu" />
+        <AiOwnerActionLauncher variant="menu" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Việc AI cho menu"
           subtitle="Cơ hội menu, ảnh món và combo cần duyệt."

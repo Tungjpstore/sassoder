@@ -11,6 +11,11 @@ export const billingFeatureKeys = [
   "payment_qr",
   "menu_management",
   "online_ordering",
+  "order_realtime",
+  "inventory_basic",
+  "inventory_premium",
+  "inventory_ai_ocr",
+  "inventory_ai_intelligence",
   "basic_analytics",
   "ai_menu_generation",
   "ai_chatbot",
@@ -51,7 +56,7 @@ export type FeatureDescriptor = {
   key: BillingFeatureKey;
   label: string;
   description: string;
-  group: "core" | "ai" | "analytics" | "growth" | "automation" | "brand";
+  group: "core" | "ai" | "analytics" | "growth" | "automation" | "brand" | "inventory";
   badge?: BillingBadgeKind;
   upgradeHeadline: string;
   upgradeBullets: string[];

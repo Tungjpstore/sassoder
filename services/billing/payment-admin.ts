@@ -1,6 +1,7 @@
 import { computeConfirmedSubscriptionTransition } from "@/lib/billing/subscription-transitions";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { notifyPlatformSubscriptionResolved } from "@/services/platform-telegram-events";
 import { asRecord, isMissingSchemaError } from "./billing-utils";
 import { mirrorLegacyPaymentFinalStateToBillingV2 } from "./billing-v2-bridge";
 import type { PaymentRow, PlanRow, SubscriptionRow } from "./billing-types";
@@ -92,6 +93,12 @@ export async function confirmSubscriptionPayment({
   }
   invalidateRestaurantEntitlementCache(paymentRow.restaurant_id);
   await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
+  await notifyPlatformSubscriptionResolved({
+    paymentId,
+    status: "confirmed",
+    resolvedBy: confirmedBy,
+    source: confirmedBy.startsWith("webhook:") ? "system" : "devops"
+  });
 }
 
 export async function rejectSubscriptionPayment({
@@ -137,4 +144,11 @@ export async function rejectSubscriptionPayment({
 
   invalidateRestaurantEntitlementCache(data.restaurant_id);
   await mirrorLegacyPaymentFinalStateToBillingV2(paymentId);
+  await notifyPlatformSubscriptionResolved({
+    paymentId,
+    status: "rejected",
+    resolvedBy: rejectedBy,
+    rejectedReason: reason || null,
+    source: rejectedBy.startsWith("webhook:") ? "system" : "devops"
+  });
 }

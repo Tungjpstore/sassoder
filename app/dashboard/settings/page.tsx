@@ -51,6 +51,7 @@ import { listStoreBranchesForManagement } from "@/services/branch-service";
 import { listDeliveryBranchSettings, type BranchDeliverySettings } from "@/services/delivery/branch-delivery-settings-service";
 import { getMapOperationalMetrics } from "@/services/map-ops-service";
 import { getRestaurantBillingPortal } from "@/services/subscription-service";
+import { featureLabels, normalizeFeatureKey, type PlanFeatureKey } from "@/services/billing/plan-features";
 import type { Database } from "@/types/supabase";
 
 export const dynamic = "force-dynamic";
@@ -985,7 +986,8 @@ function SubscriptionSettingsPanel({
   menuItemCount,
   staffCount,
   activeStep,
-  selectedPaymentId
+  selectedPaymentId,
+  gatedFeatureKey
 }: {
   billing: BillingPortal;
   billingError?: string | null;
@@ -994,6 +996,7 @@ function SubscriptionSettingsPanel({
   staffCount: number;
   activeStep: BillingStepKey;
   selectedPaymentId?: string | null;
+  gatedFeatureKey?: PlanFeatureKey | null;
 }) {
   const pending = billing.pendingPayment;
   const pendingChange = billing.pendingChange;
@@ -1013,6 +1016,11 @@ function SubscriptionSettingsPanel({
   const currentBenefits = Object.values(billing.resolvedSnapshot.features)
     .filter((feature) => feature.state === "active" && feature.includedInPlan)
     .slice(0, 5);
+  const premiumUpsellBenefits = Object.values(billing.resolvedSnapshot.features)
+    .filter((feature) => feature.state === "locked_plan" && feature.badge === "PREMIUM")
+    .slice(0, 4);
+  const gatedFeatureLabel = gatedFeatureKey ? featureLabels[gatedFeatureKey] : null;
+  const showGatedFeatureCallout = Boolean(gatedFeatureLabel && billing.currentPlan.code !== "premium");
   const confirmedCount = billing.paymentRequests.filter((payment) => payment.status === "confirmed").length;
   const waitingCount = billing.paymentRequests.filter((payment) => payment.status === "waiting_confirm").length;
   const failedCount = billing.paymentRequests.filter((payment) => payment.status === "rejected" || payment.status === "expired").length;
@@ -1175,6 +1183,26 @@ function SubscriptionSettingsPanel({
             <Link href={billingStepHref("compare")} className="mt-5 inline-flex items-center gap-1 text-sm font-black text-[#0F6B3F]">
               Xem tất cả quyền lợi <ArrowRight size={14} aria-hidden="true" />
             </Link>
+            {premiumUpsellBenefits.length ? (
+              <div className="mt-5 rounded-[18px] border border-[#F2B36E] bg-[#FFF7EC] p-4">
+                <SoftPill className="border-[#F2B36E] bg-white text-[#A95712]">
+                  <Crown size={13} className="mr-1" aria-hidden="true" />
+                  Premium
+                </SoftPill>
+                <p className="mt-3 text-sm font-black text-[#151915]">Mở thêm khi nâng cấp</p>
+                <div className="mt-3 grid gap-2">
+                  {premiumUpsellBenefits.map((feature) => (
+                    <div key={feature.key} className="flex items-start gap-2 text-xs font-bold leading-5 text-[#6B4B24]">
+                      <LockKeyhole size={13} className="mt-0.5 shrink-0 text-[#E37A1F]" aria-hidden="true" />
+                      <span>{feature.label}</span>
+                    </div>
+                  ))}
+                </div>
+                <Link href={billingStepHref("compare")} className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-[10px] bg-[#075C38] px-3 text-xs font-black text-white transition hover:bg-[#064D30]">
+                  Xem gói Premium
+                </Link>
+              </div>
+            ) : null}
           </aside>
         </div>
       </BillingSurface>
@@ -1190,6 +1218,22 @@ function SubscriptionSettingsPanel({
           </div>
         </div>
 
+        {showGatedFeatureCallout ? (
+          <div className="mt-5 rounded-[18px] border border-[#F2B36E] bg-[#FFF7EC] p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
+            <div className="min-w-0">
+              <SoftPill className="border-[#F2B36E] bg-white text-[#A95712]">
+                <LockKeyhole size={13} className="mr-1" aria-hidden="true" />
+                Premium
+              </SoftPill>
+              <p className="mt-3 text-sm font-black text-[#151915]">{gatedFeatureLabel} thuộc nhóm cần nâng cấp Premium</p>
+              <p className="mt-1 text-xs font-semibold leading-5 text-[#7A5B34]">Bạn vẫn giữ toàn bộ quyền Pro hiện tại. Nâng Premium để mở thêm tính năng này cùng báo cáo sâu, kho nâng cao và tự động hóa vận hành.</p>
+            </div>
+            <a href="#billing-plan-premium" className="mt-4 inline-flex min-h-10 shrink-0 items-center justify-center rounded-[10px] bg-[#075C38] px-4 text-xs font-black text-white transition hover:bg-[#064D30] sm:mt-0">
+              Xem Premium
+            </a>
+          </div>
+        ) : null}
+
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
           {sortedPlans.map((plan) => {
             const isCurrentPlan = plan.id === billing.currentPlan.id;
@@ -1202,6 +1246,7 @@ function SubscriptionSettingsPanel({
             return (
               <article
                 key={plan.id}
+                id={plan.code ? `billing-plan-${plan.code}` : undefined}
                 className={cn(
                   "relative rounded-[22px] border bg-white p-5 transition",
                   isPremium ? "border-[#F2B36E] shadow-[0_18px_50px_rgba(242,140,40,0.12)]" : "border-[#E8E0D5]",
@@ -1779,7 +1824,8 @@ function renderActiveSection({
   setupReadiness,
   billingError,
   billingStep,
-  billingPaymentId
+  billingPaymentId,
+  gatedFeatureKey
 }: {
   activeSection: SettingsSectionKey;
   restaurant: RestaurantRow;
@@ -1799,6 +1845,7 @@ function renderActiveSection({
   billingError?: string | null;
   billingStep: BillingStepKey;
   billingPaymentId?: string | null;
+  gatedFeatureKey?: PlanFeatureKey | null;
 }) {
   if (activeSection === "profile") return <ProfileSettingsForm restaurant={restaurant} email={sessionEmail} />;
   if (activeSection === "ai_setup") return <AiSetupStudio readiness={setupReadiness} restaurantName={restaurant.name} />;
@@ -1836,6 +1883,7 @@ function renderActiveSection({
         staffCount={staffCount}
         activeStep={billingStep}
         selectedPaymentId={billingPaymentId}
+        gatedFeatureKey={gatedFeatureKey}
       />
     );
   }
@@ -1858,7 +1906,10 @@ export default async function AdminSettingsPage({
 }) {
   const params = await searchParams;
   const activeSection = normalizeSection(params?.section);
-  const billingStep = normalizeBillingStep(params?.billingStep);
+  const gateParam = Array.isArray(params?.gate) ? params?.gate[0] : params?.gate;
+  const featureParam = Array.isArray(params?.feature) ? params?.feature[0] : params?.feature;
+  const gatedFeatureKey = gateParam === "feature" && featureParam ? normalizeFeatureKey(featureParam) : null;
+  const billingStep = normalizeBillingStep(params?.billingStep ?? (gatedFeatureKey ? "compare" : undefined));
   const billingPaymentIdParam = Array.isArray(params?.paymentId) ? params?.paymentId[0] : params?.paymentId;
   const billingPaymentId = billingPaymentIdParam ? billingPaymentIdParam.slice(0, 80) : null;
   const billingErrorParam = Array.isArray(params?.billingError) ? params?.billingError[0] : params?.billingError;
@@ -2030,7 +2081,8 @@ export default async function AdminSettingsPage({
                 setupReadiness,
                 billingError,
                 billingStep,
-                billingPaymentId
+                billingPaymentId,
+                gatedFeatureKey
               })}
             </section>
           </div>

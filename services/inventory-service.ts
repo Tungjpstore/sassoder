@@ -7,7 +7,7 @@ import {
   type InventoryFefoStockInput
 } from "@/lib/inventory-fefo-allocation-engine";
 import { AppError } from "@/lib/response";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { createAdminSupabaseClient, createScopedAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import type { InventoryMovementType } from "@/types/domain";
@@ -16,6 +16,13 @@ type UntypedSupabase = {
   from: (table: string) => any;
   rpc: (fn: string, args: Record<string, unknown>) => any;
 };
+
+const inventoryActorHeader = "x-logivn-inventory-actor-id";
+
+function createInventoryMutationSupabaseClient(actorUserId?: string | null) {
+  if (!actorUserId) throw new AppError("Can co nguoi thuc hien de ghi nhan nghiep vu kho.", 400);
+  return createScopedAdminSupabaseClient({ [inventoryActorHeader]: actorUserId });
+}
 
 export type InventoryCategory = {
   id: string;
@@ -2088,7 +2095,7 @@ export async function createInventorySupplier(restaurantId: string, input: Inven
 export async function createInventoryPurchaseOrder(restaurantId: string, input: InventoryPurchaseOrderInput) {
   if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong hang de tao PO.", 400);
 
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("create_purchase_order", {
     target_restaurant_id: restaurantId,
@@ -2122,7 +2129,7 @@ export async function receiveInventoryPurchaseOrder(
   restaurantId: string,
   input: { purchaseOrderId: string; actorUserId: string; lines?: InventoryPurchaseOrderReceiptLineInput[] }
 ): Promise<InventoryPurchaseOrderReceiptResult> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("receive_purchase_order", {
     target_restaurant_id: restaurantId,
@@ -2163,7 +2170,7 @@ export async function receiveInventoryPurchaseOrder(
 export async function applyInventoryCount(restaurantId: string, input: InventoryCountInput): Promise<InventoryCountApplyResult> {
   if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong de kiem ke kho.", 400);
 
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("apply_inventory_count", {
     target_restaurant_id: restaurantId,
@@ -2201,7 +2208,7 @@ export async function createInventoryTransfer(restaurantId: string, input: Inven
   if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong de dieu chuyen kho.", 400);
   if (input.fromLocationId === input.toLocationId) throw new AppError("Kho xuat va kho nhan phai khac nhau.", 400);
 
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("create_branch_transfer", {
     target_restaurant_id: restaurantId,
@@ -2249,7 +2256,7 @@ export async function processInventoryTransfer(
     lines?: InventoryTransferReceiveLineInput[];
   }
 ): Promise<InventoryTransferResult> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("process_branch_transfer", {
     target_restaurant_id: restaurantId,
@@ -2319,7 +2326,7 @@ export async function updateInventoryAlertStatus(
 
 export async function refreshInventoryAlerts(restaurantId: string): Promise<InventoryAlertRefreshResult> {
   await ensureDefaultStoreBranch(restaurantId);
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
   const now = new Date();
   const movementStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -2951,7 +2958,7 @@ export async function deductInventoryForOrder(
   orderId: string,
   actorUserId?: string | null
 ): Promise<InventoryOrderSyncResult> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(actorUserId);
   const db = supabase as unknown as UntypedSupabase;
 
   const existingResult = await db
@@ -3015,7 +3022,7 @@ export async function rollbackInventoryForOrder(
   orderId: string,
   actorUserId?: string | null
 ): Promise<InventoryOrderSyncResult> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(actorUserId);
   const db = supabase as unknown as UntypedSupabase;
 
   const rollbackResult = await db
@@ -3109,7 +3116,7 @@ export async function recordInventoryMovement(
     actorUserId: string;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db.rpc("apply_inventory_movement", {
     target_restaurant_id: restaurantId,

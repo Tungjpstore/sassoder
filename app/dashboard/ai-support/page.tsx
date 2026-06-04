@@ -231,7 +231,7 @@ export default async function AiSupportPage() {
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
-        <AiOwnerActionLauncher variant="support" />
+        <AiOwnerActionLauncher variant="support" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Luồng AI Support có handoff"
           subtitle="Kịch bản chăm sóc khách dùng memory public, chuyển người thật khi nhạy cảm và kiểm tra câu trả lời trước khi dùng."

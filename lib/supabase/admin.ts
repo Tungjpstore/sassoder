@@ -19,3 +19,17 @@ export function createAdminSupabaseClient() {
 
   return adminClient;
 }
+
+export function createScopedAdminSupabaseClient(headers: Record<string, string>) {
+  const { url, serviceRoleKey } = getSupabaseServiceEnv();
+
+  return createClient<Database>(url, serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    },
+    global: {
+      headers
+    }
+  });
+}

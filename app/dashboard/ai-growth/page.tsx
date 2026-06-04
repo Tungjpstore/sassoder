@@ -259,7 +259,7 @@ export default async function AiGrowthPage() {
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
-        <AiOwnerActionLauncher variant="growth" />
+        <AiOwnerActionLauncher variant="growth" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Luồng AI Growth từ tín hiệu tới campaign nháp"
           subtitle="Marketing AI được nối vào vận hành: doanh thu/menu/promotion signal tạo campaign, chủ quán duyệt, AI tạo mã hoặc copy nháp rồi mới publish."

@@ -180,6 +180,8 @@ const legacyAiBillingFeatureMap: Partial<Record<PlanFeatureKey, BillingFeatureKe
   ai_customer_assistant: "ai_chatbot",
   ai_branding_studio: "ai_branding",
   ai_menu_ocr: "ai_menu_generation",
+  inventory_ai_ocr: "inventory_ai_ocr",
+  inventory_ai_intelligence: "inventory_ai_intelligence",
   ai_image_generation: "ai_image_generation",
   advanced_reports: "ai_analytics"
 };
@@ -3966,12 +3968,12 @@ export async function generateInventoryOcrDraft(input: {
   imageBase64?: string;
   rawText?: string;
 }) {
-  await assertAiEntitlement({ restaurantId: input.restaurantId, featureKey: "ai_menu_ocr", userId: input.userId });
+  await assertAiEntitlement({ restaurantId: input.restaurantId, featureKey: "inventory_ai_ocr", userId: input.userId });
   const { result, data } = await runInventoryOcrDraft(input);
   await logAiUsage({
     restaurantId: input.restaurantId,
     userId: input.userId,
-    featureKey: "ai_menu_ocr",
+    featureKey: "inventory_ai_ocr",
     provider: result.provider,
     model: result.model,
     requestKind: "ocr",

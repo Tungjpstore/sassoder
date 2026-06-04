@@ -123,7 +123,7 @@ export const ownerAgentToolRegistry: Record<OwnerAgentCommand, OwnerAgentToolCon
     route: "/dashboard/inventory",
     reads: ["inventory snapshot", "lowStockIngredients", "reference_unit_cost"],
     writes: ["purchase_orders(draft)", "purchase_order_lines"],
-    requiredFeature: "inventory_management",
+    requiredFeature: "inventory_ai_intelligence",
     safety: "confirm",
     confirmationRequired: true,
     output: "db_draft"

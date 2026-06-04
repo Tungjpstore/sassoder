@@ -368,7 +368,7 @@ export default async function AiAutomationPage() {
       showLiveActionCenter={false}
     >
       <div className="dashboard-ai-workspace grid gap-3">
-        <AiOwnerActionLauncher variant="automation" />
+        <AiOwnerActionLauncher variant="automation" planCode={entitlement.planCode} />
         <AiOperatingLoop
           title="Tự động hóa hôm nay"
           subtitle="Luồng có tín hiệu rõ, cần duyệt trước khi AI thao tác."

@@ -71,7 +71,7 @@ export function AdminShell({
               <LogiVNLogo className="h-8" priority />
             </span>
           </Link>
-          <AdminDesktopNav />
+          <AdminDesktopNav entitlement={entitlement} />
           {showBillingSidebarNotice && entitlement && "planName" in entitlement ? (
             <Link
               href="/dashboard/settings?section=billing"
@@ -107,7 +107,7 @@ export function AdminShell({
             </span>
           </div>
         </aside>
-        {focusMode ? null : <AdminTabletRail restaurantName={restaurantName} />}
+        {focusMode ? null : <AdminTabletRail restaurantName={restaurantName} entitlement={entitlement} />}
 
         {/* ── Main content ── */}
         <section className={`relative ${focusMode ? "" : "md:pl-[76px] lg:pl-[232px]"}`}>
@@ -200,7 +200,7 @@ export function AdminShell({
               </div>
             </div>
           </header>
-          {focusMode ? null : <AdminMobileNav />}
+          {focusMode ? null : <AdminMobileNav entitlement={entitlement} />}
           <div className="dashboard-workspace mx-auto w-full max-w-[var(--admin-content-max)] px-3 pb-[var(--dashboard-mobile-content-bottom)] pt-3 sm:px-4 md:px-5 md:pb-5 md:pt-4">
             {entitlement && (!entitlement.allowed || entitlement.warning) ? (
               <DashboardSubscriptionNotice
@@ -222,7 +222,7 @@ export function AdminShell({
             {children}
           </div>
         </section>
-        <CommandPalette />
+        <CommandPalette entitlement={entitlement} />
         {focusMode || !showQuickActionsFab ? null : <DashboardQuickActionsFab />}
         {showDashboardCopilot && canUseOwnerAi && restaurantId ? <DashboardCopilotLayer restaurantId={restaurantId} restaurantName={restaurantName} /> : null}
       </main>

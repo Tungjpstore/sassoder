@@ -87,9 +87,30 @@ import type { InventoryMovementType } from "@/types/domain";
 type IntakeMode = "text" | "file" | "voice" | "ocr";
 type WorkbenchTab = "intake" | "ingredients" | "stock" | "waste" | "counting" | "transfers" | "balancing" | "purchasing" | "recipes" | "alerts" | "analytics" | "audit" | "ledger";
 type DrawerState = { mode: "create" } | { mode: "edit"; ingredient: InventoryIngredient } | null;
+type QuickOperation = "receive" | "waste" | "count" | "transfer" | "purchase";
 type ManualMovementType = Extract<InventoryMovementType, "receive" | "adjust_increase" | "adjust_decrease" | "waste" | "expired" | "internal_use" | "supplier_return" | "rollback">;
 type LossMovementType = Extract<InventoryMovementType, "waste" | "expired" | "internal_use" | "supplier_return" | "adjust_decrease">;
 type RealtimeState = "connecting" | "connected" | "error";
+
+const QUICK_OPTION_LIMIT = 80;
+
+type InventoryFeatureAccess = {
+  basic: boolean;
+  procurement: boolean;
+  warehouseAdvanced: boolean;
+  alerts: boolean;
+  premium: boolean;
+  aiOcr: boolean;
+};
+
+const defaultInventoryFeatures: InventoryFeatureAccess = {
+  basic: true,
+  procurement: true,
+  warehouseAdvanced: true,
+  alerts: true,
+  premium: true,
+  aiOcr: true
+};
 
 type IntakeDraftRow = {
   name: string;
@@ -196,6 +217,18 @@ type WorkbenchNavGroup = {
 type InventoryQuickAction = {
   label: string;
   value: string;
+  icon: LucideIcon;
+  tone: "green" | "yellow" | "red" | "blue";
+  description?: string;
+  onClick: () => void;
+};
+
+type InventoryCommandSignal = {
+  id: string;
+  label: string;
+  value: string;
+  count: number;
+  detail: string;
   icon: LucideIcon;
   tone: "green" | "yellow" | "red" | "blue";
   onClick: () => void;
@@ -311,6 +344,42 @@ function ingredientMatchesQuery(ingredient: InventoryIngredient, query: string) 
   return [ingredient.name, ingredient.sku, ingredient.barcode, ingredient.categoryName]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(normalized));
+}
+
+function getQuickIngredientOptions(ingredients: InventoryIngredient[], query: string, selectedIngredientId?: string) {
+  const options = ingredients.filter((ingredient) => ingredientMatchesQuery(ingredient, query)).slice(0, QUICK_OPTION_LIMIT);
+  if (!selectedIngredientId || options.some((ingredient) => ingredient.id === selectedIngredientId)) return options;
+
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === selectedIngredientId);
+  return selectedIngredient ? [selectedIngredient, ...options] : options;
+}
+
+function stockBalanceMatchesQuery(row: InventoryStockBalance, query: string, ingredient?: InventoryIngredient) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+
+  return [row.ingredientName, row.locationName, row.branchName, row.batchCode, row.expirationDate, ingredient?.sku, ingredient?.barcode, ingredient?.categoryName]
+    .filter(Boolean)
+    .some((value) => value?.toLowerCase().includes(normalized));
+}
+
+function getQuickStockOptions({
+  rows,
+  query,
+  selectedStockId,
+  ingredients
+}: {
+  rows: InventoryStockBalance[];
+  query: string;
+  selectedStockId?: string;
+  ingredients: InventoryIngredient[];
+}) {
+  const ingredientById = new Map(ingredients.map((ingredient) => [ingredient.id, ingredient]));
+  const options = rows.filter((row) => stockBalanceMatchesQuery(row, query, ingredientById.get(row.ingredientId))).slice(0, QUICK_OPTION_LIMIT);
+  if (!selectedStockId || options.some((row) => row.id === selectedStockId)) return options;
+
+  const selectedRow = rows.find((row) => row.id === selectedStockId);
+  return selectedRow ? [selectedRow, ...options] : options;
 }
 
 function readInventoryDraft<T>(key: string) {
@@ -699,7 +768,8 @@ export function InventoryWorkspaceV2({
   ingredients,
   recipeMenuItems,
   intelligence,
-  warehouse
+  warehouse,
+  inventoryFeatures = defaultInventoryFeatures
 }: {
   restaurantId: string;
   snapshot: InventorySnapshot;
@@ -708,7 +778,9 @@ export function InventoryWorkspaceV2({
   recipeMenuItems: InventoryRecipeMenuItem[];
   intelligence: InventoryIntelligence;
   warehouse: InventoryWarehouseCommandCenter;
+  inventoryFeatures?: InventoryFeatureAccess;
 }) {
+  const features = { ...defaultInventoryFeatures, ...inventoryFeatures };
   const router = useRouter();
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -720,9 +792,11 @@ export function InventoryWorkspaceV2({
   const [parserMessage, setParserMessage] = useState("0 dòng nháp.");
   const [query, setQuery] = useState("");
   const [drawer, setDrawer] = useState<DrawerState>(null);
+  const [quickOperation, setQuickOperation] = useState<QuickOperation | null>(null);
   const [aiOcrLoading, setAiOcrLoading] = useState(false);
   const [aiOcrError, setAiOcrError] = useState<string | null>(null);
   const [isListening, setIsListening] = useState(false);
+  const [showWorkbench, setShowWorkbench] = useState(false);
   const [showOperationalDetails, setShowOperationalDetails] = useState(false);
   const [showAdvancedInsights, setShowAdvancedInsights] = useState(false);
   const [isParsing, startTransition] = useTransition();
@@ -788,6 +862,11 @@ export function InventoryWorkspaceV2({
       router.refresh();
       setLastSyncedAt(new Date());
     });
+  };
+
+  const openWorkbenchTab = (tab: WorkbenchTab) => {
+    setActiveTab(tab);
+    setShowWorkbench(true);
   };
 
   const rowsJson = useMemo(() => JSON.stringify(draftRows), [draftRows]);
@@ -1027,46 +1106,102 @@ export function InventoryWorkspaceV2({
   const operationalSignalCount = urgentActions.length + stockSignalCount + controlSignalCount;
   const quickActions: InventoryQuickAction[] = [
     {
-      label: "Nhập kho",
-      value: `${draftRows.length.toLocaleString("vi-VN")} dòng nháp`,
+      label: "Nhập nhanh",
+      value: "Tăng tồn",
       icon: PackagePlus,
-      tone: draftRows.length > 0 ? "green" : "blue",
-      onClick: () => setActiveTab("intake")
+      tone: "blue",
+      description: "Ghi tăng tồn một nguyên liệu ngay tại kho.",
+      onClick: () => setQuickOperation("receive")
     },
     {
-      label: "Thêm nguyên liệu",
-      value: `${ingredients.length.toLocaleString("vi-VN")} đang dùng`,
-      icon: Boxes,
-      tone: "green",
-      onClick: () => setDrawer({ mode: "create" })
+      label: "Xuất giảm",
+      value: `${stockRiskInsights.expiringCount.toLocaleString("vi-VN")} HSD`,
+      icon: Trash2,
+      tone: stockRiskInsights.expiringCount > 0 || intelligence.wasteSignals.length > 0 ? "red" : "green",
+      description: "Ghi hư hỏng, hết hạn, dùng nội bộ hoặc lệch tồn.",
+      onClick: () => setQuickOperation("waste")
     },
     {
       label: "Kiểm kê",
-      value: `${warehouse.countSessionCount.toLocaleString("vi-VN")} phiên`,
+      value: "1 dòng",
       icon: ClipboardList,
       tone: warehouse.countSessionCount > 0 ? "blue" : "green",
-      onClick: () => setActiveTab("counting")
-    },
-    {
-      label: "Đặt hàng",
-      value: `${intelligence.reorderSuggestions.length.toLocaleString("vi-VN")} gợi ý`,
-      icon: Truck,
-      tone: intelligence.reorderSuggestions.length > 0 ? "yellow" : "green",
-      onClick: () => setActiveTab("purchasing")
+      description: "Đếm nhanh một nguyên liệu và tạo adjustment có audit.",
+      onClick: () => setQuickOperation("count")
     },
     {
       label: "Điều chuyển",
       value: `${warehouse.transferCount.toLocaleString("vi-VN")} phiếu`,
       icon: ArrowDownUp,
       tone: warehouse.transferCount > 0 ? "blue" : "green",
-      onClick: () => setActiveTab("transfers")
+      description: "Tạo yêu cầu chuyển hàng giữa kho, bar, bếp hoặc chi nhánh.",
+      onClick: () => setQuickOperation("transfer")
+    },
+    {
+      label: "Tạo PO",
+      value: `${purchasePlan.urgentLineCount.toLocaleString("vi-VN")} gấp`,
+      icon: Truck,
+      tone: purchasePlan.urgentLineCount > 0 ? "yellow" : "green",
+      description: "Tạo đơn mua một dòng từ tồn thấp hoặc nhu cầu mới.",
+      onClick: () => setQuickOperation("purchase")
+    },
+    {
+      label: "Thêm NL",
+      value: `${ingredients.length.toLocaleString("vi-VN")} SKU`,
+      icon: Boxes,
+      tone: "green",
+      description: "Tạo nguyên liệu mới cho định mức và tồn kho.",
+      onClick: () => setDrawer({ mode: "create" })
     },
     {
       label: "Cảnh báo",
       value: `${warehouse.openAlertCount.toLocaleString("vi-VN")} mở`,
       icon: Bell,
       tone: warehouse.openAlertCount > 0 ? "red" : "green",
-      onClick: () => setActiveTab("alerts")
+      description: "Mở danh sách alert low stock, HSD và bất thường.",
+      onClick: () => openWorkbenchTab("alerts")
+    }
+  ];
+  const commandSignals: InventoryCommandSignal[] = [
+    {
+      id: "stock-risk",
+      label: "Thiếu hàng",
+      value: stockSignalCount.toLocaleString("vi-VN"),
+      count: stockSignalCount,
+      detail: `${stockRiskInsights.lowOrOutCount.toLocaleString("vi-VN")} thấp/hết · ${stockRiskInsights.expiringCount.toLocaleString("vi-VN")} sát HSD`,
+      icon: AlertTriangle,
+      tone: stockSignalCount > 0 ? "yellow" : "green",
+      onClick: () => openWorkbenchTab("stock")
+    },
+    {
+      id: "purchase",
+      label: "Mua hàng",
+      value: purchasePlan.urgentLineCount.toLocaleString("vi-VN"),
+      count: purchasePlan.urgentLineCount + warehouse.openPurchaseOrderCount + stockRiskInsights.incomingCount,
+      detail: `${warehouse.openPurchaseOrderCount.toLocaleString("vi-VN")} PO mở · ${stockRiskInsights.incomingCount.toLocaleString("vi-VN")} dòng đang về`,
+      icon: Truck,
+      tone: purchasePlan.urgentLineCount > 0 || warehouse.openPurchaseOrderCount > 0 ? "blue" : "green",
+      onClick: () => openWorkbenchTab("purchasing")
+    },
+    {
+      id: "control",
+      label: "Kiểm soát",
+      value: auditReport.openControlAlertCount.toLocaleString("vi-VN"),
+      count: auditReport.openControlAlertCount + auditReport.unreasonedMovementCount,
+      detail: `${auditReport.unreasonedMovementCount.toLocaleString("vi-VN")} movement thiếu lý do`,
+      icon: ShieldCheck,
+      tone: auditReport.openControlAlertCount > 0 || auditReport.unreasonedMovementCount > 0 ? "red" : "green",
+      onClick: () => openWorkbenchTab("audit")
+    },
+    {
+      id: "branch-balance",
+      label: "Cân kho",
+      value: branchBalancingReport.suggestedTransferCount.toLocaleString("vi-VN"),
+      count: branchBalancingReport.suggestedTransferCount + branchBalancingReport.openTransferCount,
+      detail: `${branchBalancingReport.openTransferCount.toLocaleString("vi-VN")} transfer mở · ${branchBalancingReport.centralLocationCount.toLocaleString("vi-VN")} kho trung tâm`,
+      icon: GitBranch,
+      tone: branchBalancingReport.suggestedTransferCount > 0 ? "yellow" : "green",
+      onClick: () => openWorkbenchTab("balancing")
     }
   ];
   const healthSegments = [
@@ -1109,6 +1244,12 @@ export function InventoryWorkspaceV2({
   };
 
   const runInventoryAiOcr = async ({ imageFile, rawText }: { imageFile?: File; rawText?: string }) => {
+    if (!features.aiOcr) {
+      const message = "AI đọc hóa đơn kho đang thuộc gói Premium.";
+      setAiOcrError(message);
+      setParserMessage(message);
+      return;
+    }
     const trimmedText = rawText?.trim();
     if (!imageFile && !trimmedText) {
       setParserMessage("Hãy dán nội dung thật hoặc tải ảnh hóa đơn trước khi gọi AI đọc nâng cao.");
@@ -1149,6 +1290,12 @@ export function InventoryWorkspaceV2({
     if (!file) return;
     setIntakeMode(file.type.startsWith("image/") ? "ocr" : "file");
     if (file.type.startsWith("image/")) {
+      if (!features.aiOcr) {
+        const message = "AI đọc hóa đơn kho đang thuộc gói Premium.";
+        setAiOcrError(message);
+        setParserMessage(message);
+        return;
+      }
       await runInventoryAiOcr({ imageFile: file });
       return;
     }
@@ -1203,40 +1350,30 @@ export function InventoryWorkspaceV2({
         lastSyncedAt={lastSyncedAt}
         isRefreshing={isRefreshing}
         onRefresh={refreshInventory}
-        actions={quickActions}
       />
 
-      <section className="inventory-summary-grid grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          icon={PackageCheck}
-          label="Tồn khả dụng"
-          value={formatVnd(inventoryAnalytics.workingCapital.availableValue)}
-          caption="Có thể dùng ngay theo tồn hiện tại."
-          tone="green"
-        />
-        <SummaryCard
-          icon={AlertTriangle}
-          label="Rủi ro tồn"
-          value={stockRiskInsights.riskyRows.length.toLocaleString("vi-VN")}
-          caption={`${formatVnd(stockRiskInsights.riskValue)} cần theo dõi.`}
-          tone={stockRiskInsights.riskyRows.length > 0 ? "yellow" : "green"}
-        />
-        <SummaryCard
-          icon={Bell}
-          label="Cảnh báo mở"
-          value={warehouse.openAlertCount.toLocaleString("vi-VN")}
-          caption={`${snapshot.lowStockCount.toLocaleString("vi-VN")} SKU thấp/hết.`}
-          tone={warehouse.openAlertCount > 0 ? "red" : "green"}
-        />
-        <SummaryCard
-          icon={Truck}
-          label="Đang mua / về"
-          value={`${warehouse.openPurchaseOrderCount.toLocaleString("vi-VN")} / ${stockRiskInsights.incomingCount.toLocaleString("vi-VN")}`}
-          caption="PO mở / dòng incoming."
-          tone={warehouse.openPurchaseOrderCount > 0 || stockRiskInsights.incomingCount > 0 ? "blue" : "green"}
-        />
-      </section>
+      <InventoryCommandCenter
+        quickActions={quickActions}
+        commandSignals={commandSignals}
+        urgentActions={urgentActions}
+        availableValue={inventoryAnalytics.workingCapital.availableValue}
+        riskValue={stockRiskInsights.riskValue}
+        openAlertCount={warehouse.openAlertCount}
+        openPurchaseOrderCount={warehouse.openPurchaseOrderCount}
+        operationalSignalCount={operationalSignalCount}
+        onOpenOperationalDetails={() => setShowOperationalDetails(true)}
+        onOpenAdvancedInsights={() => {
+          setShowOperationalDetails(true);
+          setShowAdvancedInsights(true);
+        }}
+      />
 
+      <InventoryWorkbenchShell
+        open={showWorkbench}
+        onToggle={() => setShowWorkbench((current) => !current)}
+        activeGroupLabel={activeWorkbenchGroup.label}
+        activeTabLabel={activeWorkbenchGroup.tabs.find((item) => item.tab === activeTab)?.label ?? activeWorkbenchGroup.label}
+      >
       <section className="dashboard-workbench-surface rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
         <div className="dashboard-segmented-scroll flex flex-nowrap gap-2 overflow-x-auto border-b border-[var(--border)] pb-3" role="tablist" aria-label="Nhóm nghiệp vụ kho">
           {workbenchNavGroups.map((group) => (
@@ -1287,6 +1424,8 @@ export function InventoryWorkspaceV2({
               importAction={importAction}
               importPending={importPending}
               importState={importState}
+              canImport={features.procurement}
+              canUseAiOcr={features.aiOcr}
               onParse={() => runParser()}
               onFileUpload={handleFileUpload}
               onAdvancedRead={() => runInventoryAiOcr({ rawText: rawIntake })}
@@ -1309,19 +1448,19 @@ export function InventoryWorkspaceV2({
 
           {activeTab === "waste" ? <WasteExpirationDesk warehouse={warehouse} ingredients={ingredients} intelligence={intelligence} /> : null}
 
-          {activeTab === "counting" ? <InventoryCountingDesk warehouse={warehouse} ingredients={ingredients} /> : null}
+          {activeTab === "counting" ? <InventoryCountingDesk warehouse={warehouse} ingredients={ingredients} canUseWarehouseAdvanced={features.warehouseAdvanced} /> : null}
 
-          {activeTab === "transfers" ? <InventoryTransferDesk warehouse={warehouse} ingredients={ingredients} /> : null}
+          {activeTab === "transfers" ? <InventoryTransferDesk warehouse={warehouse} ingredients={ingredients} canUseWarehouseAdvanced={features.warehouseAdvanced} /> : null}
 
           {activeTab === "balancing" ? <BranchBalancingDesk report={branchBalancingReport} /> : null}
 
-          {activeTab === "purchasing" ? <SupplierPurchaseDesk warehouse={warehouse} ingredients={ingredients} purchasePlan={purchasePlan} /> : null}
+          {activeTab === "purchasing" ? <SupplierPurchaseDesk warehouse={warehouse} ingredients={ingredients} purchasePlan={purchasePlan} canUseProcurement={features.procurement} /> : null}
 
           {activeTab === "recipes" ? (
-            <RecipesAndCategories categories={categories} ingredients={ingredients} recipeMenuItems={recipeMenuItems} recipeBacklog={recipeBacklog} />
+            <RecipesAndCategories categories={categories} ingredients={ingredients} recipeMenuItems={recipeMenuItems} recipeBacklog={recipeBacklog} canEditRecipes={features.premium} />
           ) : null}
 
-          {activeTab === "alerts" ? <InventoryAlertDesk warehouse={warehouse} /> : null}
+          {activeTab === "alerts" ? <InventoryAlertDesk warehouse={warehouse} canUseAlerts={features.alerts} /> : null}
 
           {activeTab === "analytics" ? <InventoryAnalyticsDesk analytics={inventoryAnalytics} /> : null}
 
@@ -1330,6 +1469,7 @@ export function InventoryWorkspaceV2({
           {activeTab === "ledger" ? <InventoryLedger snapshot={snapshot} /> : null}
         </div>
       </section>
+      </InventoryWorkbenchShell>
 
       <InventoryOperationalDetails
         open={showOperationalDetails}
@@ -1380,6 +1520,16 @@ export function InventoryWorkspaceV2({
         />
       </InventoryOperationalDetails>
 
+      {quickOperation ? (
+        <QuickOperationDrawer
+          operation={quickOperation}
+          warehouse={warehouse}
+          ingredients={ingredients}
+          purchasePlan={purchasePlan}
+          inventoryFeatures={features}
+          onClose={() => setQuickOperation(null)}
+        />
+      ) : null}
       {drawer ? <IngredientDrawer drawer={drawer} categories={categories} onClose={() => setDrawer(null)} /> : null}
     </div>
   );
@@ -1391,8 +1541,7 @@ function InventoryPageHeader({
   realtimeState,
   lastSyncedAt,
   isRefreshing,
-  onRefresh,
-  actions
+  onRefresh
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -1400,7 +1549,6 @@ function InventoryPageHeader({
   lastSyncedAt: Date | null;
   isRefreshing: boolean;
   onRefresh: () => void;
-  actions: InventoryQuickAction[];
 }) {
   return (
     <section className="inventory-page-header rounded-3xl border border-[var(--border)] bg-[linear-gradient(135deg,#fffaf2_0%,#f7fbf6_54%,#eef6ff_100%)] p-4 shadow-[0_18px_60px_rgba(15,77,58,0.06)]">
@@ -1440,25 +1588,699 @@ function InventoryPageHeader({
           </label>
         </div>
       </div>
-      <div className="dashboard-segmented-scroll mt-4 flex flex-nowrap gap-2 overflow-x-auto" role="toolbar" aria-label="Lệnh nhanh kho">
-        {actions.map((action) => {
-          const Icon = action.icon;
+    </section>
+  );
+}
 
-          return (
-            <button
-              key={action.label}
-              type="button"
-              onClick={action.onClick}
-              className={`inline-flex h-12 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-black transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${quickActionToneClass(action.tone)}`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{action.label}</span>
-              <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-black opacity-80">{action.value}</span>
-            </button>
-          );
-        })}
+function InventoryCommandCenter({
+  quickActions,
+  commandSignals,
+  urgentActions,
+  availableValue,
+  riskValue,
+  openAlertCount,
+  openPurchaseOrderCount,
+  operationalSignalCount,
+  onOpenOperationalDetails,
+  onOpenAdvancedInsights
+}: {
+  quickActions: InventoryQuickAction[];
+  commandSignals: InventoryCommandSignal[];
+  urgentActions: InventoryIntelligence["actionQueue"];
+  availableValue: number;
+  riskValue: number;
+  openAlertCount: number;
+  openPurchaseOrderCount: number;
+  operationalSignalCount: number;
+  onOpenOperationalDetails: () => void;
+  onOpenAdvancedInsights: () => void;
+}) {
+  const primaryActions = quickActions.slice(0, 5);
+  const secondaryActions = quickActions.slice(5);
+  const [showAllSignals, setShowAllSignals] = useState(false);
+  const [showCommandMetrics, setShowCommandMetrics] = useState(false);
+  const [showMoreActions, setShowMoreActions] = useState(false);
+  const activeSignals = commandSignals.filter((signal) => signal.count > 0);
+  const prioritizedSignals = activeSignals.length > 0 ? activeSignals : commandSignals;
+  const visibleSignals = showAllSignals ? commandSignals : prioritizedSignals.slice(0, 2);
+  const hiddenSignalCount = Math.max(0, commandSignals.length - visibleSignals.length);
+  const visibleActions = showMoreActions ? [...primaryActions, ...secondaryActions] : primaryActions;
+  const metricsPanelId = "inventory-command-metrics";
+  const signalPanelId = "inventory-command-signals";
+  const actionPanelId = "inventory-command-actions";
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="dashboard-eyebrow">Command center</p>
+              <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
+            </div>
+            <Badge tone={operationalSignalCount > 0 ? "yellow" : "green"}>{operationalSignalCount.toLocaleString("vi-VN")} tín hiệu</Badge>
+          </div>
+
+          <div className="mt-3 grid gap-2">
+            {urgentActions.length === 0 ? (
+              <div className="rounded-2xl border border-emerald-100 bg-white px-3 py-3">
+                <div className="flex items-center gap-2 text-sm font-black text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Kho đang ổn
+                </div>
+                <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">Không có việc gấp trong hàng đợi vận hành.</p>
+              </div>
+            ) : (
+              urgentActions.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={onOpenOperationalDetails}
+                  className="grid gap-1 rounded-2xl border border-amber-200 bg-white px-3 py-3 text-left transition hover:border-amber-300 hover:bg-amber-50/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="line-clamp-1 text-sm font-black text-[var(--foreground)]">{item.title}</p>
+                    <Badge tone={item.priority === "high" ? "red" : "yellow"}>{item.valueLabel}</Badge>
+                  </div>
+                  <p className="line-clamp-2 text-xs font-bold text-[var(--muted-foreground)]">{item.detail}</p>
+                </button>
+              ))
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowCommandMetrics((current) => !current)}
+            aria-expanded={showCommandMetrics}
+            aria-controls={metricsPanelId}
+            className="mt-3 flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-white px-3 py-3 text-left transition hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+          >
+            <span className="inline-flex min-w-0 items-center gap-2 text-sm font-black text-[var(--foreground)]">
+              <PackageCheck className="h-4 w-4 text-[var(--primary)]" />
+              Chỉ số nền
+            </span>
+            <span className="min-w-0 truncate text-right text-xs font-black text-[var(--muted-foreground)]">
+              {formatVnd(availableValue)} · rủi ro {formatVnd(riskValue)}
+            </span>
+          </button>
+
+          {showCommandMetrics ? (
+            <div id={metricsPanelId} className="mt-2 grid gap-2 sm:grid-cols-2">
+              <MiniMetric label="Tồn khả dụng" value={formatVnd(availableValue)} />
+              <MiniMetric label="Rủi ro tồn" value={formatVnd(riskValue)} />
+              <MiniMetric label="Alert mở" value={openAlertCount.toLocaleString("vi-VN")} />
+              <MiniMetric label="PO mở" value={openPurchaseOrderCount.toLocaleString("vi-VN")} />
+            </div>
+          ) : null}
+        </div>
+
+        <div className="grid min-w-0 gap-3">
+          <div className="rounded-2xl border border-[var(--border)] bg-white p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-black text-[var(--foreground)]">Điểm nóng</p>
+              {hiddenSignalCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllSignals((current) => !current)}
+                  aria-expanded={showAllSignals}
+                  aria-controls={signalPanelId}
+                  className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+                >
+                  <Layers3 className="h-4 w-4" />
+                  {showAllSignals ? "Thu gọn" : `${hiddenSignalCount.toLocaleString("vi-VN")} mục khác`}
+                </button>
+              ) : null}
+            </div>
+            <div id={signalPanelId} className="mt-3 grid gap-2 md:grid-cols-2">
+              {visibleSignals.map((signal) => (
+                <CommandSignalButton key={signal.id} signal={signal} />
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[var(--border)] bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-black text-[var(--foreground)]">Thao tác nhanh</p>
+              <div className="flex flex-wrap items-center gap-1">
+                {secondaryActions.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowMoreActions((current) => !current)}
+                    aria-expanded={showMoreActions}
+                    aria-controls={actionPanelId}
+                    className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+                  >
+                    <Layers3 className="h-4 w-4" />
+                    {showMoreActions ? "Thu gọn" : "Thêm thao tác"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={onOpenAdvancedInsights}
+                  className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  AI & phân tích
+                </button>
+              </div>
+            </div>
+            <div id={actionPanelId} className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleActions.map((action) => {
+                const Icon = action.icon;
+                return (
+                  <button
+                    key={action.label}
+                    type="button"
+                    onClick={action.onClick}
+                    title={action.description}
+                    className={`grid min-h-[72px] gap-1 rounded-2xl border px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${quickActionToneClass(action.tone)}`}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <Icon className="h-4 w-4" />
+                      <span className="rounded-full bg-white/75 px-2 py-0.5 text-[11px] font-black opacity-80">{action.value}</span>
+                    </span>
+                    <span className="text-sm font-black">{action.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </section>
+  );
+}
+
+function CommandSignalButton({ signal }: { signal: InventoryCommandSignal }) {
+  const Icon = signal.icon;
+
+  return (
+    <button
+      type="button"
+      onClick={signal.onClick}
+      className="grid gap-2 rounded-2xl border border-[var(--border)] bg-white p-3 text-left transition hover:border-[var(--primary)] hover:bg-[var(--soft-surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+    >
+      <span className="flex items-center justify-between gap-3">
+        <span className={`grid h-9 w-9 place-items-center rounded-xl ${summaryToneClass(signal.tone)}`}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <Badge tone={signal.tone}>{signal.value}</Badge>
+      </span>
+      <span className="text-sm font-black text-[var(--foreground)]">{signal.label}</span>
+      <span className="line-clamp-1 text-xs font-bold text-[var(--muted-foreground)]">{signal.detail}</span>
+    </button>
+  );
+}
+
+function InventoryWorkbenchShell({
+  open,
+  onToggle,
+  activeGroupLabel,
+  activeTabLabel,
+  children
+}: {
+  open: boolean;
+  onToggle: () => void;
+  activeGroupLabel: string;
+  activeTabLabel: string;
+  children: ReactNode;
+}) {
+  const detailsId = "inventory-workbench-shell";
+
+  return (
+    <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
+          <p className="dashboard-eyebrow">Dữ liệu chi tiết</p>
+          <h2 className="dashboard-section-title mt-1">{activeGroupLabel}</h2>
+          <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">Đang chọn: {activeTabLabel}</p>
+        </div>
+        <Button type="button" variant={open ? "primary" : "secondary"} onClick={onToggle} aria-expanded={open} aria-controls={detailsId} className="h-12 rounded-2xl">
+          {open ? <X className="h-4 w-4" /> : <Layers3 className="h-4 w-4" />}
+          {open ? "Đóng dữ liệu" : "Mở dữ liệu"}
+        </Button>
+      </div>
+      {open ? <div id={detailsId} className="mt-4">{children}</div> : null}
+    </section>
+  );
+}
+
+function QuickOperationDrawer({
+  operation,
+  warehouse,
+  ingredients,
+  purchasePlan,
+  inventoryFeatures,
+  onClose
+}: {
+  operation: QuickOperation;
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  purchasePlan: InventoryPurchasePlan;
+  inventoryFeatures: InventoryFeatureAccess;
+  onClose: () => void;
+}) {
+  const config: Record<QuickOperation, { title: string; subtitle: string; icon: LucideIcon; tone: "green" | "yellow" | "red" | "blue" }> = {
+    receive: { title: "Nhập nhanh", subtitle: "Ghi tăng tồn", icon: PackagePlus, tone: "blue" },
+    waste: { title: "Xuất giảm", subtitle: "Hư hỏng, HSD, dùng nội bộ", icon: Trash2, tone: "red" },
+    count: { title: "Kiểm kê nhanh", subtitle: "Đếm một nguyên liệu", icon: ClipboardCheck, tone: "green" },
+    transfer: { title: "Điều chuyển nhanh", subtitle: "Chuyển hàng giữa kho", icon: ArrowDownUp, tone: "blue" },
+    purchase: { title: "Tạo PO nhanh", subtitle: "Đặt hàng một dòng", icon: Truck, tone: "yellow" }
+  };
+  const current = config[operation];
+  const Icon = current.icon;
+
+  return (
+    <DashboardDrawer
+      open
+      onClose={onClose}
+      width="md"
+      title={current.title}
+      subtitle={current.subtitle}
+      headerMeta={
+        <Badge tone={current.tone}>
+          <span className="inline-flex items-center gap-1.5">
+            <Icon className="h-3.5 w-3.5" />
+            Thao tác nhanh
+          </span>
+        </Badge>
+      }
+    >
+      {operation === "receive" ? <QuickReceiveForm warehouse={warehouse} ingredients={ingredients} canUseBasic={inventoryFeatures.basic} /> : null}
+      {operation === "waste" ? <QuickWasteForm warehouse={warehouse} ingredients={ingredients} canUseBasic={inventoryFeatures.basic} /> : null}
+      {operation === "count" ? <QuickCountForm warehouse={warehouse} ingredients={ingredients} canUseWarehouseAdvanced={inventoryFeatures.warehouseAdvanced} /> : null}
+      {operation === "transfer" ? <QuickTransferForm warehouse={warehouse} ingredients={ingredients} canUseWarehouseAdvanced={inventoryFeatures.warehouseAdvanced} /> : null}
+      {operation === "purchase" ? <QuickPurchaseOrderForm warehouse={warehouse} ingredients={ingredients} purchasePlan={purchasePlan} canUseProcurement={inventoryFeatures.procurement} /> : null}
+    </DashboardDrawer>
+  );
+}
+
+function QuickSearchInput({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  className = ""
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={`relative ${className}`}>
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted-foreground)]" />
+      <Input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="h-11 rounded-xl bg-white pl-10"
+      />
+    </div>
+  );
+}
+
+function QuickReceiveForm({ warehouse, ingredients, canUseBasic }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[]; canUseBasic: boolean }) {
+  const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const [locationId, setLocationId] = useState(warehouse.locations[0]?.id ?? "");
+  const [quantity, setQuantity] = useState("");
+  const [unitCost, setUnitCost] = useState(ingredients[0] ? String(Math.round(ingredients[0].referenceUnitCost)) : "");
+  const [reason, setReason] = useState("Nhập nhanh từ Command Center");
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
+  const ingredientOptions = getQuickIngredientOptions(ingredients, ingredientSearch, ingredientId);
+  const parsedQuantity = parseNumber(quantity);
+  const parsedCost = Math.round(parseNumber(unitCost));
+
+  return (
+    <form action={recordInventoryMovementAction} className="grid gap-3">
+      <input type="hidden" name="movementType" value="receive" />
+      <div className="grid gap-2">
+        <QuickSearchInput
+          value={ingredientSearch}
+          onChange={(next) => {
+            setIngredientSearch(next);
+            const matched = next.trim() ? ingredients.find((ingredient) => ingredientMatchesQuery(ingredient, next)) : null;
+            if (matched) {
+              setIngredientId(matched.id);
+              setUnitCost(String(Math.round(matched.referenceUnitCost)));
+            }
+          }}
+          placeholder="Scan SKU/barcode hoặc tìm nguyên liệu"
+        />
+        <select
+          name="ingredientId"
+          value={ingredientId}
+          onChange={(event) => {
+            const nextIngredient = ingredients.find((ingredient) => ingredient.id === event.target.value) ?? null;
+            setIngredientId(event.target.value);
+            if (nextIngredient) setUnitCost(String(Math.round(nextIngredient.referenceUnitCost)));
+          }}
+          className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+          required
+        >
+          <option value="">Chọn nguyên liệu</option>
+          {ingredientOptions.map((ingredient) => (
+            <option key={ingredient.id} value={ingredient.id}>{ingredient.name}{ingredient.sku ? ` · ${ingredient.sku}` : ""}{ingredient.barcode ? ` · ${ingredient.barcode}` : ""} ({ingredient.unit})</option>
+          ))}
+        </select>
+        <select name="locationId" value={locationId} onChange={(event) => setLocationId(event.target.value)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+          <option value="">Kho chính</option>
+          {warehouse.locations.map((location) => (
+            <option key={location.id} value={location.id}>{location.name}{location.branchName ? ` · ${location.branchName}` : ""}</option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input name="quantity" type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={selectedIngredient ? `Số lượng (${selectedIngredient.unit})` : "Số lượng"} className="h-11 rounded-xl bg-white" required />
+        <Input name="unitCost" type="number" min={0} step={1} value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Giá vốn / đơn vị" className="h-11 rounded-xl bg-white" />
+      </div>
+      <Textarea name="reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Lý do nhập" className="min-h-20 rounded-xl bg-white" />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniMetric label="Tồn hiện tại" value={selectedIngredient ? formatQuantity(selectedIngredient.onHandQuantity, selectedIngredient.unit) : "-"} />
+        <MiniMetric label="Giá trị nhập" value={formatVnd(Math.max(0, parsedQuantity * parsedCost))} />
+      </div>
+      <SubmitButton disabled={!canUseBasic || !selectedIngredient || parsedQuantity <= 0} pendingLabel="Đang nhập..." className="h-11 rounded-2xl">
+        <PackagePlus className="h-4 w-4" />
+        Ghi tăng tồn
+      </SubmitButton>
+    </form>
+  );
+}
+
+function QuickWasteForm({ warehouse, ingredients, canUseBasic }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[]; canUseBasic: boolean }) {
+  const stockRows = useMemo<InventoryStockBalance[]>(
+    () =>
+      warehouse.stockBalances.length > 0
+        ? warehouse.stockBalances.filter((row) => row.availableQuantity > 0 || row.onHandQuantity > 0)
+        : ingredients.map((ingredient) => ({
+            id: ingredient.id,
+            ingredientId: ingredient.id,
+            ingredientName: ingredient.name,
+            ingredientUnit: ingredient.unit,
+            locationId: null,
+            batchId: null,
+            branchName: null,
+            locationName: locationLabel(ingredient),
+            batchCode: null,
+            expirationDate: null,
+            onHandQuantity: ingredient.onHandQuantity,
+            reservedQuantity: 0,
+            incomingQuantity: 0,
+            availableQuantity: ingredient.onHandQuantity,
+            minimumQuantity: ingredient.minimumQuantity,
+            referenceUnitCost: ingredient.referenceUnitCost,
+            status: ingredient.minimumQuantity > 0 && ingredient.onHandQuantity <= ingredient.minimumQuantity ? "low" : "available"
+          })),
+    [ingredients, warehouse.stockBalances]
+  );
+  const [selectedStockId, setSelectedStockId] = useState(stockRows[0]?.id ?? "");
+  const [stockSearch, setStockSearch] = useState("");
+  const [movementType, setMovementType] = useState<LossMovementType>("waste");
+  const [quantity, setQuantity] = useState("");
+  const [reason, setReason] = useState("");
+  const ingredientById = useMemo(() => new Map(ingredients.map((ingredient) => [ingredient.id, ingredient])), [ingredients]);
+  const stockOptions = getQuickStockOptions({ rows: stockRows, query: stockSearch, selectedStockId, ingredients });
+  const selectedRow = stockRows.find((row) => row.id === selectedStockId) ?? stockRows[0] ?? null;
+  const parsedQuantity = parseNumber(quantity);
+  const isOverAvailable = Boolean(selectedRow && parsedQuantity > selectedRow.availableQuantity);
+  const isRealStockBalance = Boolean(selectedRow && warehouse.stockBalances.some((row) => row.id === selectedRow.id));
+
+  return (
+    <form action={recordInventoryMovementAction} className="grid gap-3">
+      <input type="hidden" name="ingredientId" value={selectedRow?.ingredientId ?? ""} />
+      <input type="hidden" name="locationId" value={selectedRow?.locationId ?? ""} />
+      <input type="hidden" name="batchId" value={selectedRow?.batchId ?? ""} />
+      <input type="hidden" name="stockBalanceId" value={isRealStockBalance ? selectedRow?.id ?? "" : ""} />
+      <input type="hidden" name="unitCost" value={selectedRow ? Math.round(selectedRow.referenceUnitCost) : ""} />
+      <QuickSearchInput
+        value={stockSearch}
+        onChange={(next) => {
+          setStockSearch(next);
+          const matched = next.trim() ? stockRows.find((row) => stockBalanceMatchesQuery(row, next, ingredientById.get(row.ingredientId))) : null;
+          if (matched) setSelectedStockId(matched.id);
+        }}
+        placeholder="Scan SKU/barcode hoặc tìm nguyên liệu/lô"
+      />
+      <select value={selectedStockId} onChange={(event) => setSelectedStockId(event.target.value)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+        {stockRows.length === 0 ? <option value="">Chưa có tồn khả dụng</option> : null}
+        {stockOptions.map((row) => (
+          <option key={row.id} value={row.id}>
+            {row.ingredientName}{ingredientById.get(row.ingredientId)?.sku ? ` · ${ingredientById.get(row.ingredientId)?.sku}` : ""} · {row.locationName || "Kho chính"} · {formatQuantity(row.availableQuantity, row.ingredientUnit)}
+          </option>
+        ))}
+      </select>
+      <select name="movementType" value={movementType} onChange={(event) => setMovementType(event.target.value as LossMovementType)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+        {lossMovementTypes.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+      </select>
+      <div className="grid gap-2 sm:grid-cols-[0.7fr_1.3fr]">
+        <Input name="quantity" type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder={selectedRow ? `Số lượng (${selectedRow.ingredientUnit})` : "Số lượng"} className="h-11 rounded-xl bg-white" required />
+        <Textarea name="reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Lý do xuất giảm" className="min-h-11 rounded-xl bg-white" />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <MiniMetric label="Khả dụng" value={selectedRow ? formatQuantity(selectedRow.availableQuantity, selectedRow.ingredientUnit) : "-"} />
+        <MiniMetric label="Giá trị" value={selectedRow ? formatVnd(Math.round(parsedQuantity * selectedRow.referenceUnitCost)) : formatVnd(0)} />
+        <MiniMetric label="HSD" value={selectedRow?.expirationDate ? expirationCopy(selectedRow.expirationDate) : "Không lô"} />
+      </div>
+      {isOverAvailable ? <p className="rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">Số lượng vượt tồn khả dụng.</p> : null}
+      <SubmitButton disabled={!canUseBasic || !selectedRow || parsedQuantity <= 0 || isOverAvailable} pendingLabel="Đang ghi..." className="h-11 rounded-2xl">
+        <Trash2 className="h-4 w-4" />
+        Ghi xuất giảm
+      </SubmitButton>
+    </form>
+  );
+}
+
+function QuickCountForm({ warehouse, ingredients, canUseWarehouseAdvanced }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[]; canUseWarehouseAdvanced: boolean }) {
+  const [locationId, setLocationId] = useState(warehouse.locations[0]?.id ?? "");
+  const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const [countedQuantity, setCountedQuantity] = useState("");
+  const [note, setNote] = useState("Kiểm kê nhanh từ Command Center");
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
+  const ingredientOptions = getQuickIngredientOptions(ingredients, ingredientSearch, ingredientId);
+  const expectedQuantity = selectedIngredient
+    ? warehouse.stockBalances.find((balance) => balance.ingredientId === selectedIngredient.id && (!locationId || balance.locationId === locationId))?.onHandQuantity ?? selectedIngredient.onHandQuantity
+    : 0;
+  const variance = selectedIngredient ? parseNumber(countedQuantity) - expectedQuantity : 0;
+
+  return (
+    <form action={applyInventoryCountAction} className="grid gap-3">
+      <input type="hidden" name="rowsJson" value="[]" />
+      <input type="hidden" name="title" value="Kiểm kê nhanh" />
+      {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Kiểm kê Premium" detail="Tạo adjustment kiểm kê cần quyền kho nâng cao." /> : null}
+      <select name="locationId" value={locationId} onChange={(event) => setLocationId(event.target.value)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+        <option value="">Kho chính</option>
+        {warehouse.locations.map((location) => <option key={location.id} value={location.id}>{location.name}{location.branchName ? ` · ${location.branchName}` : ""}</option>)}
+      </select>
+      <QuickSearchInput
+        value={ingredientSearch}
+        onChange={(next) => {
+          setIngredientSearch(next);
+          const matched = next.trim() ? ingredients.find((ingredient) => ingredientMatchesQuery(ingredient, next)) : null;
+          if (matched) setIngredientId(matched.id);
+        }}
+        placeholder="Scan SKU/barcode hoặc tìm nguyên liệu"
+      />
+      <select name="ingredientId" value={ingredientId} onChange={(event) => setIngredientId(event.target.value)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold" required>
+        <option value="">Chọn nguyên liệu</option>
+        {ingredientOptions.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}{ingredient.sku ? ` · ${ingredient.sku}` : ""}{ingredient.barcode ? ` · ${ingredient.barcode}` : ""} ({ingredient.unit})</option>)}
+      </select>
+      <Input name="countedQuantity" type="number" min="0" step="0.001" value={countedQuantity} onChange={(event) => setCountedQuantity(event.target.value)} placeholder={selectedIngredient ? `Số thực tế (${selectedIngredient.unit})` : "Số thực tế"} className="h-11 rounded-xl bg-white" required />
+      <Textarea name="note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú kiểm kê" className="min-h-20 rounded-xl bg-white" />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniMetric label="Hệ thống" value={selectedIngredient ? formatQuantity(expectedQuantity, selectedIngredient.unit) : "-"} />
+        <MiniMetric label="Chênh lệch" value={selectedIngredient ? formatQuantity(variance, selectedIngredient.unit) : "-"} />
+      </div>
+      <SubmitButton disabled={!canUseWarehouseAdvanced || !selectedIngredient || countedQuantity.trim().length === 0} pendingLabel="Đang kiểm kê..." className="h-11 rounded-2xl">
+        <ClipboardCheck className="h-4 w-4" />
+        Áp dụng kiểm kê
+      </SubmitButton>
+    </form>
+  );
+}
+
+function QuickTransferForm({ warehouse, ingredients, canUseWarehouseAdvanced }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[]; canUseWarehouseAdvanced: boolean }) {
+  const defaultFromLocationId = warehouse.locations[0]?.id ?? "";
+  const [fromLocationId, setFromLocationId] = useState(defaultFromLocationId);
+  const [toLocationId, setToLocationId] = useState(warehouse.locations.find((location) => location.id !== defaultFromLocationId)?.id ?? "");
+  const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [unit, setUnit] = useState(ingredients[0]?.unit ?? "");
+  const [note, setNote] = useState("Điều chuyển nhanh từ Command Center");
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
+  const ingredientOptions = getQuickIngredientOptions(ingredients, ingredientSearch, ingredientId);
+  const availableFromSource = selectedIngredient
+    ? warehouse.stockBalances.find((balance) => balance.ingredientId === selectedIngredient.id && balance.locationId === fromLocationId)?.availableQuantity ?? selectedIngredient.onHandQuantity
+    : 0;
+  const parsedQuantity = parseNumber(quantity);
+  const transferReady = warehouse.locations.length >= 2;
+
+  return (
+    <form action={createInventoryTransferAction} className="grid gap-3">
+      <input type="hidden" name="rowsJson" value="[]" />
+      {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Điều chuyển Premium" detail="Tạo phiếu điều chuyển cần quyền kho nâng cao." /> : null}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <select
+          name="fromLocationId"
+          value={fromLocationId}
+          onChange={(event) => {
+            const nextFrom = event.target.value;
+            setFromLocationId(nextFrom);
+            if (nextFrom === toLocationId) setToLocationId(warehouse.locations.find((location) => location.id !== nextFrom)?.id ?? "");
+          }}
+          className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+          required
+        >
+          <option value="">Kho xuất</option>
+          {warehouse.locations.map((location) => <option key={location.id} value={location.id}>{location.name}{location.branchName ? ` · ${location.branchName}` : ""}</option>)}
+        </select>
+        <select name="toLocationId" value={toLocationId} onChange={(event) => setToLocationId(event.target.value)} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold" required>
+          <option value="">Kho nhận</option>
+          {warehouse.locations.filter((location) => location.id !== fromLocationId).map((location) => <option key={location.id} value={location.id}>{location.name}{location.branchName ? ` · ${location.branchName}` : ""}</option>)}
+        </select>
+      </div>
+      <QuickSearchInput
+        value={ingredientSearch}
+        onChange={(next) => {
+          setIngredientSearch(next);
+          const matched = next.trim() ? ingredients.find((ingredient) => ingredientMatchesQuery(ingredient, next)) : null;
+          if (matched) {
+            setIngredientId(matched.id);
+            setUnit(matched.unit);
+          }
+        }}
+        placeholder="Scan SKU/barcode hoặc tìm nguyên liệu"
+      />
+      <select
+        name="ingredientId"
+        value={ingredientId}
+        onChange={(event) => {
+          const nextIngredient = ingredients.find((ingredient) => ingredient.id === event.target.value) ?? null;
+          setIngredientId(event.target.value);
+          setUnit(nextIngredient?.unit ?? "");
+        }}
+        className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+        required
+      >
+        <option value="">Chọn nguyên liệu</option>
+        {ingredientOptions.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}{ingredient.sku ? ` · ${ingredient.sku}` : ""}{ingredient.barcode ? ` · ${ingredient.barcode}` : ""} ({ingredient.unit})</option>)}
+      </select>
+      <div className="grid gap-2 sm:grid-cols-[1fr_0.55fr]">
+        <Input name="quantity" type="number" min="0.001" step="0.001" value={quantity} onChange={(event) => setQuantity(event.target.value)} placeholder="Số lượng" className="h-11 rounded-xl bg-white" required />
+        <Input name="unit" value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Đơn vị" className="h-11 rounded-xl bg-white" />
+      </div>
+      <Textarea name="note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú điều chuyển" className="min-h-20 rounded-xl bg-white" />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniMetric label="Khả dụng kho xuất" value={selectedIngredient ? formatQuantity(availableFromSource, selectedIngredient.unit) : "-"} />
+        <MiniMetric label="Dòng chuyển" value={parsedQuantity > 0 ? formatQuantity(parsedQuantity, unit || selectedIngredient?.unit || "") : "-"} />
+      </div>
+      {!transferReady ? <p className="rounded-2xl bg-amber-50 px-3 py-2 text-xs font-black text-amber-800">Cần ít nhất 2 kho hoặc chi nhánh để điều chuyển.</p> : null}
+      <SubmitButton disabled={!canUseWarehouseAdvanced || !transferReady || !selectedIngredient || parsedQuantity <= 0 || !fromLocationId || !toLocationId || fromLocationId === toLocationId} pendingLabel="Đang tạo..." className="h-11 rounded-2xl">
+        <ArrowDownUp className="h-4 w-4" />
+        Tạo điều chuyển
+      </SubmitButton>
+    </form>
+  );
+}
+
+function QuickPurchaseOrderForm({
+  warehouse,
+  ingredients,
+  purchasePlan,
+  canUseProcurement
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  purchasePlan: InventoryPurchasePlan;
+  canUseProcurement: boolean;
+}) {
+  const suggestedLine = purchasePlan.lines.find((line) => line.priority === "urgent") ?? purchasePlan.lines[0] ?? null;
+  const initialIngredient = ingredients.find((ingredient) => ingredient.id === suggestedLine?.ingredientId) ?? ingredients[0] ?? null;
+  const [supplierId, setSupplierId] = useState(purchasePlan.recommendedSupplier?.id ?? "");
+  const [locationId, setLocationId] = useState(warehouse.locations[0]?.id ?? "");
+  const [ingredientId, setIngredientId] = useState(initialIngredient?.id ?? "");
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const [orderQuantity, setOrderQuantity] = useState(suggestedLine ? String(suggestedLine.orderQuantity) : "");
+  const [orderUnit, setOrderUnit] = useState(suggestedLine?.unit || initialIngredient?.unit || "");
+  const [unitCost, setUnitCost] = useState(String(Math.round(suggestedLine?.unitCost || initialIngredient?.referenceUnitCost || 0)));
+  const [expectedDeliveryAt, setExpectedDeliveryAt] = useState("");
+  const [expirationDate, setExpirationDate] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [note, setNote] = useState(suggestedLine?.reason || "Tạo PO nhanh từ Command Center");
+  const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
+  const ingredientOptions = getQuickIngredientOptions(ingredients, ingredientSearch, ingredientId);
+  const parsedQuantity = parseNumber(orderQuantity);
+  const parsedCost = Math.round(parseNumber(unitCost));
+
+  return (
+    <form action={createInventoryPurchaseOrderAction} className="grid gap-3">
+      <input type="hidden" name="rowsJson" value="[]" />
+      {!canUseProcurement ? <FeatureLockNotice title="Purchase order Premium" detail="Tạo PO và quản lý mua hàng cần quyền procurement." /> : null}
+      <div className="grid gap-2 sm:grid-cols-2">
+        <select name="supplierId" value={supplierId} onChange={(event) => setSupplierId(event.target.value)} disabled={!canUseProcurement} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+          <option value="">Chọn NCC sau</option>
+          {warehouse.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+        </select>
+        <select name="locationId" value={locationId} onChange={(event) => setLocationId(event.target.value)} disabled={!canUseProcurement} className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+          <option value="">Kho chính</option>
+          {warehouse.locations.map((location) => <option key={location.id} value={location.id}>{location.name}{location.branchName ? ` · ${location.branchName}` : ""}</option>)}
+        </select>
+      </div>
+      <QuickSearchInput
+        value={ingredientSearch}
+        disabled={!canUseProcurement}
+        onChange={(next) => {
+          setIngredientSearch(next);
+          const matched = next.trim() ? ingredients.find((ingredient) => ingredientMatchesQuery(ingredient, next)) : null;
+          if (matched) {
+            setIngredientId(matched.id);
+            setOrderUnit(matched.unit);
+            setUnitCost(String(Math.round(matched.referenceUnitCost)));
+          }
+        }}
+        placeholder="Scan SKU/barcode hoặc tìm nguyên liệu"
+      />
+      <select
+        name="ingredientId"
+        value={ingredientId}
+        disabled={!canUseProcurement}
+        onChange={(event) => {
+          const nextIngredient = ingredients.find((ingredient) => ingredient.id === event.target.value) ?? null;
+          setIngredientId(event.target.value);
+          setOrderUnit(nextIngredient?.unit ?? "");
+          setUnitCost(String(Math.round(nextIngredient?.referenceUnitCost ?? 0)));
+        }}
+        className="h-11 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold"
+        required
+      >
+        <option value="">Chọn nguyên liệu</option>
+        {ingredientOptions.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name}{ingredient.sku ? ` · ${ingredient.sku}` : ""}{ingredient.barcode ? ` · ${ingredient.barcode}` : ""} ({ingredient.unit})</option>)}
+      </select>
+      <div className="grid gap-2 sm:grid-cols-[0.75fr_0.45fr_0.6fr]">
+        <Input name="orderQuantity" type="number" min="0.001" step="0.001" disabled={!canUseProcurement} value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} placeholder="SL đặt" className="h-11 rounded-xl bg-white" required />
+        <Input name="orderUnit" disabled={!canUseProcurement} value={orderUnit} onChange={(event) => setOrderUnit(event.target.value)} placeholder="Đơn vị" className="h-11 rounded-xl bg-white" />
+        <Input name="unitCost" type="number" min={0} step={1} disabled={!canUseProcurement} value={unitCost} onChange={(event) => setUnitCost(event.target.value)} placeholder="Giá / đơn vị" className="h-11 rounded-xl bg-white" required />
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <Input name="expectedDeliveryAt" type="datetime-local" disabled={!canUseProcurement} value={expectedDeliveryAt} onChange={(event) => setExpectedDeliveryAt(event.target.value)} className="h-11 rounded-xl bg-white" />
+        <Input name="expirationDate" type="date" disabled={!canUseProcurement} value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-11 rounded-xl bg-white" />
+        <Input name="batchCode" disabled={!canUseProcurement} value={batchCode} onChange={(event) => setBatchCode(event.target.value)} placeholder="Mã lô" className="h-11 rounded-xl bg-white" />
+      </div>
+      <Textarea name="note" disabled={!canUseProcurement} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ghi chú PO" className="min-h-20 rounded-xl bg-white" />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MiniMetric label="Tạm tính" value={formatVnd(Math.max(0, parsedQuantity * parsedCost))} />
+        <MiniMetric label="Tồn hiện tại" value={selectedIngredient ? formatQuantity(selectedIngredient.onHandQuantity, selectedIngredient.unit) : "-"} />
+      </div>
+      <SubmitButton disabled={!canUseProcurement || !selectedIngredient || parsedQuantity <= 0 || parsedCost < 0} pendingLabel="Đang tạo PO..." className="h-11 rounded-2xl">
+        <ClipboardList className="h-4 w-4" />
+        Tạo PO nhanh
+      </SubmitButton>
+    </form>
   );
 }
 
@@ -1476,6 +2298,18 @@ function SubmitButton({ children, disabled, pendingLabel = "Đang xử lý...", 
         children
       )}
     </Button>
+  );
+}
+
+function FeatureLockNotice({ title = "Tính năng Premium", detail = "Bạn vẫn xem được dữ liệu tổng quan. Thao tác ghi dữ liệu sẽ mở sau khi nâng cấp gói." }: { title?: string; detail?: string }) {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">
+      <div className="flex items-center gap-2 font-black">
+        <ShieldCheck className="h-4 w-4" />
+        {title}
+      </div>
+      <p className="mt-1 text-amber-800">{detail}</p>
+    </div>
   );
 }
 
@@ -2906,6 +3740,13 @@ function quickActionToneClass(tone: InventoryQuickAction["tone"]) {
   return "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100";
 }
 
+function summaryToneClass(tone: "green" | "yellow" | "red" | "blue") {
+  if (tone === "red") return "bg-red-50 text-red-700";
+  if (tone === "yellow") return "bg-amber-50 text-amber-700";
+  if (tone === "blue") return "bg-blue-50 text-blue-700";
+  return "bg-emerald-50 text-emerald-700";
+}
+
 function WorkbenchButton({
   active,
   icon: Icon,
@@ -2989,6 +3830,8 @@ function AiInventoryIntake({
   importAction,
   importPending,
   importState,
+  canImport,
+  canUseAiOcr,
   onParse,
   onFileUpload,
   onAdvancedRead,
@@ -3010,6 +3853,8 @@ function AiInventoryIntake({
   importAction: (formData: FormData) => void;
   importPending: boolean;
   importState?: { error?: string; success?: string };
+  canImport: boolean;
+  canUseAiOcr: boolean;
   onParse: () => void;
   onFileUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   onAdvancedRead: () => void;
@@ -3042,7 +3887,7 @@ function AiInventoryIntake({
           <Button type="button" onClick={onParse} disabled={isParsing} className="h-12 rounded-xl">
             <Sparkles className="h-4 w-4" /> Phân tích dữ liệu
           </Button>
-          <Button type="button" variant="secondary" onClick={onAdvancedRead} disabled={aiOcrLoading} className="h-12 rounded-xl">
+          <Button type="button" variant="secondary" onClick={onAdvancedRead} disabled={aiOcrLoading || !canUseAiOcr} className="h-12 rounded-xl">
             <BrainCircuit className="h-4 w-4" /> {aiOcrLoading ? "Đang đọc..." : "AI đọc nâng cao"}
           </Button>
           <Button type="button" variant="secondary" onClick={onVoice} className="h-12 rounded-xl">
@@ -3053,6 +3898,7 @@ function AiInventoryIntake({
           </Button>
         </div>
         <p className="mt-3 rounded-2xl bg-[var(--soft-surface)] px-3 py-2 text-xs font-bold text-[var(--muted-foreground)]">{parserMessage}</p>
+        {!canUseAiOcr ? <FeatureLockNotice title="AI OCR Premium" detail="Bạn vẫn nhập bằng text/file thường. AI đọc hóa đơn nâng cao cần gói Premium." /> : null}
         {aiOcrError ? <p className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">{aiOcrError}</p> : null}
       </section>
 
@@ -3084,7 +3930,8 @@ function AiInventoryIntake({
         </div>
         {importState?.error ? <p className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-xs font-black text-red-700">{importState.error}</p> : null}
         {importState?.success ? <p className="mt-2 rounded-2xl bg-emerald-50 px-3 py-2 text-xs font-black text-emerald-800">{importState.success}</p> : null}
-        <SubmitButton disabled={draftRows.length === 0 || importPending} pendingLabel="Đang nhập vào kho..." className="mt-3 h-12 w-full rounded-2xl">
+        {!canImport ? <FeatureLockNotice title="Nhập kho nâng cao" detail="Tạo nháp vẫn dùng được. Xác nhận nhập kho thật cần quyền mua hàng/nhập kho Premium." /> : null}
+        <SubmitButton disabled={!canImport || draftRows.length === 0 || importPending} pendingLabel="Đang nhập vào kho..." className="mt-3 h-12 w-full rounded-2xl">
           <PackagePlus className="h-4 w-4" /> Nhập vào kho thật
         </SubmitButton>
       </form>
@@ -4008,7 +4855,15 @@ function TransferControlCenter({
   );
 }
 
-function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[] }) {
+function InventoryCountingDesk({
+  warehouse,
+  ingredients,
+  canUseWarehouseAdvanced
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  canUseWarehouseAdvanced: boolean;
+}) {
   const [countDraftSeed] = useState(() => readInventoryDraft<CountDraftSnapshot>(COUNT_DRAFT_KEY));
   const [locationId, setLocationId] = useState(() => countDraftSeed?.locationId ?? warehouse.locations[0]?.id ?? "");
   const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
@@ -4022,7 +4877,7 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
     writeInventoryDraft(COUNT_DRAFT_KEY, { locationId, lines: countLines });
   }, [countLines, locationId]);
   const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
-  const countIngredientOptions = ingredients.filter((ingredient) => ingredientMatchesQuery(ingredient, countSearch)).slice(0, 80);
+  const countIngredientOptions = getQuickIngredientOptions(ingredients, countSearch, ingredientId);
   const selectedLocation = warehouse.locations.find((location) => location.id === locationId) ?? null;
   const selectedLocationName = selectedLocation ? `${selectedLocation.name}${selectedLocation.branchName ? ` · ${selectedLocation.branchName}` : ""}` : "Kho chính";
   const expectedQuantity = selectedIngredient
@@ -4084,6 +4939,7 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
           </div>
           <Badge tone="blue">Mobile-ready</Badge>
         </div>
+        {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Kiểm kê Premium" detail="Bạn vẫn xem được phiên kiểm kê. Tạo và áp dụng phiếu kiểm kê cần gói Premium." /> : null}
         <form action={applyInventoryCountAction} className="grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
           <input type="hidden" name="rowsJson" value={countRowsJson} />
           <input type="hidden" name="locationId" value={locationId} />
@@ -4158,7 +5014,7 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
               <Button type="button" variant="ghost" size="sm" onClick={() => setCountLines([])} disabled={countLines.length === 0} className="h-9 rounded-xl">
                 Xóa nháp
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={addCountLine} disabled={!selectedIngredient || countedQuantity.trim().length === 0} className="h-9 rounded-xl">
+              <Button type="button" variant="secondary" size="sm" onClick={addCountLine} disabled={!canUseWarehouseAdvanced || !selectedIngredient || countedQuantity.trim().length === 0} className="h-9 rounded-xl">
                 <PackagePlus className="h-4 w-4" />
                 Thêm dòng
               </Button>
@@ -4193,7 +5049,7 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
             <MiniMetric label="Dòng trong phiếu" value={countLines.length.toLocaleString("vi-VN")} />
             <MiniMetric label="Ước tính lệch" value={formatVnd(totalVarianceValue)} />
           </div>
-          <SubmitButton disabled={countLines.length === 0} pendingLabel="Đang áp dụng..." className="h-11 rounded-2xl">
+          <SubmitButton disabled={!canUseWarehouseAdvanced || countLines.length === 0} pendingLabel="Đang áp dụng..." className="h-11 rounded-2xl">
             <ClipboardCheck className="h-4 w-4" />
             Áp dụng {countLines.length.toLocaleString("vi-VN")} dòng kiểm kê
           </SubmitButton>
@@ -4252,7 +5108,15 @@ function InventoryCountingDesk({ warehouse, ingredients }: { warehouse: Inventor
   );
 }
 
-function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: InventoryWarehouseCommandCenter; ingredients: InventoryIngredient[] }) {
+function InventoryTransferDesk({
+  warehouse,
+  ingredients,
+  canUseWarehouseAdvanced
+}: {
+  warehouse: InventoryWarehouseCommandCenter;
+  ingredients: InventoryIngredient[];
+  canUseWarehouseAdvanced: boolean;
+}) {
   const transferReady = warehouse.locations.length >= 2 && ingredients.length > 0;
   const [transferDraftSeed] = useState(() => readInventoryDraft<TransferDraftSnapshot>(TRANSFER_DRAFT_KEY));
   const [fromLocationId, setFromLocationId] = useState(() => transferDraftSeed?.fromLocationId ?? warehouse.locations[0]?.id ?? "");
@@ -4267,7 +5131,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
   const [transferSearch, setTransferSearch] = useState("");
   const [transferLines, setTransferLines] = useState<TransferDraftLine[]>(() => (Array.isArray(transferDraftSeed?.lines) ? transferDraftSeed.lines : []));
   const selectedIngredient = ingredients.find((ingredient) => ingredient.id === ingredientId) ?? null;
-  const transferIngredientOptions = ingredients.filter((ingredient) => ingredientMatchesQuery(ingredient, transferSearch)).slice(0, 80);
+  const transferIngredientOptions = getQuickIngredientOptions(ingredients, transferSearch, ingredientId);
 
   useEffect(() => {
     writeInventoryDraft(TRANSFER_DRAFT_KEY, { fromLocationId, toLocationId, note: transferNote, lines: transferLines });
@@ -4330,6 +5194,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
           </div>
           <Badge tone={transferReady ? "green" : "yellow"}>{transferReady ? "Sẵn sàng" : "Cần 2 kho"}</Badge>
         </div>
+        {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Điều chuyển Premium" detail="Bạn vẫn xem được luồng điều chuyển. Tạo, duyệt, xuất và nhận phiếu cần gói Premium." /> : null}
         <form action={createInventoryTransferAction} className="grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
           <input type="hidden" name="rowsJson" value={transferRowsJson} />
           <input type="hidden" name="fromLocationId" value={fromLocationId} />
@@ -4413,7 +5278,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
               <Button type="button" variant="ghost" size="sm" onClick={() => setTransferLines([])} disabled={transferLines.length === 0} className="h-9 rounded-xl">
                 Xóa nháp
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={addTransferLine} disabled={!selectedIngredient || quantity.trim().length === 0} className="h-9 rounded-xl">
+              <Button type="button" variant="secondary" size="sm" onClick={addTransferLine} disabled={!canUseWarehouseAdvanced || !selectedIngredient || quantity.trim().length === 0} className="h-9 rounded-xl">
                 <PackagePlus className="h-4 w-4" />
                 Thêm dòng
               </Button>
@@ -4441,7 +5306,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
             <MiniMetric label="Dòng trong phiếu" value={transferLines.length.toLocaleString("vi-VN")} />
             <MiniMetric label="Tổng lượng" value={transferLines.reduce((sum, line) => sum + line.quantity, 0).toLocaleString("vi-VN")} />
           </div>
-          <SubmitButton disabled={!transferReady || transferLines.length === 0 || !fromLocationId || !toLocationId || fromLocationId === toLocationId} pendingLabel="Đang tạo điều chuyển..." className="h-11 rounded-2xl">
+          <SubmitButton disabled={!canUseWarehouseAdvanced || !transferReady || transferLines.length === 0 || !fromLocationId || !toLocationId || fromLocationId === toLocationId} pendingLabel="Đang tạo điều chuyển..." className="h-11 rounded-2xl">
             <ArrowDownUp className="h-4 w-4" />
             Tạo yêu cầu {transferLines.length.toLocaleString("vi-VN")} dòng
           </SubmitButton>
@@ -4487,7 +5352,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
                       : transfer.lineCount.toLocaleString("vi-VN")}
                   </span>
                   <span className="font-semibold text-[var(--muted-foreground)]">{formatDateTime(transfer.createdAt)}</span>
-                  <TransferWorkflowActions transfer={transfer} />
+                  <TransferWorkflowActions transfer={transfer} canUseWarehouseAdvanced={canUseWarehouseAdvanced} />
                 </div>
               ))}
             </div>
@@ -4499,7 +5364,7 @@ function InventoryTransferDesk({ warehouse, ingredients }: { warehouse: Inventor
   );
 }
 
-function TransferWorkflowActions({ transfer }: { transfer: InventoryTransfer }) {
+function TransferWorkflowActions({ transfer, canUseWarehouseAdvanced }: { transfer: InventoryTransfer; canUseWarehouseAdvanced: boolean }) {
   const actions =
     transfer.status === "requested"
       ? [
@@ -4516,7 +5381,7 @@ function TransferWorkflowActions({ transfer }: { transfer: InventoryTransfer }) 
           : [];
 
   if (transfer.status === "dispatched") {
-    return <TransferReceiveForm transfer={transfer} />;
+    return <TransferReceiveForm transfer={transfer} canUseWarehouseAdvanced={canUseWarehouseAdvanced} />;
   }
 
   if (actions.length === 0) {
@@ -4529,7 +5394,7 @@ function TransferWorkflowActions({ transfer }: { transfer: InventoryTransfer }) 
         <form key={`${transfer.id}:${action}`} action={processInventoryTransferAction}>
           <input type="hidden" name="transferId" value={transfer.id} />
           <input type="hidden" name="action" value={action} />
-          <SubmitButton variant={tone === "primary" ? "primary" : "secondary"} size="sm" pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
+          <SubmitButton variant={tone === "primary" ? "primary" : "secondary"} size="sm" disabled={!canUseWarehouseAdvanced} pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
             <Icon className="h-3.5 w-3.5" />
             {label}
           </SubmitButton>
@@ -4539,7 +5404,7 @@ function TransferWorkflowActions({ transfer }: { transfer: InventoryTransfer }) 
   );
 }
 
-function TransferReceiveForm({ transfer }: { transfer: InventoryTransfer }) {
+function TransferReceiveForm({ transfer, canUseWarehouseAdvanced }: { transfer: InventoryTransfer; canUseWarehouseAdvanced: boolean }) {
   const receivableLines = useMemo(() => transfer.lines.filter((line) => line.dispatchedQuantity > line.receivedQuantity), [transfer.lines]);
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
     Object.fromEntries(receivableLines.map((line) => [line.id, String(Math.max(0, line.dispatchedQuantity - line.receivedQuantity))]))
@@ -4581,7 +5446,7 @@ function TransferReceiveForm({ transfer }: { transfer: InventoryTransfer }) {
           );
         })}
       </div>
-      <SubmitButton size="sm" pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
+      <SubmitButton size="sm" disabled={!canUseWarehouseAdvanced} pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
         <PackageCheck className="h-3.5 w-3.5" />
         Nhận hàng
       </SubmitButton>
@@ -4724,10 +5589,12 @@ function PurchasingCommandCenterDraft({
 
 function PurchasePlanningPanel({
   purchasePlan,
-  onAddPlanLines
+  onAddPlanLines,
+  canUseProcurement
 }: {
   purchasePlan: InventoryPurchasePlan;
   onAddPlanLines: (lines: PurchasePlanLine[]) => void;
+  canUseProcurement: boolean;
 }) {
   const urgentLines = purchasePlan.lines.filter((line) => line.priority === "urgent");
   const hasLines = purchasePlan.lines.length > 0;
@@ -4757,7 +5624,7 @@ function PurchasePlanningPanel({
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="font-black text-[var(--foreground)]">Nhóm ưu tiên</p>
-              <Button type="button" size="sm" disabled={!hasLines} onClick={() => onAddPlanLines(purchasePlan.lines)} className="h-9 rounded-xl">
+              <Button type="button" size="sm" disabled={!canUseProcurement || !hasLines} onClick={() => onAddPlanLines(purchasePlan.lines)} className="h-9 rounded-xl">
                 <PackagePlus className="h-4 w-4" />
                 Đưa vào phiếu nháp
               </Button>
@@ -4780,7 +5647,7 @@ function PurchasePlanningPanel({
           <div className="rounded-2xl border border-[var(--border)] p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <p className="font-black text-[var(--foreground)]">Dòng mua ưu tiên</p>
-              <Button type="button" size="sm" variant="secondary" disabled={urgentLines.length === 0} onClick={() => onAddPlanLines(urgentLines)} className="h-9 rounded-xl">
+              <Button type="button" size="sm" variant="secondary" disabled={!canUseProcurement || urgentLines.length === 0} onClick={() => onAddPlanLines(urgentLines)} className="h-9 rounded-xl">
                 Thêm dòng gấp
               </Button>
             </div>
@@ -4833,7 +5700,8 @@ function PurchasingCommandCenter({
   draftLineCount,
   draftValue,
   onAddAllPlanLines,
-  onAddUrgentLines
+  onAddUrgentLines,
+  canUseProcurement
 }: {
   purchasePlan: InventoryPurchasePlan;
   suppliers: InventoryWarehouseCommandCenter["suppliers"];
@@ -4848,6 +5716,7 @@ function PurchasingCommandCenter({
   draftValue: number;
   onAddAllPlanLines: () => void;
   onAddUrgentLines: () => void;
+  canUseProcurement: boolean;
 }) {
   const preferredSuppliers = suppliers.filter((supplier) => supplier.isPreferred).length;
   const supplierPlanRows = purchasePlan.supplierPlans.slice(0, 4);
@@ -4923,15 +5792,16 @@ function PurchasingCommandCenter({
             <MiniMetric label="Phiếu nháp" value={formatVnd(draftValue)} />
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
-            <Button type="button" onClick={onAddUrgentLines} disabled={purchasePlan.urgentLineCount === 0} className="h-10 rounded-2xl">
+            <Button type="button" onClick={onAddUrgentLines} disabled={!canUseProcurement || purchasePlan.urgentLineCount === 0} className="h-10 rounded-2xl">
               <AlertTriangle className="h-4 w-4" />
               Đưa dòng gấp vào PO
             </Button>
-            <Button type="button" variant="secondary" onClick={onAddAllPlanLines} disabled={purchasePlan.lines.length === 0} className="h-10 rounded-2xl">
+            <Button type="button" variant="secondary" onClick={onAddAllPlanLines} disabled={!canUseProcurement || purchasePlan.lines.length === 0} className="h-10 rounded-2xl">
               <PackagePlus className="h-4 w-4" />
               Đưa tất cả vào PO
             </Button>
           </div>
+          {!canUseProcurement ? <FeatureLockNotice title="Mua hàng Premium" detail="Bạn vẫn xem được kế hoạch mua và PO. Tạo supplier, PO và nhận hàng cần quyền mua hàng Premium." /> : null}
         </div>
 
         <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
@@ -5018,11 +5888,13 @@ function PurchasingCommandCenter({
 function SupplierPurchaseDesk({
   warehouse,
   ingredients,
-  purchasePlan
+  purchasePlan,
+  canUseProcurement
 }: {
   warehouse: InventoryWarehouseCommandCenter;
   ingredients: InventoryIngredient[];
   purchasePlan: InventoryPurchasePlan;
+  canUseProcurement: boolean;
 }) {
   const [purchaseNowMs] = useState(() => Date.now());
   const [supplierId, setSupplierId] = useState("");
@@ -5074,6 +5946,7 @@ function SupplierPurchaseDesk({
   const purchaseReadinessTone = purchaseReadinessScore >= 85 ? "green" : purchaseReadinessScore >= 65 ? "yellow" : "red";
 
   const addPurchaseLine = () => {
+    if (!canUseProcurement) return;
     if (!selectedIngredient) return;
     const quantity = parseNumber(orderQuantity);
     const cost = Math.round(parseNumber(unitCost));
@@ -5102,6 +5975,7 @@ function SupplierPurchaseDesk({
   };
 
   const addPlanLines = (lines: PurchasePlanLine[]) => {
+    if (!canUseProcurement) return;
     const nextLines = lines.reduce<PurchaseDraftLine[]>((drafts, line) => {
         const ingredient = ingredients.find((item) => item.id === line.ingredientId);
         if (!ingredient || line.orderQuantity <= 0) return drafts;
@@ -5142,8 +6016,9 @@ function SupplierPurchaseDesk({
         draftValue={purchaseTotal}
         onAddAllPlanLines={() => addPlanLines(purchasePlan.lines)}
         onAddUrgentLines={() => addPlanLines(purchasePlan.lines.filter((line) => line.priority === "urgent"))}
+        canUseProcurement={canUseProcurement}
       />
-      <PurchasePlanningPanel purchasePlan={purchasePlan} onAddPlanLines={addPlanLines} />
+      <PurchasePlanningPanel purchasePlan={purchasePlan} onAddPlanLines={addPlanLines} canUseProcurement={canUseProcurement} />
       <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
         <div className="mb-4 flex items-center justify-between gap-3">
@@ -5153,17 +6028,18 @@ function SupplierPurchaseDesk({
           </div>
           <Badge tone={warehouse.suppliers.length > 0 ? "green" : "neutral"}>{warehouse.suppliers.length} NCC</Badge>
         </div>
+        {!canUseProcurement ? <FeatureLockNotice title="Supplier Premium" detail="Danh sách NCC vẫn xem được. Thêm mới hoặc chỉnh luồng mua hàng cần quyền procurement." /> : null}
         <form action={createInventorySupplierAction} className="mb-4 grid gap-2 rounded-2xl bg-[var(--soft-surface)] p-3 sm:grid-cols-[1fr_0.8fr_0.55fr_auto]">
-          <Input name="name" required placeholder="Tên nhà cung cấp" className="h-10 rounded-xl bg-white" />
-          <Input name="phone" placeholder="Số điện thoại" className="h-10 rounded-xl bg-white" />
-          <Input name="defaultLeadDays" type="number" min={0} max={120} placeholder="Lead" className="h-10 rounded-xl bg-white" />
-          <SubmitButton size="sm" pendingLabel="Đang thêm..." className="h-10 rounded-xl">
+          <Input name="name" required disabled={!canUseProcurement} placeholder="Tên nhà cung cấp" className="h-10 rounded-xl bg-white" />
+          <Input name="phone" disabled={!canUseProcurement} placeholder="Số điện thoại" className="h-10 rounded-xl bg-white" />
+          <Input name="defaultLeadDays" type="number" min={0} max={120} disabled={!canUseProcurement} placeholder="Lead" className="h-10 rounded-xl bg-white" />
+          <SubmitButton size="sm" disabled={!canUseProcurement} pendingLabel="Đang thêm..." className="h-10 rounded-xl">
             <Building2 className="h-4 w-4" />
             Thêm NCC
           </SubmitButton>
-          <Input name="address" placeholder="Địa chỉ hoặc ghi chú giao hàng" className="h-10 rounded-xl bg-white sm:col-span-2" />
+          <Input name="address" disabled={!canUseProcurement} placeholder="Địa chỉ hoặc ghi chú giao hàng" className="h-10 rounded-xl bg-white sm:col-span-2" />
           <label className="flex h-10 items-center gap-2 rounded-xl bg-white px-3 text-sm font-bold text-[var(--muted-foreground)]">
-            <input name="isPreferred" type="checkbox" className="h-4 w-4 accent-[var(--primary)]" />
+            <input name="isPreferred" type="checkbox" disabled={!canUseProcurement} className="h-4 w-4 accent-[var(--primary)]" />
             Ưu tiên
           </label>
         </form>
@@ -5195,14 +6071,15 @@ function SupplierPurchaseDesk({
           </div>
           <Badge tone={warehouse.openPurchaseOrderCount > 0 ? "yellow" : "green"}>{warehouse.openPurchaseOrderCount} PO mở</Badge>
         </div>
+        {!canUseProcurement ? <FeatureLockNotice title="Purchase order Premium" detail="Bạn vẫn theo dõi được PO đang mở. Tạo PO và nhận hàng cần quyền mua hàng Premium." /> : null}
         <form action={createInventoryPurchaseOrderAction} className="mb-4 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
           <input type="hidden" name="rowsJson" value={purchaseRowsJson} />
           <div className="grid gap-2 lg:grid-cols-[1fr_1fr]">
-            <select name="supplierId" value={supplierId} onChange={(event) => setSupplierId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+            <select name="supplierId" value={supplierId} disabled={!canUseProcurement} onChange={(event) => setSupplierId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
               <option value="">Chọn NCC sau</option>
               {warehouse.suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
             </select>
-            <select name="locationId" value={locationId} onChange={(event) => setLocationId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
+            <select name="locationId" value={locationId} disabled={!canUseProcurement} onChange={(event) => setLocationId(event.target.value)} className="h-10 rounded-xl border border-[var(--border)] bg-white px-3 text-sm font-bold">
               <option value="">Kho chính</option>
               {warehouse.locations.map((location) => (
                 <option key={location.id} value={location.id}>
@@ -5214,6 +6091,7 @@ function SupplierPurchaseDesk({
           <div className="grid gap-2 lg:grid-cols-[1.2fr_0.55fr_0.45fr_0.65fr]">
             <select
               value={ingredientId}
+              disabled={!canUseProcurement}
               onChange={(event) => {
                 const nextIngredientId = event.target.value;
                 const nextIngredient = ingredients.find((ingredient) => ingredient.id === nextIngredientId);
@@ -5226,20 +6104,20 @@ function SupplierPurchaseDesk({
               <option value="">Chọn nguyên liệu</option>
               {ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name} ({ingredient.unit})</option>)}
             </select>
-            <Input type="number" min="0.001" step="0.001" placeholder="SL đặt" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} className="h-10 rounded-xl bg-white" />
-            <Input placeholder="Đơn vị" value={orderUnit} onChange={(event) => setOrderUnit(event.target.value)} className="h-10 rounded-xl bg-white" />
-            <Input type="number" min={0} step={1} placeholder="Giá / đơn vị" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input type="number" min="0.001" step="0.001" disabled={!canUseProcurement} placeholder="SL đặt" value={orderQuantity} onChange={(event) => setOrderQuantity(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input placeholder="Đơn vị" disabled={!canUseProcurement} value={orderUnit} onChange={(event) => setOrderUnit(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input type="number" min={0} step={1} disabled={!canUseProcurement} placeholder="Giá / đơn vị" value={unitCost} onChange={(event) => setUnitCost(event.target.value)} className="h-10 rounded-xl bg-white" />
           </div>
           <div className="grid gap-2 lg:grid-cols-[0.9fr_0.7fr_0.7fr_auto]">
-            <Input name="expectedDeliveryAt" type="datetime-local" value={expectedDeliveryAt} onChange={(event) => setExpectedDeliveryAt(event.target.value)} className="h-10 rounded-xl bg-white" />
-            <Input type="date" value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-10 rounded-xl bg-white" />
-            <Input placeholder="Mã lô" value={batchCode} onChange={(event) => setBatchCode(event.target.value)} className="h-10 rounded-xl bg-white" />
-            <Button type="button" size="sm" variant="secondary" onClick={addPurchaseLine} disabled={!selectedIngredient || orderQuantity.trim().length === 0 || unitCost.trim().length === 0} className="h-10 rounded-xl">
+            <Input name="expectedDeliveryAt" type="datetime-local" disabled={!canUseProcurement} value={expectedDeliveryAt} onChange={(event) => setExpectedDeliveryAt(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input type="date" disabled={!canUseProcurement} value={expirationDate} onChange={(event) => setExpirationDate(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Input placeholder="Mã lô" disabled={!canUseProcurement} value={batchCode} onChange={(event) => setBatchCode(event.target.value)} className="h-10 rounded-xl bg-white" />
+            <Button type="button" size="sm" variant="secondary" onClick={addPurchaseLine} disabled={!canUseProcurement || !selectedIngredient || orderQuantity.trim().length === 0 || unitCost.trim().length === 0} className="h-10 rounded-xl">
               <PackagePlus className="h-4 w-4" />
               Thêm dòng
             </Button>
           </div>
-          <Input placeholder="Ghi chú dòng, quy cách giao hoặc giá thỏa thuận" value={lineNote} onChange={(event) => setLineNote(event.target.value)} className="h-10 rounded-xl bg-white" />
+          <Input placeholder="Ghi chú dòng, quy cách giao hoặc giá thỏa thuận" disabled={!canUseProcurement} value={lineNote} onChange={(event) => setLineNote(event.target.value)} className="h-10 rounded-xl bg-white" />
           <DraftLinesPanel
             emptyIcon={ClipboardList}
             emptyTitle="Chưa có dòng đặt hàng"
@@ -5264,8 +6142,8 @@ function SupplierPurchaseDesk({
             <MiniMetric label="Dòng trong PO" value={purchaseLines.length.toLocaleString("vi-VN")} />
             <MiniMetric label="Tạm tính" value={formatVnd(purchaseTotal)} />
           </div>
-          <Textarea name="note" placeholder="Ghi chú chung: giao hàng, công nợ hoặc điều kiện nhận hàng" value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} className="min-h-16 rounded-xl bg-white" />
-          <SubmitButton disabled={ingredients.length === 0 || purchaseLines.length === 0} pendingLabel="Đang tạo PO..." className="h-11 rounded-2xl">
+          <Textarea name="note" placeholder="Ghi chú chung: giao hàng, công nợ hoặc điều kiện nhận hàng" disabled={!canUseProcurement} value={purchaseNote} onChange={(event) => setPurchaseNote(event.target.value)} className="min-h-16 rounded-xl bg-white" />
+          <SubmitButton disabled={!canUseProcurement || ingredients.length === 0 || purchaseLines.length === 0} pendingLabel="Đang tạo PO..." className="h-11 rounded-2xl">
             <ClipboardList className="h-4 w-4" />
             Tạo PO {purchaseLines.length.toLocaleString("vi-VN")} dòng
           </SubmitButton>
@@ -5304,6 +6182,7 @@ function SupplierPurchaseDesk({
                       <PurchaseOrderReceiveForm
                         key={`${order.id}:${order.status}:${order.lines.map((line) => `${line.id}:${line.receivedQuantity}`).join("|")}`}
                         order={order}
+                        canUseProcurement={canUseProcurement}
                       />
                     ) : null}
                   </div>
@@ -5318,7 +6197,7 @@ function SupplierPurchaseDesk({
   );
 }
 
-function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) {
+function PurchaseOrderReceiveForm({ order, canUseProcurement }: { order: InventoryPurchaseOrder; canUseProcurement: boolean }) {
   const receivableLines = order.lines.filter((line) => line.remainingQuantity > 0);
   const [receiptLines, setReceiptLines] = useState<PurchaseReceiptDraftLine[]>(
     receivableLines.map((line) => ({
@@ -5369,6 +6248,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
     <form action={receiveInventoryPurchaseOrderAction} className="mt-3 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
       <input type="hidden" name="purchaseOrderId" value={order.id} />
       <input type="hidden" name="rowsJson" value={receiptRowsJson} />
+      {!canUseProcurement ? <FeatureLockNotice title="Nhận hàng Premium" detail="Bạn vẫn xem được dòng còn nhận. Xác nhận nhập kho từ PO cần quyền procurement." /> : null}
       <div className="grid gap-2">
         {receivableLines.map((line) => {
           const draft = receiptLines.find((item) => item.purchaseOrderLineId === line.id);
@@ -5394,6 +6274,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
                   type="number"
                   min="0.001"
                   step="0.001"
+                  disabled={!canUseProcurement}
                   value={draft.receivedQuantity}
                   onChange={(event) => updateReceiptLine(line.id, { receivedQuantity: event.target.value })}
                   className="h-10 rounded-xl bg-white"
@@ -5403,6 +6284,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
                   type="number"
                   min={0}
                   step={1}
+                  disabled={!canUseProcurement}
                   value={draft.unitCost}
                   onChange={(event) => updateReceiptLine(line.id, { unitCost: event.target.value })}
                   className="h-10 rounded-xl bg-white"
@@ -5410,6 +6292,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
                 />
                 <Input
                   type="date"
+                  disabled={!canUseProcurement}
                   value={draft.expirationDate}
                   onChange={(event) => updateReceiptLine(line.id, { expirationDate: event.target.value })}
                   className="h-10 rounded-xl bg-white"
@@ -5417,6 +6300,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
                 />
                 <Input
                   value={draft.batchCode}
+                  disabled={!canUseProcurement}
                   onChange={(event) => updateReceiptLine(line.id, { batchCode: event.target.value })}
                   placeholder="Mã lô"
                   className="h-10 rounded-xl bg-white"
@@ -5424,6 +6308,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
                 />
                 <Input
                   value={draft.note}
+                  disabled={!canUseProcurement}
                   onChange={(event) => updateReceiptLine(line.id, { note: event.target.value })}
                   placeholder="Ghi chú nhận"
                   className="h-10 rounded-xl bg-white"
@@ -5437,7 +6322,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
       <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-center">
         <MiniMetric label="Dòng nhận" value={activeLineCount.toLocaleString("vi-VN")} />
         <MiniMetric label="Giá trị nhận" value={formatVnd(receiptValue)} />
-        <SubmitButton size="sm" variant="secondary" disabled={activeLineCount === 0} pendingLabel="Đang nhận..." className="h-10 rounded-xl">
+        <SubmitButton size="sm" variant="secondary" disabled={!canUseProcurement || activeLineCount === 0} pendingLabel="Đang nhận..." className="h-10 rounded-xl">
           <PackageCheck className="h-4 w-4" />
           Nhận hàng
         </SubmitButton>
@@ -5446,7 +6331,7 @@ function PurchaseOrderReceiveForm({ order }: { order: InventoryPurchaseOrder }) 
   );
 }
 
-function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseCommandCenter }) {
+function InventoryAlertDesk({ warehouse, canUseAlerts }: { warehouse: InventoryWarehouseCommandCenter; canUseAlerts: boolean }) {
   const sortedAlerts = [...warehouse.alerts].sort(
     (a, b) => alertPriorityScore(b) - alertPriorityScore(a) || new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
   );
@@ -5465,7 +6350,7 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
         <div className="flex flex-wrap gap-2">
           <Badge tone={warehouse.openAlertCount > 0 ? "red" : "green"}>{warehouse.openAlertCount} alert mở</Badge>
           <form action={refreshInventoryAlertsAction}>
-            <SubmitButton variant="secondary" size="sm" pendingLabel="Đang quét..." className="h-9 rounded-xl">
+            <SubmitButton variant="secondary" size="sm" disabled={!canUseAlerts} pendingLabel="Đang quét..." className="h-9 rounded-xl">
               <Wand2 className="h-4 w-4" />
               Quét cảnh báo
             </SubmitButton>
@@ -5478,6 +6363,7 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
         <MiniMetric label="Hao hụt / HSD" value={lossCount.toLocaleString("vi-VN")} />
         <MiniMetric label="NCC / giá" value={supplierCount.toLocaleString("vi-VN")} />
       </div>
+      {!canUseAlerts ? <FeatureLockNotice title="Alert engine Premium" detail="Bạn vẫn xem được cảnh báo hiện có. Quét lại và cập nhật trạng thái alert cần quyền cảnh báo Premium." /> : null}
       {warehouse.alerts.length === 0 ? (
         <EmptyState icon={PackageCheck} title="Chưa có cảnh báo mở" description="Alert engine sẽ gom low stock, expiring soon, waste spike, supplier delay và recipe gap ở đây." />
       ) : (
@@ -5512,7 +6398,7 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
                   <form action={updateInventoryAlertStatusAction}>
                     <input type="hidden" name="alertId" value={alert.id} />
                     <input type="hidden" name="status" value="acknowledged" />
-                    <SubmitButton size="sm" variant="secondary" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
+                    <SubmitButton size="sm" variant="secondary" disabled={!canUseAlerts} pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                       <CheckCircle2 className="h-4 w-4" />
                       Đã xem
                     </SubmitButton>
@@ -5521,7 +6407,7 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
                 <form action={updateInventoryAlertStatusAction}>
                   <input type="hidden" name="alertId" value={alert.id} />
                   <input type="hidden" name="status" value="resolved" />
-                  <SubmitButton size="sm" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
+                  <SubmitButton size="sm" disabled={!canUseAlerts} pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                     <ShieldCheck className="h-4 w-4" />
                     Xử lý xong
                   </SubmitButton>
@@ -5529,7 +6415,7 @@ function InventoryAlertDesk({ warehouse }: { warehouse: InventoryWarehouseComman
                 <form action={updateInventoryAlertStatusAction}>
                   <input type="hidden" name="alertId" value={alert.id} />
                   <input type="hidden" name="status" value="dismissed" />
-                  <SubmitButton size="sm" variant="ghost" pendingLabel="Đang lưu..." className="h-9 rounded-xl">
+                  <SubmitButton size="sm" variant="ghost" disabled={!canUseAlerts} pendingLabel="Đang lưu..." className="h-9 rounded-xl">
                     <X className="h-4 w-4" />
                     Bỏ qua
                   </SubmitButton>
@@ -5547,12 +6433,14 @@ function RecipesAndCategories({
   categories,
   ingredients,
   recipeMenuItems,
-  recipeBacklog
+  recipeBacklog,
+  canEditRecipes
 }: {
   categories: InventoryCategory[];
   ingredients: InventoryIngredient[];
   recipeMenuItems: InventoryRecipeMenuItem[];
   recipeBacklog: InventoryRecipeMenuItem[];
+  canEditRecipes: boolean;
 }) {
   return (
     <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
@@ -5567,20 +6455,21 @@ function RecipesAndCategories({
           {categories.map((category) => <Badge key={category.id} tone="blue">{category.name}</Badge>)}
         </div>
         <form action={upsertInventoryRecipeLineAction} className="mt-5 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+          {!canEditRecipes ? <FeatureLockNotice title="Định mức Premium" detail="Nhóm nguyên liệu vẫn chỉnh được. Thêm, sửa hoặc xóa định mức món cần quyền recipe/cost Premium." /> : null}
           <p className="font-black">Bổ sung định mức món</p>
-          <select name="menuItemId" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold" required>
+          <select name="menuItemId" disabled={!canEditRecipes} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold" required>
             <option value="">Chọn món</option>
             {recipeMenuItems.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
-          <select name="ingredientId" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold" required>
+          <select name="ingredientId" disabled={!canEditRecipes} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold" required>
             <option value="">Chọn nguyên liệu</option>
             {ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.id}>{ingredient.name} ({ingredient.unit})</option>)}
           </select>
           <div className="grid grid-cols-2 gap-3">
-            <Input name="quantityPerItem" type="number" min="0.001" step="0.001" placeholder="Lượng / món" required />
-            <Input name="wastePercent" type="number" min="0" max="100" step="0.1" placeholder="Hao hụt %" />
+            <Input name="quantityPerItem" type="number" min="0.001" step="0.001" disabled={!canEditRecipes} placeholder="Lượng / món" required />
+            <Input name="wastePercent" type="number" min="0" max="100" step="0.1" disabled={!canEditRecipes} placeholder="Hao hụt %" />
           </div>
-          <SubmitButton pendingLabel="Đang lưu..." className="rounded-xl">Lưu định mức</SubmitButton>
+          <SubmitButton disabled={!canEditRecipes} pendingLabel="Đang lưu..." className="rounded-xl">Lưu định mức</SubmitButton>
         </form>
       </section>
       <section className="rounded-3xl border border-[var(--border)] bg-white p-4">
@@ -5616,7 +6505,7 @@ function RecipesAndCategories({
                       <span className="font-bold">{line.ingredientName} · {formatQuantity(line.quantityPerItem, line.ingredientUnit)}</span>
                       <form action={deleteInventoryRecipeLineAction}>
                         <input type="hidden" name="recipeLineId" value={line.id} />
-                        <SubmitButton variant="ghost" size="sm" pendingLabel="Đang xóa..." className="h-8 min-h-8 rounded-xl px-2 text-red-700">
+                        <SubmitButton variant="ghost" size="sm" disabled={!canEditRecipes} pendingLabel="Đang xóa..." className="h-8 min-h-8 rounded-xl px-2 text-red-700">
                           Xóa
                         </SubmitButton>
                       </form>

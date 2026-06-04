@@ -69,9 +69,16 @@ const eventSchema = z
       "staff.checked_in",
       "staff.request_created",
       "staff.request_reviewed",
+      "staff.incident_reported",
       "service_request.created",
       "service_request.resolved",
       "platform.alert",
+      "platform.tenant.created",
+      "platform.subscription.approval_requested",
+      "platform.subscription.confirmed",
+      "platform.subscription.rejected",
+      "platform.tenant.status_changed",
+      "platform.subscription.status_changed",
       "sla.warning"
     ]),
     eventId: z.string().min(8).max(180),
@@ -82,12 +89,12 @@ const eventSchema = z
   })
   .passthrough()
   .superRefine((payload, ctx) => {
-    if (payload.type !== "platform.alert" && !payload.restaurantId) {
+    if (!String(payload.type).startsWith("platform.") && !payload.restaurantId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["restaurantId"], message: "restaurantId is required for tenant operational events" });
     }
   })
   .transform((payload) => {
-    if (payload.type !== "platform.alert") return payload;
+    if (!String(payload.type).startsWith("platform.")) return payload;
     return { ...payload, tenantId: payload.tenantId ?? payload.restaurantId ?? "platform" };
   });
 

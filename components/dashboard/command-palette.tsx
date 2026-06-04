@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
+import type { PlanFeatureKey, getRestaurantEntitlement } from "@/services/subscription-service";
+
+type DashboardEntitlement = Awaited<ReturnType<typeof getRestaurantEntitlement>>;
 
 type CommandItem = {
   id: string;
@@ -12,6 +15,8 @@ type CommandItem = {
   icon: DashboardIconId;
   group: string;
   keywords: string;
+  featureKey?: PlanFeatureKey;
+  premiumHint?: string;
 };
 
 const commands: CommandItem[] = [
@@ -22,16 +27,22 @@ const commands: CommandItem[] = [
   { id: "tables", label: "Bàn & QR", href: "/dashboard/tables", icon: "tablesQr", group: "Vận hành", keywords: "table ban qr code" },
   { id: "payments", label: "Thanh toán", href: "/dashboard/payments", icon: "payments", group: "Vận hành", keywords: "payment thanh toan vietqr" },
   { id: "online", label: "Đặt online", href: "/dashboard/online", icon: "onlineOrders", group: "Bán hàng", keywords: "online dat mon giao hang" },
-  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: "reservations", group: "Bán hàng", keywords: "reservation dat ban truoc" },
+  { id: "reservations", label: "Đặt bàn trước", href: "/dashboard/reservations", icon: "reservations", group: "Bán hàng", keywords: "reservation dat ban truoc premium", featureKey: "reservations", premiumHint: "Premium mở đặt bàn trước và nhận cọc." },
   { id: "promotions", label: "Khuyến mãi", href: "/dashboard/promotions", icon: "promotions", group: "Bán hàng", keywords: "promotion khuyen mai giam gia voucher" },
   { id: "menu", label: "Menu món", href: "/dashboard/menu", icon: "menuItems", group: "Quản lý", keywords: "menu mon an food" },
-  { id: "inventory", label: "Kho hàng", href: "/dashboard/inventory", icon: "inventory", group: "Quản lý", keywords: "inventory kho hang ton kho nguyen lieu ocr nhap hang" },
+  { id: "inventory", label: "Kho hàng", href: "/dashboard/inventory", icon: "inventory", group: "Quản lý", keywords: "inventory kho hang ton kho nguyen lieu ocr nhap hang premium", featureKey: "inventory_premium", premiumHint: "Premium mở PO, lô/HSD, OCR và AI tối ưu kho." },
   { id: "staff", label: "Nhân viên", href: "/dashboard/staff", icon: "staff", group: "Quản lý", keywords: "staff nhan vien" },
-  { id: "analytics", label: "Báo cáo", href: "/dashboard/analytics", icon: "analytics", group: "Hệ thống", keywords: "analytics bao cao doanh thu" },
+  { id: "analytics", label: "Báo cáo", href: "/dashboard/analytics", icon: "analytics", group: "Hệ thống", keywords: "analytics bao cao doanh thu premium insight", featureKey: "advanced_reports", premiumHint: "Premium mở báo cáo nâng cao và insight thông minh." },
   { id: "settings", label: "Cài đặt", href: "/dashboard/settings", icon: "settings", group: "Hệ thống", keywords: "settings cai dat thiet lap" },
 ];
 
-export function CommandPalette() {
+function shouldShowPremiumBadge(item: CommandItem, entitlement?: DashboardEntitlement) {
+  if (!item.featureKey || !item.premiumHint) return false;
+  if (!entitlement || !("planCode" in entitlement)) return false;
+  return entitlement.planCode !== "premium";
+}
+
+export function CommandPalette({ entitlement }: { entitlement?: DashboardEntitlement }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -160,6 +171,7 @@ export function CommandPalette() {
               </p>
               {items.map((item) => {
                 const idx = flatList.indexOf(item);
+                const showPremium = shouldShowPremiumBadge(item, entitlement);
                 return (
                   <button
                     key={item.id}
@@ -171,9 +183,11 @@ export function CommandPalette() {
                         ? "bg-[var(--primary-soft)] text-[var(--primary)] shadow-[inset_0_0_0_1px_rgba(15,77,58,0.14)]"
                         : "text-[var(--foreground)] hover:bg-[var(--soft-surface)]"
                     }`}
+                    title={showPremium ? item.premiumHint : undefined}
                   >
                     <DashboardAssetIcon icon={item.icon} active={idx === activeIndex} />
-                    {item.label}
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {showPremium ? <span className="shrink-0 rounded-full border border-[#F2B36E]/55 bg-[#FFF2DF] px-2 py-0.5 text-[9px] font-black uppercase tracking-normal text-[#A95712]">Premium</span> : null}
                   </button>
                 );
               })}

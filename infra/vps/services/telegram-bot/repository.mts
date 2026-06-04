@@ -47,7 +47,7 @@ type TelegramSessionInput = {
   ttlSeconds?: number;
 };
 
-export type TelegramOpsInboxSlice = "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops";
+export type TelegramOpsInboxSlice = "all" | "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops";
 
 export type TelegramOpsInboxItem = {
   id: string;
@@ -243,6 +243,7 @@ export async function getTelegramOpsBoard(connection: TelegramConnection) {
 }
 
 export async function getTelegramOpsInbox(connection: TelegramConnection, slice: TelegramOpsInboxSlice): Promise<TelegramOpsInboxItem[]> {
+  if (slice === "all") return getUnifiedOpsInbox(connection);
   if (slice === "payments") return getPaymentInbox(connection);
   if (slice === "reservations") return getReservationInbox(connection);
   if (slice === "staff") return getStaffInbox(connection);
@@ -1081,25 +1082,31 @@ async function countReservationsForBoard(input: {
   statuses: string[];
   depositStatuses?: string[];
 }) {
-  let query = db().from("reservations").eq("restaurant_id", input.restaurantId).in("status", input.statuses);
+  let query = db()
+    .from("reservations")
+    .select(input.branchId ? "id,locks:reservation_table_locks(table:tables(branch_id))" : "id", input.branchId ? undefined : { count: "exact", head: true })
+    .eq("restaurant_id", input.restaurantId)
+    .in("status", input.statuses);
   if (input.startsFrom) query = query.gte("starts_at", input.startsFrom);
   if (input.startsBefore) query = query.lt("starts_at", input.startsBefore);
   if (input.depositStatuses?.length) query = query.in("deposit_status", input.depositStatuses);
 
-  if (!input.branchId) return countRows(query.select("id", { count: "exact", head: true }));
+  if (!input.branchId) return countRows(query);
 
-  const { data, error } = await query
-    .select("id,locks:reservation_table_locks(table:tables(branch_id))")
-    .limit(500);
+  const { data, error } = await query.limit(500);
   if (error) return 0;
   return (data ?? []).filter((row: any) => reservationBranchFromLocks(row.locks) === input.branchId).length;
 }
 
 async function countServiceRequestsForBoard(restaurantId: string, branchId?: string | null) {
-  let query = db().from("service_requests").eq("restaurant_id", restaurantId).in("status", ["open", "acknowledged"]);
-  if (!branchId) return countRows(query.select("id", { count: "exact", head: true }));
+  let query = db()
+    .from("service_requests")
+    .select(branchId ? "id,table:tables(branch_id)" : "id", branchId ? undefined : { count: "exact", head: true })
+    .eq("restaurant_id", restaurantId)
+    .in("status", ["open", "acknowledged"]);
+  if (!branchId) return countRows(query);
 
-  const { data, error } = await query.select("id,table:tables(branch_id)").limit(500);
+  const { data, error } = await query.limit(500);
   if (error) return 0;
   return (data ?? []).filter((row: any) => nestedBranchId(row.table) === branchId).length;
 }
@@ -1161,6 +1168,26 @@ async function getHotOrderInbox(connection: TelegramConnection) {
       }
     } satisfies TelegramOpsInboxItem;
   });
+}
+
+async function getUnifiedOpsInbox(connection: TelegramConnection) {
+  const [orders, payments, reservations, staff, menu] = await Promise.all([
+    getHotOrderInbox(connection),
+    hasPermission(connection, "payments.view") ? getPaymentInbox(connection) : Promise.resolve([]),
+    hasPermission(connection, "reservations.manage") ? getReservationInbox(connection) : Promise.resolve([]),
+    getStaffInbox(connection),
+    hasPermission(connection, "menu.view") ? getMenuInbox(connection) : Promise.resolve([])
+  ]);
+
+  return [...orders, ...payments, ...reservations, ...staff, ...menu]
+    .sort((left, right) => left.priority - right.priority || timeValue(left.createdAt) - timeValue(right.createdAt))
+    .slice(0, 10);
+}
+
+function timeValue(value: string | null) {
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
 }
 
 async function getPaymentInbox(connection: TelegramConnection) {

@@ -810,7 +810,7 @@ const inventoryPurchaseOrderLineSchema = z.object({
 });
 
 export const inventoryPurchaseOrderRowsSchema = z.object({
-  rows: jsonArrayInput(inventoryPurchaseOrderLineSchema, 200)
+  rows: jsonArrayInput(inventoryPurchaseOrderLineSchema, 100)
 });
 
 export const inventoryPurchaseOrderIdSchema = z.object({
@@ -827,7 +827,7 @@ const inventoryPurchaseOrderReceiptLineSchema = z.object({
 });
 
 export const inventoryPurchaseOrderReceiptRowsSchema = z.object({
-  rows: jsonArrayInput(inventoryPurchaseOrderReceiptLineSchema, 200)
+  rows: jsonArrayInput(inventoryPurchaseOrderReceiptLineSchema, 100)
 });
 
 export const inventoryCountSchema = z.object({
