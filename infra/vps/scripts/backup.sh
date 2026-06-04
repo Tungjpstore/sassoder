@@ -14,21 +14,23 @@ DRY_RUN="false"
 MANUAL_ACTOR=${MANUAL_ACTOR:-manual}
 MANUAL_REASON=${MANUAL_REASON:-manual backup requested}
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --daily) MODE="daily" ;;
-    --weekly) MODE="weekly" ;;
-    --monthly) MODE="monthly" ;;
-    --manual) MODE="manual" ;;
-    --claim-manual) MODE="manual"; CLAIM_MANUAL="true" ;;
-    --restore-test) MODE="monthly"; RESTORE_TEST_ONLY="true" ;;
-    --dry-run) DRY_RUN="true" ;;
-    --actor) shift; MANUAL_ACTOR=${1:-manual} ;;
-    --reason) shift; MANUAL_REASON=${1:-manual backup requested} ;;
-    *) printf 'Unknown backup option: %s\n' "$1" >&2; exit 64 ;;
-  esac
-  shift
-done
+if [ "${LOGIVN_BACKUP_SKIP_MAIN:-false}" != "true" ]; then
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --daily) MODE="daily" ;;
+      --weekly) MODE="weekly" ;;
+      --monthly) MODE="monthly" ;;
+      --manual) MODE="manual" ;;
+      --claim-manual) MODE="manual"; CLAIM_MANUAL="true" ;;
+      --restore-test) MODE="monthly"; RESTORE_TEST_ONLY="true" ;;
+      --dry-run) DRY_RUN="true" ;;
+      --actor) shift; MANUAL_ACTOR=${1:-manual} ;;
+      --reason) shift; MANUAL_REASON=${1:-manual backup requested} ;;
+      *) printf 'Unknown backup option: %s\n' "$1" >&2; exit 64 ;;
+    esac
+    shift
+  done
+fi
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -1062,12 +1064,11 @@ psql_query_restore_database() {
   local sql=$2
 
   if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
-    local -a platform_args=()
+    local -a docker_args=(--rm)
     if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
-      platform_args=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+      docker_args+=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
     fi
-    docker run --rm \
-      "${platform_args[@]}" \
+    docker run "${docker_args[@]}" \
       -e RESTORE_TEST_DATABASE_URL="$target_url" \
       "$BACKUP_RESTORE_TEST_DOCKER_IMAGE" \
       sh -c 'psql "$RESTORE_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "$1"' \
@@ -1112,7 +1113,27 @@ docker_restore_psql() {
   local password=$2
   local sql=$3
   docker exec -e PGPASSWORD="$password" "$container" \
-    psql -U postgres -d restore_test -v ON_ERROR_STOP=1 -At -c "$sql"
+    psql -h 127.0.0.1 -p 5432 -U postgres -d restore_test -v ON_ERROR_STOP=1 -At -c "$sql"
+}
+
+docker_restore_container_running() {
+  local container=$1
+  [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]
+}
+
+log_docker_restore_container_logs() {
+  local container=$1
+  printf 'Ephemeral restore container logs follow:\n' >&2
+  docker logs --tail 80 "$container" >&2 || true
+}
+
+remove_docker_restore_container() {
+  local container=$1
+  local include_logs=${2:-false}
+  if [ "$include_logs" = "true" ]; then
+    log_docker_restore_container_logs "$container"
+  fi
+  docker rm -f "$container" >/dev/null 2>&1 || true
 }
 
 bootstrap_docker_restore_database() {
@@ -1120,9 +1141,10 @@ bootstrap_docker_restore_database() {
   local password=$2
 
   docker exec -i -e PGPASSWORD="$password" "$container" \
-    psql -U postgres -d restore_test -v ON_ERROR_STOP=1 <<'SQL'
+    psql -h 127.0.0.1 -p 5432 -U postgres -d restore_test -v ON_ERROR_STOP=1 <<'SQL'
 create schema if not exists extensions;
-create extension if not exists postgis with schema extensions;
+drop extension if exists postgis cascade;
+create extension postgis with schema extensions;
 create extension if not exists pgcrypto with schema extensions;
 create schema if not exists auth;
 create schema if not exists realtime;
@@ -1225,17 +1247,16 @@ verify_docker_restore_database() {
 run_docker_restore_database() {
   local dump_file=$1
   local container password ready=false attempt schema
-  local -a platform_args=()
+  local -a docker_args=(-d)
   container="logivn-restore-test-${RUN_ID//[^A-Za-z0-9_.-]/-}"
   password=$(openssl rand -hex 24)
   schema=$(restore_test_schema_name)
   if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
-    platform_args=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+    docker_args+=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
   fi
 
   docker rm -f "$container" >/dev/null 2>&1 || true
-  if ! docker run -d \
-    "${platform_args[@]}" \
+  if ! docker run "${docker_args[@]}" \
     --name "$container" \
     -e POSTGRES_PASSWORD="$password" \
     -e POSTGRES_DB=restore_test \
@@ -1244,34 +1265,40 @@ run_docker_restore_database() {
   fi
 
   for attempt in $(seq 1 60); do
-    if docker exec -e PGPASSWORD="$password" "$container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+    if docker exec -e PGPASSWORD="$password" "$container" pg_isready -h 127.0.0.1 -p 5432 -U postgres -d restore_test >/dev/null 2>&1; then
       ready=true
       break
+    fi
+    if ! docker_restore_container_running "$container"; then
+      log_docker_restore_container_logs "$container"
+      printf 'Ephemeral restore database container exited before becoming ready\n' >&2
+      docker rm -f "$container" >/dev/null 2>&1 || true
+      return 1
     fi
     sleep 1
   done
 
   if [ "$ready" != "true" ]; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container" true
     printf 'Ephemeral restore database did not become ready\n' >&2
     return 1
   fi
 
   if ! docker exec -e PGPASSWORD="$password" "$container" \
-    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c "select 1 from pg_database where datname = 'restore_test';" | grep -qx '1'; then
-    if ! docker exec -e PGPASSWORD="$password" "$container" createdb -U postgres restore_test; then
-      docker rm -f "$container" >/dev/null 2>&1 || true
+    psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c "select 1 from pg_database where datname = 'restore_test';" | grep -qx '1'; then
+    if ! docker exec -e PGPASSWORD="$password" "$container" createdb -h 127.0.0.1 -p 5432 -U postgres restore_test; then
+      remove_docker_restore_container "$container" true
       return 1
     fi
   fi
 
   if ! bootstrap_docker_restore_database "$container" "$password"; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container" true
     return 1
   fi
 
   if ! docker cp "$dump_file" "$container:/tmp/restore-test-postgres.dump"; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container" true
     return 1
   fi
 
@@ -1283,31 +1310,35 @@ run_docker_restore_database() {
 
   if [ "${#table_args[@]}" -eq 0 ]; then
     printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container"
     return 1
   fi
 
-  local schema_restore_args=(--schema="$schema" --schema-only --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  local schema_restore_args=(--schema="$schema" --schema-only --no-owner --no-acl "${table_args[@]}" -h 127.0.0.1 -p 5432 -U postgres -d restore_test /tmp/restore-test-postgres.dump)
   if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${schema_restore_args[@]}"; then
+    if ! docker_restore_container_running "$container"; then
+      remove_docker_restore_container "$container" true
+      return 1
+    fi
     if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
-      docker rm -f "$container" >/dev/null 2>&1 || true
+      remove_docker_restore_container "$container" true
       return 1
     fi
     log "Ephemeral critical-table schema restore reported non-critical pg_restore warnings; restoring critical table data"
   fi
 
-  local data_restore_args=(--schema="$schema" --data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  local data_restore_args=(--schema="$schema" --data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -h 127.0.0.1 -p 5432 -U postgres -d restore_test /tmp/restore-test-postgres.dump)
   if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${data_restore_args[@]}"; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container" true
     return 1
   fi
 
   if ! verify_docker_restore_database "$container" "$password"; then
-    docker rm -f "$container" >/dev/null 2>&1 || true
+    remove_docker_restore_container "$container" true
     return 1
   fi
 
-  docker rm -f "$container" >/dev/null 2>&1 || true
+  remove_docker_restore_container "$container"
 }
 
 run_restore_test() {
@@ -1476,4 +1507,6 @@ main() {
   run_backup_pipeline
 }
 
-main "$@"
+if [ "${LOGIVN_BACKUP_SKIP_MAIN:-false}" != "true" ]; then
+  main "$@"
+fi
