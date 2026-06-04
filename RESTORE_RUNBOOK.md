@@ -2,29 +2,51 @@
 
 ## Prerequisites
 
-Run restore from a controlled ops host with `aws`, `openssl`, `pg_restore`, and `psql` installed.
+Run restore from a controlled ops host with `curl`, `node`, `openssl`, `pg_restore`, and `psql` installed. The production path uses the Cloudflare Worker R2 gateway, not AWS services.
 
 Required env:
 
 ```bash
-export R2_ENDPOINT="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
-export R2_BUCKET="logivn-backups"
-export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-export AWS_DEFAULT_REGION="auto"
+export BACKUP_R2_GATEWAY_URL="https://logivn-backup-r2-gateway.<account-subdomain>.workers.dev"
+export BACKUP_R2_GATEWAY_TOKEN="..."
 export BACKUP_ENCRYPTION_KEY="..."
 export BACKUP_METADATA_SIGNING_KEY="..."
 export RESTORE_TEST_DATABASE_URL="postgresql://...staging..."
 ```
 
+Helper functions:
+
+```bash
+r2_get() {
+  local key=$1
+  local out=$2
+  curl -fsS "$BACKUP_R2_GATEWAY_URL/objects/$key" \
+    -H "Authorization: Bearer $BACKUP_R2_GATEWAY_TOKEN" \
+    -o "$out"
+}
+
+r2_list_postgres() {
+  curl -fsS "$BACKUP_R2_GATEWAY_URL/objects?prefix=logivn/prod/postgres/" \
+    -H "Authorization: Bearer $BACKUP_R2_GATEWAY_TOKEN" \
+    | node -e '
+        let input = "";
+        process.stdin.on("data", (chunk) => { input += chunk; });
+        process.stdin.on("end", () => {
+          const body = JSON.parse(input);
+          for (const object of body.objects || []) {
+            if (object.key.endsWith(".enc")) {
+              process.stdout.write(`${object.uploaded}\t${object.size}\t${object.key}\n`);
+            }
+          }
+        });
+      '
+}
+```
+
 ## Select Backup
 
 ```bash
-aws --endpoint-url "$R2_ENDPOINT" s3api list-objects-v2 \
-  --bucket "$R2_BUCKET" \
-  --prefix "logivn/prod/postgres/" \
-  --query 'sort_by(Contents[?ends_with(Key, `.enc`)], &LastModified)[-10].[LastModified,Key,Size]' \
-  --output table
+r2_list_postgres | sort | tail -10
 ```
 
 Pick the newest backup whose metadata exists and whose job row is `success` or `warn` with all critical artifacts verified.
@@ -33,14 +55,14 @@ Pick the newest backup whose metadata exists and whose job row is `success` or `
 
 ```bash
 OBJECT_KEY="logivn/prod/postgres/daily/YYYY-MM-DD/postgres_HHMMSS.dump.enc"
-aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$OBJECT_KEY" postgres.dump.enc
-aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$OBJECT_KEY.metadata.json" postgres.dump.enc.metadata.json
-aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$OBJECT_KEY.metadata.sig" postgres.dump.enc.metadata.sig
+r2_get "$OBJECT_KEY" postgres.dump.enc
+r2_get "$OBJECT_KEY.metadata.json" postgres.dump.enc.metadata.json
+r2_get "$OBJECT_KEY.metadata.sig" postgres.dump.enc.metadata.sig
 
 sha256sum postgres.dump.enc
 grep '"sha256"' postgres.dump.enc.metadata.json
 
-EXPECTED_SIG=$(cat postgres.dump.enc.metadata.sig | tr -d '[:space:]')
+EXPECTED_SIG=$(tr -d '[:space:]' < postgres.dump.enc.metadata.sig)
 ACTUAL_SIG=$(openssl dgst -sha256 -hmac "$BACKUP_METADATA_SIGNING_KEY" postgres.dump.enc.metadata.json | awk '{print $NF}')
 test "$EXPECTED_SIG" = "$ACTUAL_SIG"
 ```
@@ -94,7 +116,7 @@ Redis is not the source of truth. Restore only when queue/retry continuity is ne
 
 ```bash
 OBJECT_KEY="logivn/prod/redis/daily/YYYY-MM-DD/redis_aof_HHMMSS.tar.gz.enc"
-# Download, verify metadata, decrypt as above.
+# Download with r2_get, verify metadata/signature, decrypt as above.
 tar tzf redis_aof.tar.gz | head
 # Restore into the Redis Docker volume only during a maintenance window.
 ```
@@ -105,11 +127,11 @@ Storage payload backups are tar archives after decrypting the `storage_payload` 
 
 ```bash
 OBJECT_KEY="logivn/prod/storage_payload/weekly/YYYY-MM-DD/storage_payload_HHMMSS.tar.gz.enc"
-# Download, verify metadata/signature, and decrypt as above.
+# Download with r2_get, verify metadata/signature, and decrypt as above.
 tar tzf storage_payload.tar.gz | head -40
 mkdir -p storage_payload_restore
 tar xzf storage_payload.tar.gz -C storage_payload_restore
-cat storage_payload_restore/manifest.json | head -80
+head -80 storage_payload_restore/manifest.json
 ```
 
 Files are stored under `buckets/<encoded bucket>/<encoded object path>`. Re-upload only the approved buckets, and keep the manifest with the incident record.
@@ -118,8 +140,12 @@ Files are stored under `buckets/<encoded bucket>/<encoded object path>`. Re-uplo
 
 ```bash
 OBJECT_KEY="logivn/prod/vps_configs/daily/YYYY-MM-DD/vps_configs_HHMMSS.tar.gz.enc"
-# Download, verify metadata, decrypt as above.
+# Download with r2_get, verify metadata/signature, and decrypt as above.
 tar tzf vps_configs.tar.gz
 ```
 
 Apply configs manually and compare diffs before replacing live files.
+
+## Future S3-Compatible Adapter
+
+If LogiVN later adds `BACKUP_STORAGE_ADAPTER=s3`, install and configure an S3-compatible CLI on the ops host for that adapter only. The current production runbook intentionally avoids AWS services and AWS credentials.

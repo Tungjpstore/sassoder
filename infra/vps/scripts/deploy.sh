@@ -43,6 +43,40 @@ backup_current_config() {
   fi
 }
 
+backup_env_ready() {
+  [ "${BACKUP_ENABLED:-true}" = "true" ] || return 1
+  [ -n "${BACKUP_ENCRYPTION_KEY:-}" ] || return 1
+  [ -n "${BACKUP_METADATA_SIGNING_KEY:-}" ] || return 1
+
+  local adapter=${BACKUP_STORAGE_ADAPTER:-}
+  if [ -z "$adapter" ]; then
+    if [ -n "${BACKUP_R2_GATEWAY_URL:-}" ]; then
+      adapter=worker
+    else
+      adapter=s3
+    fi
+  fi
+
+  case "$adapter" in
+    worker|gateway|r2-gateway|r2_gateway)
+      [ -n "${BACKUP_R2_GATEWAY_URL:-}" ] || return 1
+      [ -n "${BACKUP_R2_GATEWAY_TOKEN:-}" ] || return 1
+      ;;
+    s3|r2)
+      [ -n "${R2_ACCESS_KEY_ID:-}" ] || return 1
+      [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || return 1
+      [ -n "${R2_ENDPOINT:-${R2_ACCOUNT_ID:-}}" ] || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [ "${BACKUP_POSTGRES_ENABLED:-true}" = "true" ]; then
+    [ -n "${DATABASE_URL:-}" ] || { [ -n "${SUPABASE_DB_HOST:-}" ] && [ -n "${SUPABASE_DB_USER:-}" ] && [ -n "${SUPABASE_DB_PASSWORD:-}" ]; } || return 1
+  fi
+}
+
 backup_runtime_data() {
   if [ "$RUN_BACKUP" = "false" ]; then
     log "Skipping runtime backup before deploy"
@@ -51,6 +85,11 @@ backup_runtime_data() {
 
   if [ "$RUN_BACKUP" = "auto" ] && ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q redis >/dev/null 2>&1; then
     log "Skipping runtime backup before first deploy"
+    return
+  fi
+
+  if [ "$RUN_BACKUP" = "auto" ] && ! backup_env_ready; then
+    log "Skipping runtime backup before deploy; backup env is not complete yet"
     return
   fi
 

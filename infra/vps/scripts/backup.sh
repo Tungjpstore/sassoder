@@ -65,6 +65,9 @@ DEV_TELEGRAM_ALERTS_ENABLED=${DEV_TELEGRAM_ALERTS_ENABLED:-true}
 R2_REGION=${R2_REGION:-auto}
 R2_BUCKET=${R2_BUCKET:-logivn-backups}
 R2_ENDPOINT=${R2_ENDPOINT:-}
+BACKUP_R2_GATEWAY_URL=${BACKUP_R2_GATEWAY_URL:-}
+BACKUP_R2_GATEWAY_TOKEN=${BACKUP_R2_GATEWAY_TOKEN:-}
+BACKUP_STORAGE_ADAPTER=${BACKUP_STORAGE_ADAPTER:-}
 SUPABASE_REST_URL=${SUPABASE_URL:-${NEXT_PUBLIC_SUPABASE_URL:-}}
 HOSTNAME_SAFE=$(hostname 2>/dev/null || printf 'logivn-vps')
 RUN_DATE=$(TZ="$BACKUP_TIMEZONE" date +%F)
@@ -94,6 +97,19 @@ fi
 if [ -z "$R2_ENDPOINT" ] && [ -n "${R2_ACCOUNT_ID:-}" ]; then
   R2_ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 fi
+
+BACKUP_R2_GATEWAY_URL=${BACKUP_R2_GATEWAY_URL%/}
+if [ -z "$BACKUP_STORAGE_ADAPTER" ]; then
+  if [ -n "$BACKUP_R2_GATEWAY_URL" ]; then
+    BACKUP_STORAGE_ADAPTER="worker"
+  else
+    BACKUP_STORAGE_ADAPTER="s3"
+  fi
+fi
+case "$BACKUP_STORAGE_ADAPTER" in
+  worker|gateway|r2-gateway|r2_gateway) BACKUP_STORAGE_ADAPTER="worker" ;;
+  s3|r2) BACKUP_STORAGE_ADAPTER="s3" ;;
+esac
 
 mkdir -p "$BACKUP_TEMP_DIR" "$BACKUP_STATE_DIR" "$BACKUP_ROOT"
 
@@ -322,7 +338,7 @@ record_artifact() {
   if [ -z "$JOB_ID" ] || ! supabase_ready; then return 0; fi
 
   local body
-  body=$(printf '{"job_id":%s,"environment":%s,"artifact_type":%s,"status":%s,"storage_provider":"cloudflare-r2","storage_bucket":%s,"storage_path":%s,"storage_region":%s,"file_name":%s,"file_size":%s,"checksum":%s,"checksum_sha256":%s,"metadata_signature":%s,"encrypted":true,"compression":"artifact-specific","finished_at":%s,"error_message":%s,"metadata":{"retentionClass":%s,"endpointConfigured":%s}}' \
+  body=$(printf '{"job_id":%s,"environment":%s,"artifact_type":%s,"status":%s,"storage_provider":"cloudflare-r2","storage_bucket":%s,"storage_path":%s,"storage_region":%s,"file_name":%s,"file_size":%s,"checksum":%s,"checksum_sha256":%s,"metadata_signature":%s,"encrypted":true,"compression":"artifact-specific","finished_at":%s,"error_message":%s,"metadata":{"retentionClass":%s,"storageAdapter":%s,"endpointConfigured":%s}}' \
     "$(json_string "$JOB_ID")" \
     "$(json_string "$BACKUP_ENVIRONMENT")" \
     "$(json_string "$artifact_type")" \
@@ -338,7 +354,8 @@ record_artifact() {
     "$(json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
     "$(json_string "$error_message")" \
     "$(json_string "$RETENTION_CLASS")" \
-    "$(bool_json "${R2_ENDPOINT:+true}")")
+    "$(json_string "$BACKUP_STORAGE_ADAPTER")" \
+    "$(storage_endpoint_configured_json)")
   supabase_request POST "backup_artifacts" "$body" >/dev/null 2>&1 || true
 }
 
@@ -396,7 +413,18 @@ validate_runtime() {
   require_command openssl
   require_command curl
   require_command tar
-  if [ "$DRY_RUN" != "true" ]; then require_command aws; fi
+  case "$BACKUP_STORAGE_ADAPTER" in
+    worker)
+      require_command node
+      ;;
+    s3)
+      if [ "$DRY_RUN" != "true" ]; then require_command aws; fi
+      ;;
+    *)
+      printf 'Invalid BACKUP_STORAGE_ADAPTER: %s\n' "$BACKUP_STORAGE_ADAPTER" >&2
+      return 1
+      ;;
+  esac
   if [ "$BACKUP_POSTGRES_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" != "true" ]; then require_command pg_dump; fi
   if [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" = "true" ]; then require_command pg_restore; fi
   if [ "$RESTORE_TEST_ONLY" != "true" ] && should_backup_storage_payload; then require_command node; fi
@@ -404,10 +432,15 @@ validate_runtime() {
   local missing=()
   [ -n "${BACKUP_ENCRYPTION_KEY:-}" ] || missing+=(BACKUP_ENCRYPTION_KEY)
   [ -n "${BACKUP_METADATA_SIGNING_KEY:-}" ] || missing+=(BACKUP_METADATA_SIGNING_KEY)
-  [ -n "${R2_ACCESS_KEY_ID:-}" ] || missing+=(R2_ACCESS_KEY_ID)
-  [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || missing+=(R2_SECRET_ACCESS_KEY)
   [ -n "${R2_BUCKET:-}" ] || missing+=(R2_BUCKET)
-  [ -n "${R2_ENDPOINT:-}" ] || missing+=(R2_ENDPOINT)
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    [ -n "${BACKUP_R2_GATEWAY_URL:-}" ] || missing+=(BACKUP_R2_GATEWAY_URL)
+    [ -n "${BACKUP_R2_GATEWAY_TOKEN:-}" ] || missing+=(BACKUP_R2_GATEWAY_TOKEN)
+  else
+    [ -n "${R2_ACCESS_KEY_ID:-}" ] || missing+=(R2_ACCESS_KEY_ID)
+    [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || missing+=(R2_SECRET_ACCESS_KEY)
+    [ -n "${R2_ENDPOINT:-}" ] || missing+=(R2_ENDPOINT)
+  fi
   if [ "$RESTORE_TEST_ONLY" != "true" ] && should_backup_storage_payload; then
     [ -n "$SUPABASE_REST_URL" ] || missing+=(SUPABASE_URL)
     [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] || missing+=(SUPABASE_SERVICE_ROLE_KEY)
@@ -421,9 +454,11 @@ validate_runtime() {
     return 1
   fi
 
-  export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
-  export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-  export AWS_DEFAULT_REGION="$R2_REGION"
+  if [ "$BACKUP_STORAGE_ADAPTER" = "s3" ]; then
+    export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
+    export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
+    export AWS_DEFAULT_REGION="$R2_REGION"
+  fi
 }
 
 acquire_local_lock() {
@@ -529,6 +564,148 @@ object_key_for() {
   printf '%s/%s/%s/%s/%s/%s' "$BACKUP_R2_PREFIX" "$BACKUP_ENVIRONMENT" "$artifact_type" "$RETENTION_CLASS" "$RUN_DATE" "$file_name"
 }
 
+storage_endpoint_configured_json() {
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    bool_json "${BACKUP_R2_GATEWAY_URL:+true}"
+  else
+    bool_json "${R2_ENDPOINT:+true}"
+  fi
+}
+
+gateway_object_url() {
+  local key=$1
+  printf '%s/objects/%s' "$BACKUP_R2_GATEWAY_URL" "$key"
+}
+
+gateway_auth_header() {
+  printf 'Authorization: Bearer %s' "$BACKUP_R2_GATEWAY_TOKEN"
+}
+
+put_object() {
+  local object_key=$1
+  local source_file=$2
+  local content_type=${3:-application/octet-stream}
+  local checksum=${4:-}
+  local artifact_type=${5:-}
+  local signature=${6:-}
+
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    local -a headers
+    headers=(-H "$(gateway_auth_header)" -H "Content-Type: $content_type")
+    [ -n "$checksum" ] && headers+=(-H "X-Backup-Sha256: $checksum")
+    [ -n "${JOB_ID:-}" ] && headers+=(-H "X-Backup-Job-Id: $JOB_ID")
+    [ -n "$artifact_type" ] && headers+=(-H "X-Backup-Artifact-Type: $artifact_type")
+    [ -n "$signature" ] && headers+=(-H "X-Backup-Metadata-Signature: $signature")
+    curl -fsS -X PUT "$(gateway_object_url "$object_key")" \
+      "${headers[@]}" \
+      --data-binary "@$source_file" >/dev/null
+    return 0
+  fi
+
+  local -a args
+  args=(--endpoint-url "$R2_ENDPOINT" s3api put-object --bucket "$R2_BUCKET" --key "$object_key" --body "$source_file")
+  [ -n "$content_type" ] && args+=(--content-type "$content_type")
+  if [ -n "$checksum" ] || [ -n "$artifact_type" ] || [ -n "$signature" ]; then
+    args+=(--metadata "sha256=$checksum,backup-job-id=${JOB_ID:-local},artifact-type=$artifact_type,metadata-signature=$signature")
+  fi
+  aws "${args[@]}" >/dev/null
+}
+
+head_object_size() {
+  local object_key=$1
+
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    curl -fsSI -H "$(gateway_auth_header)" "$(gateway_object_url "$object_key")" \
+      | awk 'tolower($1) == "content-length:" { gsub("\r", "", $2); print $2; exit }'
+    return 0
+  fi
+
+  aws --endpoint-url "$R2_ENDPOINT" s3api head-object \
+    --bucket "$R2_BUCKET" \
+    --key "$object_key" \
+    --query ContentLength \
+    --output text
+}
+
+get_object() {
+  local object_key=$1
+  local output_file=$2
+
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    curl -fsS -H "$(gateway_auth_header)" "$(gateway_object_url "$object_key")" -o "$output_file"
+    return 0
+  fi
+
+  aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$object_key" "$output_file" >/dev/null
+}
+
+delete_object() {
+  local object_key=$1
+
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    curl -fsS -X DELETE -H "$(gateway_auth_header)" "$(gateway_object_url "$object_key")" >/dev/null
+    return 0
+  fi
+
+  aws --endpoint-url "$R2_ENDPOINT" s3api delete-object --bucket "$R2_BUCKET" --key "$object_key" >/dev/null
+}
+
+list_objects_for_prefix() {
+  local prefix=$1
+
+  if [ "$BACKUP_STORAGE_ADAPTER" = "worker" ]; then
+    node - "$prefix" <<'NODE'
+(async () => {
+  const prefix = process.argv[2] || "";
+  const baseUrl = process.env.BACKUP_R2_GATEWAY_URL;
+  const token = process.env.BACKUP_R2_GATEWAY_TOKEN;
+  let cursor = null;
+
+  do {
+    const url = new URL(`${baseUrl}/objects`);
+    url.searchParams.set("prefix", prefix);
+    url.searchParams.set("limit", "1000");
+    if (cursor) url.searchParams.set("cursor", cursor);
+
+    const response = await fetch(url, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    if (!response.ok) {
+      throw new Error(`R2 gateway list failed with HTTP ${response.status}`);
+    }
+
+    const body = await response.json();
+    for (const object of body.objects || []) {
+      process.stdout.write(`${object.uploaded}\t${object.key}\t${object.size}\n`);
+    }
+    cursor = body.truncated && body.cursor ? body.cursor : null;
+  } while (cursor);
+})().catch((error) => {
+  console.error(error.message);
+  process.exit(1);
+});
+NODE
+    return 0
+  fi
+
+  aws --endpoint-url "$R2_ENDPOINT" s3api list-objects-v2 \
+    --bucket "$R2_BUCKET" \
+    --prefix "$prefix" \
+    --output json \
+    | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const parsed = input.trim() ? JSON.parse(input) : {};
+  for (const object of parsed.Contents || []) {
+    process.stdout.write(`${object.LastModified}\t${object.Key}\t${object.Size}\n`);
+  }
+});
+'
+}
+
 upload_artifact() {
   local artifact_type=$1
   local source_file=$2
@@ -551,29 +728,11 @@ upload_artifact() {
   fi
 
   log "Uploading $artifact_type to R2: $object_key"
-  aws --endpoint-url "$R2_ENDPOINT" s3api put-object \
-    --bucket "$R2_BUCKET" \
-    --key "$object_key" \
-    --body "$encrypted_file" \
-    --metadata "sha256=$checksum,backup-job-id=${JOB_ID:-local},artifact-type=$artifact_type,metadata-signature=$signature" >/dev/null
+  put_object "$object_key" "$encrypted_file" "application/octet-stream" "$checksum" "$artifact_type" "$signature"
+  put_object "$metadata_key" "$metadata_file" "application/json"
+  put_object "$signature_key" "$metadata_file.sig" "text/plain"
 
-  aws --endpoint-url "$R2_ENDPOINT" s3api put-object \
-    --bucket "$R2_BUCKET" \
-    --key "$metadata_key" \
-    --body "$metadata_file" \
-    --content-type "application/json" >/dev/null
-
-  aws --endpoint-url "$R2_ENDPOINT" s3api put-object \
-    --bucket "$R2_BUCKET" \
-    --key "$signature_key" \
-    --body "$metadata_file.sig" \
-    --content-type "text/plain" >/dev/null
-
-  remote_size=$(aws --endpoint-url "$R2_ENDPOINT" s3api head-object \
-    --bucket "$R2_BUCKET" \
-    --key "$object_key" \
-    --query ContentLength \
-    --output text)
+  remote_size=$(head_object_size "$object_key")
 
   if [ "$remote_size" != "$size_bytes" ]; then
     ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
@@ -744,7 +903,7 @@ EOF
 apply_retention_for_class() {
   local retention_class=$1
   local days=$2
-  local cutoff prefix keys key
+  local cutoff prefix uploaded key size
   prefix="$BACKUP_R2_PREFIX/$BACKUP_ENVIRONMENT/"
   cutoff=$(date -u -d "$days days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-"$days"d +%Y-%m-%dT%H:%M:%SZ)
 
@@ -753,20 +912,12 @@ apply_retention_for_class() {
     return 0
   fi
 
-  keys=$(aws --endpoint-url "$R2_ENDPOINT" s3api list-objects-v2 \
-    --bucket "$R2_BUCKET" \
-    --prefix "$prefix" \
-    --query "Contents[?LastModified<=\`$cutoff\` && contains(Key, '/$retention_class/')].Key" \
-    --output text 2>/dev/null || true)
-
-  if [ -z "$keys" ] || [ "$keys" = "None" ]; then
-    return 0
-  fi
-
-  for key in $keys; do
+  while IFS=$'\t' read -r uploaded key size; do
     [ -n "$key" ] || continue
-    aws --endpoint-url "$R2_ENDPOINT" s3api delete-object --bucket "$R2_BUCKET" --key "$key" >/dev/null || true
-  done
+    [[ "$key" == *"/$retention_class/"* ]] || continue
+    if [[ "$uploaded" > "$cutoff" ]]; then continue; fi
+    delete_object "$key" || true
+  done < <(list_objects_for_prefix "$prefix" 2>/dev/null || true)
 }
 
 apply_retention() {
@@ -780,11 +931,9 @@ apply_retention() {
 }
 
 latest_postgres_object_key() {
-  aws --endpoint-url "$R2_ENDPOINT" s3api list-objects-v2 \
-    --bucket "$R2_BUCKET" \
-    --prefix "$BACKUP_R2_PREFIX/$BACKUP_ENVIRONMENT/postgres/" \
-    --query 'sort_by(Contents[?ends_with(Key, `.enc`)], &LastModified)[-1].Key' \
-    --output text 2>/dev/null || true
+  list_objects_for_prefix "$BACKUP_R2_PREFIX/$BACKUP_ENVIRONMENT/postgres/" 2>/dev/null \
+    | awk -F '\t' '$2 ~ /\.enc$/ { if ($1 >= latest) { latest=$1; key=$2 } } END { if (key != "") print key }' \
+    || true
 }
 
 record_restore_test() {
@@ -828,7 +977,7 @@ run_restore_test() {
   encrypted="$WORK_DIR/restore-test-postgres.dump.enc"
   dump_file="$WORK_DIR/restore-test-postgres.dump"
   list_file="$WORK_DIR/restore-test-list.txt"
-  aws --endpoint-url "$R2_ENDPOINT" s3api get-object --bucket "$R2_BUCKET" --key "$object_key" "$encrypted" >/dev/null
+  get_object "$object_key" "$encrypted"
   openssl enc -d -aes-256-cbc -pbkdf2 -iter "$BACKUP_ENCRYPTION_ITERATIONS" -md sha256 \
     -pass env:BACKUP_ENCRYPTION_KEY \
     -in "$encrypted" \
@@ -928,7 +1077,7 @@ run_backup_pipeline() {
   if [ "$ARTIFACT_FAILURES" -gt 0 ]; then final_status="warn"; fi
   update_job_status "$final_status"
   record_event "backup_completed" "info" "finish" "Backup pipeline completed"
-  send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng head-object."
+  send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng kiểm tra kích thước từ storage adapter."
   rm -rf "$WORK_DIR"
 }
 

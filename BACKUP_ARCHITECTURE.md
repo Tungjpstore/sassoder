@@ -2,14 +2,14 @@
 
 ## Goal
 
-LogiVN backup exists for one outcome: no customer data loss during a production incident. The implementation is centered on the VPS executor at `infra/vps/scripts/backup.sh`, Supabase metadata tables, Cloudflare R2 as S3-compatible storage, and Dev Telegram reporting.
+LogiVN backup exists for one outcome: no customer data loss during a production incident. The implementation is centered on the VPS executor at `infra/vps/scripts/backup.sh`, Supabase metadata tables, Cloudflare R2 storage, an optional Cloudflare Worker upload gateway, and Dev Telegram reporting.
 
 ```txt
 Supabase Postgres / Storage / Redis / VPS configs
         -> infra/vps/scripts/backup.sh
         -> pg_dump -F c, Redis archive, sanitized config archive, Storage export
         -> OpenSSL encryption + SHA256 + signed metadata
-        -> Cloudflare R2 upload + head-object verification
+        -> Cloudflare R2 upload through Worker gateway + size verification
         -> backup_jobs / backup_artifacts / backup_alerts
         -> Dev Telegram report + Control Center /backup
 ```
@@ -17,6 +17,7 @@ Supabase Postgres / Storage / Redis / VPS configs
 ## Runtime Components
 
 - Executor: `infra/vps/scripts/backup.sh`
+- R2 gateway: `infra/cloudflare/backup-r2-gateway`
 - Storage payload exporter: `scripts/infra/supabase-storage-export.mjs`
 - Cron installer: `infra/vps/scripts/install-cron.sh`
 - Metadata schema: `supabase/migrations/20260604102000_backup_dr_foundation.sql`
@@ -56,7 +57,7 @@ Each encrypted artifact has:
 
 - `<object>.metadata.json`
 - `<object>.metadata.sig`
-- SHA256 in metadata and S3 user metadata
+- SHA256 in metadata and object custom metadata when the adapter supports it
 - `backup_artifacts` row with checksum, size, type, status, and R2 path
 
 ## Security Model
@@ -66,7 +67,8 @@ Each encrypted artifact has:
 - `.env` is never copied raw; config backup stores only a sanitized template.
 - Telegram reports only metadata, never backup files or signed URLs.
 - R2 bucket must remain private.
-- R2 token should be bucket-scoped and limited to required object operations.
+- Preferred production path is `BACKUP_STORAGE_ADAPTER=worker`, where the VPS only receives `BACKUP_R2_GATEWAY_URL` and a bearer token stored as a Worker secret.
+- `BACKUP_STORAGE_ADAPTER=s3` is reserved for future S3-compatible expansion. If enabled later, its R2 token should be bucket-scoped and limited to required object operations.
 - Encryption/signing keys must not be stored in R2.
 - Raw backup download/restore requires super-admin operational approval and platform audit logging.
 
@@ -89,5 +91,5 @@ APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --manual --acto
 ## References
 
 - Cloudflare R2 overview: https://developers.cloudflare.com/r2/
-- R2 S3 API compatibility: https://developers.cloudflare.com/r2/api/s3/api/
+- R2 S3 API compatibility for future adapters: https://developers.cloudflare.com/r2/api/s3/api/
 - R2 object lifecycles: https://developers.cloudflare.com/r2/buckets/object-lifecycles/
