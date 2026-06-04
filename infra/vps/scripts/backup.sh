@@ -1159,6 +1159,36 @@ begin
     create publication supabase_realtime;
   end if;
 end $$;
+
+do $$
+begin
+  create type public.business_type as enum ('CAFE', 'RESTAURANT', 'FAST_FOOD', 'BAR', 'OTHER');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.order_status as enum ('pending', 'ordering', 'waiting_payment', 'waiting_confirm', 'paid', 'completed', 'cancelled');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.payment_log_status as enum ('pending', 'waiting_confirm', 'confirmed', 'failed', 'cancelled', 'refunded');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.payment_method as enum ('QR', 'CASH');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.restaurant_platform_status as enum ('active', 'suspended', 'deleted');
+exception when duplicate_object then null;
+end $$;
 SQL
 }
 
@@ -1214,7 +1244,7 @@ run_docker_restore_database() {
   fi
 
   for attempt in $(seq 1 60); do
-    if docker exec -e PGPASSWORD="$password" "$container" pg_isready -U postgres -d restore_test >/dev/null 2>&1; then
+    if docker exec -e PGPASSWORD="$password" "$container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
       ready=true
       break
     fi
@@ -1227,6 +1257,14 @@ run_docker_restore_database() {
     return 1
   fi
 
+  if ! docker exec -e PGPASSWORD="$password" "$container" \
+    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c "select 1 from pg_database where datname = 'restore_test';" | grep -qx '1'; then
+    if ! docker exec -e PGPASSWORD="$password" "$container" createdb -U postgres restore_test; then
+      docker rm -f "$container" >/dev/null 2>&1 || true
+      return 1
+    fi
+  fi
+
   if ! bootstrap_docker_restore_database "$container" "$password"; then
     docker rm -f "$container" >/dev/null 2>&1 || true
     return 1
@@ -1237,19 +1275,10 @@ run_docker_restore_database() {
     return 1
   fi
 
-  local schema_restore_args=(--no-owner --no-acl --section=pre-data -U postgres -d restore_test /tmp/restore-test-postgres.dump)
-  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${schema_restore_args[@]}"; then
-    if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
-      docker rm -f "$container" >/dev/null 2>&1 || true
-      return 1
-    fi
-    log "Ephemeral schema restore reported non-critical pg_restore warnings; restoring critical table data"
-  fi
-
   local table
   local -a table_args=()
   while IFS= read -r table; do
-    table_args+=(--table="$schema.$table")
+    table_args+=(--table="$table")
   done < <(restore_critical_table_names)
 
   if [ "${#table_args[@]}" -eq 0 ]; then
@@ -1258,7 +1287,16 @@ run_docker_restore_database() {
     return 1
   fi
 
-  local data_restore_args=(--data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  local schema_restore_args=(--schema="$schema" --schema-only --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${schema_restore_args[@]}"; then
+    if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
+      docker rm -f "$container" >/dev/null 2>&1 || true
+      return 1
+    fi
+    log "Ephemeral critical-table schema restore reported non-critical pg_restore warnings; restoring critical table data"
+  fi
+
+  local data_restore_args=(--schema="$schema" --data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
   if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${data_restore_args[@]}"; then
     docker rm -f "$container" >/dev/null 2>&1 || true
     return 1
