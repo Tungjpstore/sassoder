@@ -79,6 +79,122 @@ jobs:
           chmod 600 ~/.ssh/logivn_vps_key
           ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Sync backup environment over SSH
+        if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
+        env:
+          BACKUP_R2_GATEWAY_URL: ${{ secrets.BACKUP_R2_GATEWAY_URL }}
+          BACKUP_R2_GATEWAY_TOKEN: ${{ secrets.BACKUP_R2_GATEWAY_TOKEN }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_METADATA_SIGNING_KEY: ${{ secrets.BACKUP_METADATA_SIGNING_KEY }}
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_SUPABASE_URL: ${{ secrets.BACKUP_SUPABASE_URL }}
+          BACKUP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.BACKUP_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          patch_file="$(mktemp)"
+          chmod 600 "$patch_file"
+
+          write_env() {
+            local key="$1"
+            local value="$2"
+            [ -n "$value" ] || return 0
+            printf '%s=%q\n' "$key" "$value" >> "$patch_file"
+          }
+
+          write_env BACKUP_ENABLED true
+          write_env BACKUP_ENVIRONMENT prod
+          write_env BACKUP_POSTGRES_DUMP_RUNNER docker
+          write_env BACKUP_POSTGRES_DOCKER_IMAGE postgres:17-alpine
+          write_env BACKUP_STORAGE_ADAPTER worker
+          write_env BACKUP_R2_GATEWAY_URL "$BACKUP_R2_GATEWAY_URL"
+          write_env BACKUP_R2_GATEWAY_TOKEN "$BACKUP_R2_GATEWAY_TOKEN"
+          write_env BACKUP_ENCRYPTION_KEY "$BACKUP_ENCRYPTION_KEY"
+          write_env BACKUP_METADATA_SIGNING_KEY "$BACKUP_METADATA_SIGNING_KEY"
+          write_env R2_BUCKET logivn-backups
+          write_env BACKUP_R2_PREFIX logivn
+          write_env DATABASE_URL "$BACKUP_DATABASE_URL"
+          write_env NEXT_PUBLIC_SUPABASE_URL "$BACKUP_SUPABASE_URL"
+          write_env SUPABASE_URL "$BACKUP_SUPABASE_URL"
+          write_env SUPABASE_SERVICE_ROLE_KEY "$BACKUP_SUPABASE_SERVICE_ROLE_KEY"
+          write_env DEV_TELEGRAM_ALERTS_ENABLED true
+
+          remote_patch="/tmp/logivn-backup-env-${GITHUB_RUN_ID}.env"
+          scp -i ~/.ssh/logivn_vps_key -P "$VPS_PORT" "$patch_file" "$VPS_USER@$VPS_HOST:$remote_patch"
+          ssh -i ~/.ssh/logivn_vps_key -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+            "APP_ROOT='$APP_ROOT' PATCH_FILE='$remote_patch' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          ENV_FILE="$APP_ROOT/.env"
+
+          if ! mkdir -p "$APP_ROOT" 2>/dev/null; then
+            sudo -n mkdir -p "$APP_ROOT"
+          fi
+
+          if [ ! -w "$APP_ROOT" ]; then
+            sudo -n chown -R "$(id -un):$(id -gn)" "$APP_ROOT"
+          fi
+
+          if [ -e "$ENV_FILE" ] && [ ! -w "$ENV_FILE" ]; then
+            sudo -n chown "$(id -un):$(id -gn)" "$ENV_FILE"
+          fi
+
+          touch "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+
+          quote_env_value() {
+            local value="$1"
+            printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+          }
+
+          upsert_env() {
+            local key="$1"
+            local value="$2"
+            local line tmp
+            [ -n "$value" ] || return 0
+            line="$key=$(quote_env_value "$value")"
+            tmp="$(mktemp)"
+            awk -v key="$key" -v line="$line" '
+              BEGIN { done = 0 }
+              $0 ~ "^[[:space:]]*(export[[:space:]]+)?" key "[[:space:]]*=" {
+                if (!done) { print line; done = 1 }
+                next
+              }
+              { print }
+              END { if (!done) print line }
+            ' "$ENV_FILE" > "$tmp"
+            cat "$tmp" > "$ENV_FILE"
+            rm -f "$tmp"
+          }
+
+          set -a
+          # shellcheck disable=SC1090
+          . "$PATCH_FILE"
+          set +a
+
+          for key in \
+            BACKUP_ENABLED \
+            BACKUP_ENVIRONMENT \
+            BACKUP_POSTGRES_DUMP_RUNNER \
+            BACKUP_POSTGRES_DOCKER_IMAGE \
+            BACKUP_STORAGE_ADAPTER \
+            BACKUP_R2_GATEWAY_URL \
+            BACKUP_R2_GATEWAY_TOKEN \
+            BACKUP_ENCRYPTION_KEY \
+            BACKUP_METADATA_SIGNING_KEY \
+            R2_BUCKET \
+            BACKUP_R2_PREFIX \
+            DATABASE_URL \
+            NEXT_PUBLIC_SUPABASE_URL \
+            SUPABASE_URL \
+            SUPABASE_SERVICE_ROLE_KEY \
+            DEV_TELEGRAM_ALERTS_ENABLED; do
+            upsert_env "$key" "${!key:-}"
+          done
+
+          rm -f "$PATCH_FILE"
+          echo "[logivn-actions] Backup environment synced"
+          REMOTE
+          rm -f "$patch_file"
+
       - name: Deploy over SSH
         if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}
         run: |
@@ -117,8 +233,13 @@ jobs:
           fi
 
           git fetch origin --prune
-          git checkout --force "$DEPLOY_REF"
-          git reset --hard "$DEPLOY_REF"
+          if git rev-parse --verify --quiet "origin/$DEPLOY_REF" >/dev/null; then
+            target_ref="origin/$DEPLOY_REF"
+          else
+            target_ref="$DEPLOY_REF"
+          fi
+          git checkout --force --detach "$target_ref"
+          git reset --hard "$target_ref"
           git clean -fd
           chmod +x infra/vps/scripts/*.sh
 
@@ -143,6 +264,9 @@ jobs:
 
           echo "[logivn-actions] Running production readiness gate"
           APP_ROOT="$APP_ROOT" infra/vps/scripts/production-readiness.sh --local-only </dev/null
+
+          echo "[logivn-actions] Running backup restore test"
+          APP_ROOT="$APP_ROOT" ENV_FILE="$APP_ROOT/.env" infra/vps/scripts/backup.sh --restore-test </dev/null
           REMOTE
 
       - name: Deployment summary

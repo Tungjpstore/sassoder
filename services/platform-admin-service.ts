@@ -8,6 +8,7 @@ import { getPlatformAdminAuthStatus } from "@/lib/platform-admin-auth";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
+import { getBackupHealth } from "@/services/backup-service";
 import { listPlatformAiProviderConfigs, type PlatformAiProviderConfigSummary } from "@/services/platform-ai-provider-config-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 
@@ -1092,12 +1093,21 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
     }),
     buildIntegrationHealth({
       key: "cloudflare-r2",
-      name: "Cloudflare R2 assets",
+      name: "Cloudflare R2 storage",
       category: "storage",
-      envNames: ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
+      envNames: ["BACKUP_R2_GATEWAY_URL", "BACKUP_R2_GATEWAY_TOKEN", "R2_BUCKET", "BACKUP_R2_PREFIX"],
       required: false,
       secretHandling: "Secret nằm ở Vercel/Cloudflare; admin.logivn.com chỉ hiển thị masked metadata và trạng thái.",
-      note: "Hiện platform assets vẫn dùng Supabase Storage; R2 nên là bước chuyển có migration/rollback riêng."
+      note: "Production backup đi qua Cloudflare Worker gateway vào R2; S3-compatible access keys chỉ là adapter mở rộng sau này."
+    }),
+    buildIntegrationHealth({
+      key: "backup-dr",
+      name: "Backup & DR",
+      category: "ops",
+      envNames: ["BACKUP_STORAGE_ADAPTER", "BACKUP_ENCRYPTION_KEY", "BACKUP_METADATA_SIGNING_KEY", "DEV_TELEGRAM_CHAT_ID"],
+      required: process.env.NODE_ENV === "production",
+      secretHandling: "Encryption/signing keys chỉ ở env/VPS, không lưu trong R2 và không hiển thị trong Control Center.",
+      note: "VPS backup worker tạo pg_dump custom, Redis/config archives, metadata có chữ ký, R2 upload và Telegram report."
     })
   ];
 }
@@ -1222,6 +1232,19 @@ function buildAdminCapabilities({
       nextStep: "Thêm cron run log, env drift check và rollback target."
     },
     {
+      key: "backup-dr",
+      name: "Backup & DR",
+      section: "/services",
+      owner: "DevOps/Security",
+      status: integrations.find((item) => item.key === "backup-dr")?.status === "configured" ? "live" : "needs_config",
+      observe: "live",
+      adjust: "partial",
+      audit: "live",
+      rollback: "live",
+      note: "Quan sát backup_jobs, backup_artifacts, backup_alerts và manual trigger queue.",
+      nextStep: "Bật restore full vào staging DB hàng tháng và rehearsal khẩn cấp theo runbook."
+    },
+    {
       key: "security-governance",
       name: "Security governance",
       section: "/governance",
@@ -1338,6 +1361,16 @@ function buildAdminMutations(): AdminMutation[] {
       guard: "current password verify + scrypt hash + HTTP-only session",
       auditAction: "platform_admin_password_changed",
       rollback: "Reset credential row bằng Supabase admin/CLI."
+    },
+    {
+      key: "request_manual_backup",
+      name: "Yêu cầu backup thủ công",
+      surface: "/services",
+      risk: "high",
+      status: "live",
+      guard: "platform.refresh + internal backup API + platform audit log",
+      auditAction: "manual_backup_requested",
+      rollback: "Không xoá backup cũ; nếu queue nhầm thì đánh dấu cancelled trước khi VPS worker claim."
     }
   ];
 }
@@ -1605,6 +1638,21 @@ function buildProjectAtlas({
       dependencies: ["Vercel Cron", "CRON_SECRET", "report schedules", "AI Ops insights", "subscription lifecycle"],
       note: "Cron routes được bảo vệ bằng bearer secret và khai báo trong vercel.json.",
       nextStep: "Thêm push/email alert khi cron lỗi liên tiếp và run detail theo execution id."
+    },
+    {
+      key: "backup-dr-plane",
+      name: "Backup & disaster recovery plane",
+      kind: "automation",
+      owner: "DevOps/Security",
+      criticality: "critical",
+      status: integrations.find((item) => item.key === "backup-dr")?.status === "configured" && integrations.find((item) => item.key === "cloudflare-r2")?.status === "configured" ? "live" : "needs_config",
+      observe: "live",
+      control: "partial",
+      audit: "live",
+      routes: ["infra/vps/scripts/backup.sh", "/api/internal/backup/health", "/api/internal/backup/trigger", "backup_jobs", "backup_artifacts", "backup_restore_tests"],
+      dependencies: ["pg_dump -F c", "Redis AOF/RDB", "Cloudflare R2", "OpenSSL encryption", "platform Telegram", "backup_* tables"],
+      note: "Daily/weekly/monthly backup executor encrypts before upload, verifies R2 metadata and sends DevOps Telegram reports.",
+      nextStep: "Run monthly full staging restore and graduate manual trigger from queued poll to private VPS executor endpoint if needed."
     },
     {
       key: "deployment-ci-plane",
@@ -2319,6 +2367,11 @@ async function readPlatformAdminSnapshot() {
       listPlatformAiProviderConfigs()
     ]);
 
+  const backupHealth = await getBackupHealth().catch((error) => {
+    warnings.push(`Không đọc được backup health: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  });
+
   const [v2PlansResult, v2SubscriptionsResult, v2PaymentsResult] = await Promise.all([
     supabase.from("subscription_plans").select("id,code,name,description,monthly_price,metadata").is("deleted_at", null).order("display_order", { ascending: true }),
     supabase
@@ -2735,6 +2788,11 @@ async function readPlatformAdminSnapshot() {
     envStatus("PLATFORM_AI_SECRET_KEY", "Khoá mã hoá AI trong admin.logivn.com", false),
     envStatus("RESEND_API_KEY", "Resend email", false),
     envStatus("CRON_SECRET", "Cron secret", false),
+    envStatus("BACKUP_ENCRYPTION_KEY", "Backup encryption key", process.env.NODE_ENV === "production"),
+    envStatus("BACKUP_METADATA_SIGNING_KEY", "Backup metadata signing key", process.env.NODE_ENV === "production"),
+    envStatus("R2_ENDPOINT", "Cloudflare R2 endpoint", false),
+    envStatus("R2_BUCKET", "Cloudflare R2 backup bucket", false),
+    envStatus("DEV_TELEGRAM_CHAT_ID", "Dev Telegram backup chat", false),
     envStatus("MAPBOX_ACCESS_TOKEN", "Mapbox ship/route", false),
     {
       ...envStatus("QWEN_API_KEY", "Alibaba Qwen AI", false),
@@ -2817,6 +2875,8 @@ async function readPlatformAdminSnapshot() {
       mapRequests24h: mapControl.provider.requests,
       contentSurfaces: contentSurfaces.length,
       integrationWarnings: integrations.filter((item) => item.status !== "configured").length,
+      backupOpenAlerts: backupHealth?.openAlerts.length ?? 0,
+      backupRpoRisk: backupHealth?.rpoRisk ?? "high",
       adminCapabilities: adminCapabilities.length,
       guardedMutations: adminMutations.filter((item) => item.status === "live").length,
       highRiskMutations: adminMutations.filter((item) => item.risk === "high").length,
@@ -2853,6 +2913,7 @@ async function readPlatformAdminSnapshot() {
     contentSurfaces,
     aiControl,
     mapControl,
+    backup: backupHealth,
     integrations,
     cronJobs,
     projectAtlas,
@@ -2973,9 +3034,9 @@ async function readPlatformAdminSnapshot() {
       {
         key: "ops",
         name: "Infra, cron & storage",
-        status: cronJobs.every((job) => job.status === "configured") ? "live" : "needs_config",
+        status: backupHealth?.rpoRisk === "high" ? "needs_review" : cronJobs.every((job) => job.status === "configured") ? "live" : "needs_config",
         owner: "DevOps",
-        note: "Theo dõi env, Vercel Cron, R2 readiness, persistent cache và rollback/deploy guardrails."
+        note: `Theo dõi env, Vercel Cron, R2 readiness, backup RPO ${backupHealth?.rpoRisk ?? "unknown"}, persistent cache và rollback/deploy guardrails.`
       },
       {
         key: "governance",

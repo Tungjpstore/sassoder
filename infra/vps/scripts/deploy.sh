@@ -43,6 +43,81 @@ backup_current_config() {
   fi
 }
 
+backup_env_ready() {
+  [ "${BACKUP_ENABLED:-true}" = "true" ] || return 1
+  [ -n "${BACKUP_ENCRYPTION_KEY:-}" ] || return 1
+  [ -n "${BACKUP_METADATA_SIGNING_KEY:-}" ] || return 1
+
+  local adapter=${BACKUP_STORAGE_ADAPTER:-}
+  if [ -z "$adapter" ]; then
+    adapter=worker
+  fi
+
+  case "$adapter" in
+    worker|gateway|r2-gateway|r2_gateway)
+      [ -n "${BACKUP_R2_GATEWAY_URL:-}" ] || return 1
+      [ -n "${BACKUP_R2_GATEWAY_TOKEN:-}" ] || return 1
+      ;;
+    s3|r2)
+      [ -n "${R2_ACCESS_KEY_ID:-}" ] || return 1
+      [ -n "${R2_SECRET_ACCESS_KEY:-}" ] || return 1
+      [ -n "${R2_ENDPOINT:-${R2_ACCOUNT_ID:-}}" ] || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [ "${BACKUP_POSTGRES_ENABLED:-true}" = "true" ]; then
+    [ -n "${DATABASE_URL:-}" ] || { [ -n "${SUPABASE_DB_HOST:-}" ] && [ -n "${SUPABASE_DB_USER:-}" ] && [ -n "${SUPABASE_DB_PASSWORD:-}" ]; } || return 1
+  fi
+}
+
+ensure_postgres_backup_runner() {
+  if [ "${BACKUP_POSTGRES_ENABLED:-true}" != "true" ]; then
+    return 0
+  fi
+
+  local runner=${BACKUP_POSTGRES_DUMP_RUNNER:-docker}
+  local image=${BACKUP_POSTGRES_DOCKER_IMAGE:-postgres:17-alpine}
+
+  if [ "$runner" = "docker" ]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      printf 'docker is required for Docker-based Postgres backup runner.\n' >&2
+      return 1
+    fi
+
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      log "Pulling PostgreSQL backup image $image"
+      docker pull "$image"
+    fi
+    return 0
+  fi
+
+  if [ "$runner" != "local" ]; then
+    printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$runner" >&2
+    return 1
+  fi
+
+  if command -v pg_dump >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    printf 'pg_dump is required for Postgres backup, and apt-get is unavailable to install postgresql-client.\n' >&2
+    return 1
+  fi
+
+  if ! sudo -n true >/dev/null 2>&1; then
+    printf 'pg_dump is required for Postgres backup, and passwordless sudo is unavailable to install postgresql-client.\n' >&2
+    return 1
+  fi
+
+  log "Installing PostgreSQL client tools for runtime backup"
+  sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update
+  sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y postgresql-client
+}
+
 backup_runtime_data() {
   if [ "$RUN_BACKUP" = "false" ]; then
     log "Skipping runtime backup before deploy"
@@ -53,6 +128,13 @@ backup_runtime_data() {
     log "Skipping runtime backup before first deploy"
     return
   fi
+
+  if [ "$RUN_BACKUP" = "auto" ] && ! backup_env_ready; then
+    log "Skipping runtime backup before deploy; backup env is not complete yet"
+    return
+  fi
+
+  ensure_postgres_backup_runner
 
   log "Running runtime backup before deploy"
   APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$VPS_DIR/scripts/backup.sh"

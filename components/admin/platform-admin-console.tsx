@@ -42,7 +42,7 @@ export function PlatformAdminConsole({
       ) : null}
       {activeSection === "tenants" ? <Tenants snapshot={snapshot} session={session} /> : null}
       {activeSection === "ai" ? <AiControl snapshot={snapshot} /> : null}
-      {activeSection === "services" ? <ServicesCenter snapshot={snapshot} /> : null}
+      {activeSection === "services" || activeSection === "backup" ? <ServicesCenter snapshot={snapshot} /> : null}
       {activeSection === "queues" ? <QueueCenter snapshot={snapshot} /> : null}
       {activeSection === "redis" ? <RedisCenter snapshot={snapshot} /> : null}
       {activeSection === "telegram" ? <TelegramOpsCenter snapshot={snapshot} session={session} /> : null}

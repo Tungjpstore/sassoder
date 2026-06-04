@@ -5,6 +5,7 @@ export type ActiveSection =
   | "system-map"
   | "deployments"
   | "services"
+  | "backup"
   | "queues"
   | "redis"
   | "telegram"

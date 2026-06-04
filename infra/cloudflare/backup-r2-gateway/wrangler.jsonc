@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "logivn-backup-r2-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-04",
+  "workers_dev": true,
+  "preview_urls": false,
+  "r2_buckets": [
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "logivn-backups"
+    }
+  ]
+}

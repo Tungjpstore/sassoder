@@ -44,6 +44,7 @@ The script:
 - creates 2GB swap if none exists
 - tunes Linux kernel settings for Redis AOF/BGSAVE stability and high connection backlogs
 - installs Docker, Docker Compose, Node.js 22, pnpm, PM2, Nginx, Certbot
+- installs PostgreSQL client tools for encrypted R2 backup and restore checks; the default R2 path uses the Cloudflare Worker gateway over `curl`, while S3-compatible tooling is optional future expansion
 - enables UFW for SSH/HTTP/HTTPS
 - configures fail2ban
 - disables password SSH only when `DEPLOY_PUBLIC_KEY` is supplied
@@ -346,23 +347,22 @@ Events:
 
 `infra/vps/scripts/backup.sh` creates:
 
+- encrypted Supabase Postgres custom dumps
 - Redis AOF/RDB volume backup after `BGSAVE` and `BGREWRITEAOF`
-- `/opt/logivn/.env` backup
-- Docker Compose/Nginx config backup
-- recent Docker log sample
+- sanitized VPS config backup from `/opt/logivn/.env`, Docker Compose, Nginx, Redis, scripts, and cron
+- Supabase Storage bucket manifests and optional payload archives
+- signed metadata records uploaded to private Cloudflare R2 through the Worker gateway
 
 `install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries.
 
 Run a backup immediately after the first successful deploy:
 
 ```bash
-infra/vps/scripts/backup.sh
-infra/vps/scripts/restore-redis-backup.sh --dry-run "$(ls -1t /opt/logivn/backups/*.tgz | head -1)"
+APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --manual --actor sre --reason "first production backup"
+APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --restore-test
 ```
 
-`restore-redis-backup.sh` is safe by default and only inspects the archive. A real
-restore requires an explicit confirmation environment variable and creates a
-pre-restore Redis volume backup before replacing data:
+For disaster recovery, use `RESTORE_RUNBOOK.md` to download, verify, and decrypt the approved R2 artifact first. `restore-redis-backup.sh` remains a local Redis-volume helper after the decrypted Redis archive has been selected. A real restore requires an explicit confirmation environment variable and creates a pre-restore Redis volume backup before replacing data:
 
 ```bash
 CONFIRM_RESTORE=restore-logivn-redis infra/vps/scripts/restore-redis-backup.sh /opt/logivn/backups/20260101T000000Z.tgz

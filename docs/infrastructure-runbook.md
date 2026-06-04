@@ -29,7 +29,8 @@
 
 - `logivn.com` đang active trên Cloudflare và DNS apex, `www`, wildcard `*.logivn.com` đều trỏ về Vercel.
 - Tại thời điểm audit `2026-05-09`, các record này đang ở chế độ DNS-only (`proxied = false`), nên Cloudflare hiện đóng vai trò DNS nhiều hơn là reverse proxy/WAF trước Vercel.
-- Account Cloudflare có R2 bucket tồn tại sẵn, nhưng repo này chưa có R2 binding, S3 client, custom domain hay code path nào đọc/ghi R2. Với LogiVN, R2 vẫn là hạ tầng chưa được tích hợp.
+- Backup/DR production đang dùng Cloudflare R2 qua Worker gateway `logivn-backup-r2-gateway`. VPS chỉ cần `BACKUP_R2_GATEWAY_URL`, `BACKUP_R2_GATEWAY_TOKEN`, `R2_BUCKET` và `BACKUP_R2_PREFIX`; không cần AWS hay access key S3 dài hạn.
+- Adapter S3-compatible/R2 access-key trong script backup chỉ giữ để mở rộng sau này hoặc làm fallback có chủ đích. Không đặt đây là đường mặc định cho production hiện tại.
 
 ## Nguồn sự thật cho môi trường
 
@@ -188,7 +189,8 @@ Chỉ nên chạy manual trên production khi chấp nhận side effect thật n
 
 ## Quyết định cho Cloudflare và R2
 
-- Chưa nên chuyển media của LogiVN sang R2 chỉ vì có bucket sẵn trên account.
+- Giữ Worker gateway là đường production cho backup/DR vào R2; không phụ thuộc AWS CLI hoặc AWS service.
+- Chưa nên chuyển media của LogiVN sang R2 chỉ vì backup đã dùng R2.
 - Chỉ cân nhắc migration khi có ít nhất một trong các điều kiện:
   - chi phí egress hoặc storage của Supabase tăng rõ rệt
   - cần lifecycle/archive policy riêng cho media

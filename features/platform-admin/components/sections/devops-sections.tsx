@@ -42,7 +42,7 @@ import {
   Zap
 } from "lucide-react";
 import { Billing } from "@/features/platform-admin/components/sections/billing-section";
-import { refreshPlatformAdminAction, requestPlatformOperationAction, runPlatformCronJobAction } from "@/features/platform-admin/actions";
+import { refreshPlatformAdminAction, requestManualBackupAction, requestPlatformOperationAction, runPlatformCronJobAction } from "@/features/platform-admin/actions";
 import { ContentControl } from "@/features/platform-admin/components/sections/content-section";
 import { GovernanceControl } from "@/features/platform-admin/components/sections/governance-section";
 import { MapsControl } from "@/features/platform-admin/components/sections/maps-section";
@@ -78,6 +78,15 @@ function duration(value: number | null | undefined) {
   const ms = Math.max(0, Number(value));
   if (ms < 1000) return `${Math.round(ms)}ms`;
   return `${Math.round(ms / 100) / 10}s`;
+}
+
+function formatBytes(value: number | null | undefined) {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  if (bytes < 1024) return `${Math.round(bytes)}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)}MB`;
+  return `${Math.round((bytes / 1024 / 1024 / 1024) * 10) / 10}GB`;
 }
 
 function attentionTone(value: number): Tone {
@@ -196,6 +205,16 @@ function CronRunForm({ jobKey, label, icon = PlayCircle }: { jobKey: PlatformCro
 function RefreshForm({ label = "Làm mới", icon = RefreshCw }: { label?: string; icon?: typeof Activity }) {
   return (
     <form action={refreshPlatformAdminAction}>
+      <ControlButton icon={icon} label={label} type="submit" />
+    </form>
+  );
+}
+
+function ManualBackupForm({ label = "Backup ngay", icon = PlayCircle }: { label?: string; icon?: typeof Activity }) {
+  return (
+    <form action={requestManualBackupAction}>
+      <input type="hidden" name="retentionClass" value="manual" />
+      <input type="hidden" name="reason" value="Manual backup requested from Control Center" />
       <ControlButton icon={icon} label={label} type="submit" />
     </form>
   );
@@ -405,6 +424,9 @@ export function DeploymentCenter({ snapshot }: { snapshot: Snapshot }) {
 export function ServicesCenter({ snapshot }: { snapshot: Snapshot }) {
   const services = snapshot.projectAtlas.surfaces.filter((surface) => surface.kind === "backend" || surface.kind === "automation" || surface.kind === "integration");
   const avgCronDuration = Math.round(snapshot.cronJobs.reduce((sum, job) => sum + (job.lastDurationMs ?? 0), 0) / Math.max(snapshot.cronJobs.length, 1));
+  const backup = snapshot.backup;
+  const latestRestoreTest = backup?.restoreTests[0] ?? null;
+  const backupTone: Tone = !backup?.schemaReady ? "warning" : backup.rpoRisk === "high" ? "danger" : backup.rpoRisk === "medium" ? "warning" : "good";
 
   return (
     <div className="grid gap-4">
@@ -414,6 +436,69 @@ export function ServicesCenter({ snapshot }: { snapshot: Snapshot }) {
         <MetricCard label="Thời lượng cron" value={duration(avgCronDuration)} detail="Trung bình lần chạy gần nhất" icon={Clock3} tone="neutral" />
         <MetricCard label="Cảnh báo" value={formatNumber(snapshot.metrics.integrationWarnings)} detail="Secret hoặc provider chưa đủ" icon={AlertTriangle} tone={snapshot.metrics.integrationWarnings ? "warning" : "good"} />
       </div>
+      <div className="grid gap-3 md:grid-cols-4">
+        <MetricCard label="Backup RPO" value={backup?.rpoRisk?.toUpperCase() ?? "MISSING"} detail={backup?.ageHours === null || backup?.ageHours === undefined ? "Chưa có backup thành công" : `${backup.ageHours}h từ lần thành công gần nhất`} icon={Database} tone={backupTone} />
+        <MetricCard label="Backup gần nhất" value={backup?.latestJob?.status ?? "missing"} detail={backup?.latestJob?.startedAt ? formatDateTime(backup.latestJob.startedAt) : "Chưa có job"} icon={HardDrive} tone={statusTone(backup?.latestJob?.status ?? "missing")} />
+        <MetricCard label="Dung lượng R2" value={formatBytes(backup?.storageUsageBytes)} detail={`${formatNumber(backup?.history.length ?? 0)} jobs gần nhất`} icon={Cloud} tone="info" />
+        <MetricCard label="Restore test" value={latestRestoreTest?.status ?? "missing"} detail={latestRestoreTest?.createdAt ? formatDateTime(latestRestoreTest.createdAt) : "Chưa có rehearsal"} icon={ShieldCheck} tone={statusTone(latestRestoreTest?.status ?? "missing")} />
+      </div>
+      <SectionCard title="Backup & DR" action={<div className="flex flex-wrap gap-2"><ManualBackupForm /><RefreshForm label="Làm mới" /></div>}>
+        <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
+          <div className="grid gap-3">
+            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">{backup?.lastSuccessfulBackup ? "Backup thành công gần nhất" : "Chưa có backup thành công"}</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-400">{backup?.lastSuccessfulBackup?.finishedAt ? formatDateTime(backup.lastSuccessfulBackup.finishedAt) : "Cần chạy job đầu tiên sau migration."}</p>
+                </div>
+                <StatusPill label={backup?.rpoRisk ?? "high"} tone={backupTone} />
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                <div className="rounded-lg bg-white/[0.04] p-2"><p className="text-slate-500">Artifacts</p><p className="mt-1 font-semibold text-slate-200">{formatNumber(backup?.lastSuccessfulBackup?.artifactCount ?? 0)}</p></div>
+                <div className="rounded-lg bg-white/[0.04] p-2"><p className="text-slate-500">Checksum</p><p className="mt-1 font-semibold text-slate-200">{backup?.lastSuccessfulBackup?.checksumStatus ?? "pending"}</p></div>
+                <div className="rounded-lg bg-white/[0.04] p-2"><p className="text-slate-500">Verify</p><p className="mt-1 font-semibold text-slate-200">{backup?.lastSuccessfulBackup?.verifyStatus ?? "pending"}</p></div>
+                <div className="rounded-lg bg-white/[0.04] p-2"><p className="text-slate-500">Retention</p><p className="mt-1 font-semibold text-slate-200">{backup?.lastSuccessfulBackup?.retentionApplied ? "applied" : "pending"}</p></div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm leading-6 text-slate-400">
+              <p><span className="font-semibold text-slate-200">Retention:</span> {backup?.retention.daily ?? 7} daily / {backup?.retention.weekly ?? 8} weekly / {backup?.retention.monthly ?? 12} monthly</p>
+              <p><span className="font-semibold text-slate-200">Storage:</span> {backup?.retention.storageProvider ?? "cloudflare-r2"}</p>
+              <p><span className="font-semibold text-slate-200">Alerts:</span> {formatNumber(backup?.openAlerts.length ?? 0)} open</p>
+            </div>
+            <div className="grid gap-2 rounded-lg border border-white/10 bg-white/[0.025] p-3">
+              {(backup?.history ?? []).slice(0, 5).map((job) => (
+                <div key={job.id} className="flex items-center justify-between gap-3 rounded-lg bg-white/[0.035] px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-100">{job.retentionClass} · {job.triggerSource}</p>
+                    <p className="text-xs text-slate-500">{job.startedAt ? formatDateTime(job.startedAt) : formatDateTime(job.createdAt)} · {formatBytes(job.fileSize)}</p>
+                  </div>
+                  <StatusPill label={job.status} tone={statusTone(job.status)} />
+                </div>
+              ))}
+              {!(backup?.history?.length) ? <p className="py-4 text-center text-sm text-slate-500">Chưa có backup history.</p> : null}
+            </div>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-white/10">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead className="border-b border-white/10 bg-[#0B1020] text-xs uppercase tracking-[0.12em] text-slate-500">
+                <tr><th className="px-3 py-3">Artifact</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Size</th><th className="px-3 py-3">Checksum</th><th className="px-3 py-3">Object</th></tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {(backup?.artifacts ?? []).slice(0, 8).map((artifact) => (
+                  <tr key={artifact.id} className="bg-white/[0.025]">
+                    <td className="px-3 py-3 font-semibold text-slate-100">{artifact.artifactType}</td>
+                    <td className="px-3 py-3"><StatusPill label={artifact.status} tone={statusTone(artifact.status)} /></td>
+                    <td className="px-3 py-3 text-slate-400">{formatBytes(artifact.fileSize)}</td>
+                    <td className="px-3 py-3 font-mono text-xs text-slate-500">{artifact.checksumSha256?.slice(0, 12) ?? "pending"}</td>
+                    <td className="max-w-[280px] truncate px-3 py-3 font-mono text-xs text-slate-500">{artifact.storagePath ?? artifact.fileName ?? "metadata pending"}</td>
+                  </tr>
+                ))}
+                {!(backup?.artifacts?.length) ? <tr><td className="px-3 py-8 text-center text-slate-500" colSpan={5}>Chưa có artifact backup trong snapshot.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </SectionCard>
       <SectionCard title="Lưới dịch vụ" action={<div className="flex flex-wrap gap-2"><OperationForm operation="restart_workers" targetType="worker_pool" targetId="platform" label="Khởi động workers" icon={RefreshCw} danger /><Link href="/logs" className="inline-flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs font-semibold text-slate-300 hover:bg-white/[0.08]"><TerminalSquare size={14} />Nhật ký</Link></div>}>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {services.map((service) => (
@@ -569,6 +654,8 @@ export async function TelegramOpsCenter({ snapshot, session }: { snapshot: Snaps
 export function LogsPlatform({ snapshot }: { snapshot: Snapshot }) {
   const logs = [
     ...snapshot.warnings.map((warning, index) => ({ id: `warning-${index}`, time: snapshot.generatedAt, level: "warn", source: "schema", message: warning })),
+    ...(snapshot.backup?.history ?? []).filter((job) => job.errorMessage || job.status === "failed").map((job) => ({ id: `backup-${job.id}`, time: job.finishedAt ?? job.startedAt ?? job.createdAt, level: "error", source: "backup", message: `${job.status} · ${job.errorMessage ?? job.errorStep ?? job.retentionClass}` })),
+    ...(snapshot.backup?.history ?? []).filter((job) => job.status === "success" || job.status === "warn").slice(0, 4).map((job) => ({ id: `backup-ok-${job.id}`, time: job.finishedAt ?? job.createdAt, level: job.status === "warn" ? "warn" : "info", source: "backup", message: `${job.retentionClass} · ${formatBytes(job.fileSize)} · ${job.artifactCount} artifacts` })),
     ...snapshot.cronJobs.filter((job) => job.lastError).map((job) => ({ id: `cron-${job.key}`, time: job.lastRunAt ?? snapshot.generatedAt, level: "error", source: job.path, message: job.lastError ?? "Cron error" })),
     ...snapshot.auditLogs.slice(0, 12).map((log) => ({ id: log.id, time: log.createdAt, level: "info", source: log.targetType, message: `${log.actor} · ${log.action}${log.targetId ? ` · ${log.targetId}` : ""}` }))
   ].slice(0, 24);
@@ -607,6 +694,8 @@ export function LogsPlatform({ snapshot }: { snapshot: Snapshot }) {
 export function AlertCenter({ snapshot }: { snapshot: Snapshot }) {
   const alerts = [
     ...snapshot.warnings.map((warning, index) => ({ id: `warning-${index}`, title: "Cảnh báo migration/schema", detail: warning, severity: "warning" as Tone, source: "Platform" })),
+    ...(snapshot.backup?.openAlerts ?? []).map((alert) => ({ id: `backup-${alert.id}`, title: alert.title, detail: alert.message, severity: alert.severity === "critical" ? "danger" as Tone : alert.severity === "warning" ? "warning" as Tone : "info" as Tone, source: "Backup" })),
+    ...((snapshot.backup && snapshot.backup.rpoRisk !== "low") ? [{ id: "backup-rpo", title: "Backup RPO", detail: snapshot.backup.ageHours === null ? "Chưa có backup thành công." : `Backup thành công gần nhất cách ${snapshot.backup.ageHours}h.`, severity: snapshot.backup.rpoRisk === "high" ? "danger" as Tone : "warning" as Tone, source: "Backup" }] : []),
     ...snapshot.billingCutover.anomalies.map((item) => ({ id: item.key + item.restaurantId, title: item.restaurantName, detail: item.detail, severity: item.severity === "danger" ? "danger" as Tone : "warning" as Tone, source: "Payments" })),
     ...snapshot.aiControl.branchInsights.recent.filter((item) => item.severity === "critical" || item.severity === "warning").map((item) => ({ id: item.id, title: item.title, detail: item.action, severity: item.severity === "critical" ? "danger" as Tone : "warning" as Tone, source: item.restaurantName }))
   ];
