@@ -14,7 +14,7 @@ export BACKUP_METADATA_SIGNING_KEY="..."
 export RESTORE_TEST_DATABASE_URL="postgresql://...staging..."
 export BACKUP_RESTORE_TEST_MODE="docker"
 export BACKUP_RESTORE_TEST_SCHEMA="public"
-export BACKUP_RESTORE_CRITICAL_TABLES="restaurants,orders,payments,reservations"
+export BACKUP_RESTORE_CRITICAL_TABLES="restaurants,orders,payment_logs,reservations"
 export BACKUP_RESTORE_TEST_STRICT="false"
 ```
 

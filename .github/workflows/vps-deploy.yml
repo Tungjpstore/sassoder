@@ -107,7 +107,7 @@ jobs:
           write_env BACKUP_POSTGRES_DOCKER_IMAGE postgres:17-alpine
           write_env BACKUP_RESTORE_TEST_MODE docker
           write_env BACKUP_RESTORE_TEST_SCHEMA public
-          write_env BACKUP_RESTORE_CRITICAL_TABLES restaurants,orders,payments,reservations
+          write_env BACKUP_RESTORE_CRITICAL_TABLES restaurants,orders,payment_logs,reservations
           write_env BACKUP_RESTORE_TEST_STRICT false
           write_env BACKUP_STORAGE_ADAPTER worker
           write_env BACKUP_R2_GATEWAY_URL "$BACKUP_R2_GATEWAY_URL"
