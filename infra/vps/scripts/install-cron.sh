@@ -4,10 +4,28 @@ set -euo pipefail
 APP_ROOT=${APP_ROOT:-/opt/logivn}
 APP_REPO=${APP_REPO:-$APP_ROOT/app}
 CRON_FILE=/etc/cron.d/logivn-vps
+ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
+BACKUP_TIMEZONE=${BACKUP_TIMEZONE:-Asia/Ho_Chi_Minh}
+
+if [ -f "$ENV_FILE" ]; then
+  configured_timezone=$(awk -F= '
+    /^[[:space:]]*BACKUP_TIMEZONE[[:space:]]*=/ {
+      value = $0
+      sub(/^[[:space:]]*BACKUP_TIMEZONE[[:space:]]*=/, "", value)
+      gsub(/^[[:space:]\"'"'"']+|[[:space:]\"'"'"']+$/, "", value)
+      print value
+    }
+  ' "$ENV_FILE" | tail -n 1)
+  if [ -n "$configured_timezone" ]; then
+    BACKUP_TIMEZONE=$configured_timezone
+  fi
+fi
 
 cat > "$CRON_FILE" <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+CRON_TZ=$BACKUP_TIMEZONE
+TZ=$BACKUP_TIMEZONE
 
 0 2 * * * root $APP_REPO/infra/vps/scripts/backup.sh --daily >> $APP_ROOT/logs/backup.log 2>&1
 0 3 * * 0 root $APP_REPO/infra/vps/scripts/backup.sh --weekly >> $APP_ROOT/logs/backup.log 2>&1
