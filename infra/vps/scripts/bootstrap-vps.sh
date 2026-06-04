@@ -201,7 +201,7 @@ main() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
   apt-get upgrade -y
-  apt-get install -y curl git unzip htop ufw fail2ban build-essential ca-certificates gnupg lsb-release nginx certbot python3-certbot-nginx logrotate unattended-upgrades
+  apt-get install -y curl git unzip htop ufw fail2ban build-essential ca-certificates gnupg lsb-release nginx certbot python3-certbot-nginx logrotate unattended-upgrades awscli postgresql-client
 
   timedatectl set-timezone "$TIMEZONE"
   install_docker

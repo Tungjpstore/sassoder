@@ -9,7 +9,11 @@ cat > "$CRON_FILE" <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-15 2 * * * root $APP_REPO/infra/vps/scripts/backup.sh >> $APP_ROOT/logs/backup.log 2>&1
+0 2 * * * root $APP_REPO/infra/vps/scripts/backup.sh --daily >> $APP_ROOT/logs/backup.log 2>&1
+0 3 * * 0 root $APP_REPO/infra/vps/scripts/backup.sh --weekly >> $APP_ROOT/logs/backup.log 2>&1
+0 4 1 * * root $APP_REPO/infra/vps/scripts/backup.sh --monthly >> $APP_ROOT/logs/backup.log 2>&1
+20 4 1 * * root $APP_REPO/infra/vps/scripts/backup.sh --restore-test >> $APP_ROOT/logs/backup-restore-test.log 2>&1
+*/5 * * * * root $APP_REPO/infra/vps/scripts/backup.sh --claim-manual >> $APP_ROOT/logs/backup-manual.log 2>&1
 0 4 * * * root certbot renew --quiet --post-hook "systemctl reload nginx" >> $APP_ROOT/logs/certbot-renew.log 2>&1
 35 4 * * 0 root docker system prune -af --filter "until=168h" >> $APP_ROOT/logs/docker-prune.log 2>&1
 */5 * * * * root $APP_REPO/infra/vps/scripts/validate.sh --local-only >> $APP_ROOT/logs/health.log 2>&1

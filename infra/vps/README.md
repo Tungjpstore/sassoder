@@ -44,6 +44,7 @@ The script:
 - creates 2GB swap if none exists
 - tunes Linux kernel settings for Redis AOF/BGSAVE stability and high connection backlogs
 - installs Docker, Docker Compose, Node.js 22, pnpm, PM2, Nginx, Certbot
+- installs AWS CLI and PostgreSQL client tools for encrypted R2 backup and restore checks
 - enables UFW for SSH/HTTP/HTTPS
 - configures fail2ban
 - disables password SSH only when `DEPLOY_PUBLIC_KEY` is supplied

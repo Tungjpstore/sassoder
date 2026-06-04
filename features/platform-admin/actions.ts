@@ -192,6 +192,14 @@ const platformCronJobSchema = z.object({
   jobKey: z.enum(["reports", "ai-ops", "reservations-expire", "subscriptions"])
 });
 
+const manualBackupSchema = z.object({
+  retentionClass: z.enum(["daily", "weekly", "monthly", "manual"]).default("manual"),
+  reason: z.preprocess(
+    (value) => (typeof value === "string" ? value.trim() || undefined : undefined),
+    z.string().max(300).optional()
+  )
+});
+
 const platformOperationSchema = z.object({
   operation: z.enum([
     "ack_alert",
@@ -256,7 +264,7 @@ function revalidateAdmin() {
   revalidateTag("public-active-plans", "max");
   revalidatePath("/");
   revalidatePath("/pricing");
-  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security"].forEach((path) => {
+  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security", "/services", "/backup", "/alerts", "/logs"].forEach((path) => {
     revalidatePath(platformAdminInternalPath(path));
   });
 }
@@ -281,6 +289,31 @@ async function callInternalPlatformPath(pathOrUrl: string) {
   if (process.env.CRON_SECRET) headers.authorization = `Bearer ${process.env.CRON_SECRET}`;
 
   const response = await fetch(url, { method: "GET", headers, cache: "no-store" });
+  const bodyText = await response.text();
+  return {
+    ok: response.ok,
+    status: response.status,
+    path: `${url.pathname}${url.search}`,
+    response: compactOperationResponse(bodyText)
+  };
+}
+
+async function callInternalPlatformJson(pathOrUrl: string, body: Record<string, unknown>) {
+  const origin = await currentRequestOrigin();
+  const url = /^https?:\/\//i.test(pathOrUrl) ? new URL(pathOrUrl) : new URL(pathOrUrl, origin);
+  const headers: HeadersInit = {
+    accept: "application/json",
+    "content-type": "application/json"
+  };
+  const internalSecret = process.env.LOGIVN_INTERNAL_API_KEY || process.env.CRON_SECRET;
+  if (internalSecret) headers.authorization = `Bearer ${internalSecret}`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    cache: "no-store"
+  });
   const bodyText = await response.text();
   return {
     ok: response.ok,
@@ -445,6 +478,49 @@ export async function runPlatformCronJobAction(formData: FormData) {
   revalidateAdmin();
   if (!response.ok) {
     throw new Error(`Không chạy được ${parsed.jobKey}: HTTP ${response.status}`);
+  }
+}
+
+export async function requestManualBackupAction(formData: FormData) {
+  const parsed = manualBackupSchema.parse({
+    retentionClass: formData.get("retentionClass") || "manual",
+    reason: formData.get("reason")
+  });
+  const session = await requirePlatformAdmin("platform.refresh");
+
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: "manual_backup_requested",
+    targetType: "backup_job",
+    metadata: {
+      retentionClass: parsed.retentionClass,
+      reason: parsed.reason ?? null,
+      source: "admin.logivn.com"
+    },
+    required: true
+  });
+
+  const execution = await callInternalPlatformJson("/api/internal/backup/trigger", {
+    actor: session.actor,
+    retentionClass: parsed.retentionClass,
+    reason: parsed.reason ?? "Manual backup requested from Control Center"
+  });
+
+  await writePlatformAuditLog({
+    actor: session.actor,
+    action: execution.ok ? "manual_backup_queued" : "manual_backup_queue_failed",
+    targetType: "backup_job",
+    metadata: {
+      retentionClass: parsed.retentionClass,
+      reason: parsed.reason ?? null,
+      execution
+    },
+    required: true
+  });
+
+  revalidateAdmin();
+  if (!execution.ok) {
+    throw new Error(`Không queue được backup thủ công: HTTP ${execution.status}`);
   }
 }
 
