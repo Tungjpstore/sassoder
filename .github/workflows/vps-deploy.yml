@@ -229,8 +229,13 @@ jobs:
           fi
 
           git fetch origin --prune
-          git checkout --force "$DEPLOY_REF"
-          git reset --hard "$DEPLOY_REF"
+          if git rev-parse --verify --quiet "origin/$DEPLOY_REF" >/dev/null; then
+            target_ref="origin/$DEPLOY_REF"
+          else
+            target_ref="$DEPLOY_REF"
+          fi
+          git checkout --force --detach "$target_ref"
+          git reset --hard "$target_ref"
           git clean -fd
           chmod +x infra/vps/scripts/*.sh
 
