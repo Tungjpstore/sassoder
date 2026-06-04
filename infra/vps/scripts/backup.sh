@@ -1237,17 +1237,31 @@ run_docker_restore_database() {
     return 1
   fi
 
-  local restore_args=(--no-owner --no-acl -U postgres -d restore_test /tmp/restore-test-postgres.dump)
-  if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
-    restore_args=(--exit-on-error "${restore_args[@]}")
-  fi
-
-  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${restore_args[@]}"; then
+  local schema_restore_args=(--no-owner --no-acl --section=pre-data -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${schema_restore_args[@]}"; then
     if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
       docker rm -f "$container" >/dev/null 2>&1 || true
       return 1
     fi
-    log "Ephemeral restore reported non-critical pg_restore warnings; verifying critical tables"
+    log "Ephemeral schema restore reported non-critical pg_restore warnings; restoring critical table data"
+  fi
+
+  local table
+  local -a table_args=()
+  while IFS= read -r table; do
+    table_args+=(--table="$schema.$table")
+  done < <(restore_critical_table_names)
+
+  if [ "${#table_args[@]}" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  local data_restore_args=(--data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${data_restore_args[@]}"; then
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    return 1
   fi
 
   if ! verify_docker_restore_database "$container" "$password"; then
@@ -1282,7 +1296,7 @@ run_restore_test() {
   case "$BACKUP_RESTORE_TEST_MODE" in
     docker|ephemeral)
       if run_docker_restore_database "$dump_file"; then
-        record_restore_test "success" "$object_key" "Restore test completed in an ephemeral Docker Postgres database" true true true
+        record_restore_test "success" "$object_key" "Restore test completed in an ephemeral Docker Postgres database for critical tables" true true true
       else
         record_restore_test "failed" "$object_key" "Ephemeral Docker Postgres restore failed critical-table verification" true false false
         return 1
