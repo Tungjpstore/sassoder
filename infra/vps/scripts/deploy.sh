@@ -77,9 +77,30 @@ backup_env_ready() {
   fi
 }
 
-ensure_postgres_backup_client() {
+ensure_postgres_backup_runner() {
   if [ "${BACKUP_POSTGRES_ENABLED:-true}" != "true" ]; then
     return 0
+  fi
+
+  local runner=${BACKUP_POSTGRES_DUMP_RUNNER:-docker}
+  local image=${BACKUP_POSTGRES_DOCKER_IMAGE:-postgres:17-alpine}
+
+  if [ "$runner" = "docker" ]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      printf 'docker is required for Docker-based Postgres backup runner.\n' >&2
+      return 1
+    fi
+
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      log "Pulling PostgreSQL backup image $image"
+      docker pull "$image"
+    fi
+    return 0
+  fi
+
+  if [ "$runner" != "local" ]; then
+    printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$runner" >&2
+    return 1
   fi
 
   if command -v pg_dump >/dev/null 2>&1; then
@@ -117,7 +138,7 @@ backup_runtime_data() {
     return
   fi
 
-  ensure_postgres_backup_client
+  ensure_postgres_backup_runner
 
   log "Running runtime backup before deploy"
   APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$VPS_DIR/scripts/backup.sh"

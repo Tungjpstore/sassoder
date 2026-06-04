@@ -53,6 +53,8 @@ BACKUP_RETENTION_MANUAL=${BACKUP_RETENTION_MANUAL:-14}
 BACKUP_R2_PREFIX=${BACKUP_R2_PREFIX:-logivn}
 BACKUP_ENCRYPTION_ITERATIONS=${BACKUP_ENCRYPTION_ITERATIONS:-200000}
 BACKUP_POSTGRES_ENABLED=${BACKUP_POSTGRES_ENABLED:-true}
+BACKUP_POSTGRES_DUMP_RUNNER=${BACKUP_POSTGRES_DUMP_RUNNER:-docker}
+BACKUP_POSTGRES_DOCKER_IMAGE=${BACKUP_POSTGRES_DOCKER_IMAGE:-postgres:17-alpine}
 BACKUP_REDIS_ENABLED=${BACKUP_REDIS_ENABLED:-true}
 BACKUP_VPS_CONFIGS_ENABLED=${BACKUP_VPS_CONFIGS_ENABLED:-true}
 BACKUP_STORAGE_MANIFEST_ENABLED=${BACKUP_STORAGE_MANIFEST_ENABLED:-true}
@@ -425,7 +427,13 @@ validate_runtime() {
       return 1
       ;;
   esac
-  if [ "$BACKUP_POSTGRES_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" != "true" ]; then require_command pg_dump; fi
+  if [ "$BACKUP_POSTGRES_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" != "true" ]; then
+    case "$BACKUP_POSTGRES_DUMP_RUNNER" in
+      docker) require_command docker ;;
+      local) require_command pg_dump ;;
+      *) printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$BACKUP_POSTGRES_DUMP_RUNNER" >&2; return 1 ;;
+    esac
+  fi
   if [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" = "true" ]; then require_command pg_restore; fi
   if [ "$RESTORE_TEST_ONLY" != "true" ] && should_backup_storage_payload; then require_command node; fi
 
@@ -779,7 +787,16 @@ backup_postgres() {
     return 1
   }
 
-  pg_dump --dbname "$db_url" -F c --no-owner --no-acl --file "$dump_file"
+  if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
+    docker run --rm \
+      -e DATABASE_URL="$db_url" \
+      -v "$WORK_DIR:/backup" \
+      "$BACKUP_POSTGRES_DOCKER_IMAGE" \
+      sh -c 'pg_dump --dbname "$DATABASE_URL" -F c --no-owner --no-acl --file "$1"' \
+      sh "/backup/$(basename "$dump_file")"
+  else
+    pg_dump --dbname "$db_url" -F c --no-owner --no-acl --file "$dump_file"
+  fi
   upload_artifact "postgres" "$dump_file"
 }
 

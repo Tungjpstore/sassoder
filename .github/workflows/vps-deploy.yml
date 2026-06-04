@@ -102,6 +102,8 @@ jobs:
 
           write_env BACKUP_ENABLED true
           write_env BACKUP_ENVIRONMENT prod
+          write_env BACKUP_POSTGRES_DUMP_RUNNER docker
+          write_env BACKUP_POSTGRES_DOCKER_IMAGE postgres:17-alpine
           write_env BACKUP_STORAGE_ADAPTER worker
           write_env BACKUP_R2_GATEWAY_URL "$BACKUP_R2_GATEWAY_URL"
           write_env BACKUP_R2_GATEWAY_TOKEN "$BACKUP_R2_GATEWAY_TOKEN"
@@ -171,6 +173,8 @@ jobs:
           for key in \
             BACKUP_ENABLED \
             BACKUP_ENVIRONMENT \
+            BACKUP_POSTGRES_DUMP_RUNNER \
+            BACKUP_POSTGRES_DOCKER_IMAGE \
             BACKUP_STORAGE_ADAPTER \
             BACKUP_R2_GATEWAY_URL \
             BACKUP_R2_GATEWAY_TOKEN \
