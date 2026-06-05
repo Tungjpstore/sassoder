@@ -11,8 +11,9 @@ const geminiOpenAiBaseUrl = "https://generativelanguage.googleapis.com/v1beta/op
 const claudeBaseUrl = "https://api.anthropic.com/v1";
 const vercelGatewayBaseUrl = "https://ai-gateway.vercel.sh/v1";
 const nvidiaBaseUrl = "https://integrate.api.nvidia.com/v1";
+const bedrockBaseUrl = "https://bedrock-runtime.us-east-1.amazonaws.com";
 
-const providerOrder: AiProvider[] = ["qwen", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"];
+const providerOrder: AiProvider[] = ["qwen", "bedrock", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"];
 
 type ProviderDefinition = {
   provider: AiProvider;
@@ -67,6 +68,7 @@ function readNumberEnv(names: string[]) {
 function normalizeProviderBaseUrl(provider: AiProvider, baseUrl: string) {
   if (provider === "qwen") return normalizeQwenCompatibleBaseUrl(baseUrl);
   if (provider === "claude") return baseUrl.trim().replace(/\/$/, "");
+  if (provider === "bedrock") return baseUrl.trim().replace(/\/$/, "");
   return normalizeV1BaseUrl(baseUrl);
 }
 
@@ -111,6 +113,26 @@ function providerDefinitions(): ProviderDefinition[] {
       supportsImageGeneration: false,
       supportsOcr: false,
       priority: 15
+    },
+    {
+      provider: "bedrock",
+      protocol: "bedrock-converse",
+      keyEnvNames: ["AWS_BEARER_TOKEN_BEDROCK", "BEDROCK_API_KEY"],
+      baseUrlEnvNames: ["BEDROCK_BASE_URL", "AWS_BEDROCK_BASE_URL"],
+      baseUrl: bedrockBaseUrl,
+      chatModelEnvNames: ["BEDROCK_MODEL", "BEDROCK_CHAT_MODEL", "AWS_BEDROCK_MODEL"],
+      fastModelEnvNames: ["BEDROCK_FAST_MODEL", "BEDROCK_MODEL", "AWS_BEDROCK_MODEL"],
+      imageModelEnvNames: ["BEDROCK_IMAGE_MODEL"],
+      ocrModelEnvNames: ["BEDROCK_OCR_MODEL"],
+      chatModel: "us.amazon.nova-2-lite-v1:0",
+      fastModel: "us.amazon.nova-2-lite-v1:0",
+      imageModel: "unsupported",
+      ocrModel: "unsupported",
+      supportsJsonMode: false,
+      supportsToolCalling: false,
+      supportsImageGeneration: false,
+      supportsOcr: false,
+      priority: 18
     },
     {
       provider: "openai",

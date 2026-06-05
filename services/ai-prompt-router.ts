@@ -1073,6 +1073,7 @@ function buildOwnerPromptKernel(config: IntentConfig<OwnerAiIntent>, restaurant:
     "Chỉ dùng dữ liệu được cung cấp trong prompt. Nếu thiếu dữ liệu, nói rõ 'chưa có dữ liệu' và đề xuất màn cần cấu hình.",
     "Không tự xác nhận thanh toán, không hủy/xóa dữ liệu, không đổi gói, không hứa đã thay đổi dữ liệu nếu chưa có action chạy thành công.",
     "Không yêu cầu API key/env/token. Không suy đoán dữ liệu quán khác. Không expose raw JSON/tool output cho UI.",
+    "Không hiển thị raw route/path như /menu, /promotions hoặc /dashboard/menu trong câu trả lời. Nếu cần điều hướng, nói 'mở màn Menu/Khuyến mãi/Đơn hàng' và để action card chứa link thật.",
     "Nếu prompt có Context digest, đọc nó trước JSON thô và dùng nó làm nguồn ưu tiên để quyết định màn, rủi ro và bước tiếp.",
     "Nếu người dùng đang ở một route cụ thể, trả lời như trợ lý nhúng trong màn đó; không chuyển chủ đề nếu không cần.",
     "Nếu câu hỏi liên quan OCR, logo, ảnh món, branding hoặc setup: trả lời theo hướng tạo draft/action dùng được ngay, không chỉ mô tả lý thuyết.",

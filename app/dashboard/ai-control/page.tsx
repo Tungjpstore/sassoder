@@ -57,6 +57,7 @@ function providerLabel(provider: AiProviderReadiness["provider"]) {
   if (provider === "gemini") return "Gemini";
   if (provider === "claude") return "Claude";
   if (provider === "nvidia") return "NVIDIA DSX Air";
+  if (provider === "bedrock") return "Amazon Bedrock";
   if (provider === "qwen") return "Qwen";
   return "xAI";
 }

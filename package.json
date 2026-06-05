@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "tsx --test services/**/*.test.ts lib/**/*.test.ts",
+    "ai:bedrock:check": "node scripts/ai/check-bedrock.mjs",
     "ai:image2:order-flow": "node scripts/ai/generate-order-flow-images.mjs --provider=openai",
     "ai:grok:order-flow": "node scripts/ai/generate-order-flow-images.mjs --provider=xai",
     "ai:image2:onboarding-flow": "node scripts/ai/generate-onboarding-flow-images.mjs --provider=openai",

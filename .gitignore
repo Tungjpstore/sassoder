@@ -12,6 +12,7 @@ coverage
 reports/seo/
 reports/responsive/
 reports/release/
+output/
 docs/p1-progress-*.md
 docs/p2-progress-*.md
 .lighthouseci/

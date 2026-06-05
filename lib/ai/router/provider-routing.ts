@@ -35,7 +35,7 @@ export function buildAiProviderOrder(input: {
   if (batchTasks.has(input.taskType)) {
     const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
     const ordered: AiProvider[] = preferred ? [preferred] : capable.includes("nvidia") ? ["nvidia"] : [];
-    const fallbackPreference: AiProvider[] = ["nvidia", "qwen", "openai", "gemini", "xai", "vercel_gateway", "claude"];
+    const fallbackPreference: AiProvider[] = ["nvidia", "qwen", "bedrock", "openai", "gemini", "xai", "vercel_gateway", "claude"];
     for (const provider of fallbackPreference) {
       if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);
     }
@@ -57,10 +57,10 @@ export function buildAiProviderOrder(input: {
 
   const ordered: AiProvider[] = primary ? [primary] : [];
   const fallbackPreference: AiProvider[] = deterministicTasks.has(input.taskType)
-    ? ["qwen", "openai", "gemini", "nvidia", "xai", "vercel_gateway"]
+    ? ["qwen", "openai", "gemini", "bedrock", "nvidia", "xai", "vercel_gateway"]
     : reasoningTasks.has(input.taskType)
-      ? ["openai", "xai", "claude", "gemini", "qwen", "nvidia", "vercel_gateway"]
-      : ["qwen", "openai", "gemini", "xai", "vercel_gateway", "claude", "nvidia"];
+      ? ["openai", "xai", "claude", "gemini", "bedrock", "qwen", "nvidia", "vercel_gateway"]
+      : ["qwen", "bedrock", "openai", "gemini", "xai", "vercel_gateway", "claude", "nvidia"];
 
   for (const provider of fallbackPreference) {
     if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);

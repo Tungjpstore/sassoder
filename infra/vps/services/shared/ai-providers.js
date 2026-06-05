@@ -19,13 +19,23 @@ const providerConfig = {
     apiKey: "DASHSCOPE_API_KEY",
     baseUrl: "DASHSCOPE_BASE_URL",
     model: "QWEN_CHAT_MODEL",
+    defaultModel: "qwen-plus",
     defaultBaseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     kind: "openai-compatible"
+  },
+  bedrock: {
+    apiKey: "AWS_BEARER_TOKEN_BEDROCK",
+    baseUrl: "BEDROCK_BASE_URL",
+    model: "BEDROCK_MODEL",
+    defaultModel: "us.amazon.nova-2-lite-v1:0",
+    defaultBaseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    kind: "bedrock-converse"
   },
   claude: {
     apiKey: "ANTHROPIC_API_KEY",
     baseUrl: "ANTHROPIC_BASE_URL",
     model: "ANTHROPIC_MODEL",
+    defaultModel: "claude-haiku-4-5",
     defaultBaseUrl: "https://api.anthropic.com/v1",
     kind: "anthropic"
   }
@@ -49,9 +59,24 @@ function resolveProvider(provider) {
     provider,
     apiKey: readEnv(config.apiKey),
     baseUrl: readEnv(config.baseUrl, config.defaultBaseUrl).replace(/\/$/, ""),
-    model: readEnv(config.model),
+    model: readEnv(config.model, config.defaultModel || ""),
     kind: config.kind
   };
+}
+
+function readMessageText(content) {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (typeof part?.text === "string") return part.text;
+      if (typeof part?.content === "string") return part.content;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 function messagesToAnthropic(messages) {
@@ -64,6 +89,27 @@ function messagesToAnthropic(messages) {
     }));
 
   return { system, messages: chatMessages };
+}
+
+function messagesToBedrock(messages) {
+  const system = messages
+    .filter((message) => message.role === "system")
+    .map((message) => readMessageText(message.content))
+    .filter(Boolean)
+    .map((text) => ({ text }));
+
+  const chatMessages = messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role === "assistant" ? "assistant" : "user",
+      content: [{ text: readMessageText(message.content) }]
+    }))
+    .filter((message) => message.content.some((part) => part.text));
+
+  return {
+    system: system.length ? system : undefined,
+    messages: chatMessages.length ? chatMessages : [{ role: "user", content: [{ text: "Hay ho tro chu quan theo ngu canh da cung cap." }] }]
+  };
 }
 
 async function postJson(url, body, headers, timeoutMs) {
@@ -149,6 +195,31 @@ async function chatWithAnthropic(provider, request, timeoutMs) {
   };
 }
 
+async function chatWithBedrock(provider, request, timeoutMs) {
+  const payload = messagesToBedrock(request.messages);
+  const json = await postJson(
+    `${provider.baseUrl}/model/${encodeURIComponent(request.model || provider.model)}/converse`,
+    {
+      ...payload,
+      inferenceConfig: {
+        temperature: request.temperature ?? 0.2,
+        maxTokens: request.maxTokens ?? 1200
+      }
+    },
+    {
+      authorization: `Bearer ${provider.apiKey}`
+    },
+    timeoutMs
+  );
+
+  return {
+    provider: provider.provider,
+    model: request.model || provider.model,
+    content: json.output?.message?.content?.map((item) => item.text || "").filter(Boolean).join("\n").trim() || "",
+    raw: json
+  };
+}
+
 async function chatOnce(providerName, request, timeoutMs) {
   const provider = resolveProvider(providerName);
   if (!provider.apiKey || !provider.model) {
@@ -157,6 +228,10 @@ async function chatOnce(providerName, request, timeoutMs) {
 
   if (provider.kind === "anthropic") {
     return chatWithAnthropic(provider, request, timeoutMs);
+  }
+
+  if (provider.kind === "bedrock-converse") {
+    return chatWithBedrock(provider, request, timeoutMs);
   }
 
   return chatWithOpenAiCompatible(provider, request, timeoutMs);

@@ -84,7 +84,7 @@ export type UpdatePlatformAiProviderConfigInput = {
   updatedBy: string;
 };
 
-const supportedProviders = ["qwen", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
+const supportedProviders = ["qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
 
 const providerMetadata: PlatformAiProviderMetadata[] = [
   {
@@ -106,6 +106,16 @@ const providerMetadata: PlatformAiProviderMetadata[] = [
     fastModelEnvNames: ["NVIDIA_AI_FAST_MODEL", "NVIDIA_AI_CHAT_MODEL", "NVIDIA_AI_MODEL", "DSX_AIR_FAST_MODEL", "DSX_AIR_MODEL"],
     imageModelEnvNames: ["NVIDIA_AI_IMAGE_MODEL", "NVIDIA_AI_VISION_MODEL", "DSX_AIR_IMAGE_MODEL", "DSX_AIR_VISION_MODEL"],
     ocrModelEnvNames: ["NVIDIA_AI_OCR_MODEL", "NVIDIA_AI_VISION_MODEL", "DSX_AIR_OCR_MODEL", "DSX_AIR_VISION_MODEL"]
+  },
+  {
+    provider: "bedrock",
+    label: "Amazon Bedrock",
+    keyEnvNames: ["AWS_BEARER_TOKEN_BEDROCK", "BEDROCK_API_KEY"],
+    baseUrlEnvNames: ["BEDROCK_BASE_URL", "AWS_BEDROCK_BASE_URL"],
+    chatModelEnvNames: ["BEDROCK_MODEL", "BEDROCK_CHAT_MODEL", "AWS_BEDROCK_MODEL"],
+    fastModelEnvNames: ["BEDROCK_FAST_MODEL", "BEDROCK_MODEL", "AWS_BEDROCK_MODEL"],
+    imageModelEnvNames: ["BEDROCK_IMAGE_MODEL"],
+    ocrModelEnvNames: ["BEDROCK_OCR_MODEL"]
   },
   {
     provider: "openai",

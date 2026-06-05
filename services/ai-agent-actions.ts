@@ -157,6 +157,44 @@ function ownerOrderMainItem(order: Record<string, unknown>) {
   return `${quantity > 0 ? `${quantity}x ` : ""}${String(first.name ?? "món")}`;
 }
 
+const ownerActionableOrderStatuses = new Set(["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"]);
+
+function ownerOrderStatus(order: Record<string, unknown>) {
+  return String(order.status ?? "").toLowerCase();
+}
+
+function ownerOrderPaymentStatus(order: Record<string, unknown>) {
+  return String(order.paymentStatus ?? order.payment_status ?? "").toLowerCase();
+}
+
+function isOwnerActionableOrder(order: Record<string, unknown>) {
+  return ownerActionableOrderStatuses.has(ownerOrderStatus(order)) || ownerOrderPaymentStatus(order) === "waiting_confirm";
+}
+
+function ownerHasOrdersInCurrentWindow(snapshot: { summary24h?: { orderCount?: number } }) {
+  return Number(snapshot.summary24h?.orderCount ?? 0) > 0;
+}
+
+function ownerOperationalOrders(orders: Array<Record<string, unknown>>) {
+  return orders.filter(isOwnerActionableOrder);
+}
+
+function foldOwnerActionText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function isOwnerEmptyOrderInsight(title: string, actionText: string) {
+  const text = foldOwnerActionText(`${title} ${actionText}`);
+  return /(chua co|khong co|0)\s+don/.test(text) || text.includes("don trong 24 gio");
+}
+
+function isExplicitOwnerWorkflowRequest(message: string) {
+  return /(tao|dung|lap|thiet lap|chay|workflow|quy trinh|checklist|playbook)/.test(foldOwnerActionText(message));
+}
+
 function buildAcceptOrderAction(order?: Record<string, unknown>, priority: AiAgentAction["priority"] = "primary") {
   if (!order?.id) return null;
   return action({
@@ -204,6 +242,7 @@ function buildBulkAcceptOrdersAction(pendingOrders: Array<Record<string, unknown
 
 function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
   const data = (snapshot ?? {}) as {
+    summary24h?: { orderCount?: number };
     recentOrders?: Array<Record<string, unknown>>;
     tables?: { tables?: Array<Record<string, unknown>> };
     payments?: { waitingConfirm?: number; logs?: Array<Record<string, unknown>> };
@@ -232,16 +271,18 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
   };
   const actions: AiAgentAction[] = [];
   const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
+  const operationalOrders = ownerOperationalOrders(orders);
+  const hasCurrentOrders = ownerHasOrdersInCurrentWindow(data);
 
   if (intent === "orders" || intent === "overview" || intent === "kitchen") {
-    const pendingOrders = orders.filter((order) => order.status === "pending");
+    const pendingOrders = operationalOrders.filter((order) => ownerOrderStatus(order) === "pending");
     const bulkPendingAction = buildBulkAcceptOrdersAction(pendingOrders);
     if (bulkPendingAction) actions.push(bulkPendingAction);
 
     const pendingAction = buildAcceptOrderAction(pendingOrders[0], bulkPendingAction ? "secondary" : "primary");
     if (pendingAction) actions.push(pendingAction);
 
-    const cooking = orders.find((order) => order.status === "ordering");
+    const cooking = operationalOrders.find((order) => ownerOrderStatus(order) === "ordering");
     if (cooking?.id) {
       actions.push(
         action({
@@ -257,7 +298,7 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
       );
     }
 
-    const completed = orders.find((order) => order.status === "completed" || order.status === "waiting_payment");
+    const completed = operationalOrders.find((order) => ownerOrderStatus(order) === "completed" || ownerOrderStatus(order) === "waiting_payment");
     if (completed?.id && actions.length < 2) {
       actions.push(
         action({
@@ -275,7 +316,7 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
   }
 
   if (intent === "payments" || intent === "overview" || intent === "orders") {
-    const waitingPayment = orders.find((order) => order.status === "waiting_confirm" || order.paymentStatus === "waiting_confirm");
+    const waitingPayment = operationalOrders.find((order) => ownerOrderStatus(order) === "waiting_confirm" || ownerOrderPaymentStatus(order) === "waiting_confirm");
     if (waitingPayment?.id) {
       actions.push(
         action({
@@ -292,16 +333,30 @@ function buildOwnerDataActions(intent: OwnerAiIntent, snapshot?: unknown) {
     }
   }
 
-  if ((intent === "overview" || intent === "orders") && actions.length === 0 && orders[0]?.id) {
+  if ((intent === "overview" || intent === "orders") && actions.length === 0 && operationalOrders[0]?.id) {
     actions.push(
       action({
-        id: `open-latest-order-${String(orders[0].id)}`,
+        id: `open-active-order-${String(operationalOrders[0].id)}`,
         type: "link",
-        label: `Mở đơn #${ownerOrderCode(orders[0])}`,
-        description: [String(orders[0].tableName || "Bàn"), ownerOrderMainItem(orders[0])].filter(Boolean).join(" · "),
-        href: `/dashboard/orders?order=${String(orders[0].id)}`,
+        label: `Mở đơn cần xử lý #${ownerOrderCode(operationalOrders[0])}`,
+        description: [String(operationalOrders[0].tableName || "Bàn"), ownerOrderMainItem(operationalOrders[0])].filter(Boolean).join(" · "),
+        href: `/dashboard/orders?order=${String(operationalOrders[0].id)}`,
         intent: "orders",
         priority: "primary"
+      })
+    );
+  }
+
+  if ((intent === "overview" || intent === "orders") && actions.length === 0 && hasCurrentOrders) {
+    actions.push(
+      action({
+        id: "open-current-orders",
+        type: "link",
+        label: "Mở danh sách đơn hôm nay",
+        description: "Ca có đơn trong 24 giờ nhưng chưa có đơn nào cần AI thao tác ngay.",
+        href: "/dashboard/orders",
+        intent: "orders",
+        priority: "secondary"
       })
     );
   }
@@ -589,6 +644,19 @@ function buildOwnerInsightAction(intent: OwnerAiIntent, snapshot?: unknown) {
   const actionText = String(insight.action ?? "").trim();
   if (!title || !actionText) return null;
 
+  if ((intent === "overview" || intent === "orders") && isOwnerEmptyOrderInsight(title, actionText)) {
+    return action({
+      id: `ops-insight-empty-orders-${String(insight.id ?? title).slice(0, 64)}`,
+      type: "prompt",
+      label: "Tạo kế hoạch kéo đơn đầu ca",
+      description: "Ca hiện chưa có đơn mới; chuyển sang hành động tăng đơn thay vì xử lý đơn cũ.",
+      prompt: "Ca hiện chưa có đơn trong 24 giờ. Hãy đề xuất một hành động kéo đơn an toàn: ưu đãi nhẹ, bài đăng ngắn hoặc combo dễ bán, không public khi chưa được chủ quán duyệt.",
+      intent: "growth",
+      priority: "primary",
+      safety: "safe"
+    });
+  }
+
   const severity = String(insight.severity ?? "");
   const actionIntent = String(insight.actionIntent ?? intent);
   return action({
@@ -603,7 +671,19 @@ function buildOwnerInsightAction(intent: OwnerAiIntent, snapshot?: unknown) {
   });
 }
 
-function buildOwnerExecutorAction(intent: OwnerAiIntent, ownerMessage = "") {
+function shouldOfferOwnerExecutorAction(intent: OwnerAiIntent, ownerMessage: string, snapshot?: unknown) {
+  if (intent !== "orders") return true;
+
+  const data = (snapshot ?? {}) as { recentOrders?: Array<Record<string, unknown>>; summary24h?: { orderCount?: number } };
+  const orders = Array.isArray(data.recentOrders) ? data.recentOrders : [];
+  if (ownerOperationalOrders(orders).length > 0) return true;
+
+  return ownerHasOrdersInCurrentWindow(data) && isExplicitOwnerWorkflowRequest(ownerMessage);
+}
+
+function buildOwnerExecutorAction(intent: OwnerAiIntent, ownerMessage = "", snapshot?: unknown) {
+  if (!shouldOfferOwnerExecutorAction(intent, ownerMessage, snapshot)) return null;
+
   const domain = intent as OwnerAgentDomain;
   const command = normalizeOwnerAgentCommand(null, domain, ownerMessage);
   const contract = getOwnerAgentToolContract(command);
@@ -624,8 +704,7 @@ function buildOwnerExecutorAction(intent: OwnerAiIntent, ownerMessage = "") {
       domain: contract.domain,
       command: contract.command,
       message: ownerMessage || `Chạy ${contract.label.toLowerCase()} cho quán hiện tại.`,
-      confirm: true,
-      mode: "execute"
+      mode: "plan"
     },
     intent: contract.domain,
     priority: intent === "menu" || intent === "inventory" || intent === "promotions" || intent === "growth" ? "primary" : "secondary",
@@ -655,7 +734,7 @@ export function buildOwnerAgentActions(
   const dataActions = buildOwnerDataActions(intent, snapshot);
   const toolActions = buildOwnerToolActions(intent, snapshot, toolRuns);
   const insightAction = buildOwnerInsightAction(intent, snapshot);
-  const executorAction = buildOwnerExecutorAction(intent, ownerMessage || suggestions[0] || "");
+  const executorAction = buildOwnerExecutorAction(intent, ownerMessage || suggestions[0] || "", snapshot);
   const actions: AiAgentAction[] = [
     ...toolActions,
     ...(insightAction ? [insightAction] : []),

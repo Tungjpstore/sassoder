@@ -4,6 +4,7 @@ import { AppError } from "@/lib/response";
 import { createStableAiCacheKey, getAiCache, setAiCache } from "@/lib/ai/services/cache";
 import { availableResolvedAiProviders, estimateAiCostVnd, getResolvedAiProviderConfig } from "@/lib/ai/providers/registry";
 import { runAnthropicMessagesChat } from "@/lib/ai/providers/anthropic-messages";
+import { runBedrockConverseChat } from "@/lib/ai/providers/bedrock-converse";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
 import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
@@ -33,6 +34,7 @@ async function pickModel(provider: AiProvider, taskType: AiTaskType, modelOverri
 }
 
 function runProviderChat(input: Parameters<typeof runOpenAiCompatibleChat>[0]) {
+  if (input.config.protocol === "bedrock-converse") return runBedrockConverseChat(input);
   if (input.config.protocol === "anthropic-messages") return runAnthropicMessagesChat(input);
   return runOpenAiCompatibleChat(input);
 }

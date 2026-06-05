@@ -13,7 +13,7 @@ Tài liệu này mô tả lớp vận hành AI dùng cho `admin.logivn.com`, t�
 
 Bảng `public.platform_ai_provider_configs` lưu cấu hình runtime theo provider:
 
-- `provider`: `qwen`, `nvidia`, `openai`, `gemini`, `xai`, `claude`, `vercel_gateway`
+- `provider`: `qwen`, `nvidia`, `bedrock`, `openai`, `gemini`, `xai`, `claude`, `vercel_gateway`
 - `enabled`: bật/tắt provider ở runtime
 - `api_key_ciphertext`, `api_key_iv`, `api_key_tag`: API key đã mã hoá AES-256-GCM
 - `key_fingerprint`, `key_last_four`: metadata an toàn để nhận diện key trong UI
@@ -50,6 +50,20 @@ Các entrypoint đã đọc cấu hình đã resolve:
 - `services/ai/runtime.ts` cho Qwen/xAI native OCR và image generation
 - các AI readiness deck/API trong dashboard
 
+`bedrock` dùng Amazon Bedrock Converse API cho text/chat tasks và mặc định thử `us.amazon.nova-2-lite-v1:0` qua US inference profile. PoC nên dùng `AWS_BEARER_TOKEN_BEDROCK` hoặc key đã nhập trong `admin.logivn.com/ai`; không dùng Bedrock cho OCR/image/tool-calling cho tới khi có adapter riêng và số đo chi phí/latency.
+
+Không đưa `bedrock` vào `AI_PROVIDER_FALLBACK_ORDER` production cho tới khi `npm run ai:bedrock:check` qua được bước Converse; nếu cần thử sớm, chọn provider Bedrock rõ ràng từ admin để lỗi được cô lập.
+
+Nếu Bedrock trả `Operation not allowed` trên tài khoản AWS mới trong khi `ListFoundationModels` vẫn chạy được, kiểm tra trạng thái account verification của AWS. CloudShell/Bedrock runtime có thể bị chặn cho tới khi AWS hoàn tất xác minh tài khoản.
+
+Smoke-test Bedrock sau khi AWS verification hoàn tất:
+
+```bash
+npm run ai:bedrock:check
+```
+
+Script này đọc `AWS_BEARER_TOKEN_BEDROCK` hoặc `BEDROCK_API_KEY` từ `.env.local`, không in key ra terminal, gọi `ListFoundationModels`, rồi thử Converse với model đang cấu hình.
+
 Provider bị tắt trong DB sẽ không được chọn dù biến môi trường vẫn tồn tại. Nếu xoá key DB, runtime trở lại dùng ENV fallback nếu ENV còn cấu hình.
 
 ## An toàn UI
@@ -68,6 +82,7 @@ Raw API key không được trả về snapshot, không nằm trong props React 
 Các kiểm tra liên quan:
 
 - `npx tsc --noEmit --pretty false --incremental false`
+- `npm run ai:bedrock:check` sau khi AWS account verification đã xong
 - `npm test -- services/platform-ai-provider-config-service.test.ts`
 - `npm run lint`
 - `git diff --check`

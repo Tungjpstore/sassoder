@@ -1,8 +1,8 @@
 import type { AiPromptMessage } from "@/services/ai-prompt-router";
 
-export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway" | "nvidia";
+export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway" | "nvidia" | "bedrock";
 
-export type AiProviderProtocol = "openai-compatible" | "anthropic-messages";
+export type AiProviderProtocol = "openai-compatible" | "anthropic-messages" | "bedrock-converse";
 
 export type AiTaskType =
   | "customer_ordering"

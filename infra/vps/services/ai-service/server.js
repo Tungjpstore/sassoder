@@ -9,7 +9,7 @@ const logger = createLogger("ai-service");
 const app = createHttpApp({ logger, serviceName: "ai-service" });
 
 const chatSchema = z.object({
-  provider: z.enum(["openai", "xai", "qwen", "claude"]).optional(),
+  provider: z.enum(["openai", "xai", "qwen", "bedrock", "claude"]).optional(),
   model: z.string().optional(),
   messages: z.array(
     z.object({

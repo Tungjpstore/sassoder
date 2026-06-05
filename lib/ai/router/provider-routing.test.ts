@@ -6,8 +6,8 @@ import type { AiProvider, AiProviderConfig } from "./types";
 function candidate(provider: AiProvider, overrides: Partial<AiProviderConfig> = {}) {
   return {
     provider,
-    supportsJsonMode: true,
-    supportsToolCalling: true,
+    supportsJsonMode: provider !== "bedrock",
+    supportsToolCalling: provider !== "bedrock",
     supportsImageGeneration: provider === "qwen" || provider === "openai" || provider === "xai" || provider === "vercel_gateway",
     supportsOcr: provider === "qwen" || provider === "openai" || provider === "gemini" || provider === "vercel_gateway",
     ...overrides
@@ -81,4 +81,21 @@ test("buildAiProviderOrder honors an explicit batch provider while retaining nvi
   });
 
   assert.deepEqual(order.slice(0, 3), ["openai", "nvidia", "qwen"]);
+});
+
+test("buildAiProviderOrder uses Bedrock as text fallback but skips it for JSON mode", () => {
+  const textOrder = buildAiProviderOrder({
+    taskType: "dashboard_operation",
+    candidates: [candidate("qwen"), candidate("bedrock"), candidate("openai")]
+  });
+
+  assert.deepEqual(textOrder.slice(0, 3), ["qwen", "bedrock", "openai"]);
+
+  const jsonOrder = buildAiProviderOrder({
+    taskType: "dashboard_operation",
+    options: { jsonMode: true },
+    candidates: [candidate("qwen"), candidate("bedrock"), candidate("openai")]
+  });
+
+  assert.deepEqual(jsonOrder.slice(0, 2), ["qwen", "openai"]);
 });
