@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
@@ -34,6 +35,7 @@ import type { LucideIcon } from "lucide-react";
 import { onboardingAction } from "@/app/dashboard/actions";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import { featureCatalog, planCatalog } from "@/lib/billing/catalog";
 import { getOnboardingTableLimit } from "@/lib/billing/plan-limits";
 import type { BillingFeatureKey, BillingPlanCode } from "@/lib/billing/types";
@@ -674,12 +676,15 @@ function PlanFeaturesModal({
   const isPremium = plan.code.toLowerCase() === "premium";
   const narrative = planNarrative(plan);
   const comparisonPlans = allPlans.length > 0 ? allPlans : [plan];
+  const portalTarget = useDashboardOverlay(true);
 
   useDialogFocusTrap({ containerRef: panelRef, onClose, open: true });
 
-  return (
+  if (!portalTarget) return null;
+
+  return createPortal(
     <div
-      className="dashboard-plan-modal-backdrop fixed inset-0 z-[60] grid place-items-center bg-[#102a1f]/72 px-3 py-4 backdrop-blur-sm"
+      className="dashboard-modal-root dashboard-plan-modal-backdrop fixed inset-0 isolate z-[60] grid place-items-center bg-[#102a1f]/72 px-3 py-4 backdrop-blur-sm"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -811,7 +816,8 @@ function PlanFeaturesModal({
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    portalTarget
   );
 }
 

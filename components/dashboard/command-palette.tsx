@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
+import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import type { PlanFeatureKey, getRestaurantEntitlement } from "@/services/subscription-service";
 
 type DashboardEntitlement = Awaited<ReturnType<typeof getRestaurantEntitlement>>;
@@ -47,6 +49,7 @@ export function CommandPalette({ entitlement }: { entitlement?: DashboardEntitle
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const portalTarget = useDashboardOverlay(open);
   const router = useRouter();
 
   const filtered = useMemo(() => {
@@ -123,10 +126,10 @@ export function CommandPalette({ entitlement }: { entitlement?: DashboardEntitle
     }
   }
 
-  if (!open) return null;
+  if (!open || !portalTarget) return null;
 
-  return (
-    <div className="fixed inset-0 z-[var(--z-dashboard-modal)] overflow-hidden overscroll-contain">
+  return createPortal(
+    <div className="dashboard-modal-root fixed inset-0 isolate z-[var(--z-dashboard-modal)] overflow-hidden overscroll-contain">
       <button
         type="button"
         className="drawer-backdrop absolute inset-0 z-0"
@@ -200,7 +203,8 @@ export function CommandPalette({ entitlement }: { entitlement?: DashboardEntitle
           <span className="hidden sm:inline">⌘K mở/đóng nhanh</span>
         </div>
       </div>
-    </div>
+    </div>,
+    portalTarget
   );
 }
 

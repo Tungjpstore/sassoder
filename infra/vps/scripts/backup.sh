@@ -14,21 +14,23 @@ DRY_RUN="false"
 MANUAL_ACTOR=${MANUAL_ACTOR:-manual}
 MANUAL_REASON=${MANUAL_REASON:-manual backup requested}
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --daily) MODE="daily" ;;
-    --weekly) MODE="weekly" ;;
-    --monthly) MODE="monthly" ;;
-    --manual) MODE="manual" ;;
-    --claim-manual) MODE="manual"; CLAIM_MANUAL="true" ;;
-    --restore-test) MODE="monthly"; RESTORE_TEST_ONLY="true" ;;
-    --dry-run) DRY_RUN="true" ;;
-    --actor) shift; MANUAL_ACTOR=${1:-manual} ;;
-    --reason) shift; MANUAL_REASON=${1:-manual backup requested} ;;
-    *) printf 'Unknown backup option: %s\n' "$1" >&2; exit 64 ;;
-  esac
-  shift
-done
+if [ "${LOGIVN_BACKUP_SKIP_MAIN:-false}" != "true" ]; then
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --daily) MODE="daily" ;;
+      --weekly) MODE="weekly" ;;
+      --monthly) MODE="monthly" ;;
+      --manual) MODE="manual" ;;
+      --claim-manual) MODE="manual"; CLAIM_MANUAL="true" ;;
+      --restore-test) MODE="monthly"; RESTORE_TEST_ONLY="true" ;;
+      --dry-run) DRY_RUN="true" ;;
+      --actor) shift; MANUAL_ACTOR=${1:-manual} ;;
+      --reason) shift; MANUAL_REASON=${1:-manual backup requested} ;;
+      *) printf 'Unknown backup option: %s\n' "$1" >&2; exit 64 ;;
+    esac
+    shift
+  done
+fi
 
 if [ -f "$ENV_FILE" ]; then
   set -a
@@ -55,6 +57,8 @@ BACKUP_ENCRYPTION_ITERATIONS=${BACKUP_ENCRYPTION_ITERATIONS:-200000}
 BACKUP_POSTGRES_ENABLED=${BACKUP_POSTGRES_ENABLED:-true}
 BACKUP_POSTGRES_DUMP_RUNNER=${BACKUP_POSTGRES_DUMP_RUNNER:-docker}
 BACKUP_POSTGRES_DOCKER_IMAGE=${BACKUP_POSTGRES_DOCKER_IMAGE:-postgres:17-alpine}
+BACKUP_RESTORE_TEST_DOCKER_IMAGE=${BACKUP_RESTORE_TEST_DOCKER_IMAGE:-postgis/postgis:17-3.5-alpine}
+BACKUP_RESTORE_TEST_DOCKER_PLATFORM=${BACKUP_RESTORE_TEST_DOCKER_PLATFORM:-}
 BACKUP_REDIS_ENABLED=${BACKUP_REDIS_ENABLED:-true}
 BACKUP_VPS_CONFIGS_ENABLED=${BACKUP_VPS_CONFIGS_ENABLED:-true}
 BACKUP_STORAGE_MANIFEST_ENABLED=${BACKUP_STORAGE_MANIFEST_ENABLED:-true}
@@ -62,7 +66,10 @@ BACKUP_STORAGE_PAYLOAD_ENABLED=${BACKUP_STORAGE_PAYLOAD_ENABLED:-auto}
 BACKUP_STORAGE_PAYLOAD_MODES=${BACKUP_STORAGE_PAYLOAD_MODES:-weekly,monthly,manual}
 BACKUP_APPLICATION_METADATA_ENABLED=${BACKUP_APPLICATION_METADATA_ENABLED:-true}
 BACKUP_RESTORE_TEST_ENABLED=${BACKUP_RESTORE_TEST_ENABLED:-true}
-BACKUP_RESTORE_TEST_MODE=${BACKUP_RESTORE_TEST_MODE:-list}
+BACKUP_RESTORE_TEST_MODE=${BACKUP_RESTORE_TEST_MODE:-docker}
+BACKUP_RESTORE_TEST_SCHEMA=${BACKUP_RESTORE_TEST_SCHEMA:-public}
+BACKUP_RESTORE_CRITICAL_TABLES=${BACKUP_RESTORE_CRITICAL_TABLES:-restaurants,orders,payment_logs,reservations}
+BACKUP_RESTORE_TEST_STRICT=${BACKUP_RESTORE_TEST_STRICT:-false}
 DEV_TELEGRAM_ALERTS_ENABLED=${DEV_TELEGRAM_ALERTS_ENABLED:-true}
 R2_REGION=${R2_REGION:-auto}
 R2_BUCKET=${R2_BUCKET:-logivn-backups}
@@ -431,10 +438,21 @@ validate_runtime() {
     esac
   fi
   if [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] && [ "$RESTORE_TEST_ONLY" = "true" ]; then
-    case "$BACKUP_POSTGRES_DUMP_RUNNER" in
-      docker) require_command docker ;;
-      local) require_command pg_restore ;;
-      *) printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$BACKUP_POSTGRES_DUMP_RUNNER" >&2; return 1 ;;
+    case "$BACKUP_RESTORE_TEST_MODE" in
+      docker|ephemeral)
+        require_command docker
+        ;;
+      restore|list)
+        case "$BACKUP_POSTGRES_DUMP_RUNNER" in
+          docker) require_command docker ;;
+          local) require_command pg_restore; if [ "$BACKUP_RESTORE_TEST_MODE" = "restore" ]; then require_command psql; fi ;;
+          *) printf 'Invalid BACKUP_POSTGRES_DUMP_RUNNER: %s\n' "$BACKUP_POSTGRES_DUMP_RUNNER" >&2; return 1 ;;
+        esac
+        ;;
+      *)
+        printf 'Invalid BACKUP_RESTORE_TEST_MODE: %s\n' "$BACKUP_RESTORE_TEST_MODE" >&2
+        return 1
+        ;;
     esac
   fi
   if [ "$RESTORE_TEST_ONLY" != "true" ] && should_backup_storage_payload; then require_command node; fi
@@ -991,7 +1009,7 @@ pg_restore_list_to_file() {
       -v "$WORK_DIR:/restore" \
       "$BACKUP_POSTGRES_DOCKER_IMAGE" \
       pg_restore --list "/restore/$(basename "$dump_file")" > "$list_file"
-    return 0
+    return $?
   fi
 
   pg_restore --list "$dump_file" > "$list_file"
@@ -1008,10 +1026,319 @@ pg_restore_database() {
       "$BACKUP_POSTGRES_DOCKER_IMAGE" \
       sh -c 'pg_restore --clean --if-exists --no-owner --no-acl --dbname "$RESTORE_TEST_DATABASE_URL" "$1"' \
       sh "/restore/$(basename "$dump_file")"
-    return 0
+    return $?
   fi
 
   pg_restore --clean --if-exists --no-owner --no-acl --dbname "$target_url" "$dump_file"
+}
+
+restore_critical_table_names() {
+  local csv=${BACKUP_RESTORE_CRITICAL_TABLES:-}
+  local item
+  local -a items
+  IFS=',' read -r -a items <<< "$csv"
+
+  for item in "${items[@]}"; do
+    item=${item//[[:space:]]/}
+    [ -n "$item" ] || continue
+    if [[ ! "$item" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf 'Invalid critical restore table name: %s\n' "$item" >&2
+      return 1
+    fi
+    printf '%s\n' "$item"
+  done
+}
+
+restore_test_schema_name() {
+  local schema=${BACKUP_RESTORE_TEST_SCHEMA:-public}
+  schema=${schema//[[:space:]]/}
+  if [[ ! "$schema" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    printf 'Invalid restore test schema name: %s\n' "$schema" >&2
+    return 1
+  fi
+  printf '%s' "$schema"
+}
+
+psql_query_restore_database() {
+  local target_url=$1
+  local sql=$2
+
+  if [ "$BACKUP_POSTGRES_DUMP_RUNNER" = "docker" ]; then
+    local -a docker_args=(--rm)
+    if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
+      docker_args+=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+    fi
+    docker run "${docker_args[@]}" \
+      -e RESTORE_TEST_DATABASE_URL="$target_url" \
+      "$BACKUP_RESTORE_TEST_DOCKER_IMAGE" \
+      sh -c 'psql "$RESTORE_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -At -c "$1"' \
+      sh "$sql"
+    return $?
+  fi
+
+  psql "$target_url" -v ON_ERROR_STOP=1 -At -c "$sql"
+}
+
+verify_remote_restore_database() {
+  local target_url=$1
+  local expected_count=0 found_count=0 exists schema table missing=""
+
+  schema=$(restore_test_schema_name)
+
+  while IFS= read -r table; do
+    expected_count=$((expected_count + 1))
+    exists=$(psql_query_restore_database "$target_url" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name = '$table';" | tail -n 1)
+    if [ "$exists" != "1" ]; then
+      if [ -n "$missing" ]; then missing="$missing,"; fi
+      missing="$missing$table"
+      continue
+    fi
+    found_count=$((found_count + 1))
+    psql_query_restore_database "$target_url" "select count(*) from $schema.$table;" >/dev/null
+  done < <(restore_critical_table_names)
+
+  if [ "$expected_count" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
+    return 1
+  fi
+
+  if [ -n "$missing" ]; then
+    printf 'Critical table verification failed: missing %s (expected %s, found %s)\n' "$missing" "$expected_count" "$found_count" >&2
+    return 1
+  fi
+}
+
+docker_restore_psql() {
+  local container=$1
+  local password=$2
+  local sql=$3
+  docker exec -e PGPASSWORD="$password" "$container" \
+    psql -h 127.0.0.1 -p 5432 -U postgres -d restore_test -v ON_ERROR_STOP=1 -At -c "$sql"
+}
+
+docker_restore_container_running() {
+  local container=$1
+  [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null || true)" = "true" ]
+}
+
+log_docker_restore_container_logs() {
+  local container=$1
+  printf 'Ephemeral restore container logs follow:\n' >&2
+  docker logs --tail 80 "$container" >&2 || true
+}
+
+remove_docker_restore_container() {
+  local container=$1
+  local include_logs=${2:-false}
+  if [ "$include_logs" = "true" ]; then
+    log_docker_restore_container_logs "$container"
+  fi
+  docker rm -f "$container" >/dev/null 2>&1 || true
+}
+
+bootstrap_docker_restore_database() {
+  local container=$1
+  local password=$2
+
+  docker exec -i -e PGPASSWORD="$password" "$container" \
+    psql -h 127.0.0.1 -p 5432 -U postgres -d restore_test -v ON_ERROR_STOP=1 <<'SQL'
+create schema if not exists extensions;
+drop extension if exists postgis cascade;
+create extension postgis with schema extensions;
+create extension if not exists pgcrypto with schema extensions;
+create schema if not exists auth;
+create schema if not exists realtime;
+create schema if not exists storage;
+create schema if not exists vault;
+
+do $$
+begin
+  create role anon nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role authenticated nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role service_role nologin bypassrls;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create role authenticator nologin;
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;
+  end if;
+end $$;
+
+do $$
+begin
+  create type public.business_type as enum ('CAFE', 'RESTAURANT', 'FAST_FOOD', 'BAR', 'OTHER');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.order_status as enum ('pending', 'ordering', 'waiting_payment', 'waiting_confirm', 'paid', 'completed', 'cancelled');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.payment_log_status as enum ('pending', 'waiting_confirm', 'confirmed', 'failed', 'cancelled', 'refunded');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.payment_method as enum ('QR', 'CASH');
+exception when duplicate_object then null;
+end $$;
+
+do $$
+begin
+  create type public.restaurant_platform_status as enum ('active', 'suspended', 'deleted');
+exception when duplicate_object then null;
+end $$;
+SQL
+}
+
+verify_docker_restore_database() {
+  local container=$1
+  local password=$2
+  local expected_count=0 found_count=0 exists schema table missing=""
+
+  schema=$(restore_test_schema_name)
+
+  while IFS= read -r table; do
+    expected_count=$((expected_count + 1))
+    exists=$(docker_restore_psql "$container" "$password" "select count(*) from information_schema.tables where table_schema = '$schema' and table_name = '$table';" | tail -n 1)
+    if [ "$exists" != "1" ]; then
+      if [ -n "$missing" ]; then missing="$missing,"; fi
+      missing="$missing$table"
+      continue
+    fi
+    found_count=$((found_count + 1))
+    docker_restore_psql "$container" "$password" "select count(*) from $schema.$table;" >/dev/null
+  done < <(restore_critical_table_names)
+
+  if [ "$expected_count" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
+    return 1
+  fi
+
+  if [ -n "$missing" ]; then
+    printf 'Critical table verification failed: missing %s (expected %s, found %s)\n' "$missing" "$expected_count" "$found_count" >&2
+    return 1
+  fi
+}
+
+run_docker_restore_database() {
+  local dump_file=$1
+  local container password ready=false attempt schema
+  local -a docker_args=(-d)
+  container="logivn-restore-test-${RUN_ID//[^A-Za-z0-9_.-]/-}"
+  password=$(openssl rand -hex 24)
+  schema=$(restore_test_schema_name)
+  if [ -n "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM" ]; then
+    docker_args+=(--platform "$BACKUP_RESTORE_TEST_DOCKER_PLATFORM")
+  fi
+
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  if ! docker run "${docker_args[@]}" \
+    --name "$container" \
+    -e POSTGRES_PASSWORD="$password" \
+    -e POSTGRES_DB=restore_test \
+    "$BACKUP_RESTORE_TEST_DOCKER_IMAGE" >/dev/null; then
+    return 1
+  fi
+
+  for attempt in $(seq 1 60); do
+    if docker exec -e PGPASSWORD="$password" "$container" pg_isready -h 127.0.0.1 -p 5432 -U postgres -d restore_test >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    if ! docker_restore_container_running "$container"; then
+      log_docker_restore_container_logs "$container"
+      printf 'Ephemeral restore database container exited before becoming ready\n' >&2
+      docker rm -f "$container" >/dev/null 2>&1 || true
+      return 1
+    fi
+    sleep 1
+  done
+
+  if [ "$ready" != "true" ]; then
+    remove_docker_restore_container "$container" true
+    printf 'Ephemeral restore database did not become ready\n' >&2
+    return 1
+  fi
+
+  if ! docker exec -e PGPASSWORD="$password" "$container" \
+    psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -v ON_ERROR_STOP=1 -At -c "select 1 from pg_database where datname = 'restore_test';" | grep -qx '1'; then
+    if ! docker exec -e PGPASSWORD="$password" "$container" createdb -h 127.0.0.1 -p 5432 -U postgres restore_test; then
+      remove_docker_restore_container "$container" true
+      return 1
+    fi
+  fi
+
+  if ! bootstrap_docker_restore_database "$container" "$password"; then
+    remove_docker_restore_container "$container" true
+    return 1
+  fi
+
+  if ! docker cp "$dump_file" "$container:/tmp/restore-test-postgres.dump"; then
+    remove_docker_restore_container "$container" true
+    return 1
+  fi
+
+  local table
+  local -a table_args=()
+  while IFS= read -r table; do
+    table_args+=(--table="$table")
+  done < <(restore_critical_table_names)
+
+  if [ "${#table_args[@]}" -eq 0 ]; then
+    printf 'BACKUP_RESTORE_CRITICAL_TABLES must contain at least one table\n' >&2
+    remove_docker_restore_container "$container"
+    return 1
+  fi
+
+  local schema_restore_args=(--schema="$schema" --schema-only --no-owner --no-acl "${table_args[@]}" -h 127.0.0.1 -p 5432 -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${schema_restore_args[@]}"; then
+    if ! docker_restore_container_running "$container"; then
+      remove_docker_restore_container "$container" true
+      return 1
+    fi
+    if [ "$BACKUP_RESTORE_TEST_STRICT" = "true" ]; then
+      remove_docker_restore_container "$container" true
+      return 1
+    fi
+    log "Ephemeral critical-table schema restore reported non-critical pg_restore warnings; restoring critical table data"
+  fi
+
+  local data_restore_args=(--schema="$schema" --data-only --disable-triggers --no-owner --no-acl "${table_args[@]}" -h 127.0.0.1 -p 5432 -U postgres -d restore_test /tmp/restore-test-postgres.dump)
+  if ! docker exec -e PGPASSWORD="$password" "$container" pg_restore "${data_restore_args[@]}"; then
+    remove_docker_restore_container "$container" true
+    return 1
+  fi
+
+  if ! verify_docker_restore_database "$container" "$password"; then
+    remove_docker_restore_container "$container" true
+    return 1
+  fi
+
+  remove_docker_restore_container "$container"
 }
 
 run_restore_test() {
@@ -1035,18 +1362,35 @@ run_restore_test() {
     -out "$dump_file"
   pg_restore_list_to_file "$dump_file" "$list_file"
 
-  if [ "$BACKUP_RESTORE_TEST_MODE" = "restore" ]; then
-    if [ -z "${RESTORE_TEST_DATABASE_URL:-}" ]; then
-      record_restore_test "skipped" "$object_key" "RESTORE_TEST_DATABASE_URL is required for restore mode" true false false
-      return 0
-    fi
-    pg_restore_database "$dump_file" "$RESTORE_TEST_DATABASE_URL"
-    require_command psql
-    psql "$RESTORE_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -c "select table_name from information_schema.tables where table_schema = 'public' and table_name in ('restaurants','orders','payments','reservations','users') order by table_name;" >/dev/null
-    record_restore_test "success" "$object_key" "Restore test completed against staging database" true true true
-  else
-    record_restore_test "success" "$object_key" "pg_restore --list succeeded; set BACKUP_RESTORE_TEST_MODE=restore for full staging restore" true false false
-  fi
+  case "$BACKUP_RESTORE_TEST_MODE" in
+    docker|ephemeral)
+      if run_docker_restore_database "$dump_file"; then
+        record_restore_test "success" "$object_key" "Restore test completed in an ephemeral Docker Postgres database for critical tables" true true true
+      else
+        record_restore_test "failed" "$object_key" "Ephemeral Docker Postgres restore failed critical-table verification" true false false
+        return 1
+      fi
+      ;;
+    restore)
+      if [ -z "${RESTORE_TEST_DATABASE_URL:-}" ]; then
+        record_restore_test "skipped" "$object_key" "RESTORE_TEST_DATABASE_URL is required for restore mode" true false false
+        return 0
+      fi
+      if pg_restore_database "$dump_file" "$RESTORE_TEST_DATABASE_URL" && verify_remote_restore_database "$RESTORE_TEST_DATABASE_URL"; then
+        record_restore_test "success" "$object_key" "Restore test completed against staging database" true true true
+      else
+        record_restore_test "failed" "$object_key" "Staging database restore failed critical-table verification" true false false
+        return 1
+      fi
+      ;;
+    list)
+      record_restore_test "success" "$object_key" "pg_restore --list succeeded; set BACKUP_RESTORE_TEST_MODE=docker for full ephemeral restore" true false false
+      ;;
+    *)
+      printf 'Invalid BACKUP_RESTORE_TEST_MODE: %s\n' "$BACKUP_RESTORE_TEST_MODE" >&2
+      return 1
+      ;;
+  esac
 
   record_event "restore_test_completed" "info" "restore_test" "Restore test pipeline completed"
 }
@@ -1163,4 +1507,6 @@ main() {
   run_backup_pipeline
 }
 
-main "$@"
+if [ "${LOGIVN_BACKUP_SKIP_MAIN:-false}" != "true" ]; then
+  main "$@"
+fi

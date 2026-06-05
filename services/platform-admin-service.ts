@@ -11,6 +11,7 @@ import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 import { getBackupHealth } from "@/services/backup-service";
 import { listPlatformAiProviderConfigs, type PlatformAiProviderConfigSummary } from "@/services/platform-ai-provider-config-service";
 import { invalidateMenuCache } from "@/services/menu-service";
+import { notifyPlatformTenantStatusChanged } from "@/services/platform-telegram-events";
 
 type PlatformStatus = "active" | "suspended" | "deleted";
 type UserAccountStatus = "active" | "blocked";
@@ -1864,6 +1865,13 @@ export async function updateTenantPlatformStatus({
     required: true
   });
 
+  const { data: previousRestaurant, error: previousRestaurantError } = await supabase
+    .from("restaurants")
+    .select("id,name,slug,platform_status")
+    .eq("id", restaurantId)
+    .maybeSingle();
+  if (previousRestaurantError) throw previousRestaurantError;
+
   const { error } = await supabase.from("restaurants").update(update).eq("id", restaurantId);
   if (error) throw error;
 
@@ -1881,6 +1889,17 @@ export async function updateTenantPlatformStatus({
     targetType: "restaurant",
     targetId: restaurantId,
     metadata: { status, reason: reason || null }
+  });
+  await notifyPlatformTenantStatusChanged({
+    restaurantId,
+    restaurantName: previousRestaurant?.name ?? null,
+    restaurantSlug: previousRestaurant?.slug ?? null,
+    previousStatus: previousRestaurant?.platform_status ?? null,
+    status,
+    reason: reason || null,
+    actor: updatedBy,
+    changedAt: now,
+    source: "devops"
   });
   invalidateMenuCache();
   invalidatePlatformAdminSnapshotCache();

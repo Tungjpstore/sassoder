@@ -20,6 +20,7 @@ import {
   connectTelegramAccount,
   createCallbackAction,
   createTelegramSession,
+  consumeTelegramSession,
   getOrCreateNotification,
   getTelegramConnectionsForUser,
   getTelegramEventPolicy,
@@ -1483,7 +1484,7 @@ async function promptAiOpsTenantSelection(
 
 async function handleTelegramSessionCallback(ctx: Context, token: string) {
   if (!ctx.from) throw new Error("telegram_user_missing");
-  const claimed = await claimTelegramSession(token, ctx.from.id);
+  const claimed = await claimTelegramSession(token, ctx.from.id, { consume: false });
 
   const menuPayload = menuActionPayloadSchema.safeParse(claimed.session.payload);
   if (menuPayload.success) {
@@ -1500,6 +1501,8 @@ async function handleTelegramSessionCallback(ctx: Context, token: string) {
   }
 
   const payload = aiOpsSessionPayloadSchema.parse(claimed.session.payload);
+  const consumed = await consumeTelegramSession(claimed.session.id);
+  if (!consumed) throw new Error("session_replayed");
   await ctx.answerCallbackQuery({ text: "Đang đọc dữ liệu..." });
   await ctx.editMessageReplyMarkup().catch(() => undefined);
   await ctx.editMessageText(`Đang đọc dữ liệu cho ${connectionLabel(claimed.connection)}...`).catch(() => undefined);
@@ -1803,7 +1806,7 @@ async function signedMenuCallback(connection: TelegramConnection, action: Telegr
     connection,
     state: "idle",
     payload: { purpose: "menu_action", action },
-    ttlSeconds: numberEnv("TELEGRAM_MENU_SESSION_TTL_SECONDS", 300)
+    ttlSeconds: numberEnv("TELEGRAM_MENU_SESSION_TTL_SECONDS", 3600)
   });
   return `${TELEGRAM_SESSION_CALLBACK_PREFIX}${token}`;
 }
@@ -1821,6 +1824,7 @@ function friendlyCallbackError(error: unknown) {
   const message = error instanceof Error ? error.message : "callback_failed";
   if (message.includes("rate_limited")) return "Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.";
   if (message.includes("session_expired")) return "Lựa chọn này đã hết hạn. Hãy gửi lại yêu cầu.";
+  if (message.includes("session_not_found")) return "Nút này không còn hiệu lực. Gõ /menu để lấy menu mới.";
   if (message.includes("expired")) return "Nút này đã hết hạn.";
   if (message.includes("permission")) return "Bạn chưa có quyền thao tác.";
   if (message.includes("replayed")) return "Nút này đã được dùng.";
@@ -1832,6 +1836,7 @@ function friendlyConnectError(error: unknown) {
   const message = error instanceof Error ? error.message : "connect_failed";
   if (message.includes("expired")) return "Link kết nối không còn hiệu lực. Hãy tạo hoặc thu hồi link trong Dashboard.";
   if (message.includes("used")) return "Link kết nối này đã được dùng. Hãy tạo link mới trong Dashboard.";
+  if (message.includes("already_linked_to_restaurant")) return "Telegram này đã liên kết với một quán khác. Hãy ngắt kết nối cũ trước khi liên kết quán mới.";
   if (message.includes("already_connected")) return "Telegram này đang nối với tài khoản khác trong quán.";
   if (message.includes("not_found") || message.includes("signature")) return "Link kết nối không hợp lệ hoặc đã bị thu hồi.";
   return "Chưa kết nối được Telegram. Dashboard sẽ có log chi tiết.";

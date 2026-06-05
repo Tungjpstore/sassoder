@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import { Button } from "@/components/ui/button";
 
 type ConfirmDialogOptions = {
@@ -37,14 +39,15 @@ export function ConfirmDialog({
   const descriptionId = useId();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [inputValue, setInputValue] = useState("");
+  const portalTarget = useDashboardOverlay(open);
   const canConfirm = !confirmationText || inputValue === confirmationText;
 
   useDialogFocusTrap({ containerRef: panelRef, onClose: onCancel, open });
 
-  if (!open) return null;
+  if (!open || !portalTarget) return null;
 
-  return (
-    <div className="fixed inset-0 z-[var(--z-dashboard-confirm)] grid place-items-center overflow-y-auto overscroll-contain px-4 py-6">
+  return createPortal(
+    <div className="dashboard-modal-root fixed inset-0 isolate z-[var(--z-dashboard-confirm)] grid place-items-center overflow-y-auto overscroll-contain px-4 py-6">
       <button type="button" aria-hidden="true" tabIndex={-1} onClick={onCancel} className="drawer-backdrop absolute inset-0 z-0" />
       <div
         ref={panelRef}
@@ -91,7 +94,8 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    portalTarget
   );
 }
 

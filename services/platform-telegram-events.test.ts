@@ -10,6 +10,7 @@ const platformBotServerSource = read("infra/vps/services/platform-telegram-bot/s
 const tenantBotServerSource = read("infra/vps/services/telegram-bot/server.mts");
 const tenantBotRepositorySource = read("infra/vps/services/telegram-bot/repository.mts");
 const platformEventsSource = read("services/platform-telegram-events.ts");
+const tenantSingleConnectionMigrationSource = read("supabase/migrations/20260605093000_telegram_single_tenant_connection_lock.sql");
 
 const platformEventTypes = [
   "platform.tenant.created",
@@ -36,7 +37,7 @@ test("LogiDev producers publish real onboarding, billing, and tenant-status even
   assert.match(read("services/billing/payment-admin.ts"), /notifyPlatformSubscriptionResolved\(\{[\s\S]*status: "confirmed"/, "payment confirmation must notify LogiDev");
   assert.match(read("services/billing/payment-admin.ts"), /notifyPlatformSubscriptionResolved\(\{[\s\S]*status: "rejected"/, "payment rejection must notify LogiDev");
   assert.match(read("services/billing/subscription-cron.ts"), /notifyPlatformSubscriptionStatusChanged\(\{[\s\S]*previousStatus: "trialing"/, "subscription cron lifecycle changes must notify LogiDev");
-  assert.match(read("services/platform-admin-service.ts"), /notifyPlatformTenantStatusChanged\(\{[\s\S]*previousStatus: previousRestaurant\.platform_status/, "tenant status changes must notify LogiDev");
+  assert.match(read("services/platform-admin-service.ts"), /notifyPlatformTenantStatusChanged\(\{[\s\S]*previousStatus: previousRestaurant\?\.platform_status/, "tenant status changes must notify LogiDev");
 });
 
 test("LogiDev event publisher never sends Telegram directly from app services", () => {
@@ -64,6 +65,21 @@ test("Tenant bot uses a unified action inbox with detail sheets", () => {
 
 test("Tenant bot repository builds Supabase filters after select", () => {
   assert.doesNotMatch(tenantBotRepositorySource, /\.from\("[^"]+"\)\s*\.eq\(/, "Supabase queries must call select/insert/update/delete before filters");
+});
+
+test("Tenant Telegram accounts are locked to one active restaurant connection", () => {
+  assert.match(tenantSingleConnectionMigrationSource, /telegram_connections_active_telegram_user_unique_idx/, "migration must create the active telegram_user_id unique index");
+  assert.match(tenantSingleConnectionMigrationSource, /where status = 'active'/, "unique index must only lock active connections");
+  assert.match(tenantSingleConnectionMigrationSource, /telegram\.connection\.revoked_duplicate/, "migration must audit duplicate revocations");
+  assert.match(tenantBotRepositorySource, /enforceSingleActiveTelegramConnection/, "runtime reads must guard legacy duplicate active connections");
+  assert.match(tenantBotRepositorySource, /telegram_user_already_linked_to_restaurant/, "connect flow must reject Telegram accounts already linked to another restaurant");
+  assert.match(tenantBotServerSource, /already_linked_to_restaurant/, "connect rejection must have owner-facing copy");
+});
+
+test("Tenant bot read-only callbacks stay reusable while AI sessions remain one-time", () => {
+  assert.match(tenantBotServerSource, /claimTelegramSession\(token, ctx\.from\.id, \{ consume: false \}\)/, "menu/detail callbacks should not be consumed on read");
+  assert.match(tenantBotServerSource, /consumeTelegramSession\(claimed\.session\.id\)/, "AI Ops session callbacks must still be consumed before execution");
+  assert.match(tenantBotServerSource, /TELEGRAM_MENU_SESSION_TTL_SECONDS", 3600/, "menu sessions should stay usable long enough for real operators");
 });
 
 test("staff incident operational events are accepted by VPS gateway and queue router", () => {

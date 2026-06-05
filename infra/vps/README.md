@@ -212,6 +212,7 @@ Core runtime paths:
 - `POST /events` on `gateway` for normal order/payment/reservation/inventory/SLA events
 - `POST /queues/jobs` on `gateway` for explicit admin retry of failed Telegram notifications
 - `GET /queues` and `GET /queues/failed` on `gateway` for queue, failed job, and DLQ visibility
+- `POST /alerts` on `gateway` for Alertmanager; alerts are routed to `platform.telegram.notifications`
 - `POST /webhook/set` on `telegram-bot` after `TELEGRAM_WEBHOOK_URL` is configured
 - `GET /ready` on `telegram-bot` for configured/worker readiness
 
@@ -292,8 +293,11 @@ signed with `PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET`, stored only as a hash in
 Emergency bootstrap still supports `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` or
 `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. After connection, all buttons are
 one-time signed sessions with scope checks such as `infra.read`, `queues.read`,
-`incidents.read`, and `platform.admin`. Telegram-side self-service commands are
-`/whoami`, `/security`, and `/disconnect`.
+`incidents.read`, and `platform.admin`. The DevOps menu includes `/backup` for
+a short R2 backup/RPO card, a signed manual-backup queue action, and an on-demand
+detail card for artifacts, restore-test results, and open backup alerts.
+Telegram-side self-service commands are `/whoami`, `/security`, and
+`/disconnect`.
 
 AI Ops commands use the app internal API and real tenant snapshots:
 
@@ -314,11 +318,14 @@ a compact signed tenant picker. Each option is backed by a one-time
 `telegram_sessions` row, expires quickly, and is claimed against the Telegram user
 before the AI request runs.
 
-If delivery fails, the worker marks the notification row failed or rate-limited,
-BullMQ retries with Telegram-aware backoff, and the final failed job is copied to
-`telegram.notifications.dlq`. Admin retry from the Dashboard requeues the original
-event payload through `/queues/jobs` with a retry job id, preserving event
-idempotency inside `telegram_notifications`.
+If tenant Telegram delivery fails, the worker marks the notification row failed or
+rate-limited, BullMQ retries with Telegram-aware backoff, and the final failed job
+is copied to `telegram.notifications.dlq`. Admin retry from the Dashboard requeues
+the original event payload through `/queues/jobs` with a retry job id, preserving
+event idempotency inside `telegram_notifications`. Non-Telegram push/email queues
+use `PUSH_NOTIFICATION_WEBHOOK_URL` and `EMAIL_NOTIFICATION_WEBHOOK_URL` only when
+an external provider is configured; otherwise they route sanitized operational
+metadata to the Dev Telegram bot through `platform.telegram.notifications`.
 
 Ingress from Telegram is rate-limited in Redis before expensive work:
 
@@ -353,7 +360,7 @@ Events:
 - Supabase Storage bucket manifests and optional payload archives
 - signed metadata records uploaded to private Cloudflare R2 through the Worker gateway
 
-`install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries.
+`install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries. It writes `CRON_TZ=$BACKUP_TIMEZONE` and `TZ=$BACKUP_TIMEZONE` into `/etc/cron.d/logivn-vps`, so backup schedules stay pinned to `Asia/Ho_Chi_Minh` unless `/opt/logivn/.env` intentionally overrides `BACKUP_TIMEZONE`.
 
 Run a backup immediately after the first successful deploy:
 
@@ -361,6 +368,8 @@ Run a backup immediately after the first successful deploy:
 APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --manual --actor sre --reason "first production backup"
 APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --restore-test
 ```
+
+The default restore test mode is `docker`: the script downloads the latest encrypted Postgres artifact, decrypts it locally, restores critical-table schema plus critical table data into a throwaway PostGIS-capable Postgres container, verifies `BACKUP_RESTORE_CRITICAL_TABLES` inside `BACKUP_RESTORE_TEST_SCHEMA`, records `backup_restore_tests`, and removes the container. `BACKUP_RESTORE_TEST_STRICT=false` lets the check tolerate non-critical managed-extension restore warnings while still failing if critical app tables cannot be restored and counted. Use `BACKUP_RESTORE_TEST_MODE=restore` only with an approved staging database URL; never point it at production.
 
 For disaster recovery, use `RESTORE_RUNBOOK.md` to download, verify, and decrypt the approved R2 artifact first. `restore-redis-backup.sh` remains a local Redis-volume helper after the decrypted Redis archive has been selected. A real restore requires an explicit confirmation environment variable and creates a pre-restore Redis volume backup before replacing data:
 

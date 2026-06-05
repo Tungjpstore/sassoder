@@ -47,6 +47,10 @@ type TelegramSessionInput = {
   ttlSeconds?: number;
 };
 
+type ClaimTelegramSessionOptions = {
+  consume?: boolean;
+};
+
 export type TelegramOpsInboxSlice = "all" | "hot_orders" | "payments" | "reservations" | "staff" | "menu_ops";
 
 export type TelegramOpsInboxItem = {
@@ -179,7 +183,8 @@ export async function getTelegramConnectionsForUser(telegramUserId: number): Pro
     .eq("status", "active")
     .order("last_seen_at", { ascending: false, nullsFirst: false });
   if (error) throw error;
-  return refreshTelegramConnectionsAccess((data ?? []).map(normalizeConnection));
+  const refreshed = await refreshTelegramConnectionsAccess((data ?? []).map(normalizeConnection));
+  return enforceSingleActiveTelegramConnection(refreshed);
 }
 
 export async function getTelegramOpsBoard(connection: TelegramConnection) {
@@ -407,7 +412,7 @@ export async function createTelegramSession(input: TelegramSessionInput) {
   return token;
 }
 
-export async function claimTelegramSession(token: string, telegramUserId: number) {
+export async function claimTelegramSession(token: string, telegramUserId: number, options: ClaimTelegramSessionOptions = {}) {
   assertSignedToken(token, sessionSecret());
   const hash = tokenHash(token);
   const { data: session, error } = await db()
@@ -437,8 +442,10 @@ export async function claimTelegramSession(token: string, telegramUserId: number
     throw new Error("session_not_authorized");
   }
 
-  const consumed = await consumeTelegramSession(session.id);
-  if (!consumed) throw new Error("session_replayed");
+  if (options.consume !== false) {
+    const consumed = await consumeTelegramSession(session.id);
+    if (!consumed) throw new Error("session_replayed");
+  }
 
   await recordTelegramAudit({
     restaurantId: session.restaurant_id,
@@ -580,10 +587,7 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
   const now = new Date().toISOString();
   const { data: connectToken, error } = await db()
     .from("telegram_connection_tokens")
-    .update({
-      consumed_at: now,
-      consumed_by_telegram_user_id: identity.telegramUserId
-    })
+    .select("*")
     .eq("token_hash", tokenHash(token))
     .is("consumed_at", null)
     .is("revoked_at", null)
@@ -593,11 +597,46 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
   if (error) throw error;
   if (!connectToken) throw new Error("connect_token_used_or_expired");
 
-  const existing = await getConnectionForTelegramUser(connectToken.restaurant_id, identity.telegramUserId);
-  if (existing && existing.user_id !== connectToken.user_id) throw new Error("telegram_user_already_connected");
+  const existingTelegramConnection = await getActiveConnectionForTelegramUser(identity.telegramUserId);
+  if (
+    existingTelegramConnection &&
+    (existingTelegramConnection.restaurant_id !== connectToken.restaurant_id || existingTelegramConnection.user_id !== connectToken.user_id)
+  ) {
+    await recordTelegramAudit({
+      restaurantId: connectToken.restaurant_id,
+      branchId: connectToken.branch_id ?? null,
+      userId: connectToken.user_id,
+      telegramUserId: identity.telegramUserId,
+      action: "telegram.connect",
+      outcome: "denied",
+      metadata: {
+        reason: "telegram_user_single_active_connection",
+        existingConnectionId: existingTelegramConnection.id,
+        existingRestaurantId: existingTelegramConnection.restaurant_id,
+        existingUserId: existingTelegramConnection.user_id
+      }
+    }).catch(() => undefined);
+    throw new Error("telegram_user_already_linked_to_restaurant");
+  }
+
   const currentUser = await getActiveTelegramConnectUser(connectToken.restaurant_id, connectToken.user_id);
   await assertTelegramConnectionBranchAccess(connectToken.restaurant_id, connectToken.branch_id ?? null, currentUser);
   const staffMemberId = currentUser.staffMemberId ?? metadataStaffMemberId(connectToken.metadata);
+
+  const claimResult = await db()
+    .from("telegram_connection_tokens")
+    .update({
+      consumed_at: now,
+      consumed_by_telegram_user_id: identity.telegramUserId
+    })
+    .eq("id", connectToken.id)
+    .is("consumed_at", null)
+    .is("revoked_at", null)
+    .gt("expires_at", now)
+    .select("id")
+    .maybeSingle();
+  if (claimResult.error) throw claimResult.error;
+  if (!claimResult.data) throw new Error("connect_token_used_or_expired");
 
   const connectionPayload = {
     restaurant_id: connectToken.restaurant_id,
@@ -623,7 +662,10 @@ export async function connectTelegramAccount(token: string, identity: TelegramId
     .upsert(connectionPayload, { onConflict: "restaurant_id,user_id" })
     .select("*")
     .single();
-  if (upsertError) throw upsertError;
+  if (upsertError) {
+    if (upsertError.code === "23505") throw new Error("telegram_user_already_linked_to_restaurant");
+    throw upsertError;
+  }
 
   await recordTelegramAudit({
     restaurantId: connectToken.restaurant_id,
@@ -967,6 +1009,53 @@ async function revokeStaleTelegramConnection(connection: TelegramConnection, rea
   }).catch(() => undefined);
 }
 
+async function enforceSingleActiveTelegramConnection(connections: TelegramConnection[]) {
+  if (connections.length <= 1) return connections;
+  const [primary, ...duplicates] = connections;
+  await Promise.all(duplicates.map((connection) => revokeDuplicateTelegramConnection(connection, primary)));
+  return [primary];
+}
+
+async function revokeDuplicateTelegramConnection(connection: TelegramConnection, keptConnection: TelegramConnection) {
+  const now = new Date().toISOString();
+  const { error } = await db()
+    .from("telegram_connections")
+    .update({
+      status: "revoked",
+      revoked_at: now,
+      updated_at: now,
+      metadata: {
+        revokedBy: "telegram_single_tenant_guard",
+        revokedReason: "telegram_user_single_active_connection",
+        keptConnectionId: keptConnection.id,
+        keptRestaurantId: keptConnection.restaurant_id
+      }
+    })
+    .eq("id", connection.id)
+    .eq("status", "active");
+  if (error) throw error;
+
+  await Promise.all([
+    db().from("telegram_sessions").delete().eq("connection_id", connection.id),
+    db().from("telegram_callback_actions").update({ status: "revoked" }).eq("connection_id", connection.id).eq("status", "pending").is("used_at", null)
+  ]).catch(() => undefined);
+
+  await recordTelegramAudit({
+    restaurantId: connection.restaurant_id,
+    branchId: connection.branch_id,
+    connectionId: connection.id,
+    userId: connection.user_id,
+    telegramUserId: connection.telegram_user_id,
+    action: "telegram.connection.revoked_duplicate",
+    outcome: "denied",
+    metadata: {
+      reason: "telegram_user_single_active_connection",
+      keptConnectionId: keptConnection.id,
+      keptRestaurantId: keptConnection.restaurant_id
+    }
+  }).catch(() => undefined);
+}
+
 function isMissingStaffScopeSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   return error.code === "PGRST204" || error.code === "42P01" || /staff_(members|roles|role_permissions|branch_assignments)|shift_assignments|permission_key|branch_id/i.test(error.message ?? "");
@@ -979,6 +1068,21 @@ async function getConnectionForTelegramUser(restaurantId: string, telegramUserId
     .eq("restaurant_id", restaurantId)
     .eq("telegram_user_id", telegramUserId)
     .eq("status", "active")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return refreshTelegramConnectionAccess(normalizeConnection(data));
+}
+
+async function getActiveConnectionForTelegramUser(telegramUserId: number) {
+  const { data, error } = await db()
+    .from("telegram_connections")
+    .select(TELEGRAM_CONNECTION_SELECT)
+    .eq("telegram_user_id", telegramUserId)
+    .eq("status", "active")
+    .order("last_seen_at", { ascending: false, nullsFirst: false })
+    .order("updated_at", { ascending: false, nullsFirst: false })
+    .limit(1)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
@@ -1009,7 +1113,7 @@ async function deleteTelegramSession(id: string) {
   if (error) throw error;
 }
 
-async function consumeTelegramSession(id: string) {
+export async function consumeTelegramSession(id: string) {
   const { data, error } = await db().from("telegram_sessions").delete().eq("id", id).select("id").maybeSingle();
   if (error) throw error;
   return Boolean(data);

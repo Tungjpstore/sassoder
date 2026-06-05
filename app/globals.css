@@ -12004,9 +12004,20 @@ img {
 }
 
 /* Unified dashboard surface system: drawers should read as one solid workspace layer, not stacked translucent cards. */
+html.dashboard-overlay-open,
+body.dashboard-overlay-open {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: none;
+}
+
+.dashboard-modal-root,
 .dashboard-drawer-root {
   --dashboard-drawer-top-offset: 0px;
   --dashboard-drawer-left-offset: 0px;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100svh;
   pointer-events: auto;
 }
 
@@ -12016,12 +12027,14 @@ img {
   -webkit-backdrop-filter: none !important;
 }
 
+.dashboard-drawer-root .drawer-panel,
 .stitch-admin .dashboard-drawer-root .drawer-panel,
 .stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel {
   position: absolute !important;
   inset: 0 0 0 auto !important;
   isolation: isolate;
   z-index: 10 !important;
+  display: flex !important;
   contain: layout paint style;
   background: var(--surface-strong) !important;
   background-color: var(--surface-strong) !important;
@@ -12031,6 +12044,13 @@ img {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   transform: translate3d(0, 0, 0);
+}
+
+@supports (height: 100svh) {
+  .dashboard-modal-root,
+  .dashboard-drawer-root {
+    height: 100svh;
+  }
 }
 
 .dashboard-drawer-root .drawer-panel [data-dashboard-drawer-content] {
@@ -12063,6 +12083,7 @@ img {
   background: rgba(0, 0, 0, 0.34) !important;
 }
 
+.dark-admin .dashboard-drawer-root .drawer-panel,
 .dark-admin .stitch-admin .dashboard-drawer-root .drawer-panel,
 .dark-admin .stitch-admin.admin-shell-bg.dashboard-density .dashboard-drawer-root .drawer-panel {
   background: var(--surface) !important;

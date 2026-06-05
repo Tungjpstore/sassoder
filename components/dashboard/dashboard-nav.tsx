@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, Search, X } from "lucide-react";
 import { DashboardAssetIcon, type DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
+import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import { prefetchKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
 import { cn } from "@/lib/utils";
 import type { PlanFeatureKey, getRestaurantEntitlement } from "@/services/subscription-service";
@@ -281,6 +283,7 @@ export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitle
   const [open, setOpen] = useState(false);
   const sheetRef = useRef<HTMLElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const portalTarget = useDashboardOverlay(open);
   const activeGroupId = useMemo(() => navGroups.find((group) => group.links.some((link) => isActive(pathname, link.href)))?.id ?? navGroups[0].id, [pathname]);
   const [selectedGroupId, setSelectedGroupId] = useState(activeGroupId);
   const [query, setQuery] = useState("");
@@ -306,9 +309,6 @@ export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitle
 
   useEffect(() => {
     if (!open) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -340,7 +340,6 @@ export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitle
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [open]);
@@ -422,8 +421,9 @@ export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitle
         </div>
       </nav>
 
-      {open ? (
-        <div className="fixed inset-0 z-[90] md:hidden" role="presentation">
+      {open && portalTarget
+        ? createPortal(
+        <div className="dashboard-modal-root fixed inset-0 isolate z-[90] md:hidden" role="presentation">
           <button
             type="button"
             className="absolute inset-0 bg-black/24 backdrop-blur-[2px]"
@@ -564,8 +564,10 @@ export function AdminMobileNav({ entitlement }: { entitlement?: DashboardEntitle
               ))}
             </div>
           </section>
-        </div>
-      ) : null}
+        </div>,
+        portalTarget
+      )
+        : null}
     </>
   );
 }

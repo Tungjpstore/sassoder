@@ -102,8 +102,14 @@ jobs:
 
           write_env BACKUP_ENABLED true
           write_env BACKUP_ENVIRONMENT prod
+          write_env BACKUP_TIMEZONE Asia/Ho_Chi_Minh
           write_env BACKUP_POSTGRES_DUMP_RUNNER docker
           write_env BACKUP_POSTGRES_DOCKER_IMAGE postgres:17-alpine
+          write_env BACKUP_RESTORE_TEST_DOCKER_IMAGE postgis/postgis:17-3.5-alpine
+          write_env BACKUP_RESTORE_TEST_MODE docker
+          write_env BACKUP_RESTORE_TEST_SCHEMA public
+          write_env BACKUP_RESTORE_CRITICAL_TABLES restaurants,orders,payment_logs,reservations
+          write_env BACKUP_RESTORE_TEST_STRICT false
           write_env BACKUP_STORAGE_ADAPTER worker
           write_env BACKUP_R2_GATEWAY_URL "$BACKUP_R2_GATEWAY_URL"
           write_env BACKUP_R2_GATEWAY_TOKEN "$BACKUP_R2_GATEWAY_TOKEN"
@@ -173,8 +179,14 @@ jobs:
           for key in \
             BACKUP_ENABLED \
             BACKUP_ENVIRONMENT \
+            BACKUP_TIMEZONE \
             BACKUP_POSTGRES_DUMP_RUNNER \
             BACKUP_POSTGRES_DOCKER_IMAGE \
+            BACKUP_RESTORE_TEST_DOCKER_IMAGE \
+            BACKUP_RESTORE_TEST_MODE \
+            BACKUP_RESTORE_TEST_SCHEMA \
+            BACKUP_RESTORE_CRITICAL_TABLES \
+            BACKUP_RESTORE_TEST_STRICT \
             BACKUP_STORAGE_ADAPTER \
             BACKUP_R2_GATEWAY_URL \
             BACKUP_R2_GATEWAY_TOKEN \

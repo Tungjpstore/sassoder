@@ -1,8 +1,10 @@
 "use client";
 
 import { useId, useRef } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
+import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import { cn } from "@/lib/utils";
 
 type DashboardDrawerProps = {
@@ -39,12 +41,13 @@ export function DashboardDrawer({
   const titleId = useId();
   const subtitleId = useId();
   const panelRef = useRef<HTMLElement | null>(null);
+  const portalTarget = useDashboardOverlay(open);
 
   useDialogFocusTrap({ containerRef: panelRef, onClose, open });
 
-  if (!open) return null;
+  if (!open || !portalTarget) return null;
 
-  return (
+  return createPortal(
     <div className="dashboard-drawer-root fixed inset-0 isolate z-[var(--z-dashboard-drawer)] overflow-hidden overscroll-contain">
       <button
         type="button"
@@ -100,6 +103,7 @@ export function DashboardDrawer({
           </div>
         )}
       </aside>
-    </div>
+    </div>,
+    portalTarget
   );
 }
