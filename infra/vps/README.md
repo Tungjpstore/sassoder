@@ -212,6 +212,7 @@ Core runtime paths:
 - `POST /events` on `gateway` for normal order/payment/reservation/inventory/SLA events
 - `POST /queues/jobs` on `gateway` for explicit admin retry of failed Telegram notifications
 - `GET /queues` and `GET /queues/failed` on `gateway` for queue, failed job, and DLQ visibility
+- `POST /alerts` on `gateway` for Alertmanager; alerts are routed to `platform.telegram.notifications`
 - `POST /webhook/set` on `telegram-bot` after `TELEGRAM_WEBHOOK_URL` is configured
 - `GET /ready` on `telegram-bot` for configured/worker readiness
 
@@ -314,11 +315,14 @@ a compact signed tenant picker. Each option is backed by a one-time
 `telegram_sessions` row, expires quickly, and is claimed against the Telegram user
 before the AI request runs.
 
-If delivery fails, the worker marks the notification row failed or rate-limited,
-BullMQ retries with Telegram-aware backoff, and the final failed job is copied to
-`telegram.notifications.dlq`. Admin retry from the Dashboard requeues the original
-event payload through `/queues/jobs` with a retry job id, preserving event
-idempotency inside `telegram_notifications`.
+If tenant Telegram delivery fails, the worker marks the notification row failed or
+rate-limited, BullMQ retries with Telegram-aware backoff, and the final failed job
+is copied to `telegram.notifications.dlq`. Admin retry from the Dashboard requeues
+the original event payload through `/queues/jobs` with a retry job id, preserving
+event idempotency inside `telegram_notifications`. Non-Telegram push/email queues
+use `PUSH_NOTIFICATION_WEBHOOK_URL` and `EMAIL_NOTIFICATION_WEBHOOK_URL` only when
+an external provider is configured; otherwise they route sanitized operational
+metadata to the Dev Telegram bot through `platform.telegram.notifications`.
 
 Ingress from Telegram is rate-limited in Redis before expensive work:
 
