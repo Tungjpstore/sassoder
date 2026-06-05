@@ -307,6 +307,7 @@ app.delete("/cache", requireInternalApiKey, async (req, res, next) => {
 app.post("/alerts", async (req, res, next) => {
   try {
     const payload = alertmanagerSchema.parse(req.body);
+    const platformEvent = alertmanagerToPlatformAlert(payload);
     logger.warn(
       {
         status: payload.status,
@@ -320,8 +321,9 @@ app.post("/alerts", async (req, res, next) => {
       },
       "alertmanager notification received"
     );
+    const jobs = await publishOperationalEvent(platformEvent);
     await forwardAlertmanagerPayload(payload);
-    res.json({ ok: true });
+    res.json({ ok: true, eventId: platformEvent.eventId, jobs });
   } catch (error) {
     next(error);
   }
@@ -465,6 +467,68 @@ function secureEqual(left, right) {
 function normalizeBasePath(path) {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+}
+
+function alertmanagerToPlatformAlert(payload) {
+  const alerts = payload.alerts || [];
+  const first = alerts[0];
+  const activeAlerts = alerts.filter((alert) => alert.status !== "resolved");
+  const alertCount = alerts.length;
+  const severity = normalizeAlertSeverity(first?.labels?.severity);
+  const title = first?.annotations?.summary || first?.labels?.alertname || `Alertmanager ${payload.status || "notification"}`;
+  const summary = summarizeAlertmanagerPayload(payload, activeAlerts.length || alertCount);
+  const eventSeed = `${payload.status || "unknown"}:${payload.receiver || "default"}:${alerts
+    .map((alert) => alert.labels?.alertname || alert.annotations?.summary || alert.status || "alert")
+    .join(",")}`;
+
+  return {
+    type: "platform.alert",
+    tenantId: "platform",
+    eventId: `alertmanager:${createHash("sha256").update(eventSeed).digest("hex").slice(0, 24)}:${Date.now()}`,
+    occurredAt: new Date().toISOString(),
+    source: "system",
+    alert: {
+      severity,
+      title: truncateText(title, 160),
+      summary: truncateText(summary, 900),
+      area: inferAlertArea(first?.labels?.alertname, first?.annotations?.summary)
+    }
+  };
+}
+
+function normalizeAlertSeverity(severity) {
+  if (severity === "critical") return "critical";
+  if (severity === "warning" || severity === "warn") return "warning";
+  return "info";
+}
+
+function summarizeAlertmanagerPayload(payload, count) {
+  const lines = [`Status: ${payload.status || "unknown"}`, `Receiver: ${payload.receiver || "default"}`, `Alerts: ${count}`];
+  for (const alert of (payload.alerts || []).slice(0, 4)) {
+    const name = alert.labels?.alertname || "unnamed";
+    const summary = alert.annotations?.summary || alert.annotations?.description || alert.status || "no summary";
+    lines.push(`- ${name}: ${summary}`);
+  }
+  return lines.join("\n");
+}
+
+function inferAlertArea(alertName = "", summary = "") {
+  const text = `${alertName} ${summary}`.toLowerCase();
+  if (text.includes("redis") || text.includes("queue") || text.includes("bull")) return "queue";
+  if (text.includes("postgres") || text.includes("database") || text.includes("supabase")) return "database";
+  if (text.includes("telegram")) return "telegram";
+  if (text.includes("api") || text.includes("gateway")) return "api";
+  if (text.includes("web") || text.includes("vercel")) return "web";
+  if (text.includes("billing") || text.includes("payment")) return "billing";
+  if (text.includes("ai") || text.includes("openai") || text.includes("qwen")) return "ai";
+  if (text.includes("security") || text.includes("auth")) return "security";
+  return "other";
+}
+
+function truncateText(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 async function forwardAlertmanagerPayload(payload) {

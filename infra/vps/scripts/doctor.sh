@@ -98,6 +98,26 @@ check_platform_telegram_webhook_url() {
   esac
 }
 
+check_alert_routing() {
+  if is_set ALERT_WEBHOOK_FORWARD_URL; then
+    if is_set ALERT_WEBHOOK_FORWARD_TOKEN; then
+      printf '[logivn-doctor] alert routing: Dev Telegram + external forward configured\n'
+    else
+      printf '[logivn-doctor] alert routing: Dev Telegram + external forward without bearer token\n'
+    fi
+  else
+    printf '[logivn-doctor] alert routing: Dev Telegram fallback via platform.telegram.notifications\n'
+  fi
+}
+
+check_notification_routing() {
+  local push_target="Dev Telegram fallback"
+  local email_target="Dev Telegram fallback"
+  if is_set PUSH_NOTIFICATION_WEBHOOK_URL; then push_target="external webhook"; fi
+  if is_set EMAIL_NOTIFICATION_WEBHOOK_URL; then email_target="external webhook"; fi
+  printf '[logivn-doctor] notifications routing: push=%s email=%s\n' "$push_target" "$email_target"
+}
+
 main() {
   if [ ! -f "$ENV_FILE" ]; then
     printf 'Env file not found: %s\n' "$ENV_FILE" >&2
@@ -111,7 +131,7 @@ main() {
     LOGIVN_INTERNAL_API_KEY REDIS_PASSWORD NEXT_PUBLIC_SUPABASE_URL NEXT_PUBLIC_SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY GF_SECURITY_ADMIN_PASSWORD || failed=1
 
   check_group monitoring optional \
-    BULL_BOARD_PASSWORD ALERT_WEBHOOK_FORWARD_URL ALERT_WEBHOOK_FORWARD_TOKEN || failed=1
+    BULL_BOARD_PASSWORD || failed=1
 
   check_group ai optional \
     DASHSCOPE_API_KEY XAI_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY || failed=1
@@ -122,8 +142,8 @@ main() {
   check_group platform-telegram optional \
     PLATFORM_TELEGRAM_BOT_TOKEN PLATFORM_TELEGRAM_WEBHOOK_SECRET PLATFORM_TELEGRAM_WEBHOOK_URL PLATFORM_TELEGRAM_SESSION_SECRET || failed=1
 
-  check_group notifications optional \
-    PUSH_NOTIFICATION_WEBHOOK_URL EMAIL_NOTIFICATION_WEBHOOK_URL || failed=1
+  check_notification_routing || failed=1
+  check_alert_routing || failed=1
 
   check_app_cron_mode || failed=1
   check_telegram_webhook_url || failed=1
