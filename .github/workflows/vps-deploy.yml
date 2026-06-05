@@ -89,6 +89,10 @@ jobs:
           BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
           BACKUP_SUPABASE_URL: ${{ secrets.BACKUP_SUPABASE_URL }}
           BACKUP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.BACKUP_SUPABASE_SERVICE_ROLE_KEY }}
+          BACKUP_TELEGRAM_BOT_TOKEN: ${{ secrets.BACKUP_TELEGRAM_BOT_TOKEN }}
+          DEV_TELEGRAM_CHAT_ID: ${{ secrets.DEV_TELEGRAM_CHAT_ID }}
+          PLATFORM_TELEGRAM_BOT_TOKEN: ${{ secrets.PLATFORM_TELEGRAM_BOT_TOKEN }}
+          PLATFORM_TELEGRAM_ALLOWED_USER_IDS: ${{ secrets.PLATFORM_TELEGRAM_ALLOWED_USER_IDS }}
         run: |
           patch_file="$(mktemp)"
           chmod 600 "$patch_file"
@@ -111,6 +115,8 @@ jobs:
           write_env BACKUP_RESTORE_CRITICAL_TABLES restaurants,orders,payment_logs,reservations
           write_env BACKUP_RESTORE_TEST_STRICT false
           write_env BACKUP_STORAGE_ADAPTER worker
+          write_env BACKUP_STORAGE_PAYLOAD_ENABLED auto
+          write_env BACKUP_STORAGE_PAYLOAD_MODES daily,weekly,monthly,manual
           write_env BACKUP_R2_GATEWAY_URL "$BACKUP_R2_GATEWAY_URL"
           write_env BACKUP_R2_GATEWAY_TOKEN "$BACKUP_R2_GATEWAY_TOKEN"
           write_env BACKUP_ENCRYPTION_KEY "$BACKUP_ENCRYPTION_KEY"
@@ -122,6 +128,11 @@ jobs:
           write_env SUPABASE_URL "$BACKUP_SUPABASE_URL"
           write_env SUPABASE_SERVICE_ROLE_KEY "$BACKUP_SUPABASE_SERVICE_ROLE_KEY"
           write_env DEV_TELEGRAM_ALERTS_ENABLED true
+          write_env BACKUP_TELEGRAM_REPORT_REQUIRED true
+          write_env BACKUP_TELEGRAM_BOT_TOKEN "$BACKUP_TELEGRAM_BOT_TOKEN"
+          write_env DEV_TELEGRAM_CHAT_ID "$DEV_TELEGRAM_CHAT_ID"
+          write_env PLATFORM_TELEGRAM_BOT_TOKEN "$PLATFORM_TELEGRAM_BOT_TOKEN"
+          write_env PLATFORM_TELEGRAM_ALLOWED_USER_IDS "$PLATFORM_TELEGRAM_ALLOWED_USER_IDS"
 
           remote_patch="/tmp/logivn-backup-env-${GITHUB_RUN_ID}.env"
           scp -i ~/.ssh/logivn_vps_key -P "$VPS_PORT" "$patch_file" "$VPS_USER@$VPS_HOST:$remote_patch"
@@ -188,6 +199,8 @@ jobs:
             BACKUP_RESTORE_CRITICAL_TABLES \
             BACKUP_RESTORE_TEST_STRICT \
             BACKUP_STORAGE_ADAPTER \
+            BACKUP_STORAGE_PAYLOAD_ENABLED \
+            BACKUP_STORAGE_PAYLOAD_MODES \
             BACKUP_R2_GATEWAY_URL \
             BACKUP_R2_GATEWAY_TOKEN \
             BACKUP_ENCRYPTION_KEY \
@@ -198,7 +211,12 @@ jobs:
             NEXT_PUBLIC_SUPABASE_URL \
             SUPABASE_URL \
             SUPABASE_SERVICE_ROLE_KEY \
-            DEV_TELEGRAM_ALERTS_ENABLED; do
+            DEV_TELEGRAM_ALERTS_ENABLED \
+            BACKUP_TELEGRAM_REPORT_REQUIRED \
+            BACKUP_TELEGRAM_BOT_TOKEN \
+            DEV_TELEGRAM_CHAT_ID \
+            PLATFORM_TELEGRAM_BOT_TOKEN \
+            PLATFORM_TELEGRAM_ALLOWED_USER_IDS; do
             upsert_env "$key" "${!key:-}"
           done
 

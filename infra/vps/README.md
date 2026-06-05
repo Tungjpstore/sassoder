@@ -357,10 +357,12 @@ Events:
 - encrypted Supabase Postgres custom dumps
 - Redis AOF/RDB volume backup after `BGSAVE` and `BGREWRITEAOF`
 - sanitized VPS config backup from `/opt/logivn/.env`, Docker Compose, Nginx, Redis, scripts, and cron
-- Supabase Storage bucket manifests and optional payload archives
+- Supabase Storage bucket manifests and daily payload archives
 - signed metadata records uploaded to private Cloudflare R2 through the Worker gateway
 
 `install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries. It writes `CRON_TZ=$BACKUP_TIMEZONE` and `TZ=$BACKUP_TIMEZONE` into `/etc/cron.d/logivn-vps`, so backup schedules stay pinned to `Asia/Ho_Chi_Minh` unless `/opt/logivn/.env` intentionally overrides `BACKUP_TIMEZONE`.
+
+Daily backups report their final status to LogiBot Dev after upload verification and retention cleanup. Configure `PLATFORM_TELEGRAM_BOT_TOKEN` or `BACKUP_TELEGRAM_BOT_TOKEN`; either set `DEV_TELEGRAM_CHAT_ID` directly or connect a dev account through the Platform Telegram bot so `backup.sh` can discover active `platform_telegram_connections`. With `BACKUP_TELEGRAM_REPORT_REQUIRED=true`, a completed data backup that cannot notify LogiBot Dev is recorded as `warn` and opens a `telegram_report_failed` alert instead of appearing as a clean success.
 
 Run a backup immediately after the first successful deploy:
 

@@ -30,7 +30,7 @@ Supabase Postgres / Storage / Redis / VPS configs
 - Postgres: full `pg_dump -F c --no-owner --no-acl` from `DATABASE_URL` or `SUPABASE_DB_*`.
 - Redis: RDB/AOF volume archive after `BGSAVE` and `BGREWRITEAOF` requests.
 - VPS configs: nginx, docker compose, Redis config, scripts, cron, and a sanitized env template.
-- Supabase Storage: bucket manifest on every backup; recursive object payload archive for `weekly`, `monthly`, and `manual` modes by default.
+- Supabase Storage: bucket manifest plus recursive object payload archive on every daily, weekly, monthly, and manual backup by default.
 - Application metadata: backup settings, platform settings metadata, and recent cron logs. The Postgres dump remains the source of truth.
 
 ## Schedule
@@ -42,6 +42,8 @@ Installed by `infra/vps/scripts/install-cron.sh`:
 - Monthly: `0 4 1 * *`, `backup.sh --monthly`
 - Restore rehearsal: `20 4 1 * *`, `backup.sh --restore-test`
 - Manual poll: every 5 minutes, `backup.sh --claim-manual`
+
+Every daily/weekly/monthly/manual data backup sends a completion report to LogiBot Dev after R2 upload verification and retention cleanup. The executor first resolves stale `backup_failed` alerts when the new data backup has real artifacts, then sends the Telegram report. If the data backup succeeds but the LogiBot Dev report cannot be delivered, the job is updated to `warn` and a `telegram_report_failed` alert is opened so operators do not see a false-clean success.
 
 ## Object Layout
 
@@ -84,8 +86,7 @@ APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/backup.sh --manual --acto
 
 ## Current Boundaries
 
-- Daily Storage backup is manifest-only by default to keep RPO checks cheap. Set `BACKUP_STORAGE_PAYLOAD_ENABLED=true` or adjust `BACKUP_STORAGE_PAYLOAD_MODES` if daily object payload backup becomes required.
-- Large Storage buckets should be controlled with `BACKUP_STORAGE_BUCKETS`, `BACKUP_STORAGE_EXCLUDE_BUCKETS`, `BACKUP_STORAGE_MAX_OBJECTS`, and `BACKUP_STORAGE_MAX_BYTES` before enabling more frequent payload exports.
+- Daily Storage payload backup is enabled by default through `BACKUP_STORAGE_PAYLOAD_MODES=daily,weekly,monthly,manual` so the daily RPO includes uploaded assets. Large Storage buckets should be controlled with `BACKUP_STORAGE_BUCKETS`, `BACKUP_STORAGE_EXCLUDE_BUCKETS`, `BACKUP_STORAGE_MAX_OBJECTS`, and `BACKUP_STORAGE_MAX_BYTES` before allowing unlimited growth.
 - BullMQ-specific backup queues are represented as VPS cron execution today. If the worker app is split later, map these modes to `backup.daily`, `backup.weekly`, `backup.monthly`, `backup.manual`, `backup.restore_test`, and `backup.alerts`.
 
 ## References

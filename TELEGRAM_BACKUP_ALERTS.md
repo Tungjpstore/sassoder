@@ -10,6 +10,7 @@ Preferred env:
 PLATFORM_TELEGRAM_BOT_TOKEN=
 DEV_TELEGRAM_CHAT_ID=
 DEV_TELEGRAM_ALERTS_ENABLED=true
+BACKUP_TELEGRAM_REPORT_REQUIRED=true
 ```
 
 Optional override:
@@ -17,6 +18,14 @@ Optional override:
 ```env
 BACKUP_TELEGRAM_BOT_TOKEN=
 ```
+
+Recipient resolution order:
+
+1. `DEV_TELEGRAM_CHAT_ID` / `PLATFORM_TELEGRAM_ADMIN_CHAT_ID` / `TELEGRAM_ADMIN_CHAT_ID` when explicitly configured.
+2. Active `platform_telegram_connections` with `ADMIN`, `SRE`, `DEV`, or infra/backup scopes.
+3. `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` as a private-chat fallback.
+
+When `BACKUP_TELEGRAM_REPORT_REQUIRED=true`, a completed backup that cannot deliver a LogiBot Dev report is downgraded to `warn`, records `telegram_report_failed`, and opens a backup alert. This prevents a clean green backup status when the data backup succeeded but operators were not notified.
 
 ## Reports
 
@@ -30,6 +39,8 @@ Success report includes:
 - R2 verification status
 - retention policy
 - backup job id
+
+After a verified data backup succeeds, open `backup_failed` alerts from older failed runs are automatically resolved before the new Telegram report is sent. A notification failure creates its own `telegram_report_failed` alert instead of keeping stale backup failure alerts open.
 
 Failure report includes:
 

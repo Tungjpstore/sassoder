@@ -63,7 +63,7 @@ BACKUP_REDIS_ENABLED=${BACKUP_REDIS_ENABLED:-true}
 BACKUP_VPS_CONFIGS_ENABLED=${BACKUP_VPS_CONFIGS_ENABLED:-true}
 BACKUP_STORAGE_MANIFEST_ENABLED=${BACKUP_STORAGE_MANIFEST_ENABLED:-true}
 BACKUP_STORAGE_PAYLOAD_ENABLED=${BACKUP_STORAGE_PAYLOAD_ENABLED:-auto}
-BACKUP_STORAGE_PAYLOAD_MODES=${BACKUP_STORAGE_PAYLOAD_MODES:-weekly,monthly,manual}
+BACKUP_STORAGE_PAYLOAD_MODES=${BACKUP_STORAGE_PAYLOAD_MODES:-daily,weekly,monthly,manual}
 BACKUP_APPLICATION_METADATA_ENABLED=${BACKUP_APPLICATION_METADATA_ENABLED:-true}
 BACKUP_RESTORE_TEST_ENABLED=${BACKUP_RESTORE_TEST_ENABLED:-true}
 BACKUP_RESTORE_TEST_MODE=${BACKUP_RESTORE_TEST_MODE:-docker}
@@ -71,6 +71,7 @@ BACKUP_RESTORE_TEST_SCHEMA=${BACKUP_RESTORE_TEST_SCHEMA:-public}
 BACKUP_RESTORE_CRITICAL_TABLES=${BACKUP_RESTORE_CRITICAL_TABLES:-restaurants,orders,payment_logs,reservations}
 BACKUP_RESTORE_TEST_STRICT=${BACKUP_RESTORE_TEST_STRICT:-false}
 DEV_TELEGRAM_ALERTS_ENABLED=${DEV_TELEGRAM_ALERTS_ENABLED:-true}
+BACKUP_TELEGRAM_REPORT_REQUIRED=${BACKUP_TELEGRAM_REPORT_REQUIRED:-true}
 R2_REGION=${R2_REGION:-auto}
 R2_BUCKET=${R2_BUCKET:-logivn-backups}
 R2_ENDPOINT=${R2_ENDPOINT:-}
@@ -95,6 +96,8 @@ VERIFY_STATUS="pending"
 CHECKSUM_STATUS="pending"
 FAILURE_STEP=""
 FAILURE_MESSAGE=""
+TELEGRAM_REPORT_SENT_COUNT=0
+TELEGRAM_REPORT_FAILURE=""
 LOCK_FD=9
 BACKUP_LOCK_DIR=""
 
@@ -388,6 +391,23 @@ create_alert() {
     "$(json_string "$HOSTNAME_SAFE")" \
     "$(json_string "$MODE")")
   supabase_request POST "backup_alerts" "$body" >/dev/null 2>&1 || true
+}
+
+resolve_recovered_backup_alerts() {
+  local status=$1
+  if [ "$RESTORE_TEST_ONLY" = "true" ] || ! supabase_ready; then return 0; fi
+  if [ "$status" != "success" ] && [ "$status" != "warn" ]; then return 0; fi
+  if [ "$ARTIFACT_COUNT" -le 0 ] || [ "$TOTAL_BYTES" -le 0 ]; then return 0; fi
+
+  local body query
+  body=$(printf '{"status":"resolved","resolved_at":%s,"resolved_by":"backup-worker","metadata":{"resolvedByJobId":%s,"resolvedByRunId":%s,"reason":"new_data_backup_completed"}}' \
+    "$(json_string "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
+    "$(json_string "${JOB_ID:-local-$RUN_ID}")" \
+    "$(json_string "$RUN_ID")")
+  query="backup_alerts?status=eq.open&alert_type=eq.backup_failed"
+  if supabase_request PATCH "$query" "$body" >/dev/null 2>&1; then
+    record_event "backup_alerts_resolved" "info" "alerts" "Resolved stale backup_failed alerts after a new verified data backup"
+  fi
 }
 
 require_command() {
@@ -1409,39 +1429,141 @@ telegram_chat_id() {
   printf '%s' "${DEV_TELEGRAM_CHAT_ID:-${PLATFORM_TELEGRAM_ADMIN_CHAT_ID:-${TELEGRAM_ADMIN_CHAT_ID:-}}}"
 }
 
+platform_telegram_connection_chat_ids() {
+  if ! supabase_ready || ! command -v node >/dev/null 2>&1; then return 1; fi
+  node <<'NODE'
+(async () => {
+  const baseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!baseUrl || !key) return;
+  const url = new URL(`${baseUrl.replace(/\/$/, "")}/rest/v1/platform_telegram_connections`);
+  url.searchParams.set("select", "telegram_chat_id,role,scopes,status");
+  url.searchParams.set("status", "eq.active");
+  url.searchParams.set("order", "last_seen_at.desc.nullslast,created_at.desc");
+  url.searchParams.set("limit", "25");
+  const response = await fetch(url, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json"
+    }
+  });
+  if (!response.ok) throw new Error(`platform telegram recipients failed: ${response.status}`);
+  const rows = await response.json();
+  const allowedRoles = new Set(["ADMIN", "SRE", "DEV"]);
+  const allowedScopes = new Set(["platform.admin", "infra.read", "backup.trigger", "incidents.read"]);
+  const chatIds = [];
+  for (const row of rows || []) {
+    const chatId = String(row.telegram_chat_id || "").trim();
+    if (!chatId) continue;
+    const role = String(row.role || "").toUpperCase();
+    const scopes = Array.isArray(row.scopes) ? row.scopes.map(String) : [];
+    const scoped = scopes.some((scope) => allowedScopes.has(scope));
+    if (allowedRoles.has(role) || scoped) chatIds.push(chatId);
+  }
+  for (const chatId of [...new Set(chatIds)]) process.stdout.write(`${chatId}\n`);
+})().catch(() => process.exit(1));
+NODE
+}
+
+telegram_chat_ids() {
+  local configured
+  configured=$(telegram_chat_id)
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured" | tr ',; ' '\n' | awk 'NF && !seen[$0]++ { print }'
+    return 0
+  fi
+
+  if platform_telegram_connection_chat_ids; then return 0; fi
+
+  if [ -n "${PLATFORM_TELEGRAM_ALLOWED_USER_IDS:-}" ]; then
+    printf '%s\n' "$PLATFORM_TELEGRAM_ALLOWED_USER_IDS" | tr ',; ' '\n' | awk 'NF && !seen[$0]++ { print }'
+    return 0
+  fi
+}
+
+deliver_telegram_message() {
+  local token=$1
+  local message=$2
+  local chat_ids sent failed chat body
+  chat_ids=$(telegram_chat_ids || true)
+  sent=0
+  failed=0
+
+  if [ -z "$chat_ids" ]; then
+    TELEGRAM_REPORT_FAILURE="Chưa cấu hình hoặc chưa kết nối người nhận LogiBot Dev Telegram"
+    return 1
+  fi
+
+  while IFS= read -r chat; do
+    [ -n "$chat" ] || continue
+    body=$(printf '{"chat_id":%s,"text":%s,"disable_web_page_preview":true}' "$(json_string "$chat")" "$(json_string "$message")")
+    if curl -fsS -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+      -H "Content-Type: application/json" \
+      --data "$body" >/dev/null 2>&1; then
+      sent=$((sent + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done <<EOF
+$chat_ids
+EOF
+
+  TELEGRAM_REPORT_SENT_COUNT=$sent
+  if [ "$sent" -le 0 ]; then
+    TELEGRAM_REPORT_FAILURE="Telegram API từ chối báo cáo backup cho toàn bộ người nhận LogiBot Dev"
+    return 1
+  fi
+  if [ "$failed" -gt 0 ]; then
+    TELEGRAM_REPORT_FAILURE="Đã gửi báo cáo Telegram tới $sent người nhận, lỗi với $failed người nhận"
+  else
+    TELEGRAM_REPORT_FAILURE=""
+  fi
+  return 0
+}
+
 send_telegram_report() {
   local status=$1
   local title=$2
   local detail=$3
   if [ "$DEV_TELEGRAM_ALERTS_ENABLED" != "true" ]; then return 0; fi
-  local token chat icon message
+  local token icon message
   token=$(telegram_token)
-  chat=$(telegram_chat_id)
-  [ -n "$token" ] && [ -n "$chat" ] || return 0
+  if [ -z "$token" ]; then
+    TELEGRAM_REPORT_FAILURE="Thiếu PLATFORM_TELEGRAM_BOT_TOKEN hoặc BACKUP_TELEGRAM_BOT_TOKEN"
+    record_event "telegram_report_failed" "warning" "telegram" "$TELEGRAM_REPORT_FAILURE"
+    create_alert "telegram_report_failed" "warning" "Không gửi được báo cáo Telegram backup" "$TELEGRAM_REPORT_FAILURE" "medium"
+    [ "$BACKUP_TELEGRAM_REPORT_REQUIRED" = "true" ] && return 1
+    return 0
+  fi
 
   icon="✅"
   if [ "$status" = "failed" ]; then icon="🚨"; elif [ "$status" = "warn" ]; then icon="⚠️"; fi
   message=$(cat <<EOF
 $icon $title
 
-Environment: $BACKUP_ENVIRONMENT
-Mode: $MODE / $RETENTION_CLASS
-Artifacts: $ARTIFACT_COUNT
-Uploaded: $TOTAL_BYTES bytes
+Môi trường: $BACKUP_ENVIRONMENT
+Chế độ: $MODE / $RETENTION_CLASS
+Tệp backup: $ARTIFACT_COUNT
+Dung lượng upload: $TOTAL_BYTES bytes
 Checksum: $CHECKSUM_STATUS
-Verify: $VERIFY_STATUS
-Retention: daily $BACKUP_RETENTION_DAILY / weekly $BACKUP_RETENTION_WEEKLY / monthly $BACKUP_RETENTION_MONTHLY
-Job: ${JOB_ID:-local-$RUN_ID}
-Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+Kiểm tra R2: $VERIFY_STATUS
+Lưu giữ: hằng ngày $BACKUP_RETENTION_DAILY / hằng tuần $BACKUP_RETENTION_WEEKLY / hằng tháng $BACKUP_RETENTION_MONTHLY
+Mã job: ${JOB_ID:-local-$RUN_ID}
+Thời gian: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 $detail
 EOF
 )
-  local body
-  body=$(printf '{"chat_id":%s,"text":%s,"disable_web_page_preview":true}' "$(json_string "$chat")" "$(json_string "$message")")
-  curl -fsS -X POST "https://api.telegram.org/bot${token}/sendMessage" \
-    -H "Content-Type: application/json" \
-    --data "$body" >/dev/null 2>&1 || true
+  if deliver_telegram_message "$token" "$message"; then
+    record_event "telegram_report_sent" "info" "telegram" "Đã gửi báo cáo backup tới LogiBot Dev Telegram"
+    return 0
+  fi
+
+  record_event "telegram_report_failed" "warning" "telegram" "$TELEGRAM_REPORT_FAILURE"
+  create_alert "telegram_report_failed" "warning" "Không gửi được báo cáo Telegram backup" "$TELEGRAM_REPORT_FAILURE" "medium"
+  [ "$BACKUP_TELEGRAM_REPORT_REQUIRED" = "true" ] && return 1
+  return 0
 }
 
 on_error() {
@@ -1454,8 +1576,8 @@ on_error() {
   log "$FAILURE_MESSAGE"
   record_event "backup_failed" "critical" "$FAILURE_STEP" "$FAILURE_MESSAGE"
   update_job_status "failed" "$FAILURE_STEP" "$FAILURE_MESSAGE"
-  create_alert "backup_failed" "critical" "BACKUP FAILED" "$FAILURE_MESSAGE" "high"
-  send_telegram_report "failed" "BACKUP FAILED" "$FAILURE_MESSAGE"
+  create_alert "backup_failed" "critical" "Backup thất bại" "$FAILURE_MESSAGE" "high"
+  send_telegram_report "failed" "Backup thất bại" "$FAILURE_MESSAGE" || true
   if [ "$BACKUP_KEEP_FAILED_TEMP" != "true" ]; then rm -rf "$WORK_DIR"; fi
   exit "$exit_code"
 }
@@ -1477,7 +1599,12 @@ run_backup_pipeline() {
   if [ "$ARTIFACT_FAILURES" -gt 0 ]; then final_status="warn"; fi
   update_job_status "$final_status"
   record_event "backup_completed" "info" "finish" "Backup pipeline completed"
-  send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng kiểm tra kích thước từ storage adapter."
+  resolve_recovered_backup_alerts "$final_status"
+  if ! send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng kiểm tra kích thước từ storage adapter."; then
+    ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
+    final_status="warn"
+    update_job_status "$final_status" "telegram_report" "${TELEGRAM_REPORT_FAILURE:-Chưa gửi được báo cáo backup qua Telegram}"
+  fi
   rm -rf "$WORK_DIR"
 }
 
@@ -1501,7 +1628,9 @@ main() {
     mkdir -p "$WORK_DIR"
     run_restore_test
     update_job_status "success"
-    send_telegram_report "success" "Restore test hoàn tất" "Restore test pipeline đã hoàn tất."
+    if ! send_telegram_report "success" "Restore test hoàn tất" "Restore test pipeline đã hoàn tất."; then
+      update_job_status "warn" "telegram_report" "${TELEGRAM_REPORT_FAILURE:-Chưa gửi được báo cáo restore test qua Telegram}"
+    fi
     rm -rf "$WORK_DIR"
     exit 0
   fi
