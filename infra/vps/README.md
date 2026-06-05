@@ -294,9 +294,10 @@ Emergency bootstrap still supports `PLATFORM_TELEGRAM_ALLOWED_USER_IDS` or
 `/start <PLATFORM_TELEGRAM_BOOTSTRAP_TOKEN>`. After connection, all buttons are
 one-time signed sessions with scope checks such as `infra.read`, `queues.read`,
 `incidents.read`, and `platform.admin`. The DevOps menu includes `/backup` for
-latest R2 backup status, RPO age, artifacts, restore-test results, and open
-backup alerts. Telegram-side self-service commands are `/whoami`, `/security`,
-and `/disconnect`.
+a short R2 backup/RPO card, a signed manual-backup queue action, and an on-demand
+detail card for artifacts, restore-test results, and open backup alerts.
+Telegram-side self-service commands are `/whoami`, `/security`, and
+`/disconnect`.
 
 AI Ops commands use the app internal API and real tenant snapshots:
 

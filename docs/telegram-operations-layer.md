@@ -65,7 +65,7 @@ Every mutation still flows through signed Telegram callback tokens, one-time dat
 The DevOps bot uses `/menu`, `/health`, `/backup`, `/queues`, `/webhook`, and `/incidents` for internal operations only. Its cards are compact and button-first:
 
 - Health: gateway, socket, AI, image, worker, and tenant Telegram health
-- Backup: latest Cloudflare R2 backup, backup age/RPO, artifacts, restore test, and open backup alerts
+- Backup: short RPO/status card, manual backup queue action with signed confirmation, and an on-demand detail card for artifacts, restore tests, and open alerts
 - Queues: top BullMQ backlog and failed/DLQ counts, including `platform.telegram.notifications`
 - Webhook: Telegram webhook status without exposing the webhook secret
 - Incidents: failed queues and platform alerts
