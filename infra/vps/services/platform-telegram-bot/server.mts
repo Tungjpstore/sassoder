@@ -19,6 +19,7 @@ import {
   connectPlatformTelegramAccount,
   confirmPlatformSubscriptionPayment,
   createPlatformSession,
+  getPlatformBackupSnapshot,
   getPendingSubscriptionPayment,
   getPlatformAlertRecipients,
   getPlatformConnectionRecentAudit,
@@ -32,6 +33,7 @@ import {
   revokePlatformConnectionById,
   touchPlatformConnection,
   updatePlatformTenantStatusFromTelegram,
+  type PlatformBackupSnapshot,
   type PlatformSubscriptionPayment,
   type PlatformTenantAction
 } from "./repository.mjs";
@@ -56,6 +58,7 @@ const PLATFORM_MENU_ACTIONS = [
   "tenant.delete.prompt",
   "tenant.delete",
   "health",
+  "backup",
   "queues",
   "queue.failed",
   "queue.retry.prompt",
@@ -116,6 +119,7 @@ if (bot) {
   bot.command("payments", (ctx) => replyWithPayments(ctx));
   bot.command("tenants", (ctx) => replyWithTenants(ctx));
   bot.command("health", (ctx) => replyWithHealth(ctx));
+  bot.command("backup", (ctx) => replyWithBackup(ctx));
   bot.command("queues", (ctx) => replyWithQueues(ctx));
   bot.command("webhook", (ctx) => replyWithWebhook(ctx));
   bot.command("incidents", (ctx) => replyWithIncidents(ctx));
@@ -144,6 +148,10 @@ if (bot) {
 
   bot.catch((error) => {
     logger.error({ error: safeLogError(error.error), updateId: error.ctx.update.update_id }, "platform telegram update failed");
+  });
+
+  configurePlatformCommands().catch((error) => {
+    logger.warn({ error: safeLogError(error) }, "platform telegram command sync failed");
   });
 }
 
@@ -328,12 +336,14 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
     .row()
     .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
-    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
+    .text("Backup", await signedPlatformCallback(connection, "backup"))
     .row()
-    .text("Webhook", await signedPlatformCallback(connection, "webhook"))
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
     .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     .row()
+    .text("Webhook", await signedPlatformCallback(connection, "webhook"))
     .text("Bảo mật", await signedPlatformCallback(connection, "security"))
+    .row()
     .text("Ngắt", await signedPlatformCallback(connection, "disconnect"))
     .row()
     .url("Admin Ops", platformAdminUrl("/ops"))
@@ -366,9 +376,11 @@ async function replyWithHelp(ctx: Context) {
         .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
         .row()
         .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
+        .text("Backup", await signedPlatformCallback(connection, "backup"))
+        .row()
         .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     : new InlineKeyboard().url("Admin Ops", platformAdminUrl("/ops"));
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/backup - trạng thái backup và restore", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -583,6 +595,21 @@ async function replyWithHealth(ctx: Context, preferredConnection?: PlatformTeleg
   await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
 }
 
+async function replyWithBackup(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "infra.read");
+  if (!connection) return;
+  const snapshot = await getPlatformBackupSnapshot();
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "backup"))
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .row()
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply(formatBackupSnapshot(snapshot), { reply_markup: keyboard });
+}
+
 async function replyWithQueues(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
   const connection = await requireConnection(ctx, preferredConnection, "queues.read");
   if (!connection) return;
@@ -785,6 +812,7 @@ async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction
   if (action === "tenant.delete.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "deleted");
   if (action === "tenant.delete") return updateTenantFromTelegram(ctx, connection, payload, "deleted");
   if (action === "health") return replyWithHealth(ctx, connection);
+  if (action === "backup") return replyWithBackup(ctx, connection);
   if (action === "queues") return replyWithQueues(ctx, connection);
   if (action === "queue.failed") return replyWithQueueFailedJobs(ctx, connection, payload);
   if (action === "queue.retry.prompt") return replyWithQueueRetryPrompt(ctx, connection, payload);
@@ -823,7 +851,9 @@ async function signedPlatformCallback(connection: PlatformTelegramConnection, ac
 
 async function platformIncidentKeyboard(connection: PlatformTelegramConnection) {
   return new InlineKeyboard()
+    .text("Backup", await signedPlatformCallback(connection, "backup"))
     .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .row()
     .text("Hàng đợi", await signedPlatformCallback(connection, "queues"));
 }
 
@@ -983,6 +1013,102 @@ function formatTenantDecisionPrompt(actionLabel: string, tenant: PlatformTenantA
   ].filter(Boolean).join("\n");
 }
 
+function formatBackupSnapshot(snapshot: PlatformBackupSnapshot) {
+  if (!snapshot.schemaReady) {
+    return [
+      "Backup",
+      "",
+      `Môi trường: ${snapshot.environment}`,
+      "Trạng thái: chưa có schema backup trên DB này.",
+      ...snapshot.warnings.map((warning) => `- ${warning}`)
+    ].join("\n");
+  }
+
+  const lines = [
+    "Backup",
+    "",
+    `Môi trường: ${snapshot.environment} · RPO ${backupRiskLabel(snapshot.rpoRisk)} · tuổi ${formatBackupAgeHours(snapshot.ageHours)}`,
+    formatBackupJobLine("Mới nhất", snapshot.latestJob),
+    formatBackupJobLine("Thành công", snapshot.lastSuccessfulJob),
+    formatBackupVerificationLine(snapshot.lastSuccessfulJob),
+    formatBackupArtifactLine(snapshot.artifacts),
+    formatBackupRestoreTestLine(snapshot.restoreTest),
+    `Manual chờ: ${snapshot.queuedManualCount}`,
+    ...formatBackupAlertLines(snapshot.openAlerts),
+    ...formatBackupWarningLines(snapshot.warnings)
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+function formatBackupJobLine(label: string, job: PlatformBackupSnapshot["latestJob"]) {
+  if (!job) return `${label}: chưa có dữ liệu`;
+  const time = job.finishedAt ?? job.startedAt ?? job.createdAt;
+  const error = job.errorMessage ? ` · lỗi: ${truncateVisible(job.errorMessage, 80)}` : "";
+  return `${label}: ${job.status} · ${job.backupType}/${job.retentionClass} · ${job.triggerSource} · ${formatShortDate(time)} (${formatAge(time)})${error}`;
+}
+
+function formatBackupVerificationLine(job: PlatformBackupSnapshot["lastSuccessfulJob"]) {
+  if (!job) return "Kiểm tra: chưa có bản backup thành công.";
+  const encrypted = job.encrypted ? "mã hóa có" : "mã hóa thiếu";
+  return `Kiểm tra: checksum ${job.checksumStatus} · verify ${job.verifyStatus} · ${encrypted} · ${formatBytes(job.fileSize)}`;
+}
+
+function formatBackupArtifactLine(artifacts: PlatformBackupSnapshot["artifacts"]) {
+  if (!artifacts.length) return "Artifacts: chưa có dữ liệu artifact.";
+  const visible = artifacts.slice(0, 5).map((artifact) => `${artifact.artifactType}:${artifact.status} ${formatBytes(artifact.fileSize)}`);
+  const overflow = artifacts.length > visible.length ? ` +${artifacts.length - visible.length}` : "";
+  return `Artifacts: ${visible.join("; ")}${overflow}`;
+}
+
+function formatBackupRestoreTestLine(test: PlatformBackupSnapshot["restoreTest"]) {
+  if (!test) return "Restore test: chưa có lần kiểm tra.";
+  const time = test.finishedAt ?? test.startedAt ?? test.createdAt;
+  const checks = [
+    `schema ${booleanCheckLabel(test.schemaVerified)}`,
+    `rows ${booleanCheckLabel(test.rowCountVerified)}`,
+    `critical ${booleanCheckLabel(test.criticalTablesVerified)}`
+  ].join(" · ");
+  const error = test.errorMessage ? ` · lỗi: ${truncateVisible(test.errorMessage, 80)}` : "";
+  return `Restore test: ${test.status} · ${checks} · ${formatShortDate(time)} (${formatAge(time)})${error}`;
+}
+
+function formatBackupAlertLines(alerts: PlatformBackupSnapshot["openAlerts"]) {
+  if (!alerts.length) return ["Cảnh báo: không có alert backup mở."];
+  return ["Cảnh báo:", ...alerts.map((alert) => `- ${alert.severity}/${alert.rpoRisk}: ${truncateVisible(alert.title, 80)} (${formatAge(alert.createdAt)})`)];
+}
+
+function formatBackupWarningLines(warnings: string[]) {
+  return warnings.length ? ["Ghi chú:", ...warnings.map((warning) => `- ${truncateVisible(warning, 100)}`)] : [];
+}
+
+function backupRiskLabel(value: string) {
+  if (value === "low") return "low";
+  if (value === "medium") return "medium";
+  return "high";
+}
+
+function formatBackupAgeHours(value: number | null) {
+  if (!Number.isFinite(value ?? NaN)) return "unknown";
+  return `${(value ?? 0).toFixed((value ?? 0) < 10 ? 1 : 0)}h`;
+}
+
+function booleanCheckLabel(value: boolean) {
+  return value ? "OK" : "FAIL";
+}
+
+function formatBytes(value: number) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let current = bytes / 1024;
+  for (const unit of units) {
+    if (current < 1024 || unit === units[units.length - 1]) return `${current.toFixed(current < 10 ? 1 : 0)} ${unit}`;
+    current /= 1024;
+  }
+  return `${bytes} B`;
+}
+
 function formatPaymentPeriod(payment: PlatformSubscriptionPayment) {
   if (payment.currentPeriodStart || payment.currentPeriodEnd) return `Kỳ hiện tại: ${formatDateRange(payment.currentPeriodStart, payment.currentPeriodEnd)}`;
   if (payment.trialEndsAt) return `Trial đến: ${formatShortDate(payment.trialEndsAt)}`;
@@ -1078,6 +1204,7 @@ async function configurePlatformCommands() {
     { command: "payments", description: "Duyệt gói chủ quán" },
     { command: "tenants", description: "Quản lý quán nhanh" },
     { command: "health", description: "Kiểm tra hệ thống" },
+    { command: "backup", description: "Xem backup và restore" },
     { command: "queues", description: "Kiểm tra việc lỗi" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
     { command: "incidents", description: "Xem sự cố vận hành" },

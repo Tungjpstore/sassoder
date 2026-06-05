@@ -65,6 +65,90 @@ export type PlatformTenantAction = {
   deletedAt: string | null;
 };
 
+type BackupJobStatus = "queued" | "running" | "success" | "warn" | "failed" | "cancelled";
+type BackupRpoRisk = "low" | "medium" | "high";
+
+type BackupJobRow = {
+  id: string;
+  environment: string;
+  backup_type: string;
+  retention_class: string;
+  status: BackupJobStatus;
+  trigger_source: string;
+  triggered_by: string | null;
+  storage_provider: string;
+  storage_bucket: string | null;
+  storage_prefix: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  file_size: number | null;
+  artifact_count: number | null;
+  encrypted: boolean;
+  checksum_status: string;
+  verify_status: string;
+  retention_applied: boolean;
+  error_step: string | null;
+  error_message: string | null;
+  summary: unknown;
+  metadata: unknown;
+  created_at: string;
+};
+
+type BackupArtifactRow = {
+  id: string;
+  job_id: string;
+  artifact_type: string;
+  status: string;
+  storage_bucket: string | null;
+  storage_path: string | null;
+  file_name: string | null;
+  file_size: number | null;
+  encrypted: boolean;
+  created_at: string;
+};
+
+type BackupRestoreTestRow = {
+  id: string;
+  job_id: string | null;
+  environment: string;
+  status: string;
+  schema_verified: boolean;
+  row_count_verified: boolean;
+  critical_tables_verified: boolean;
+  error_message: string | null;
+  verification_summary: unknown;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+};
+
+type BackupAlertRow = {
+  id: string;
+  job_id: string | null;
+  severity: "info" | "warning" | "critical";
+  status: "open" | "acknowledged" | "resolved";
+  title: string;
+  message: string;
+  rpo_risk: BackupRpoRisk;
+  created_at: string;
+};
+
+export type PlatformBackupSnapshot = {
+  schemaReady: boolean;
+  generatedAt: string;
+  environment: string;
+  latestJob: ReturnType<typeof mapBackupJob> | null;
+  lastSuccessfulJob: ReturnType<typeof mapBackupJob> | null;
+  artifacts: ReturnType<typeof mapBackupArtifact>[];
+  restoreTest: ReturnType<typeof mapBackupRestoreTest> | null;
+  openAlerts: ReturnType<typeof mapBackupAlert>[];
+  queuedManualCount: number;
+  ageHours: number | null;
+  rpoRisk: BackupRpoRisk;
+  warnings: string[];
+};
+
 type LegacySubscriptionStatus = "trialing" | "pending_payment" | "active" | "past_due" | "suspended" | "cancelled" | "expired";
 
 type LegacyPlanSnapshot = {
@@ -127,6 +211,79 @@ export async function getPlatformAlertRecipients(requiredScope = "incidents.read
   if (error) throw error;
   const refreshed = await refreshPlatformConnectionsAccess((data ?? []).map(normalizeConnection));
   return refreshed.filter((connection: PlatformTelegramConnection) => hasPlatformScope(connection, requiredScope));
+}
+
+export async function getPlatformBackupSnapshot(): Promise<PlatformBackupSnapshot> {
+  const environment = readEnv("BACKUP_ENVIRONMENT") || readEnv("LOGIVN_ENV") || "prod";
+  const jobSelect = "id,environment,backup_type,retention_class,status,trigger_source,triggered_by,storage_provider,storage_bucket,storage_prefix,started_at,finished_at,duration_ms,file_size,artifact_count,encrypted,checksum_status,verify_status,retention_applied,error_step,error_message,summary,metadata,created_at";
+  const [jobsResult, latestSuccessResult, restoreTestResult, alertsResult, queuedManualResult] = await Promise.all([
+    db()
+      .from("backup_jobs")
+      .select(jobSelect)
+      .eq("environment", environment)
+      .order("created_at", { ascending: false })
+      .limit(6),
+    db()
+      .from("backup_jobs")
+      .select(jobSelect)
+      .eq("environment", environment)
+      .in("status", ["success", "warn"])
+      .order("finished_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    db()
+      .from("backup_restore_tests")
+      .select("id,job_id,environment,status,schema_verified,row_count_verified,critical_tables_verified,error_message,verification_summary,started_at,finished_at,created_at")
+      .eq("environment", environment)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    db()
+      .from("backup_alerts")
+      .select("id,job_id,severity,status,title,message,rpo_risk,created_at")
+      .eq("status", "open")
+      .order("created_at", { ascending: false })
+      .limit(3),
+    db()
+      .from("backup_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("environment", environment)
+      .eq("status", "queued")
+      .eq("trigger_source", "manual")
+  ]);
+
+  const schemaError = [jobsResult.error, latestSuccessResult.error, restoreTestResult.error, alertsResult.error, queuedManualResult.error]
+    .find(isMissingBackupSchema);
+  if (schemaError) return emptyPlatformBackupSnapshot(environment);
+
+  const hardError = jobsResult.error || latestSuccessResult.error || restoreTestResult.error || alertsResult.error || queuedManualResult.error;
+  if (hardError) throw hardError;
+
+  const latestJobs = ((jobsResult.data ?? []) as BackupJobRow[]).map(mapBackupJob);
+  const latestJob = latestJobs[0] ?? null;
+  const lastSuccessfulJob = latestSuccessResult.data ? mapBackupJob(latestSuccessResult.data as BackupJobRow) : null;
+  const artifacts = await getBackupArtifactsForJob(lastSuccessfulJob?.id ?? latestJob?.id ?? null);
+  const openAlerts = ((alertsResult.data ?? []) as BackupAlertRow[]).map(mapBackupAlert);
+  const ageHours = backupHoursSince(lastSuccessfulJob?.finishedAt ?? lastSuccessfulJob?.startedAt);
+
+  return {
+    schemaReady: true,
+    generatedAt: new Date().toISOString(),
+    environment,
+    latestJob,
+    lastSuccessfulJob,
+    artifacts,
+    restoreTest: restoreTestResult.data ? mapBackupRestoreTest(restoreTestResult.data as BackupRestoreTestRow) : null,
+    openAlerts,
+    queuedManualCount: Number(queuedManualResult.count ?? 0),
+    ageHours,
+    rpoRisk: platformBackupRpoRisk({
+      ageHours,
+      latestStatus: latestJob?.status,
+      openCriticalAlerts: openAlerts.filter((alert) => alert.severity === "critical").length
+    }),
+    warnings: []
+  };
 }
 
 export async function claimPlatformConnectionToken(token: string, identity: TelegramIdentity) {
@@ -1041,6 +1198,140 @@ function isMissingOperationalSchema(error: { code?: string; message?: string } |
     error.code === "PGRST205" ||
     /subscription_|restaurant|payment|invoice|billing_|saas_plans|platform_audit_logs/i.test(error.message ?? "")
   );
+}
+
+function isMissingBackupSchema(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return (
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST202" ||
+    error.code === "PGRST204" ||
+    error.code === "PGRST205" ||
+    error.message?.includes("Could not find") ||
+    error.message?.includes("does not exist") ||
+    /backup_(jobs|artifacts|alerts|restore_tests|settings|events)/i.test(error.message ?? "")
+  );
+}
+
+async function getBackupArtifactsForJob(jobId: string | null) {
+  if (!jobId) return [];
+  const { data, error } = await db()
+    .from("backup_artifacts")
+    .select("id,job_id,artifact_type,status,storage_bucket,storage_path,file_name,file_size,encrypted,created_at")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (isMissingBackupSchema(error)) return [];
+  if (error) throw error;
+  return ((data ?? []) as BackupArtifactRow[]).map(mapBackupArtifact);
+}
+
+function emptyPlatformBackupSnapshot(environment: string): PlatformBackupSnapshot {
+  return {
+    schemaReady: false,
+    generatedAt: new Date().toISOString(),
+    environment,
+    latestJob: null,
+    lastSuccessfulJob: null,
+    artifacts: [],
+    restoreTest: null,
+    openAlerts: [],
+    queuedManualCount: 0,
+    ageHours: null,
+    rpoRisk: "high",
+    warnings: ["Cần chạy migration backup_dr_foundation trước khi đọc backup."]
+  };
+}
+
+function mapBackupJob(job: BackupJobRow) {
+  return {
+    id: String(job.id),
+    environment: String(job.environment),
+    backupType: String(job.backup_type),
+    retentionClass: String(job.retention_class),
+    status: job.status,
+    triggerSource: String(job.trigger_source),
+    triggeredBy: job.triggered_by ? String(job.triggered_by) : null,
+    storageProvider: String(job.storage_provider),
+    storageBucket: job.storage_bucket ? String(job.storage_bucket) : null,
+    storagePrefix: job.storage_prefix ? String(job.storage_prefix) : null,
+    startedAt: job.started_at ? String(job.started_at) : null,
+    finishedAt: job.finished_at ? String(job.finished_at) : null,
+    durationMs: Number(job.duration_ms ?? 0),
+    fileSize: Number(job.file_size ?? 0),
+    artifactCount: Number(job.artifact_count ?? 0),
+    encrypted: Boolean(job.encrypted),
+    checksumStatus: String(job.checksum_status ?? "pending"),
+    verifyStatus: String(job.verify_status ?? "pending"),
+    retentionApplied: Boolean(job.retention_applied),
+    errorStep: job.error_step ? String(job.error_step) : null,
+    errorMessage: job.error_message ? String(job.error_message) : null,
+    summary: asRecord(job.summary),
+    metadata: asRecord(job.metadata),
+    createdAt: String(job.created_at)
+  };
+}
+
+function mapBackupArtifact(artifact: BackupArtifactRow) {
+  return {
+    id: String(artifact.id),
+    jobId: String(artifact.job_id),
+    artifactType: String(artifact.artifact_type),
+    status: String(artifact.status),
+    storageBucket: artifact.storage_bucket ? String(artifact.storage_bucket) : null,
+    storagePath: artifact.storage_path ? String(artifact.storage_path) : null,
+    fileName: artifact.file_name ? String(artifact.file_name) : null,
+    fileSize: Number(artifact.file_size ?? 0),
+    encrypted: Boolean(artifact.encrypted),
+    createdAt: String(artifact.created_at)
+  };
+}
+
+function mapBackupRestoreTest(test: BackupRestoreTestRow) {
+  return {
+    id: String(test.id),
+    jobId: test.job_id ? String(test.job_id) : null,
+    environment: String(test.environment),
+    status: String(test.status),
+    schemaVerified: Boolean(test.schema_verified),
+    rowCountVerified: Boolean(test.row_count_verified),
+    criticalTablesVerified: Boolean(test.critical_tables_verified),
+    errorMessage: test.error_message ? String(test.error_message) : null,
+    verificationSummary: asRecord(test.verification_summary),
+    startedAt: test.started_at ? String(test.started_at) : null,
+    finishedAt: test.finished_at ? String(test.finished_at) : null,
+    createdAt: String(test.created_at)
+  };
+}
+
+function mapBackupAlert(alert: BackupAlertRow) {
+  return {
+    id: String(alert.id),
+    jobId: alert.job_id ? String(alert.job_id) : null,
+    severity: alert.severity,
+    status: alert.status,
+    title: String(alert.title),
+    message: String(alert.message),
+    rpoRisk: alert.rpo_risk,
+    createdAt: String(alert.created_at)
+  };
+}
+
+function backupHoursSince(value: string | null | undefined, now = Date.now()) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.round(Math.max(0, now - timestamp) / 36_000) / 100;
+}
+
+function platformBackupRpoRisk(input: { ageHours: number | null; latestStatus?: string | null; openCriticalAlerts?: number }): BackupRpoRisk {
+  if (input.openCriticalAlerts && input.openCriticalAlerts > 0) return "high";
+  if (!Number.isFinite(input.ageHours ?? NaN)) return "high";
+  if (input.latestStatus === "failed") return "high";
+  if ((input.ageHours ?? 999) > 36) return "high";
+  if ((input.ageHours ?? 999) > 26) return "medium";
+  return "low";
 }
 
 function db() {
