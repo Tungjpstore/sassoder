@@ -89,11 +89,11 @@ BACKUP_R2_PREFIX=logivn
 
 ## Supabase Storage Payload
 
-Storage payload export is encrypted and uploaded as `storage_payload` artifacts. It runs for `weekly`, `monthly`, and `manual` backups by default; daily backups still upload the bucket manifest only.
+Storage payload export is encrypted and uploaded as `storage_payload` artifacts. It runs for `daily`, `weekly`, `monthly`, and `manual` backups by default so the daily backup covers Supabase Storage objects as well as the bucket manifest.
 
 ```env
 BACKUP_STORAGE_PAYLOAD_ENABLED=auto
-BACKUP_STORAGE_PAYLOAD_MODES=weekly,monthly,manual
+BACKUP_STORAGE_PAYLOAD_MODES=daily,weekly,monthly,manual
 BACKUP_STORAGE_BUCKETS=
 BACKUP_STORAGE_EXCLUDE_BUCKETS=
 BACKUP_STORAGE_LIST_LIMIT=1000
