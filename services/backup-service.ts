@@ -210,6 +210,17 @@ function mapRestoreTest(test: BackupRestoreTestRow) {
   };
 }
 
+function isBackupDataJob(job: ReturnType<typeof mapJob>) {
+  if (job.backupType === "restore_test" || job.triggerSource === "restore_test") return false;
+  if (job.status === "success" || job.status === "warn") return isCompletedDataBackupJob(job);
+  return true;
+}
+
+function isCompletedDataBackupJob(job: ReturnType<typeof mapJob>) {
+  if (job.backupType === "restore_test" || job.triggerSource === "restore_test") return false;
+  return job.artifactCount > 0 || job.fileSize > 0;
+}
+
 function normalizeRetention(settings: BackupSettingRow[]) {
   const retention = settings.find((row) => row.key === "retention_policy");
   const value = asRecord(retention?.value);
@@ -261,8 +272,7 @@ export async function getBackupHealth(): Promise<BackupHealth> {
       .eq("environment", environment)
       .in("status", ["success", "warn"])
       .order("finished_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(20),
     supabase
       .from("backup_alerts")
       .select("id,job_id,alert_type,severity,status,title,message,rpo_risk,created_at")
@@ -284,13 +294,15 @@ export async function getBackupHealth(): Promise<BackupHealth> {
   if (hardError) throw hardError;
 
   const jobs = ((jobsResult.data ?? []) as BackupJobRow[]).map(mapJob);
-  const latestJob = jobs[0] ?? null;
-  const lastSuccessfulBackup = latestSuccessResult.data ? mapJob(latestSuccessResult.data as BackupJobRow) : null;
+  const latestJob = jobs.find(isBackupDataJob) ?? null;
+  const lastSuccessfulBackup = ((latestSuccessResult.data ?? []) as BackupJobRow[])
+    .map(mapJob)
+    .find(isCompletedDataBackupJob) ?? null;
   const ageHours = hoursSince(lastSuccessfulBackup?.finishedAt ?? lastSuccessfulBackup?.startedAt);
   const openAlerts = ((alertsResult.data ?? []) as BackupAlertRow[]).map(mapAlert);
   const criticalAlerts = openAlerts.filter((alert) => alert.severity === "critical").length;
   const latestStatus = latestJob?.status ?? "missing";
-  const artifactJobId = latestJob?.id ?? lastSuccessfulBackup?.id;
+  const artifactJobId = lastSuccessfulBackup?.id ?? latestJob?.id;
   let artifacts: ReturnType<typeof mapArtifact>[] = [];
 
   if (artifactJobId) {

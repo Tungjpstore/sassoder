@@ -230,15 +230,14 @@ export async function getPlatformBackupSnapshot(): Promise<PlatformBackupSnapsho
       .select(jobSelect)
       .eq("environment", environment)
       .order("created_at", { ascending: false })
-      .limit(6),
+      .limit(20),
     db()
       .from("backup_jobs")
       .select(jobSelect)
       .eq("environment", environment)
       .in("status", ["success", "warn"])
       .order("finished_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .limit(20),
     db()
       .from("backup_restore_tests")
       .select("id,job_id,environment,status,schema_verified,row_count_verified,critical_tables_verified,error_message,verification_summary,started_at,finished_at,created_at")
@@ -267,9 +266,11 @@ export async function getPlatformBackupSnapshot(): Promise<PlatformBackupSnapsho
   const hardError = jobsResult.error || latestSuccessResult.error || restoreTestResult.error || alertsResult.error || queuedManualResult.error;
   if (hardError) throw hardError;
 
-  const latestJobs = ((jobsResult.data ?? []) as BackupJobRow[]).map(mapBackupJob);
+  const latestJobs = ((jobsResult.data ?? []) as BackupJobRow[]).map(mapBackupJob).filter(isBackupDataJob);
   const latestJob = latestJobs[0] ?? null;
-  const lastSuccessfulJob = latestSuccessResult.data ? mapBackupJob(latestSuccessResult.data as BackupJobRow) : null;
+  const lastSuccessfulJob = ((latestSuccessResult.data ?? []) as BackupJobRow[])
+    .map(mapBackupJob)
+    .find(isCompletedDataBackupJob) ?? null;
   const artifacts = await getBackupArtifactsForJob(lastSuccessfulJob?.id ?? latestJob?.id ?? null);
   const openAlerts = ((alertsResult.data ?? []) as BackupAlertRow[]).map(mapBackupAlert);
   const ageHours = backupHoursSince(lastSuccessfulJob?.finishedAt ?? lastSuccessfulJob?.startedAt);
@@ -1410,6 +1411,17 @@ function mapBackupAlert(alert: BackupAlertRow) {
     rpoRisk: alert.rpo_risk,
     createdAt: String(alert.created_at)
   };
+}
+
+function isBackupDataJob(job: ReturnType<typeof mapBackupJob>) {
+  if (job.backupType === "restore_test" || job.triggerSource === "restore_test") return false;
+  if (job.status === "success" || job.status === "warn") return isCompletedDataBackupJob(job);
+  return true;
+}
+
+function isCompletedDataBackupJob(job: ReturnType<typeof mapBackupJob>) {
+  if (job.backupType === "restore_test" || job.triggerSource === "restore_test") return false;
+  return job.artifactCount > 0 || job.fileSize > 0;
 }
 
 function backupHoursSince(value: string | null | undefined, now = Date.now()) {

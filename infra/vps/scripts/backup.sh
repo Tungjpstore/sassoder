@@ -238,16 +238,22 @@ create_job() {
     return 0
   fi
 
+  local backup_type="full"
   local trigger_source="cron"
   local actor="system"
   if [ "$MODE" = "manual" ]; then
     trigger_source="manual"
     actor="$MANUAL_ACTOR"
   fi
+  if [ "$RESTORE_TEST_ONLY" = "true" ]; then
+    backup_type="restore_test"
+    trigger_source="restore_test"
+  fi
 
   local body response id
-  body=$(printf '{"environment":%s,"backup_type":"full","retention_class":%s,"status":"running","trigger_source":%s,"triggered_by":%s,"worker_id":%s,"storage_provider":"cloudflare-r2","storage_bucket":%s,"storage_prefix":%s,"started_at":%s,"encrypted":true,"summary":{"reason":%s,"timezone":%s},"metadata":{"script":"infra/vps/scripts/backup.sh","runId":%s}}' \
+  body=$(printf '{"environment":%s,"backup_type":%s,"retention_class":%s,"status":"running","trigger_source":%s,"triggered_by":%s,"worker_id":%s,"storage_provider":"cloudflare-r2","storage_bucket":%s,"storage_prefix":%s,"started_at":%s,"encrypted":true,"summary":{"reason":%s,"timezone":%s},"metadata":{"script":"infra/vps/scripts/backup.sh","runId":%s}}' \
     "$(json_string "$BACKUP_ENVIRONMENT")" \
+    "$(json_string "$backup_type")" \
     "$(json_string "$RETENTION_CLASS")" \
     "$(json_string "$trigger_source")" \
     "$(json_string "$actor")" \
