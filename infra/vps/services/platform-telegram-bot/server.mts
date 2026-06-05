@@ -28,11 +28,13 @@ import {
   hasPlatformScope,
   listPendingSubscriptionPayments,
   listPlatformTenantActions,
+  queuePlatformManualBackup,
   recordPlatformTelegramAudit,
   rejectPlatformSubscriptionPayment,
   revokePlatformConnectionById,
   touchPlatformConnection,
   updatePlatformTenantStatusFromTelegram,
+  type PlatformBackupQueuedJob,
   type PlatformBackupSnapshot,
   type PlatformSubscriptionPayment,
   type PlatformTenantAction
@@ -59,6 +61,9 @@ const PLATFORM_MENU_ACTIONS = [
   "tenant.delete",
   "health",
   "backup",
+  "backup.detail",
+  "backup.run.prompt",
+  "backup.run",
   "queues",
   "queue.failed",
   "queue.retry.prompt",
@@ -380,7 +385,7 @@ async function replyWithHelp(ctx: Context) {
         .row()
         .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     : new InlineKeyboard().url("Admin Ops", platformAdminUrl("/ops"));
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/backup - trạng thái backup và restore", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/backup - xem và chạy backup", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -599,15 +604,64 @@ async function replyWithBackup(ctx: Context, preferredConnection?: PlatformTeleg
   const connection = await requireConnection(ctx, preferredConnection, "infra.read");
   if (!connection) return;
   const snapshot = await getPlatformBackupSnapshot();
-  const keyboard = new InlineKeyboard()
+  const keyboard = new InlineKeyboard();
+  if (hasPlatformScope(connection, "backup.trigger")) {
+    keyboard.text("Chạy backup", await signedPlatformCallback(connection, "backup.run.prompt"));
+  }
+  keyboard
+    .text("Chi tiết", await signedPlatformCallback(connection, "backup.detail"))
+    .row()
     .text("Làm mới", await signedPlatformCallback(connection, "backup"))
-    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
-    .row()
     .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
-    .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     .row()
+    .text("Sức khỏe", await signedPlatformCallback(connection, "health"))
+    .text("Sự cố", await signedPlatformCallback(connection, "incidents"));
+  await ctx.reply(formatBackupSnapshot(snapshot, "summary"), { reply_markup: keyboard });
+}
+
+async function replyWithBackupDetails(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "infra.read");
+  if (!connection) return;
+  const snapshot = await getPlatformBackupSnapshot();
+  const keyboard = new InlineKeyboard().text("Tóm tắt", await signedPlatformCallback(connection, "backup"));
+  if (hasPlatformScope(connection, "backup.trigger")) {
+    keyboard.text("Chạy backup", await signedPlatformCallback(connection, "backup.run.prompt"));
+  }
+  keyboard
+    .row()
+    .text("Làm mới", await signedPlatformCallback(connection, "backup.detail"))
     .url("Admin Ops", platformAdminUrl("/ops"));
-  await ctx.reply(formatBackupSnapshot(snapshot), { reply_markup: keyboard });
+  await ctx.reply(formatBackupSnapshot(snapshot, "detail"), { reply_markup: keyboard });
+}
+
+async function replyWithBackupRunPrompt(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "backup.trigger");
+  if (!connection) return;
+  const snapshot = await getPlatformBackupSnapshot();
+  const keyboard = new InlineKeyboard()
+    .text("Xác nhận chạy", await signedPlatformCallback(connection, "backup.run"))
+    .text("Hủy", await signedPlatformCallback(connection, "backup"));
+  await ctx.reply(formatBackupRunPrompt(snapshot), { reply_markup: keyboard });
+}
+
+async function queueBackupFromTelegram(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "backup.trigger");
+  if (!connection) return;
+  const job = await queuePlatformManualBackup({ actor: actorForConnection(connection), reason: "Dev Telegram Bot manual backup" });
+  await recordPlatformTelegramAudit({
+    connection,
+    action: "platform.backup.manual.queue",
+    outcome: "accepted",
+    targetType: "backup_job",
+    targetId: job.id,
+    metadata: { environment: job.environment, retentionClass: job.retentionClass, status: job.status }
+  });
+  const keyboard = new InlineKeyboard()
+    .text("Theo dõi", await signedPlatformCallback(connection, "backup"))
+    .text("Hàng đợi", await signedPlatformCallback(connection, "queues"))
+    .row()
+    .text("Chi tiết", await signedPlatformCallback(connection, "backup.detail"));
+  await ctx.reply(formatBackupQueuedJob(job), { reply_markup: keyboard });
 }
 
 async function replyWithQueues(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -813,6 +867,9 @@ async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction
   if (action === "tenant.delete") return updateTenantFromTelegram(ctx, connection, payload, "deleted");
   if (action === "health") return replyWithHealth(ctx, connection);
   if (action === "backup") return replyWithBackup(ctx, connection);
+  if (action === "backup.detail") return replyWithBackupDetails(ctx, connection);
+  if (action === "backup.run.prompt") return replyWithBackupRunPrompt(ctx, connection);
+  if (action === "backup.run") return queueBackupFromTelegram(ctx, connection);
   if (action === "queues") return replyWithQueues(ctx, connection);
   if (action === "queue.failed") return replyWithQueueFailedJobs(ctx, connection, payload);
   if (action === "queue.retry.prompt") return replyWithQueueRetryPrompt(ctx, connection, payload);
@@ -1013,21 +1070,39 @@ function formatTenantDecisionPrompt(actionLabel: string, tenant: PlatformTenantA
   ].filter(Boolean).join("\n");
 }
 
-function formatBackupSnapshot(snapshot: PlatformBackupSnapshot) {
+function formatBackupSnapshot(snapshot: PlatformBackupSnapshot, mode: "summary" | "detail" = "summary") {
   if (!snapshot.schemaReady) {
     return [
       "Backup",
       "",
+      "Trạng thái: chưa sẵn sàng",
       `Môi trường: ${snapshot.environment}`,
-      "Trạng thái: chưa có schema backup trên DB này.",
       ...snapshot.warnings.map((warning) => `- ${warning}`)
     ].join("\n");
   }
 
+  if (mode === "detail") return formatBackupDetailSnapshot(snapshot);
+
+  const latest = snapshot.latestJob;
+  const active = latest?.status === "queued" || latest?.status === "running";
   const lines = [
-    "Backup",
+    `Backup: ${backupStateLabel(snapshot)}`,
+    `Lần thành công: ${formatBackupSuccessSummary(snapshot.lastSuccessfulJob)}`,
+    `Restore test: ${formatBackupRestoreSummary(snapshot.restoreTest)}`,
+    `RPO: ${backupRiskLabel(snapshot.rpoRisk)} · tuổi ${formatBackupAgeHours(snapshot.ageHours)}`,
+    active ? `Đang xử lý: ${latest.status} · ${shortId(latest.id)} · ${formatAge(latest.createdAt)}` : null,
+    snapshot.queuedManualCount > 0 ? `Manual chờ: ${snapshot.queuedManualCount}` : null,
+    `Cảnh báo mở: ${formatBackupAlertSummary(snapshot.openAlerts)}`
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+function formatBackupDetailSnapshot(snapshot: PlatformBackupSnapshot) {
+  const lines = [
+    `Backup chi tiết · ${snapshot.environment}`,
     "",
-    `Môi trường: ${snapshot.environment} · RPO ${backupRiskLabel(snapshot.rpoRisk)} · tuổi ${formatBackupAgeHours(snapshot.ageHours)}`,
+    `Trạng thái: ${backupStateLabel(snapshot)} · RPO ${backupRiskLabel(snapshot.rpoRisk)} · tuổi ${formatBackupAgeHours(snapshot.ageHours)}`,
     formatBackupJobLine("Mới nhất", snapshot.latestJob),
     formatBackupJobLine("Thành công", snapshot.lastSuccessfulJob),
     formatBackupVerificationLine(snapshot.lastSuccessfulJob),
@@ -1037,8 +1112,64 @@ function formatBackupSnapshot(snapshot: PlatformBackupSnapshot) {
     ...formatBackupAlertLines(snapshot.openAlerts),
     ...formatBackupWarningLines(snapshot.warnings)
   ].filter(Boolean);
-
   return lines.join("\n");
+}
+
+function formatBackupRunPrompt(snapshot: PlatformBackupSnapshot) {
+  return [
+    "Chạy backup thủ công?",
+    "",
+    `Môi trường: ${snapshot.environment}`,
+    `Hiện tại: ${backupStateLabel(snapshot)} · RPO ${backupRiskLabel(snapshot.rpoRisk)}`,
+    `Lần thành công: ${formatBackupSuccessSummary(snapshot.lastSuccessfulJob)}`,
+    "",
+    "Sau khi xác nhận, VPS sẽ nhận job manual qua cron claim và upload bản backup mới lên R2."
+  ].join("\n");
+}
+
+function formatBackupQueuedJob(job: PlatformBackupQueuedJob) {
+  return [
+    "Đã xếp hàng backup",
+    "",
+    `Job: ${shortId(job.id)} · ${job.environment}`,
+    `Loại: ${job.retentionClass} · ${job.status}`,
+    `Tạo: ${formatShortDate(job.createdAt)} (${formatAge(job.createdAt)})`,
+    "VPS sẽ tự nhận job trong lượt cron manual kế tiếp."
+  ].join("\n");
+}
+
+function backupStateLabel(snapshot: PlatformBackupSnapshot) {
+  const latestStatus = snapshot.latestJob?.status;
+  if (latestStatus === "queued") return "Đang chờ";
+  if (latestStatus === "running") return "Đang chạy";
+  if (snapshot.openAlerts.some((alert) => alert.severity === "critical")) return "Cần xử lý";
+  if (snapshot.rpoRisk === "high") return "Cần xử lý";
+  if (snapshot.rpoRisk === "medium") return "Theo dõi";
+  if (latestStatus === "failed") return "Cần xử lý";
+  if (latestStatus === "warn") return "Theo dõi";
+  return "Ổn";
+}
+
+function formatBackupSuccessSummary(job: PlatformBackupSnapshot["lastSuccessfulJob"]) {
+  if (!job) return "chưa có";
+  const time = job.finishedAt ?? job.startedAt ?? job.createdAt;
+  return `${formatShortDate(time)} · ${formatAge(time)} · ${formatBytes(job.fileSize)}`;
+}
+
+function formatBackupRestoreSummary(test: PlatformBackupSnapshot["restoreTest"]) {
+  if (!test) return "chưa có";
+  const time = test.finishedAt ?? test.startedAt ?? test.createdAt;
+  const checksOk = test.schemaVerified && test.rowCountVerified && test.criticalTablesVerified;
+  return `${test.status}${checksOk ? " OK" : " cần xem"} · ${formatAge(time)}`;
+}
+
+function formatBackupAlertSummary(alerts: PlatformBackupSnapshot["openAlerts"]) {
+  if (!alerts.length) return "0";
+  const critical = alerts.filter((alert) => alert.severity === "critical").length;
+  const warning = alerts.filter((alert) => alert.severity === "warning").length;
+  return [critical ? `${critical} critical` : null, warning ? `${warning} warning` : null, alerts.length > critical + warning ? `${alerts.length - critical - warning} info` : null]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function formatBackupJobLine(label: string, job: PlatformBackupSnapshot["latestJob"]) {
@@ -1075,7 +1206,21 @@ function formatBackupRestoreTestLine(test: PlatformBackupSnapshot["restoreTest"]
 
 function formatBackupAlertLines(alerts: PlatformBackupSnapshot["openAlerts"]) {
   if (!alerts.length) return ["Cảnh báo: không có alert backup mở."];
-  return ["Cảnh báo:", ...alerts.map((alert) => `- ${alert.severity}/${alert.rpoRisk}: ${truncateVisible(alert.title, 80)} (${formatAge(alert.createdAt)})`)];
+  const unique = dedupeBackupAlerts(alerts).slice(0, 3);
+  const overflow = alerts.length > unique.length ? [`- còn ${alerts.length - unique.length} alert tương tự`] : [];
+  return ["Cảnh báo:", ...unique.map((alert) => `- ${alert.severity}/${alert.rpoRisk}: ${truncateVisible(alert.title, 80)} (${formatAge(alert.createdAt)})`), ...overflow];
+}
+
+function dedupeBackupAlerts(alerts: PlatformBackupSnapshot["openAlerts"]) {
+  const seen = new Set<string>();
+  const rows: PlatformBackupSnapshot["openAlerts"] = [];
+  for (const alert of alerts) {
+    const key = `${alert.severity}:${alert.rpoRisk}:${alert.title}:${alert.message}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(alert);
+  }
+  return rows;
 }
 
 function formatBackupWarningLines(warnings: string[]) {
@@ -1204,7 +1349,7 @@ async function configurePlatformCommands() {
     { command: "payments", description: "Duyệt gói chủ quán" },
     { command: "tenants", description: "Quản lý quán nhanh" },
     { command: "health", description: "Kiểm tra hệ thống" },
-    { command: "backup", description: "Xem backup và restore" },
+    { command: "backup", description: "Xem và chạy backup" },
     { command: "queues", description: "Kiểm tra việc lỗi" },
     { command: "webhook", description: "Kiểm tra webhook bot" },
     { command: "incidents", description: "Xem sự cố vận hành" },
@@ -1363,6 +1508,7 @@ function friendlyPlatformError(error: unknown) {
   if (message.includes("authorized")) return "Tài khoản chưa được cấp quyền DevOps Bot.";
   if (message.includes("scope")) return "Bạn chưa có scope cho thao tác này.";
   if (message.includes("queue") || message.includes("dead_letter")) return "Queue job không còn retry được. Mở Hàng đợi để tải lại.";
+  if (message.includes("backup")) return "Không xử lý được backup. Mở Backup để tải lại trạng thái.";
   if (message.includes("payment")) return "Giao dịch không còn ở trạng thái chờ xử lý.";
   if (message.includes("tenant")) return "Không xử lý được tenant này.";
   if (message.includes("downgrade")) return "Downgrade cần xử lý trong Admin Billing.";

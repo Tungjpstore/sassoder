@@ -149,6 +149,14 @@ export type PlatformBackupSnapshot = {
   warnings: string[];
 };
 
+export type PlatformBackupQueuedJob = {
+  id: string;
+  environment: string;
+  retentionClass: string;
+  status: BackupJobStatus;
+  createdAt: string;
+};
+
 type LegacySubscriptionStatus = "trialing" | "pending_payment" | "active" | "past_due" | "suspended" | "cancelled" | "expired";
 
 type LegacyPlanSnapshot = {
@@ -214,7 +222,7 @@ export async function getPlatformAlertRecipients(requiredScope = "incidents.read
 }
 
 export async function getPlatformBackupSnapshot(): Promise<PlatformBackupSnapshot> {
-  const environment = readEnv("BACKUP_ENVIRONMENT") || readEnv("LOGIVN_ENV") || "prod";
+  const environment = await resolveBackupEnvironment(readEnv("BACKUP_ENVIRONMENT") || readEnv("LOGIVN_ENV") || "prod");
   const jobSelect = "id,environment,backup_type,retention_class,status,trigger_source,triggered_by,storage_provider,storage_bucket,storage_prefix,started_at,finished_at,duration_ms,file_size,artifact_count,encrypted,checksum_status,verify_status,retention_applied,error_step,error_message,summary,metadata,created_at";
   const [jobsResult, latestSuccessResult, restoreTestResult, alertsResult, queuedManualResult] = await Promise.all([
     db()
@@ -283,6 +291,58 @@ export async function getPlatformBackupSnapshot(): Promise<PlatformBackupSnapsho
       openCriticalAlerts: openAlerts.filter((alert) => alert.severity === "critical").length
     }),
     warnings: []
+  };
+}
+
+export async function queuePlatformManualBackup(input: { actor: string; reason?: string | null }): Promise<PlatformBackupQueuedJob> {
+  const environment = await resolveBackupEnvironment(readEnv("BACKUP_ENVIRONMENT") || readEnv("LOGIVN_ENV") || "prod");
+  const reason = input.reason?.trim() || "manual backup requested from Dev Telegram bot";
+  const now = new Date().toISOString();
+  const { data, error } = await db()
+    .from("backup_jobs")
+    .insert({
+      environment,
+      backup_type: "full",
+      retention_class: "manual",
+      status: "queued",
+      trigger_source: "manual",
+      triggered_by: input.actor,
+      storage_provider: "cloudflare-r2",
+      storage_bucket: readEnv("R2_BUCKET", "logivn-backups"),
+      storage_prefix: `${readEnv("BACKUP_R2_PREFIX", "logivn")}/${environment}`,
+      encrypted: true,
+      checksum_status: "pending",
+      verify_status: "pending",
+      summary: { reason },
+      metadata: {
+        source: "platform-telegram-bot",
+        queuedAt: now,
+        executor: "infra/vps/scripts/backup.sh --claim-manual"
+      }
+    })
+    .select("id,environment,retention_class,status,created_at")
+    .maybeSingle();
+  if (isMissingBackupSchema(error)) throw new Error("backup_schema_missing");
+  if (error) throw error;
+  if (!data) throw new Error("backup_manual_queue_failed");
+
+  await db().from("backup_events").insert({
+    job_id: data.id,
+    event_type: "manual_backup_queued",
+    severity: "info",
+    step: "telegram_manual_trigger",
+    message: reason,
+    metadata: { actor: input.actor, source: "platform-telegram-bot" }
+  }).then(({ error }: { error: { code?: string; message?: string } | null }) => {
+    if (error && !isMissingBackupSchema(error)) throw error;
+  });
+
+  return {
+    id: String(data.id),
+    environment: String(data.environment),
+    retentionClass: String(data.retention_class),
+    status: data.status as BackupJobStatus,
+    createdAt: String(data.created_at)
   };
 }
 
@@ -868,8 +928,8 @@ function normalizeAdminRole(value: unknown): PlatformAdminRole {
 }
 
 function platformTelegramAccessForAdminRole(role: PlatformAdminRole): { telegramRole: PlatformTelegramRole; scopes: string[] } {
-  if (role === "owner") return { telegramRole: "ADMIN", scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"] };
-  if (role === "ops") return { telegramRole: "SRE", scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"] };
+  if (role === "owner") return { telegramRole: "ADMIN", scopes: ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"] };
+  if (role === "ops") return { telegramRole: "SRE", scopes: ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"] };
   if (role === "billing") return { telegramRole: "DEV", scopes: ["billing.approve", "tenants.read"] };
   if (role === "support") return { telegramRole: "SUPPORT", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"] };
   return { telegramRole: "DEV", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read"] };
@@ -901,8 +961,8 @@ async function consumePlatformSession(id: string) {
 
 function defaultScopes(role: PlatformTelegramRole) {
   if (role === "SUPPORT") return ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"];
-  if (role === "SRE") return ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.manage"];
-  if (role === "ADMIN") return ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.manage"];
+  if (role === "SRE") return ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.manage"];
+  if (role === "ADMIN") return ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.manage"];
   return ["infra.read", "queues.read", "incidents.read", "deploy.read"];
 }
 
@@ -1212,6 +1272,40 @@ function isMissingBackupSchema(error: { code?: string; message?: string } | null
     error.message?.includes("does not exist") ||
     /backup_(jobs|artifacts|alerts|restore_tests|settings|events)/i.test(error.message ?? "")
   );
+}
+
+async function resolveBackupEnvironment(preferred: string) {
+  const normalized = preferred.trim() || "prod";
+  const current = await db()
+    .from("backup_jobs")
+    .select("id")
+    .eq("environment", normalized)
+    .limit(1)
+    .maybeSingle();
+  if (isMissingBackupSchema(current.error)) return normalized;
+  if (current.error) throw current.error;
+  if (current.data) return normalized;
+
+  const latestJob = await db()
+    .from("backup_jobs")
+    .select("environment")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (isMissingBackupSchema(latestJob.error)) return normalized;
+  if (latestJob.error) throw latestJob.error;
+  const environment = stringField(latestJob.data as Record<string, unknown> | null, "environment");
+  if (environment) return environment;
+
+  const latestRestore = await db()
+    .from("backup_restore_tests")
+    .select("environment")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (isMissingBackupSchema(latestRestore.error)) return normalized;
+  if (latestRestore.error) throw latestRestore.error;
+  return stringField(latestRestore.data as Record<string, unknown> | null, "environment") ?? normalized;
 }
 
 async function getBackupArtifactsForJob(jobId: string | null) {
