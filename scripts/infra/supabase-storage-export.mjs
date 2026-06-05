@@ -4,7 +4,6 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createClient } from "@supabase/supabase-js";
 
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 1) {
@@ -38,10 +37,6 @@ if (!supabaseUrl || !serviceRoleKey) {
   throw new Error("SUPABASE_URL/NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
 }
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: { persistSession: false, autoRefreshToken: false }
-});
-
 const manifest = {
   schemaVersion: "logivn.supabase-storage-export.v1",
   capturedAt: new Date().toISOString(),
@@ -66,8 +61,7 @@ const manifest = {
 
 await mkdir(outputDir, { recursive: true });
 
-const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
-if (bucketError) throw bucketError;
+const buckets = await storageJson("bucket");
 
 for (const bucket of buckets ?? []) {
   if (includeBuckets.size && !includeBuckets.has(bucket.name)) continue;
@@ -86,24 +80,26 @@ for (const bucket of buckets ?? []) {
   manifest.buckets.push(bucketManifest);
   manifest.totals.buckets += 1;
 
-  await exportFolder({ bucketName: bucket.name, prefix: "", bucketManifest });
+  await exportFolder({ bucketId: bucket.id || bucket.name, bucketName: bucket.name, prefix: "", bucketManifest });
 }
 
 await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 process.stdout.write(JSON.stringify(manifest.totals));
 
-async function exportFolder({ bucketName, prefix, bucketManifest }) {
+async function exportFolder({ bucketId, bucketName, prefix, bucketManifest }) {
   let offset = 0;
 
   while (true) {
-    const { data, error } = await supabase.storage.from(bucketName).list(prefix, {
-      limit,
-      offset,
-      sortBy: { column: "name", order: "asc" }
+    const rows = await storageJson(`object/list/${encodeURIComponent(bucketId)}`, {
+      method: "POST",
+      body: {
+        prefix,
+        limit,
+        offset,
+        sortBy: { column: "name", order: "asc" }
+      }
     });
 
-    if (error) throw error;
-    const rows = data ?? [];
     if (!rows.length) return;
 
     for (const item of rows) {
@@ -112,7 +108,7 @@ async function exportFolder({ bucketName, prefix, bucketManifest }) {
       const isFolder = !item.id && !item.metadata?.size && !item.updated_at;
 
       if (isFolder) {
-        await exportFolder({ bucketName, prefix: objectPath, bucketManifest });
+        await exportFolder({ bucketId, bucketName, prefix: objectPath, bucketManifest });
         continue;
       }
 
@@ -122,6 +118,27 @@ async function exportFolder({ bucketName, prefix, bucketManifest }) {
     offset += rows.length;
     if (rows.length < limit) return;
   }
+}
+
+async function storageJson(path, options = {}) {
+  const response = await fetch(`${supabaseUrl.replace(/\/$/, "")}/storage/v1/${path}`, {
+    method: options.method || "GET",
+    headers: {
+      apikey: serviceRoleKey,
+      authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json"
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Supabase Storage ${path} failed with HTTP ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  if (!text.trim()) return [];
+  const parsed = JSON.parse(text);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 async function exportObject({ bucketName, objectPath, item, bucketManifest }) {
