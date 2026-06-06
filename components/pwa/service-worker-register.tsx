@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, RefreshCw, WifiOff, X } from "lucide-react";
+import { resolvePwaConnectivity } from "@/lib/pwa/network-status";
+
+const NETWORK_PROBE_TIMEOUT_MS = 3500;
+const NETWORK_RECHECK_MS = 15_000;
 
 export function ServiceWorkerRegister() {
   const registrationRef = useRef<ServiceWorkerRegistration | null>(null);
@@ -10,13 +14,15 @@ export function ServiceWorkerRegister() {
   const reconnectTimerRef = useRef<number | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
   const [reloading, setReloading] = useState(false);
-  const [offline, setOffline] = useState(() => (typeof navigator === "undefined" ? false : !navigator.onLine));
+  const [offline, setOffline] = useState(false);
   const [reconnected, setReconnected] = useState(false);
   const [offlineDismissed, setOfflineDismissed] = useState(false);
 
   useEffect(() => {
     if (typeof navigator === "undefined") return;
-    wasOfflineRef.current = !navigator.onLine;
+
+    let cancelled = false;
+    let networkProbeVersion = 0;
 
     const clearReconnectTimer = () => {
       if (reconnectTimerRef.current === null) return;
@@ -24,17 +30,8 @@ export function ServiceWorkerRegister() {
       reconnectTimerRef.current = null;
     };
 
-    const updateNetworkState = () => {
-      const isOffline = !navigator.onLine;
-      setOffline(isOffline);
-
-      if (isOffline) {
-        wasOfflineRef.current = true;
-        setReconnected(false);
-        clearReconnectTimer();
-        return;
-      }
-
+    const markOnline = () => {
+      setOffline(false);
       setOfflineDismissed(false);
       if (wasOfflineRef.current) {
         setReconnected(true);
@@ -44,13 +41,64 @@ export function ServiceWorkerRegister() {
       }
     };
 
-    window.addEventListener("online", updateNetworkState);
-    window.addEventListener("offline", updateNetworkState);
+    const markOffline = () => {
+      setOffline(true);
+      wasOfflineRef.current = true;
+      setReconnected(false);
+      clearReconnectTimer();
+    };
+
+    const verifyNetworkState = async () => {
+      const probeVersion = (networkProbeVersion += 1);
+      const browserOnline = navigator.onLine;
+      if (resolvePwaConnectivity({ browserOnline }) === "online") {
+        markOnline();
+        return;
+      }
+
+      const sameOriginReachable = await probeSameOriginHealth();
+      if (cancelled || probeVersion !== networkProbeVersion) return;
+
+      const connectivity = resolvePwaConnectivity({ browserOnline, sameOriginReachable });
+      if (connectivity === "offline") {
+        markOffline();
+        return;
+      }
+
+      markOnline();
+    };
+
+    const handleOnline = () => {
+      networkProbeVersion += 1;
+      markOnline();
+    };
+    const handleOffline = () => {
+      void verifyNetworkState();
+    };
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      void verifyNetworkState();
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    const recheckInterval = window.setInterval(() => {
+      if (!navigator.onLine || wasOfflineRef.current) void verifyNetworkState();
+    }, NETWORK_RECHECK_MS);
+
+    void verifyNetworkState();
 
     return () => {
+      cancelled = true;
+      window.clearInterval(recheckInterval);
       clearReconnectTimer();
-      window.removeEventListener("online", updateNetworkState);
-      window.removeEventListener("offline", updateNetworkState);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, []);
 
@@ -158,4 +206,22 @@ export function ServiceWorkerRegister() {
       ) : null}
     </div>
   );
+}
+
+async function probeSameOriginHealth() {
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  const timeout = controller ? window.setTimeout(() => controller.abort(), NETWORK_PROBE_TIMEOUT_MS) : null;
+
+  try {
+    await fetch(`/api/health?pwaNetworkProbe=${Date.now()}`, {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller?.signal
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (timeout !== null) window.clearTimeout(timeout);
+  }
 }
