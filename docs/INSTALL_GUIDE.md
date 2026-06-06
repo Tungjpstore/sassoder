@@ -27,9 +27,19 @@ logivn:pwa-install-dismissed
 
 This only controls the install CTA state. It does not disable the service worker, clear caches, or affect login/session behavior.
 
+## Notification Boundary
+
+Installed PWA users can enable Web Push from the dashboard after login. Push is permission-based and platform-dependent:
+
+- Chromium/Edge/Android can receive background notifications after permission is granted.
+- iOS/iPadOS requires the LogiVN web app to be added to Home Screen before Web Push is available.
+- Clicking a push notification only opens safe first-party LogiVN app routes.
+
+Web Push does not make install automatic and does not bypass browser permission prompts.
+
 ## Security Boundary
 
-The install center is public UI only. It does not expand offline caching, dashboard caching, API caching, Web Push, Background Sync, staff attendance sync, payments, reservations, or order mutation behavior.
+The install center is public UI only. It does not expand offline caching, dashboard caching, API caching, Background Sync, staff attendance sync, payments, reservations, or order mutation behavior.
 
 ## One-Click Install Boundary
 

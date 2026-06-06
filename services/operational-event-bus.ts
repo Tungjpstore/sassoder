@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { sendOperationalEventPush } from "@/services/push-notification-service";
 
 type BaseOperationalEvent = {
   eventId: string;
@@ -398,6 +399,13 @@ export async function publishOperationalEvent(event: OperationalEvent): Promise<
     occurredAt: event.occurredAt ?? new Date().toISOString()
   };
   const outbox = await recordOperationalOutbox(eventRecord);
+  await sendOperationalEventPush(eventRecord).catch((error) => {
+    console.error("[operational-event-bus] pwa push failed", {
+      eventId: eventRecord.eventId,
+      type: eventRecord.type,
+      error
+    });
+  });
   const gatewayUrl = internalGatewayUrl();
   const internalKey = process.env.LOGIVN_INTERNAL_API_KEY;
   if (!gatewayUrl || !internalKey) {

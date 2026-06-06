@@ -77,6 +77,7 @@ import type {
   StaffOpsAttendanceFeedItem,
   StaffOpsBranchSummary,
   StaffOpsMember,
+  StaffOpsNotification,
   StaffOpsRoleSummary,
   StaffOpsShiftAssignment,
   StaffOpsShiftTemplate
@@ -140,6 +141,17 @@ function formatDate(value: string | null | undefined) {
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "--";
   return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function formatNotificationTime(value: string | null | undefined) {
+  if (!value) return "--";
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return "--";
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - time.getTime()) / 60_000));
+  if (diffMinutes < 1) return "Vừa xong";
+  if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+  if (diffMinutes < 24 * 60) return `${Math.floor(diffMinutes / 60)} giờ trước`;
+  return formatDateTime(value);
 }
 
 function dateTimeLocalValue(value: string | null | undefined) {
@@ -531,6 +543,8 @@ export function StaffRedesignWorkspace({ bundle, restaurantId, restaurantName, r
   const [createdCredentials, setCreatedCredentials] = useState<{ employeeCode?: string | null; temporaryPassword?: string | null } | null>(null);
   const [search, setSearch] = useState("");
   const [operationMessage, setOperationMessage] = useState<{ tone: "success" | "warning"; text: string } | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [markingNotificationId, setMarkingNotificationId] = useState<string | "all" | null>(null);
   const createdMember = createdStaffUserId ? bundle.members.find((member) => member.userId === createdStaffUserId) ?? null : null;
   const selectedMember = bundle.members.find((member) => member.id === selectedMemberId) ?? createdMember ?? bundle.members[0] ?? null;
 
@@ -546,17 +560,20 @@ export function StaffRedesignWorkspace({ bundle, restaurantId, restaurantName, r
     setActiveView("detail");
   }
 
-  async function markNotificationsRead() {
+  async function markNotificationRead(notificationId?: string) {
     if (!bundle.unreadNotificationCount) {
       setOperationMessage({ tone: "success", text: "Không có thông báo mới." });
       return;
     }
     try {
-      await markStaffNotificationRead({ all: true });
+      setMarkingNotificationId(notificationId ?? "all");
+      await markStaffNotificationRead(notificationId ? { notificationId } : { all: true });
       setOperationMessage({ tone: "success", text: "Đã đánh dấu thông báo là đã đọc." });
       router.refresh();
     } catch (error) {
       setOperationMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể cập nhật thông báo." });
+    } finally {
+      setMarkingNotificationId(null);
     }
   }
 
@@ -566,8 +583,18 @@ export function StaffRedesignWorkspace({ bundle, restaurantId, restaurantName, r
     <main className="staff-brand-page dashboard-density text-[#2B2B2B]">
       <DesktopSidebar activeView={lastPrimaryView} onNavigate={openView} />
       <section className="min-h-screen lg:pl-72">
-        <TopBar title={pageTitle} restaurantName={restaurantName} search={search} onSearch={setSearch} onAdd={() => openView("add")} unreadCount={bundle.unreadNotificationCount} onNotifications={markNotificationsRead} />
-        <MobileHeader title={pageTitle} onAdd={() => openView("add")} unreadCount={bundle.unreadNotificationCount} onNotifications={markNotificationsRead} />
+        <TopBar title={pageTitle} restaurantName={restaurantName} search={search} onSearch={setSearch} onAdd={() => openView("add")} unreadCount={bundle.unreadNotificationCount} onNotifications={() => setNotificationsOpen((open) => !open)} />
+        <MobileHeader title={pageTitle} onAdd={() => openView("add")} unreadCount={bundle.unreadNotificationCount} onNotifications={() => setNotificationsOpen((open) => !open)} />
+        {notificationsOpen ? (
+          <StaffNotificationPanel
+            notifications={bundle.notifications.slice(0, 12)}
+            unreadCount={bundle.unreadNotificationCount}
+            markingNotificationId={markingNotificationId}
+            onClose={() => setNotificationsOpen(false)}
+            onMarkAll={() => markNotificationRead()}
+            onMarkOne={(notificationId) => markNotificationRead(notificationId)}
+          />
+        ) : null}
         <div className="mx-auto w-full max-w-[1280px] px-5 pb-28 pt-6 sm:px-7 lg:px-8 lg:pb-10 lg:pt-8">
           <OperationNotice message={operationMessage} />
           {activeView === "staff" ? <StaffListScreen bundle={bundle} search={search} onSearch={setSearch} onOpenMember={openMember} onAdd={() => openView("add")} onNavigate={openView} /> : null}
@@ -659,7 +686,7 @@ function TopBar({
       <div className="flex items-center gap-3">
         <StaffButton onClick={onAdd} className="min-w-[154px]"><Plus size={17} /> Thêm nhân viên</StaffButton>
         <span className="h-8 w-px bg-[#D8D1C7]" />
-        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={20} />{unreadCount ? <span className="absolute mt-[-20px] ml-[16px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
+        <IconButton label={unreadCount ? `Mở ${unreadCount} thông báo mới` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={20} />{unreadCount ? <span className="absolute mt-[-20px] ml-[16px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
         <span className="grid h-10 w-10 place-items-center rounded-full bg-[#0F4D3A] text-sm font-black text-white ring-2 ring-[#D8D1C7]">{restaurantName.charAt(0).toUpperCase()}</span>
       </div>
     </header>
@@ -674,9 +701,85 @@ function MobileHeader({ title, onAdd, unreadCount, onNotifications }: { title: s
       </div>
       <div className="flex items-center gap-1">
         <IconButton label="Thêm nhân viên" onClick={onAdd} className="border-transparent bg-transparent"><Plus size={22} /></IconButton>
-        <IconButton label={unreadCount ? `Đánh dấu ${unreadCount} thông báo đã đọc` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={22} />{unreadCount ? <span className="absolute mt-[-22px] ml-[18px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
+        <IconButton label={unreadCount ? `Mở ${unreadCount} thông báo mới` : "Thông báo"} onClick={onNotifications} className="border-transparent bg-transparent"><Bell size={22} />{unreadCount ? <span className="absolute mt-[-22px] ml-[18px] h-2.5 w-2.5 rounded-full bg-[#F28C28]" /> : null}</IconButton>
       </div>
     </header>
+  );
+}
+
+function StaffNotificationPanel({
+  notifications,
+  unreadCount,
+  markingNotificationId,
+  onClose,
+  onMarkAll,
+  onMarkOne
+}: {
+  notifications: StaffOpsNotification[];
+  unreadCount: number;
+  markingNotificationId: string | "all" | null;
+  onClose: () => void;
+  onMarkAll: () => void;
+  onMarkOne: (notificationId: string) => void;
+}) {
+  return (
+    <aside className="fixed inset-x-3 top-[72px] z-50 mx-auto max-w-[420px] rounded-xl border border-[#D8D1C7] bg-[#FFFCF6] p-3 text-[#2B2B2B] shadow-[0_24px_60px_rgba(43,43,43,0.18)] lg:left-auto lg:right-8 lg:top-20 lg:mx-0" aria-label="Thông báo nhân sự">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Thông báo</p>
+          <h2 className="mt-1 text-lg font-black leading-none text-[#2B2B2B]">{unreadCount ? `${unreadCount} chưa đọc` : "Đã cập nhật"}</h2>
+        </div>
+        <div className="flex items-center gap-1">
+          {unreadCount ? (
+            <button type="button" onClick={onMarkAll} disabled={markingNotificationId !== null} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#D8D1C7] bg-white px-2.5 text-xs font-black text-[#0F4D3A]">
+              <CheckCircle2 size={14} aria-hidden="true" />
+              Đọc hết
+            </button>
+          ) : null}
+          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-lg text-[#5E5A54]" aria-label="Đóng thông báo">
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid max-h-[min(64vh,520px)] gap-2 overflow-y-auto pr-1">
+        {notifications.map((notification) => {
+          const unread = notification.status === "unread";
+          const item = (
+            <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] gap-3">
+              <span className={cn("grid h-10 w-10 place-items-center rounded-lg border", unread ? "border-[#F28C28]/30 bg-[#FFF1DF] text-[#A85B14]" : "border-[#D8D1C7] bg-white text-[#5E5A54]")}>
+                <Bell size={17} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 text-left">
+                <span className="block truncate text-sm font-black text-[#2B2B2B]">{notification.title}</span>
+                {notification.body ? <span className="mt-1 block line-clamp-2 text-xs font-semibold leading-5 text-[#5E5A54]">{notification.body}</span> : null}
+                <span className="mt-1 block text-[11px] font-bold text-[#837B70]">{formatNotificationTime(notification.createdAt)}</span>
+              </span>
+              {notification.actionUrl ? <ChevronRight className="mt-3 text-[#837B70]" size={16} aria-hidden="true" /> : null}
+            </span>
+          );
+
+          return notification.actionUrl ? (
+            <Link key={notification.id} href={notification.actionUrl} className={cn("rounded-xl border p-3 transition hover:border-[#0F4D3A]/30", unread ? "border-[#F28C28]/25 bg-[#FFF9F0]" : "border-[#E9DED0] bg-white")} onClick={onClose}>
+              {item}
+            </Link>
+          ) : (
+            <button key={notification.id} type="button" onClick={() => onMarkOne(notification.id)} disabled={!unread || markingNotificationId !== null} className={cn("rounded-xl border p-3 transition", unread ? "border-[#F28C28]/25 bg-[#FFF9F0] hover:border-[#0F4D3A]/30" : "border-[#E9DED0] bg-white")}>
+              {item}
+            </button>
+          );
+        })}
+
+        {!notifications.length ? (
+          <div className="grid min-h-28 place-items-center rounded-xl border border-dashed border-[#D8D1C7] bg-white px-4 text-center">
+            <div>
+              <Bell className="mx-auto text-[#0F4D3A]" size={22} aria-hidden="true" />
+              <p className="mt-2 text-sm font-black text-[#2B2B2B]">Chưa có thông báo</p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </aside>
   );
 }
 

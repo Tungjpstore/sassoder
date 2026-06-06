@@ -10,11 +10,13 @@ This phase adds the conservative PWA foundation for LogiVN:
 - PWA icons under `public/icons/`.
 - Production-only service worker registration from `components/pwa/service-worker-register.tsx`.
 - Service worker source at `public/sw.js`.
+- Web Push v1: VAPID-backed push subscriptions, service worker `push`/`notificationclick`, safe notification routing, and operational event push for selected high-signal events.
+- Dashboard notification permission prompt from `components/pwa/push-notification-manager.tsx`.
 - Offline fallback page at `/offline`.
 - Testable cache policy in `lib/pwa/cache-policy.ts`.
 - Install/download center under `/download` and platform routes.
 
-This phase does not add Web Push, Background Sync, install campaigns, dashboard data caching, order/reservation/payment offline mutations, or staff attendance background sync.
+This phase does not add Background Sync, dashboard data caching, order/reservation/payment offline mutations, or staff attendance background sync.
 
 ## Runtime Behavior
 
@@ -55,6 +57,38 @@ The same component also shows app-grade network status:
 - Reconnected confirmation after the browser comes back online.
 - Update available prompt only when a waiting service worker exists.
 
+## Web Push V1
+
+Web Push is progressive enhancement for installed/compatible browsers:
+
+- The browser subscribes through `PushManager` after the user clicks the dashboard prompt.
+- Subscriptions are stored in `public.push_subscriptions` through `/api/admin/push-subscriptions`.
+- Mutations are server-owned with the Supabase service role; authenticated clients can only read their own future device records through RLS.
+- Server sending uses `web-push` and VAPID env vars.
+- `public/sw.js` handles `push` and `notificationclick`; click targets are constrained to first-party `/dashboard` or `/download` routes.
+- `services/operational-event-bus.ts` sends PWA push for selected events when configured: `order.created`, `payment.waiting_confirm`, `reservation.created`, `service_request.created`, `staff.request_created`, `staff.incident_reported`, and `sla.warning`.
+- Push payloads intentionally contain compact operational copy and route hints only. Do not include customer phone, payment details, notes, tokens, or private staff/payroll data.
+
+Required production env vars:
+
+```txt
+NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY=...
+WEB_PUSH_VAPID_PRIVATE_KEY=...
+WEB_PUSH_VAPID_SUBJECT=mailto:admin@logivn.com
+```
+
+Generate a key pair once and store it as environment variables:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+Platform caveats:
+
+- Chromium/Edge/Android can receive Web Push after permission is granted.
+- iOS/iPadOS Web Push requires the site to be added to Home Screen and the user to grant permission.
+- Some desktop browsers support permission but not full badge behavior; app badge updates are best-effort.
+
 ## Offline Behavior
 
 When a navigation fails and there is no safe cached public document, the service worker falls back to `/offline`. The offline page contains no tenant, customer, staff, payment, or dashboard data.
@@ -85,6 +119,6 @@ The PWA `start_url` intentionally points to `/dashboard/login?source=pwa_launch`
 
 Future PWA work should be split into separate reviews:
 
-- Web Push architecture with VAPID, subscription schema, consent, unsubscribe, rate limits, and audit logs.
+- Notification center upgrade: role-specific inbox panel, quiet hours, rate limits, audit logs, and per-event preferences.
 - Staff-specific offline/background sync only after idempotency and device-trust review.
 - Optional public menu snapshot cache after privacy/product approval.

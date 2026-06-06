@@ -13,6 +13,11 @@ Use this checklist for any release that changes `public/sw.js`, PWA cache policy
 - Confirm `/sw.js` is served with `Cache-Control: no-cache, no-store, must-revalidate`.
 - Confirm CSP includes `manifest-src 'self'` and still allows required Supabase/VPS/map connections.
 - Confirm service worker is not registered during `next dev`.
+- Confirm Web Push env vars are present in production when push is expected:
+  - `NEXT_PUBLIC_WEB_PUSH_VAPID_PUBLIC_KEY`
+  - `WEB_PUSH_VAPID_PRIVATE_KEY`
+  - `WEB_PUSH_VAPID_SUBJECT`
+- Confirm migration `20260606015156_pwa_push_subscriptions.sql` has been applied before enabling the dashboard push prompt.
 
 ## Browser Smoke
 
@@ -23,6 +28,9 @@ Use this checklist for any release that changes `public/sw.js`, PWA cache policy
 - Visit one `/r/[restaurantSlug]` route and confirm order/payment/reservation API calls remain network-only.
 - Toggle offline and confirm public/offline fallback behavior does not expose tenant-private or user-private data.
 - Toggle back online and confirm the reconnect notice appears then dismisses.
+- Log in to dashboard, grant notification permission, and confirm `/api/admin/push-subscriptions` stores one active subscription.
+- Send a test push from `/dashboard/settings` and confirm the notification opens `/dashboard` when clicked.
+- Trigger one `order.created` or `payment.waiting_confirm` event in staging and confirm the push payload contains no phone number, token, note, or payment detail.
 
 ## Installability
 
@@ -32,6 +40,8 @@ Use this checklist for any release that changes `public/sw.js`, PWA cache policy
 - Download center: verify `/download`, `/download/android`, `/download/ios`, `/download/windows`, and `/download/mac` render.
 - Installed app: verify shortcuts open dashboard login, demo, and download center when supported by the test browser.
 - Installed app: opening the main icon should land on `/dashboard/login` and show the Google OAuth entry point.
+- Installed app with push permission: verify background notification delivery on at least one Chromium browser.
+- iOS/iPadOS: test Web Push only after Add to Home Screen; do not treat normal Safari tab behavior as a failure.
 
 ## Update And Rollback
 
@@ -47,3 +57,5 @@ Use this checklist for any release that changes `public/sw.js`, PWA cache policy
 - Tenant subdomain rewrite serves the wrong tenant.
 - Offline mode displays stale private data.
 - Service worker causes blank pages after deploy.
+- Push subscription API allows cross-origin mutation or stores a subscription for the wrong restaurant/user.
+- Push payload includes PII, payment secrets, OAuth/auth tokens, QR access tokens, or private staff/payroll details.
