@@ -34,6 +34,7 @@ export function createSeoMetadata({
   const resolvedTitle = title || SEO_DEFAULT_TITLE;
 
   return {
+    applicationName: SEO_SITE_NAME,
     metadataBase: new URL(getSeoUrl()),
     title: title
       ? resolvedTitle
@@ -42,6 +43,15 @@ export function createSeoMetadata({
           template: SEO_TITLE_TEMPLATE
         },
     description,
+    manifest: "/manifest.webmanifest",
+    appleWebApp: {
+      capable: true,
+      title: SEO_SITE_NAME,
+      statusBarStyle: "default"
+    },
+    formatDetection: {
+      telephone: false
+    },
     alternates: {
       canonical
     },

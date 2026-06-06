@@ -10,6 +10,7 @@ const contentSecurityPolicy = [
   "font-src 'self' data:",
   "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.logivn.com https://ws.logivn.com wss://ws.logivn.com https://api.mapbox.com https://events.mapbox.com https://rsapi.goong.io https://tiles.goong.io https://*.goong.io https://tile.openstreetmap.org https://*.arcgisonline.com https://server.arcgisonline.com https://services.arcgisonline.com https://img.vietqr.io https://api.qrserver.com https://vercel.live",
   "media-src 'self' blob:",
+  "manifest-src 'self'",
   "worker-src 'self' blob:",
   "child-src 'self' blob:",
   "frame-src 'none'",
@@ -33,6 +34,21 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" }
+        ]
+      },
+      {
+        source: "/manifest.webmanifest",
+        headers: [{ key: "Cache-Control", value: "public, max-age=0, must-revalidate" }]
+      },
+      {
+        source: "/icons/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }]
+      },
       {
         source: "/(.*)",
         headers: [

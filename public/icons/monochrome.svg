@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="LogiVN">
+  <rect width="512" height="512" rx="96" fill="#0F4D3A" />
+  <path fill="#FFF7EB" d="M146 118h74v208h146v68H146V118Z" />
+  <path fill="#F28C28" d="M292 118h74v74h-74v-74Zm0 104h74v172h-74V222Z" />
+</svg>
