@@ -740,6 +740,7 @@ export function RemoteOrderClient({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [customerToast, setCustomerToast] = useState<string | null>(null);
+  const [cartFeedback, setCartFeedback] = useState<{ key: number; itemName: string } | null>(null);
   const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
   const [customizingItem, setCustomizingItem] = useState<{
     item: MenuItemWithCategory;
@@ -764,6 +765,7 @@ export function RemoteOrderClient({
   const pendingCreateRequestRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
   const actionInFlightRef = useRef<"submit" | "mark_paid" | null>(null);
   const customerToastTimerRef = useRef<number | null>(null);
+  const cartFeedbackTimerRef = useRef<number | null>(null);
   const trackedOrderRef = useRef<OrderDto | null>(null);
   const notifyOrderUpdateRef = useRef<(order: OrderDto) => void>(() => undefined);
   const pendingOrderStorageKey = useMemo(
@@ -854,6 +856,16 @@ export function RemoteOrderClient({
       setCustomerToast(null);
       customerToastTimerRef.current = null;
     }, 2800);
+  }
+
+  function notifyAddedToCart(itemName: string) {
+    if (cartFeedbackTimerRef.current) window.clearTimeout(cartFeedbackTimerRef.current);
+    setCartFeedback({ key: Date.now(), itemName });
+    notifyCustomer(`Đã thêm ${itemName} vào giỏ hàng.`);
+    cartFeedbackTimerRef.current = window.setTimeout(() => {
+      setCartFeedback(null);
+      cartFeedbackTimerRef.current = null;
+    }, 1900);
   }
 
   function notifyOrderUpdate(order: OrderDto) {
@@ -1071,6 +1083,7 @@ export function RemoteOrderClient({
   useEffect(() => {
     return () => {
       if (customerToastTimerRef.current) window.clearTimeout(customerToastTimerRef.current);
+      if (cartFeedbackTimerRef.current) window.clearTimeout(cartFeedbackTimerRef.current);
       if (quoteRetryTimerRef.current) window.clearTimeout(quoteRetryTimerRef.current);
     };
   }, []);
@@ -1280,6 +1293,7 @@ export function RemoteOrderClient({
     }
 
     setCart((current) => updateRemoteCartQuantity(current, item.id, 1));
+    notifyAddedToCart(item.name);
   }
 
   function toggleModifierOption(group: PublicModifierGroup, optionId: string) {
@@ -1331,7 +1345,7 @@ export function RemoteOrderClient({
         modifiers: customizingItem.selections
       })
     );
-    notifyCustomer(`Đã thêm ${customizingItem.item.name} vào giỏ hàng.`);
+    notifyAddedToCart(customizingItem.item.name);
     setCustomizingItem(null);
     setError(null);
   }
@@ -1598,6 +1612,45 @@ export function RemoteOrderClient({
     );
   }
 
+  function renderMenuCartDock() {
+    if (cartItemCount === 0 && !activeEntry) return null;
+
+    const showingCart = cartItemCount > 0;
+    const targetScreen = showingCart ? "cart" : "tracking";
+    const title = showingCart ? "Xem giỏ hàng" : "Theo dõi đơn";
+    const subtitle = showingCart
+      ? `${cartLines.length} loại món · ${formatVnd(total)}`
+      : orderStatusText(activeEntry!.order);
+
+    return (
+      <div className="customer-menu-cart-dock" aria-live="polite">
+        {cartFeedback && showingCart ? (
+          <div key={`cart-feedback-${cartFeedback.key}`} role="status" className="customer-menu-cart-feedback">
+            <CheckCircle2 size={15} aria-hidden="true" />
+            <span className="min-w-0 truncate">Đã thêm {cartFeedback.itemName}</span>
+          </div>
+        ) : null}
+        <button
+          key={cartFeedback?.key ?? "menu-cart-dock"}
+          type="button"
+          onClick={() => setScreen(targetScreen)}
+          className={`customer-menu-cart-button ${cartFeedback && showingCart ? "customer-menu-cart-button--pulse" : ""}`}
+          aria-label={showingCart ? `Xem giỏ hàng, ${cartItemCount} món, tổng ${formatVnd(total)}` : "Theo dõi đơn hàng"}
+        >
+          <span className="customer-menu-cart-icon">
+            <ShoppingBag size={19} aria-hidden="true" />
+            {showingCart ? <span className="customer-menu-cart-count">{cartItemCount}</span> : null}
+          </span>
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block truncate text-[14px] font-black">{title}</span>
+            <span className="block truncate text-[12px] font-bold text-white/78">{subtitle}</span>
+          </span>
+          <ChevronRight size={18} aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+
   function handleCustomerAgentAction(action: AiAgentAction) {
     if (action.type === "link" && action.href) {
       window.location.href = action.href;
@@ -1610,7 +1663,6 @@ export function RemoteOrderClient({
       if (!item) return;
       addMenuItem(item);
       if (body?.categoryId) setActiveCategory(body.categoryId);
-      if (!hasMenuModifiers(item)) notifyCustomer(`Đã thêm ${item.name} vào giỏ hàng.`);
       setScreen((current) => (current === "payment" || current === "vietqr" ? "menu" : current));
       setError(null);
       return;
@@ -2105,27 +2157,7 @@ export function RemoteOrderClient({
             </section>
           </div>
 
-          {(cartItemCount > 0 || activeEntry) ? (
-            <BottomAction>
-              <button
-                type="button"
-                onClick={() => setScreen(cartItemCount > 0 ? "cart" : "tracking")}
-                className="flex h-14 w-full items-center justify-between rounded-2xl bg-[#006b3c] px-4 text-white shadow-[0_18px_34px_rgba(0,107,60,0.24)]"
-              >
-                <span className="flex items-center gap-3">
-                  <span className="relative grid h-10 w-10 place-items-center rounded-xl bg-white/12">
-                    <ShoppingBag size={19} />
-                    {cartItemCount > 0 ? <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-[#f28c28] text-[10px] font-black">{cartItemCount}</span> : null}
-                  </span>
-                  <span className="text-left">
-                    <span className="block text-[14px] font-black">{cartItemCount > 0 ? "Xem giỏ hàng" : "Theo dõi đơn"}</span>
-                    <span className="block text-[12px] font-bold text-white/78">{cartItemCount > 0 ? formatVnd(total) : orderStatusText(activeEntry!.order)}</span>
-                  </span>
-                </span>
-                <ChevronRight size={18} />
-              </button>
-            </BottomAction>
-          ) : null}
+          {renderMenuCartDock()}
         </div>
       </PhoneFrame>
     );
