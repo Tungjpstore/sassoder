@@ -57,23 +57,25 @@ function resolveImageFileType({
 function assertMenuImage({
   fileName,
   contentType,
-  size
+  size,
+  label = "Ảnh món"
 }: {
   fileName: string;
   contentType?: string | null;
   size: number;
+  label?: string;
 }) {
   const imageType = resolveImageFileType({ fileName, contentType });
   if (!imageType) {
-    throw new AppError("Ảnh món chỉ hỗ trợ JPG, PNG hoặc WebP.", 400);
+    throw new AppError(`${label} chỉ hỗ trợ JPG, PNG hoặc WebP.`, 400);
   }
 
   if (size > maxImageSize) {
-    throw new AppError("Ảnh món không được vượt quá 5MB.", 400);
+    throw new AppError(`${label} không được vượt quá 5MB.`, 400);
   }
 
   if (size <= 0) {
-    throw new AppError("Ảnh món không hợp lệ. Vui lòng chọn ảnh khác.", 400);
+    throw new AppError(`${label} không hợp lệ. Vui lòng chọn ảnh khác.`, 400);
   }
 
   return imageType;
@@ -111,14 +113,16 @@ export async function createMenuImageSignedUpload({
 
 export async function uploadMenuImageFile({
   restaurantId,
-  file
+  file,
+  label
 }: {
   restaurantId: string;
   file: FormDataEntryValue | null;
+  label?: string;
 }) {
   if (!isFileLike(file) || file.size === 0) return undefined;
 
-  const imageType = assertMenuImage({ fileName: file.name, contentType: file.type, size: file.size });
+  const imageType = assertMenuImage({ fileName: file.name, contentType: file.type, size: file.size, label });
 
   const supabase = createAdminSupabaseClient();
   const path = `${restaurantId}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${imageType.extension}`;
@@ -126,7 +130,7 @@ export async function uploadMenuImageFile({
   try {
     bytes = Buffer.from(await file.arrayBuffer());
   } catch {
-    throw new AppError("Không đọc được ảnh món. Vui lòng chọn ảnh khác và thử lại.", 400);
+    throw new AppError(`Không đọc được ${label ?? "ảnh món"}. Vui lòng chọn ảnh khác và thử lại.`, 400);
   }
 
   const { error } = await supabase.storage.from(menuImageBucket).upload(path, bytes, {
@@ -136,7 +140,7 @@ export async function uploadMenuImageFile({
   });
 
   if (error) {
-    throw new AppError(error.message || "Không tải được ảnh món.", 400);
+    throw new AppError(error.message || `Không tải được ${label ?? "ảnh món"}.`, 400);
   }
 
   const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);

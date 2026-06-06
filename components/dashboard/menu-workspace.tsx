@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type FormEvent } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition, type ChangeEvent, type FormEvent } from "react";
 import {
   AlertTriangle,
   BarChart3,
@@ -23,8 +23,10 @@ import {
   Sparkles,
   Tags,
   TimerReset,
+  Upload,
   Trash2,
-  Utensils
+  Utensils,
+  X
 } from "lucide-react";
 import {
   createCategoryAction,
@@ -92,6 +94,10 @@ type AiFoodImageDraft = AiImageResponse & {
   mode: "create" | "edit";
   itemId?: string;
 };
+type MenuImageSelection = {
+  file: File;
+  previewUrl: string;
+};
 
 const maxImageUploadSize = 5 * 1024 * 1024;
 const menuImageBucket = "menu-images";
@@ -106,6 +112,157 @@ type SignedMenuImageUpload = {
 };
 
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
+
+function formatMenuImageFileSize(size: number) {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 1 }).format(size / (1024 * 1024))} MB`;
+}
+
+function clearMenuImageUrlInput(input: HTMLInputElement | null) {
+  const imageInput = input?.form?.elements.namedItem("image") as HTMLInputElement | null;
+  if (imageInput) imageInput.value = "";
+}
+
+function MenuImageUploadField({
+  label,
+  helperText,
+  existingImageUrl,
+  appliedImageUrl,
+  selectedImage,
+  uploading,
+  validateFile,
+  onValidationChange,
+  onFileSelected
+}: {
+  label: string;
+  helperText: string;
+  existingImageUrl?: string | null;
+  appliedImageUrl: string | null;
+  selectedImage: MenuImageSelection | null;
+  uploading: boolean;
+  validateFile: (file: File) => string | null;
+  onValidationChange: (error: string | null) => void;
+  onFileSelected: (file: File | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedFile = selectedImage?.file ?? null;
+
+  useEffect(() => {
+    if (!selectedImage && inputRef.current) inputRef.current.value = "";
+  }, [selectedImage]);
+
+  const selectedError = selectedFile ? validateFile(selectedFile) : null;
+  const isAiApplied = Boolean(appliedImageUrl && !selectedFile);
+  const displayImageUrl = selectedImage?.previewUrl || (isAiApplied ? appliedImageUrl : existingImageUrl) || null;
+  const statusTitle = selectedFile
+    ? selectedFile.name
+    : isAiApplied
+      ? "Ảnh AI đã áp dụng"
+      : existingImageUrl
+        ? "Đang dùng ảnh hiện tại"
+        : "Chưa chọn ảnh món";
+  const statusDetail = selectedFile
+    ? selectedError || `${formatMenuImageFileSize(selectedFile.size)} · sẽ tải lên khi bấm lưu`
+    : isAiApplied
+      ? "Bấm lưu để dùng ảnh gợi ý này trên menu khách."
+      : existingImageUrl
+        ? "Chọn ảnh mới nếu muốn thay ảnh đang hiển thị."
+        : "Có thể chọn file máy tính hoặc dùng ảnh gợi ý bên dưới.";
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+    if (!file) {
+      onFileSelected(null);
+      onValidationChange(null);
+      return;
+    }
+
+    clearMenuImageUrlInput(event.currentTarget);
+    onFileSelected(file);
+    onValidationChange(validateFile(file));
+  }
+
+  function clearSelectedFile() {
+    if (inputRef.current) {
+      inputRef.current.value = "";
+      clearMenuImageUrlInput(inputRef.current);
+    }
+    onFileSelected(null);
+    onValidationChange(null);
+  }
+
+  return (
+    <div className="grid gap-2 text-sm font-semibold">
+      <div className="flex items-center justify-between gap-3">
+        <span>{label}</span>
+        <span className="rounded-full border border-[var(--border)] bg-[var(--soft-surface)] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">
+          JPG · PNG · WebP
+        </span>
+      </div>
+      <input
+        ref={inputRef}
+        name="imageFile"
+        type="file"
+        accept={menuImageAccept}
+        className="sr-only"
+        aria-label={`${label} - chọn ảnh từ máy`}
+        onChange={handleFileChange}
+      />
+      <div
+        className={cn(
+          "rounded-xl border bg-[var(--surface)] p-3 transition",
+          selectedError ? "border-[var(--accent)]/35 bg-[var(--accent-soft)]/40" : "border-[var(--border)]"
+        )}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--soft-surface)]">
+            {displayImageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={displayImageUrl} alt="Xem trước ảnh món" className="h-full w-full object-cover" />
+            ) : (
+              <ImageIcon size={22} className="text-[var(--outline)]" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-[var(--foreground)]">{statusTitle}</p>
+            <p className={cn("mt-1 text-xs font-semibold leading-5", selectedError ? "text-[var(--accent-strong)]" : "text-[var(--muted-foreground)]")}>{statusDetail}</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="rounded-full bg-[var(--soft-surface)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Tối đa 5MB</span>
+              <span className="rounded-full bg-[var(--soft-surface)] px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">Gợi ý 1200x1200</span>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={uploading}
+              onClick={() => inputRef.current?.click()}
+              className="h-10 shadow-none hover:shadow-none"
+            >
+              <Upload size={14} />
+              {selectedFile || isAiApplied || existingImageUrl ? "Đổi ảnh" : "Chọn ảnh"}
+            </Button>
+            {selectedFile ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={uploading}
+                onClick={clearSelectedFile}
+                className="h-10 w-10 text-[var(--muted-foreground)] hover:text-[var(--accent-strong)]"
+                aria-label="Bỏ ảnh đã chọn"
+              >
+                <X size={16} />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+      <span className="text-xs font-semibold leading-5 text-[var(--muted-foreground)]">{helperText}</span>
+    </div>
+  );
+}
 
 function flattenOcrDraft(draft: OcrDraft | null): OcrImportItem[] {
   if (!draft) return [];
@@ -175,6 +332,7 @@ export function MenuWorkspace({
   const [query, setQuery] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [menuImageSelection, setMenuImageSelection] = useState<MenuImageSelection | null>(null);
   const [aiOcrText, setAiOcrText] = useState("");
   const [aiOcrImage, setAiOcrImage] = useState<File | null>(null);
   const [aiOcrDraft, setAiOcrDraft] = useState<OcrDraft | null>(null);
@@ -188,6 +346,13 @@ export function MenuWorkspace({
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(() => new Date());
   const [isRefreshing, startRefreshTransition] = useTransition();
   const [ocrImportState, importOcrFormAction, ocrImportPending] = useActionState<OcrImportActionState | undefined, FormData>(importMenuOcrItemsAction, undefined);
+
+  useEffect(() => {
+    const previewUrl = menuImageSelection?.previewUrl;
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [menuImageSelection?.previewUrl]);
 
   useEffect(() => {
     const supabase = createBrowserSupabaseClient();
@@ -319,6 +484,7 @@ export function MenuWorkspace({
       setAiOcrImage(null);
       setPanelMode("closed");
       setUploadError(null);
+      setMenuImageSelection(null);
     }, 900);
 
     return () => window.clearTimeout(timeout);
@@ -335,6 +501,7 @@ export function MenuWorkspace({
   function openPanel(mode: MenuPanelMode, itemId?: string) {
     setUploadError(null);
     setUploadingImage(false);
+    setMenuImageSelection(null);
     setAiFoodImageError(null);
     if (mode === "createItem" || mode === "editItem") {
       setAiFoodImageDraft(null);
@@ -349,6 +516,7 @@ export function MenuWorkspace({
     setPanelMode("closed");
     setUploadError(null);
     setUploadingImage(false);
+    setMenuImageSelection(null);
     setAiFoodImageError(null);
     setAiFoodImageLoading(null);
     setAppliedAiFoodImageUrl(null);
@@ -361,6 +529,16 @@ export function MenuWorkspace({
       reader.onerror = () => reject(new Error("Không đọc được ảnh menu."));
       reader.readAsDataURL(file);
     });
+  }
+
+  function handleMenuImageSelected(file: File | null) {
+    if (!file) {
+      setMenuImageSelection(null);
+      return;
+    }
+
+    setAppliedAiFoodImageUrl(null);
+    setMenuImageSelection({ file, previewUrl: URL.createObjectURL(file) });
   }
 
   async function runAiMenuOcr() {
@@ -450,6 +628,7 @@ export function MenuWorkspace({
     const fileInput = form.elements.namedItem("imageFile") as HTMLInputElement | null;
     if (imageInput) imageInput.value = imageUrl;
     if (fileInput) fileInput.value = "";
+    setMenuImageSelection(null);
     setAppliedAiFoodImageUrl(imageUrl);
     setUploadError(null);
   }
@@ -535,6 +714,7 @@ export function MenuWorkspace({
       const publicUrl = await uploadMenuImageFromBrowser(file);
       if (imageInput) imageInput.value = publicUrl;
       if (fileInput) fileInput.value = "";
+      setMenuImageSelection(null);
       form.dataset.imageUploadReady = "true";
       form.requestSubmit();
     } catch (error) {
@@ -1256,11 +1436,16 @@ export function MenuWorkspace({
                     Giá bán
                     <Input name="price" type="number" min={1000} step={1000} placeholder="35000" required />
                   </label>
-                  <label className="grid gap-2 text-sm font-semibold">
-                    Ảnh món
-                    <Input name="imageFile" type="file" accept={menuImageAccept} />
-                    <span className="text-xs font-semibold text-[var(--muted-foreground)]">JPG/PNG/WebP tối đa 5MB. Khuyến nghị 1200x1200px, món nằm giữa khung để đẹp trên menu mobile.</span>
-                  </label>
+                  <MenuImageUploadField
+                    label="Ảnh món"
+                    helperText="Ảnh vuông, món nằm giữa khung sẽ đẹp hơn trên menu mobile. File nặng nên nén trước để khách tải nhanh."
+                    appliedImageUrl={appliedAiFoodImageUrl}
+                    selectedImage={menuImageSelection}
+                    uploading={uploadingImage}
+                    validateFile={getImageValidationError}
+                    onValidationChange={setUploadError}
+                    onFileSelected={handleMenuImageSelected}
+                  />
                   {renderAiFoodImageAssistant("create")}
                   <Button disabled={uploadingImage} className="shadow-none hover:shadow-none">
                     <Plus size={16} />
@@ -1298,11 +1483,17 @@ export function MenuWorkspace({
                     Giá bán
                     <Input name="price" type="number" min={1000} step={1000} defaultValue={selectedItem.price} required />
                   </label>
-                  <label className="grid gap-2 text-sm font-semibold">
-                    Hình ảnh món
-                    <Input name="imageFile" type="file" accept={menuImageAccept} />
-                    <span className="text-xs font-semibold text-[var(--muted-foreground)]">Chọn ảnh mới để thay ảnh hiện tại. Khuyến nghị 1200x1200px, JPG/WebP dưới 1MB để menu khách tải nhanh trên điện thoại.</span>
-                  </label>
+                  <MenuImageUploadField
+                    label="Hình ảnh món"
+                    helperText="Chọn ảnh mới để thay ảnh hiện tại. Ưu tiên WebP/JPG dưới 1MB để menu khách tải nhanh trên điện thoại."
+                    existingImageUrl={selectedItem.image_url}
+                    appliedImageUrl={appliedAiFoodImageUrl}
+                    selectedImage={menuImageSelection}
+                    uploading={uploadingImage}
+                    validateFile={getImageValidationError}
+                    onValidationChange={setUploadError}
+                    onFileSelected={handleMenuImageSelected}
+                  />
                   {renderAiFoodImageAssistant("edit", selectedItem)}
                   <label className="flex items-center gap-2 text-sm font-semibold">
                     <input type="checkbox" name="isAvailable" value="true" defaultChecked={selectedItem.is_available} className="h-4 w-4 accent-[var(--primary)]" />

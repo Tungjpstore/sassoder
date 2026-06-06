@@ -137,7 +137,11 @@ export async function updateRestaurantSettingsAction(formData: FormData) {
     receiptShowQr: section === "receipt" ? formData.get("receiptShowQr") === "true" : current.receipt_show_qr
   });
 
-  await updateRestaurantSettings(session.restaurantId, parsed);
+  await updateRestaurantSettings(session.restaurantId, {
+    ...parsed,
+    logoFile: formData.get("logoFile"),
+    removeLogo: section === "profile" && formData.get("removeLogo") === "true"
+  });
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateMenuCache();
   await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview", "payments", "reservations", "tables"]);

@@ -24,6 +24,7 @@ import {
   Sparkles,
   Store,
   TimerReset,
+  Upload,
   Users,
   WalletCards,
   type LucideIcon
@@ -88,7 +89,7 @@ const settingsSections: SettingsSection[] = [
   { key: "online", label: "Đặt món online", description: "Đến lấy, giao hàng, phí ship", icon: Bike },
   { key: "payments", label: "Thanh toán", description: "Ngân hàng nhận VietQR", icon: CreditCard },
   { key: "billing", label: "Gói LogiVN", description: "Dùng thử, gia hạn và hoá đơn", icon: WalletCards },
-  { key: "notifications", label: "Thông báo", description: "Cảnh báo đơn và thanh toán", icon: Bell },
+  { key: "notifications", label: "Thông báo", description: "Luồng cảnh báo và Web Push", icon: Bell },
   { key: "permissions", label: "Nhân quyền", description: "Tài khoản và phân quyền", icon: ShieldCheck },
   { key: "receipt", label: "Mẫu in/hóa đơn", description: "Dòng cuối và QR hóa đơn", icon: FileText },
   { key: "brand", label: "Thương hiệu", description: "Màu sắc và nhận diện", icon: Paintbrush }
@@ -166,7 +167,7 @@ function ProfileSettingsForm({ restaurant, email }: { restaurant: RestaurantRow;
   const hasPinnedLocation = restaurant.store_lat !== null && restaurant.store_lng !== null;
 
   return (
-    <form action={updateRestaurantSettingsAction}>
+    <form action={updateRestaurantSettingsAction} encType="multipart/form-data">
       <input type="hidden" name="settingsSection" value="profile" />
       <FieldGroup title="Profile cửa hàng">
         <div className="mb-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
@@ -245,6 +246,38 @@ function ProfileSettingsForm({ restaurant, email }: { restaurant: RestaurantRow;
                 Email
                 <Input name="contactEmail" type="email" defaultValue={restaurant.contact_email ?? email} />
               </label>
+            </div>
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-4 shadow-sm">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] text-[var(--primary)]">
+                  {restaurant.logo_url ? (
+                    <Image src={restaurant.logo_url} alt={`Logo ${restaurant.name}`} width={96} height={96} className="h-full w-full object-cover" />
+                  ) : (
+                    <Store size={26} />
+                  )}
+                </div>
+                <div className="grid min-w-0 flex-1 gap-3">
+                  <div>
+                    <p className="text-sm font-black text-[var(--foreground)]">Logo quán</p>
+                    <p className="mt-1 text-sm font-semibold leading-6 text-[var(--muted-foreground)]">
+                      Tải ảnh thật của quán lên để dùng cho menu online, hóa đơn, thông báo và trang khách hàng. Hỗ trợ JPG, PNG, WebP tối đa 5MB.
+                    </p>
+                  </div>
+                  <label className="grid gap-2 text-sm font-black">
+                    Tải ảnh logo
+                    <span className="flex min-h-12 items-center gap-3 rounded-xl border border-dashed border-[var(--primary)]/35 bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] transition hover:border-[var(--primary)] hover:bg-[var(--primary-soft)]">
+                      <Upload size={18} className="text-[var(--primary)]" />
+                      <input name="logoFile" type="file" accept="image/png,image/jpeg,image/webp" className="min-w-0 flex-1 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--primary)] file:px-3 file:py-2 file:text-sm file:font-bold file:text-white" />
+                    </span>
+                  </label>
+                  {restaurant.logo_url ? (
+                    <label className="flex min-h-11 items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--muted-foreground)]">
+                      <input type="checkbox" name="removeLogo" value="true" className="h-5 w-5 accent-[var(--accent)]" />
+                      Gỡ logo hiện tại nếu chưa muốn dùng ảnh nào
+                    </label>
+                  ) : null}
+                </div>
+              </div>
             </div>
             <label className="grid gap-2 text-sm font-black">
               Mô tả quán
@@ -386,7 +419,7 @@ function NotificationSettingsForm({
               <p className="dashboard-eyebrow text-[var(--primary)]">Trung tâm thông báo</p>
             <h3 className="dashboard-section-title mt-1">Thông báo & báo cáo</h3>
             <p className="dashboard-body-copy mt-1 max-w-2xl">
-              Gom cảnh báo đơn, kênh Telegram và lịch email vào một vùng vận hành thống nhất.
+              Gom cảnh báo trong app, Web Push thiết bị, kênh Telegram và lịch email vào một vùng vận hành thống nhất.
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 md:min-w-[300px]">
@@ -1996,8 +2029,8 @@ export default async function AdminSettingsPage({
         : { label: "Thiếu tài khoản", detail: "Cần mã ngân hàng, số tài khoản và tên chủ tài khoản.", tone: "warning" },
     notifications:
       notificationCoverage === 2
-        ? { label: "Đã bật cảnh báo", detail: "Đơn mới và đơn chờ thanh toán đều có thông báo.", tone: "success" }
-        : { label: "Thiếu cảnh báo", detail: "Bật đủ thông báo để không bỏ sót tình huống quan trọng.", tone: "warning" },
+        ? { label: "Luồng cảnh báo đã bật", detail: "Đơn mới và đơn chờ thanh toán đã bật trong app; Web Push kiểm tra riêng trên thiết bị.", tone: "success" }
+        : { label: "Thiếu luồng cảnh báo", detail: "Bật đủ cảnh báo trong app và kiểm tra Web Push trên thiết bị trực ca.", tone: "warning" },
     permissions: { label: "Đi tới staff", detail: "Thêm admin hoặc staff khi quán tăng ca hoặc mở chi nhánh.", tone: "neutral" },
     receipt:
       restaurant.receipt_footer || restaurant.receipt_show_qr

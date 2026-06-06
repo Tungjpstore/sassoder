@@ -1665,7 +1665,7 @@ export async function completeRestaurantOnboarding(input: {
 
   if (input.logoFile) {
     try {
-      const logoUrl = await uploadMenuImageFile({ restaurantId: restaurant.id, file: input.logoFile });
+      const logoUrl = await uploadMenuImageFile({ restaurantId: restaurant.id, file: input.logoFile, label: "Logo quán" });
       if (logoUrl) {
         const { data: updatedRestaurant, error: logoUpdateError } = await supabase
           .from("restaurants")
@@ -1752,9 +1752,13 @@ export async function updateRestaurantSettings(
     showPromotionsOnMenu?: boolean;
     receiptFooter?: string;
     receiptShowQr?: boolean;
+    logoFile?: FormDataEntryValue | null;
+    removeLogo?: boolean;
   }
 ) {
   const supabase = await createServerSupabaseClient();
+  const logoUrl = input.removeLogo ? null : await uploadMenuImageFile({ restaurantId, file: input.logoFile ?? null, label: "Logo quán" });
+  const logoUpdate = logoUrl !== undefined || input.removeLogo ? { logo_url: logoUrl } : {};
   const { data, error } = await supabase
     .from("restaurants")
     .update({
@@ -1773,7 +1777,8 @@ export async function updateRestaurantSettings(
       notify_payment_waiting: input.notifyPaymentWaiting ?? true,
       show_promotions_on_menu: input.showPromotionsOnMenu ?? true,
       receipt_footer: input.receiptFooter || null,
-      receipt_show_qr: input.receiptShowQr ?? true
+      receipt_show_qr: input.receiptShowQr ?? true,
+      ...logoUpdate
     })
     .eq("id", restaurantId)
     .select()

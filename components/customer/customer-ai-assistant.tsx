@@ -582,7 +582,7 @@ const CustomerLogibotToggle = forwardRef<HTMLButtonElement, ButtonHTMLAttributes
       type="button"
       onClick={handleClick}
       disabled={disabled}
-      className={`fixed bottom-[calc(6.9rem+env(safe-area-inset-bottom))] z-[var(--z-customer-ai)] flex h-12 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-1.5 pr-2.5 text-xs font-bold text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition active:scale-95 ${customClassName ?? ""}`}
+      className={`customer-logibot-toggle fixed bottom-[calc(6.9rem+env(safe-area-inset-bottom))] z-[var(--z-customer-ai)] flex h-12 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-1.5 pr-2.5 text-xs font-bold text-[var(--primary)] shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition active:scale-95 ${customClassName ?? ""}`}
       style={{ right: "max(0.875rem, calc((100vw - 430px) / 2 + 0.875rem))", ...style }}
       aria-label={isOpen ? "Đóng LogiBot" : "Mở LogiBot"}
       aria-pressed={isOpen}
@@ -591,7 +591,7 @@ const CustomerLogibotToggle = forwardRef<HTMLButtonElement, ButtonHTMLAttributes
       <span className="relative h-9 w-9 overflow-hidden rounded-full bg-[#FFF7EB]">
         <Image src={logibotLogo} alt="LogiBot" fill sizes="36px" className="object-cover" priority />
       </span>
-      <span className="hidden sm:inline">{isOpen ? "Đóng" : "LogiBot"}</span>
+      <span className="customer-logibot-label">{isOpen ? "Đóng" : "LogiBot"}</span>
     </button>
   );
 });
@@ -1073,15 +1073,15 @@ function CustomerLogibotLauncher({ onOpen }: { onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="fixed bottom-[calc(5.85rem+env(safe-area-inset-bottom))] z-[var(--z-customer-ai)] inline-flex h-[52px] min-h-[52px] items-center gap-2 rounded-full border border-[#111827]/[0.07] bg-[#FFFEFA]/92 px-2.5 pr-4 text-[13px] font-bold text-[#111827] shadow-[0_18px_44px_rgba(17,24,39,0.14)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-[#0F5132]/25 hover:bg-white active:scale-[0.98]"
+      className="customer-logibot-launcher fixed bottom-[calc(5.85rem+env(safe-area-inset-bottom))] z-[var(--z-customer-ai)] inline-flex h-[52px] min-h-[52px] items-center gap-2 rounded-full border border-[#111827]/[0.07] bg-[#FFFEFA]/92 px-2.5 pr-4 text-[13px] font-bold text-[#111827] shadow-[0_18px_44px_rgba(17,24,39,0.14)] backdrop-blur-2xl transition hover:-translate-y-0.5 hover:border-[#0F5132]/25 hover:bg-white active:scale-[0.98]"
       style={{ right: "max(0.875rem, calc((100vw - 430px) / 2 + 0.875rem))" }}
       aria-label="Mở LogiBot"
     >
       <span className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-2xl border border-[#0F5132]/10 bg-[#F8F7F4]">
         <Image src={logibotLogo} alt="" fill sizes="36px" className="object-cover" priority />
       </span>
-      <span className="hidden sm:inline">Hỏi LogiBot</span>
-      <MessageCircle size={16} className="sm:hidden" aria-hidden="true" />
+      <span className="customer-logibot-label">Hỏi LogiBot</span>
+      <MessageCircle size={16} className="customer-logibot-mobile-icon" aria-hidden="true" />
     </button>
   );
 }

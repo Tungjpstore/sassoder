@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { BellRing, CheckCircle2, Loader2, Send, X } from "lucide-react";
+import { AlertTriangle, BellRing, CheckCircle2, Loader2, Send, X } from "lucide-react";
+import { resolvePwaPushNotificationUi, type PwaPushLoadState, type PwaPushNotice, type PwaPushPermission } from "@/lib/pwa/push-notification-ui";
 
 type PushConfigResponse = {
   configured: boolean;
@@ -17,9 +18,12 @@ type ApiResponse<T> = {
   error?: string;
 };
 
-type Notice = {
-  tone: "success" | "warning";
-  text: string;
+type PushSendSummary = {
+  scanned: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  disabled: number;
 };
 
 const DISMISS_KEY = "logivn:pwa-push-dismissed";
@@ -27,19 +31,36 @@ const DISMISS_KEY = "logivn:pwa-push-dismissed";
 export function PushNotificationManager() {
   const pathname = usePathname();
   const inDashboard = pathname?.startsWith("/dashboard") ?? false;
+  const isSettings = pathname === "/dashboard/settings";
   const [supported] = useState(() => isPushSupported());
+  const [loadState, setLoadState] = useState<PwaPushLoadState>(() => {
+    if (process.env.NODE_ENV !== "production") return "development";
+    return isPushSupported() ? "loading" : "ready";
+  });
   const [config, setConfig] = useState<PushConfigResponse | null>(null);
-  const [permission, setPermission] = useState<NotificationPermission | "unsupported">(() => (isPushSupported() ? window.Notification.permission : "unsupported"));
+  const [permission, setPermission] = useState<PwaPushPermission>(() => (isPushSupported() ? window.Notification.permission : "unsupported"));
   const [subscribed, setSubscribed] = useState(false);
   const [busy, setBusy] = useState<"subscribe" | "test" | "unsubscribe" | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notice, setNotice] = useState<PwaPushNotice | null>(null);
   const [dismissed, setDismissed] = useState(() => (typeof window === "undefined" ? false : window.localStorage.getItem(DISMISS_KEY) === "1"));
 
-  const canPrompt = useMemo(() => {
-    if (!inDashboard || !supported || !config?.configured || !config.publicKey) return false;
-    if (permission === "denied" || permission === "unsupported") return false;
-    return !subscribed && !dismissed;
-  }, [config, dismissed, inDashboard, permission, subscribed, supported]);
+  const ui = useMemo(
+    () =>
+      resolvePwaPushNotificationUi({
+        inDashboard,
+        isSettings,
+        supported,
+        configured: Boolean(config?.configured),
+        hasPublicKey: Boolean(config?.publicKey),
+        permission,
+        currentSubscribed: subscribed,
+        activeCount: config?.activeCount ?? 0,
+        dismissed,
+        loadState,
+        notice
+      }),
+    [config?.activeCount, config?.configured, config?.publicKey, dismissed, inDashboard, isSettings, loadState, notice, permission, subscribed, supported]
+  );
 
   useEffect(() => {
     if (!inDashboard) return;
@@ -50,20 +71,43 @@ export function PushNotificationManager() {
     fetch("/api/admin/push-subscriptions", { cache: "no-store" })
       .then((response) => response.json() as Promise<ApiResponse<PushConfigResponse>>)
       .then(async (payload) => {
-        if (cancelled || !payload.ok || !payload.data) return;
-        setConfig(payload.data);
+        if (cancelled) return;
+        if (!payload.ok || !payload.data) {
+          setLoadState("error");
+          return;
+        }
+
+        const nextConfig = payload.data;
+        setConfig(nextConfig);
+        const currentPermission = window.Notification.permission;
+        setPermission(currentPermission);
         const existing = await getCurrentPushSubscription();
         if (cancelled) return;
-        setSubscribed(Boolean(existing) || payload.data.activeCount > 0);
+
+        if (existing && nextConfig.configured && nextConfig.publicKey) {
+          try {
+            await savePushSubscription(existing, currentPermission);
+            if (cancelled) return;
+            setConfig({ ...nextConfig, activeCount: Math.max(1, nextConfig.activeCount) });
+            setSubscribed(true);
+          } catch {
+            setSubscribed(false);
+          }
+        } else {
+          setSubscribed(false);
+        }
+        setLoadState("ready");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelled) setLoadState("error");
+      });
 
     return () => {
       cancelled = true;
     };
   }, [inDashboard, supported]);
 
-  if (!inDashboard || (!canPrompt && !notice && !(subscribed && pathname === "/dashboard/settings"))) return null;
+  if (!ui.shouldRender) return null;
 
   async function enablePush() {
     if (!config?.publicKey) return;
@@ -86,18 +130,12 @@ export function PushNotificationManager() {
           applicationServerKey: urlBase64ToUint8Array(config.publicKey)
         }));
 
-      await postJson("/api/admin/push-subscriptions", {
-        subscription: subscription.toJSON(),
-        device: {
-          appSurface: "dashboard",
-          permissionState: nextPermission,
-          platform: navigator.platform || null,
-          userAgent: navigator.userAgent || null,
-          deviceLabel: browserDeviceLabel()
-        }
-      });
+      await savePushSubscription(subscription, nextPermission);
 
       setSubscribed(true);
+      setDismissed(false);
+      window.localStorage.removeItem(DISMISS_KEY);
+      setConfig((current) => (current ? { ...current, activeCount: Math.max(1, current.activeCount + 1) } : current));
       setNotice({ tone: "success", text: "Đã bật thông báo trên thiết bị này." });
       await clearAppBadge();
     } catch (error) {
@@ -111,7 +149,18 @@ export function PushNotificationManager() {
     setBusy("test");
     setNotice(null);
     try {
-      await postJson("/api/admin/push-subscriptions/test", {});
+      const result = await postJson<PushSendSummary>("/api/admin/push-subscriptions/test", {});
+      if (!result?.sent) {
+        if ((result?.disabled ?? 0) > 0 || (result?.scanned ?? 0) === 0) {
+          setSubscribed(false);
+          setConfig((current) => (current ? { ...current, activeCount: Math.max(0, current.activeCount - (result?.disabled ?? 0)) } : current));
+        }
+        setNotice({
+          tone: "warning",
+          text: result?.failed ? "Thiết bị đã đăng ký nhưng Web Push trả lỗi. Tắt rồi bật lại thông báo." : "Chưa có thiết bị nhận Web Push. Hãy bấm Bật trên máy này."
+        });
+        return;
+      }
       setNotice({ tone: "success", text: "Đã gửi thông báo thử tới thiết bị." });
     } catch (error) {
       setNotice({ tone: "warning", text: error instanceof Error ? error.message : "Không gửi được thông báo thử." });
@@ -125,9 +174,15 @@ export function PushNotificationManager() {
     setNotice(null);
     try {
       const subscription = await getCurrentPushSubscription();
-      await postJson("/api/admin/push-subscriptions", { endpoint: subscription?.endpoint ?? null }, "DELETE");
+      if (!subscription) {
+        setSubscribed(false);
+        setNotice({ tone: "warning", text: "Máy này chưa có endpoint Web Push để tắt." });
+        return;
+      }
+      await postJson("/api/admin/push-subscriptions", { endpoint: subscription.endpoint }, "DELETE");
       await subscription?.unsubscribe();
       setSubscribed(false);
+      setConfig((current) => (current ? { ...current, activeCount: Math.max(0, current.activeCount - 1) } : current));
       setNotice({ tone: "success", text: "Đã tắt thông báo trên thiết bị này." });
     } catch (error) {
       setNotice({ tone: "warning", text: error instanceof Error ? error.message : "Không tắt được thông báo." });
@@ -137,46 +192,48 @@ export function PushNotificationManager() {
   }
 
   function dismissPrompt() {
+    if (isSettings) return;
     window.localStorage.setItem(DISMISS_KEY, "1");
     setDismissed(true);
   }
 
-  const isSettings = pathname === "/dashboard/settings";
-  const showSubscribedTools = subscribed && isSettings;
+  const isLoading = loadState === "loading" && !notice;
 
   return (
     <div className="fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-[var(--z-dashboard-toast)] mx-auto max-w-md sm:inset-x-auto sm:right-4 sm:max-w-sm">
       <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--surface)] p-3 text-[var(--foreground)] shadow-[var(--shadow-soft)]">
         <div className="flex items-start gap-3">
-          <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg ${notice?.tone === "warning" ? "bg-[var(--warning-soft)] text-[var(--warning)]" : "bg-[var(--primary-soft)] text-[var(--primary)]"}`}>
-            {notice?.tone === "success" ? <CheckCircle2 size={18} aria-hidden="true" /> : <BellRing size={18} aria-hidden="true" />}
+          <span className={`mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg ${ui.tone === "warning" ? "bg-[var(--warning-soft)] text-[var(--warning)]" : ui.tone === "success" ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--surface-container)] text-[var(--muted-foreground)]"}`}>
+            {isLoading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : ui.tone === "success" ? <CheckCircle2 size={18} aria-hidden="true" /> : ui.tone === "warning" ? <AlertTriangle size={18} aria-hidden="true" /> : <BellRing size={18} aria-hidden="true" />}
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold leading-5">{notice?.text || (showSubscribedTools ? "Thông báo PWA đang bật." : "Bật thông báo vận hành trên thiết bị này.")}</p>
-            {canPrompt ? <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">Đơn mới, thanh toán chờ xác nhận và yêu cầu phục vụ sẽ báo như app.</p> : null}
+            <p className="text-sm font-semibold leading-5">{ui.title}</p>
+            {ui.detail ? <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{ui.detail}</p> : null}
             <div className="mt-3 flex flex-wrap gap-2">
-              {canPrompt ? (
+              {ui.canEnable ? (
                 <button type="button" onClick={enablePush} disabled={Boolean(busy)} className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-[var(--primary)] px-3 text-sm font-semibold text-[#FFF7EB]">
                   {busy === "subscribe" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <BellRing size={16} aria-hidden="true" />}
                   Bật
                 </button>
               ) : null}
-              {showSubscribedTools ? (
-                <>
-                  <button type="button" onClick={sendTest} disabled={Boolean(busy)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
-                    {busy === "test" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Send size={16} aria-hidden="true" />}
-                    Gửi thử
-                  </button>
-                  <button type="button" onClick={disablePush} disabled={Boolean(busy)} className="inline-flex min-h-10 items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold text-[var(--muted-foreground)]">
-                    Tắt
-                  </button>
-                </>
+              {ui.canSendTest ? (
+                <button type="button" onClick={sendTest} disabled={Boolean(busy)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+                  {busy === "test" ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Send size={16} aria-hidden="true" />}
+                  Gửi thử
+                </button>
+              ) : null}
+              {ui.canDisable ? (
+                <button type="button" onClick={disablePush} disabled={Boolean(busy)} className="inline-flex min-h-10 items-center rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold text-[var(--muted-foreground)]">
+                  Tắt
+                </button>
               ) : null}
             </div>
           </div>
-          <button type="button" onClick={notice ? () => setNotice(null) : dismissPrompt} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)]" aria-label="Ẩn thông báo PWA">
-            <X size={16} aria-hidden="true" />
-          </button>
+          {ui.showClose ? (
+            <button type="button" onClick={notice ? () => setNotice(null) : dismissPrompt} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[var(--muted-foreground)]" aria-label="Ẩn thông báo PWA">
+              <X size={16} aria-hidden="true" />
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
@@ -198,6 +255,19 @@ async function getCurrentPushSubscription() {
   if (!isPushSupported()) return null;
   const registration = await navigator.serviceWorker.getRegistration("/");
   return registration?.pushManager.getSubscription() ?? null;
+}
+
+async function savePushSubscription(subscription: PushSubscription, permissionState: NotificationPermission) {
+  await postJson("/api/admin/push-subscriptions", {
+    subscription: subscription.toJSON(),
+    device: {
+      appSurface: "dashboard",
+      permissionState,
+      platform: navigator.platform || null,
+      userAgent: navigator.userAgent || null,
+      deviceLabel: browserDeviceLabel()
+    }
+  });
 }
 
 async function postJson<T>(url: string, payload: unknown, method = "POST") {
