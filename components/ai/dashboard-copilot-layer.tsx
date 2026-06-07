@@ -33,6 +33,13 @@ import { cn } from "@/lib/utils";
 import type { AiConversationReplayPayload, AiConversationWorkflowSnapshot, AiWorkflowCheckpoint, AiWorkflowCheckpointStatus } from "@/types/ai-history";
 import type { AiAgentAction, AiAgentMission, AiAgentPlan, AiCommandDeck } from "@/types/ai-agent";
 
+function foldOwnerText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 /* ─── Types ─── */
 
 type ApiResponse<T> = { ok: true; data: T } | { ok: false; error?: string };
@@ -1774,6 +1781,41 @@ function DashboardCopilotExperience({
           }
         })) as OwnerAiResult
       );
+
+      // Auto-trigger/execute matching action for drawer commands
+      const lowerMsg = foldOwnerText(finalMessage);
+      const isCommand = /(xac nhan|nhan don|chap nhan|tinh tien|duyet|hoan thanh|phuc vu)/.test(lowerMsg);
+      if (isCommand && result.actions && result.actions.length > 0) {
+        const bestAction = result.actions.find(a => {
+          if (a.id && lowerMsg.includes(a.id.toLowerCase())) return true;
+          const lowerLabel = foldOwnerText(a.label);
+          const lowerDesc = foldOwnerText(a.description ?? "");
+          const numbers = lowerMsg.match(/\d+/g) || [];
+          if (numbers.some(num => lowerLabel.includes(num) || lowerDesc.includes(num))) return true;
+          if (lowerMsg.includes("nhan don") || lowerMsg.includes("chap nhan")) {
+            return a.id.startsWith("accept-order") || a.id.startsWith("bulk-accept");
+          }
+          if (lowerMsg.includes("tinh tien") || lowerMsg.includes("xac nhan tien")) {
+            return a.id.startsWith("confirm-payment");
+          }
+          if (lowerMsg.includes("hoan thanh") || lowerMsg.includes("phuc vu")) {
+            return a.id.startsWith("complete-order");
+          }
+          return false;
+        }) || result.actions.find(a => a.priority === "primary" && (a.type === "api" || a.type === "ui"));
+
+        if (bestAction) {
+          if (!requiresApproval(bestAction)) {
+            void runOwnerAction(bestAction);
+          } else {
+            setWorkflowState((current) => ({
+              ...current,
+              pendingApprovalActionId: bestAction.id,
+              status: "awaiting_approval"
+            }));
+          }
+        }
+      }
 
       setDrawerMessages((current) => [
         ...current,

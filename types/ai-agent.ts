@@ -19,7 +19,10 @@ export type AiAgentAction = {
     | "payment"
     | "staff_call"
     | "reservation"
-    | "delivery";
+    | "delivery"
+    | "add_item_to_cart"
+    | "remove_item_from_cart"
+    | "clear_cart";
   priority?: "primary" | "secondary" | "danger";
   safety?: "safe" | "confirm" | "manual_only";
 };

@@ -970,6 +970,120 @@ function CustomerAiAssistantExperience({
     [onAgentAction]
   );
 
+  useCopilotAction(
+    {
+      name: "add_item_to_cart",
+      followUp: true,
+      description: "Thêm món ăn hoặc đồ uống từ thực đơn vào giỏ hàng. Chỉ dùng khi khách hàng yêu cầu thêm món cụ thể.",
+      parameters: [
+        {
+          name: "menuItemId",
+          type: "string",
+          required: true,
+          description: "ID của món ăn/đồ uống cần thêm."
+        },
+        {
+          name: "quantity",
+          type: "number",
+          required: false,
+          description: "Số lượng phần ăn/uống cần thêm (mặc định là 1)."
+        },
+        {
+          name: "note",
+          type: "string",
+          required: false,
+          description: "Ghi chú riêng cho món (ví dụ: ít đá, không đá)."
+        },
+        {
+          name: "modifiers",
+          type: "object[]",
+          required: false,
+          description: "Danh sách tùy chọn/modifier đã chọn, mỗi phần tử là { groupId: string, optionId: string }."
+        }
+      ],
+      handler: async ({ menuItemId, quantity, note, modifiers }) => {
+        const action: AiAgentAction = {
+          id: `add-item-${menuItemId}-${Date.now()}`,
+          type: "ui",
+          label: "Thêm món vào giỏ",
+          uiTarget: "add_item_to_cart",
+          body: { menuItemId, quantity: quantity || 1, note, modifiers },
+          priority: "primary",
+          safety: "safe"
+        };
+        onAgentAction?.(action);
+        return `Đã yêu cầu thêm món có ID ${menuItemId} vào giỏ hàng thành công.`;
+      },
+      render: ({ status, result }) => <CustomerToolResult status={status} result={String(result || "Đang thêm món...")} />
+    },
+    [onAgentAction]
+  );
+
+  useCopilotAction(
+    {
+      name: "remove_item_from_cart",
+      followUp: true,
+      description: "Xóa hoặc giảm số lượng của một món ăn/đồ uống trong giỏ hàng.",
+      parameters: [
+        {
+          name: "menuItemId",
+          type: "string",
+          required: true,
+          description: "ID của món cần xóa/giảm số lượng."
+        },
+        {
+          name: "quantity",
+          type: "number",
+          required: false,
+          description: "Số lượng cần giảm. Nếu không truyền, xóa toàn bộ dòng món đó."
+        },
+        {
+          name: "modifiers",
+          type: "object[]",
+          required: false,
+          description: "Danh sách tùy chọn để định vị đúng dòng món muốn xóa/giảm, mỗi phần tử là { groupId: string, optionId: string }."
+        }
+      ],
+      handler: async ({ menuItemId, quantity, modifiers }) => {
+        const action: AiAgentAction = {
+          id: `remove-item-${menuItemId}-${Date.now()}`,
+          type: "ui",
+          label: "Xóa món khỏi giỏ",
+          uiTarget: "remove_item_from_cart",
+          body: { menuItemId, quantity, modifiers },
+          priority: "primary",
+          safety: "safe"
+        };
+        onAgentAction?.(action);
+        return `Đã yêu cầu cập nhật/xóa món có ID ${menuItemId} trong giỏ hàng.`;
+      },
+      render: ({ status, result }) => <CustomerToolResult status={status} result={String(result || "Đang xóa món...")} />
+    },
+    [onAgentAction]
+  );
+
+  useCopilotAction(
+    {
+      name: "clear_cart",
+      followUp: true,
+      description: "Xóa sạch toàn bộ các món trong giỏ hàng hiện tại.",
+      handler: async () => {
+        const action: AiAgentAction = {
+          id: `clear-cart-${Date.now()}`,
+          type: "ui",
+          label: "Hủy toàn bộ giỏ hàng",
+          uiTarget: "clear_cart",
+          priority: "primary",
+          safety: "safe"
+        };
+        onAgentAction?.(action);
+        return "Đã xóa toàn bộ giỏ hàng.";
+      },
+      render: ({ status, result }) => <CustomerToolResult status={status} result={String(result || "Đã xóa toàn bộ giỏ hàng.")} />
+    },
+    [onAgentAction]
+  );
+
   return (
     <>
       <CopilotSidebar

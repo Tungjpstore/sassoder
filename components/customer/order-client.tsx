@@ -1325,9 +1325,112 @@ export function CustomerOrderClient({
     await loadOrderHistory();
   }
 
+  function modifiersMatch(a?: Array<{ groupId: string; optionId: string }>, b?: Array<{ groupId: string; optionId: string }>) {
+    const listA = a || [];
+    const listB = b || [];
+    if (listA.length !== listB.length) return false;
+    return listA.every((selA) =>
+      listB.some((selB) => selB.groupId === selA.groupId && selB.optionId === selA.optionId)
+    );
+  }
+
   function handleCustomerAgentAction(action: AiAgentAction) {
     if (action.type === "link" && action.href) {
       window.location.assign(action.href);
+      return;
+    }
+
+    if (action.uiTarget === "add_item_to_cart") {
+      const body = action.body as {
+        menuItemId: string;
+        quantity?: number;
+        note?: string;
+        modifiers?: Array<{ groupId: string; optionId: string; quantity?: number }>;
+      } | undefined;
+      if (!body?.menuItemId) return;
+      const menuItem = categories.flatMap((category) => category.items).find((item) => item.id === body.menuItemId);
+      if (!menuItem) return;
+
+      const selections = body.modifiers ?? [];
+      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections);
+      if (!resolution.ok) {
+        // Fallback: required option is missing, open the customizer modal
+        setCustomizingItem({
+          item: menuItem,
+          selections: defaultModifierSelections(menuItem.modifierGroups ?? []),
+          quantity: body.quantity ?? 1,
+          note: body.note ?? ""
+        });
+        setError(null);
+        return;
+      }
+
+      const unitPrice = menuItem.price + resolution.totalDelta;
+      const summary = modifierSummary(resolution);
+      const qty = body.quantity ?? 1;
+      for (let index = 0; index < qty; index += 1) {
+        add({
+          menuItemId: menuItem.id,
+          name: menuItem.name,
+          price: unitPrice,
+          image: menuItem.image,
+          note: body.note,
+          modifiers: selections,
+          modifierSummary: summary
+        });
+      }
+      notifyCustomer(`Đã thêm ${menuItem.name} vào giỏ hàng.`);
+      setScreen((current) =>
+        current === "payment-choice" || current === "cash-payment" || current === "vietqr-payment" || current === "payment-pending"
+          ? "menu"
+          : current
+      );
+      setError(null);
+      return;
+    }
+
+    if (action.uiTarget === "remove_item_from_cart") {
+      const body = action.body as {
+        menuItemId: string;
+        quantity?: number;
+        modifiers?: Array<{ groupId: string; optionId: string }>;
+      } | undefined;
+      if (!body?.menuItemId) return;
+
+      const matchingCartItems = cart.filter((item) => {
+        if (item.menuItemId !== body.menuItemId) return false;
+        if (body.modifiers) {
+          return modifiersMatch(item.modifiers, body.modifiers);
+        }
+        return true;
+      });
+
+      if (matchingCartItems.length === 0) return;
+
+      const qtyToRemove = body.quantity ?? 1;
+      let removedCount = 0;
+      for (const item of matchingCartItems) {
+        if (removedCount >= qtyToRemove) break;
+        if (!body.quantity) {
+          remove(item.lineId);
+          removedCount += item.quantity;
+        } else {
+          const toDec = Math.min(item.quantity, qtyToRemove - removedCount);
+          for (let i = 0; i < toDec; i++) {
+            decrement(item.lineId);
+          }
+          removedCount += toDec;
+        }
+      }
+      notifyCustomer("Đã cập nhật giỏ hàng.");
+      setError(null);
+      return;
+    }
+
+    if (action.uiTarget === "clear_cart") {
+      clear();
+      notifyCustomer("Đã xóa toàn bộ giỏ hàng.");
+      setError(null);
       return;
     }
 

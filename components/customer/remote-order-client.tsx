@@ -1651,9 +1651,104 @@ export function RemoteOrderClient({
     );
   }
 
+  function modifiersMatch(a?: Array<{ groupId: string; optionId: string }>, b?: Array<{ groupId: string; optionId: string }>) {
+    const listA = a || [];
+    const listB = b || [];
+    if (listA.length !== listB.length) return false;
+    return listA.every((selA) =>
+      listB.some((selB) => selB.groupId === selA.groupId && selB.optionId === selA.optionId)
+    );
+  }
+
   function handleCustomerAgentAction(action: AiAgentAction) {
     if (action.type === "link" && action.href) {
       window.location.href = action.href;
+      return;
+    }
+
+    if (action.uiTarget === "add_item_to_cart") {
+      const body = action.body as {
+        menuItemId: string;
+        quantity?: number;
+        note?: string;
+        modifiers?: Array<{ groupId: string; optionId: string; quantity?: number }>;
+      } | undefined;
+      if (!body?.menuItemId) return;
+      const menuItem = allItems.find((item) => item.id === body.menuItemId);
+      if (!menuItem) return;
+
+      const selections = body.modifiers ?? [];
+      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections);
+      if (!resolution.ok) {
+        setCustomizingItem({
+          item: menuItem,
+          selections: defaultModifierSelections(menuItem.modifierGroups ?? []),
+          quantity: body.quantity ?? 1,
+          note: body.note ?? ""
+        });
+        setError(null);
+        return;
+      }
+
+      setCart((current) =>
+        addRemoteCartLine(current, {
+          itemId: menuItem.id,
+          quantity: body.quantity ?? 1,
+          note: body.note,
+          modifiers: selections
+        })
+      );
+      notifyAddedToCart(menuItem.name);
+      setScreen((current) => (current === "payment" || current === "vietqr" ? "menu" : current));
+      setError(null);
+      return;
+    }
+
+    if (action.uiTarget === "remove_item_from_cart") {
+      const body = action.body as {
+        menuItemId: string;
+        quantity?: number;
+        modifiers?: Array<{ groupId: string; optionId: string }>;
+      } | undefined;
+      if (!body?.menuItemId) return;
+
+      const matchingLines = cartLines.filter((line) => {
+        if (line.itemId !== body.menuItemId) return false;
+        if (body.modifiers) {
+          return modifiersMatch(line.modifiers, body.modifiers);
+        }
+        return true;
+      });
+
+      if (matchingLines.length === 0) return;
+
+      const qtyToRemove = body.quantity ?? 1;
+      let removedCount = 0;
+
+      setCart((current) => {
+        let updatedCart = { ...current };
+        for (const line of matchingLines) {
+          if (removedCount >= qtyToRemove) break;
+          if (!body.quantity) {
+            delete updatedCart[line.lineId];
+            removedCount += line.quantity;
+          } else {
+            const toDec = Math.min(line.quantity, qtyToRemove - removedCount);
+            updatedCart = updateRemoteCartQuantity(updatedCart, line.lineId, -toDec);
+            removedCount += toDec;
+          }
+        }
+        return updatedCart;
+      });
+      notifyCustomer("Đã cập nhật giỏ hàng.");
+      setError(null);
+      return;
+    }
+
+    if (action.uiTarget === "clear_cart") {
+      setCart({});
+      notifyCustomer("Đã xóa toàn bộ giỏ hàng.");
+      setError(null);
       return;
     }
 

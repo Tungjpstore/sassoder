@@ -186,3 +186,32 @@ export async function assertStaffActionPermission(
 
   return context;
 }
+
+export async function assertCanAssignStaffRole(
+  session: SessionProfile,
+  roleCode: string
+) {
+  const template = STAFF_ROLE_TEMPLATES.find((role) => role.code === roleCode);
+  if (template?.role === "ADMIN") {
+    await assertStaffActionPermission(session, "staff.roles");
+    return;
+  }
+
+  const supabase = createAdminSupabaseClient() as any;
+  const roleResult = await supabase
+    .from("staff_roles")
+    .select("role_scope")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("code", roleCode)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (roleResult.error && !isMissingPermissionSchema(roleResult.error)) {
+    throw roleResult.error;
+  }
+
+  if (roleResult.data?.role_scope === "ADMIN") {
+    await assertStaffActionPermission(session, "staff.roles");
+  }
+}
+

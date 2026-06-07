@@ -666,7 +666,7 @@ const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
     "cho meo"
   ],
   menu_discovery: ["goi y", "mon nao", "ngon", "de an", "de uong", "nen thu", "menu", "combo", "nhom", "ngan sach", "duoi"],
-  cart: ["gio", "them", "xoa", "so luong", "goi them", "ghi chu"],
+  cart: ["gio", "them", "xoa", "so luong", "goi them", "ghi chu", "huy gio", "bot mon", "giam mon", "cap nhat gio", "lay cho toi", "cho toi", "lay 1 ly", "cho 1 ly", "lay them", "goi mon"],
   order_status: ["don cua toi", "trang thai", "da nhan", "dang ra", "cho mon", "xac nhan"],
   payment: ["thanh toan", "vietqr", "tien mat", "hoa don", "chuyen khoan", "da tra"],
   staff_call: ["goi nhan vien", "nhan vien", "ho tro", "them nuoc", "muon gap"],
@@ -677,8 +677,8 @@ const customerKeywordMap: Record<CustomerAiIntent, string[]> = {
 };
 
 const ownerRouteRules: Array<IntentRouteRule<OwnerAiIntent>> = [
-  { intent: "orders", weight: 5, patterns: ["xu ly tat ca don", "xu ly don cho", "nhan don", "accept order", "don nao can xu ly"] },
-  { intent: "payments", weight: 5, patterns: ["xac nhan thanh toan", "doi soat", "vietqr", "da chuyen khoan", "xac nhan tien"] },
+  { intent: "orders", weight: 5, patterns: ["xu ly tat ca don", "xu ly don cho", "nhan don", "accept order", "don nao can xu ly", "chấp nhận đơn", "nhận đơn", "duyệt đơn", "phục vụ xong", "ra món xong"] },
+  { intent: "payments", weight: 5, patterns: ["xac nhan thanh toan", "doi soat", "vietqr", "da chuyen khoan", "xac nhan tien", "tính tiền", "xác nhận tiền"] },
   { intent: "menu", weight: 6, patterns: ["tao anh mon", "anh mon an", "anh do an", "food photo", "ocr menu", "quet menu", "nhap menu", "them mon tu ocr"] },
   { intent: "inventory", weight: 6, patterns: ["ton kho", "nguyen lieu", "thieu hang", "het hang", "dinh muc", "food cost", "nhap kho", "dat hang"] },
   { intent: "growth", weight: 6, patterns: ["tao logo", "prompt logo", "tao slogan", "viet slogan", "bo nhan dien", "thuong hieu", "branding"] },
@@ -691,7 +691,7 @@ const ownerRouteRules: Array<IntentRouteRule<OwnerAiIntent>> = [
 ];
 
 const customerRouteRules: Array<IntentRouteRule<CustomerAiIntent>> = [
-  { intent: "cart", weight: 5, patterns: ["them vao gio", "mo gio", "gio hang", "goi them", "xoa mon"] },
+  { intent: "cart", weight: 5, patterns: ["them vao gio", "mo gio", "gio hang", "goi them", "xoa mon", "huy gio", "bot mon", "giam mon", "cap nhat gio", "them ca phe", "lay cho toi", "cho toi", "lay 1 ly", "cho 1 ly", "lay them", "goi mon"] },
   { intent: "payment", weight: 5, patterns: ["thanh toan", "toi da chuyen khoan", "vietqr", "hoa don", "da tra"] },
   { intent: "order_status", weight: 5, patterns: ["don cua toi", "trang thai don", "quan da nhan", "cho mon"] },
   { intent: "delivery", weight: 4, patterns: ["giao hang", "phi ship", "bao lau giao", "dia chi giao"] },

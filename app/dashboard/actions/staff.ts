@@ -56,9 +56,7 @@ import { forceStaffSessionLogout } from "@/features/staff/services/staff-session
 import { updateStaffIncidentReportStatus } from "@/features/staff/services/staff-self-service";
 import { createTemporaryStaffAppPassword, resetStaffAppPassword } from "@/features/staff/services/staff-app-auth-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
-import { STAFF_ROLE_TEMPLATES } from "@/lib/staff-permissions";
-import { createAdminSupabaseClient } from "@/lib/supabase/admin";
-import { assertStaffActionPermission } from "@/services/staff-permission-service";
+import { assertStaffActionPermission, assertCanAssignStaffRole } from "@/services/staff-permission-service";
 import {
   createRestaurantUser,
   setRestaurantUserAccountState,
@@ -116,32 +114,6 @@ function merchantAttendanceSession(session: Awaited<ReturnType<typeof requireOpe
   return authorizeAttendanceManagementSession(session);
 }
 
-async function assertCanAssignStaffRole(session: Awaited<ReturnType<typeof requireOperationalStaffSession>>, roleCode: string) {
-  const template = STAFF_ROLE_TEMPLATES.find((role) => role.code === roleCode);
-  if (template?.role === "ADMIN") {
-    await assertStaffActionPermission(session, "staff.roles");
-    return;
-  }
-
-  const supabase = createAdminSupabaseClient() as any;
-  const roleResult = await supabase
-    .from("staff_roles")
-    .select("role_scope")
-    .eq("restaurant_id", session.restaurantId)
-    .eq("code", roleCode)
-    .eq("is_active", true)
-    .maybeSingle();
-
-  if (roleResult.error) {
-    const message = roleResult.error.message ?? "";
-    const missingStaffRoles = roleResult.error.code === "PGRST204" || roleResult.error.code === "42P01" || /staff_roles|role_scope/i.test(message);
-    if (!missingStaffRoles) throw roleResult.error;
-  }
-
-  if (roleResult.data?.role_scope === "ADMIN") {
-    await assertStaffActionPermission(session, "staff.roles");
-  }
-}
 
 async function revalidateStaffDashboards(restaurantId: string) {
   await invalidateStaffOperationsBundleCache(restaurantId);

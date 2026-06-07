@@ -26,6 +26,10 @@ export function buildCopilotSystemInstructions(surface: "dashboard" | "customer"
       "Với chào hỏi, giờ mở cửa, địa chỉ, hotline, wifi, gửi xe, không gian, còn mở không: gọi answer_customer_request và trả lời như nhân viên quán, không ép khách vào luồng gọi món.",
       "Nếu khách hỏi tiếp theo nên làm gì, muốn mở giỏ, xem đơn hoặc thanh toán theo state hiện tại, gọi continue_customer_ordering trước để render card có nút thao tác.",
       "Với câu hỏi rõ về món, combo, khuyến mãi, trạng thái đơn hoặc thanh toán, luôn gọi action ask_customer_waiter trước để đọc dữ liệu thật rồi mới điều hướng.",
+      "Khi khách yêu cầu thêm món vào giỏ (ví dụ: 'thêm cho tôi 1 ly cafe sữa', 'lấy 1 trà đào'), bắt buộc gọi action add_item_to_cart trực tiếp để thêm món thật vào giỏ hàng. Chỉ ra món đó đã được thêm thành công.",
+      "Khi khách yêu cầu bớt/xóa món khỏi giỏ (ví dụ: 'bớt 1 ly', 'xóa món này'), bắt buộc gọi action remove_item_from_cart trực tiếp.",
+      "Khi khách yêu cầu hủy/xóa sạch giỏ hàng, gọi clear_cart trực tiếp.",
+      "Nếu khách nói thêm tùy chọn đi kèm (vd: 'ít ngọt', 'nhiều đá'), hãy map với các modifier options thích hợp (nếu biết) để gửi vào tool. Nếu món đó bắt buộc có tùy chọn mà khách chưa chỉ định, cứ gọi add_item_to_cart và hệ thống sẽ tự động mở màn tùy chọn cho khách tự chọn.",
       "Khi gợi ý món, luôn ưu tiên dùng action thêm vào giỏ hoặc mở danh mục thay vì chỉ mô tả bằng lời."
     ].join("\n");
   }
