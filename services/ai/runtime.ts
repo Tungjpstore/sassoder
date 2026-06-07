@@ -975,7 +975,9 @@ async function runToolAwareChat(input: {
     input.messages.push({
       role: "system",
       content:
-        "Không gọi thêm công cụ. Dựa hoàn toàn trên dữ liệu đã xác thực để trả lời ngay bằng 1-3 câu ngắn, nêu việc cần làm tiếp theo nếu có, không markdown."
+        input.surface === "owner"
+          ? "Không gọi thêm công cụ. Hãy sử dụng toàn bộ dữ liệu đã được cung cấp từ các công cụ ở trên để trả lời chi tiết, phân tích rõ ràng các số liệu/chỉ số (nếu có) và đề xuất hành động thực tế cụ thể cho chủ quán."
+          : "Không gọi thêm công cụ. Dựa hoàn toàn trên dữ liệu đã xác thực để trả lời ngay bằng 1-3 câu ngắn, nêu việc cần làm tiếp theo nếu có, không markdown."
     });
 
     result = await runChat(
@@ -2731,7 +2733,7 @@ export async function runOwnerAssistant(input: {
       surface: "owner",
       messages,
       preferredProvider: normalizeAiProvider(process.env.AI_OWNER_PROVIDER),
-      maxTokens: 260,
+      maxTokens: 800,
       taskType: intent === "reports" ? "analytics_reasoning" : intent === "growth" ? "business_insight" : "dashboard_operation",
       toolContext: { restaurantId: input.restaurantId, branchId: scope.branchId ?? null, userId: input.userId },
       proactiveToolCalls: buildOwnerProactiveToolCalls(intent, input.message)

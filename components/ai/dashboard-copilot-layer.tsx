@@ -1183,34 +1183,35 @@ function WorkflowTimeline({
       ];
 
   return (
-    <section className="rounded-2xl border border-black/[0.06] bg-white/62 p-4">
+    <section className="rounded-2xl border border-[#0F5132]/12 bg-[#FFFEFA]/70 p-4.5 shadow-[0_8px_30px_rgba(15,81,50,0.02)]">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-[0.04em] text-[#0F5132]">
-            <Activity size={14} />
+          <p className="inline-flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.08em] text-[#0F5132]">
+            <Activity size={13} className="animate-pulse text-[#10B981]" />
             Agent đang vận hành
           </p>
           <h3 className="mt-1 text-base font-black text-[#111827]">
             {workflow.summary || "Workflow điều hành ca bán"}
           </h3>
         </div>
-        <span className="rounded-full border border-[#0F5132]/15 bg-[#0F5132]/[0.07] px-2.5 py-1 text-[11px] font-black text-[#0F5132]">
+        <span className="rounded-full border border-[#0F5132]/15 bg-[#0F5132]/[0.07] px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-[#0F5132]">
           {workflow.status}
         </span>
       </div>
-      <div className="mt-4 grid gap-3">
+      <div className="mt-4.5 grid gap-3.5">
         {steps.map((step, index) => (
           <div key={`${step.label}-${index}`} className="grid grid-cols-[30px_minmax(0,1fr)] gap-3">
             <span
-              className={`grid h-7 w-7 place-items-center rounded-lg border text-xs font-black ${
+              className={cn(
+                "grid h-7 w-7 place-items-center rounded-lg border text-xs font-black shadow-sm transition-all duration-300",
                 step.status === "done"
-                  ? "border-[#0F5132]/20 bg-[#0F5132] text-white"
+                  ? "border-[#0F5132]/20 bg-gradient-to-br from-[#0F5132] to-[#147A4D] text-white"
                   : step.status === "running"
-                    ? "border-[#F59E0B]/25 bg-[#F59E0B]/15 text-[#8A5506]"
-                    : "border-black/[0.06] bg-white/74 text-[#6B7280]"
-              }`}
+                    ? "border-[#F59E0B]/30 bg-[#F59E0B]/12 text-[#7A4A05] animate-pulse"
+                    : "border-black/[0.06] bg-white/50 text-[#6B7280]"
+              )}
             >
-              {step.status === "done" ? <Check size={14} /> : step.status === "running" ? <Loader2 size={14} className="animate-spin" /> : index + 1}
+              {step.status === "done" ? <Check size={14} /> : step.status === "running" ? <Loader2 size={13} className="animate-spin" /> : index + 1}
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-black text-[#111827]">{step.label}</span>
@@ -1268,10 +1269,10 @@ function LogibotOperatingDrawer({
       transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
       className={cn(
         "fixed z-[var(--z-dashboard-modal)] overflow-hidden p-0 text-[#111827]",
-        "inset-0 bg-[#F8F7F4]/98 backdrop-blur-2xl",
+        "inset-0 bg-[#F8F7F4]/98 backdrop-blur-3xl",
         isExpanded
-          ? "lg:inset-4 lg:rounded-[34px] lg:border lg:border-[#111827]/[0.08] lg:bg-white/38 lg:p-2 lg:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
-          : "md:inset-y-4 md:right-4 md:left-auto md:w-[min(620px,calc(100vw-2rem))] md:rounded-[34px] md:border md:border-[#111827]/[0.08] md:bg-white/38 md:p-2 md:shadow-[0_28px_100px_rgba(17,24,39,0.18)]"
+          ? "lg:inset-6 lg:rounded-[36px] lg:border lg:border-white/20 lg:bg-[#FFFEFA]/45 lg:p-2 lg:shadow-[0_32px_120px_rgba(15,81,50,0.15)]"
+          : "md:inset-y-6 md:right-6 md:left-auto md:w-[min(620px,calc(100vw-3rem))] md:rounded-[36px] md:border md:border-white/20 md:bg-[#FFFEFA]/45 md:p-2 md:shadow-[0_32px_120px_rgba(15,81,50,0.15)]"
       )}
     >
       <LogibotChatSurface
@@ -1308,10 +1309,11 @@ function LogibotOperatingDrawer({
  */
 type LogibotSidebarToggleProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   open?: boolean;
+  hasActions?: boolean;
 };
 
 const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleProps>(
-  function LogibotSidebarToggle({ onClick, disabled, className: _className, open = false, ...buttonProps }, ref) {
+  function LogibotSidebarToggle({ onClick, disabled, className: _className, open = false, hasActions = false, ...buttonProps }, ref) {
     function handleClick(event: MouseEvent<HTMLButtonElement>) {
       if (disabled) return;
       onClick?.(event);
@@ -1323,17 +1325,21 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleP
         type="button"
         onClick={handleClick}
         disabled={disabled}
-        className={`fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-semibold transition-[background-color,border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 active:scale-95 md:bottom-5 md:right-5 ${
+        className={cn(
+          "fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-bold transition-all duration-300 hover:-translate-y-1 active:scale-95 md:bottom-5 md:right-5",
           open
-            ? "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] shadow-[var(--shadow-soft)]"
-            : "border-[var(--primary)]/25 bg-gradient-to-r from-[var(--primary)] to-[var(--primary-hover)] text-[#FFF7EB] shadow-[0_8px_32px_rgba(15,77,58,0.24)] hover:shadow-[0_12px_40px_rgba(15,77,58,0.3)]"
-        }`}
+            ? "border-[#0F5132]/20 bg-white/80 backdrop-blur-md text-[#0F5132] shadow-[0_8px_32px_rgba(15,81,50,0.08)]"
+            : "border-[#0F5132]/25 bg-gradient-to-br from-[#0F5132] to-[#0A3822] text-[#FFF7EB] shadow-[0_12px_36px_rgba(15,81,50,0.3)] hover:shadow-[0_16px_44px_rgba(15,81,50,0.4)]"
+        )}
         aria-label={open ? "Đóng LogiBot" : "Mở LogiBot"}
         aria-pressed={open}
         {...buttonProps}
       >
-        <span className="relative h-10 w-10 overflow-hidden rounded-full border border-[rgba(255,255,255,0.15)] bg-[#FFF7EB]">
-          <Image src={logibotLogo} alt="LogiBot" fill sizes="40px" className="object-cover" />
+        <span className="relative h-10 w-10 overflow-hidden rounded-full border border-[rgba(255,255,255,0.15)] bg-[#FFF7EB] flex items-center justify-center">
+          {hasActions && (
+            <span className="absolute inset-0 rounded-full border-2 border-[#F59E0B] animate-ping opacity-75" />
+          )}
+          <Image src={logibotLogo} alt="LogiBot" fill sizes="40px" className="object-cover rounded-full" />
         </span>
         <span className="hidden text-sm sm:inline">{open ? "Đóng LogiBot" : "LogiBot AI"}</span>
       </button>
@@ -2204,6 +2210,7 @@ function DashboardCopilotExperience({
       ) : (
         <LogibotSidebarToggle
           onClick={() => setHasEverOpened(true)}
+          hasActions={queuedActions.length > 0}
         />
       )}
     </>

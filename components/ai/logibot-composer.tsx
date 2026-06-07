@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent } from "react";
 import { FileText, Image as ImageIcon, Loader2, X } from "lucide-react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 export type LogibotAttachmentDraft = {
@@ -112,10 +113,10 @@ function ComposerToolButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-2xl border px-2 text-xs font-semibold transition duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-3",
+        "inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-xs font-bold transition-all duration-200 active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto",
         active
-          ? "border-[#F59E0B]/35 bg-[#F59E0B]/[0.09] text-[#7A4A05] shadow-[0_10px_26px_rgba(245,158,11,0.12)]"
-          : "border-[#111827]/[0.075] bg-white/76 text-[#374151] hover:border-[#0F5132]/22 hover:bg-white hover:text-[#0F5132]"
+          ? "border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#7A4A05] shadow-[0_0_12px_rgba(245,158,11,0.15)]"
+          : "border-[#0F5132]/10 bg-white/45 backdrop-blur-md text-[#374151] hover:border-[#0F5132]/20 hover:bg-white hover:text-[#0F5132] hover:shadow-sm"
       )}
       aria-pressed={active || undefined}
       aria-label={label}
@@ -295,6 +296,7 @@ export function LogibotComposer({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isSubmittingRef = useRef(false);
   const [attachments, setAttachments] = useState<LogibotAttachmentDraft[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -335,17 +337,34 @@ export function LogibotComposer({
     await addFiles(Array.from(event.dataTransfer.files ?? []));
   }
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const message = value.trim();
     if ((!message && !attachments.length) || isSending) return;
-    await onSubmit(message || "Đọc file đính kèm và cho biết bước xử lý tiếp theo.", attachments);
+
+    isSubmittingRef.current = true;
+
+    // Clear state in parent synchronously
+    onChange("");
+
+    // Fail-proof instant clear on the DOM textarea element
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+    }
+
+    void onSubmit(message || "Đọc file đính kèm và cho biết bước xử lý tiếp theo.", attachments);
     setAttachments([]);
     setAttachmentError(null);
     voice.clearError();
+
+    // Reset reference after composition commit events settle
+    setTimeout(() => {
+      isSubmittingRef.current = false;
+    }, 150);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.nativeEvent.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       event.currentTarget.form?.requestSubmit();
@@ -360,8 +379,10 @@ export function LogibotComposer({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
-          "rounded-[24px] border bg-[#FFFEFA]/96 p-2.5 shadow-[0_18px_50px_rgba(17,24,39,0.09)] backdrop-blur-2xl transition",
-          dragActive ? "border-[#0F5132]/35 ring-4 ring-[#0F5132]/10" : "border-[#111827]/[0.08] focus-within:border-[#0F5132]/22 focus-within:ring-4 focus-within:ring-[#0F5132]/[0.07]"
+          "rounded-[28px] bg-[#FFFEFA]/70 backdrop-blur-xl border border-black/[0.08] p-2.5 shadow-[0_20px_50px_rgba(0,0,0,0.06)] transition-all duration-200",
+          dragActive 
+            ? "border-[#0F5132]/30 ring-4 ring-[#0F5132]/10 bg-[#FFFEFA]/90" 
+            : "focus-within:border-[#0F5132]/30 focus-within:ring-4 focus-within:ring-[#0F5132]/10"
         )}
       >
         {attachments.length ? (
@@ -369,17 +390,17 @@ export function LogibotComposer({
             {attachments.map((attachment) => {
               const Icon = attachment.kind === "image" ? ImageIcon : FileText;
               return (
-                <span key={attachment.id} className="inline-flex min-h-10 max-w-[240px] shrink-0 items-center gap-2 rounded-full border border-[#111827]/[0.07] bg-[#F8F7F4] px-3 text-xs font-bold text-[#111827]">
-                  <Icon size={14} className="shrink-0 text-[#0F5132]" />
+                <span key={attachment.id} className="inline-flex min-h-9 max-w-[240px] shrink-0 items-center gap-2 rounded-full border border-[#0F5132]/10 bg-[#0F5132]/5 px-3 text-xs font-bold text-[#0F5132] shadow-sm">
+                  <Icon size={13} className="shrink-0 text-[#0F5132]" />
                   <span className="min-w-0 truncate">{attachment.name}</span>
-                  <span className="shrink-0 text-[#6B7280]">{formatBytes(attachment.size)}</span>
+                  <span className="shrink-0 text-[#0F5132]/60 font-semibold">{formatBytes(attachment.size)}</span>
                   <button
                     type="button"
                     onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[#6B7280] transition hover:bg-black/[0.05] hover:text-[#111827]"
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#0F5132]/10 text-[#0F5132] transition hover:bg-[#0F5132]/20 hover:scale-105"
                     aria-label={`Bỏ ${attachment.name}`}
                   >
-                    <X size={13} />
+                    <X size={11} />
                   </button>
                 </span>
               );
@@ -387,7 +408,7 @@ export function LogibotComposer({
           </div>
         ) : null}
 
-        <div className="flex min-h-12 items-start gap-2 rounded-[18px] bg-[#F8F7F4]/70 px-3 py-1.5">
+        <div className="flex min-h-12 items-start gap-2 rounded-[20px] bg-[#F8F7F4]/40 border border-black/[0.04] px-3.5 py-1.5 focus-within:bg-[#F8F7F4]/60 transition-colors duration-200">
           <input
             ref={inputRef}
             type="file"
@@ -400,7 +421,10 @@ export function LogibotComposer({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => {
+              if (isSubmittingRef.current) return;
+              onChange(event.target.value);
+            }}
             onKeyDown={handleKeyDown}
             rows={1}
             name="logibot-message"
@@ -417,19 +441,45 @@ export function LogibotComposer({
           <button
             type="submit"
             disabled={isSending || (!value.trim() && !attachments.length)}
-            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-2xl bg-[#0F5132] px-2 text-xs font-bold text-[#FFF9EF] shadow-[0_14px_32px_rgba(15,81,50,0.22)] transition hover:bg-[#0B3D27] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 sm:ml-auto sm:w-auto sm:px-4"
+            className="inline-flex h-10 w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#0F5132] to-[#147A4D] hover:from-[#0B3D27] hover:to-[#0F5132] px-4 text-xs font-bold text-white shadow-[0_10px_24px_rgba(15,81,50,0.15)] hover:shadow-[0_12px_30px_rgba(15,81,50,0.22)] transition-all duration-200 active:scale-[0.95] disabled:cursor-not-allowed disabled:opacity-45 sm:ml-auto sm:w-auto"
             aria-label="Gửi"
             title="Gửi"
           >
-            {isSending ? <Loader2 size={17} className="animate-spin" /> : <ComposerIcon name="send" />}
+            {isSending ? <Loader2 size={16} className="animate-spin" /> : <ComposerIcon name="send" />}
             <span>Gửi</span>
           </button>
         </div>
       </form>
       {voice.isListening || voice.error || attachmentError || disclaimer ? (
-        <p className="mt-2 text-center text-[11px] font-semibold leading-5 text-[#6B7280]">
-          {voice.isListening ? "Đang nghe tiếng Việt…" : voice.error || attachmentError || disclaimer}
-        </p>
+        <div className="mt-2 flex flex-col items-center justify-center gap-1.5 text-center text-[11px] font-semibold leading-5 text-[#6B7280]">
+          {voice.isListening ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[#EF4444]">Đang nghe tiếng Việt…</span>
+              <div className="flex items-center justify-center gap-0.5 h-3">
+                {[...Array(6)].map((_, i) => (
+                  <motion.span
+                    key={i}
+                    animate={{
+                      scaleY: [0.3, 1.3, 0.3],
+                    }}
+                    transition={{
+                      duration: 0.6,
+                      repeat: Infinity,
+                      delay: i * 0.1,
+                      ease: "easeInOut",
+                    }}
+                    className={cn(
+                      "w-[2px] rounded-full origin-center h-3.5",
+                      i % 2 === 0 ? "bg-[#EF4444]" : "bg-[#F59E0B]"
+                    )}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p>{voice.error || attachmentError || disclaimer}</p>
+          )}
+        </div>
       ) : null}
     </div>
   );

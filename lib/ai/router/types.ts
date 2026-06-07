@@ -97,6 +97,7 @@ export type AiProviderConfig = {
   fastModel: string;
   imageModel: string;
   ocrModel: string;
+  reasoningModel: string;
   supportsJsonMode: boolean;
   supportsToolCalling: boolean;
   supportsImageGeneration: boolean;
@@ -118,6 +119,7 @@ export type AiProviderReadiness = {
   fastModel: string;
   imageModel: string;
   ocrModel: string;
+  reasoningModel: string;
   supportsJsonMode: boolean;
   supportsToolCalling: boolean;
   supportsImageGeneration: boolean;

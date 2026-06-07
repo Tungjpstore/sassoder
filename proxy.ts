@@ -151,11 +151,7 @@ function repairInvalidSupabaseSession(request: NextRequest, reason = "refresh") 
 
   const response = pathnameNeedsLoginRedirect(request.nextUrl.pathname)
     ? NextResponse.redirect(url)
-    : NextResponse.next({
-        request: {
-          headers: request.headers
-        }
-      });
+    : NextResponse.next();
   response.headers.set("Cache-Control", "no-store");
 
   supabaseCookieNames(request).forEach((name) => {
@@ -320,11 +316,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (shouldBypassProxySessionRefresh(request, pathname)) {
-    const response = NextResponse.next({
-      request: {
-        headers: request.headers
-      }
-    });
+    const response = NextResponse.next();
     return appendExpiredTransientCookies(response, request);
   }
 

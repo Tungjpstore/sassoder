@@ -28,6 +28,9 @@ export async function chooseAiProviderOrder(request: Pick<AiCompletionRequest, "
 async function pickModel(provider: AiProvider, taskType: AiTaskType, modelOverride?: string) {
   const config = await getResolvedAiProviderConfig(provider);
   if (modelOverride) return modelOverride;
+  if (taskType === "analytics_reasoning" || taskType === "business_insight" || taskType === "batch_report") {
+    return config.reasoningModel || config.chatModel;
+  }
   if (taskType === "customer_ordering" || taskType === "upsell" || taskType === "tool") return config.fastModel;
   if (taskType === "ocr") return config.ocrModel;
   if (taskType === "image") return config.imageModel;

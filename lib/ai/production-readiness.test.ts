@@ -17,6 +17,7 @@ function provider(configured: boolean): AiProviderReadiness {
     fastModel: "gpt-4.1-nano",
     imageModel: "gpt-image-1",
     ocrModel: "gpt-4.1-mini",
+    reasoningModel: configured ? "gpt-4o" : "gemini-2.5-pro",
     supportsJsonMode: configured,
     supportsToolCalling: configured,
     supportsImageGeneration: configured,
