@@ -364,6 +364,15 @@ Events:
 
 `install-cron.sh` schedules daily backups, Certbot renewal, weekly Docker prune, local health validation, and app cron handoff entries. It writes `CRON_TZ=$BACKUP_TIMEZONE` and `TZ=$BACKUP_TIMEZONE` into `/etc/cron.d/logivn-vps`, so backup schedules stay pinned to `Asia/Ho_Chi_Minh` unless `/opt/logivn/.env` intentionally overrides `BACKUP_TIMEZONE`.
 
+The same installer also enables systemd safety timers. `logivn-backup-daily.timer` runs at 02:10 Asia/Ho_Chi_Minh with `Persistent=true` to catch a missed cron window, and `logivn-backup-manual-claim.timer` claims queued manual backups every 5 minutes so Admin/Telegram backup actions are not dependent on cron alone. Daily cron and timer runs set `BACKUP_DAILY_SKIP_IF_COMPLETED=true`; after a verified daily backup reports to LogiBot Dev, `backup.sh` writes a success stamp for that local date so the fallback timer skips instead of creating a duplicate backup.
+
+Check scheduler state after deploy:
+
+```bash
+systemctl list-timers logivn-backup-daily.timer logivn-backup-manual-claim.timer --no-pager
+APP_ROOT=/opt/logivn /opt/logivn/app/infra/vps/scripts/doctor.sh
+```
+
 Daily backups report their final status to LogiBot Dev after upload verification and retention cleanup. Configure `PLATFORM_TELEGRAM_BOT_TOKEN` or `BACKUP_TELEGRAM_BOT_TOKEN`; either set `DEV_TELEGRAM_CHAT_ID` directly or connect a dev account through the Platform Telegram bot so `backup.sh` can discover active `platform_telegram_connections`. With `BACKUP_TELEGRAM_REPORT_REQUIRED=true`, a completed data backup that cannot notify LogiBot Dev is recorded as `warn` and opens a `telegram_report_failed` alert instead of appearing as a clean success.
 
 Run a backup immediately after the first successful deploy:

@@ -6,6 +6,11 @@ APP_REPO=${APP_REPO:-$APP_ROOT/app}
 CRON_FILE=/etc/cron.d/logivn-vps
 ENV_FILE=${ENV_FILE:-$APP_ROOT/.env}
 BACKUP_TIMEZONE=${BACKUP_TIMEZONE:-Asia/Ho_Chi_Minh}
+SYSTEMD_DIR=${SYSTEMD_DIR:-/etc/systemd/system}
+DAILY_BACKUP_SERVICE=logivn-backup-daily.service
+DAILY_BACKUP_TIMER=logivn-backup-daily.timer
+MANUAL_CLAIM_SERVICE=logivn-backup-manual-claim.service
+MANUAL_CLAIM_TIMER=logivn-backup-manual-claim.timer
 
 if [ -f "$ENV_FILE" ]; then
   configured_timezone=$(awk -F= '
@@ -21,13 +26,127 @@ if [ -f "$ENV_FILE" ]; then
   fi
 fi
 
+systemd_calendar_or_fallback() {
+  local calendar=$1
+  local fallback=${2:-}
+
+  if ! command -v systemd-analyze >/dev/null 2>&1; then
+    printf '%s' "$calendar"
+    return 0
+  fi
+
+  if systemd-analyze calendar "$calendar" >/dev/null 2>&1; then
+    printf '%s' "$calendar"
+    return 0
+  fi
+
+  if [ -n "$fallback" ] && systemd-analyze calendar "$fallback" >/dev/null 2>&1; then
+    printf 'Warning: systemd does not accept calendar %s; using %s instead.\n' "$calendar" "$fallback" >&2
+    printf '%s' "$fallback"
+    return 0
+  fi
+
+  printf 'Warning: systemd does not accept calendar %s; skipping related timer.\n' "$calendar" >&2
+  return 1
+}
+
+install_systemd_timers() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    printf 'Warning: systemctl not found; skipping systemd backup timers.\n' >&2
+    return 0
+  fi
+  if [ ! -d "$SYSTEMD_DIR" ]; then
+    printf 'Warning: %s not found; skipping systemd backup timers.\n' "$SYSTEMD_DIR" >&2
+    return 0
+  fi
+
+  local daily_calendar
+  local manual_calendar
+  daily_calendar=$(systemd_calendar_or_fallback "*-*-* 02:10:00 $BACKUP_TIMEZONE" "*-*-* 19:10:00 UTC") || return 0
+  manual_calendar=$(systemd_calendar_or_fallback "*:0/5") || return 0
+
+  cat > "$SYSTEMD_DIR/$DAILY_BACKUP_SERVICE" <<EOF
+[Unit]
+Description=LogiVN daily backup
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment="APP_ROOT=$APP_ROOT"
+Environment="ENV_FILE=$ENV_FILE"
+Environment="BACKUP_DAILY_SKIP_IF_COMPLETED=true"
+WorkingDirectory=$APP_REPO
+ExecStart=/bin/bash -lc 'APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" BACKUP_DAILY_SKIP_IF_COMPLETED=true "$APP_REPO/infra/vps/scripts/backup.sh" --daily >> "$APP_ROOT/logs/backup.log" 2>&1'
+TimeoutStartSec=6h
+EOF
+
+  cat > "$SYSTEMD_DIR/$DAILY_BACKUP_TIMER" <<EOF
+[Unit]
+Description=Run LogiVN daily backup fallback after the cron window
+
+[Timer]
+OnCalendar=$daily_calendar
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=30s
+Unit=$DAILY_BACKUP_SERVICE
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  cat > "$SYSTEMD_DIR/$MANUAL_CLAIM_SERVICE" <<EOF
+[Unit]
+Description=LogiVN manual backup queue claim
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment="APP_ROOT=$APP_ROOT"
+Environment="ENV_FILE=$ENV_FILE"
+WorkingDirectory=$APP_REPO
+ExecStart=/bin/bash -lc 'APP_ROOT="$APP_ROOT" ENV_FILE="$ENV_FILE" "$APP_REPO/infra/vps/scripts/backup.sh" --claim-manual >> "$APP_ROOT/logs/backup-manual.log" 2>&1'
+TimeoutStartSec=2h
+EOF
+
+  cat > "$SYSTEMD_DIR/$MANUAL_CLAIM_TIMER" <<EOF
+[Unit]
+Description=Claim queued LogiVN manual backups every 5 minutes
+
+[Timer]
+OnCalendar=$manual_calendar
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=20s
+Unit=$MANUAL_CLAIM_SERVICE
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  chmod 644 \
+    "$SYSTEMD_DIR/$DAILY_BACKUP_SERVICE" \
+    "$SYSTEMD_DIR/$DAILY_BACKUP_TIMER" \
+    "$SYSTEMD_DIR/$MANUAL_CLAIM_SERVICE" \
+    "$SYSTEMD_DIR/$MANUAL_CLAIM_TIMER"
+
+  systemctl daemon-reload
+  systemctl enable --now "$DAILY_BACKUP_TIMER" "$MANUAL_CLAIM_TIMER"
+  printf 'Installed systemd timers: %s, %s\n' "$DAILY_BACKUP_TIMER" "$MANUAL_CLAIM_TIMER"
+  systemctl list-timers "$DAILY_BACKUP_TIMER" "$MANUAL_CLAIM_TIMER" --no-pager || true
+}
+
 cat > "$CRON_FILE" <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CRON_TZ=$BACKUP_TIMEZONE
 TZ=$BACKUP_TIMEZONE
 
-0 2 * * * root $APP_REPO/infra/vps/scripts/backup.sh --daily >> $APP_ROOT/logs/backup.log 2>&1
+0 2 * * * root BACKUP_DAILY_SKIP_IF_COMPLETED=true $APP_REPO/infra/vps/scripts/backup.sh --daily >> $APP_ROOT/logs/backup.log 2>&1
 0 3 * * 0 root $APP_REPO/infra/vps/scripts/backup.sh --weekly >> $APP_ROOT/logs/backup.log 2>&1
 0 4 1 * * root $APP_REPO/infra/vps/scripts/backup.sh --monthly >> $APP_ROOT/logs/backup.log 2>&1
 20 4 1 * * root $APP_REPO/infra/vps/scripts/backup.sh --restore-test >> $APP_ROOT/logs/backup-restore-test.log 2>&1
@@ -57,3 +176,4 @@ else
   printf 'Warning: could not reload or restart cron service; verify cron daemon manually.\n' >&2
 fi
 printf 'Installed %s\n' "$CRON_FILE"
+install_systemd_timers
