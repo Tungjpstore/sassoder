@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import Image from "next/image";
 import {
   BarChart3,
   Bell,
   CalendarDays,
   Camera,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -55,7 +57,7 @@ type StaffMobileRedesignWorkspaceProps = {
   enableHeartbeat?: boolean;
 };
 
-type StaffAppTab = "home" | "schedule" | "attendance" | "requests" | "reports";
+type StaffAppTab = "home" | "schedule" | "requests" | "reports";
 type ClockSource = "gps" | "qr" | "wifi";
 
 type GpsPoint = {
@@ -128,11 +130,10 @@ type IncidentDraft = {
 };
 
 const tabs: Array<{ key: StaffAppTab; label: string; icon: LucideIcon }> = [
-  { key: "home", label: "Trang chủ", icon: Grid2X2 },
+  { key: "home", label: "Ca", icon: Grid2X2 },
   { key: "schedule", label: "Lịch ca", icon: CalendarDays },
-  { key: "attendance", label: "Chấm công", icon: Fingerprint },
   { key: "requests", label: "Yêu cầu", icon: ListChecks },
-  { key: "reports", label: "Cá nhân", icon: UserRound }
+  { key: "reports", label: "Hồ sơ", icon: UserRound }
 ];
 
 function todayInputValue() {
@@ -141,8 +142,8 @@ function todayInputValue() {
 }
 
 function normalizeTab(value: string | null): StaffAppTab {
-  if (value === "schedule" || value === "attendance" || value === "requests" || value === "reports" || value === "home") return value;
-  if (value === "today") return "attendance";
+  if (value === "schedule" || value === "requests" || value === "reports" || value === "home") return value;
+  if (value === "attendance" || value === "today") return "home";
   if (value === "work") return "home";
   return "home";
 }
@@ -264,6 +265,11 @@ function shortTime(value: string | null | undefined) {
 function formatDate(value: string | null | undefined) {
   if (!value) return "--";
   return new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(value));
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "--";
+  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 function durationBetween(start: string | null | undefined, end: string | null | undefined, nowMs: number) {
@@ -410,7 +416,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const activeAttendance = staff ? activeAttendanceForMember(bundle, staff.id) : null;
   const staleOpenAttendance = isStaleOpenAttendance(activeAttendance, nowMs);
   const latestAttendance = staff ? bundle.attendanceFeed.find((item) => item.staffMemberId === staff.id) ?? null : null;
-  const selectedBranchName = bundle.branches.find((branch) => branch.id === selectedBranchId)?.name ?? staff?.primaryBranchName ?? "Chi nhánh";
+  const selectedBranch = bundle.branches.find((branch) => branch.id === selectedBranchId) ?? null;
+  const selectedBranchName = selectedBranch?.name ?? staff?.primaryBranchName ?? "Chi nhánh";
 
   const refreshBundle = useCallback(async () => {
     try {
@@ -461,10 +468,6 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     () => (staff ? bundle.approvals.filter((approval) => approval.staffMemberId === staff.id && ["leave_request", "shift_swap", "overtime"].includes(approval.requestType)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) : []),
     [bundle.approvals, staff]
   );
-  const recentAttendance = useMemo(
-    () => (staff ? bundle.attendanceFeed.filter((item) => item.staffMemberId === staff.id).slice(0, 6) : []),
-    [bundle.attendanceFeed, staff]
-  );
 
   const applyQrScanValue = useCallback((value: string) => {
     const parsed = parseStaffQrScanValue(value);
@@ -476,7 +479,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     setQrToken(parsed.token);
     setSelectedClockSource("qr");
     setQrScannerOpen(false);
-    setActiveTab("attendance");
+    setActiveTab("home");
     if (parsed.branchId) setSelectedBranchId(parsed.branchId);
     clearStaffQrParamsFromUrl();
     setMessage({ tone: "success", text: "Đã nhận QR chấm công. Bấm Vào ca/Kết ca để xác thực." });
@@ -562,6 +565,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     }
     if (source === "gps" && !bundle.premium.gpsAttendance) {
       setMessage({ tone: "warning", text: "Gói hiện tại chưa bật GPS. Vui lòng dùng QR hoặc WiFi tại quán." });
+      return;
+    }
+    if (!selectedBranch?.attendanceLocationConfigured) {
+      setMessage({ tone: "warning", text: "Chi nhánh chưa có toạ độ GPS nên chưa thể xác minh chấm công chống gian lận. Vui lòng báo quản lý cập nhật vị trí chi nhánh." });
       return;
     }
     if (source === "qr" && !qrToken.trim()) {
@@ -789,28 +796,25 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   }
 
   const activeDuration = durationBetween(activeAttendance?.clockInAt, activeAttendance?.clockOutAt, nowMs);
-  const onTimeCount = bundle.attendanceFeed.filter((item) => item.state === "on_time" || item.state === "overtime").length;
-  const lateCount = bundle.attendanceFeed.filter((item) => item.state === "late" || item.state === "absent").length;
-
   return (
     <main className="staff-brand-page staff-brand-page--mobile dashboard-density text-[#2B2B2B]">
-      <header className="staff-brand-mobile-header sticky top-0 z-40 border-b px-5 py-4">
+      <header className="staff-brand-mobile-header sticky top-0 z-40 border-b px-4 py-3">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[#E5EEE2] text-base font-black text-[#0F4D3A] ring-1 ring-[#D8D1C7]">{initials(staff.fullName)}</span>
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#E5EEE2] text-sm font-black text-[#0F4D3A] ring-1 ring-[#D8D1C7]">{initials(staff.fullName)}</span>
             <div className="min-w-0">
-              <LogiVNLogo priority className="h-8 w-auto" />
-              <p className="mt-0.5 truncate text-sm font-bold text-[#5E5A54]">{restaurantName}</p>
+              <LogiVNLogo priority className="h-7 w-auto" />
+              <p className="mt-0.5 truncate text-xs font-bold text-[#5E5A54]">{restaurantName}</p>
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button type="button" onClick={markNotificationsRead} className="relative grid h-12 w-12 place-items-center rounded-full text-[#2B2B2B]" aria-label={bundle.unreadNotificationCount ? `Đánh dấu ${bundle.unreadNotificationCount} thông báo đã đọc` : "Thông báo"}><Bell size={28} />{bundle.unreadNotificationCount ? <span className="absolute right-3 top-2 h-3 w-3 rounded-full bg-[#A33D10]" /> : null}</button>
+            <button type="button" onClick={markNotificationsRead} className="relative grid h-11 w-11 place-items-center rounded-full text-[#2B2B2B]" aria-label={bundle.unreadNotificationCount ? `Đánh dấu ${bundle.unreadNotificationCount} thông báo đã đọc` : "Thông báo"}><Bell size={22} />{bundle.unreadNotificationCount ? <span className="absolute right-2.5 top-2 h-2.5 w-2.5 rounded-full bg-[#A33D10]" /> : null}</button>
           </div>
         </div>
       </header>
 
-      <section className="mx-auto grid w-full max-w-6xl gap-5 px-5 pb-[calc(7.5rem+env(safe-area-inset-bottom))] pt-7 lg:grid-cols-[minmax(390px,460px)_minmax(0,1fr)] lg:pb-10">
-        <div className="min-w-0 space-y-5">
+      <section className="mx-auto grid w-full max-w-6xl gap-4 px-4 pb-[calc(7.25rem+env(safe-area-inset-bottom))] pt-5 lg:grid-cols-[minmax(390px,460px)_minmax(0,1fr)] lg:px-5 lg:pb-10">
+        <div className="min-w-0 space-y-4">
           {message ? <MessageBar message={message} /> : null}
           {attendanceBlockedByOffline ? <MessageBar message={{ tone: "warning", text: pendingOfflineClockIn ? "Có check-in offline đang chờ đồng bộ." : "Có kết ca offline đang chờ đồng bộ." }} /> : null}
           {staleOpenAttendance && activeAttendance ? <MessageBar message={{ tone: "warning", text: `Phiên công chưa kết từ ${formatDate(activeAttendance.clockInAt)} lúc ${shortTime(activeAttendance.clockInAt)}. Hãy kết ca hoặc báo quản lý kết ca hộ trước khi vào ca mới.` }} /> : null}
@@ -844,6 +848,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   processing={processingAttendance || forcedLogout || attendanceBlockedByOffline}
                   gpsEnabled={bundle.premium.gpsAttendance}
                   qrReady={qrReady}
+                  branchLocationConfigured={Boolean(selectedBranch?.attendanceLocationConfigured)}
                   online={offlineQueue.isOnline}
                   queueLength={offlineQueue.queue.length}
                   syncing={offlineQueue.syncing}
@@ -853,41 +858,6 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
             />
           ) : null}
           {activeTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} /> : null}
-          {activeTab === "attendance" ? (
-            <AttendanceTab
-              clockCard={
-                <ClockControlCard
-                  machine={attendanceMachine}
-                  activeAttendance={activeAttendance}
-                  staleOpenAttendance={staleOpenAttendance}
-                  nowMs={nowMs}
-                  latestAttendance={latestAttendance}
-                  activeDuration={activeDuration}
-                  selectedBranchId={selectedBranchId}
-                  selectedBranchName={selectedBranchName}
-                  branches={bundle.branches}
-                  onBranchChange={setSelectedBranchId}
-                  selectedSource={selectedClockSource}
-                  onSourceChange={setSelectedClockSource}
-                  onOpenQrScanner={() => {
-                    setSelectedClockSource("qr");
-                    setQrScannerOpen(true);
-                  }}
-                  onClock={runClockAction}
-                  processing={processingAttendance || forcedLogout || attendanceBlockedByOffline}
-                  gpsEnabled={bundle.premium.gpsAttendance}
-                  qrReady={qrReady}
-                  online={offlineQueue.isOnline}
-                  queueLength={offlineQueue.queue.length}
-                  syncing={offlineQueue.syncing}
-                  onSync={() => void offlineQueue.syncQueue({ force: true })}
-                />
-              }
-              recentAttendance={recentAttendance}
-              onTimeCount={onTimeCount}
-              lateCount={lateCount}
-            />
-          ) : null}
           {activeTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
           {activeTab === "reports" ? <ProfileTab staff={staff} bundle={bundle} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
         </div>
@@ -906,11 +876,11 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         onClose={() => setQrScannerOpen(false)}
       />
 
-      <nav className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-50 grid h-[88px] grid-cols-5 border-t px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2" aria-label="Staff app navigation">
+      <nav className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-50 grid h-[82px] grid-cols-4 border-t px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2" aria-label="Staff app navigation">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const active = activeTab === tab.key;
-          return <button key={tab.key} type="button" onClick={() => { setActiveTab(tab.key); writeTabToUrl(tab.key); }} className={cn("grid min-h-16 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#3F3D39]")}><Icon size={27} strokeWidth={active ? 2.7 : 2.1} /><span className="mt-0.5 truncate">{tab.label}</span><span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-[#0F4D3A]" : "bg-transparent")} /></button>;
+          return <button key={tab.key} type="button" onClick={() => { setActiveTab(tab.key); writeTabToUrl(tab.key); }} className={cn("grid min-h-14 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#3F3D39]")}><Icon size={23} strokeWidth={active ? 2.7 : 2.1} /><span className="mt-0.5 truncate">{tab.label}</span><span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-[#0F4D3A]" : "bg-transparent")} /></button>;
         })}
       </nav>
     </main>
@@ -943,6 +913,7 @@ function ClockControlCard({
   processing,
   gpsEnabled,
   qrReady,
+  branchLocationConfigured,
   online,
   queueLength,
   syncing,
@@ -965,6 +936,7 @@ function ClockControlCard({
   processing: boolean;
   gpsEnabled: boolean;
   qrReady: boolean;
+  branchLocationConfigured: boolean;
   online: boolean;
   queueLength: number;
   syncing: boolean;
@@ -980,8 +952,8 @@ function ClockControlCard({
       : machine.detail;
   const sourceOptions: Array<{ key: ClockSource; label: string; icon: LucideIcon; disabled: boolean }> = [
     { key: "gps", label: "GPS", icon: MapPin, disabled: !gpsEnabled },
-    { key: "wifi", label: "WiFi+GPS", icon: Wifi, disabled: !online },
-    { key: "qr", label: qrReady ? "QR+GPS" : "Quét QR", icon: Fingerprint, disabled: false }
+    { key: "wifi", label: "WiFi", icon: Wifi, disabled: !online },
+    { key: "qr", label: qrReady ? "QR" : "Quét QR", icon: Fingerprint, disabled: false }
   ];
 
   return (
@@ -990,16 +962,16 @@ function ClockControlCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs font-black uppercase tracking-[0.12em] text-white/70">Chấm công</p>
-            <h2 className="mt-1 truncate text-xl font-black">{machine.title}</h2>
-            <p className="mt-1 line-clamp-1 text-sm font-semibold text-white/78">{activeDetail}</p>
+            <h2 className="mt-1 truncate text-lg font-black">{machine.title}</h2>
+            <p className="mt-1 line-clamp-1 text-xs font-semibold text-white/78">{activeDetail}</p>
           </div>
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
-            <PrimaryIcon size={22} aria-hidden="true" />
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/12 text-white">
+            <PrimaryIcon size={20} aria-hidden="true" />
           </span>
         </div>
       </div>
 
-      <div className="grid gap-3 p-4">
+      <div className="grid gap-3 p-3.5">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
           <label className="min-w-0">
             <span className="sr-only">Chi nhánh chấm công</span>
@@ -1022,7 +994,13 @@ function ClockControlCard({
           </div>
         ) : null}
 
-        <ShellButton disabled={sourceDisabled} onClick={() => onClock(machine.source)} className="min-h-14 w-full">
+        {!branchLocationConfigured ? (
+          <div className="rounded-xl border border-[#F2D2B2] bg-[#FFF8EB] px-3 py-2 text-xs font-bold leading-5 text-[#93540A]">
+            Chi nhánh chưa có toạ độ GPS. QR/WiFi/GPS sẽ bị chặn cho tới khi quản lý cập nhật vị trí chi nhánh.
+          </div>
+        ) : null}
+
+        <ShellButton disabled={sourceDisabled || !branchLocationConfigured} onClick={() => onClock(machine.source)} className="min-h-14 w-full text-[15px]">
           <PrimaryIcon size={19} /> {processing ? "Đang xử lý..." : machine.primaryLabel}
         </ShellButton>
 
@@ -1049,7 +1027,7 @@ function ClockControlCard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#5E5A54]">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F5F8F1] px-2.5 py-1.5">{online ? <Wifi size={14} /> : <WifiOff size={14} />} {online ? "Online" : "Offline"}</span>
+          {!online ? <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FFF0D9] px-2.5 py-1.5 text-[#93540A]"><WifiOff size={14} /> Offline</span> : null}
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F5F8F1] px-2.5 py-1.5">{selectedBranchName}</span>
           {queueLength ? <button type="button" onClick={onSync} disabled={syncing} className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-[#D8D1C7] bg-white px-2.5 text-xs font-black text-[#0F4D3A] disabled:opacity-55"><RefreshCw size={14} className={syncing ? "animate-spin" : undefined} /> Đồng bộ {queueLength}</button> : null}
         </div>
@@ -1178,46 +1156,41 @@ function QrScannerSheet({
 }
 
 function HomeTab({ staffName, workItems, processingKey, onRunWorkItem, currentShift, activeDuration, clockCard }: { staffName: string; workItems: StaffOpsMobileWorkItem[]; processingKey: string | null; onRunWorkItem: (item: StaffOpsMobileWorkItem) => void; currentShift: StaffOpsShiftAssignment | null; activeDuration: string | null; clockCard: ReactNode }) {
+  const visibleWorkItems = workItems.slice(0, 2);
+  const hiddenWorkItemCount = Math.max(0, workItems.length - visibleWorkItems.length);
   return (
-    <div className="space-y-4">
-      <section className="flex items-end justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Ca làm</p>
-          <h1 className="mt-1 truncate text-2xl font-black leading-tight text-[#2B2B2B]">{staffName}</h1>
+    <div className="space-y-3">
+      <section className="rounded-2xl border border-[#E5DDD2] bg-[#FFFDF8] p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Ca hôm nay</p>
+            <h1 className="mt-1 truncate text-xl font-black leading-tight text-[#2B2B2B]">{staffName}</h1>
+            <p className="mt-2 truncate text-sm font-semibold text-[#5E5A54]">{currentShift ? `${currentShift.shiftName} · ${currentShift.branchName ?? "Chi nhánh"}` : "Chưa có ca được gán"}</p>
+          </div>
+          <StatusPill tone={activeDuration ? "success" : currentShift ? "warning" : "neutral"}>{activeDuration ?? (currentShift ? "Chờ vào" : "Trống")}</StatusPill>
         </div>
-        <StatusPill tone={activeDuration ? "success" : "neutral"}>{activeDuration ?? "Chưa vào"}</StatusPill>
       </section>
 
       {clockCard}
 
-      <AppCard className="p-4">
+      <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Ca gần nhất</p>
-            <h2 className="mt-2 truncate text-lg font-black text-[#2B2B2B]">{currentShift?.shiftName ?? "Chưa có ca"}</h2>
-            <p className="mt-1 truncate text-sm font-semibold text-[#5E5A54]">{currentShift?.branchName ?? "Theo phân công"}</p>
-          </div>
-          <CalendarDays size={22} className="shrink-0 text-[#0F4D3A]" aria-hidden="true" />
+          <h2 className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Việc khẩn</h2>
+          <StatusPill tone={workItems.length ? "warning" : "success"}>{workItems.length || "0"}</StatusPill>
         </div>
-      </AppCard>
-
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Việc cần xử lý</h2>
-          <StatusPill tone={workItems.length ? "warning" : "success"}>{workItems.length}</StatusPill>
-        </div>
-        {workItems.length ? workItems.map((item) => (
-          <AppCard key={item.id} className="p-4">
+        {visibleWorkItems.length ? visibleWorkItems.map((item) => (
+          <AppCard key={item.id} className="p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="truncate text-base font-black text-[#2B2B2B]">{item.title}</p>
-                <p className="mt-1 line-clamp-2 text-sm font-medium text-[#5E5A54]">{item.subtitle}</p>
+                <p className="truncate text-sm font-black text-[#2B2B2B]">{item.title}</p>
+                <p className="mt-1 line-clamp-1 text-xs font-semibold text-[#5E5A54]">{item.subtitle}</p>
               </div>
               <StatusPill tone={item.priority === "high" ? "danger" : item.priority === "medium" ? "warning" : "neutral"}>{item.priority === "high" ? "Gấp" : item.priority === "medium" ? "Vừa" : "Thấp"}</StatusPill>
             </div>
-            {item.action ? <ShellButton onClick={() => onRunWorkItem(item)} disabled={processingKey === item.id} className="mt-4 w-full">{processingKey === item.id ? "Đang xử lý..." : item.actionLabel ?? "Xử lý"}</ShellButton> : null}
+            {item.action ? <ShellButton onClick={() => onRunWorkItem(item)} disabled={processingKey === item.id} className="mt-3 min-h-11 w-full text-sm">{processingKey === item.id ? "Đang xử lý..." : item.actionLabel ?? "Xử lý"}</ShellButton> : null}
           </AppCard>
-        )) : <AppCard className="grid min-h-28 place-items-center p-5 text-center"><div><Check className="mx-auto text-[#0F4D3A]" /><p className="mt-2 text-sm font-black">Không có việc đang chờ</p></div></AppCard>}
+        )) : <AppCard className="grid min-h-20 place-items-center p-4 text-center"><div><Check className="mx-auto text-[#0F4D3A]" size={19} /><p className="mt-2 text-sm font-black">Không có việc đang chờ</p></div></AppCard>}
+        {hiddenWorkItemCount ? <p className="px-1 text-xs font-bold text-[#5E5A54]">Còn {hiddenWorkItemCount} việc trong tab Yêu cầu.</p> : null}
       </section>
     </div>
   );
@@ -1246,41 +1219,6 @@ function ShiftGroup({ title, assignments }: { title: string; assignments: StaffO
   return <section className="space-y-3"><div className="flex items-center gap-3"><Clock3 size={18} className="text-[#F28C28]" /><h2 className="text-xs font-black uppercase tracking-[0.08em] text-[#3F3D39]">{title}</h2><span className="h-px flex-1 bg-[#E5DDD2]" /></div>{assignments.map((assignment) => <AppCard key={assignment.id} className="p-4"><div className="flex items-center justify-between gap-3"><div><h3 className="text-lg font-black text-[#2B2B2B]">{assignment.shiftName}</h3><p className="mt-1 text-sm font-semibold text-[#5E5A54]">{assignment.branchName ?? "Chi nhánh"}</p></div><StatusPill tone="success">Đã gán</StatusPill></div><div className="mt-4 border-t border-[#E5DDD2] pt-4"><p className="text-sm font-semibold text-[#2B2B2B]">{assignment.staffName}</p></div></AppCard>)}</section>;
 }
 
-function AttendanceTab({ clockCard, recentAttendance, onTimeCount, lateCount }: { clockCard: ReactNode; recentAttendance: StaffOpsAttendanceFeedItem[]; onTimeCount: number; lateCount: number }) {
-  return (
-    <div className="space-y-4">
-      <section className="flex items-end justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Hôm nay</p>
-          <h1 className="mt-1 text-2xl font-black leading-tight text-[#2B2B2B]">Chấm công</h1>
-        </div>
-        <p className="text-right text-xs font-bold text-[#5E5A54]">{formatDate(todayInputValue())}</p>
-      </section>
-
-      {clockCard}
-
-      <AppCard className="p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-base font-black text-[#2B2B2B]">Lịch sử gần đây</h2>
-          <div className="flex gap-2"><StatusPill tone="success">{onTimeCount} đúng</StatusPill><StatusPill tone={lateCount ? "warning" : "neutral"}>{lateCount} lệch</StatusPill></div>
-        </div>
-        <div className="mt-4 grid gap-2">
-          {recentAttendance.map((item) => (
-            <article key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-black text-[#2B2B2B]">{item.shiftName ?? "Ca làm"}</p>
-                <p className="mt-1 text-xs font-semibold text-[#5E5A54]">{shortTime(item.clockInAt)} - {shortTime(item.clockOutAt)} · {item.branchName ?? "Chi nhánh"}</p>
-              </div>
-              <StatusPill tone={item.state === "late" || item.state === "early_leave" ? "warning" : item.state === "absent" ? "danger" : "success"}>{item.source.toUpperCase()}</StatusPill>
-            </article>
-          ))}
-          {!recentAttendance.length ? <InlineEmptyState title="Chưa có công" text="Check-in bằng GPS, QR hoặc WiFi để tạo dữ liệu thật." /> : null}
-        </div>
-      </AppCard>
-    </div>
-  );
-}
-
 function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubmit, submitting }: { draft: RequestDraft; onDraftChange: (patch: Partial<RequestDraft>) => void; recentRequests: StaffOpsApprovalItem[]; assignments: StaffOpsShiftAssignment[]; onSubmit: () => void; submitting: boolean }) {
   const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected">("pending");
   const visibleRequests = recentRequests.filter((request) => request.status === statusFilter);
@@ -1289,7 +1227,7 @@ function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubm
     <div className="space-y-4">
       <div className="flex gap-2 overflow-x-auto">{(["pending", "approved", "rejected"] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} className={cn("min-h-11 rounded-xl px-4 text-sm font-black", statusFilter === status ? "bg-[#0F4D3A] text-white" : "bg-[#ECE9E3] text-[#4B4945]")}>{status === "pending" ? "Chờ" : status === "approved" ? "Duyệt" : "Từ chối"}</button>)}</div>
       <AppCard className="p-4"><h1 className="text-xl font-black text-[#2B2B2B]">Tạo yêu cầu</h1><div className="mt-4 grid gap-3"><select value={draft.kind} onChange={(event) => onDraftChange({ kind: event.target.value as RequestDraft["kind"] })} className="staff-redesign-input"><option value="leave_request">Nghỉ phép</option><option value="shift_swap">Đổi ca</option><option value="overtime">Tăng ca</option></select>{draft.kind === "shift_swap" ? assignments.length ? <select value={draft.shiftAssignmentId || assignments[0]?.id || ""} onChange={(event) => onDraftChange({ shiftAssignmentId: event.target.value })} className="staff-redesign-input">{assignments.map((assignment) => <option key={assignment.id} value={assignment.id}>{assignment.shiftName} · {assignment.scheduledDate}</option>)}</select> : <InlineEmptyState title="Chưa có ca để đổi" text="Cần một ca thật đã được gán." /> : <div className="grid grid-cols-2 gap-3"><input type="date" value={draft.fromDate} onChange={(event) => onDraftChange({ fromDate: event.target.value })} className="staff-redesign-input" /><input type="date" value={draft.toDate} onChange={(event) => onDraftChange({ toDate: event.target.value })} className="staff-redesign-input" /></div>}{draft.kind === "overtime" ? <input type="number" value={draft.overtimeMinutes} onChange={(event) => onDraftChange({ overtimeMinutes: Number(event.target.value) })} className="staff-redesign-input" min={15} max={720} /> : null}<textarea value={draft.reason} onChange={(event) => onDraftChange({ reason: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-sm font-semibold outline-none" placeholder="Lý do" /><ShellButton onClick={onSubmit} disabled={submitting || cannotSubmitShiftSwap}><Send size={18} /> {submitting ? "Đang gửi..." : `Gửi ${requestTypeLabel(draft.kind).toLowerCase()}`}</ShellButton></div></AppCard>
-      <div className="space-y-3">{visibleRequests.map((request) => <AppCard key={request.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-[#2B2B2B]">{requestTypeLabel(request.requestType)}</p><p className="mt-1 line-clamp-2 text-sm font-medium text-[#5E5A54]">{request.reason ?? "Không có ghi chú"}</p></div><StatusPill tone={request.status === "approved" ? "success" : request.status === "rejected" ? "danger" : "neutral"}>{request.status === "pending" ? "Chờ" : request.status === "approved" ? "Duyệt" : "Từ chối"}</StatusPill></div></AppCard>)}{!visibleRequests.length ? <InlineEmptyState title="Không có yêu cầu" text="Dữ liệu sẽ xuất hiện sau khi gửi." /> : null}</div>
+      <div className="space-y-3">{visibleRequests.map((request) => <AppCard key={request.id} className="p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate text-base font-black text-[#2B2B2B]">{requestTypeLabel(request.requestType)}</p><p className="mt-1 line-clamp-2 text-sm font-medium text-[#5E5A54]">{request.reason ?? "Không có ghi chú"}</p></div><StatusPill tone={request.status === "approved" ? "success" : request.status === "rejected" ? "danger" : "neutral"}>{request.status === "pending" ? "Chờ" : request.status === "approved" ? "Duyệt" : "Từ chối"}</StatusPill></div></AppCard>)}{!visibleRequests.length ? <InlineEmptyState title="Không có yêu cầu" text="Chưa có đơn trong trạng thái này." /> : null}</div>
     </div>
   );
 }
@@ -1300,27 +1238,23 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
   const score = timesheet?.attendanceScore ?? 100;
   const overtime = timesheet?.overtimeMinutes ?? 0;
   const attendanceRows = bundle.attendanceFeed.filter((item) => item.staffMemberId === staff.id).slice(0, 7).reverse();
+  const incidents = bundle.incidents.filter((item) => item.staffMemberId === staff.id).slice(0, 4);
   const maxMinutes = Math.max(...attendanceRows.map(attendanceWorkMinutes), 1);
   return (
-    <div className="space-y-6">
-      <section>
-        <h1 className="text-3xl font-black text-[#2B2B2B]">Cá nhân</h1>
-        <p className="mt-1 text-sm font-semibold text-[#3F3D39]">Hồ sơ, mật khẩu app, báo cáo sự cố và công cá nhân.</p>
-      </section>
-
-      <AppCard className="p-5">
+    <div className="space-y-4">
+      <AppCard className="p-4">
         <div className="flex items-center gap-4">
-          {staff.avatarUrl ? <img src={staff.avatarUrl} alt="" className="h-16 w-16 rounded-full border border-[#D8D1C7] object-cover" /> : <span className="grid h-16 w-16 place-items-center rounded-full bg-[#E5EEE2] text-lg font-black text-[#0F4D3A]">{initials(staff.fullName)}</span>}
+          {staff.avatarUrl ? <Image src={staff.avatarUrl} alt="" width={56} height={56} unoptimized className="h-14 w-14 rounded-full border border-[#D8D1C7] object-cover" /> : <span className="grid h-14 w-14 place-items-center rounded-full bg-[#E5EEE2] text-base font-black text-[#0F4D3A]">{initials(staff.fullName)}</span>}
           <div className="min-w-0">
-            <p className="truncate text-xl font-black text-[#2B2B2B]">{staff.fullName}</p>
-            <p className="mt-1 text-sm font-bold text-[#5E5A54]">{staff.employeeCode ?? "Chưa có mã"} · {staff.roleTitle}</p>
+            <p className="truncate text-lg font-black text-[#2B2B2B]">{staff.fullName}</p>
+            <p className="mt-1 text-xs font-bold text-[#5E5A54]">{staff.employeeCode ?? "Chưa có mã"} · {staff.roleTitle}</p>
           </div>
         </div>
       </AppCard>
 
-      <AppCard className="p-5">
-        <h2 className="flex items-center gap-2 text-xl font-black"><UserRound size={20} /> Hồ sơ</h2>
-        <div className="mt-4 grid gap-3">
+      <details className="staff-brand-panel p-4">
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-base font-black text-[#2B2B2B]"><span className="flex items-center gap-2"><UserRound size={18} /> Cập nhật hồ sơ</span><ChevronDown size={18} className="text-[#0F4D3A]" /></summary>
+        <div className="mt-3 grid gap-3">
           <input value={profileDraft.fullName} onChange={(event) => onProfileDraftChange({ fullName: event.target.value })} className="staff-redesign-input" placeholder="Họ tên" />
           <input value={profileDraft.phone ?? ""} onChange={(event) => onProfileDraftChange({ phone: event.target.value })} className="staff-redesign-input" placeholder="Số điện thoại" />
           <div className="grid grid-cols-2 gap-3"><input type="date" value={profileDraft.dateOfBirth ?? ""} onChange={(event) => onProfileDraftChange({ dateOfBirth: event.target.value })} className="staff-redesign-input" /><input value={profileDraft.hometown ?? ""} onChange={(event) => onProfileDraftChange({ hometown: event.target.value })} className="staff-redesign-input" placeholder="Quê quán" /></div>
@@ -1339,24 +1273,48 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
               }}
             />
           </label>
-          <ShellButton onClick={onSubmitProfile} disabled={savingProfile}><Check size={18} /> {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}</ShellButton>
+          <ShellButton onClick={onSubmitProfile} disabled={savingProfile} className="text-sm"><Check size={18} /> {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}</ShellButton>
           <ShellButton variant="secondary" onClick={() => { window.location.assign(`/staff/change-password?next=${encodeURIComponent("/dashboard/staff/mobile?tab=reports")}`); }}><LockKeyhole size={18} /> Đổi mật khẩu app</ShellButton>
         </div>
-      </AppCard>
+      </details>
 
-      <AppCard className="p-5">
-        <h2 className="flex items-center gap-2 text-xl font-black"><Send size={20} /> Báo cáo sự cố</h2>
-        <div className="mt-4 grid gap-3">
+      <details className="staff-brand-panel p-4">
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-base font-black text-[#2B2B2B]"><span className="flex items-center gap-2"><Send size={18} /> Báo cáo sự cố</span><ChevronDown size={18} className="text-[#0F4D3A]" /></summary>
+        <div className="mt-3 grid gap-3">
           <input value={incidentDraft.title} onChange={(event) => onIncidentDraftChange({ title: event.target.value })} className="staff-redesign-input" placeholder="Tiêu đề sự cố" />
           <select value={incidentDraft.severity} onChange={(event) => onIncidentDraftChange({ severity: event.target.value as IncidentDraft["severity"] })} className="staff-redesign-input"><option value="low">Thấp</option><option value="normal">Bình thường</option><option value="high">Cao</option><option value="urgent">Khẩn cấp</option></select>
-          <textarea value={incidentDraft.description} onChange={(event) => onIncidentDraftChange({ description: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-base font-semibold outline-none" placeholder="Mô tả để quản lý xử lý" />
-          <p className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-3 py-2 text-xs font-bold leading-5 text-[#5E5A54]">Báo cáo sẽ được lưu vào Staff và gửi cảnh báo Telegram cho quản lý nếu quán đã kết nối bot.</p>
-          <ShellButton onClick={onSubmitIncident} disabled={submittingIncident}><Send size={18} /> {submittingIncident ? "Đang gửi..." : "Gửi cho quản lý"}</ShellButton>
+          <textarea value={incidentDraft.description} onChange={(event) => onIncidentDraftChange({ description: event.target.value })} className="min-h-24 rounded-xl border border-[#D8D1C7] bg-white p-4 text-sm font-semibold outline-none" placeholder="Mô tả để quản lý xử lý" />
+          <ShellButton onClick={onSubmitIncident} disabled={submittingIncident} className="text-sm"><Send size={18} /> {submittingIncident ? "Đang gửi..." : "Gửi cho quản lý"}</ShellButton>
         </div>
-      </AppCard>
+        {incidents.length ? (
+          <div className="mt-4 space-y-2 border-t border-[#E5DDD2] pt-4">
+            {incidents.map((incident) => (
+              <div key={incident.id} className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-black text-[#2B2B2B]">{incident.title}</p>
+                    <p className="mt-1 text-xs font-semibold text-[#5E5A54]">{formatDateTime(incident.createdAt)}</p>
+                  </div>
+                  <StatusPill tone={incident.status === "resolved" ? "success" : incident.status === "dismissed" ? "neutral" : incident.severity === "urgent" || incident.severity === "high" ? "danger" : "neutral"}>{incident.status === "open" ? "Mới" : incident.status === "reviewing" ? "Đang xử lý" : incident.status === "resolved" ? "Đã xử lý" : "Bỏ qua"}</StatusPill>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </details>
 
-      <div className="grid grid-cols-2 gap-3"><AppCard className="p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Số ca</p><p className="mt-3 text-3xl font-black">{attendanceCount}</p></AppCard><AppCard className="p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Điểm công</p><p className="mt-3 text-3xl font-black">{score}</p></AppCard><AppCard className="p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Tăng ca</p><p className="mt-3 text-3xl font-black">{Math.round(overtime / 60)}h</p></AppCard><AppCard className="p-4"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Yêu cầu</p><p className="mt-3 text-3xl font-black">{bundle.approvals.length}</p></AppCard></div>
-      <AppCard className="p-5"><h2 className="flex items-center gap-2 text-xl font-black"><BarChart3 size={20} /> Giờ công gần đây</h2>{attendanceRows.length ? <div className="mt-6 flex h-44 items-end gap-3 border-b border-[#D8D1C7]">{attendanceRows.map((item) => { const minutes = attendanceWorkMinutes(item); return <span key={item.id} className="flex flex-1 flex-col items-center justify-end gap-2"><span className="w-full rounded-t-xl bg-[#0F4D3A]" style={{ height: `${Math.max(8, Math.round((minutes / maxMinutes) * 100))}%` }} /><span className="text-[11px] font-black text-[#5E5A54]">{new Date(item.clockInAt).getDate()}</span></span>; })}</div> : <InlineEmptyState title="Chưa có log công" text="Biểu đồ chỉ hiển thị khi có chấm công thật." />}</AppCard>
+      <details className="rounded-2xl border border-[#D8D1C7] bg-[#FFFDF8] p-4">
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-sm font-black text-[#0F4D3A]"><span>Công cá nhân</span><ChevronDown size={18} /></summary>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <MiniStat label="Ca" value={attendanceCount} />
+          <MiniStat label="Điểm" value={score} />
+          <MiniStat label="OT" value={`${Math.round(overtime / 60)}h`} />
+        </div>
+        <div className="mt-4">
+          <h2 className="flex items-center gap-2 text-sm font-black"><BarChart3 size={18} /> Giờ công gần đây</h2>
+          {attendanceRows.length ? <div className="mt-4 flex h-36 items-end gap-2 border-b border-[#D8D1C7]">{attendanceRows.map((item) => { const minutes = attendanceWorkMinutes(item); return <span key={item.id} className="flex flex-1 flex-col items-center justify-end gap-2"><span className="w-full rounded-t-lg bg-[#0F4D3A]" style={{ height: `${Math.max(8, Math.round((minutes / maxMinutes) * 100))}%` }} /><span className="text-[11px] font-black text-[#5E5A54]">{new Date(item.clockInAt).getDate()}</span></span>; })}</div> : <InlineEmptyState title="Chưa có log công" text="Dữ liệu xuất hiện sau khi chấm công." />}
+        </div>
+      </details>
     </div>
   );
 }
@@ -1368,5 +1326,5 @@ function attendanceWorkMinutes(item: StaffOperationsBundle["attendanceFeed"][num
 }
 
 function InlineEmptyState({ title, text }: { title: string; text: string }) {
-  return <div className="mt-6 grid min-h-36 place-items-center rounded-xl border border-dashed border-[#D8D1C7] bg-[#FFFDF8] p-5 text-center"><div><p className="text-lg font-black text-[#2B2B2B]">{title}</p><p className="mt-1 text-sm font-semibold text-[#5E5A54]">{text}</p></div></div>;
+  return <div className="mt-4 grid min-h-28 place-items-center rounded-xl border border-dashed border-[#D8D1C7] bg-[#FFFDF8] p-4 text-center"><div><p className="text-base font-black text-[#2B2B2B]">{title}</p><p className="mt-1 text-xs font-semibold text-[#5E5A54]">{text}</p></div></div>;
 }

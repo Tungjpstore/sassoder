@@ -6,6 +6,7 @@ import { availableResolvedAiProviders, estimateAiCostVnd, getResolvedAiProviderC
 import { runAnthropicMessagesChat } from "@/lib/ai/providers/anthropic-messages";
 import { runBedrockConverseChat } from "@/lib/ai/providers/bedrock-converse";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
+import { assertMimoDailyTaskTokenBudget, recordMimoDailyTaskTokenUsage } from "@/lib/ai/providers/mimo-quota";
 import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
 
@@ -60,6 +61,10 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
     const model = await pickModel(provider, request.taskType, request.modelOverride);
     const startedAt = Date.now();
     try {
+      if (provider === "mimo") {
+        await assertMimoDailyTaskTokenBudget(request.taskType, request.options?.maxTokens ?? null);
+      }
+
       const result = await runProviderChat({
         config,
         model,
@@ -70,11 +75,15 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
       const completed: AiCompletionResult = {
         ...result,
         estimatedCostVnd,
+        taskType: request.taskType,
         attempts: [
           ...attempts,
           { provider, model, status: "success", latencyMs: result.latencyMs ?? Date.now() - startedAt, estimatedCostVnd }
         ]
       };
+      if (provider === "mimo") {
+        recordMimoDailyTaskTokenUsage(request.taskType, result.inputTokens, result.outputTokens);
+      }
       if (cacheKey && cacheTtl > 0) setAiCache(cacheKey, completed, cacheTtl);
       return completed;
     } catch (error) {

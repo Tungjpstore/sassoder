@@ -52,6 +52,8 @@ type MemoryRow = Awaited<ReturnType<typeof listRestaurantAiMemories>>["memories"
 const schemaOrder: AiSchemaKey[] = ["recommendations", "automationRuns", "restaurantMemories"];
 
 function providerLabel(provider: AiProviderReadiness["provider"]) {
+  if (provider === "mimo") return "Xiaomi MiMo";
+  if (provider === "deepseek") return "DeepSeek";
   if (provider === "vercel_gateway") return "Vercel Gateway";
   if (provider === "openai") return "OpenAI";
   if (provider === "gemini") return "Gemini";

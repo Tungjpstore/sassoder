@@ -3,6 +3,7 @@ import "server-only";
 import { createHmac } from "crypto";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { isEmailDeliveryConfigured, sendTransactionalEmail } from "@/services/email-delivery";
 import {
   funnelEventSchema,
   inferPlanFromPilotGoal,
@@ -61,10 +62,9 @@ async function maybeSendWaitlistNotification({
   variant: string;
 }) {
   if (process.env.MARKETING_WAITLIST_NOTIFY_ENABLED !== "true") return;
-  const apiKey = process.env.RESEND_API_KEY;
   const to = process.env.MARKETING_WAITLIST_NOTIFY_TO;
   const from = process.env.MARKETING_EMAIL_FROM || process.env.REPORT_EMAIL_FROM || process.env.AUTH_EMAIL_FROM;
-  if (!apiKey || !to || !from) return;
+  if (!to || !from || !isEmailDeliveryConfigured()) return;
 
   const subject = `Waitlist LogiVN: ${restaurantName || contact}`;
   const text = [
@@ -80,20 +80,15 @@ async function maybeSendWaitlistNotification({
     `Variant: ${variant}`
   ].join("\n");
 
-  await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
+  await sendTransactionalEmail(
+    {
       from,
       to: [to],
       subject,
       text
-    }),
-    signal: AbortSignal.timeout(8_000)
-  }).catch((error) => {
+    },
+    { signal: AbortSignal.timeout(8_000) }
+  ).catch((error) => {
     console.error("[marketing/waitlist] Notification email failed", {
       message: error instanceof Error ? error.message : String(error)
     });

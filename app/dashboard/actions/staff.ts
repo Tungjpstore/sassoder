@@ -16,6 +16,7 @@ import {
   staffDeviceTrustUpdateSchema,
   staffDocumentCreateSchema,
   staffInviteSchema,
+  staffIncidentStatusUpdateSchema,
   staffProfileSchema,
   staffReviewCreateSchema,
   staffRoleCloneSchema,
@@ -52,8 +53,11 @@ import {
 } from "@/features/staff/services/staff-admin-workflow-service";
 import { updateStaffDeviceAttendanceTrust } from "@/features/staff/services/staff-device-trust-service";
 import { forceStaffSessionLogout } from "@/features/staff/services/staff-session-service";
+import { updateStaffIncidentReportStatus } from "@/features/staff/services/staff-self-service";
 import { createTemporaryStaffAppPassword, resetStaffAppPassword } from "@/features/staff/services/staff-app-auth-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
+import { STAFF_ROLE_TEMPLATES } from "@/lib/staff-permissions";
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import {
   createRestaurantUser,
@@ -112,6 +116,33 @@ function merchantAttendanceSession(session: Awaited<ReturnType<typeof requireOpe
   return authorizeAttendanceManagementSession(session);
 }
 
+async function assertCanAssignStaffRole(session: Awaited<ReturnType<typeof requireOperationalStaffSession>>, roleCode: string) {
+  const template = STAFF_ROLE_TEMPLATES.find((role) => role.code === roleCode);
+  if (template?.role === "ADMIN") {
+    await assertStaffActionPermission(session, "staff.roles");
+    return;
+  }
+
+  const supabase = createAdminSupabaseClient() as any;
+  const roleResult = await supabase
+    .from("staff_roles")
+    .select("role_scope")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("code", roleCode)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (roleResult.error) {
+    const message = roleResult.error.message ?? "";
+    const missingStaffRoles = roleResult.error.code === "PGRST204" || roleResult.error.code === "42P01" || /staff_roles|role_scope/i.test(message);
+    if (!missingStaffRoles) throw roleResult.error;
+  }
+
+  if (roleResult.data?.role_scope === "ADMIN") {
+    await assertStaffActionPermission(session, "staff.roles");
+  }
+}
+
 async function revalidateStaffDashboards(restaurantId: string) {
   await invalidateStaffOperationsBundleCache(restaurantId);
   revalidatePath("/dashboard/staff");
@@ -134,6 +165,7 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
       notes: formData.get("notes")
     });
     await assertStaffActionPermission(session, "staff.create");
+    await assertCanAssignStaffRole(session, parsed.roleCode);
 
     await assertRestaurantResourceLimit({
       restaurantId: session.restaurantId,
@@ -189,6 +221,7 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
       notes: formData.get("notes")
     });
     await assertStaffActionPermission(session, "staff.edit");
+    await assertCanAssignStaffRole(session, parsed.roleCode);
 
     await updateRestaurantUserOperationsProfile({
       restaurantId: session.restaurantId,
@@ -769,6 +802,35 @@ export async function reviewAttendanceApprovalAction(_prevState: StaffActionStat
 
     await revalidateStaffDashboards(session.restaurantId);
     return { success: parsed.decision === "approved" ? "Đã duyệt yêu cầu nhân sự." : "Đã từ chối yêu cầu nhân sự." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function reviewStaffIncidentReportAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffIncidentStatusUpdateSchema.parse({
+      incidentId: formData.get("incidentId"),
+      status: formData.get("status"),
+      note: formData.get("note")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    await updateStaffIncidentReportStatus({
+      session,
+      input: parsed
+    });
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return {
+      success:
+        parsed.status === "reviewing"
+          ? "Đã chuyển báo cáo sang trạng thái đang xử lý."
+          : parsed.status === "resolved"
+            ? "Đã đánh dấu báo cáo sự cố đã xử lý."
+            : "Đã bỏ qua báo cáo sự cố và ghi audit log."
+    };
   } catch (error) {
     return { error: staffActionError(error) };
   }

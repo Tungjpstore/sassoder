@@ -9,7 +9,7 @@ const logger = createLogger("ai-service");
 const app = createHttpApp({ logger, serviceName: "ai-service" });
 
 const chatSchema = z.object({
-  provider: z.enum(["openai", "xai", "qwen", "bedrock", "claude"]).optional(),
+  provider: z.enum(["mimo", "deepseek", "gemini", "openai", "xai", "qwen", "bedrock", "claude"]).optional(),
   model: z.string().optional(),
   messages: z.array(
     z.object({
@@ -18,6 +18,7 @@ const chatSchema = z.object({
     })
   ),
   temperature: z.number().min(0).max(2).optional(),
+  topP: z.number().min(0).max(1).optional(),
   maxTokens: z.number().int().min(1).max(8192).optional()
 });
 

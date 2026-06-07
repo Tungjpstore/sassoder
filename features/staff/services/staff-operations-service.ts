@@ -30,6 +30,7 @@ import type {
   StaffOpsDeviceItem,
   StaffOpsDocumentItem,
   StaffOpsHeatmapCell,
+  StaffOpsIncidentItem,
   StaffOpsMember,
   StaffOpsMobileOps,
   StaffOpsMobileWorkItem,
@@ -58,6 +59,8 @@ type BranchRow = {
   id: string;
   name: string;
   address: string;
+  latitude: number | null;
+  longitude: number | null;
   is_primary: boolean;
   is_active: boolean;
 };
@@ -274,6 +277,20 @@ type StaffDeviceRow = {
   created_at: string;
 };
 
+type StaffIncidentRow = {
+  id: string;
+  staff_member_id: string;
+  branch_id: string | null;
+  title: string;
+  description: string;
+  severity: "low" | "normal" | "high" | "urgent";
+  status: "open" | "reviewing" | "resolved" | "dismissed";
+  attachment_url: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+};
+
 function isMissingStaffOperationsSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   const message = error.message ?? "";
@@ -320,6 +337,19 @@ function displayNameFromEmail(email: string) {
 
 function dayKey(value: string) {
   return value.slice(0, 10);
+}
+
+function dateKeyInVietnam(value: Date) {
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === "year")?.value ?? "1970";
+  const month = parts.find((part) => part.type === "month")?.value ?? "01";
+  const day = parts.find((part) => part.type === "day")?.value ?? "01";
+  return `${year}-${month}-${day}`;
 }
 
 function nowMinusMinutes(minutes: number) {
@@ -623,6 +653,7 @@ function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, curren
       contracts: [],
       documents: [],
       devices: [],
+      incidents: [],
       mobileOps: emptyMobileOps()
     };
   }
@@ -642,6 +673,7 @@ function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, curren
   const branches = bundle.branches.filter((branch) => branchIds.has(branch.id));
   const activeShiftAssignments = shiftAssignments.filter((item) => item.status !== "cancelled");
   const timesheets = bundle.timesheets.filter((item) => currentMemberIds.has(item.staffMemberId));
+  const incidents = bundle.incidents.filter((item) => currentMemberIds.has(item.staffMemberId));
 
   return {
     ...bundle,
@@ -676,6 +708,7 @@ function scopeStaffOperationsBundleForSelf(bundle: StaffOperationsBundle, curren
     contracts: bundle.contracts.filter((item) => currentMemberIds.has(item.staffMemberId)),
     documents: bundle.documents.filter((item) => currentMemberIds.has(item.staffMemberId)),
     devices: bundle.devices.filter((item) => !item.staffMemberId || currentMemberIds.has(item.staffMemberId)),
+    incidents,
     mobileOps: bundle.mobileOps
   };
 }
@@ -694,7 +727,7 @@ export async function getStaffOperationsBundle(
   const [users, branches, operations, entitlement] = await Promise.all([
     listRestaurantUsers(restaurantId) as Promise<StaffUserRow[]>,
     readOptionalRows<BranchRow>(
-      supabase.from("store_branches").select("id,name,address,is_primary,is_active").eq("restaurant_id", restaurantId).order("is_primary", { ascending: false })
+      supabase.from("store_branches").select("id,name,address,latitude,longitude,is_primary,is_active").eq("restaurant_id", restaurantId).order("is_primary", { ascending: false })
     ),
     getRestaurantOperationsSummary(restaurantId),
     getRestaurantEntitlement(restaurantId)
@@ -713,6 +746,7 @@ export async function getStaffOperationsBundle(
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
   const shouldLoadAdminExtendedData = options.scope !== "self";
+  const shouldLoadPeopleExtendedData = true;
 
   const [
     roles,
@@ -731,7 +765,8 @@ export async function getStaffOperationsBundle(
     reviewRows,
     contractRows,
     documentRows,
-    deviceRows
+    deviceRows,
+    incidentRows
   ] = await Promise.all([
     readOptionalRows<StaffRoleRow>(
       supabase
@@ -823,7 +858,7 @@ export async function getStaffOperationsBundle(
         .order("created_at", { ascending: false })
         .limit(20)
     ),
-    shouldLoadAdminExtendedData
+    shouldLoadPeopleExtendedData
       ? readOptionalRows<StaffReviewRow>(
           supabase
             .from("staff_reviews")
@@ -833,7 +868,7 @@ export async function getStaffOperationsBundle(
             .limit(120)
         )
       : Promise.resolve([] as StaffReviewRow[]),
-    shouldLoadAdminExtendedData
+    shouldLoadPeopleExtendedData
       ? readOptionalRows<StaffContractRow>(
           supabase
             .from("staff_contracts")
@@ -843,7 +878,7 @@ export async function getStaffOperationsBundle(
             .limit(120)
         )
       : Promise.resolve([] as StaffContractRow[]),
-    shouldLoadAdminExtendedData
+    shouldLoadPeopleExtendedData
       ? readOptionalRows<StaffDocumentRow>(
           supabase
             .from("staff_documents")
@@ -853,7 +888,7 @@ export async function getStaffOperationsBundle(
             .limit(120)
         )
       : Promise.resolve([] as StaffDocumentRow[]),
-    shouldLoadAdminExtendedData
+    shouldLoadPeopleExtendedData
       ? readOptionalRows<StaffDeviceRow>(
           supabase
             .from("staff_devices")
@@ -861,8 +896,16 @@ export async function getStaffOperationsBundle(
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(120)
-        )
-      : Promise.resolve([] as StaffDeviceRow[])
+      )
+      : Promise.resolve([] as StaffDeviceRow[]),
+    readOptionalRows<StaffIncidentRow>(
+      supabase
+        .from("staff_incident_reports")
+        .select("id,staff_member_id,branch_id,title,description,severity,status,attachment_url,created_at,updated_at,resolved_at")
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", { ascending: false })
+        .limit(80)
+    )
   ]);
 
   const rolePermissionMap = new Map<string, StaffPermissionKey[]>();
@@ -904,7 +947,7 @@ export async function getStaffOperationsBundle(
     activeSessionsByMemberId.set(session.staff_member_id, [...(activeSessionsByMemberId.get(session.staff_member_id) ?? []), session]);
   });
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = dateKeyInVietnam(new Date());
   const attendanceTodayByMemberId = new Map<string, AttendanceRow>();
   const todayAttendanceMemberIds = new Set<string>();
   const attendanceRowsWithOpen = [...openAttendanceRows, ...attendanceRows].reduce((rows, attendance) => {
@@ -1268,6 +1311,22 @@ export async function getStaffOperationsBundle(
     createdAt: device.created_at
   }));
 
+  const incidents: StaffOpsIncidentItem[] = incidentRows.map((incident) => ({
+    id: incident.id,
+    staffMemberId: incident.staff_member_id,
+    staffName: memberNameById.get(incident.staff_member_id) ?? "Nhân viên",
+    branchId: incident.branch_id,
+    branchName: incident.branch_id ? branchById.get(incident.branch_id)?.name ?? null : null,
+    title: incident.title,
+    description: incident.description,
+    severity: incident.severity,
+    status: incident.status,
+    attachmentUrl: incident.attachment_url,
+    createdAt: incident.created_at,
+    updatedAt: incident.updated_at,
+    resolvedAt: incident.resolved_at
+  }));
+
   const notifications: StaffOpsNotification[] = notificationRows.map((notification) => ({
     id: notification.id,
     type: notification.type,
@@ -1296,6 +1355,7 @@ export async function getStaffOperationsBundle(
       address: branch.address,
       isPrimary: branch.is_primary,
       isActive: branch.is_active,
+      attendanceLocationConfigured: branch.latitude !== null && branch.longitude !== null,
       activeStaff,
       lateCount,
       pendingApprovals,
@@ -1392,6 +1452,7 @@ export async function getStaffOperationsBundle(
     contracts,
     documents,
     devices,
+    incidents,
     mobileOps,
     notifications,
     unreadNotificationCount: notifications.filter((notification) => notification.status === "unread").length,

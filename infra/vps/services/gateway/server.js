@@ -527,7 +527,7 @@ function inferAlertArea(alertName = "", summary = "") {
   if (text.includes("api") || text.includes("gateway")) return "api";
   if (text.includes("web") || text.includes("vercel")) return "web";
   if (text.includes("billing") || text.includes("payment")) return "billing";
-  if (text.includes("ai") || text.includes("openai") || text.includes("qwen")) return "ai";
+  if (text.includes("ai") || text.includes("mimo") || text.includes("deepseek") || text.includes("openai") || text.includes("qwen")) return "ai";
   if (text.includes("security") || text.includes("auth")) return "security";
   return "other";
 }

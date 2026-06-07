@@ -171,12 +171,13 @@ export type StaffSelfAvatarUploadResult = {
   avatarUrl: string;
 };
 
-async function parseOperationalResponse<T>(response: Response, fallback: string) {
+async function parseOperationalResponse<T>(response: Response, fallback: string, options: { requireData?: boolean } = {}) {
   const payload = (await response.json().catch(() => null)) as AttendanceApiResponse<T> | null;
+  const requireData = options.requireData ?? true;
   const requestSucceeded = payload?.success === true || payload?.ok === true;
   const hasData = payload && Object.prototype.hasOwnProperty.call(payload, "data") && payload.data !== null && payload.data !== undefined;
 
-  if (!response.ok || !requestSucceeded || !hasData) {
+  if (!response.ok || !requestSucceeded || (requireData && !hasData)) {
     const firstError = Array.isArray(payload?.errors) ? payload.errors[0] : null;
     const message = typeof firstError === "string" ? firstError : payload?.message ?? payload?.error ?? fallback;
     throw new StaffOperationsApiError(message, {
@@ -184,10 +185,10 @@ async function parseOperationalResponse<T>(response: Response, fallback: string)
     });
   }
 
-  return payload.data as T;
+  return (hasData ? payload.data : null) as T;
 }
 
-async function postOperational<T>(url: string, payload: unknown, fallback: string) {
+async function postOperational<T>(url: string, payload: unknown, fallback: string, options: { requireData?: boolean } = {}) {
   let response: Response;
 
   try {
@@ -203,7 +204,7 @@ async function postOperational<T>(url: string, payload: unknown, fallback: strin
     });
   }
 
-  return parseOperationalResponse<T>(response, fallback);
+  return parseOperationalResponse<T>(response, fallback, options);
 }
 
 export async function fetchStaffOperationsBundle(scope: StaffOperationsBundleScope = "admin") {
@@ -290,5 +291,5 @@ export async function runStaffMobileQuickAction(action: StaffMobileQuickAction, 
     resolve_request: `/api/admin/service-requests/${targetId}/resolve`
   };
 
-  return postOperational(endpoints[action], {}, "Không thể xử lý việc trong ca.");
+  return postOperational(endpoints[action], {}, "Không thể xử lý việc trong ca.", { requireData: false });
 }

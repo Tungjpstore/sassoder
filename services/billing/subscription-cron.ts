@@ -1,6 +1,6 @@
-import { AppError } from "@/lib/response";
 import { DEFAULT_GRACE_PERIOD_DAYS } from "@/lib/billing/subscription-transitions";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { isEmailDeliveryConfigured, sendTransactionalEmail } from "@/services/email-delivery";
 import { notifyPlatformSubscriptionStatusChanged } from "@/services/platform-telegram-events";
 import { addDays, dateOnly, daysUntil, firstOrNull, formatDateVi, isMissingSchemaError } from "./billing-utils";
 import type { SubscriptionReminderCandidateRow } from "./billing-types";
@@ -55,33 +55,8 @@ async function sendSubscriptionReminderEmail({
   subject: string;
   html: string;
 }) {
-  const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.BILLING_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <billing@logivn.com>";
-
-  if (!apiKey) {
-    throw new AppError("Thiếu RESEND_API_KEY để gửi email nhắc gia hạn", 500);
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      subject,
-      html
-    })
-  });
-
-  const json = (await response.json().catch(() => null)) as { id?: string; message?: string } | null;
-  if (!response.ok) {
-    throw new AppError(json?.message ?? "Resend từ chối gửi email nhắc gia hạn", 502);
-  }
-
-  return { providerMessageId: json?.id ?? null, raw: json };
+  return sendTransactionalEmail({ from, to: [to], subject, html });
 }
 
 async function insertReminderLog({
@@ -162,7 +137,7 @@ export async function sendSubscriptionExpiryReminders() {
       continue;
     }
 
-    if (!process.env.RESEND_API_KEY) {
+    if (!isEmailDeliveryConfigured()) {
       skipped += 1;
       await insertReminderLog({
         restaurantId: row.restaurant_id,
@@ -170,7 +145,7 @@ export async function sendSubscriptionExpiryReminders() {
         reminderKey,
         recipient,
         status: "skipped",
-        errorMessage: "Thiếu RESEND_API_KEY.",
+        errorMessage: "Thiếu cấu hình provider gửi email transactional.",
         metadata: { daysLeft, periodEnd }
       });
       continue;

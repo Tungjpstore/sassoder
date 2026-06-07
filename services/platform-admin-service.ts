@@ -898,15 +898,18 @@ function summarizeAiControl(
       disabledProviders: providerConfigs.filter((provider) => !provider.enabled).length
     },
     routing: {
-      ownerProvider: process.env.AI_OWNER_PROVIDER || process.env.COPILOTKIT_PROVIDER || "qwen",
-      customerProvider: process.env.AI_CUSTOMER_PROVIDER || "qwen",
+      ownerProvider: process.env.AI_OWNER_PROVIDER || process.env.COPILOTKIT_PROVIDER || "mimo",
+      customerProvider: process.env.AI_CUSTOMER_PROVIDER || "mimo",
       imageProvider: process.env.AI_IMAGE_PROVIDER || "xai",
-      ownerModel: providerConfigs.find((provider) => provider.provider === "qwen")?.chatModel || process.env.QWEN_CHAT_MODEL || process.env.QWEN_MODEL || process.env.COPILOTKIT_MODEL || "qwen-plus",
+      ownerModel:
+        providerConfigs.find((provider) => provider.provider === "mimo")?.chatModel ||
+        process.env.MIMO_CHAT_MODEL ||
+        process.env.MIMO_MODEL ||
+        process.env.COPILOTKIT_MODEL ||
+        "mimo-v2.5-pro",
       imageModel:
         providerConfigs.find((provider) => provider.provider === "xai")?.imageModel ||
-        providerConfigs.find((provider) => provider.provider === "qwen")?.imageModel ||
         process.env.XAI_IMAGE_MODEL ||
-        process.env.QWEN_IMAGE_MODEL ||
         "provider-default"
     }
   };
@@ -1014,7 +1017,8 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
     note: "Nên nâng lên multi-admin RBAC trước khi cho chỉnh content/ops sâu."
   });
 
-  const qwenConfig = aiProviderConfigs.find((provider) => provider.provider === "qwen");
+  const mimoConfig = aiProviderConfigs.find((provider) => provider.provider === "mimo");
+  const deepSeekConfig = aiProviderConfigs.find((provider) => provider.provider === "deepseek");
   const xaiConfig = aiProviderConfigs.find((provider) => provider.provider === "xai");
 
   return [
@@ -1036,10 +1040,10 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
       key: "email",
       name: "Transactional email",
       category: "email",
-      envNames: ["RESEND_API_KEY", "RESEND_FROM", "AUTH_EMAIL_FROM", "REPORT_EMAIL_FROM", "BILLING_EMAIL_FROM"],
+      envNames: ["EMAIL_PROVIDER", "RESEND_API_KEY", "RESEND_FROM", "AUTH_EMAIL_FROM", "REPORT_EMAIL_FROM", "BILLING_EMAIL_FROM", "AWS_SES_REGION", "AWS_SES_ACCESS_KEY_ID", "AWS_SES_SECRET_ACCESS_KEY"],
       required: false,
-      secretHandling: "API key server-side; sender domains phải verify ở Resend/Supabase Auth.",
-      note: "Dùng cho auth, báo cáo định kỳ và nhắc billing."
+      secretHandling: "Provider key server-side; sender domains phải verify ở Resend/SES/Supabase Auth.",
+      note: "Dùng cho auth, báo cáo định kỳ, AI Morning Brief và nhắc billing. Resend là mặc định; SES bật bằng EMAIL_PROVIDER=ses."
     }),
     buildIntegrationHealth({
       key: "cron",
@@ -1052,15 +1056,27 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
     }),
     applyManagedProviderHealth(
       buildIntegrationHealth({
-        key: "ai-qwen",
-        name: "Qwen/DashScope AI",
+        key: "ai-mimo",
+        name: "Xiaomi MiMo AI",
         category: "ai",
-        envNames: ["QWEN_API_KEY", "QWEN_BASE_URL", "QWEN_MODEL"],
+        envNames: ["MIMO_API_KEY", "MIMO_BASE_URL", "MIMO_MODEL"],
         required: false,
         secretHandling: "Key chỉ server-side; model routing đọc từ env hoặc cấu hình admin mã hoá.",
-        note: "Provider chính cho owner/customer assistant theo cấu hình hiện tại."
+        note: "Provider chính cho owner/customer assistant và báo cáo AI theo cấu hình hiện tại."
       }),
-      qwenConfig
+      mimoConfig
+    ),
+    applyManagedProviderHealth(
+      buildIntegrationHealth({
+        key: "ai-deepseek",
+        name: "DeepSeek fallback",
+        category: "ai",
+        envNames: ["DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"],
+        required: false,
+        secretHandling: "Key fallback chỉ server-side; dùng khi MiMo timeout/hết quota.",
+        note: "Fallback đầu tiên sau MiMo trong AI Router."
+      }),
+      deepSeekConfig
     ),
     applyManagedProviderHealth(
       buildIntegrationHealth({
@@ -1561,7 +1577,7 @@ function buildProjectAtlas({
       control: "planned",
       audit: "partial",
       routes: ["/api/copilotkit", "/api/admin/ai/*", "/api/ai/customer-assistant", "/api/ai/customer-history", "/api/onboarding/ai/*"],
-      dependencies: ["Qwen", "xAI", "ai_usage_logs", "feature entitlements", "AI memory"],
+      dependencies: ["MiMo", "DeepSeek", "Gemini", "ai_usage_logs", "feature entitlements", "AI memory"],
       note: "AI owner/customer/onboarding flows đã có usage logs và provider readiness.",
       nextStep: "Thêm budget limits, prompt version registry, provider kill switch."
     },
@@ -1680,7 +1696,7 @@ function buildProjectAtlas({
       observe: "live",
       control: "planned",
       audit: "partial",
-      routes: ["Supabase", "Vercel", "Resend", "Qwen", "xAI", "Goong", "Vietmap", "Mapbox", "Upstash/KV", "Cloudflare R2"],
+      routes: ["Supabase", "Vercel", "Resend", "MiMo", "DeepSeek", "Gemini", "xAI", "Goong", "Vietmap", "Mapbox", "Upstash/KV", "Cloudflare R2"],
       dependencies: integrations.map((item) => item.key),
       note: "Integrations readiness đã hiển thị masked; raw secrets không được lưu/hiển thị.",
       nextStep: "Thêm rotation metadata, owner, expiry và drift check giữa preview/production."
@@ -2805,7 +2821,10 @@ async function readPlatformAdminSnapshot() {
     envStatus("PLATFORM_TELEGRAM_BOT_USERNAME", "DevOps Telegram username", false),
     envStatus("PLATFORM_TELEGRAM_CONNECT_TOKEN_SECRET", "DevOps Telegram connect secret", process.env.NODE_ENV === "production"),
     envStatus("PLATFORM_AI_SECRET_KEY", "Khoá mã hoá AI trong admin.logivn.com", false),
+    envStatus("EMAIL_PROVIDER", "Email provider", false),
     envStatus("RESEND_API_KEY", "Resend email", false),
+    envStatus("AWS_SES_ACCESS_KEY_ID", "AWS SES email", false),
+    envStatus("AWS_SES_SECRET_ACCESS_KEY", "AWS SES secret", false),
     envStatus("CRON_SECRET", "Cron secret", false),
     envStatus("BACKUP_ENCRYPTION_KEY", "Backup encryption key", process.env.NODE_ENV === "production"),
     envStatus("BACKUP_METADATA_SIGNING_KEY", "Backup metadata signing key", process.env.NODE_ENV === "production"),
@@ -2814,9 +2833,9 @@ async function readPlatformAdminSnapshot() {
     envStatus("DEV_TELEGRAM_CHAT_ID", "Dev Telegram backup chat", false),
     envStatus("MAPBOX_ACCESS_TOKEN", "Mapbox ship/route", false),
     {
-      ...envStatus("QWEN_API_KEY", "Alibaba Qwen AI", false),
-      configured: Boolean(process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "qwen")?.configured),
-      status: process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "qwen")?.configured ? "OK" : "Tuỳ chọn"
+      ...envStatus("MIMO_API_KEY", "Xiaomi MiMo AI", false),
+      configured: Boolean(process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured),
+      status: process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured ? "OK" : "Tuỳ chọn"
     },
     {
       ...envStatus("XAI_API_KEY", "xAI Grok/Voice/Image", false),

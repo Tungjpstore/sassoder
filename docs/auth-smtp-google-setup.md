@@ -19,7 +19,9 @@ Sender name, ví dụ LogiVN
 
 Trong Supabase, SMTP mặc định chỉ dành cho thử nghiệm và có giới hạn rất thấp, nên production bắt buộc dùng SMTP riêng.
 
-Cấu hình hiện tại của dự án đang dùng Resend SMTP với sender `no-reply@chophanmem.com` vì tài khoản Resend free chỉ cho một domain đã xác minh. Khi nâng cấp/đổi domain gửi mail, thay sender sang `no-reply@logivn.com` hoặc domain gửi mail chính thức của LogiVN.
+Cấu hình hiện tại của dự án đang dùng Resend với sender `no-reply@chophanmem.com` vì tài khoản Resend free chỉ cho một domain đã xác minh. App LogiVN gửi OTP/báo cáo/email hệ thống qua `services/email-delivery.ts`: mặc định `EMAIL_PROVIDER=resend`, sau khi AWS account và SES identity đã verified có thể đổi sang `EMAIL_PROVIDER=ses` cùng `AWS_SES_REGION`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`.
+
+Khi nâng cấp/đổi domain gửi mail, thay sender sang `no-reply@logivn.com` hoặc domain gửi mail chính thức của LogiVN, rồi verify domain đó ở provider đang dùng. Supabase custom SMTP vẫn nên cấu hình riêng như tuyến dự phòng cho các email Auth ngoài luồng app.
 
 ## 2. Chuẩn Bị Google OAuth
 
@@ -114,6 +116,10 @@ Nếu không dùng script:
   - Google: bật provider, thêm Web Client ID của luồng direct vào trường `Client IDs` để Supabase chấp nhận `signInWithIdToken` từ Google direct OAuth.
   - Giữ Client Secret OAuth cũ nếu vẫn muốn route rollback `/auth/google/supabase` tiếp tục chạy qua Supabase OAuth. Chỉ đổi secret trong Supabase khi Google OAuth client mới cũng đã có authorized redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`.
 - Vercel > Environment Variables:
+  - `EMAIL_PROVIDER=resend` cho hiện tại; đổi thành `ses` sau khi AWS SES production/sandbox status đã sẵn sàng.
+  - `RESEND_API_KEY` nếu dùng Resend.
+  - `AWS_SES_REGION`, `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY` nếu dùng SES.
+  - `AUTH_EMAIL_FROM`, `REPORT_EMAIL_FROM`, `BILLING_EMAIL_FROM` phải là sender đã verify ở provider.
   - `GOOGLE_OAUTH_CLIENT_ID`
   - `GOOGLE_OAUTH_CLIENT_SECRET`
   - `GOOGLE_OAUTH_STATE_SECRET`

@@ -1,6 +1,16 @@
 import type { AiPromptMessage } from "@/services/ai-prompt-router";
 
-export type AiProvider = "qwen" | "xai" | "openai" | "gemini" | "claude" | "vercel_gateway" | "nvidia" | "bedrock";
+export type AiProvider =
+  | "mimo"
+  | "deepseek"
+  | "qwen"
+  | "xai"
+  | "openai"
+  | "gemini"
+  | "claude"
+  | "vercel_gateway"
+  | "nvidia"
+  | "bedrock";
 
 export type AiProviderProtocol = "openai-compatible" | "anthropic-messages" | "bedrock-converse";
 
@@ -25,6 +35,7 @@ export type AiTaskType =
 export type AiCompletionOptions = {
   jsonMode?: boolean;
   maxTokens?: number;
+  topP?: number;
   timeoutMs?: number;
   temperature?: number;
   cacheTtlMs?: number;
@@ -58,6 +69,7 @@ export type AiCompletionResult = {
   raw?: unknown;
   cacheHit?: boolean;
   latencyMs?: number;
+  taskType?: AiTaskType;
   toolCalls?: Array<{
     id: string;
     type: "function";

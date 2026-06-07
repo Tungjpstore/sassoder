@@ -1,6 +1,7 @@
 import "server-only";
 
 import { runAiCompletion } from "@/lib/ai/router/model-router";
+import { assertMimoDailyTaskTokenBudget, recordMimoDailyTaskTokenUsage } from "@/lib/ai/providers/mimo-quota";
 import { getResolvedAiProviderConfig, normalizeAiProviderId } from "@/lib/ai/providers/registry";
 import { getScopedRestaurantMemoryContext, persistAiConversationMessage } from "@/lib/ai/memory/restaurant-memory";
 import { sanitizeOcrText, sanitizeOcrTextList } from "@/lib/ai/ocr/sanitizer";
@@ -57,7 +58,7 @@ type AiMessage = AiPromptMessage;
 type RestaurantAiContext = AiRestaurantContext;
 type RestaurantRow = Database["public"]["Tables"]["restaurants"]["Row"];
 type LegacyAiCompletionResult = Omit<AiCompletionResult, "attempts">;
-type NativeAiProvider = Extract<AiProvider, "qwen" | "xai">;
+type NativeAiProvider = Extract<AiProvider, "mimo" | "xai">;
 type NativeAiProviderConfig = Pick<AiProviderConfig, "baseUrl" | "apiKey" | "chatModel" | "fastModel" | "imageModel" | "ocrModel"> & { provider: NativeAiProvider };
 type ExecutedAiToolCall = {
   id: string;
@@ -148,7 +149,7 @@ type AiImageResult = {
   raw?: unknown;
 };
 
-const qwenNativeBaseUrl = "https://dashscope-intl.aliyuncs.com";
+const mimoNativeBaseUrl = "https://token-plan-sgp.xiaomimimo.com";
 const xaiNativeBaseUrl = "https://api.x.ai";
 
 function isMissingSchemaError(error: { code?: string; message?: string } | null | undefined) {
@@ -194,9 +195,9 @@ function billingAccessErrorMessage(label: string, state: "locked_plan" | "quota_
 }
 
 function normalizeNativeProviderBaseUrl(provider: NativeAiProvider, baseUrl: string) {
-  if (provider === "qwen") {
-    return (baseUrl || qwenNativeBaseUrl)
-      .replace(/\/compatible-mode\/v1\/?$/, "")
+  if (provider === "mimo") {
+    return (baseUrl || mimoNativeBaseUrl)
+      .replace(/\/v1\/?$/, "")
       .replace(/\/$/, "");
   }
   return (baseUrl || xaiNativeBaseUrl).replace(/\/v1\/?$/, "").replace(/\/$/, "");
@@ -204,8 +205,8 @@ function normalizeNativeProviderBaseUrl(provider: NativeAiProvider, baseUrl: str
 
 async function getProviderConfig(preferred?: NativeAiProvider): Promise<NativeAiProviderConfig> {
   const candidates: NativeAiProvider[] = preferred
-    ? [preferred, ...(preferred === "qwen" ? ["xai" as const] : ["qwen" as const])]
-    : ["qwen", "xai"];
+    ? [preferred, ...(preferred === "mimo" ? ["xai" as const] : ["mimo" as const])]
+    : ["mimo", "xai"];
 
   for (const provider of candidates) {
     try {
@@ -224,17 +225,18 @@ async function getProviderConfig(preferred?: NativeAiProvider): Promise<NativeAi
     }
   }
 
-  throw new AppError("Chưa cấu hình QWEN_API_KEY/DASHSCOPE_API_KEY hoặc XAI_API_KEY cho tính năng AI.", 500);
+  throw new AppError("Chưa cấu hình MIMO_API_KEY hoặc XAI_API_KEY cho tính năng AI.", 500);
 }
 
-async function getRequiredQwenProviderConfig(featureLabel: string): Promise<NativeAiProviderConfig> {
-  const config = await getProviderConfig("qwen");
-  if (config.provider === "qwen") return config;
-  throw new AppError(`${featureLabel} yêu cầu QWEN_API_KEY hoặc DASHSCOPE_API_KEY. Không thể dùng xAI cho OCR menu.`, 500);
+async function getRequiredMimoProviderConfig(featureLabel: string): Promise<NativeAiProviderConfig> {
+  const config = await getProviderConfig("mimo");
+  if (config.provider === "mimo") return config;
+  throw new AppError(`${featureLabel} yêu cầu MIMO_API_KEY. Không thể dùng xAI cho OCR menu.`, 500);
 }
 
 function normalizeNativeAiProvider(value?: string | null): NativeAiProvider | undefined {
-  return value === "qwen" || value === "xai" ? value : undefined;
+  if (value === "qwen" || value === "dashscope") return "mimo";
+  return value === "mimo" || value === "xai" ? value : undefined;
 }
 
 function normalizeAiProvider(value?: string | null): AiProvider | undefined {
@@ -317,7 +319,7 @@ function extractJsonObject(text: string) {
   }
 }
 
-function normalizeQwenImagePayload({
+function normalizeMimoImagePayload({
   imageUrl,
   imageBase64
 }: {
@@ -2282,7 +2284,8 @@ async function logAiUsage({
           })),
           estimatedCostVnd: aiResult.estimatedCostVnd ?? null,
           cacheHit: Boolean(aiResult.cacheHit),
-          latencyMs: aiResult.latencyMs ?? null
+          latencyMs: aiResult.latencyMs ?? null,
+          taskType: aiResult.taskType ?? null
         }
       : {})
   };
@@ -2463,43 +2466,48 @@ async function assertAiEntitlement({
   return entitlement;
 }
 
-async function qwenChat(
+async function mimoChat(
   config: NativeAiProviderConfig,
   model: string,
   messages: AiMessage[],
   options?: { jsonMode?: boolean; maxTokens?: number }
 ): Promise<LegacyAiCompletionResult> {
+  await assertMimoDailyTaskTokenBudget("ocr", options?.maxTokens ?? null);
+
   const response = await fetchAiWithTimeout(
-    `${config.baseUrl}/compatible-mode/v1/chat/completions`,
+    `${config.baseUrl}/v1/chat/completions`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        "api-key": config.apiKey,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
         model,
         messages,
         temperature: 0.35,
-        max_tokens: options?.maxTokens,
+        max_completion_tokens: options?.maxTokens,
+        top_p: 0.95,
         ...(options?.jsonMode ? { response_format: { type: "json_object" } } : {})
       })
     },
     {
       timeoutMs: LEGACY_AI_CHAT_TIMEOUT_MS,
-      timeoutMessage: "Qwen phản hồi quá lâu. Vui lòng thử lại sau.",
+      timeoutMessage: "MiMo phản hồi quá lâu. Vui lòng thử lại sau.",
       retries: 1
     }
   );
 
   const json = (await response.json().catch(() => null)) as any;
   if (!response.ok) {
-    throw new AppError(json?.message || json?.error?.message || "Qwen từ chối xử lý yêu cầu AI.", 502);
+    throw new AppError(json?.message || json?.error?.message || "MiMo từ chối xử lý yêu cầu AI.", 502);
   }
+
+  recordMimoDailyTaskTokenUsage("ocr", json?.usage?.prompt_tokens ?? null, json?.usage?.completion_tokens ?? null);
 
   return {
     text: String(json?.choices?.[0]?.message?.content ?? "").trim(),
-    provider: "qwen",
+    provider: "mimo",
     model,
     inputTokens: json?.usage?.prompt_tokens ?? null,
     outputTokens: json?.usage?.completion_tokens ?? null,
@@ -2507,7 +2515,7 @@ async function qwenChat(
   };
 }
 
-async function qwenMultimodalOcr({
+async function mimoMultimodalOcr({
   config,
   prompt,
   imageUrl,
@@ -2518,19 +2526,21 @@ async function qwenMultimodalOcr({
   imageUrl?: string;
   imageBase64?: string;
 }): Promise<LegacyAiCompletionResult> {
-  if (config.provider !== "qwen") {
-    throw new AppError("OCR menu yêu cầu cấu hình Qwen/DashScope hợp lệ.", 500);
+  if (config.provider !== "mimo") {
+    throw new AppError("OCR menu yêu cầu cấu hình Xiaomi MiMo hợp lệ.", 500);
   }
 
-  const imagePayload = normalizeQwenImagePayload({ imageUrl, imageBase64 });
+  const imagePayload = normalizeMimoImagePayload({ imageUrl, imageBase64 });
   if (!imagePayload) throw new AppError("Thiếu ảnh menu để AI OCR.", 400);
 
+  await assertMimoDailyTaskTokenBudget("ocr", 3500);
+
   const response = await fetchAiWithTimeout(
-    `${config.baseUrl}/compatible-mode/v1/chat/completions`,
+    `${config.baseUrl}/v1/chat/completions`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        "api-key": config.apiKey,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
@@ -2550,27 +2560,29 @@ async function qwenMultimodalOcr({
           }
         ],
         temperature: 0.01,
-        max_tokens: 3500
+        max_completion_tokens: 3500,
+        top_p: 0.95
       })
     },
     {
       timeoutMs: LEGACY_AI_OCR_TIMEOUT_MS,
-      timeoutMessage: "Qwen OCR phản hồi quá lâu. Vui lòng thử lại với ảnh rõ hơn hoặc nhỏ hơn.",
+      timeoutMessage: "MiMo OCR phản hồi quá lâu. Vui lòng thử lại với ảnh rõ hơn hoặc nhỏ hơn.",
       retries: 1
     }
   );
 
   const json = (await response.json().catch(() => null)) as any;
   if (!response.ok) {
-    throw new AppError(json?.message || json?.error?.message || "Qwen OCR không đọc được menu.", 502);
+    throw new AppError(json?.message || json?.error?.message || "MiMo OCR không đọc được menu.", 502);
   }
 
   const content = json?.choices?.[0]?.message?.content ?? json?.output?.choices?.[0]?.message?.content;
   const text = readAiMessageContent(content) || String(json?.output?.text ?? "").trim();
+  recordMimoDailyTaskTokenUsage("ocr", json?.usage?.prompt_tokens ?? json?.usage?.input_tokens ?? null, json?.usage?.completion_tokens ?? json?.usage?.output_tokens ?? null);
 
   return {
     text,
-    provider: "qwen",
+    provider: "mimo",
     model: config.ocrModel,
     inputTokens: json?.usage?.prompt_tokens ?? json?.usage?.input_tokens ?? null,
     outputTokens: json?.usage?.completion_tokens ?? json?.usage?.output_tokens ?? null,
@@ -2620,7 +2632,7 @@ async function runChat(
   messages: AiMessage[],
   preferred?: AiProvider,
   modelOverride?: string,
-  options?: Pick<AiCompletionOptions, "jsonMode" | "maxTokens" | "cacheTtlMs" | "tools" | "toolChoice">,
+  options?: Pick<AiCompletionOptions, "jsonMode" | "maxTokens" | "topP" | "cacheTtlMs" | "tools" | "toolChoice">,
   taskType: AiTaskType = "dashboard_operation"
 ) {
   return runAiCompletion({
@@ -2631,6 +2643,7 @@ async function runChat(
     options: {
       jsonMode: options?.jsonMode,
       maxTokens: options?.maxTokens,
+      topP: options?.topP,
       cacheTtlMs: options?.cacheTtlMs,
       tools: options?.tools,
       toolChoice: options?.toolChoice,
@@ -3517,62 +3530,7 @@ async function runAiImageGeneration(input: {
   const canFallbackToPromptOnly = allowPromptOnlyImageFallback();
 
   try {
-    const config = await getProviderConfig(normalizeNativeAiProvider(process.env.AI_IMAGE_PROVIDER) || "qwen");
-    if (config.provider === "qwen") {
-      const size = input.kind === "logo" ? "1024*1024" : input.kind === "menu_preview" ? "1536*1024" : "1024*1024";
-      const response = await fetchAiWithTimeout(
-        `${config.baseUrl}/api/v1/services/aigc/multimodal-generation/generation`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${config.apiKey}`,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            model: config.imageModel,
-            input: {
-              messages: [
-                {
-                  role: "user",
-                  content: [{ text: prompt }]
-                }
-              ]
-            },
-            parameters: {
-              size,
-              n: 1,
-              negative_prompt:
-                "low quality, blurry, distorted logo, unreadable typography, broken Vietnamese diacritics, random letters, misspelled text, watermark, QR-like artifacts, cluttered composition, cheap 3D clipart, generic mascot, plastic food, extra fingers, oversaturated colors",
-              prompt_extend: true,
-              watermark: false
-            }
-          })
-        },
-        {
-          timeoutMs: LEGACY_AI_IMAGE_TIMEOUT_MS,
-          timeoutMessage: "Qwen tạo ảnh phản hồi quá lâu. Vui lòng thử lại sau."
-        }
-      );
-      const json = (await response.json().catch(() => null)) as any;
-      if (!response.ok) throw new AppError(json?.message || json?.error?.message || "Không tạo được ảnh bằng Qwen.", 502);
-      const content = json?.output?.choices?.[0]?.message?.content;
-      const imageUrl =
-        (Array.isArray(content) ? content.find((part) => part?.image)?.image || content.find((part) => part?.url)?.url : null) ||
-        json?.output?.image_url ||
-        json?.output?.url ||
-        json?.data?.[0]?.url ||
-        null;
-      if (!imageUrl) {
-        throw new AppError("Qwen đã xử lý nhưng chưa trả URL ảnh. Vui lòng kiểm tra quota/model trong Alibaba Cloud hoặc thử lại.", 502);
-      }
-      return {
-        imageUrl,
-        prompt,
-        provider: "qwen",
-        model: config.imageModel,
-        raw: json
-      } satisfies AiImageResult;
-    }
+    const config = await getProviderConfig(normalizeNativeAiProvider(process.env.AI_IMAGE_PROVIDER) || "xai");
 
     if (config.provider === "xai") {
       const response = await fetchAiWithTimeout(
@@ -3609,6 +3567,8 @@ async function runAiImageGeneration(input: {
         raw: json
       } satisfies AiImageResult;
     }
+
+    throw new AppError("Provider tạo ảnh hiện tại chưa hỗ trợ trả URL ảnh. Hãy cấu hình XAI_API_KEY hoặc bật prompt fallback.", 500);
   } catch (error) {
     if (!canFallbackToPromptOnly) throw error;
   }
@@ -3631,7 +3591,7 @@ export async function generateRestaurantBranding(input: {
 }) {
   await assertAiEntitlement({ restaurantId: input.restaurantId, featureKey: "ai_branding_studio", userId: input.userId });
   const restaurant = await getRestaurantContext(input.restaurantId);
-  const result = await runChat(buildBrandingMessages({ restaurant, ...input }), "qwen", undefined, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
+  const result = await runChat(buildBrandingMessages({ restaurant, ...input }), "mimo", undefined, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
   await logAiUsage({
     restaurantId: input.restaurantId,
     userId: input.userId,
@@ -3641,7 +3601,8 @@ export async function generateRestaurantBranding(input: {
     requestKind: "chat",
     status: "success",
     inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens
+    outputTokens: result.outputTokens,
+    aiResult: result
   });
 
   const data = normalizeBrandBoard(extractJsonObject(result.text));
@@ -3733,7 +3694,7 @@ export async function generateOnboardingBranding(input: {
       ].join("\n")
     }
   ];
-  const result = await runChat(messages, "qwen", undefined, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
+  const result = await runChat(messages, "mimo", undefined, { jsonMode: true, cacheTtlMs: 20_000 }, "branding");
 
   const data = normalizeBrandBoard(extractJsonObject(result.text));
   const replyContract = normalizeAiReply({
@@ -3797,18 +3758,18 @@ function hasInventoryOcrRows(draft: InventoryOcrDraft) {
 
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const prompt = buildMenuOcrPrompt(input);
-  const qwenConfig = await getRequiredQwenProviderConfig("AI OCR menu");
+  const mimoConfig = await getRequiredMimoProviderConfig("AI OCR menu");
   const result =
     input.imageUrl || input.imageBase64
-      ? await qwenMultimodalOcr({
-          config: qwenConfig,
+      ? await mimoMultimodalOcr({
+          config: mimoConfig,
           prompt,
           imageUrl: input.imageUrl,
           imageBase64: input.imageBase64
         })
-      : await qwenChat(
-          qwenConfig,
-          qwenConfig.chatModel,
+      : await mimoChat(
+          mimoConfig,
+          mimoConfig.chatModel,
           [
             { role: "system", content: "Bạn chuyên OCR và chuẩn hóa menu F&B Việt Nam. Trả JSON thuần." },
             { role: "user", content: prompt }
@@ -3819,9 +3780,9 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
   let data = normalizeMenuOcrDraft(extractJsonObject(result.text));
 
   if (!hasMenuOcrItems(data) && result.text.trim()) {
-    const repairResult = await qwenChat(
-      qwenConfig,
-      qwenConfig.chatModel,
+    const repairResult = await mimoChat(
+      mimoConfig,
+      mimoConfig.chatModel,
       [
         {
           role: "system",
@@ -3850,18 +3811,18 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
 
 async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const prompt = buildInventoryOcrPrompt(input);
-  const qwenConfig = await getRequiredQwenProviderConfig("AI OCR nhập kho");
+  const mimoConfig = await getRequiredMimoProviderConfig("AI OCR nhập kho");
   const result =
     input.imageUrl || input.imageBase64
-      ? await qwenMultimodalOcr({
-          config: qwenConfig,
+      ? await mimoMultimodalOcr({
+          config: mimoConfig,
           prompt,
           imageUrl: input.imageUrl,
           imageBase64: input.imageBase64
         })
-      : await qwenChat(
-          qwenConfig,
-          qwenConfig.chatModel,
+      : await mimoChat(
+          mimoConfig,
+          mimoConfig.chatModel,
           [
             { role: "system", content: "Bạn chuyên OCR hóa đơn và chuẩn hóa nhập kho F&B Việt Nam. Trả JSON thuần." },
             { role: "user", content: prompt }
@@ -3872,9 +3833,9 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
   let data = normalizeInventoryOcrDraft(extractJsonObject(result.text));
 
   if (!hasInventoryOcrRows(data) && result.text.trim()) {
-    const repairResult = await qwenChat(
-      qwenConfig,
-      qwenConfig.chatModel,
+    const repairResult = await mimoChat(
+      mimoConfig,
+      mimoConfig.chatModel,
       [
         {
           role: "system",
@@ -3919,7 +3880,8 @@ export async function generateMenuOcrDraft(input: {
     requestKind: "ocr",
     status: "success",
     inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens
+    outputTokens: result.outputTokens,
+    metadata: { taskType: "ocr" }
   });
   const text = buildMenuOcrReplyText(data);
   const mission = buildAgentMission({
@@ -3979,7 +3941,8 @@ export async function generateInventoryOcrDraft(input: {
     requestKind: "ocr",
     status: "success",
     inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens
+    outputTokens: result.outputTokens,
+    metadata: { taskType: "ocr" }
   });
 
   const totalQuantity = data.rows.reduce((sum, row) => sum + row.quantity, 0);

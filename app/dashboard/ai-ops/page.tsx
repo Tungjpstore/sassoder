@@ -98,7 +98,7 @@ function feedbackMessage(searchParams: { settings?: string | string[]; retry?: s
   if (settings === "saved") return { tone: "green" as const, text: "Đã lưu cài đặt Morning Brief." };
   if (settings === "schema") return { tone: "yellow" as const, text: "Cần chạy migration Morning Brief trước khi lưu cài đặt." };
   if (retry === "sent") return { tone: "green" as const, text: "Đã gửi lại email Morning Brief." };
-  if (retry === "failed") return { tone: "red" as const, text: "Email Morning Brief gửi lại chưa thành công. Kiểm tra Resend/env." };
+  if (retry === "failed") return { tone: "red" as const, text: "Email Morning Brief gửi lại chưa thành công. Kiểm tra email provider/env." };
   if (retry === "skipped") return { tone: "yellow" as const, text: "Email Morning Brief bị bỏ qua do thiếu người nhận hoặc đang tắt." };
   if (retry === "schema") return { tone: "yellow" as const, text: "Cần chạy migration Morning Brief trước khi retry." };
   return null;

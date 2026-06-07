@@ -5,6 +5,11 @@ export const STAFF_OPERATIONS_REALTIME_TABLES = [
   "shift_assignments",
   "attendance_logs",
   "attendance_approval_requests",
+  "staff_attendance_qr_tokens",
+  "staff_attendance_wifi_networks",
+  "staff_sessions",
+  "staff_devices",
+  "staff_incident_reports",
   "staff_activity_logs",
   "notifications"
 ] as const;

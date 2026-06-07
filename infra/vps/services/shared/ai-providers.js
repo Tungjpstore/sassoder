@@ -1,6 +1,30 @@
 import { readEnv } from "./env.js";
 
 const providerConfig = {
+  mimo: {
+    apiKey: "MIMO_API_KEY",
+    baseUrl: "MIMO_BASE_URL",
+    model: "MIMO_CHAT_MODEL",
+    defaultModel: "mimo-v2.5-pro",
+    defaultBaseUrl: "https://token-plan-sgp.xiaomimimo.com/v1",
+    kind: "mimo-openai-compatible"
+  },
+  deepseek: {
+    apiKey: "DEEPSEEK_API_KEY",
+    baseUrl: "DEEPSEEK_BASE_URL",
+    model: "DEEPSEEK_CHAT_MODEL",
+    defaultModel: "deepseek-chat",
+    defaultBaseUrl: "https://api.deepseek.com/v1",
+    kind: "openai-compatible"
+  },
+  gemini: {
+    apiKey: "GEMINI_API_KEY",
+    baseUrl: "GEMINI_BASE_URL",
+    model: "GEMINI_CHAT_MODEL",
+    defaultModel: "gemini-2.5-flash",
+    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    kind: "openai-compatible"
+  },
   openai: {
     apiKey: "OPENAI_API_KEY",
     baseUrl: "OPENAI_BASE_URL",
@@ -41,14 +65,21 @@ const providerConfig = {
   }
 };
 
+function normalizeProviderName(provider) {
+  if (provider === "qwen" || provider === "dashscope") return "mimo";
+  return provider;
+}
+
 export function providerOrder(preferredProvider) {
-  const configured = readEnv("AI_PROVIDER_FALLBACK_ORDER", "qwen,xai,openai,claude")
+  const configured = readEnv("AI_PROVIDER_FALLBACK_ORDER", "mimo,deepseek,gemini")
     .split(",")
-    .map((provider) => provider.trim())
+    .map((provider) => normalizeProviderName(provider.trim()))
     .filter(Boolean);
 
-  if (!preferredProvider) return configured;
-  return [preferredProvider, ...configured.filter((provider) => provider !== preferredProvider)];
+  const uniqueConfigured = [...new Set(configured)];
+  const preferred = normalizeProviderName(preferredProvider);
+  if (!preferred) return uniqueConfigured;
+  return [preferred, ...uniqueConfigured.filter((provider) => provider !== preferred)];
 }
 
 function resolveProvider(provider) {
@@ -147,17 +178,16 @@ async function postJson(url, body, headers, timeoutMs) {
 }
 
 async function chatWithOpenAiCompatible(provider, request, timeoutMs) {
+  const isMimo = provider.kind === "mimo-openai-compatible";
   const json = await postJson(
     `${provider.baseUrl}/chat/completions`,
     {
       model: request.model || provider.model,
       messages: request.messages,
       temperature: request.temperature ?? 0.2,
-      max_tokens: request.maxTokens ?? 1200
+      ...(isMimo ? { max_completion_tokens: request.maxTokens ?? 1200, top_p: request.topP ?? 0.95 } : { max_tokens: request.maxTokens ?? 1200 })
     },
-    {
-      authorization: `Bearer ${provider.apiKey}`
-    },
+    isMimo ? { "api-key": provider.apiKey } : { authorization: `Bearer ${provider.apiKey}` },
     timeoutMs
   );
 

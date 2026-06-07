@@ -8,28 +8,28 @@ function candidate(provider: AiProvider, overrides: Partial<AiProviderConfig> = 
     provider,
     supportsJsonMode: provider !== "bedrock",
     supportsToolCalling: provider !== "bedrock",
-    supportsImageGeneration: provider === "qwen" || provider === "openai" || provider === "xai" || provider === "vercel_gateway",
-    supportsOcr: provider === "qwen" || provider === "openai" || provider === "gemini" || provider === "vercel_gateway",
+    supportsImageGeneration: provider === "openai" || provider === "xai" || provider === "vercel_gateway",
+    supportsOcr: provider === "mimo" || provider === "openai" || provider === "gemini" || provider === "vercel_gateway",
     ...overrides
   };
 }
 
-test("buildAiProviderOrder prefers fast operational providers and keeps openai fallback", () => {
+test("buildAiProviderOrder prefers MiMo and keeps DeepSeek/Gemini fallback", () => {
   const order = buildAiProviderOrder({
     taskType: "customer_ordering",
-    candidates: [candidate("qwen"), candidate("openai"), candidate("xai")]
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("gemini"), candidate("openai")]
   });
 
-  assert.deepEqual(order.slice(0, 3), ["qwen", "openai", "xai"]);
+  assert.deepEqual(order.slice(0, 4), ["mimo", "deepseek", "gemini", "openai"]);
 });
 
-test("buildAiProviderOrder routes reasoning to openai before xai and qwen", () => {
+test("buildAiProviderOrder routes reasoning to MiMo before fallback providers", () => {
   const order = buildAiProviderOrder({
     taskType: "analytics_reasoning",
-    candidates: [candidate("qwen"), candidate("openai"), candidate("xai")]
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("openai"), candidate("xai")]
   });
 
-  assert.deepEqual(order.slice(0, 3), ["openai", "xai", "qwen"]);
+  assert.deepEqual(order.slice(0, 4), ["mimo", "deepseek", "openai", "xai"]);
 });
 
 test("buildAiProviderOrder filters providers that cannot handle tool calls", () => {
@@ -54,48 +54,48 @@ test("buildAiProviderOrder filters providers that cannot handle tool calls", () 
   assert.deepEqual(order, ["openai"]);
 });
 
-test("buildAiProviderOrder keeps qwen first for OCR when available", () => {
+test("buildAiProviderOrder keeps MiMo first for OCR when available", () => {
   const order = buildAiProviderOrder({
     taskType: "ocr",
     preferredProvider: "openai",
-    candidates: [candidate("openai"), candidate("gemini"), candidate("qwen")]
+    candidates: [candidate("openai"), candidate("gemini"), candidate("mimo")]
   });
 
-  assert.deepEqual(order, ["qwen", "openai", "gemini"]);
+  assert.deepEqual(order, ["mimo", "gemini", "openai"]);
 });
 
-test("buildAiProviderOrder sends batch jobs to nvidia before normal fallbacks", () => {
+test("buildAiProviderOrder sends batch jobs to MiMo before normal fallbacks", () => {
   const order = buildAiProviderOrder({
     taskType: "batch_report",
-    candidates: [candidate("qwen"), candidate("nvidia"), candidate("openai")]
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("nvidia"), candidate("openai")]
   });
 
-  assert.deepEqual(order.slice(0, 3), ["nvidia", "qwen", "openai"]);
+  assert.deepEqual(order.slice(0, 4), ["mimo", "deepseek", "openai", "nvidia"]);
 });
 
-test("buildAiProviderOrder honors an explicit batch provider while retaining nvidia fallback", () => {
+test("buildAiProviderOrder honors an explicit batch provider while retaining MiMo fallback", () => {
   const order = buildAiProviderOrder({
     taskType: "batch_inventory",
     preferredProvider: "openai",
-    candidates: [candidate("qwen"), candidate("nvidia"), candidate("openai")]
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("nvidia"), candidate("openai")]
   });
 
-  assert.deepEqual(order.slice(0, 3), ["openai", "nvidia", "qwen"]);
+  assert.deepEqual(order.slice(0, 4), ["openai", "mimo", "deepseek", "nvidia"]);
 });
 
 test("buildAiProviderOrder uses Bedrock as text fallback but skips it for JSON mode", () => {
   const textOrder = buildAiProviderOrder({
     taskType: "dashboard_operation",
-    candidates: [candidate("qwen"), candidate("bedrock"), candidate("openai")]
+    candidates: [candidate("mimo"), candidate("bedrock"), candidate("openai")]
   });
 
-  assert.deepEqual(textOrder.slice(0, 3), ["qwen", "bedrock", "openai"]);
+  assert.deepEqual(textOrder.slice(0, 3), ["mimo", "openai", "bedrock"]);
 
   const jsonOrder = buildAiProviderOrder({
     taskType: "dashboard_operation",
     options: { jsonMode: true },
-    candidates: [candidate("qwen"), candidate("bedrock"), candidate("openai")]
+    candidates: [candidate("mimo"), candidate("bedrock"), candidate("openai")]
   });
 
-  assert.deepEqual(jsonOrder.slice(0, 2), ["qwen", "openai"]);
+  assert.deepEqual(jsonOrder.slice(0, 2), ["mimo", "openai"]);
 });

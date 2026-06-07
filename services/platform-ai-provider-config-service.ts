@@ -84,9 +84,29 @@ export type UpdatePlatformAiProviderConfigInput = {
   updatedBy: string;
 };
 
-const supportedProviders = ["qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
+const supportedProviders = ["mimo", "deepseek", "qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
 
 const providerMetadata: PlatformAiProviderMetadata[] = [
+  {
+    provider: "mimo",
+    label: "Xiaomi MiMo",
+    keyEnvNames: ["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY"],
+    baseUrlEnvNames: ["MIMO_BASE_URL", "XIAOMI_MIMO_BASE_URL"],
+    chatModelEnvNames: ["MIMO_MODEL", "MIMO_CHAT_MODEL"],
+    fastModelEnvNames: ["MIMO_FAST_MODEL", "MIMO_MODEL", "MIMO_CHAT_MODEL"],
+    imageModelEnvNames: ["MIMO_IMAGE_MODEL"],
+    ocrModelEnvNames: ["MIMO_OCR_MODEL", "MIMO_MODEL", "MIMO_CHAT_MODEL"]
+  },
+  {
+    provider: "deepseek",
+    label: "DeepSeek",
+    keyEnvNames: ["DEEPSEEK_API_KEY"],
+    baseUrlEnvNames: ["DEEPSEEK_BASE_URL"],
+    chatModelEnvNames: ["DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"],
+    fastModelEnvNames: ["DEEPSEEK_FAST_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"],
+    imageModelEnvNames: ["DEEPSEEK_IMAGE_MODEL"],
+    ocrModelEnvNames: ["DEEPSEEK_OCR_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"]
+  },
   {
     provider: "qwen",
     label: "Qwen / DashScope",

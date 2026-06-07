@@ -115,7 +115,7 @@ Confirm these are present in the target Vercel/Supabase environment before deplo
 Required only when the related production path is enabled:
 
 - `CRON_SECRET` for AI/Ops cron or scheduled HR/ops checks.
-- `RESEND_API_KEY`, `REPORT_EMAIL_FROM`, and related email sender env when HR notifications are routed through email.
+- `EMAIL_PROVIDER`, provider credentials (`RESEND_API_KEY` or `AWS_SES_*`), `REPORT_EMAIL_FROM`, and related sender env when HR notifications are routed through email.
 
 ## Request Payload Conventions
 

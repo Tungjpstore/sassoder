@@ -109,7 +109,7 @@ function inferPlatformRoute(message: string, activeSection: string): AdminRoute 
   if (/goi|plan|pricing|premium|pro|trial|entitlement/.test(text)) return "/plans";
   if (/tenant|quan|restaurant|suspended|kich hoat|tam dung/.test(text)) return "/tenants";
   if (/user|nguoi dung|admin|staff|role|quyen/.test(text)) return "/users";
-  if (/ai|qwen|xai|model|token|prompt|ocr|image/.test(text)) return "/ai";
+  if (/ai|mimo|deepseek|qwen|xai|model|token|prompt|ocr|image/.test(text)) return "/ai";
   if (/api map|atlas|project|du an|frontend|backend|surface|coverage|bao quat|fullstack/.test(text)) return "/atlas";
   if (/map|maps|goong|vietmap|mapbox|route|geocode|delivery|ship/.test(text)) return "/maps";
   if (/cron|r2|cloudflare|env|secret|cache|storage|ops|infra/.test(text)) return "/ops";

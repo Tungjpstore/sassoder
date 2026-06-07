@@ -703,7 +703,7 @@ async function resolveBranch({
   const branch = result.data as BranchRow | null;
   if (!branch) throw new AppError("Không tìm thấy chi nhánh chấm công đang hoạt động.", 404);
 
-  if (session.role === "ADMIN") {
+  if (canManageAttendance(session)) {
     return {
       branch,
       requiresApproval: false,
@@ -712,11 +712,7 @@ async function resolveBranch({
   }
 
   if (activeAssignments.length === 0) {
-    return {
-      branch,
-      requiresApproval: true,
-      approvalReason: "Nhân sự chưa được gán chi nhánh cố định, ghi nhận như ca đột xuất."
-    };
+    throw new AppError("Nhân sự chưa được gán chi nhánh nên chưa thể chấm công. Vui lòng báo quản lý phân chi nhánh trước ca làm.", 403);
   }
 
   if (assignedBranchIds.size > 0 && !assignedBranchIds.has(branch.id)) {
@@ -728,10 +724,14 @@ async function resolveBranch({
       capturedAt
     });
 
+    if (!hasRotatedShift) {
+      throw new AppError("Nhân sự không được phân công tại chi nhánh này. Chấm công ngoài chi nhánh chỉ được phép khi đã có ca xoay hợp lệ.", 403);
+    }
+
     return {
       branch,
-      requiresApproval: !hasRotatedShift,
-      approvalReason: hasRotatedShift ? null : "Nhân sự chấm công tại chi nhánh chưa được phân công, ghi nhận như xoay ca đột xuất."
+      requiresApproval: false,
+      approvalReason: null
     };
   }
 

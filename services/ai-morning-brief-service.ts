@@ -2,6 +2,7 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { sendTransactionalEmail } from "@/services/email-delivery";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import {
   buildAiMorningBriefActionItems,
@@ -272,32 +273,13 @@ async function sendMorningBriefEmail(input: {
   deck: AiOperationInsightsDeck;
   items: AiMorningBriefActionItem[];
 }) {
-  const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.AI_OPS_MORNING_BRIEF_FROM ?? process.env.REPORT_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <reports@logivn.com>";
-
-  if (!apiKey) {
-    throw new AppError("Thiếu RESEND_API_KEY để gửi AI Morning Brief", 500);
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from,
-      to: input.recipients,
-      subject: `LogiVN AI Morning Brief - ${input.restaurantName}`,
-      html: buildMorningBriefEmailHtml(input)
-    })
+  return sendTransactionalEmail({
+    from,
+    to: input.recipients,
+    subject: `LogiVN AI Morning Brief - ${input.restaurantName}`,
+    html: buildMorningBriefEmailHtml(input)
   });
-  const json = (await response.json().catch(() => null)) as { id?: string; message?: string } | null;
-  if (!response.ok) {
-    throw new AppError(json?.message ?? "Resend từ chối gửi AI Morning Brief", 502);
-  }
-
-  return { providerMessageId: json?.id ?? null, raw: json };
 }
 
 async function recordAiMorningBriefRun(input: RecordAiMorningBriefRunInput) {
@@ -439,7 +421,7 @@ export async function createAiMorningBriefRun(input: CreateAiMorningBriefInput) 
       channel: "email",
       status: "sent",
       recipients,
-      provider: "resend",
+      provider: sent.provider,
       providerMessageId: sent.providerMessageId,
       sentAt: new Date().toISOString(),
       now
@@ -455,7 +437,6 @@ export async function createAiMorningBriefRun(input: CreateAiMorningBriefInput) 
       channel: "email",
       status: "failed",
       recipients,
-      provider: "resend",
       errorMessage: message,
       now
     });
@@ -575,7 +556,7 @@ export async function retryAiMorningBriefEmail(input: RetryAiMorningBriefEmailIn
       channel: "email",
       status: "sent",
       recipients,
-      provider: "resend",
+      provider: sent.provider,
       providerMessageId: sent.providerMessageId,
       sentAt: new Date().toISOString(),
       now: new Date()
@@ -598,7 +579,6 @@ export async function retryAiMorningBriefEmail(input: RetryAiMorningBriefEmailIn
       channel: "email",
       status: "failed",
       recipients,
-      provider: "resend",
       errorMessage: message,
       now: new Date()
     });

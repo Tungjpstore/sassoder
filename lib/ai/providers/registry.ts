@@ -4,6 +4,8 @@ import { AppError } from "@/lib/response";
 import { getManagedAiProviderRuntimeOverride, type ManagedAiProviderRuntimeOverride } from "@/services/platform-ai-provider-config-service";
 import type { AiProvider, AiProviderConfig, AiProviderProtocol, AiProviderReadiness } from "@/lib/ai/router/types";
 
+const mimoTokenPlanBaseUrl = "https://token-plan-sgp.xiaomimimo.com/v1";
+const deepSeekBaseUrl = "https://api.deepseek.com/v1";
 const qwenIntlBaseUrl = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 const xaiBaseUrl = "https://api.x.ai/v1";
 const openAiBaseUrl = "https://api.openai.com/v1";
@@ -13,7 +15,7 @@ const vercelGatewayBaseUrl = "https://ai-gateway.vercel.sh/v1";
 const nvidiaBaseUrl = "https://integrate.api.nvidia.com/v1";
 const bedrockBaseUrl = "https://bedrock-runtime.us-east-1.amazonaws.com";
 
-const providerOrder: AiProvider[] = ["qwen", "bedrock", "nvidia", "openai", "gemini", "xai", "claude", "vercel_gateway"];
+const providerOrder: AiProvider[] = ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "claude", "vercel_gateway", "qwen"];
 
 type ProviderDefinition = {
   provider: AiProvider;
@@ -75,6 +77,46 @@ function normalizeProviderBaseUrl(provider: AiProvider, baseUrl: string) {
 function providerDefinitions(): ProviderDefinition[] {
   const definitions = [
     {
+      provider: "mimo",
+      protocol: "openai-compatible",
+      keyEnvNames: ["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY"],
+      baseUrlEnvNames: ["MIMO_BASE_URL", "XIAOMI_MIMO_BASE_URL"],
+      baseUrl: mimoTokenPlanBaseUrl,
+      chatModelEnvNames: ["MIMO_MODEL", "MIMO_CHAT_MODEL"],
+      fastModelEnvNames: ["MIMO_FAST_MODEL", "MIMO_MODEL", "MIMO_CHAT_MODEL"],
+      imageModelEnvNames: ["MIMO_IMAGE_MODEL"],
+      ocrModelEnvNames: ["MIMO_OCR_MODEL", "MIMO_MODEL", "MIMO_CHAT_MODEL"],
+      chatModel: "mimo-v2.5-pro",
+      fastModel: "mimo-v2.5-pro",
+      imageModel: "unsupported",
+      ocrModel: "mimo-v2.5-pro",
+      supportsJsonMode: true,
+      supportsToolCalling: true,
+      supportsImageGeneration: false,
+      supportsOcr: true,
+      priority: 5
+    },
+    {
+      provider: "deepseek",
+      protocol: "openai-compatible",
+      keyEnvNames: ["DEEPSEEK_API_KEY"],
+      baseUrlEnvNames: ["DEEPSEEK_BASE_URL"],
+      baseUrl: deepSeekBaseUrl,
+      chatModelEnvNames: ["DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"],
+      fastModelEnvNames: ["DEEPSEEK_FAST_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"],
+      imageModelEnvNames: ["DEEPSEEK_IMAGE_MODEL"],
+      ocrModelEnvNames: ["DEEPSEEK_OCR_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_CHAT_MODEL"],
+      chatModel: "deepseek-chat",
+      fastModel: "deepseek-chat",
+      imageModel: "unsupported",
+      ocrModel: "unsupported",
+      supportsJsonMode: true,
+      supportsToolCalling: true,
+      supportsImageGeneration: false,
+      supportsOcr: false,
+      priority: 8
+    },
+    {
       provider: "qwen",
       protocol: "openai-compatible",
       keyEnvNames: ["QWEN_API_KEY", "DASHSCOPE_API_KEY"],
@@ -92,7 +134,7 @@ function providerDefinitions(): ProviderDefinition[] {
       supportsToolCalling: true,
       supportsImageGeneration: true,
       supportsOcr: true,
-      priority: 10
+      priority: 80
     },
     {
       provider: "nvidia",
@@ -358,7 +400,8 @@ export async function getResolvedAiProviderReadiness(): Promise<AiProviderReadin
 }
 
 export function normalizeAiProviderId(value?: string | null): AiProvider | undefined {
-  const normalized = value?.trim();
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "qwen" || normalized === "dashscope" || normalized === "alibaba_qwen") return "mimo";
   if (normalized === "dsx_air" || normalized === "dsx-air" || normalized === "nvidia_dsx_air") return "nvidia";
   return normalized && providerOrder.includes(normalized as AiProvider) ? (normalized as AiProvider) : undefined;
 }

@@ -18,6 +18,8 @@ import {
   Clock3,
   Copy,
   Download,
+  Eye,
+  EyeOff,
   Fingerprint,
   FileText,
   KeyRound,
@@ -54,6 +56,7 @@ import {
   resetStaffAppPasswordAction,
   resetStaffAppPasswordsAction,
   reviewAttendanceApprovalAction,
+  reviewStaffIncidentReportAction,
   setStaffAccountStateAction,
   updateStaffProfileAction,
   updateStaffDeviceTrustAction,
@@ -76,6 +79,7 @@ import type {
   StaffOpsApprovalItem,
   StaffOpsAttendanceFeedItem,
   StaffOpsBranchSummary,
+  StaffOpsIncidentItem,
   StaffOpsMember,
   StaffOpsNotification,
   StaffOpsRoleSummary,
@@ -385,9 +389,53 @@ function requestLabel(type: StaffOpsApprovalItem["requestType"]) {
   return map[type];
 }
 
+function incidentSeverityLabel(severity: StaffOpsIncidentItem["severity"]) {
+  const map: Record<StaffOpsIncidentItem["severity"], string> = {
+    low: "Thấp",
+    normal: "Bình thường",
+    high: "Cao",
+    urgent: "Khẩn cấp"
+  };
+  return map[severity];
+}
+
+function incidentStatusLabel(status: StaffOpsIncidentItem["status"]) {
+  const map: Record<StaffOpsIncidentItem["status"], string> = {
+    open: "Mới gửi",
+    reviewing: "Đang xử lý",
+    resolved: "Đã xử lý",
+    dismissed: "Đã bỏ qua"
+  };
+  return map[status];
+}
+
+function incidentTone(incident: StaffOpsIncidentItem): "success" | "warning" | "danger" | "neutral" {
+  if (incident.status === "resolved") return "success";
+  if (incident.status === "dismissed") return "neutral";
+  if (incident.severity === "urgent" || incident.severity === "high") return "danger";
+  return "warning";
+}
+
 function attendanceLabel(item: StaffOpsAttendanceFeedItem | undefined) {
   if (!item) return "--:--";
   return `${shortTime(item.clockInAt)} - ${item.clockOutAt ? shortTime(item.clockOutAt) : "--:--"}`;
+}
+
+function attendanceAgeHours(item: StaffOpsAttendanceFeedItem) {
+  const startedAt = new Date(item.clockInAt).getTime();
+  if (!Number.isFinite(startedAt)) return 0;
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 3_600_000));
+}
+
+function attendanceOpenLabel(item: StaffOpsAttendanceFeedItem) {
+  const hours = attendanceAgeHours(item);
+  if (hours >= 48) return `${Math.floor(hours / 24)} ngày chưa kết`;
+  if (hours >= 18) return `${hours} giờ chưa kết`;
+  return `Mở ${hours} giờ`;
+}
+
+function sortOpenAttendance(left: StaffOpsAttendanceFeedItem, right: StaffOpsAttendanceFeedItem) {
+  return new Date(left.clockInAt).getTime() - new Date(right.clockInAt).getTime();
 }
 
 function currentAssignmentForMember(assignments: StaffOpsShiftAssignment[], memberId: string) {
@@ -446,7 +494,7 @@ function useActionSuccessRefresh(state: StaffActionState | undefined, onSuccess?
     handledMessageRef.current = state.success;
     router.refresh();
     onSuccess?.(state);
-  }, [onSuccess, router, state?.success]);
+  }, [onSuccess, router, state]);
 }
 
 function OperationNotice({ message }: { message: { tone: "success" | "warning"; text: string } | null }) {
@@ -834,75 +882,45 @@ function StaffListScreen({ bundle, search, onSearch, onOpenMember, onAdd, onNavi
   const openSessionCount = bundle.attendanceFeed.filter((item) => !item.clockOutAt).length;
   const payrollBlockerCount = bundle.timesheets.filter((item) => payrollStatus(item).tone === "danger").length;
   const highRiskAttendanceCount = bundle.attendanceFeed.filter((item) => attendanceRiskScore(item) >= 55).length;
-  const branchAlerts = [...branches]
-    .filter((branch) => branch.coverageScore < 80 || branch.lateCount > 0 || branch.pendingApprovals > 0 || branch.suspiciousCount > 0)
-    .sort((left, right) => (right.pendingApprovals * 4 + right.lateCount * 3 + right.suspiciousCount * 5 + Math.max(0, 80 - right.coverageScore)) - (left.pendingApprovals * 4 + left.lateCount * 3 + left.suspiciousCount * 5 + Math.max(0, 80 - left.coverageScore)))
-    .slice(0, 3);
-  const staffSignals = [
-    { label: "Đang mở ca", value: openSessionCount, detail: "phiên cần kết ca đúng giờ", tone: openSessionCount ? "success" : "neutral", icon: Fingerprint, view: "attendance" as StaffView },
-    { label: "Nhận ca", value: `${confirmedToday}/${todayAssignments.length || 0}`, detail: "ca hôm nay đã xác nhận", tone: todayAssignments.length && confirmedToday < todayAssignments.length ? "warning" : "success", icon: CalendarClock, view: "shifts" as StaffView },
-    { label: "Rủi ro công", value: highRiskAttendanceCount, detail: "bản ghi cần kiểm tra", tone: highRiskAttendanceCount ? "danger" : "success", icon: ShieldCheck, view: "attendance" as StaffView },
-    { label: "Chặn payroll", value: payrollBlockerCount, detail: "nhân sự cần đối soát", tone: payrollBlockerCount ? "danger" : "success", icon: BriefcaseBusiness, view: "reports" as StaffView }
+  const operationalChips = [
+    { label: "Đang mở ca", value: openSessionCount, tone: openSessionCount ? "success" : "neutral", icon: Fingerprint, view: "attendance" as StaffView },
+    { label: "Nhận ca", value: `${confirmedToday}/${todayAssignments.length || 0}`, tone: todayAssignments.length && confirmedToday < todayAssignments.length ? "warning" : "success", icon: CalendarClock, view: "shifts" as StaffView },
+    { label: "Rủi ro", value: highRiskAttendanceCount, tone: highRiskAttendanceCount ? "danger" : "success", icon: ShieldCheck, view: "attendance" as StaffView },
+    { label: "Payroll", value: payrollBlockerCount, tone: payrollBlockerCount ? "danger" : "success", icon: BriefcaseBusiness, view: "reports" as StaffView }
   ];
 
   return (
     <div className="space-y-5">
-      <section className="hidden lg:block">
-        <h1 className="text-2xl font-black leading-tight text-[#2B2B2B]">Quản lý Nhân viên</h1>
-        <p className="mt-1 text-sm font-medium text-[#4B4945]">Tổng quan và danh sách nhân sự trong ca làm việc hôm nay.</p>
-      </section>
-
-      <Panel className="overflow-hidden">
-        <div className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:p-5">
+      <Panel className="p-4 lg:p-5">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Trung tâm nhân sự</p>
-                <h2 className="mt-1 text-xl font-black leading-tight text-[#2B2B2B] lg:text-2xl">Vận hành nhân sự hôm nay</h2>
-              </div>
-              <StatusChip tone="brand">Đồng bộ thật</StatusChip>
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-2 xl:grid-cols-4">
-              {staffSignals.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button key={item.label} type="button" onClick={() => onNavigate(item.view)} className="min-h-[104px] rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-3 text-left transition hover:border-[#0F4D3A]/35 hover:bg-[#F9F7F0]">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className={cn("grid h-8 w-8 place-items-center rounded-lg", item.tone === "danger" ? "bg-[#FFF0D9] text-[#A33D10]" : item.tone === "warning" ? "bg-[#FFF0D9] text-[#93540A]" : item.tone === "success" ? "bg-[#E5EEE2] text-[#0F4D3A]" : "bg-[#ECE9E3] text-[#595650]")}> <Icon size={17} /> </span>
-                      <ChevronRight size={16} className="text-[#8B857B]" />
-                    </span>
-                    <span className="mt-3 block text-2xl font-black leading-none text-[#2B2B2B]">{item.value}</span>
-                    <span className="mt-1 block text-xs font-black uppercase tracking-[0.08em] text-[#3F3D39]">{item.label}</span>
-                    <span className="mt-1 block text-xs font-semibold text-[#6B655B]">{item.detail}</span>
-                  </button>
-                );
-              })}
-            </div>
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Nhân sự</p>
+            <h1 className="mt-1 text-2xl font-black leading-tight text-[#2B2B2B]">Danh sách nhân viên</h1>
           </div>
-          <div className="rounded-xl border border-[#E5DDD2] bg-[#F9F7F0] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-black uppercase tracking-[0.1em] text-[#2B2B2B]">Chi nhánh cần chú ý</h3>
-              <button type="button" onClick={() => onNavigate("reports")} className="text-xs font-black text-[#0F4D3A]">Mở báo cáo</button>
-            </div>
-            <div className="mt-3 space-y-2">
-              {branchAlerts.map((branch) => (
-                <button key={branch.id} type="button" onClick={() => onNavigate(branch.pendingApprovals ? "requests" : "shifts")} className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg bg-white px-3 py-2 text-left">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-black text-[#2B2B2B]">{branch.name}</span>
-                    <span className="mt-0.5 block truncate text-xs font-semibold text-[#6B655B]">{branch.coverageScore}% phủ ca · {branch.lateCount} muộn · {branch.pendingApprovals} chờ duyệt</span>
-                  </span>
-                  <StatusChip tone={branch.coverageScore < 55 || branch.suspiciousCount > 0 ? "danger" : "warning"}>{branch.coverageScore < 80 ? "Thiếu phủ" : "Theo dõi"}</StatusChip>
-                </button>
-              ))}
-              {!branchAlerts.length ? <p className="rounded-lg border border-dashed border-[#D8D1C7] bg-white px-3 py-4 text-sm font-semibold text-[#5E5A54]">Các chi nhánh đang ổn theo dữ liệu hiện có.</p> : null}
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <StaffButton variant="secondary" onClick={() => onNavigate("attendance")}><Fingerprint size={17} /> Chấm công</StaffButton>
+            <StaffButton variant="secondary" onClick={() => onNavigate("shifts")}><CalendarClock size={17} /> Gán ca</StaffButton>
+            <StaffButton onClick={onAdd}><Plus size={17} /> Thêm nhân viên</StaffButton>
           </div>
         </div>
-        <div className="grid border-t border-[#E5DDD2] bg-[#FCFAF6] text-sm font-black text-[#2B2B2B] sm:grid-cols-4">
-          <button type="button" onClick={() => onNavigate("attendance")} className="flex min-h-12 items-center justify-center gap-2 border-b border-[#E5DDD2] px-3 hover:bg-white sm:border-b-0 sm:border-r"><Fingerprint size={17} /> Chấm công</button>
-          <button type="button" onClick={() => onNavigate("shifts")} className="flex min-h-12 items-center justify-center gap-2 border-b border-[#E5DDD2] px-3 hover:bg-white sm:border-b-0 sm:border-r"><CalendarClock size={17} /> Gán ca</button>
-          <button type="button" onClick={() => onNavigate("credentials")} className="flex min-h-12 items-center justify-center gap-2 border-b border-[#E5DDD2] px-3 hover:bg-white sm:border-b-0 sm:border-r"><KeyRound size={17} /> Tài khoản</button>
-          <button type="button" onClick={() => onNavigate("reports")} className="flex min-h-12 items-center justify-center gap-2 px-3 hover:bg-white"><BriefcaseBusiness size={17} /> Lương/thưởng</button>
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(280px,1fr)_auto] lg:items-center">
+          <label className="relative block">
+            <span className="sr-only">Tìm nhân viên</span>
+            <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#74716B]" size={18} />
+            <input value={search} onChange={(event) => onSearch(event.target.value)} className="h-11 w-full rounded-xl border border-[#D8D1C7] bg-white pl-10 pr-4 text-sm font-semibold outline-none focus:border-[#0F4D3A]" placeholder="Tìm theo tên, mã nhân viên, SĐT" />
+          </label>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {operationalChips.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button key={item.label} type="button" onClick={() => onNavigate(item.view)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-3 text-xs font-black text-[#2B2B2B] hover:border-[#0F4D3A]/35">
+                  <Icon size={16} className={item.tone === "danger" ? "text-[#A33D10]" : item.tone === "warning" ? "text-[#93540A]" : "text-[#0F4D3A]"} />
+                  <span>{item.label}</span>
+                  <span className="font-black text-[#0F4D3A]">{item.value}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Panel>
 
@@ -1139,6 +1157,12 @@ function CredentialsScreen({
   const pendingPasswordCount = credentialMembers.filter((member) => member.mustChangeAppPassword).length;
   const lockedCount = credentialMembers.filter((member) => isAppPasswordLocked(member) || member.accountStatus === "blocked" || member.employmentStatus === "suspended").length;
   const readyCount = credentialMembers.filter((member) => credentialLabel(member) === "Sẵn sàng").length;
+  const credentialFilterChips: Array<{ key: typeof filter; label: string; count: number; tone: "neutral" | "success" | "warning" | "danger" }> = [
+    { key: "all", label: "Tất cả", count: credentialMembers.length, tone: "neutral" },
+    { key: "ready", label: "Đã kích hoạt", count: readyCount, tone: "success" },
+    { key: "pending", label: "Cần đổi", count: pendingPasswordCount, tone: "warning" },
+    { key: "locked", label: "Đang khóa", count: lockedCount, tone: "danger" }
+  ];
 
   function toggleMember(userId: string, checked: boolean) {
     setSelectedUserIds((current) => checked ? (current.includes(userId) ? current : [...current, userId]) : current.filter((item) => item !== userId));
@@ -1153,61 +1177,58 @@ function CredentialsScreen({
 
   return (
     <div className="space-y-5">
-      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
-        <Panel className="overflow-hidden p-0">
-          <div className="grid gap-5 p-5 sm:grid-cols-[1fr_auto] sm:items-center">
-            <div className="min-w-0">
-              <p className="text-xs font-black uppercase text-[#0F4D3A]">Đăng nhập app nhân viên</p>
-              <h1 className="mt-2 text-[32px] font-black text-[#2B2B2B]">Tài khoản nhân viên</h1>
-              <p className="mt-2 max-w-2xl text-sm font-semibold text-[#5E5A54]">Quản lý mã nhân viên, mật khẩu app lần đầu và cấp lại mật khẩu bằng dữ liệu thật của {restaurantName}.</p>
-            </div>
-            <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#0F4D3A] text-white"><ShieldCheck size={23} /></span>
+      <Panel className="p-4 lg:p-5">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">App nhân viên</p>
+            <h1 className="mt-1 text-2xl font-black leading-tight text-[#2B2B2B]">Tài khoản nhân viên</h1>
           </div>
-          <div className="grid border-t border-[#D8D1C7] md:grid-cols-2">
-            <div className="border-b border-[#D8D1C7] p-5 md:border-b-0 md:border-r">
-              <p className="text-xs font-black uppercase text-[#5E5A54]">Mã quán</p>
-              <div className="mt-2 flex items-center gap-2">
-                <p className="min-w-0 flex-1 truncate font-mono text-2xl font-black text-[#2B2B2B]">{staffCode}</p>
-                {staffCode !== "Chưa cấp" ? <CopyTextButton value={staffCode} label="Sao chép mã quán" /> : null}
-              </div>
-            </div>
-            <div className="p-5">
-              <p className="text-xs font-black uppercase text-[#5E5A54]">URL đăng nhập</p>
-              <div className="mt-2 flex items-center gap-2">
-                <p className="min-w-0 flex-1 truncate font-mono text-base font-black text-[#2B2B2B]">{loginUrl}</p>
-                <CopyTextButton value={loginUrl} label="Sao chép URL đăng nhập" />
-              </div>
-            </div>
+          <StatusChip tone="brand">{restaurantName}</StatusChip>
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+          <div className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-3 py-2">
+            <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#5E5A54]">Mã quán</p>
+            <div className="mt-1 flex min-w-0 items-center gap-2"><p className="min-w-0 flex-1 truncate font-mono text-sm font-black text-[#2B2B2B]">{staffCode}</p>{staffCode !== "Chưa cấp" ? <CopyTextButton value={staffCode} label="Sao chép mã quán" /> : null}</div>
           </div>
-        </Panel>
-
-        <Panel className="p-4">
-          <div className="grid grid-cols-3 gap-2">
-            <MetricMini label="Sẵn sàng" value={readyCount} />
-            <MetricMini label="Cần đổi" value={pendingPasswordCount} />
-            <MetricMini label="Khóa" value={lockedCount} />
+          <div className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-3 py-2">
+            <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#5E5A54]">URL</p>
+            <div className="mt-1 flex min-w-0 items-center gap-2"><p className="min-w-0 flex-1 truncate font-mono text-sm font-black text-[#2B2B2B]">{loginUrl}</p><CopyTextButton value={loginUrl} label="Sao chép URL đăng nhập" /></div>
           </div>
-          <form action={bulkAction} className="mt-3 grid gap-3">
-            <input type="hidden" name="userIds" value={JSON.stringify(selectedUserIds.filter((userId) => visibleUserIds.has(userId)))} />
-            <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản nhân viên" />
-            <StaffButton type="submit" disabled={bulkPending || selectedVisibleCount === 0} className="w-full"><RefreshCw size={17} /> {bulkPending ? "Đang cấp..." : `Cấp lại ${selectedVisibleCount || ""} mật khẩu`}</StaffButton>
-            <ActionMessage state={bulkState} />
-          </form>
-        </Panel>
-      </section>
+          {credentialFilterChips.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setFilter(item.key)}
+              aria-pressed={filter === item.key}
+              className={cn("rounded-xl border px-3 py-2 text-left transition", filter === item.key ? "border-[#0F4D3A]/35 bg-[#E5EEE2]" : "border-[#E5DDD2] bg-[#FFFDF8] hover:border-[#0F4D3A]/25")}
+            >
+              <p className="text-[11px] font-black uppercase tracking-[0.1em] text-[#5E5A54]">{item.label}</p>
+              <p className={cn("mt-1 text-lg font-black", item.tone === "danger" ? "text-[#A33D10]" : item.tone === "warning" ? "text-[#93540A]" : item.tone === "success" ? "text-[#0F4D3A]" : "text-[#2B2B2B]")}>{item.count}</p>
+            </button>
+          ))}
+        </div>
+        <ActionMessage state={bulkState} />
+      </Panel>
 
       {bulkState?.temporaryCredentials?.length ? <TemporaryCredentialsPanel credentials={bulkState.temporaryCredentials} /> : null}
 
       <Panel className="p-4">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_150px] lg:items-center">
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px] lg:items-center">
           <label className="relative block">
             <span className="sr-only">Tìm tài khoản nhân viên</span>
             <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#74716B]" size={18} />
             <input value={search} onChange={(event) => onSearch(event.target.value)} className="staff-redesign-input pl-10" placeholder="Tìm tên, mã nhân viên, SĐT..." />
           </label>
-          <SelectPill value={filter} onChange={(value) => setFilter(value as typeof filter)} label="Trạng thái đăng nhập" options={[{ value: "all", label: "Tất cả" }, { value: "pending", label: "Cần đổi mật khẩu" }, { value: "locked", label: "Đang khóa" }, { value: "ready", label: "Sẵn sàng" }]} fluid />
           <StaffButton variant="secondary" onClick={() => toggleVisible(selectedVisibleCount !== filteredMembers.length)}><Check size={17} /> {selectedVisibleCount === filteredMembers.length && filteredMembers.length ? "Bỏ chọn" : "Chọn trang"}</StaffButton>
         </div>
+        {selectedVisibleCount > 0 ? (
+          <form action={bulkAction} className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#0F4D3A]/18 bg-[#E8F6EE] p-3">
+            <input type="hidden" name="userIds" value={JSON.stringify(selectedUserIds.filter((userId) => visibleUserIds.has(userId)))} />
+            <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản nhân viên" />
+            <p className="text-sm font-black text-[#0F4D3A]">Đã chọn {selectedVisibleCount} tài khoản</p>
+            <StaffButton type="submit" disabled={bulkPending}><RefreshCw size={17} /> {bulkPending ? "Đang cấp..." : "Cấp lại mật khẩu"}</StaffButton>
+          </form>
+        ) : null}
       </Panel>
 
       <Panel className="hidden overflow-hidden lg:block">
@@ -1242,14 +1263,17 @@ function CredentialsScreen({
 }
 
 function TemporaryCredentialsPanel({ credentials }: { credentials: NonNullable<StaffActionState["temporaryCredentials"]> }) {
+  const [revealed, setRevealed] = useState(false);
   return (
     <Panel className="border-[#0F4D3A]/25 bg-[#E8F6EE] p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-black text-[#0F4D3A]">Mật khẩu tạm vừa cấp</h2>
-          <p className="mt-1 text-sm font-semibold text-[#3F3D39]">Chỉ gửi cho đúng nhân viên và yêu cầu đổi mật khẩu ở lần đăng nhập đầu tiên.</p>
+          <h2 className="text-lg font-black text-[#0F4D3A]">Mật khẩu tạm vừa cấp</h2>
+          <p className="mt-1 text-sm font-semibold text-[#3F3D39]">Sao chép và gửi riêng cho đúng nhân viên.</p>
         </div>
-        <StatusChip tone="success">{credentials.length} tài khoản</StatusChip>
+        <button type="button" onClick={() => setRevealed((current) => !current)} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-[#0F4D3A]/20 bg-white/75 px-3 text-xs font-black text-[#0F4D3A]">
+          {revealed ? <EyeOff size={16} /> : <Eye size={16} />} {revealed ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+        </button>
       </div>
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {credentials.map((item) => (
@@ -1257,7 +1281,7 @@ function TemporaryCredentialsPanel({ credentials }: { credentials: NonNullable<S
             <div className="min-w-0">
               <p className="truncate text-sm font-black text-[#2B2B2B]">{item.staffName}</p>
               <p className="mt-1 font-mono text-sm font-black text-[#0F4D3A]">{item.employeeCode}</p>
-              <p className="mt-1 break-all font-mono text-sm font-black text-[#2B2B2B]">{item.temporaryPassword}</p>
+              <p className="mt-1 break-all font-mono text-sm font-black text-[#2B2B2B]">{revealed ? item.temporaryPassword : "********"}</p>
             </div>
             <CopyTextButton value={`${item.employeeCode}\n${item.temporaryPassword}`} label="Sao chép thông tin đăng nhập" />
           </div>
@@ -1271,6 +1295,7 @@ function CredentialTableRow({ member, selected, onSelect, onOpen }: { member: St
   const [state, action, pending] = useActionState(resetStaffAppPasswordAction, undefined);
   useActionSuccessRefresh(state);
   const label = credentialLabel(member);
+  const needsReset = member.mustChangeAppPassword || isAppPasswordLocked(member) || member.accountStatus === "blocked" || member.employmentStatus === "suspended" || Boolean(state?.temporaryPassword);
   return (
     <tr className="bg-white transition hover:bg-[#FFF9F0]">
       <td className="px-4 py-3"><input type="checkbox" checked={selected} onChange={(event) => onSelect(event.target.checked)} aria-label={`Chọn ${member.fullName}`} /></td>
@@ -1284,12 +1309,16 @@ function CredentialTableRow({ member, selected, onSelect, onOpen }: { member: St
       <td className="px-4 py-3"><StatusChip tone={credentialTone(member)}>{label}</StatusChip>{member.appPasswordAttempts > 0 ? <p className="mt-1 text-xs font-semibold text-[#A33D10]">Sai {member.appPasswordAttempts} lần</p> : null}</td>
       <td className="px-4 py-3 text-sm font-semibold text-[#3F3D39]">{formatDateTime(member.lastSeenAt)}</td>
       <td className="px-4 py-3 text-right">
-        <form action={action} className="inline-flex flex-col items-end gap-2">
-          <input type="hidden" name="userId" value={member.userId} />
-          <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản" />
-          <StaffButton type="submit" variant="secondary" disabled={pending}><RefreshCw size={16} /> {pending ? "Đang cấp..." : "Cấp lại"}</StaffButton>
-          {state?.temporaryPassword ? <div className="max-w-[260px] rounded-lg border border-[#0F4D3A]/15 bg-[#E8F6EE] p-2 text-left text-xs font-bold text-[#0F4D3A]"><p>{state.employeeCode ?? member.employeeCode}</p><p className="break-all">{state.temporaryPassword}</p></div> : <ActionMessage state={state} />}
-        </form>
+        {needsReset ? (
+          <form action={action} className="inline-flex flex-col items-end gap-2">
+            <input type="hidden" name="userId" value={member.userId} />
+            <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản" />
+            <StaffButton type="submit" variant="secondary" disabled={pending}><RefreshCw size={16} /> {pending ? "Đang cấp..." : "Cấp lại"}</StaffButton>
+            {state?.temporaryPassword ? <div className="max-w-[260px] rounded-lg border border-[#0F4D3A]/15 bg-[#E8F6EE] p-2 text-left text-xs font-bold text-[#0F4D3A]"><p>{state.employeeCode ?? member.employeeCode}</p><p className="break-all">{state.temporaryPassword}</p></div> : <ActionMessage state={state} />}
+          </form>
+        ) : (
+          <button type="button" onClick={onOpen} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#2B2B2B] hover:border-[#0F4D3A]/30">Mở hồ sơ</button>
+        )}
       </td>
     </tr>
   );
@@ -1298,6 +1327,7 @@ function CredentialTableRow({ member, selected, onSelect, onOpen }: { member: St
 function CredentialMobileCard({ member, selected, onSelect, onOpen }: { member: StaffOpsMember; selected: boolean; onSelect: (checked: boolean) => void; onOpen: () => void }) {
   const [state, action, pending] = useActionState(resetStaffAppPasswordAction, undefined);
   useActionSuccessRefresh(state);
+  const needsReset = member.mustChangeAppPassword || isAppPasswordLocked(member) || member.accountStatus === "blocked" || member.employmentStatus === "suspended" || Boolean(state?.temporaryPassword);
   return (
     <Panel className="p-4">
       <div className="flex items-start gap-3">
@@ -1309,12 +1339,16 @@ function CredentialMobileCard({ member, selected, onSelect, onOpen }: { member: 
         <StatusChip tone={credentialTone(member)}>{credentialLabel(member)}</StatusChip>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#3F3D39]"><span>{member.roleTitle}</span><span className="text-right">{formatDateTime(member.lastSeenAt)}</span></div>
-      <form action={action} className="mt-3 grid gap-2">
-        <input type="hidden" name="userId" value={member.userId} />
-        <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản" />
-        <StaffButton type="submit" variant="secondary" disabled={pending} className="w-full"><RefreshCw size={16} /> {pending ? "Đang cấp..." : "Cấp lại mật khẩu"}</StaffButton>
-        {state?.temporaryPassword ? <div className="rounded-lg border border-[#0F4D3A]/15 bg-[#E8F6EE] p-3 text-sm font-bold text-[#0F4D3A]"><p>{state.employeeCode ?? member.employeeCode}</p><p className="break-all">{state.temporaryPassword}</p></div> : <ActionMessage state={state} />}
-      </form>
+      {needsReset ? (
+        <form action={action} className="mt-3 grid gap-2">
+          <input type="hidden" name="userId" value={member.userId} />
+          <input type="hidden" name="reason" value="Chủ quán cấp lại mật khẩu app từ trung tâm tài khoản" />
+          <StaffButton type="submit" variant="secondary" disabled={pending} className="w-full"><RefreshCw size={16} /> {pending ? "Đang cấp..." : "Cấp lại mật khẩu"}</StaffButton>
+          {state?.temporaryPassword ? <div className="rounded-lg border border-[#0F4D3A]/15 bg-[#E8F6EE] p-3 text-sm font-bold text-[#0F4D3A]"><p>{state.employeeCode ?? member.employeeCode}</p><p className="break-all">{state.temporaryPassword}</p></div> : <ActionMessage state={state} />}
+        </form>
+      ) : (
+        <button type="button" onClick={onOpen} className="mt-3 inline-flex min-h-12 w-full items-center justify-center rounded-xl border border-[#D8D1C7] bg-white px-3 text-sm font-black text-[#2B2B2B]">Mở hồ sơ</button>
+      )}
     </Panel>
   );
 }
@@ -1372,29 +1406,29 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
   return (
     <div className="space-y-5">
       <button type="button" onClick={onBack} className="inline-flex min-h-11 items-center gap-2 text-sm font-black text-[#2B2B2B]"><ArrowLeft size={18} /> Danh sách nhân viên / {member.fullName}</button>
-      <Panel className="p-5">
+      <Panel className="p-4 lg:p-5">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="flex min-w-0 items-center gap-4">
             <Avatar name={member.fullName} active={status === "Đang làm"} size="lg" />
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-2xl font-black leading-tight text-[#2B2B2B] sm:text-[28px]">{member.fullName}</h1>
+                <h1 className="min-w-0 break-words text-2xl font-black leading-tight text-[#2B2B2B]">{member.fullName}</h1>
                 <StatusChip tone={statusTone(status)}>{status}</StatusChip>
                 <StatusChip tone={credentialTone(member)}>{credentialLabel(member)}</StatusChip>
               </div>
               <p className="mt-2 flex flex-wrap items-center gap-3 text-sm font-bold text-[#3F3D39]"><span className="font-mono font-black text-[#0F4D3A]">Mã NV: {member.employeeCode ?? "Chưa đồng bộ"}</span><span>{member.roleTitle || roleLabel(member.roleCode)}</span><span>{member.primaryBranchName ?? "Chưa gán chi nhánh"}</span></p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[440px]">
-            <MetricMini label="Ca tuần" value={memberAssignments.filter((assignment) => assignment.status !== "cancelled").length} />
-            <MetricMini label="Giờ công" value={timesheet ? formatHours(timesheet.workMinutes) : "0p"} />
-            <MetricMini label="Điểm" value={timesheet ? `${timesheet.attendanceScore}%` : "--"} />
-            <MetricMini label="Thiết bị" value={memberDevices.length ? `${trustedDeviceCount}/${memberDevices.length}` : "0"} />
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            <StatusChip tone="neutral">{memberAssignments.filter((assignment) => assignment.status !== "cancelled").length} ca</StatusChip>
+            <StatusChip tone="brand">{timesheet ? formatHours(timesheet.workMinutes) : "0p"}</StatusChip>
+            <StatusChip tone={timesheet && timesheet.attendanceScore < 75 ? "warning" : "success"}>{timesheet ? `${timesheet.attendanceScore}% công` : "Chưa có công"}</StatusChip>
+            <StatusChip tone={trustedDeviceCount ? "success" : "neutral"}>{memberDevices.length ? `${trustedDeviceCount}/${memberDevices.length} thiết bị` : "0 thiết bị"}</StatusChip>
           </div>
         </div>
       </Panel>
 
-      <div className="grid grid-cols-2 gap-2 rounded-xl border border-[#D8D1C7] bg-[#F5F8F1] p-1 text-sm font-black text-[#4B4945] sm:grid-cols-4">
+      <div role="tablist" aria-label="Khu vực hồ sơ nhân viên" className="grid grid-cols-2 gap-2 rounded-xl border border-[#D8D1C7] bg-[#F5F8F1] p-1 text-sm font-black text-[#4B4945] sm:grid-cols-4">
         <DetailTabButton active={activeTab === "profile"} onClick={() => setActiveTab("profile")} icon={UserRound}>Thông tin</DetailTabButton>
         <DetailTabButton active={activeTab === "schedule"} onClick={() => setActiveTab("schedule")} icon={CalendarClock}>Lịch làm</DetailTabButton>
         <DetailTabButton active={activeTab === "payroll"} onClick={() => setActiveTab("payroll")} icon={BarChart3}>Lương thưởng</DetailTabButton>
@@ -1480,7 +1514,7 @@ function StaffDetailScreen({ member, bundle, onBack, onPermissions }: { member: 
 
 function DetailTabButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: LucideIcon; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={active} className={cn("inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 transition", active ? "bg-white text-[#0F4D3A] shadow-[0_2px_8px_rgba(43,43,43,0.06)]" : "text-[#4B4945] hover:bg-white/60")}>
+    <button type="button" role="tab" onClick={onClick} aria-selected={active} className={cn("inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3 transition", active ? "bg-white text-[#0F4D3A] shadow-[0_2px_8px_rgba(43,43,43,0.06)]" : "text-[#4B4945] hover:bg-white/60")}>
       <Icon size={17} />
       <span className="truncate">{children}</span>
     </button>
@@ -1543,8 +1577,12 @@ function StaffProfileTab({
           </Panel>
         </div>
 
-        <Panel className="p-5">
-          <form action={profileAction} className="grid gap-4 md:grid-cols-2">
+        <details className="staff-brand-panel p-4 lg:p-5">
+          <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">
+            <span>Sửa hồ sơ</span>
+            <ChevronDown size={18} />
+          </summary>
+          <form action={profileAction} className="mt-4 grid gap-4 md:grid-cols-2">
             <input type="hidden" name="userId" value={member.userId} />
             <Field label="Họ tên"><input name="fullName" required defaultValue={member.fullName} className="staff-redesign-input" /></Field>
             <Field label="Số điện thoại"><input name="phone" defaultValue={member.phone ?? ""} className="staff-redesign-input" /></Field>
@@ -1560,7 +1598,7 @@ function StaffProfileTab({
             <div className="md:col-span-2"><ActionMessage state={profileState} /></div>
             <div className="flex justify-end md:col-span-2"><StaffButton type="submit" disabled={savingProfile}><Check size={18} /> {savingProfile ? "Đang lưu..." : "Lưu hồ sơ"}</StaffButton></div>
           </form>
-        </Panel>
+        </details>
       </div>
 
       <Panel className="p-5">
@@ -1574,7 +1612,6 @@ function StaffProfileTab({
             <p className="min-w-0 break-all font-mono text-xl font-black text-[#0F4D3A]">{member.employeeCode ?? "Chưa đồng bộ"}</p>
             {member.employeeCode ? <CopyTextButton value={member.employeeCode} label="Sao chép mã nhân viên" /> : null}
           </div>
-          <p className="mt-2 text-xs font-semibold leading-relaxed text-[#5E5A54]">Dùng mã này để đăng nhập app nhân viên. Nhân viên cũ trước đợt nâng cấp có thể lấy mã tại hồ sơ này.</p>
         </div>
         <div className="mt-4 grid gap-3">
           <form action={passwordAction} className="grid gap-2">
@@ -1588,16 +1625,19 @@ function StaffProfileTab({
             <input type="hidden" name="reason" value={member.accountStatus === "blocked" || member.employmentStatus === "suspended" ? "Khôi phục từ hồ sơ nhân sự" : "Tạm khóa từ hồ sơ nhân sự"} />
             <StaffButton type="submit" disabled={updatingAccount} variant={member.accountStatus === "blocked" || member.employmentStatus === "suspended" ? "secondary" : "danger"} className="w-full"><LockKeyhole size={18} /> {member.accountStatus === "blocked" || member.employmentStatus === "suspended" ? "Mở khóa" : "Khóa tài khoản"}</StaffButton>
           </form>
-          <form action={accountAction}>
-            <input type="hidden" name="userId" value={member.userId} />
-            <input type="hidden" name="nextState" value="archived" />
-            <input type="hidden" name="reason" value="Lưu trữ từ hồ sơ nhân sự" />
-            <StaffButton type="submit" disabled={updatingAccount} variant="secondary" className="w-full"><X size={18} /> Lưu trữ</StaffButton>
-          </form>
           <StaffButton variant="ghost" onClick={onPermissions} className="w-full"><KeyRound size={18} /> Phân quyền</StaffButton>
           <ActionMessage state={accountState} />
           <ActionMessage state={passwordState} />
           {passwordState?.temporaryPassword ? <div className="rounded-xl border border-[#0F4D3A]/20 bg-[#E8F6EE] px-4 py-3 text-sm font-bold text-[#0F4D3A]"><p>{passwordState.employeeCode ?? member.employeeCode}</p><p className="mt-1 break-all">{passwordState.temporaryPassword}</p></div> : null}
+          <details className="rounded-xl border border-[#F2D2B2] bg-[#FFF8EB] p-3">
+            <summary className="flex min-h-10 cursor-pointer items-center justify-between gap-3 text-sm font-black text-[#A33D10]"><span>Vùng nguy hiểm</span><ChevronDown size={17} /></summary>
+            <form action={accountAction} className="mt-3">
+              <input type="hidden" name="userId" value={member.userId} />
+              <input type="hidden" name="nextState" value="archived" />
+              <input type="hidden" name="reason" value="Lưu trữ từ hồ sơ nhân sự" />
+              <StaffButton type="submit" disabled={updatingAccount} variant="danger" className="w-full"><X size={18} /> Lưu trữ nhân viên</StaffButton>
+            </form>
+          </details>
         </div>
       </Panel>
     </div>
@@ -1722,9 +1762,9 @@ function StaffSecurityTab({
         </Panel>
       </div>
 
-      <aside className="space-y-5">
-        <Panel className="p-5">
-          <h2 className="flex items-center gap-2 text-xl font-black text-[#2B2B2B]"><FileText size={20} /> Thêm tài liệu</h2>
+      <aside className="space-y-3">
+        <details className="staff-brand-panel p-4">
+          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Thêm tài liệu</summary>
           <form action={documentAction} className="mt-4 grid gap-3">
             <input type="hidden" name="staffMemberId" value={member.id} />
             <input name="documentName" required placeholder="Tên tài liệu" className="staff-redesign-input" />
@@ -1735,10 +1775,10 @@ function StaffSecurityTab({
             <StaffButton type="submit" disabled={creatingDocument} className="w-full"><Plus size={17} /> {creatingDocument ? "Đang thêm..." : "Thêm tài liệu"}</StaffButton>
             <ActionMessage state={documentState} />
           </form>
-        </Panel>
+        </details>
 
-        <Panel className="p-5">
-          <h2 className="flex items-center gap-2 text-xl font-black text-[#2B2B2B]"><Smartphone size={20} /> Cấp thiết bị</h2>
+        <details className="staff-brand-panel p-4">
+          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Cấp thiết bị</summary>
           <form action={deviceAction} className="mt-4 grid gap-3">
             <input type="hidden" name="staffMemberId" value={member.id} />
             <input name="deviceName" required placeholder="VD: iPhone thu ngân" className="staff-redesign-input" />
@@ -1751,7 +1791,7 @@ function StaffSecurityTab({
             <StaffButton type="submit" disabled={creatingDevice} variant="secondary" className="w-full"><Smartphone size={17} /> {creatingDevice ? "Đang cấp..." : "Cấp thiết bị"}</StaffButton>
             <ActionMessage state={deviceState} />
           </form>
-        </Panel>
+        </details>
       </aside>
     </div>
   );
@@ -1846,7 +1886,7 @@ function StaffScheduleTab({
           <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-black">Chấm công gần đây</h2><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#D8D1C7] px-3 text-xs font-black text-[#2B2B2B]"><Download size={15} /> CSV</a></div>
           <div className="mt-4 grid gap-2">
             {attendance.slice(0, 6).map((item) => <div key={item.id} className="grid gap-2 rounded-lg border border-[#E5DDD2] bg-white p-3 sm:grid-cols-[minmax(0,1fr)_150px_120px] sm:items-center"><div className="min-w-0"><p className="truncate text-sm font-black text-[#2B2B2B]">{item.shiftName ?? "Ca đột xuất"}</p><p className="text-xs font-semibold text-[#5E5A54]">{formatDate(item.clockInAt)} · {item.branchName ?? "Chi nhánh"}</p></div><p className="text-sm font-black text-[#2B2B2B]">{attendanceLabel(item)}</p><StatusChip tone={item.state === "late" ? "danger" : item.state === "overtime" ? "warning" : "success"}>{item.state === "late" ? "Đi trễ" : item.state === "overtime" ? "Tăng ca" : "Đúng giờ"}</StatusChip></div>)}
-            {!attendance.length ? <InlineEmptyState title="Chưa có công" text="Dữ liệu sẽ xuất hiện khi nhân viên check-in bằng GPS, QR, WiFi hoặc chấm hộ." /> : null}
+            {!attendance.length ? <InlineEmptyState title="Chưa có công" text="Bản ghi sẽ hiển thị sau khi nhân viên vào ca." /> : null}
           </div>
         </Panel>
       </div>
@@ -1914,7 +1954,7 @@ function StaffPayrollTab({
         </div>
 
         <Panel className="overflow-hidden">
-          <div className="flex items-center justify-between border-b border-[#D8D1C7] p-4"><h2 className="text-xl font-black">Timesheet payroll-ready</h2><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#D8D1C7] px-3 text-xs font-black text-[#2B2B2B]"><Download size={15} /> Xuất CSV</a></div>
+          <div className="flex items-center justify-between border-b border-[#D8D1C7] p-4"><h2 className="text-xl font-black">Bảng công lương</h2><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#D8D1C7] px-3 text-xs font-black text-[#2B2B2B]"><Download size={15} /> Xuất CSV</a></div>
           <div className="grid gap-0 md:grid-cols-2">
             <PayrollLine label="Số ca tính công" value={timesheet?.attendanceCount ?? 0} />
             <PayrollLine label="Giờ công" value={timesheet ? formatHours(timesheet.workMinutes) : "0p"} />
@@ -1934,9 +1974,9 @@ function StaffPayrollTab({
         </Panel>
       </div>
 
-      <aside className="space-y-5">
-        <Panel className="p-5">
-          <h2 className="text-xl font-black text-[#2B2B2B]">Tạo hồ sơ lương</h2>
+      <aside className="space-y-3">
+        <details className="staff-brand-panel p-4">
+          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Tạo hồ sơ lương</summary>
           <form action={contractAction} className="mt-4 grid gap-3">
             <input type="hidden" name="staffMemberId" value={member.id} />
             <select name="templateCode" className="staff-redesign-input" defaultValue="restaurant_part_time"><option value="restaurant_fixed_term">Toàn thời gian có thời hạn</option><option value="restaurant_indefinite">Toàn thời gian không thời hạn</option><option value="restaurant_part_time">Part-time theo ca</option><option value="restaurant_probation">Thử việc</option></select>
@@ -1952,10 +1992,10 @@ function StaffPayrollTab({
             <StaffButton type="submit" disabled={creatingContract} className="w-full"><BriefcaseBusiness size={17} /> {creatingContract ? "Đang tạo..." : "Tạo hồ sơ"}</StaffButton>
             <ActionMessage state={contractState} />
           </form>
-        </Panel>
+        </details>
 
-        <Panel className="p-5">
-          <h2 className="text-xl font-black text-[#2B2B2B]">Đánh giá thưởng</h2>
+        <details className="staff-brand-panel p-4">
+          <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Đánh giá thưởng</summary>
           <form action={reviewAction} className="mt-4 grid gap-3">
             <input type="hidden" name="staffMemberId" value={member.id} />
             <input name="periodLabel" defaultValue={payrollPeriodLabel()} className="staff-redesign-input" />
@@ -1968,7 +2008,7 @@ function StaffPayrollTab({
             {reviews.slice(0, 4).map((review) => <div key={review.id} className="rounded-lg border border-[#E5DDD2] bg-white p-3"><div className="flex items-center justify-between gap-3"><p className="text-sm font-black text-[#2B2B2B]">{review.periodLabel}</p><StatusChip tone={review.score >= 4 ? "success" : review.score >= 3 ? "neutral" : "warning"}>{review.score}/5</StatusChip></div>{review.note ? <p className="mt-1 text-xs font-semibold text-[#5E5A54]">{review.note}</p> : null}</div>)}
             {!reviews.length ? <p className="rounded-lg border border-dashed border-[#D8D1C7] bg-[#FFFDF8] p-3 text-sm font-semibold text-[#5E5A54]">Chưa có đánh giá.</p> : null}
           </div>
-        </Panel>
+        </details>
       </aside>
     </div>
   );
@@ -2178,7 +2218,8 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
   const branches = branchOptions(bundle.branches);
   const [utilityBranchId, setUtilityBranchId] = useState(() => branches[0]?.id ?? "");
   const activeBranch = branches.find((branch) => branch.id === utilityBranchId) ?? branches[0];
-  const openAttendance = bundle.attendanceFeed.filter((item) => !item.clockOutAt);
+  const openAttendance = bundle.attendanceFeed.filter((item) => !item.clockOutAt).sort(sortOpenAttendance);
+  const staleOpenAttendance = openAttendance.filter((item) => attendanceAgeHours(item) >= 18);
   const pendingAttendanceApprovals = bundle.attendanceFeed.filter((item) => item.approvalState === "pending").length;
   const highRiskAttendance = bundle.attendanceFeed.filter((item) => attendanceRiskScore(item) >= 55).length;
   const manualAttendance = bundle.attendanceFeed.filter((item) => item.source === "manual" || item.source === "offline_sync").length;
@@ -2201,6 +2242,10 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
       setUtilityError("Cần có chi nhánh thật trước khi tạo QR chấm công.");
       return;
     }
+    if (!activeBranch.attendanceLocationConfigured) {
+      setUtilityError("Chi nhánh chưa có toạ độ GPS. Hãy cập nhật vị trí chi nhánh trước khi bật QR/WiFi/GPS để chống chấm công từ xa.");
+      return;
+    }
     try {
       setQrState(await createStaffAttendanceQrToken({ branchId: activeBranch.id, expiresInMinutes: 1, mode: "daily_branch" }));
     } catch (error) {
@@ -2211,6 +2256,10 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
     setUtilityError("");
     if (!activeBranch?.id) {
       setUtilityError("Cần có chi nhánh thật trước khi lưu WiFi chấm công.");
+      return;
+    }
+    if (!activeBranch.attendanceLocationConfigured) {
+      setUtilityError("Chi nhánh chưa có toạ độ GPS. WiFi chấm công vẫn cần vị trí chi nhánh để đối chiếu chống gian lận.");
       return;
     }
     try {
@@ -2238,30 +2287,46 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
           qrConfigBlocked={qrConfigBlocked}
         />
       </div>
-      <div className="hidden space-y-6 lg:block">
+      <div className="hidden space-y-5 lg:block">
       <section className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Kiểm soát chấm công</p>
-          <h1 className="mt-1 text-2xl font-black leading-tight text-[#2B2B2B]">Chấm công, QR và WiFi</h1>
-          <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Dữ liệu thật từ GPS, QR, WiFi và thao tác quản lý.</p>
+          <h1 className="mt-1 text-2xl font-black leading-tight text-[#2B2B2B]">Bản ghi chấm công</h1>
         </div>
         <div className="grid grid-cols-4 gap-2 rounded-xl border border-[#E5DDD2] bg-white p-2">
           <MetricMini label="Đúng giờ" value={`${onTimeRate}%`} />
           <MetricMini label="Đang mở" value={openAttendance.length} />
           <MetricMini label="Chờ duyệt" value={pendingAttendanceApprovals} />
-          <MetricMini label="Rủi ro" value={highRiskAttendance} />
+          <MetricMini label="Tồn đọng" value={staleOpenAttendance.length} />
         </div>
       </section>
+      {staleOpenAttendance.length ? (
+        <Panel className="border-[#F28C28]/25 bg-[#FFF8EB] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-black text-[#A33D10]">Có {staleOpenAttendance.length} phiên công mở tồn đọng</p>
+              <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Cần kết ca hộ hoặc sửa công trước khi nhân viên vào ca mới, tránh lỗi “đang có ca mở”. Có {highRiskAttendance} bản ghi rủi ro cao cần theo dõi.</p>
+            </div>
+            <button type="button" onClick={() => document.getElementById("staff-open-attendance-queue")?.scrollIntoView({ block: "center", behavior: "smooth" })} className="inline-flex min-h-10 items-center justify-center rounded-xl border border-[#F28C28]/35 bg-white px-4 text-sm font-black text-[#A33D10]">Xử lý ngay</button>
+          </div>
+        </Panel>
+      ) : null}
       <div className="grid gap-5 xl:grid-cols-[1fr_386px]">
-        <Panel className="p-6"><h2 className="text-2xl font-black">Bộ lọc dữ liệu</h2><div className="mt-5 grid gap-4 md:grid-cols-3"><Field label="Ngày"><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="staff-redesign-input" /></Field><Field label="Chi nhánh"><select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field><Field label="Trạng thái"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả trạng thái</option><option value="on_time">Đúng giờ</option><option value="late">Đi trễ</option><option value="absent">Vắng mặt</option><option value="overtime">Tăng ca</option></select></Field></div></Panel>
-        <Panel className="p-6"><h2 className="text-2xl font-black">Tỷ lệ đúng giờ</h2><p className="mt-2 text-sm font-medium text-[#3F3D39]">Ngày {formatDate(today)}</p><div className="mt-4 flex items-center gap-7"><div className="grid h-28 w-28 place-items-center rounded-full border-[14px] border-[#0F4D3A] border-l-[#A33D10]"><span className="text-2xl font-black">{onTimeRate}%</span></div><div className="space-y-3 text-sm font-bold text-[#3F3D39]"><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#0F4D3A]" />Đúng giờ</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#A33D10]" />Đi trễ/Vắng</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#93540A]" />{manualAttendance} log thủ công/offline</p></div></div></Panel>
+        <Panel className="p-4 xl:col-span-2"><div className="grid gap-3 md:grid-cols-3"><Field label="Ngày"><input type="date" value={dateFilter} onChange={(event) => setDateFilter(event.target.value)} className="staff-redesign-input" /></Field><Field label="Chi nhánh"><select value={branchFilter} onChange={(event) => setBranchFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field><Field label="Trạng thái"><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="staff-redesign-input"><option value="all">Tất cả trạng thái</option><option value="on_time">Đúng giờ</option><option value="late">Đi trễ</option><option value="absent">Vắng mặt</option><option value="overtime">Tăng ca</option></select></Field></div></Panel>
+        <Panel className="hidden p-6"><h2 className="text-2xl font-black">Tỷ lệ đúng giờ</h2><p className="mt-2 text-sm font-medium text-[#3F3D39]">Ngày {formatDate(today)}</p><div className="mt-4 flex items-center gap-7"><div className="grid h-28 w-28 place-items-center rounded-full border-[14px] border-[#0F4D3A] border-l-[#A33D10]"><span className="text-2xl font-black">{onTimeRate}%</span></div><div className="space-y-3 text-sm font-bold text-[#3F3D39]"><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#0F4D3A]" />Đúng giờ</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#A33D10]" />Đi trễ/Vắng</p><p><span className="mr-2 inline-block h-3 w-3 rounded-full bg-[#93540A]" />{manualAttendance} log thủ công/offline</p></div></div></Panel>
       </div>
       <Panel className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#D8D1C7] p-5"><h2 className="text-xl font-black">Danh sách bản ghi</h2><a href={STAFF_ACTIVITY_EXPORT_URL} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3 text-xs font-black text-[#4B4945] hover:bg-[#F5F1E9]"><Download size={16} /> Xuất CSV</a></div>
+        <div className="hidden lg:block"><AttendanceTable feed={filteredFeed} members={bundle.members} clockOutAction={clockOutAction} clockingOut={clockingOut} /></div>
+        <div className="space-y-4 p-4 lg:hidden">{filteredFeed.map((item) => <AttendanceCard key={item.id} item={item} />)}</div>
+      </Panel>
+      <details className="staff-brand-panel overflow-hidden">
+        <summary className="cursor-pointer border-b border-[#D8D1C7] px-5 py-4 text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Thiết lập QR / WiFi</summary>
         <div className="grid gap-5 p-5 xl:grid-cols-[320px_minmax(0,1fr)]">
           <div className="space-y-4">
             <Field label="Chi nhánh kiểm soát"><select value={utilityBranchId} onChange={(event) => setUtilityBranchId(event.target.value)} className="staff-redesign-input"><option value="">Chọn chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></Field>
             <div className="grid grid-cols-2 gap-3">
-              <StaffButton onClick={generateQr} disabled={qrConfigBlocked} className="w-full"><Fingerprint size={18} /> QR 90s</StaffButton>
+              <StaffButton onClick={generateQr} disabled={qrConfigBlocked} className="w-full"><Fingerprint size={18} /> Tạo QR</StaffButton>
               <StaffButton variant="secondary" onClick={registerWifi} className="w-full"><Wifi size={18} /> Lưu WiFi</StaffButton>
             </div>
             {qrConfigBlocked ? <p className="rounded-xl border border-[#A33D10]/20 bg-[#FFF0D9] px-3 py-2 text-sm font-bold text-[#A33D10]">Thiếu QR secret cho production.</p> : null}
@@ -2271,9 +2336,8 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
             <div className="rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-black uppercase tracking-[0.1em] text-[#0F4D3A]">QR ngắn hạn</p>
-                  <h2 className="mt-1 text-xl font-black text-[#2B2B2B]">Mã chấm công 90 giây</h2>
-                  <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Mỗi lần tạo sẽ đổi mã mới theo chi nhánh để giảm chia sẻ mã.</p>
+                  <p className="text-xs font-black uppercase tracking-[0.1em] text-[#0F4D3A]">QR theo chi nhánh</p>
+                  <h2 className="mt-1 text-xl font-black text-[#2B2B2B]">Mã chấm công hôm nay</h2>
                 </div>
                 <StatusChip tone={qrState ? "success" : "neutral"}>{qrState ? "Đã tạo" : "Chưa tạo"}</StatusChip>
               </div>
@@ -2287,7 +2351,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
                     <div className="mt-3 flex items-center gap-2"><CopyTextButton value={qrState.attendanceUrl} label="Sao chép link QR" /><a href={qrState.attendanceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#0F4D3A]">Mở link</a></div>
                   </div>
                 </div>
-              ) : <p className="mt-4 rounded-lg border border-dashed border-[#D8D1C7] bg-white px-3 py-4 text-sm font-semibold text-[#5E5A54]">Chọn chi nhánh thật rồi tạo QR ngắn hạn.</p>}
+              ) : <p className="mt-4 rounded-lg border border-dashed border-[#D8D1C7] bg-white px-3 py-4 text-sm font-semibold text-[#5E5A54]">Chọn chi nhánh rồi tạo QR tại quán.</p>}
             </div>
             <div className="rounded-xl border border-[#E5DDD2] bg-[#F9F7F0] p-4">
               <div className="flex items-start justify-between gap-3">
@@ -2301,17 +2365,16 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
               <div className="mt-4 grid gap-3 rounded-lg bg-white p-3 text-sm font-semibold text-[#3F3D39]">
                 <p><span className="font-black text-[#2B2B2B]">Chi nhánh:</span> {activeBranch?.name ?? "Chưa chọn"}</p>
                 <p><span className="font-black text-[#2B2B2B]">WiFi/IP:</span> {wifiState?.publicIpCidr ?? "Chưa lưu từ backend"}</p>
+                <p><span className="font-black text-[#2B2B2B]">Toạ độ:</span> {activeBranch?.attendanceLocationConfigured ? "Đã có" : "Chưa có, cần cập nhật chi nhánh"}</p>
                 <p><span className="font-black text-[#2B2B2B]">Cách dùng:</span> nhân viên vẫn check-in bằng app, hệ thống đối chiếu thêm WiFi/GPS/QR.</p>
               </div>
             </div>
           </div>
         </div>
-      </Panel>
-      <Panel className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[#D8D1C7] p-6"><h2 className="text-2xl font-black">Danh sách bản ghi</h2><a href={STAFF_ACTIVITY_EXPORT_URL} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold text-[#4B4945] hover:bg-[#F5F1E9]"><Download size={17} /> Xuất CSV</a></div>
-        <div className="hidden lg:block"><AttendanceTable feed={filteredFeed} members={bundle.members} clockOutAction={clockOutAction} clockingOut={clockingOut} /></div>
-        <div className="space-y-4 p-4 lg:hidden">{filteredFeed.map((item) => <AttendanceCard key={item.id} item={item} />)}</div>
-        <div className="border-t border-[#D8D1C7] p-5">
+      </details>
+      <details className="staff-brand-panel overflow-hidden">
+        <summary className="cursor-pointer border-b border-[#D8D1C7] px-5 py-4 text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Chấm hộ / sửa công</summary>
+        <div className="p-5">
           <div className="grid gap-4 md:grid-cols-2">
             <form action={clockInAction} className="grid gap-3 rounded-xl border border-[#D8D1C7] bg-white p-4 md:grid-cols-6">
               <p className="text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A] md:col-span-6">Chấm công hộ</p>
@@ -2325,7 +2388,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
           <div className="mt-3"><ActionMessage state={clockInState} /><ActionMessage state={clockOutState} /></div>
           <AttendanceAdjustmentPanel feed={filteredFeed} adjustAction={adjustAction} adjusting={adjustingAttendance} state={adjustState} />
         </div>
-      </Panel>
+      </details>
       </div>
     </>
   );
@@ -2438,21 +2501,25 @@ function ManualClockOutQueue({
   compact?: boolean;
 }) {
   return (
-    <div className={cn("grid gap-3 rounded-xl border border-[#D8D1C7] bg-white p-4", compact ? "" : "md:grid-cols-1")}>
-      <p className="text-sm font-black uppercase text-[#93540A]">Kết ca hộ</p>
+    <div id="staff-open-attendance-queue" className={cn("grid gap-3 rounded-xl border border-[#D8D1C7] bg-white p-4", compact ? "" : "md:grid-cols-1")}>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-black uppercase text-[#93540A]">Kết ca hộ</p>
+        {openAttendance.length ? <span className="rounded-full bg-[#FFF0D9] px-2.5 py-1 text-xs font-black text-[#A33D10]">{openAttendance.length} ca mở</span> : null}
+      </div>
       {openAttendance.length ? (
         <div className="grid gap-2">
           {openAttendance.map((item) => (
-            <form key={item.id} action={clockOutAction} className="grid gap-2 rounded-lg border border-[#E5DDD2] bg-[#FFFDF8] p-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)_112px] sm:items-center">
+            <form key={item.id} action={clockOutAction} className={cn("grid gap-2 rounded-lg border border-[#E5DDD2] bg-[#FFFDF8] p-3 sm:items-center", compact ? "sm:grid-cols-[minmax(0,1fr)_112px]" : "sm:grid-cols-[minmax(0,1fr)_minmax(180px,0.8fr)_112px]") }>
               <input type="hidden" name="attendanceLogId" value={item.id} />
               <input type="hidden" name="staffMemberId" value={item.staffMemberId} />
               <input type="hidden" name="branchId" value={item.branchId ?? ""} />
               <div className="min-w-0">
                 <p className="truncate text-sm font-black text-[#2B2B2B]">{item.fullName}</p>
-                <p className="mt-0.5 text-xs font-semibold text-[#5E5A54]">{shortTime(item.clockInAt)} · {item.branchName ?? "Chi nhánh"}</p>
+                <p className="mt-0.5 text-xs font-semibold text-[#5E5A54]">{formatDate(item.clockInAt)} {shortTime(item.clockInAt)} · {item.branchName ?? "Chi nhánh"}</p>
+                <p className={cn("mt-1 text-xs font-black", attendanceAgeHours(item) >= 18 ? "text-[#A33D10]" : "text-[#0F4D3A]")}>{attendanceOpenLabel(item)}</p>
               </div>
-              <input name="note" required defaultValue="Chủ quán kết ca hộ sau khi xác nhận giờ ra" className="h-10 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-bold text-[#2B2B2B] outline-none focus:border-[#0F4D3A]" />
-              <button type="submit" disabled={clockingOut} className="inline-flex min-h-10 items-center justify-center rounded-lg border border-[#D8D1C7] bg-[#FFF7EB] px-3 text-xs font-black text-[#2B2B2B] disabled:opacity-60">
+              {compact ? <input type="hidden" name="note" value="Chủ quán kết ca hộ sau khi xác nhận giờ ra" /> : <input name="note" required defaultValue="Chủ quán kết ca hộ sau khi xác nhận giờ ra" className="min-h-12 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-bold text-[#2B2B2B] outline-none focus:border-[#0F4D3A]" />}
+              <button type="submit" disabled={clockingOut} className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#D8D1C7] bg-[#FFF7EB] px-3 text-xs font-black text-[#2B2B2B] disabled:opacity-60">
                 {clockingOut ? "Đang kết..." : "Kết ca"}
               </button>
             </form>
@@ -2480,7 +2547,10 @@ function AttendanceAdjustmentPanel({
 }) {
   return (
     <details className={cn("mt-4 rounded-xl border border-[#D8D1C7] bg-white", compact ? "p-4" : "p-5")}>
-      <summary className="cursor-pointer text-sm font-black uppercase text-[#0F4D3A]">Sửa công</summary>
+      <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-sm font-black uppercase text-[#0F4D3A]">
+        <span>Sửa công</span>
+        <span className="inline-flex items-center gap-2 text-xs text-[#5E5A54]"><span>{feed.length} bản ghi</span><ChevronDown size={17} /></span>
+      </summary>
       <div className="mt-4 grid gap-3">
         {state ? <ActionMessage state={state} /> : null}
         {feed.length ? (
@@ -2511,17 +2581,27 @@ function AttendanceAdjustmentPanel({
 
 function RequestsScreen({ bundle }: { bundle: StaffOperationsBundle }) {
   const [reviewState, reviewAction, reviewing] = useActionState(reviewAttendanceApprovalAction, undefined);
+  const [incidentState, incidentAction, updatingIncident] = useActionState(reviewStaffIncidentReportAction, undefined);
   useActionSuccessRefresh(reviewState);
+  useActionSuccessRefresh(incidentState);
   const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected">("pending");
   const requests = bundle.approvals.filter((item) => item.status === statusFilter);
+  const incidents = bundle.incidents.filter((incident) => {
+    if (statusFilter === "pending") return incident.status === "open" || incident.status === "reviewing";
+    if (statusFilter === "approved") return incident.status === "resolved";
+    return incident.status === "dismissed";
+  });
+  const totalVisible = requests.length + incidents.length;
   return (
     <div className="space-y-6">
       <div className="flex gap-3 overflow-x-auto">{(["pending", "approved", "rejected"] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} className={cn("min-h-14 rounded-full px-7 text-lg font-black", statusFilter === status ? "bg-[#0F4D3A] text-white" : "bg-[#ECE9E3] text-[#4B4945]")}>{status === "pending" ? "Đang chờ" : status === "approved" ? "Đã duyệt" : "Đã từ chối"}</button>)}</div>
       <div className="grid gap-5 lg:grid-cols-2">
         {requests.map((request) => <RequestCard key={request.id} request={request} action={reviewAction} reviewing={reviewing} />)}
-        {!requests.length ? <EmptyState title="Không có yêu cầu phù hợp" text="Các đơn nghỉ phép, đổi ca, tăng ca và đối soát chấm công sẽ xuất hiện từ dữ liệu thật." /> : null}
+        {incidents.map((incident) => <IncidentCard key={incident.id} incident={incident} action={incidentAction} updating={updatingIncident} />)}
+        {!totalVisible ? <EmptyState title="Không có yêu cầu phù hợp" text="Đơn nghỉ phép, đổi ca, tăng ca, đối soát công và báo cáo sự cố sẽ xuất hiện từ dữ liệu thật." /> : null}
       </div>
       <ActionMessage state={reviewState} />
+      <ActionMessage state={incidentState} />
     </div>
   );
 }
@@ -2532,6 +2612,53 @@ function RequestCard({ request, action, reviewing }: { request: StaffOpsApproval
       <div className="flex items-start justify-between gap-4"><div className="flex items-center gap-4"><Avatar name={request.fullName} /><div><p className="text-2xl font-medium text-[#2B2B2B]">{request.fullName}</p><p className="text-base font-semibold text-[#5E5A54]">{request.branchName ?? "Nhân sự"}</p></div></div><span className="inline-flex min-h-9 items-center gap-2 rounded-full bg-[#ECE9E3] px-3 text-base font-semibold text-[#3F3D39]"><CalendarClock size={17} /> {requestLabel(request.requestType)}</span></div>
       <div className="mt-5 space-y-2 text-xl font-medium text-[#2B2B2B]"><p className="flex items-center gap-3"><Clock3 size={22} className="text-[#77736D]" />{formatDateTime(request.createdAt)}</p><p className="flex items-center gap-3"><ListChecks size={22} className="text-[#77736D]" />{request.reason ?? "Không có ghi chú"}</p></div>
       {request.status === "pending" ? <form action={action} className="mt-6 grid grid-cols-2 gap-4"><input type="hidden" name="approvalId" value={request.id} /><input type="hidden" name="note" value="Duyệt từ giao diện Staff mới" /><button name="decision" value="rejected" disabled={reviewing} className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-[#ECE9E3] text-lg font-black text-[#4B4945]"><X size={20} /> Từ chối</button><button name="decision" value="approved" disabled={reviewing} className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl bg-[#0F4D3A] text-lg font-black text-white"><Check size={20} /> Duyệt</button></form> : <StatusChip tone={request.status === "approved" ? "success" : "danger"}>{request.status === "approved" ? "Đã duyệt" : "Đã từ chối"}</StatusChip>}
+    </Panel>
+  );
+}
+
+function IncidentCard({ incident, action, updating }: { incident: StaffOpsIncidentItem; action: (payload: FormData) => void; updating: boolean }) {
+  const open = incident.status === "open" || incident.status === "reviewing";
+  return (
+    <Panel className="p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-4">
+          <Avatar name={incident.staffName} />
+          <div className="min-w-0">
+            <p className="truncate text-2xl font-medium text-[#2B2B2B]">{incident.staffName}</p>
+            <p className="truncate text-base font-semibold text-[#5E5A54]">{incident.branchName ?? "Nhân sự"}</p>
+          </div>
+        </div>
+        <StatusChip tone={incidentTone(incident)}>{incidentSeverityLabel(incident.severity)}</StatusChip>
+      </div>
+      <div className="mt-5 rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] p-4">
+        <p className="text-lg font-black text-[#2B2B2B]">{incident.title}</p>
+        <p className="mt-2 line-clamp-4 text-sm font-semibold leading-6 text-[#5E5A54]">{incident.description}</p>
+        <p className="mt-3 text-xs font-black uppercase tracking-[0.08em] text-[#837B70]">{formatDateTime(incident.createdAt)} · {incidentStatusLabel(incident.status)}</p>
+      </div>
+      {open ? (
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <form action={action}>
+            <input type="hidden" name="incidentId" value={incident.id} />
+            <input type="hidden" name="status" value="dismissed" />
+            <input type="hidden" name="note" value="Bỏ qua từ màn hình yêu cầu nhân sự" />
+            <button type="submit" disabled={updating} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#ECE9E3] text-sm font-black text-[#4B4945]"><X size={18} /> Bỏ qua</button>
+          </form>
+          <form action={action}>
+            <input type="hidden" name="incidentId" value={incident.id} />
+            <input type="hidden" name="status" value="reviewing" />
+            <input type="hidden" name="note" value="Quản lý bắt đầu xử lý sự cố" />
+            <button type="submit" disabled={updating || incident.status === "reviewing"} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#D8D1C7] bg-white text-sm font-black text-[#2B2B2B]"><Eye size={18} /> Đang xử lý</button>
+          </form>
+          <form action={action}>
+            <input type="hidden" name="incidentId" value={incident.id} />
+            <input type="hidden" name="status" value="resolved" />
+            <input type="hidden" name="note" value="Đã xử lý từ màn hình yêu cầu nhân sự" />
+            <button type="submit" disabled={updating} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#0F4D3A] text-sm font-black text-white"><Check size={18} /> Đã xử lý</button>
+          </form>
+        </div>
+      ) : (
+        <div className="mt-5"><StatusChip tone={incident.status === "resolved" ? "success" : "neutral"}>{incidentStatusLabel(incident.status)}</StatusChip></div>
+      )}
     </Panel>
   );
 }
@@ -2600,8 +2727,10 @@ function PayrollPeriodWorkspace({ bundle, compact = false }: { bundle: StaffOper
   const overtimeGap = Math.max(0, totalOvertimeMinutes - totalApprovedOvertimeMinutes);
   const blockerRows = payrollRows.filter((item) => payrollStatus(item).tone === "danger");
   const payrollReadyCount = payrollRows.filter((item) => payrollStatus(item).tone === "success").length;
-  const readinessScore = clampPercent(100 - pendingPayrollApprovals * 7 - blockerRows.length * 5 - Math.ceil(totalLateMinutes / 30) * 2 - Math.ceil(overtimeGap / 60) * 4);
-  const readinessTone = readinessScore >= 90 ? "success" : readinessScore >= 75 ? "warning" : "danger";
+  const payrollHealthScore = clampPercent(100 - pendingPayrollApprovals * 7 - blockerRows.length * 5 - Math.ceil(totalLateMinutes / 30) * 2 - Math.ceil(overtimeGap / 60) * 4);
+  const payrollHealthTone = payrollHealthScore >= 90 ? "success" : payrollHealthScore >= 75 ? "warning" : "danger";
+  const payrollIssueCount = pendingPayrollApprovals + blockerRows.length + (overtimeGap ? 1 : 0);
+  const payrollCloseLabel = payrollIssueCount ? `${payrollIssueCount} cần xử lý` : "Đã đối soát";
   const visibleRows = payrollRows.slice(0, compact ? 4 : 8);
   const bonusCandidates = payrollRows
     .map((timesheet) => {
@@ -2627,7 +2756,7 @@ function PayrollPeriodWorkspace({ bundle, compact = false }: { bundle: StaffOper
             <p className="text-xs font-black uppercase tracking-[0.1em] text-[#0F4D3A]">Lương/thưởng</p>
             <h2 className="mt-1 text-2xl font-black text-[#2B2B2B]">{payrollPeriodLabel()}</h2>
           </div>
-          <StatusChip tone={readinessTone}>{readinessScore}% sẵn sàng</StatusChip>
+          <StatusChip tone={payrollHealthTone}>{payrollCloseLabel}</StatusChip>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3">
           <MetricMini label="Giờ công" value={formatHours(totalWorkMinutes)} />
@@ -2659,12 +2788,12 @@ function PayrollPeriodWorkspace({ bundle, compact = false }: { bundle: StaffOper
               <h2 className="mt-1 text-2xl font-black text-[#2B2B2B]">Lương/thưởng {payrollPeriodLabel()}</h2>
               <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Tổng hợp từ timesheet, tăng ca đã duyệt, review và hợp đồng thật.</p>
             </div>
-            <div className="flex gap-2"><StatusChip tone={readinessTone}>{readinessScore}% sẵn sàng</StatusChip><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#2B2B2B]"><Download size={15} /> CSV</a></div>
+            <div className="flex gap-2"><StatusChip tone={payrollHealthTone}>{payrollCloseLabel}</StatusChip><a href={STAFF_TIMESHEET_EXPORT_URL} className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#2B2B2B]"><Download size={15} /> CSV</a></div>
           </div>
           <div className="mt-5 grid grid-cols-4 gap-3">
             <MetricMini label="Giờ công" value={formatHours(totalWorkMinutes)} />
             <MetricMini label="OT duyệt" value={formatHours(totalApprovedOvertimeMinutes)} />
-            <MetricMini label="Sẵn lương" value={`${payrollReadyCount}/${payrollRows.length}`} />
+            <MetricMini label="Đã khớp" value={`${payrollReadyCount}/${payrollRows.length}`} />
             <MetricMini label="Cần xử lý" value={blockerRows.length} />
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -2825,10 +2954,13 @@ function MobileAttendanceManagementScreen({
   qrConfigBlocked: boolean;
 }) {
   const todayFeed = bundle.attendanceFeed.filter((item) => item.clockInAt?.slice(0, 10) === today);
-  const openAttendance = todayFeed.filter((item) => !item.clockOutAt);
+  const openAttendance = bundle.attendanceFeed.filter((item) => !item.clockOutAt).sort(sortOpenAttendance);
+  const staleOpenAttendance = openAttendance.filter((item) => attendanceAgeHours(item) >= 18);
   const onTime = todayFeed.filter((item) => item.state === "on_time" || item.state === "overtime").length;
-  const late = todayFeed.filter((item) => item.state === "late" || item.state === "absent").length;
   const branches = branchOptions(bundle.branches);
+  const priorityFeed = [...openAttendance, ...todayFeed.filter((item) => item.clockOutAt && (item.state === "late" || item.state === "absent"))].filter((item, index, rows) => rows.findIndex((candidate) => candidate.id === item.id) === index);
+  const visibleFeed = (priorityFeed.length ? priorityFeed : todayFeed).slice(0, 5);
+  const hiddenFeedCount = Math.max(0, (priorityFeed.length ? priorityFeed.length : todayFeed.length) - visibleFeed.length);
 
   return (
     <div className="space-y-5">
@@ -2838,41 +2970,51 @@ function MobileAttendanceManagementScreen({
       </section>
       <div className="grid grid-cols-2 gap-3">
         <Panel className="p-4"><p className="flex items-center gap-2 text-sm font-black text-[#0F4D3A]"><CheckCircle2 size={18} /> Đúng giờ</p><p className="mt-3 text-2xl font-black">{onTime}</p></Panel>
-        <Panel className="p-4"><p className="flex items-center gap-2 text-sm font-black text-[#A33D10]"><Clock3 size={18} /> Đi muộn</p><p className="mt-3 text-2xl font-black">{late}</p></Panel>
+        <Panel className="p-4"><p className="flex items-center gap-2 text-sm font-black text-[#A33D10]"><Clock3 size={18} /> Ca mở</p><p className="mt-3 text-2xl font-black">{openAttendance.length}</p></Panel>
       </div>
-      <div className="space-y-3">
-        {todayFeed.map((item) => {
-          const assignment = currentAssignmentForMember(bundle.shiftAssignments, item.staffMemberId);
-          return (
-          <Panel key={item.id} className="p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex min-w-0 items-center gap-3"><Avatar name={item.fullName} /><div className="min-w-0"><p className="truncate text-base font-black leading-tight text-[#2B2B2B]">{item.fullName}</p><p className="truncate text-sm font-semibold text-[#3F3D39]">{assignment?.shiftName ?? "Chưa gán ca"}</p></div></div>
-              <StatusChip tone={item.state === "late" ? "danger" : item.state === "absent" ? "neutral" : "success"}>{item.state === "late" ? "Đi muộn" : item.state === "absent" ? "Vắng mặt" : "Đúng giờ"}</StatusChip>
-            </div>
-            {item.state !== "absent" ? <div className="mt-4 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F5F8F1] p-3 text-base font-black"><span className={item.state === "late" ? "text-[#A33D10]" : "text-[#0F4D3A]"}>{shortTime(item.clockInAt)}</span><span className="pl-3 text-[#77736D]">{shortTime(item.clockOutAt)}</span></div> : null}
-            <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-[#3F3D39]"><MapPin size={16} /> {item.branchName ?? "Chưa gán chi nhánh"}</p>
-          </Panel>
-        );})}
-        {!todayFeed.length ? <EmptyState title="Chưa có log chấm công hôm nay" text="Khi nhân viên check-in bằng GPS, QR hoặc WiFi, dữ liệu thật sẽ xuất hiện tại đây." /> : null}
-      </div>
-      <Panel className="p-5">
-        <h2 className="text-xl font-black text-[#2B2B2B]">Chấm công hộ</h2>
+      {staleOpenAttendance.length ? <p className="rounded-2xl border border-[#F28C28]/25 bg-[#FFF8EB] px-4 py-3 text-sm font-bold text-[#A33D10]">{staleOpenAttendance.length} phiên mở tồn đọng cần kết ca hộ trước khi nhân viên vào ca mới.</p> : null}
+      <details className="staff-brand-panel p-4" open={openAttendance.length > 0}>
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]"><span>Chấm hộ / kết ca</span><span className="inline-flex items-center gap-2 text-xs text-[#5E5A54]"><span>{openAttendance.length} ca mở</span><ChevronDown size={18} /></span></summary>
         <form action={clockInAction} className="mt-4 grid gap-3">
           <select name="staffMemberId" className="staff-redesign-input">{bundle.members.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</select>
           <select name="branchId" className="staff-redesign-input"><option value="">Chi nhánh theo hồ sơ</option>{branchOptions(bundle.branches).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
-          <input name="note" required defaultValue="Chủ quán chấm công hộ sau khi xác nhận trực tiếp với nhân viên" className="staff-redesign-input" />
+          <input type="hidden" name="note" value="Chủ quán chấm công hộ sau khi xác nhận trực tiếp với nhân viên" />
           <button type="submit" disabled={clockingIn || !bundle.members.length} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#0F4D3A] text-sm font-black text-white disabled:opacity-60">{clockingIn ? "Đang xử lý..." : "Vào ca hộ"}</button>
         </form>
         <div className="mt-4 border-t border-[#D8D1C7] pt-4">
           <ManualClockOutQueue openAttendance={openAttendance} clockOutAction={clockOutAction} clockingOut={clockingOut} compact />
         </div>
         <AttendanceAdjustmentPanel feed={todayFeed} adjustAction={adjustAction} adjusting={adjustingAttendance} compact />
+      </details>
+
+      <details className="staff-brand-panel p-4">
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]"><span>QR / WiFi</span><ChevronDown size={18} /></summary>
         <label className="mt-4 grid gap-2 text-sm font-black text-[#2B2B2B]"><span>Chi nhánh tạo QR/WiFi</span><select value={utilityBranchId} onChange={(event) => onUtilityBranchChange(event.target.value)} className="staff-redesign-input"><option value="">Chọn chi nhánh</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-        <div className="mt-4 grid grid-cols-2 gap-3"><StaffButton onClick={generateQr} disabled={qrConfigBlocked}><Fingerprint size={17} /> QR 90s</StaffButton><StaffButton variant="secondary" onClick={registerWifi}><Wifi size={17} /> WiFi</StaffButton></div>
+        <div className="mt-4 grid grid-cols-2 gap-3"><StaffButton onClick={generateQr} disabled={qrConfigBlocked}><Fingerprint size={17} /> Tạo mã QR</StaffButton><StaffButton variant="secondary" onClick={registerWifi}><Wifi size={17} /> Lưu WiFi quán</StaffButton></div>
         {qrConfigBlocked ? <p className="mt-3 rounded-xl bg-[#FFF0D9] p-3 text-sm font-bold text-[#A33D10]">Thiếu QR secret production.</p> : null}
-        {utilityState.qrState ? <div className="mt-3 flex items-center gap-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]"><Image src={utilityState.qrState.qrImageUrl} alt={`QR chấm công ${utilityState.qrState.branchName}`} width={88} height={88} unoptimized className="h-[88px] w-[88px] rounded-lg bg-white object-contain" /><span>{utilityState.qrState.branchName}<br />Hết hạn {formatDateTime(utilityState.qrState.expiresAt)}</span></div> : null}
-        {utilityState.utilityError || utilityState.wifiState ? <p className="mt-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]">{utilityState.utilityError || utilityState.wifiState?.publicIpCidr}</p> : null}
-      </Panel>
+        {utilityState.qrState ? <div className="mt-3 flex items-center gap-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]"><Image src={utilityState.qrState.qrImageUrl} alt={`QR chấm công ${utilityState.qrState.branchName}`} width={88} height={88} unoptimized className="h-[88px] w-[88px] rounded-lg bg-white object-contain" /><span><span className="font-black text-[#2B2B2B]">QR đang dùng</span><br />{utilityState.qrState.branchName} · hết hạn {formatDateTime(utilityState.qrState.expiresAt)}</span></div> : null}
+        {utilityState.wifiState ? <p className="mt-3 rounded-xl bg-[#F5F8F1] p-3 text-sm font-semibold text-[#5E5A54]"><span className="font-black text-[#2B2B2B]">WiFi đã lưu</span><br />{utilityState.wifiState.branchName} · {utilityState.wifiState.publicIpCidr}</p> : null}
+        {utilityState.utilityError ? <p className="mt-3 rounded-xl bg-[#FFF0D9] p-3 text-sm font-bold text-[#A33D10]">{utilityState.utilityError}</p> : null}
+      </details>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-sm font-black uppercase tracking-[0.08em] text-[#5E5A54]">Nhật ký ưu tiên</h2>
+          {hiddenFeedCount ? <span className="text-xs font-bold text-[#5E5A54]">+{hiddenFeedCount} bản ghi</span> : null}
+        </div>
+        {visibleFeed.map((item) => {
+          const assignment = currentAssignmentForMember(bundle.shiftAssignments, item.staffMemberId);
+          return (
+          <Panel key={item.id} className="p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3"><Avatar name={item.fullName} /><div className="min-w-0"><p className="truncate text-base font-black leading-tight text-[#2B2B2B]">{item.fullName}</p><p className="truncate text-sm font-semibold text-[#3F3D39]">{assignment?.shiftName ?? "Chưa gán ca"}</p></div></div>
+              <StatusChip tone={!item.clockOutAt ? "warning" : item.state === "late" ? "danger" : item.state === "absent" ? "neutral" : "success"}>{!item.clockOutAt ? "Đang mở" : item.state === "late" ? "Đi muộn" : item.state === "absent" ? "Vắng mặt" : "Đúng giờ"}</StatusChip>
+            </div>
+            {item.state !== "absent" ? <div className="mt-4 grid grid-cols-2 divide-x divide-[#D8D1C7] rounded-xl bg-[#F5F8F1] p-3 text-base font-black"><span className={item.state === "late" ? "text-[#A33D10]" : "text-[#0F4D3A]"}>{shortTime(item.clockInAt)}</span><span className="pl-3 text-[#77736D]">{shortTime(item.clockOutAt)}</span></div> : null}
+            <p className="mt-3 flex items-center gap-2 text-sm font-semibold text-[#3F3D39]"><MapPin size={16} /> {item.branchName ?? "Chưa gán chi nhánh"}</p>
+          </Panel>
+        );})}
+        {!todayFeed.length && !openAttendance.length ? <EmptyState title="Chưa có công hôm nay" text="Bản ghi sẽ tự cập nhật khi nhân viên vào ca." /> : null}
+      </div>
     </div>
   );
 }
@@ -2881,13 +3023,21 @@ function MobileReportsScreen({ bundle, totalStaff, totalHours, avgAttendance }: 
   const topStaff = bundle.timesheets.filter((item) => item.workMinutes > 0 || item.attendanceCount > 0).sort((left, right) => right.workMinutes - left.workMinutes).slice(0, 4);
   const reportBars = topStaff.slice(0, 7).map((item) => ({ label: item.fullName, value: item.workMinutes, display: formatHours(item.workMinutes) }));
   return (
-    <div className="space-y-5">
-      <section><h1 className="text-2xl font-black leading-tight text-[#2B2B2B]">Báo cáo</h1><p className="mt-1 text-sm font-semibold text-[#3F3D39]">Tổng quan hiệu suất hoạt động</p></section>
-      <div className="grid grid-cols-3 rounded-xl bg-[#F5F8F1] p-1 text-center text-sm font-black text-[#4B4945]"><button className="min-h-11 rounded-lg">Hôm nay</button><button className="min-h-11 rounded-lg bg-white text-[#2B2B2B] shadow-[0_2px_8px_rgba(43,43,43,0.06)]">Tuần này</button><button className="min-h-11 rounded-lg">Tháng này</button></div>
+    <div className="space-y-4">
+      <section><h1 className="text-2xl font-black leading-tight text-[#2B2B2B]">Báo cáo nhân sự</h1></section>
       <div className="grid grid-cols-2 gap-3"><Panel className="p-4"><p className="flex items-center gap-2 text-sm font-bold text-[#3F3D39]"><BriefcaseBusiness size={18} /> Nhân sự</p><p className="mt-3 text-2xl font-black text-[#2B2B2B]">{totalStaff}</p><p className="mt-1 text-xs font-bold text-[#5E5A54]">Từ hồ sơ thật</p></Panel><Panel className="p-4"><p className="flex items-center gap-2 text-sm font-bold text-[#3F3D39]"><Clock3 size={18} /> Giờ công</p><p className="mt-3 text-2xl font-black text-[#2B2B2B]">{formatHours(totalHours)}</p><p className="mt-1 text-xs font-bold text-[#5E5A54]">Điểm công {avgAttendance}%</p></Panel></div>
-      <PayrollPeriodWorkspace bundle={bundle} compact />
-      <Panel className="p-5"><h2 className="text-xl font-black text-[#2B2B2B]">Giờ công theo nhân viên</h2>{reportBars.length ? <ReportBarChart rows={reportBars} compact /> : <InlineEmptyState title="Chưa có giờ công" text="Báo cáo sẽ cập nhật khi có dữ liệu chấm công thật." />}</Panel>
-      <Panel className="p-5"><h2 className="text-xl font-black text-[#2B2B2B]">Top nhân viên tích cực</h2>{topStaff.length ? <div className="mt-5 space-y-4">{topStaff.map((item) => <div key={item.staffMemberId} className="flex items-center gap-3"><Avatar name={item.fullName} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-[#2B2B2B]">{item.fullName}</p><p className="text-xs font-semibold text-[#5E5A54]">{item.branchName ?? "Nhân viên"}</p></div><p className="text-sm font-black">{formatHours(item.workMinutes)}</p></div>)}</div> : <InlineEmptyState title="Chưa có xếp hạng" text="Không hiển thị nhân viên ảo khi chưa có timesheet." />}</Panel>
+      <details className="staff-brand-panel p-4">
+        <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Lương/thưởng</summary>
+        <div className="mt-4"><PayrollPeriodWorkspace bundle={bundle} compact /></div>
+      </details>
+      <details className="staff-brand-panel p-4">
+        <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Giờ công</summary>
+        {reportBars.length ? <ReportBarChart rows={reportBars} compact /> : <InlineEmptyState title="Chưa có giờ công" text="Chưa có dữ liệu trong kỳ này." />}
+      </details>
+      <details className="staff-brand-panel p-4">
+        <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A]">Top nhân viên</summary>
+        {topStaff.length ? <div className="mt-4 space-y-3">{topStaff.map((item) => <div key={item.staffMemberId} className="flex items-center gap-3"><Avatar name={item.fullName} /><div className="min-w-0 flex-1"><p className="truncate text-sm font-black text-[#2B2B2B]">{item.fullName}</p><p className="text-xs font-semibold text-[#5E5A54]">{item.branchName ?? "Nhân viên"}</p></div><p className="text-sm font-black">{formatHours(item.workMinutes)}</p></div>)}</div> : <InlineEmptyState title="Chưa có xếp hạng" text="Chưa có timesheet trong kỳ này." />}
+      </details>
     </div>
   );
 }

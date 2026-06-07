@@ -241,3 +241,81 @@ export async function createStaffIncidentReport({
 
   return result.data;
 }
+
+export async function updateStaffIncidentReportStatus({
+  session,
+  input
+}: {
+  session: SessionProfile;
+  input: {
+    incidentId: string;
+    status: "reviewing" | "resolved" | "dismissed";
+    note?: string | null;
+  };
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const existingResult = await supabase
+    .from("staff_incident_reports")
+    .select("id,restaurant_id,staff_member_id,branch_id,title,description,severity,status,attachment_url,created_at,updated_at,resolved_at")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", input.incidentId)
+    .maybeSingle();
+
+  if (existingResult.error) {
+    if (isMissingStaffSelfServiceSchema(existingResult.error)) throw new AppError("Schema báo cáo sự cố chưa sẵn sàng.", 400);
+    throw new AppError(existingResult.error.message, 400);
+  }
+
+  const existing = existingResult.data as {
+    id: string;
+    staff_member_id: string;
+    branch_id: string | null;
+    title: string;
+    description: string;
+    severity: "low" | "normal" | "high" | "urgent";
+    status: "open" | "reviewing" | "resolved" | "dismissed";
+    attachment_url: string | null;
+    created_at: string;
+    updated_at: string;
+    resolved_at: string | null;
+  } | null;
+
+  if (!existing) throw new AppError("Không tìm thấy báo cáo sự cố.", 404);
+  if (existing.status === "resolved" || existing.status === "dismissed") {
+    throw new AppError("Báo cáo sự cố này đã được đóng.", 409);
+  }
+
+  const closing = input.status === "resolved" || input.status === "dismissed";
+  const updateResult = await supabase
+    .from("staff_incident_reports")
+    .update({
+      status: input.status,
+      resolved_at: closing ? new Date().toISOString() : null,
+      resolved_by: closing ? session.userId : null
+    })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", input.incidentId)
+    .select("id,staff_member_id,branch_id,title,description,severity,status,attachment_url,created_at,updated_at,resolved_at")
+    .single();
+
+  if (updateResult.error) {
+    if (isMissingStaffSelfServiceSchema(updateResult.error)) throw new AppError("Schema báo cáo sự cố chưa sẵn sàng.", 400);
+    throw new AppError(updateResult.error.message, 400);
+  }
+
+  await writeStaffActivityLog({
+    restaurantId: session.restaurantId,
+    actorUserId: session.userId,
+    branchId: existing.branch_id,
+    entityType: "staff_incident_report",
+    entityId: existing.id,
+    action: input.status === "reviewing" ? "staff_incident.reviewing" : input.status === "resolved" ? "staff_incident.resolved" : "staff_incident.dismissed",
+    severity: input.status === "dismissed" ? "warning" : "info",
+    reason: input.note || null,
+    beforeState: existing,
+    afterState: updateResult.data,
+    metadata: { source: "staff_owner_requests" }
+  });
+
+  return updateResult.data;
+}

@@ -236,25 +236,25 @@ export async function registerAccountAction(
       redirectTo: verifyEmailPath(email, onboardingPath)
     };
   } catch (error) {
-    let resendError: unknown;
+    let emailRetryError: unknown;
     try {
       await resendSignupEmailOtp(email, buildAppUrl(`/auth/confirm?next=${encodeURIComponent(onboardingPath)}`));
       return {
         success: "Email này đang chờ xác thực. LogiVN đã gửi lại email xác thực.",
         redirectTo: verifyEmailPath(email, onboardingPath)
       };
-    } catch (caughtResendError) {
-      resendError = caughtResendError;
+    } catch (caughtEmailRetryError) {
+      emailRetryError = caughtEmailRetryError;
       // Keep the public error intentionally generic so we do not leak account state.
     }
 
     console.error("[dashboard/register] Account registration failed", {
       email,
       message: error instanceof Error ? error.message : String(error),
-      resendMessage: resendError instanceof Error ? resendError.message : resendError ? String(resendError) : undefined
+      retryMessage: emailRetryError instanceof Error ? emailRetryError.message : emailRetryError ? String(emailRetryError) : undefined
     });
-    if (resendError instanceof AppError && resendError.status >= 500) {
-      return { error: resendError.message };
+    if (emailRetryError instanceof AppError && emailRetryError.status >= 500) {
+      return { error: emailRetryError.message };
     }
     if (error instanceof AppError && error.status >= 500) {
       return { error: error.message };
@@ -428,7 +428,7 @@ export async function resendEmailOtpAction(
     await resendSignupEmailOtp(parsed.data.email, buildAppUrl(`/auth/confirm?next=${encodeURIComponent(nextPath)}`));
     return { success: "Đã gửi lại mã xác thực. Vui lòng kiểm tra hộp thư." };
   } catch (error) {
-    console.error("[dashboard/resend-email] Resend OTP failed", {
+    console.error("[dashboard/resend-email] Email OTP retry failed", {
       email: parsed.data.email.toLowerCase(),
       message: error instanceof Error ? error.message : String(error)
     });
@@ -459,7 +459,7 @@ export async function resendPasswordResetOtpAction(
   try {
     await requestPasswordReset(normalizedEmail, buildAppUrl(resetCallbackPath));
   } catch (error) {
-    console.error("[dashboard/reset-password] Resend recovery OTP failed", {
+    console.error("[dashboard/reset-password] Recovery OTP email failed", {
       email: normalizedEmail,
       message: error instanceof Error ? error.message : String(error)
     });

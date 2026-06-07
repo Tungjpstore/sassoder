@@ -60,7 +60,7 @@ test("legacy AI fetches are bounded by timeout and retry helper", () => {
   assert.match(runtime, /const LEGACY_AI_OCR_TIMEOUT_MS = 25_000/);
   assert.match(runtime, /const LEGACY_AI_IMAGE_TIMEOUT_MS = 30_000/);
   assert.match(runtime, /function isRetryableAiResponse\(response: Response\)/);
-  assert.match(runtime, /timeoutMessage: "Qwen OCR phản hồi quá lâu/);
+  assert.match(runtime, /timeoutMessage: "MiMo OCR phản hồi quá lâu/);
 });
 
 test("conversation memory reuse requires an actor scope in addition to thread context", () => {

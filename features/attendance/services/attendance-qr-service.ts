@@ -322,6 +322,10 @@ export async function validateStaffAttendanceQrToken({
     .maybeSingle();
 
   if (isMissingQrConsumeRpc(updateResult.error)) {
+    if (process.env.NODE_ENV === "production") {
+      throw new AppError("Thiếu RPC consume_staff_attendance_qr_token để dùng QR chấm công an toàn trên production.", 503);
+    }
+
     let updateQuery = supabase
       .from("staff_attendance_qr_tokens")
       .update({

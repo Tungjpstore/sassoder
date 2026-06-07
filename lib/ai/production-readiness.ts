@@ -100,7 +100,7 @@ function configuredProviderCheck(providers: AiProviderReadiness[]): AiProduction
     detail: configured.length
       ? `${configured.length}/${providers.length} provider đã cấu hình, có thể route và fallback.`
       : "Chưa có provider AI nào được cấu hình, các luồng dùng LLM sẽ bị chặn.",
-    action: configured.length ? "Giữ ít nhất 1 provider chính và 1 provider fallback cho production." : "Cấu hình API key cho OpenAI, Gemini, Qwen hoặc Vercel AI Gateway."
+    action: configured.length ? "Giữ ít nhất 1 provider chính và 1 provider fallback cho production." : "Cấu hình API key cho MiMo, DeepSeek, Gemini hoặc Vercel AI Gateway."
   };
 }
 

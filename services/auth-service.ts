@@ -3,11 +3,12 @@ import { assertAuthEmailDeliveryConfigured } from "@/lib/auth-email-delivery";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
+import { sendTransactionalEmail, type EmailDeliveryProvider } from "@/services/email-delivery";
 import type { UserRole } from "@/types/domain";
 
 export type AuthEmailRegistrationStatus = "available" | "registered" | "pending_verification";
 type AuthOtpPurpose = "signup" | "recovery";
-type SignupOtpDelivery = "resend";
+type SignupOtpDelivery = EmailDeliveryProvider;
 
 function authEmailFrom() {
   return process.env.AUTH_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <no-reply@logivn.com>";
@@ -73,36 +74,25 @@ async function sendAuthOtpEmail({
   token: string;
   purpose: AuthOtpPurpose;
 }): Promise<SignupOtpDelivery> {
-  const apiKey = assertAuthEmailDeliveryConfigured();
+  assertAuthEmailDeliveryConfigured();
   const email = buildAuthOtpEmail({ token, purpose });
-  let response: Response;
 
   try {
-    response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
+    const result = await sendTransactionalEmail(
+      {
         from: authEmailFrom(),
         to: [to],
         subject: email.subject,
         html: email.html,
         text: email.text
-      }),
-      signal: AbortSignal.timeout(12_000)
-    });
-  } catch {
+      },
+      { signal: AbortSignal.timeout(12_000) }
+    );
+    return result.provider;
+  } catch (error) {
+    if (error instanceof AppError) throw error;
     throw new AppError("Không kết nối được dịch vụ gửi email OTP. Vui lòng thử lại sau ít phút.", 502);
   }
-
-  const payload = (await response.json().catch(() => null)) as { message?: string; name?: string } | null;
-  if (!response.ok) {
-    throw new AppError(payload?.message || "Không gửi được email OTP qua Resend.", 502);
-  }
-
-  return "resend";
 }
 
 async function generateSignupOtpEmail({

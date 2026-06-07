@@ -20,6 +20,36 @@ function chatCompletionsUrl(config: AiProviderConfig) {
     : joinUrl(config.baseUrl, "/v1/chat/completions");
 }
 
+function authHeaders(config: AiProviderConfig): Record<string, string> {
+  if (config.provider === "mimo") {
+    return { "api-key": config.apiKey };
+  }
+
+  return { Authorization: `Bearer ${config.apiKey}` };
+}
+
+function requestBody({
+  model,
+  messages,
+  options,
+  provider
+}: {
+  model: string;
+  messages: AiPromptMessage[];
+  options?: AiCompletionOptions;
+  provider: AiProviderConfig["provider"];
+}) {
+  return {
+    model,
+    messages,
+    temperature: options?.temperature ?? 0.28,
+    ...(provider === "mimo" ? { max_completion_tokens: options?.maxTokens, top_p: options?.topP ?? 0.95 } : { max_tokens: options?.maxTokens }),
+    ...(options?.jsonMode ? { response_format: { type: "json_object" } } : {}),
+    ...(options?.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
+    ...(options?.toolChoice ? { tool_choice: options.toolChoice } : {})
+  };
+}
+
 function extractMessageText(message: any) {
   const content = message?.content;
 
@@ -68,18 +98,15 @@ export async function runOpenAiCompatibleChat({
       method: "POST",
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${config.apiKey}`,
+        ...authHeaders(config),
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
+      body: JSON.stringify(requestBody({
+        provider: config.provider,
         model,
         messages,
-        temperature: options?.temperature ?? 0.28,
-        max_tokens: options?.maxTokens,
-        ...(options?.jsonMode ? { response_format: { type: "json_object" } } : {}),
-        ...(options?.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
-        ...(options?.toolChoice ? { tool_choice: options.toolChoice } : {})
-      })
+        options
+      }))
     });
 
     const json = (await response.json().catch(() => null)) as any;

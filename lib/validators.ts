@@ -1007,6 +1007,12 @@ export const staffIncidentReportSchema = z.object({
   severity: z.enum(["low", "normal", "high", "urgent"]).default("normal")
 });
 
+export const staffIncidentStatusUpdateSchema = z.object({
+  incidentId: z.string().uuid(),
+  status: z.enum(["reviewing", "resolved", "dismissed"]),
+  note: z.string().trim().max(240).optional().or(z.literal(""))
+});
+
 export const staffRolePermissionUpdateSchema = z.object({
   roleId: z.string().uuid(),
   permissions: z.array(z.enum(STAFF_PERMISSION_KEYS)).min(1).max(STAFF_PERMISSION_KEYS.length)

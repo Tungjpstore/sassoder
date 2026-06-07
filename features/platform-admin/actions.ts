@@ -161,7 +161,7 @@ const billingAnomalySchema = z.object({
 });
 
 const aiProviderConfigSchema = z.object({
-  provider: z.enum(["qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"]),
+  provider: z.enum(["mimo", "deepseek", "qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"]),
   enabled: z.enum(["true", "false"]),
   apiKey: z.preprocess(
     (value) => (typeof value === "string" ? value.trim() || undefined : undefined),

@@ -25,17 +25,20 @@ export function buildAiProviderOrder(input: {
   options?: AiCompletionOptions;
   candidates: ProviderRoutingCandidate[];
 }) {
-  const capable = input.candidates.filter((candidate) => supportsTask(candidate, input.taskType, input.options)).map((candidate) => candidate.provider);
+  const capable = input.candidates
+    .filter((candidate) => candidate.provider !== "qwen" && supportsTask(candidate, input.taskType, input.options))
+    .map((candidate) => candidate.provider);
   if (capable.length === 0) return [];
 
   if (input.taskType === "ocr") {
-    return [...(capable.includes("qwen") ? ["qwen" as AiProvider] : []), ...capable.filter((provider) => provider !== "qwen")];
+    const preferredOcr: AiProvider[] = ["mimo", "gemini", "openai", "vercel_gateway"];
+    return [...preferredOcr.filter((provider) => capable.includes(provider)), ...capable.filter((provider) => !preferredOcr.includes(provider))];
   }
 
   if (batchTasks.has(input.taskType)) {
     const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
-    const ordered: AiProvider[] = preferred ? [preferred] : capable.includes("nvidia") ? ["nvidia"] : [];
-    const fallbackPreference: AiProvider[] = ["nvidia", "qwen", "bedrock", "openai", "gemini", "xai", "vercel_gateway", "claude"];
+    const ordered: AiProvider[] = preferred ? [preferred] : capable.includes("mimo") ? ["mimo"] : [];
+    const fallbackPreference: AiProvider[] = ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "vercel_gateway", "claude"];
     for (const provider of fallbackPreference) {
       if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);
     }
@@ -45,22 +48,24 @@ export function buildAiProviderOrder(input: {
   const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
   const primary =
     preferred ??
-    (reasoningTasks.has(input.taskType) && capable.includes("openai")
+    (capable.includes("mimo")
+      ? "mimo"
+      : reasoningTasks.has(input.taskType) && capable.includes("openai")
       ? "openai"
       : reasoningTasks.has(input.taskType) && capable.includes("xai")
         ? "xai"
         : creativeTasks.has(input.taskType) && capable.includes("gemini")
           ? "gemini"
-          : fastOperationalTasks.has(input.taskType) && capable.includes("qwen")
-            ? "qwen"
+          : capable.includes("mimo")
+            ? "mimo"
             : capable[0]);
 
   const ordered: AiProvider[] = primary ? [primary] : [];
   const fallbackPreference: AiProvider[] = deterministicTasks.has(input.taskType)
-    ? ["qwen", "openai", "gemini", "bedrock", "nvidia", "xai", "vercel_gateway"]
+    ? ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "vercel_gateway"]
     : reasoningTasks.has(input.taskType)
-      ? ["openai", "xai", "claude", "gemini", "bedrock", "qwen", "nvidia", "vercel_gateway"]
-      : ["qwen", "bedrock", "openai", "gemini", "xai", "vercel_gateway", "claude", "nvidia"];
+      ? ["mimo", "deepseek", "gemini", "openai", "xai", "claude", "bedrock", "nvidia", "vercel_gateway"]
+      : ["mimo", "deepseek", "gemini", "openai", "bedrock", "xai", "vercel_gateway", "claude", "nvidia"];
 
   for (const provider of fallbackPreference) {
     if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);

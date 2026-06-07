@@ -6,16 +6,27 @@ import {
   isAuthEmailDeliveryConfigured
 } from "./auth-email-delivery";
 
-test("auth email delivery reports unavailable when RESEND_API_KEY is missing", () => {
+test("auth email delivery reports unavailable when no transactional provider is configured", () => {
   assert.equal(isAuthEmailDeliveryConfigured({}), false);
   assert.equal(isAuthEmailDeliveryConfigured({ RESEND_API_KEY: "   " }), false);
   assert.equal(getAuthEmailDeliveryStatus({}), "delivery_unavailable");
 });
 
-test("auth email delivery reports configured when RESEND_API_KEY is present", () => {
+test("auth email delivery reports configured when Resend is present", () => {
   assert.equal(isAuthEmailDeliveryConfigured({ RESEND_API_KEY: "re_test_key" }), true);
   assert.equal(getAuthEmailDeliveryStatus({ RESEND_API_KEY: "re_test_key" }), "configured");
-  assert.equal(assertAuthEmailDeliveryConfigured({ RESEND_API_KEY: " re_test_key " }), "re_test_key");
+  assert.equal(assertAuthEmailDeliveryConfigured({ RESEND_API_KEY: " re_test_key " }), "resend");
+});
+
+test("auth email delivery reports configured when SES is present", () => {
+  const env = {
+    EMAIL_PROVIDER: "ses",
+    AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
+    AWS_SES_SECRET_ACCESS_KEY: "secret"
+  };
+  assert.equal(isAuthEmailDeliveryConfigured(env), true);
+  assert.equal(getAuthEmailDeliveryStatus(env), "configured");
+  assert.equal(assertAuthEmailDeliveryConfigured(env), "ses");
 });
 
 test("auth email delivery throws a service error when OTP email is unavailable", () => {

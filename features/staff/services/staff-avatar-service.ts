@@ -45,6 +45,24 @@ function assertAvatarFile(file: FormDataEntryValue | null) {
   return { file, imageType };
 }
 
+function assertAvatarMagicBytes(bytes: Buffer, extension: string) {
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng =
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a;
+  const isWebp = bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+
+  if ((extension === "jpg" && isJpeg) || (extension === "png" && isPng) || (extension === "webp" && isWebp)) return;
+  throw new AppError("File ảnh đại diện không khớp định dạng JPG, PNG hoặc WebP.", 400);
+}
+
 export async function uploadStaffAvatarFile({
   restaurantId,
   staffMemberId,
@@ -61,6 +79,7 @@ export async function uploadStaffAvatarFile({
   } catch {
     throw new AppError("Không đọc được ảnh đại diện. Vui lòng chọn ảnh khác.", 400);
   }
+  assertAvatarMagicBytes(bytes, imageType.extension);
 
   const supabase = createAdminSupabaseClient();
   const path = `${restaurantId}/${staffMemberId}/${crypto.randomUUID()}.${imageType.extension}`;

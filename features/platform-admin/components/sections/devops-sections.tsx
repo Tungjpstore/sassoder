@@ -282,7 +282,7 @@ function serviceNodes(snapshot: Snapshot) {
     { key: "redis", name: "Redis", detail: integration("persistent-cache")?.status ?? "needs_config", icon: Database, tone: moduleTone(integration("persistent-cache")?.status ?? "needs_config"), deps: ["BullMQ", "Cache"] },
     { key: "workers", name: "Workers", detail: `${snapshot.cronJobs.length} tác vụ tự động`, icon: Cpu, tone: snapshot.cronJobs.every((job) => job.status === "configured") ? "good" as Tone : "warning" as Tone, deps: ["Cron", "Queue"] },
     { key: "telegram", name: "Telegram", detail: "Bot vận hành", icon: RadioTower, tone: "info" as Tone, deps: ["Thông báo", "Callback"] },
-    { key: "ai", name: "Dịch vụ AI", detail: aiReady ? `${snapshot.aiControl.runtimeConfig.configuredProviders} provider` : "thiếu key", icon: Bot, tone: aiReady ? "good" as Tone : "warning" as Tone, deps: ["Qwen", "xAI"] },
+    { key: "ai", name: "Dịch vụ AI", detail: aiReady ? `${snapshot.aiControl.runtimeConfig.configuredProviders} provider` : "thiếu key", icon: Bot, tone: aiReady ? "good" as Tone : "warning" as Tone, deps: ["MiMo", "DeepSeek", "Gemini"] },
     { key: "payments", name: "Thanh toán", detail: `${snapshot.metrics.pendingPayments} chờ xử lý`, icon: CreditCard, tone: snapshot.metrics.pendingPayments ? "warning" as Tone : "good" as Tone, deps: ["VietQR", "Webhook"] },
     { key: "storage", name: "Lưu trữ", detail: integration("cloudflare-r2")?.status ?? "planned", icon: HardDrive, tone: moduleTone(integration("cloudflare-r2")?.status ?? "planned"), deps: ["Asset", "R2"] }
   ];

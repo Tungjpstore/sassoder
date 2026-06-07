@@ -22,6 +22,7 @@ export type StaffOpsBranchSummary = {
   address: string;
   isPrimary: boolean;
   isActive: boolean;
+  attendanceLocationConfigured: boolean;
   activeStaff: number;
   lateCount: number;
   pendingApprovals: number;
@@ -276,6 +277,22 @@ export type StaffOpsNotification = {
   createdAt: string;
 };
 
+export type StaffOpsIncidentItem = {
+  id: string;
+  staffMemberId: string;
+  staffName: string;
+  branchId: string | null;
+  branchName: string | null;
+  title: string;
+  description: string;
+  severity: "low" | "normal" | "high" | "urgent";
+  status: "open" | "reviewing" | "resolved" | "dismissed";
+  attachmentUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+};
+
 export type StaffOpsOverview = {
   activeStaff: number;
   lateAttendance: number;
@@ -315,6 +332,7 @@ export type StaffOperationsBundle = {
   contracts: StaffOpsContractItem[];
   documents: StaffOpsDocumentItem[];
   devices: StaffOpsDeviceItem[];
+  incidents: StaffOpsIncidentItem[];
   mobileOps: StaffOpsMobileOps;
   notifications: StaffOpsNotification[];
   unreadNotificationCount: number;

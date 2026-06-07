@@ -348,6 +348,40 @@ test("staff HR workspace access and actions are permission-first, not ADMIN-only
   assert.match(permissionServiceSource, /mergeEffectivePermissions\(rolePermissions, accountPermissions\)/);
 });
 
+test("staff HR completion wires incidents, safe quick actions and stricter attendance guards", () => {
+  const typesSource = readFileSync("features/staff/types.ts", "utf8");
+  const serviceSource = readFileSync("features/staff/services/staff-operations-service.ts", "utf8");
+  const workspaceSource = readFileSync("features/staff/components/staff-redesign-workspace.tsx", "utf8");
+  const clientSource = readFileSync("features/staff/api/client.ts", "utf8");
+  const realtimeSource = readFileSync("features/staff/realtime/channels.ts", "utf8");
+  const avatarSource = readFileSync("features/staff/services/staff-avatar-service.ts", "utf8");
+  const attendanceSource = readFileSync("features/attendance/services/attendance-service.ts", "utf8");
+  const qrSource = readFileSync("features/attendance/services/attendance-qr-service.ts", "utf8");
+  const actionsSource = readFileSync("app/dashboard/actions/staff.ts", "utf8");
+
+  assert.match(typesSource, /StaffOpsIncidentItem/);
+  assert.match(typesSource, /incidents: StaffOpsIncidentItem\[\]/);
+  assert.match(serviceSource, /staff_incident_reports/);
+  assert.match(serviceSource, /incidents: StaffOpsIncidentItem\[\]/);
+  assert.match(workspaceSource, /reviewStaffIncidentReportAction/);
+  assert.match(workspaceSource, /function IncidentCard/);
+  assert.match(clientSource, /requireData\?: boolean/);
+  assert.match(clientSource, /runStaffMobileQuickAction[\s\S]*requireData: false/);
+  assert.match(realtimeSource, /staff_attendance_qr_tokens/);
+  assert.match(realtimeSource, /staff_attendance_wifi_networks/);
+  assert.match(realtimeSource, /staff_sessions/);
+  assert.match(realtimeSource, /staff_devices/);
+  assert.match(realtimeSource, /staff_incident_reports/);
+  assert.match(avatarSource, /assertAvatarMagicBytes/);
+  assert.match(avatarSource, /RIFF/);
+  assert.match(avatarSource, /WEBP/);
+  assert.match(attendanceSource, /Nhân sự chưa được gán chi nhánh nên chưa thể chấm công/);
+  assert.match(attendanceSource, /Chấm công ngoài chi nhánh chỉ được phép khi đã có ca xoay hợp lệ/);
+  assert.match(qrSource, /NODE_ENV === "production"[\s\S]*consume_staff_attendance_qr_token/);
+  assert.match(actionsSource, /assertCanAssignStaffRole/);
+  assert.match(actionsSource, /assertStaffActionPermission\(session, "staff\.roles"\)/);
+});
+
 test("staff operations APIs use granular HR permissions without ADMIN-only gates", () => {
   const routeFiles = [
     "app/api/admin/staff-operations/route.ts",

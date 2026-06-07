@@ -1,10 +1,10 @@
 import "server-only";
 
-import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { formatVnd } from "@/lib/money";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { getAdminReport, type AdminReport } from "@/services/dashboard-report-service";
+import { sendTransactionalEmail } from "@/services/email-delivery";
 import { buildAdminReportCsv } from "@/services/report-export-service";
 
 export type ReportFrequency = "weekly" | "monthly" | "yearly";
@@ -273,33 +273,8 @@ async function sendEmail({
   html: string;
   attachments: Array<{ filename: string; content: string }>;
 }) {
-  const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.REPORT_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <reports@logivn.com>";
-
-  if (!apiKey) {
-    throw new AppError("Thiếu RESEND_API_KEY để gửi email báo cáo", 500);
-  }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from,
-      to,
-      subject,
-      html,
-      attachments
-    })
-  });
-  const json = (await response.json().catch(() => null)) as { id?: string; message?: string } | null;
-  if (!response.ok) {
-    throw new AppError(json?.message ?? "Resend từ chối gửi email báo cáo", 502);
-  }
-
-  return { providerMessageId: json?.id ?? null, raw: json };
+  return sendTransactionalEmail({ from, to, subject, html, attachments });
 }
 
 export async function getReportScheduleForRestaurant(restaurantId: string, fallbackEmail: string) {
@@ -507,6 +482,7 @@ export async function sendDueScheduledReports({
             recipients,
             status: "sent",
             subject,
+            provider: email.provider,
             providerMessageId: email.providerMessageId,
             rawData: email.raw
           });

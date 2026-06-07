@@ -27,12 +27,14 @@ async function pickCopilotProvider() {
   if (preferred && openAiCompatibleProviders.includes(preferred)) {
     return preferred;
   }
-  return openAiCompatibleProviders[0] ?? "qwen";
+  return openAiCompatibleProviders[0] ?? "mimo";
 }
 
 function isModelCompatibleWithProvider(model: string, provider: AiProviderConfig["provider"]) {
   const normalizedModel = model.trim().toLowerCase();
   if (!normalizedModel) return false;
+  if (provider === "mimo") return normalizedModel.startsWith("mimo");
+  if (provider === "deepseek") return normalizedModel.startsWith("deepseek");
   if (provider === "qwen") return normalizedModel.startsWith("qwen");
   if (provider === "xai") return normalizedModel.startsWith("grok");
   if (provider === "openai") return normalizedModel.startsWith("gpt") || normalizedModel.startsWith("o");
@@ -57,8 +59,9 @@ async function createServiceAdapter() {
   const provider = await pickCopilotProvider();
   const aiProvider = await getResolvedAiProviderConfig(provider);
   const openai = new OpenAI({
-    apiKey: aiProvider.apiKey,
+    apiKey: aiProvider.provider === "mimo" ? "mimo-api-key-header" : aiProvider.apiKey,
     baseURL: aiProvider.baseUrl,
+    defaultHeaders: aiProvider.provider === "mimo" ? { "api-key": aiProvider.apiKey } : undefined,
     timeout: copilotProviderTimeoutMs,
     maxRetries: 1
   });
