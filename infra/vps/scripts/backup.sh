@@ -46,6 +46,8 @@ BACKUP_ROOT=${BACKUP_ROOT:-$APP_ROOT/backups}
 BACKUP_TEMP_DIR=${BACKUP_TEMP_DIR:-$BACKUP_ROOT/tmp}
 BACKUP_STATE_DIR=${BACKUP_STATE_DIR:-$BACKUP_ROOT/state}
 BACKUP_LOCK_FILE=${BACKUP_LOCK_FILE:-$BACKUP_STATE_DIR/backup.lock}
+BACKUP_DAILY_SUCCESS_STAMP=${BACKUP_DAILY_SUCCESS_STAMP:-$BACKUP_STATE_DIR/daily-success.stamp}
+BACKUP_DAILY_SKIP_IF_COMPLETED=${BACKUP_DAILY_SKIP_IF_COMPLETED:-false}
 BACKUP_TEMP_TTL_HOURS=${BACKUP_TEMP_TTL_HOURS:-72}
 BACKUP_KEEP_FAILED_TEMP=${BACKUP_KEEP_FAILED_TEMP:-true}
 BACKUP_RETENTION_DAILY=${BACKUP_RETENTION_DAILY:-7}
@@ -538,6 +540,43 @@ release_local_lock() {
 
 cleanup_old_temp() {
   find "$BACKUP_TEMP_DIR" -mindepth 1 -maxdepth 1 -type d -mmin "+$((BACKUP_TEMP_TTL_HOURS * 60))" -print -exec rm -rf {} + >/dev/null 2>&1 || true
+}
+
+skip_completed_daily_backup_if_requested() {
+  if [ "$BACKUP_DAILY_SKIP_IF_COMPLETED" != "true" ] || [ "$MODE" != "daily" ] || [ "$CLAIM_MANUAL" = "true" ]; then
+    return 0
+  fi
+
+  if [ ! -f "$BACKUP_DAILY_SUCCESS_STAMP" ]; then
+    return 0
+  fi
+
+  local stamp_date=""
+  local stamp_job=""
+  local stamp_reported=""
+  IFS=' ' read -r stamp_date stamp_job stamp_reported _ < "$BACKUP_DAILY_SUCCESS_STAMP" || true
+  if [ "$stamp_date" = "$RUN_DATE" ] && [ "$stamp_reported" = "telegram_reported" ]; then
+    log "Daily backup already completed for $RUN_DATE by job ${stamp_job:-unknown}; exiting"
+    exit 0
+  fi
+}
+
+mark_daily_backup_success() {
+  local final_status=${1:-}
+  if [ "$MODE" != "daily" ] || [ "$CLAIM_MANUAL" = "true" ]; then
+    return 0
+  fi
+  if [ "$final_status" != "success" ]; then
+    return 0
+  fi
+  if [ "$ARTIFACT_COUNT" -le 0 ] || [ "$VERIFY_STATUS" != "ok" ]; then
+    return 0
+  fi
+  if [ "$BACKUP_TELEGRAM_REPORT_REQUIRED" = "true" ] && [ "$TELEGRAM_REPORT_SENT_COUNT" -le 0 ]; then
+    return 0
+  fi
+
+  printf '%s %s telegram_reported %s\n' "$RUN_DATE" "${JOB_ID:-unknown}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$BACKUP_DAILY_SUCCESS_STAMP"
 }
 
 sanitize_env_file() {
@@ -1605,6 +1644,7 @@ run_backup_pipeline() {
     final_status="warn"
     update_job_status "$final_status" "telegram_report" "${TELEGRAM_REPORT_FAILURE:-Chưa gửi được báo cáo backup qua Telegram}"
   fi
+  mark_daily_backup_success "$final_status"
   rm -rf "$WORK_DIR"
 }
 
@@ -1614,6 +1654,7 @@ main() {
   validate_enabled
   cleanup_old_temp
   acquire_local_lock
+  skip_completed_daily_backup_if_requested
 
   if [ "$CLAIM_MANUAL" = "true" ]; then
     require_command curl

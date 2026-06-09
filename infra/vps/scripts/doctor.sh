@@ -118,6 +118,40 @@ check_notification_routing() {
   printf '[logivn-doctor] notifications routing: push=%s email=%s\n' "$push_target" "$email_target"
 }
 
+check_systemd_timer() {
+  local unit="$1"
+  local enabled=""
+  local active=""
+
+  enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+  active=$(systemctl is-active "$unit" 2>/dev/null || true)
+  printf '[logivn-doctor] systemd timer %s: enabled=%s active=%s\n' "$unit" "${enabled:-unknown}" "${active:-unknown}"
+  [ "$enabled" = "enabled" ] && [ "$active" = "active" ]
+}
+
+check_backup_scheduler() {
+  local failed=0
+  local cron_file=/etc/cron.d/logivn-vps
+
+  if [ -f "$cron_file" ]; then
+    printf '[logivn-doctor] backup scheduler cron: installed %s\n' "$cron_file"
+    grep -q 'backup.sh --daily' "$cron_file" || { printf '[logivn-doctor] backup scheduler cron missing daily entry\n'; failed=1; }
+    grep -q 'backup.sh --claim-manual' "$cron_file" || { printf '[logivn-doctor] backup scheduler cron missing manual claim entry\n'; failed=1; }
+  else
+    printf '[logivn-doctor] backup scheduler cron missing: %s\n' "$cron_file"
+    failed=1
+  fi
+
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    printf '[logivn-doctor] backup scheduler systemd: unavailable; cron remains the scheduler of record\n'
+    return "$failed"
+  fi
+
+  check_systemd_timer logivn-backup-daily.timer || failed=1
+  check_systemd_timer logivn-backup-manual-claim.timer || failed=1
+  return "$failed"
+}
+
 main() {
   if [ ! -f "$ENV_FILE" ]; then
     printf 'Env file not found: %s\n' "$ENV_FILE" >&2
@@ -144,6 +178,7 @@ main() {
 
   check_notification_routing || failed=1
   check_alert_routing || failed=1
+  check_backup_scheduler || failed=1
 
   check_app_cron_mode || failed=1
   check_telegram_webhook_url || failed=1

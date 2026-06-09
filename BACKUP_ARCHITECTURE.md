@@ -19,7 +19,7 @@ Supabase Postgres / Storage / Redis / VPS configs
 - Executor: `infra/vps/scripts/backup.sh`
 - R2 gateway: `infra/cloudflare/backup-r2-gateway`
 - Storage payload exporter: `scripts/infra/supabase-storage-export.mjs`
-- Cron installer: `infra/vps/scripts/install-cron.sh`
+- Scheduler installer: `infra/vps/scripts/install-cron.sh` (`/etc/cron.d/logivn-vps` plus systemd fallback timers)
 - Metadata schema: `supabase/migrations/20260604102000_backup_dr_foundation.sql`
 - Health/manual API: `/api/internal/backup/health`, `/api/internal/backup/trigger`
 - Control Center: `admin.logivn.com/backup`
@@ -42,6 +42,9 @@ Installed by `infra/vps/scripts/install-cron.sh`:
 - Monthly: `0 4 1 * *`, `backup.sh --monthly`
 - Restore rehearsal: `20 4 1 * *`, `backup.sh --restore-test`
 - Manual poll: every 5 minutes, `backup.sh --claim-manual`
+- Systemd fallback: `logivn-backup-daily.timer` runs at 02:10 Asia/Ho_Chi_Minh with `Persistent=true`, and `logivn-backup-manual-claim.timer` claims queued manual jobs every 5 minutes.
+
+The daily cron and systemd fallback both set `BACKUP_DAILY_SKIP_IF_COMPLETED=true`. After a verified daily backup successfully reports to LogiBot Dev, `backup.sh` writes a date stamp in the backup state directory. The fallback timer checks that stamp before starting, so it catches a missed cron window without creating a second full backup when cron already completed correctly.
 
 Every daily/weekly/monthly/manual data backup sends a completion report to LogiBot Dev after R2 upload verification and retention cleanup. The executor first resolves stale `backup_failed` alerts when the new data backup has real artifacts, then sends the Telegram report. If the data backup succeeds but the LogiBot Dev report cannot be delivered, the job is updated to `warn` and a `telegram_report_failed` alert is opened so operators do not see a false-clean success.
 
