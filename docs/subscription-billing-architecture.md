@@ -121,8 +121,9 @@ flowchart TD
 
 Router 3 tầng:
 
-- `Qwen` first cho menu generation, OCR, light assistant, low-cost chat
-- `xAI` cho deep analytics, reasoning, marketing copy khi cần chất lượng cao
+- `Xiaomi MiMo` first cho menu generation, OCR, assistant vận hành, chatbot và báo cáo dài context
+- `DeepSeek` và `Gemini Flash` làm fallback text khi MiMo timeout, lỗi provider, hoặc chạm token guard theo task/ngày
+- `xAI` cho image-oriented flows hoặc các use case riêng cần model đó
 - `hybrid` cho business advisor, AI assistant nâng cao, premium workflows
 
 Rules:

@@ -13,14 +13,17 @@ Tài liệu này mô tả lớp vận hành AI dùng cho `admin.logivn.com`, t�
 
 Bảng `public.platform_ai_provider_configs` lưu cấu hình runtime theo provider:
 
-- `provider`: `qwen`, `nvidia`, `bedrock`, `openai`, `gemini`, `xai`, `claude`, `vercel_gateway`
+- `provider`: `mimo`, `deepseek`, `qwen` (legacy alias), `nvidia`, `bedrock`, `openai`, `gemini`, `xai`, `claude`, `vercel_gateway`
 - `enabled`: bật/tắt provider ở runtime
 - `api_key_ciphertext`, `api_key_iv`, `api_key_tag`: API key đã mã hoá AES-256-GCM
 - `key_fingerprint`, `key_last_four`: metadata an toàn để nhận diện key trong UI
 - `base_url`, `chat_model`, `fast_model`, `image_model`, `ocr_model`: override runtime
 - `last_rotated_at`, `updated_at`, `updated_by`: audit metadata
 
-Migration: `supabase/migrations/20260528143000_platform_ai_provider_configs.sql`.
+Migrations:
+
+- `supabase/migrations/20260528143000_platform_ai_provider_configs.sql`
+- `supabase/migrations/20260607103000_add_mimo_deepseek_ai_providers.sql`
 
 ## Khoá mã hoá
 
@@ -47,8 +50,10 @@ Các entrypoint đã đọc cấu hình đã resolve:
 
 - `lib/ai/router/model-router.ts`
 - `app/api/copilotkit/route.ts`
-- `services/ai/runtime.ts` cho Qwen/xAI native OCR và image generation
+- `services/ai/runtime.ts` cho Xiaomi MiMo OCR, chat router và xAI image generation
 - các AI readiness deck/API trong dashboard
+
+Runtime production hiện ưu tiên `mimo` với model `mimo-v2.5-pro`, fallback mặc định `deepseek -> gemini`. Các id provider cũ như `qwen` hoặc `dashscope` chỉ còn tác dụng tương thích ngược và được alias sang `mimo`; router không auto-route sang Qwen nữa.
 
 `bedrock` dùng Amazon Bedrock Converse API cho text/chat tasks và mặc định thử `us.amazon.nova-2-lite-v1:0` qua US inference profile. PoC nên dùng `AWS_BEARER_TOKEN_BEDROCK` hoặc key đã nhập trong `admin.logivn.com/ai`; không dùng Bedrock cho OCR/image/tool-calling cho tới khi có adapter riêng và số đo chi phí/latency.
 

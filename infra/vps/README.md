@@ -19,7 +19,7 @@ Internal-only services:
 
 - `redis`: persistent Redis for BullMQ and Socket.IO fan-out
 - `redis-exporter`: Redis memory, command, and persistence metrics for Prometheus
-- `ai-service`: OpenAI/xAI/Qwen/Claude provider routing and async AI jobs
+- `ai-service`: Xiaomi MiMo-first provider routing, DeepSeek/Gemini fallback, and async AI jobs
 - `image-service`: image optimization and PDF invoice generation
 - `telegram-bot`: grammY webhook and BullMQ Telegram operations worker
 - `platform-telegram-bot`: separate grammY DevOps bot for LogiVN internal alerts, queue checks, and support operations
@@ -121,7 +121,16 @@ BULL_BOARD_PASSWORD
 Add provider keys as needed:
 
 ```txt
-DASHSCOPE_API_KEY
+MIMO_API_KEY
+MIMO_BASE_URL
+MIMO_CHAT_MODEL
+MIMO_FAST_MODEL
+DEEPSEEK_API_KEY
+DEEPSEEK_BASE_URL
+DEEPSEEK_CHAT_MODEL
+GEMINI_API_KEY
+GEMINI_BASE_URL
+GEMINI_CHAT_MODEL
 AWS_BEARER_TOKEN_BEDROCK
 BEDROCK_MODEL
 XAI_API_KEY
@@ -177,6 +186,8 @@ ORDERS_SLA_SCANNER_BATCH_SIZE
 ORDERS_SLA_WARNING_MINUTES
 ORDERS_SLA_WARNING_REPEAT_MINUTES
 ```
+
+Mặc định production hiện dùng `MIMO_CHAT_MODEL=mimo-v2.5-pro` và `AI_PROVIDER_FALLBACK_ORDER=mimo,deepseek,gemini`. Chỉ giữ `QWEN_*` hoặc `DASHSCOPE_*` nếu đang cần đọc lại cấu hình legacy trong giai đoạn migration; runtime mới không auto-route sang Qwen.
 
 ## Queue Inventory
 

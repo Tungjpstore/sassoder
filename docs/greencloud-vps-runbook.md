@@ -36,11 +36,16 @@ VPS required:
 
 VPS optional but expected soon:
 
-- `DASHSCOPE_API_KEY`
+- `MIMO_API_KEY`
+- `MIMO_BASE_URL`
+- `DEEPSEEK_API_KEY`
+- `GEMINI_API_KEY`
 - `XAI_API_KEY`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
+
+Production AI routing hiện ưu tiên `mimo-v2.5-pro` qua `MIMO_API_KEY`, với fallback `deepseek -> gemini`. Chỉ giữ `QWEN_*` hoặc `DASHSCOPE_*` nếu còn dữ liệu migration legacy cần tham chiếu.
 
 Vercel additions after VPS cutover:
 

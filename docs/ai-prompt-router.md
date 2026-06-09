@@ -101,11 +101,12 @@ Luồng khách cũng nhận `actions` để mở thực đơn, mở giỏ, theo 
 
 ## Provider
 
-- Qwen: mặc định cho assistant, OCR và phản hồi nhanh.
+- Xiaomi MiMo: provider mặc định cho assistant, OCR, phân tích báo cáo và phản hồi nhanh. Runtime đang dùng model mạnh nhất `mimo-v2.5-pro` để giữ context dài và ổn định format cũ.
+- DeepSeek và Gemini Flash: fallback tự động khi MiMo timeout, vướng daily task cap, trả `429`, hoặc gặp lỗi `5xx`.
 - xAI: mặc định cho tạo ảnh nếu `AI_IMAGE_PROVIDER=xai`.
-- Các luồng trả schema (`setup-plan`, `setup-draft`, branding, OCR text) bật JSON mode của DashScope/OpenAI-compatible bằng `response_format: { "type": "json_object" }` để giảm lỗi AI trả markdown.
+- Các luồng trả schema (`setup-plan`, `setup-draft`, branding, OCR text) bật JSON mode của OpenAI-compatible providers bằng `response_format: { "type": "json_object" }` để giảm lỗi AI trả markdown.
 
-Các env chính: `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `XAI_API_KEY`, `XAI_BASE_URL`, `AI_OWNER_PROVIDER`, `AI_CUSTOMER_PROVIDER`, `AI_IMAGE_PROVIDER`, `QWEN_*`, `XAI_*`.
+Các env chính: `MIMO_API_KEY`, `MIMO_BASE_URL`, `MIMO_MODEL`, `DEEPSEEK_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `XAI_BASE_URL`, `AI_OWNER_PROVIDER`, `AI_CUSTOMER_PROVIDER`, `AI_IMAGE_PROVIDER`, `AI_PROVIDER_FALLBACK_ORDER`, `MIMO_*`, `DEEPSEEK_*`, `GEMINI_*`, `XAI_*`.
 
 ## Mở Rộng Gói Pro/Premium
 

@@ -1,7 +1,7 @@
 # LogiVN Project Handoff
 
 Generated: 2026-05-09
-Last updated: 2026-05-17
+Last updated: 2026-06-09
 
 ## Project Overview
 
@@ -15,7 +15,7 @@ Core product scope:
 - VietQR and cash hybrid payments
 - Owner dashboard at `/dashboard`
 - DevOps Control Center at `admin.logivn.com`
-- AI-native assistant layer via CopilotKit, Qwen and xAI
+- AI-native assistant layer via CopilotKit, Xiaomi MiMo, fallback providers, and xAI image generation
 - Supabase PostgreSQL/Auth/Realtime
 - Vercel deployment
 - Cloudflare R2 planned for media storage
@@ -30,6 +30,7 @@ Current branch:
 
 Latest engineering update:
 
+- 2026-06-09: Qwen/DashScope AI flow migrated to Xiaomi MiMo `mimo-v2.5-pro` with DeepSeek and Gemini fallback, daily task token guards, preserved routing/prompt contracts, and migration runbook at `docs/mimo-ai-migration.md`.
 - 2026-05-17: Git worktree hygiene pass completed. Stale `/private/tmp` worktree metadata was pruned, the active worktree is clean, and branch/worktree tracking docs were added: `WORKTREE_MAP.md`, `ACTIVE_BRANCHES.md`, `MIGRATION_LOG.md`, and `RELEASE_NOTES.md`.
 - 2026-05-17: Current release commit is `531a181 chore: consolidate LogiVN production release`; branch is ahead of `origin/codex/p0-production-clean` by 1 commit and `git push --dry-run origin codex/p0-production-clean` succeeded during audit.
 - 2026-05-16: platform RBAC foundation completed locally, not deployed.
@@ -46,8 +47,9 @@ Primary stack:
 - TailwindCSS v4
 - Supabase PostgreSQL/Auth/Realtime
 - CopilotKit
-- Qwen API as primary AI provider
-- xAI/Grok as secondary or reasoning provider
+- Xiaomi MiMo `mimo-v2.5-pro` as primary AI provider
+- DeepSeek and Gemini as text fallback providers
+- xAI/Grok as image-oriented optional provider
 - Vercel for deployment
 
 Main structure:
@@ -93,7 +95,7 @@ Important route groups:
 - Online ordering foundation.
 - Reservation flow foundation with deposit/payment lifecycle.
 - Subscription/plan entitlement foundation.
-- LogiBot/CopilotKit integration repaired for Qwen-compatible API base URL.
+- LogiBot/CopilotKit integration aligned with MiMo's OpenAI-compatible endpoint and `api-key` header contract.
 - AI tool-calling foundation added for:
   - menu search
   - best seller lookup
