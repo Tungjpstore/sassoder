@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 /* Container — single max width, consistent gutter */
 export function Container({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mx-auto w-full max-w-[var(--container)] px-5 sm:px-7 lg:px-8", className)} {...props} />;
+  return <div className={cn("mx-auto w-full max-w-[var(--container)] px-4 min-[360px]:px-5 sm:px-7 lg:px-8", className)} {...props} />;
 }
 
 /* Section — consistent vertical rhythm */
