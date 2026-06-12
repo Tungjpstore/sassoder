@@ -138,6 +138,20 @@
   border-radius: 4px;
 }
 
+/* ---- Mobile spacing tightening — keep sections proportional on small screens ---- */
+@media (max-width: 640px) {
+  [data-ds="v2"] {
+    --s-12: 2rem;
+    --s-16: 2.5rem;
+    --s-20: 3rem;
+    --s-28: 4rem;
+  }
+  [data-ds="v2"] .v2-display {
+    font-size: clamp(1.875rem, 9vw, 2.5rem);
+    line-height: 1.1;
+  }
+}
+
 /* ---- Reveal animation ---- */
 @keyframes v2-fade-up {
   from { opacity: 0; transform: translateY(18px); }
