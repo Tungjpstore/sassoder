@@ -176,11 +176,29 @@ sync_nginx_config() {
 
   local source="$VPS_DIR/nginx/logivn-ssl.conf.template"
   local target="/etc/nginx/sites-available/logivn-vps.conf"
+  local confd_target="/etc/nginx/conf.d/logivn-vps.conf"
 
   log "Syncing NGINX reverse-proxy routes"
   sudo -n cp "$source" "$target"
   sudo -n ln -sf "$target" /etc/nginx/sites-enabled/logivn-vps.conf
   sudo -n nginx -t
+
+  if ! sudo -n nginx -T 2>/dev/null | grep -q 'location /webhooks/platform-telegram/'; then
+    if [ -d /etc/nginx/conf.d ]; then
+      log "sites-enabled is not active in nginx -T; installing fallback conf.d route file"
+      sudo -n cp "$source" "$confd_target"
+      if ! sudo -n nginx -t >/dev/null 2>&1 || ! sudo -n nginx -T 2>/dev/null | grep -q 'location /webhooks/platform-telegram/'; then
+        sudo -n rm -f "$confd_target"
+        sudo -n nginx -t >/dev/null 2>&1 || true
+        printf 'NGINX config sync did not activate /webhooks/platform-telegram/ route\n' >&2
+        return 1
+      fi
+    else
+      printf 'NGINX config sync did not activate /webhooks/platform-telegram/ route\n' >&2
+      return 1
+    fi
+  fi
+
   if command -v systemctl >/dev/null 2>&1; then
     sudo -n systemctl reload nginx
   else
