@@ -9,6 +9,7 @@
 .next*
 node_modules
 codex
+logimail
 coverage
 reports/seo
 reports/responsive

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">LogiMail mark reverse</title>
+  <desc id="desc">Reverse LogiMail mark for dark green surfaces.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#FFF7EB"/>
+  <path d="M64 27 94 38v22c0 24-12.7 39.2-30 47.6C46.7 99.2 34 84 34 60V38l30-11Z" fill="#0F4D3A"/>
+  <rect x="42" y="50" width="44" height="32" rx="5" fill="#FFF7EB"/>
+  <path d="M44 54 64 68l20-14" fill="none" stroke="#0F4D3A" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="92" cy="38" r="15" fill="#F28C28"/>
+  <path d="m85.5 38.3 4.7 4.7 8.7-10" fill="none" stroke="#FFF7EB" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

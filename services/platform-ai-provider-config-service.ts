@@ -85,6 +85,7 @@ export type UpdatePlatformAiProviderConfigInput = {
 };
 
 const supportedProviders = ["mimo", "deepseek", "qwen", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
+export const adminConfigurableAiProviders = ["mimo", "deepseek", "nvidia", "bedrock", "openai", "gemini", "xai", "claude", "vercel_gateway"] as const satisfies AiProvider[];
 
 const providerMetadata: PlatformAiProviderMetadata[] = [
   {
@@ -230,6 +231,15 @@ function assertSupportedProvider(provider: AiProvider) {
   }
 }
 
+export function isAdminConfigurableAiProvider(provider: AiProvider) {
+  return adminConfigurableAiProviders.includes(provider as (typeof adminConfigurableAiProviders)[number]);
+}
+
+function assertAdminConfigurableProvider(provider: AiProvider) {
+  if (isAdminConfigurableAiProvider(provider)) return;
+  throw new AppError(`Provider AI ${provider} chỉ còn ở chế độ legacy và không thể chỉnh từ admin.`, 400);
+}
+
 function rowHasEncryptedKey(row: PlatformAiProviderRow | undefined) {
   return Boolean(row?.api_key_ciphertext && row.api_key_iv && row.api_key_tag && row.key_fingerprint);
 }
@@ -268,7 +278,7 @@ async function rowsByProvider(required = false) {
 export async function listPlatformAiProviderConfigs(): Promise<PlatformAiProviderConfigSummary[]> {
   const rows = await rowsByProvider(false);
 
-  return providerMetadata.map((metadata) => {
+  return providerMetadata.filter((metadata) => isAdminConfigurableAiProvider(metadata.provider)).map((metadata) => {
     const row = rows.get(metadata.provider);
     const envKey = readEnv(metadata.keyEnvNames);
     const envConfigured = Boolean(envKey);
@@ -370,6 +380,7 @@ async function writePlatformAiAuditLog(input: {
 
 export async function updatePlatformAiProviderConfig(input: UpdatePlatformAiProviderConfigInput) {
   assertSupportedProvider(input.provider);
+  assertAdminConfigurableProvider(input.provider);
   metadataForProvider(input.provider);
   const apiKey = input.apiKey?.trim() ?? "";
   const changedKey = Boolean(apiKey);

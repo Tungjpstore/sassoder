@@ -17,31 +17,45 @@ import {
   claimPlatformConnectionToken,
   claimPlatformSession,
   connectPlatformTelegramAccount,
+  approveLogimailRequestFromTelegram,
   confirmPlatformSubscriptionPayment,
+  createLogimailSecurityCodeFromTelegram,
   createPlatformSession,
   getPlatformBackupSnapshot,
   getPendingSubscriptionPayment,
+  getPendingLogimailRequest,
   getPlatformAlertRecipients,
   getPlatformConnectionRecentAudit,
   getPlatformConnectionForTelegramUser,
   getPlatformTenantAction,
   hasPlatformScope,
+  listActiveLogimailSecurityCodes,
+  listLogimailDomainsForTelegram,
+  listPendingLogimailRequests,
   listPendingSubscriptionPayments,
   listPlatformTenantActions,
   queuePlatformManualBackup,
   recordPlatformTelegramAudit,
+  rejectLogimailRequestFromTelegram,
   rejectPlatformSubscriptionPayment,
+  revokeLogimailSecurityCodeFromTelegram,
   revokePlatformConnectionById,
+  rotateLogimailSecurityCodeFromTelegram,
   touchPlatformConnection,
   updatePlatformTenantStatusFromTelegram,
   type PlatformBackupQueuedJob,
   type PlatformBackupSnapshot,
+  type PlatformLogimailDomain,
+  type PlatformLogimailRequest,
+  type PlatformLogimailRequestType,
+  type PlatformLogimailSecurityCode,
   type PlatformSubscriptionPayment,
   type PlatformTenantAction
 } from "./repository.mjs";
 import {
   platformTelegramJobSchema,
   type PlatformAlertJob,
+  type PlatformLogimailApprovalRequestedJob,
   type PlatformSubscriptionApprovalRequestedJob,
   type PlatformSubscriptionConfirmedJob,
   type PlatformSubscriptionRejectedJob,
@@ -64,6 +78,17 @@ const PLATFORM_MENU_ACTIONS = [
   "payment.confirm",
   "payment.reject.prompt",
   "payment.reject",
+  "logimail",
+  "logimail.detail",
+  "logimail.approve.prompt",
+  "logimail.approve",
+  "logimail.reject.prompt",
+  "logimail.reject",
+  "logimail.codes",
+  "logimail.code.create",
+  "logimail.code.rotate",
+  "logimail.code.revoke",
+  "logimail.domains",
   "tenants",
   "tenant.detail",
   "tenant.suspend.prompt",
@@ -136,6 +161,8 @@ if (bot) {
   bot.command("menu", (ctx) => replyWithPlatformMenu(ctx));
   bot.command("inbox", (ctx) => replyWithPlatformInbox(ctx));
   bot.command("payments", (ctx) => replyWithPayments(ctx));
+  bot.command("logimail", (ctx) => replyWithLogimail(ctx));
+  bot.command("domains", (ctx) => replyWithLogimailDomains(ctx));
   bot.command("tenants", (ctx) => replyWithTenants(ctx));
   bot.command("health", (ctx) => replyWithHealth(ctx));
   bot.command("backup", (ctx) => replyWithBackup(ctx));
@@ -263,6 +290,7 @@ async function processPlatformTelegramJob(job: Job) {
   if (parsed.type === "platform.alert") return deliverPlatformAlert(parsed);
   if (parsed.type === "platform.tenant.created") return deliverPlatformTenantCreated(parsed);
   if (parsed.type === "platform.subscription.approval_requested") return deliverPlatformSubscriptionApprovalRequested(parsed);
+  if (parsed.type === "platform.logimail.approval_requested") return deliverPlatformLogimailApprovalRequested(parsed);
   if (parsed.type === "platform.subscription.confirmed") return deliverPlatformSubscriptionConfirmed(parsed);
   if (parsed.type === "platform.subscription.rejected") return deliverPlatformSubscriptionRejected(parsed);
   if (parsed.type === "platform.tenant.status_changed") return deliverPlatformTenantStatusChanged(parsed);
@@ -307,6 +335,19 @@ async function deliverPlatformSubscriptionApprovalRequested(event: PlatformSubsc
     targetType: "subscription_payment",
     targetId: event.payment.id,
     metadata: { restaurantId: event.restaurantId, billingAction: event.payment.billingAction ?? null, amount: event.payment.amount }
+  });
+}
+
+async function deliverPlatformLogimailApprovalRequested(event: PlatformLogimailApprovalRequestedJob) {
+  const recipients = await getPlatformAlertRecipients("logimail.approve");
+  return deliverPlatformEvent({
+    eventType: event.type,
+    recipients,
+    text: formatPlatformLogimailApprovalRequested(event),
+    keyboard: (recipient) => platformLogimailApprovalKeyboard(recipient, event),
+    targetType: "logimail_request",
+    targetId: `${event.logimail.requestType}:${event.logimail.requestId}`,
+    metadata: { requestType: event.logimail.requestType, targetValue: event.logimail.targetValue, workspaceId: event.logimail.workspaceId ?? null }
   });
 }
 
@@ -454,10 +495,11 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     await replyWithConnectAction(ctx);
     return;
   }
-  const [pendingPayments, tenantActions, queueRows] = await Promise.all([
-    listPendingSubscriptionPayments(6).catch(() => []),
-    listPlatformTenantActions(6).catch(() => []),
-    queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[])
+  const [pendingPayments, pendingLogimail, tenantActions, queueRows] = await Promise.all([
+    hasPlatformScope(connection, "billing.approve") ? listPendingSubscriptionPayments(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "logimail.approve") ? listPendingLogimailRequests(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "tenants.read") ? listPlatformTenantActions(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "queues.read") ? queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[]) : Promise.resolve([])
   ]);
   const queueFailures = queueRows.reduce((sum, row) => sum + row.failed, 0);
   const keyboard = new InlineKeyboard()
@@ -465,8 +507,12 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
     .text("Menu", await signedPlatformCallback(connection, "menu"))
     .row()
     .text(`Duyệt gói (${pendingPayments.length})`, await signedPlatformCallback(connection, "payments"))
-    .text(`Quán (${tenantActions.length})`, await signedPlatformCallback(connection, "tenants"))
+    .text(`LogiMail (${pendingLogimail.length})`, await signedPlatformCallback(connection, "logimail"))
     .row()
+    .text("Domain DNS", await signedPlatformCallback(connection, "logimail.domains"))
+    .text("Mã LogiMail", await signedPlatformCallback(connection, "logimail.codes"))
+    .row()
+    .text(`Quán (${tenantActions.length})`, await signedPlatformCallback(connection, "tenants"))
     .text(queueFailures ? `Queue lỗi (${queueFailures})` : "Queue", await signedPlatformCallback(connection, "queues"))
     .text("Backup", await signedPlatformCallback(connection, "backup"))
     .row()
@@ -481,8 +527,8 @@ async function replyWithPlatformMenu(ctx: Context, preferredConnection?: Platfor
   await ctx.reply([
     "LogiVN DevOps",
     "",
-    `Ưu tiên: ${platformMenuPriority(pendingPayments[0], tenantActions[0])}`,
-    `Đang chờ: ${countLabel(pendingPayments.length, 6)} gói · ${countLabel(tenantActions.length, 6)} quán · ${queueFailures} queue lỗi`,
+    `Ưu tiên: ${platformMenuPriority(pendingPayments[0], pendingLogimail[0], tenantActions[0])}`,
+    `Đang chờ: ${countLabel(pendingPayments.length, 6)} gói · ${countLabel(pendingLogimail.length, 6)} LogiMail · ${countLabel(tenantActions.length, 6)} quán · ${queueFailures} queue lỗi`,
     `Tài khoản: ${connection.role} · ${connection.status}`,
     "",
     "Chọn Inbox để xử lý theo thứ tự ưu tiên."
@@ -496,8 +542,9 @@ async function replyWithPlatformInbox(ctx: Context, preferredConnection?: Platfo
     return;
   }
 
-  const [pendingPayments, tenantActions, queueRows] = await Promise.all([
+  const [pendingPayments, pendingLogimail, tenantActions, queueRows] = await Promise.all([
     hasPlatformScope(connection, "billing.approve") ? listPendingSubscriptionPayments(6).catch(() => []) : Promise.resolve([]),
+    hasPlatformScope(connection, "logimail.approve") ? listPendingLogimailRequests(6).catch(() => []) : Promise.resolve([]),
     hasPlatformScope(connection, "tenants.read") ? listPlatformTenantActions(6).catch(() => []) : Promise.resolve([]),
     hasPlatformScope(connection, "queues.read") ? queueSummary({ includeDeadLetters: true }).then(queueAttentionRows).catch(() => [] as QueueAttentionRow[]) : Promise.resolve([])
   ]);
@@ -505,8 +552,9 @@ async function replyWithPlatformInbox(ctx: Context, preferredConnection?: Platfo
   const keyboard = new InlineKeyboard();
 
   if (pendingPayments.length) keyboard.text("Duyệt gói", await signedPlatformCallback(connection, "payments"));
+  if (pendingLogimail.length) keyboard.text("LogiMail", await signedPlatformCallback(connection, "logimail"));
   if (tenantActions.length) keyboard.text("Quán", await signedPlatformCallback(connection, "tenants"));
-  if (pendingPayments.length || tenantActions.length) keyboard.row();
+  if (pendingPayments.length || pendingLogimail.length || tenantActions.length) keyboard.row();
   if (failedRows.length) keyboard.text("Queue lỗi", await signedPlatformCallback(connection, "queues"));
   keyboard
     .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
@@ -517,7 +565,7 @@ async function replyWithPlatformInbox(ctx: Context, preferredConnection?: Platfo
     .url("Admin Ops", platformAdminUrl("/ops"))
     .url("Bull Board", readEnv("PLATFORM_BULL_BOARD_URL", "https://monitor.logivn.com/queues/board/"));
 
-  await ctx.reply(formatPlatformInbox({ pendingPayments, tenantActions, failedRows }), { reply_markup: keyboard });
+  await ctx.reply(formatPlatformInbox({ pendingPayments, pendingLogimail, tenantActions, failedRows }), { reply_markup: keyboard });
 }
 
 async function replyWithHelp(ctx: Context) {
@@ -528,12 +576,16 @@ async function replyWithHelp(ctx: Context) {
         .text("Inbox", await signedPlatformCallback(connection, "inbox"))
         .row()
         .text("Duyệt gói", await signedPlatformCallback(connection, "payments"))
+        .text("LogiMail", await signedPlatformCallback(connection, "logimail"))
+        .row()
+        .text("Domain DNS", await signedPlatformCallback(connection, "logimail.domains"))
+        .row()
         .text("Quản lý quán", await signedPlatformCallback(connection, "tenants"))
         .row()
         .text("Backup", await signedPlatformCallback(connection, "backup"))
         .text("Sự cố", await signedPlatformCallback(connection, "incidents"))
     : new InlineKeyboard().url("Admin Ops", platformAdminUrl("/ops"));
-  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/inbox - việc platform cần xử lý", "/payments - duyệt gói chủ quán", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/backup - xem và chạy backup", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
+  await ctx.reply(["LogiVN DevOps Bot", "", "/menu - trung tâm thao tác", "/inbox - việc platform cần xử lý", "/payments - duyệt gói chủ quán", "/logimail - duyệt request và mã bảo mật", "/domains - xem domain, DNS và link quản trị LogiMail", "/tenants - tạm dừng, mở lại, xóa mềm quán", "/health - kiểm tra hệ thống", "/backup - xem và chạy backup", "/queues - việc lỗi cần xử lý", "/webhook - kiểm tra bot", "/security - audit và quyền", "/disconnect - ngắt tài khoản"].join("\n"), { reply_markup: keyboard });
 }
 
 async function replyWithWhoami(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -669,6 +721,190 @@ async function rejectPaymentFromTelegram(ctx: Context, connection: PlatformTeleg
   await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.billing.payment.reject", outcome: "accepted", targetType: "subscription_payment", targetId: paymentId, metadata: result });
   const keyboard = new InlineKeyboard().text("Duyệt tiếp", await signedPlatformCallback(approvedConnection, "payments")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
   await ctx.reply("Đã từ chối giao dịch và ghi audit.", { reply_markup: keyboard });
+}
+
+async function replyWithLogimail(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "logimail.approve");
+  if (!connection) return;
+  const [requests, codes] = await Promise.all([
+    listPendingLogimailRequests(8),
+    listActiveLogimailSecurityCodes(8).catch(() => [] as PlatformLogimailSecurityCode[])
+  ]);
+  const keyboard = new InlineKeyboard();
+
+  await appendLogimailSelectors(keyboard, connection, requests.slice(0, 6));
+  keyboard
+    .text(`Mã bảo mật (${codes.length})`, await signedPlatformCallback(connection, "logimail.codes"))
+    .text("Domain DNS", await signedPlatformCallback(connection, "logimail.domains"))
+    .row()
+    .text("Làm mới", await signedPlatformCallback(connection, "logimail"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+
+  const lines = [
+    "Duyệt LogiMail",
+    "",
+    requests.length ? `${countLabel(requests.length, 8)} yêu cầu đang chờ admin.` : "Không có yêu cầu LogiMail đang chờ duyệt.",
+    `Mã bảo mật active: ${codes.length}`,
+    requests.length ? "Bấm số để mở chi tiết, sau đó duyệt hoặc từ chối." : "",
+    "",
+    ...(requests.length ? requests.slice(0, 6).map(formatLogimailListRow) : ["Hàng đợi đang sạch."])
+  ].filter(Boolean);
+  await ctx.reply(lines.join("\n"), { reply_markup: keyboard });
+}
+
+async function replyWithLogimailDomains(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "logimail.approve");
+  if (!connection) return;
+  const domains = await listLogimailDomainsForTelegram(8);
+  const active = domains.filter((domain) => isLogimailDomainActive(domain)).length;
+  const registrationEnabled = domains.filter((domain) => domain.registrationEnabled).length;
+  const warnings = domains.filter((domain) => logimailDomainNeedsAttention(domain)).length;
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "logimail.domains"))
+    .text("Tạo mã", await signedPlatformCallback(connection, "logimail.code.create"))
+    .row()
+    .text("LogiMail", await signedPlatformCallback(connection, "logimail"))
+    .text("Mã bảo mật", await signedPlatformCallback(connection, "logimail.codes"))
+    .row()
+    .url("Domain Control", domainControlUrl("/"))
+    .url("Admin Domains", platformAdminUrl("/domains"));
+
+  const lines = [
+    "Domain & DNS LogiMail",
+    "",
+    domains.length ? `${countLabel(domains.length, 8)} domain · ${active} active · ${registrationEnabled} bật đăng ký · ${warnings} cần rà soát` : "Chưa có domain LogiMail trong hệ thống.",
+    "",
+    ...(domains.length ? domains.slice(0, 8).map(formatLogimailDomainRow) : ["Mở Domain Control để thêm domain và cấu hình DNS."])
+  ].join("\n");
+  await ctx.reply(lines, { reply_markup: keyboard });
+}
+
+async function replyWithLogimailCodes(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
+  const connection = await requireConnection(ctx, preferredConnection, "logimail.approve");
+  if (!connection) return;
+  const codes = await listActiveLogimailSecurityCodes(8);
+  const keyboard = new InlineKeyboard().text("Tạo mã mới", await signedPlatformCallback(connection, "logimail.code.create")).row();
+
+  for (const [index, code] of codes.slice(0, 4).entries()) {
+    keyboard
+      .text(`Đổi #${index + 1}`, await signedPlatformCallback(connection, "logimail.code.rotate", { codeId: code.id }))
+      .text(`Xoá #${index + 1}`, await signedPlatformCallback(connection, "logimail.code.revoke", { codeId: code.id }))
+      .row();
+  }
+
+  keyboard.text("LogiMail", await signedPlatformCallback(connection, "logimail")).text("Menu", await signedPlatformCallback(connection, "menu"));
+
+  const lines = [
+    "Mã bảo mật LogiMail",
+    "",
+    codes.length ? `${countLabel(codes.length, 8)} mã đang hiệu lực.` : "Chưa có mã active.",
+    "",
+    ...(codes.length ? codes.slice(0, 8).map(formatLogimailSecurityCodeRow) : ["Bấm Tạo mã mới để cấp mã một-lần."])
+  ].join("\n");
+  await ctx.reply(lines, { reply_markup: keyboard });
+}
+
+async function createLogimailCodeFromTelegram(ctx: Context, connection: PlatformTelegramConnection) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const result = await createLogimailSecurityCodeFromTelegram(actorForConnection(approvedConnection));
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.logimail.security_code.create", outcome: "accepted", targetType: "logimail_security_code", targetId: String(result.codeId), metadata: { domain: result.domain, expiresAt: result.expiresAt } });
+  const keyboard = new InlineKeyboard().text("Xem mã", await signedPlatformCallback(approvedConnection, "logimail.codes")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(["Đã tạo mã đăng ký email", "", `Mã: ${result.code}`, `Domain: ${result.domain ?? "mọi domain"}`, `Hết hạn: ${formatShortDate(String(result.expiresAt))}`].join("\n"), { reply_markup: keyboard });
+}
+
+async function rotateLogimailCodeFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const codeId = payloadSecurityCodeId(payload);
+  if (!codeId) return replyWithLogimailCodes(ctx, approvedConnection);
+  const result = await rotateLogimailSecurityCodeFromTelegram(codeId, actorForConnection(approvedConnection));
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.logimail.security_code.rotate", outcome: "accepted", targetType: "logimail_security_code", targetId: codeId, metadata: { replacementId: result.codeId, domain: result.domain } });
+  const keyboard = new InlineKeyboard().text("Xem mã", await signedPlatformCallback(approvedConnection, "logimail.codes")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(["Đã đổi mã bảo mật", "", `Mã mới: ${result.code}`, `Domain: ${result.domain ?? "mọi domain"}`, `Hết hạn: ${formatShortDate(String(result.expiresAt))}`].join("\n"), { reply_markup: keyboard });
+}
+
+async function revokeLogimailCodeFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const codeId = payloadSecurityCodeId(payload);
+  if (!codeId) return replyWithLogimailCodes(ctx, approvedConnection);
+  const result = await revokeLogimailSecurityCodeFromTelegram(codeId, actorForConnection(approvedConnection));
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.logimail.security_code.revoke", outcome: "accepted", targetType: "logimail_security_code", targetId: codeId, metadata: result });
+  const keyboard = new InlineKeyboard().text("Xem mã", await signedPlatformCallback(approvedConnection, "logimail.codes")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply("Đã xoá mã bảo mật.", { reply_markup: keyboard });
+}
+
+async function replyWithLogimailDetail(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const requestRef = payloadLogimailRequest(payload);
+  if (!requestRef) return replyWithLogimailReload(ctx, approvedConnection, "Thiếu yêu cầu LogiMail cần xem.");
+  const request = await getPendingLogimailRequest(requestRef.type, requestRef.requestId);
+  if (!request) return replyWithLogimailReload(ctx, approvedConnection, "Yêu cầu LogiMail không còn chờ duyệt.");
+  const keyboard = new InlineKeyboard()
+    .text("Duyệt", await signedPlatformCallback(approvedConnection, "logimail.approve.prompt", requestRef))
+    .text("Từ chối", await signedPlatformCallback(approvedConnection, "logimail.reject.prompt", requestRef))
+    .row()
+    .text("Danh sách", await signedPlatformCallback(approvedConnection, "logimail"))
+    .text("Menu", await signedPlatformCallback(approvedConnection, "menu"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply(formatLogimailDecisionPrompt("Chi tiết LogiMail", request, "Chọn Duyệt hoặc Từ chối. Bot sẽ hỏi xác nhận trước khi ghi dữ liệu."), { reply_markup: keyboard });
+}
+
+async function replyWithLogimailApprovePrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const requestRef = payloadLogimailRequest(payload);
+  if (!requestRef) return replyWithLogimailReload(ctx, approvedConnection, "Thiếu yêu cầu LogiMail cần duyệt.");
+  const request = await getPendingLogimailRequest(requestRef.type, requestRef.requestId);
+  if (!request) return replyWithLogimailReload(ctx, approvedConnection, "Yêu cầu LogiMail không còn chờ duyệt.");
+  const keyboard = new InlineKeyboard()
+    .text("Xác nhận duyệt", await signedPlatformCallback(approvedConnection, "logimail.approve", requestRef))
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "logimail"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply(formatLogimailDecisionPrompt("Duyệt LogiMail", request, logimailApprovalImpact(request.type)), { reply_markup: keyboard });
+}
+
+async function approveLogimailFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const requestRef = payloadLogimailRequest(payload);
+  if (!requestRef) return replyWithLogimailReload(ctx, approvedConnection, "Thiếu yêu cầu LogiMail cần duyệt.");
+  const result = await approveLogimailRequestFromTelegram(requestRef.type, requestRef.requestId, actorForConnection(approvedConnection));
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.logimail.approve", outcome: "accepted", targetType: "logimail_request", targetId: `${requestRef.type}:${requestRef.requestId}`, metadata: result });
+  const keyboard = new InlineKeyboard().text("Duyệt tiếp", await signedPlatformCallback(approvedConnection, "logimail")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply(`Đã duyệt LogiMail ${requestRef.type}.`, { reply_markup: keyboard });
+}
+
+async function replyWithLogimailRejectPrompt(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const requestRef = payloadLogimailRequest(payload);
+  if (!requestRef) return replyWithLogimailReload(ctx, approvedConnection, "Thiếu yêu cầu LogiMail cần từ chối.");
+  const request = await getPendingLogimailRequest(requestRef.type, requestRef.requestId);
+  if (!request) return replyWithLogimailReload(ctx, approvedConnection, "Yêu cầu LogiMail không còn chờ từ chối.");
+  const keyboard = new InlineKeyboard()
+    .text("Xác nhận từ chối", await signedPlatformCallback(approvedConnection, "logimail.reject", requestRef))
+    .text("Hủy", await signedPlatformCallback(approvedConnection, "logimail"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+  await ctx.reply(formatLogimailDecisionPrompt("Từ chối LogiMail", request, "Lý do sẽ ghi: Chưa đủ điều kiện kích hoạt LogiMail."), { reply_markup: keyboard });
+}
+
+async function rejectLogimailFromTelegram(ctx: Context, connection: PlatformTelegramConnection, payload: Record<string, unknown>) {
+  const approvedConnection = await requireConnection(ctx, connection, "logimail.approve");
+  if (!approvedConnection) return;
+  const requestRef = payloadLogimailRequest(payload);
+  if (!requestRef) return replyWithLogimailReload(ctx, approvedConnection, "Thiếu yêu cầu LogiMail cần từ chối.");
+  const result = await rejectLogimailRequestFromTelegram(requestRef.type, requestRef.requestId, actorForConnection(approvedConnection), "Chưa đủ điều kiện kích hoạt LogiMail");
+  await recordPlatformTelegramAudit({ connection: approvedConnection, action: "platform.logimail.reject", outcome: "accepted", targetType: "logimail_request", targetId: `${requestRef.type}:${requestRef.requestId}`, metadata: result });
+  const keyboard = new InlineKeyboard().text("Duyệt tiếp", await signedPlatformCallback(approvedConnection, "logimail")).text("Menu", await signedPlatformCallback(approvedConnection, "menu"));
+  await ctx.reply("Đã từ chối yêu cầu LogiMail và ghi audit.", { reply_markup: keyboard });
 }
 
 async function replyWithTenants(ctx: Context, preferredConnection?: PlatformTelegramConnection) {
@@ -1048,6 +1284,17 @@ async function handlePlatformMenuAction(ctx: Context, action: PlatformMenuAction
   if (action === "payment.confirm") return confirmPaymentFromTelegram(ctx, connection, payload);
   if (action === "payment.reject.prompt") return replyWithPaymentRejectPrompt(ctx, connection, payload);
   if (action === "payment.reject") return rejectPaymentFromTelegram(ctx, connection, payload);
+  if (action === "logimail") return replyWithLogimail(ctx, connection);
+  if (action === "logimail.detail") return replyWithLogimailDetail(ctx, connection, payload);
+  if (action === "logimail.approve.prompt") return replyWithLogimailApprovePrompt(ctx, connection, payload);
+  if (action === "logimail.approve") return approveLogimailFromTelegram(ctx, connection, payload);
+  if (action === "logimail.reject.prompt") return replyWithLogimailRejectPrompt(ctx, connection, payload);
+  if (action === "logimail.reject") return rejectLogimailFromTelegram(ctx, connection, payload);
+  if (action === "logimail.codes") return replyWithLogimailCodes(ctx, connection);
+  if (action === "logimail.code.create") return createLogimailCodeFromTelegram(ctx, connection);
+  if (action === "logimail.code.rotate") return rotateLogimailCodeFromTelegram(ctx, connection, payload);
+  if (action === "logimail.code.revoke") return revokeLogimailCodeFromTelegram(ctx, connection, payload);
+  if (action === "logimail.domains") return replyWithLogimailDomains(ctx, connection);
   if (action === "tenants") return replyWithTenants(ctx, connection);
   if (action === "tenant.detail") return replyWithTenantDetail(ctx, connection, payload);
   if (action === "tenant.suspend.prompt") return replyWithTenantStatusPrompt(ctx, connection, payload, "suspended");
@@ -1126,6 +1373,18 @@ async function platformSubscriptionApprovalKeyboard(connection: PlatformTelegram
     .url("Admin billing", platformAdminUrl("/payments"));
 }
 
+async function platformLogimailApprovalKeyboard(connection: PlatformTelegramConnection, event: PlatformLogimailApprovalRequestedJob) {
+  const requestRef = { requestType: event.logimail.requestType, requestId: event.logimail.requestId };
+  return new InlineKeyboard()
+    .text("Duyệt", await signedPlatformCallback(connection, "logimail.approve.prompt", requestRef))
+    .text("Từ chối", await signedPlatformCallback(connection, "logimail.reject.prompt", requestRef))
+    .row()
+    .text("Chi tiết", await signedPlatformCallback(connection, "logimail.detail", requestRef))
+    .text("LogiMail", await signedPlatformCallback(connection, "logimail"))
+    .row()
+    .url("Admin Ops", platformAdminUrl("/ops"));
+}
+
 async function platformSubscriptionResolvedKeyboard(
   connection: PlatformTelegramConnection,
   event: PlatformSubscriptionConfirmedJob | PlatformSubscriptionRejectedJob
@@ -1176,6 +1435,13 @@ async function replyWithPaymentsReload(ctx: Context, connection: PlatformTelegra
   await ctx.reply(`${message} Tải lại danh sách thanh toán hiện tại.`, { reply_markup: keyboard });
 }
 
+async function replyWithLogimailReload(ctx: Context, connection: PlatformTelegramConnection, message: string) {
+  const keyboard = new InlineKeyboard()
+    .text("Làm mới", await signedPlatformCallback(connection, "logimail"))
+    .text("Menu", await signedPlatformCallback(connection, "menu"));
+  await ctx.reply(`${message} Tải lại danh sách LogiMail hiện tại.`, { reply_markup: keyboard });
+}
+
 async function replyWithTenantsReload(ctx: Context, connection: PlatformTelegramConnection, message: string) {
   const keyboard = new InlineKeyboard()
     .text("Làm mới", await signedPlatformCallback(connection, "tenants"))
@@ -1189,6 +1455,14 @@ async function appendPaymentSelectors(keyboard: InlineKeyboard, connection: Plat
     if ((index + 1) % 4 === 0) keyboard.row();
   }
   if (payments.length && payments.length % 4 !== 0) keyboard.row();
+}
+
+async function appendLogimailSelectors(keyboard: InlineKeyboard, connection: PlatformTelegramConnection, requests: PlatformLogimailRequest[]) {
+  for (const [index, request] of requests.entries()) {
+    keyboard.text(`#${index + 1}`, await signedPlatformCallback(connection, "logimail.detail", { requestType: request.type, requestId: request.id }));
+    if ((index + 1) % 6 === 0) keyboard.row();
+  }
+  if (requests.length && requests.length % 6 !== 0) keyboard.row();
 }
 
 async function appendTenantSelectors(keyboard: InlineKeyboard, connection: PlatformTelegramConnection, tenants: PlatformTenantAction[]) {
@@ -1222,6 +1496,19 @@ function formatQueueAttentionRow(row: QueueAttentionRow) {
 function payloadQueueName(payload: Record<string, unknown>) {
   const queueName = payloadString(payload, "queueName");
   return QUEUE_CONTROL_NAMES.has(queueName) ? queueName : "";
+}
+
+function payloadLogimailRequest(payload: Record<string, unknown>) {
+  const requestType = payloadString(payload, "requestType") as PlatformLogimailRequestType;
+  const requestId = payloadString(payload, "requestId");
+  if (requestType !== "account" && requestType !== "domain" && requestType !== "mailbox") return null;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) return null;
+  return { requestType, requestId, type: requestType };
+}
+
+function payloadSecurityCodeId(payload: Record<string, unknown>) {
+  const codeId = payloadString(payload, "codeId");
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(codeId) ? codeId : "";
 }
 
 async function findQueueFailedJob(queueName: string, jobId: string) {
@@ -1258,22 +1545,26 @@ function formatQueueRetryResult(result: Record<string, unknown>) {
 
 function formatPlatformInbox(input: {
   pendingPayments: PlatformSubscriptionPayment[];
+  pendingLogimail: PlatformLogimailRequest[];
   tenantActions: PlatformTenantAction[];
   failedRows: QueueAttentionRow[];
 }) {
   const paymentLines = input.pendingPayments.slice(0, 3).map((payment, index) => `P${index + 1}. ${paymentRestaurantLabel(payment)} · ${formatVnd(payment.amount)} · ${paymentPlanLabel(payment)}`);
+  const logimailLines = input.pendingLogimail.slice(0, 3).map((request, index) => `M${index + 1}. ${logimailTypeLabel(request.type)} · ${request.targetValue} · ${request.workspaceName ?? request.requesterEmail ?? "platform"}`);
   const tenantLines = input.tenantActions.slice(0, 3).map((tenant, index) => `T${index + 1}. ${tenantRestaurantLabel(tenant)} · ${tenant.platformStatus} · ${tenant.riskFlags[0] ?? tenant.subscriptionStatus ?? "theo dõi"}`);
   const queueLines = input.failedRows.slice(0, 3).map((row, index) => `Q${index + 1}. ${shortQueueName(row.name)} · lỗi/DLQ ${row.failed} · chờ ${row.backlog}`);
-  const hasWork = paymentLines.length || tenantLines.length || queueLines.length;
+  const hasWork = paymentLines.length || logimailLines.length || tenantLines.length || queueLines.length;
 
   return [
     "LogiVN DevOps Inbox",
     "",
     `Cần duyệt: ${input.pendingPayments.length} gói`,
+    `LogiMail chờ duyệt: ${input.pendingLogimail.length}`,
     `Tenant cần xem: ${input.tenantActions.length}`,
     `Queue lỗi: ${input.failedRows.reduce((sum, row) => sum + row.failed, 0)}`,
     "",
     ...(paymentLines.length ? ["Duyệt gói", ...paymentLines, ""] : []),
+    ...(logimailLines.length ? ["LogiMail", ...logimailLines, ""] : []),
     ...(tenantLines.length ? ["Tenant", ...tenantLines, ""] : []),
     ...(queueLines.length ? ["Queue", ...queueLines, ""] : []),
     hasWork ? "Chọn nhóm việc bên dưới để xử lý. Chi tiết và action nằm trong từng màn." : "Không có việc platform khẩn ở thời điểm này."
@@ -1292,10 +1583,84 @@ function formatQueueJobTime(value: number | null) {
   return formatShortDate(new Date(value).toISOString());
 }
 
-function platformMenuPriority(payment?: PlatformSubscriptionPayment, tenant?: PlatformTenantAction) {
+function platformMenuPriority(payment?: PlatformSubscriptionPayment, logimail?: PlatformLogimailRequest, tenant?: PlatformTenantAction) {
   if (payment) return `Duyệt ${paymentRestaurantLabel(payment)} · ${formatVnd(payment.amount)}`;
+  if (logimail) return `Duyệt LogiMail ${logimailTypeLabel(logimail.type)} · ${logimail.targetValue}`;
   if (tenant) return `Rà soát ${tenantRestaurantLabel(tenant)} · ${tenant.riskFlags[0] ?? tenant.platformStatus}`;
   return "theo dõi sức khỏe hệ thống";
+}
+
+function formatLogimailListRow(request: PlatformLogimailRequest, index: number) {
+  const risk = request.riskFlags.length ? ` · ${request.riskFlags.join(", ")}` : "";
+  return [
+    `#${index + 1} ${logimailTypeLabel(request.type)} · ${truncateVisible(request.targetValue, 54)}`,
+    `   ${request.workspaceName ?? "workspace mới"} · ${request.requesterEmail ?? shortId(request.requesterUserId)}`,
+    `   ${formatAge(request.createdAt)}${request.plannedRecordCount ? ` · ${request.plannedRecordCount} DNS records` : ""}${risk}`
+  ].join("\n");
+}
+
+function formatLogimailSecurityCodeRow(code: PlatformLogimailSecurityCode, index: number) {
+  return [
+    `#${index + 1} ${securityCodePurposeLabel(code.purpose)} · ${code.code ?? `••••-${code.codeHint}`} · ${code.domain ?? "mọi domain"}`,
+    `   hết hạn ${formatShortDate(code.expiresAt)} · tạo ${formatAge(code.createdAt)}`
+  ].join("\n");
+}
+
+function securityCodePurposeLabel(purpose: PlatformLogimailSecurityCode["purpose"]) {
+  if (purpose === "password_reset") return "Quên mật khẩu";
+  if (purpose === "account_signup") return "Đăng ký email";
+  return "Truy cập";
+}
+
+function formatLogimailDomainRow(domain: PlatformLogimailDomain, index: number) {
+  const status = isLogimailDomainActive(domain) ? "active" : `${domain.status}/${domain.approvalStatus}`;
+  const registration = domain.registrationEnabled ? "đăng ký bật" : "đăng ký tắt";
+  const dns = [`MX ${domain.dns.mx}`, `SPF ${domain.dns.spf}`, `DMARC ${domain.dns.dmarc}`, `PTR ${domain.dns.ptr}`].join(" · ");
+  return [
+    `#${index + 1} ${domain.domain} · ${status} · ${registration}`,
+    `   MX host: ${domain.mailHostname} · mailbox ${domain.mailboxCount}`,
+    `   DNS: ${dns}`,
+    `   Workspace: ${domain.workspaceName ?? domain.workspaceSlug ?? domain.workspaceId ?? "platform"} · kiểm tra ${domain.dns.lastCheckedAt ? formatShortDate(domain.dns.lastCheckedAt) : "chưa có"}`
+  ].join("\n");
+}
+
+function isLogimailDomainActive(domain: PlatformLogimailDomain) {
+  return domain.status === "active" && domain.approvalStatus === "approved";
+}
+
+function logimailDomainNeedsAttention(domain: PlatformLogimailDomain) {
+  if (!isLogimailDomainActive(domain)) return true;
+  return [domain.dns.mx, domain.dns.spf, domain.dns.dmarc, domain.dns.ptr].some((status) => ["failed", "fail", "warning"].includes(status));
+}
+
+function formatLogimailDecisionPrompt(title: string, request: PlatformLogimailRequest, impact: string) {
+  return [
+    title,
+    "",
+    `Loại: ${logimailTypeLabel(request.type)}`,
+    `Mục tiêu: ${request.targetValue}`,
+    request.workspaceName ? `Workspace: ${request.workspaceName}${request.workspaceSlug ? ` (${request.workspaceSlug})` : ""}` : null,
+    `Requester: ${request.requesterEmail ?? request.requesterUserId}`,
+    request.detail ? `Chi tiết: ${request.detail}` : null,
+    request.purpose ? `Mục đích: ${truncateVisible(request.purpose, 160)}` : null,
+    request.plannedRecordCount ? `DNS dự kiến: ${request.plannedRecordCount} records` : null,
+    request.riskFlags.length ? `Cờ rủi ro: ${request.riskFlags.join(", ")}` : "Cờ rủi ro: không có",
+    `Tạo: ${formatShortDate(request.createdAt)} (${formatAge(request.createdAt)})`,
+    "",
+    impact
+  ].filter(Boolean).join("\n");
+}
+
+function logimailApprovalImpact(type: PlatformLogimailRequestType) {
+  if (type === "account") return "Sau khi duyệt: tạo profile approved, workspace owner, membership và quota mặc định.";
+  if (type === "domain") return "Sau khi duyệt: domain chuyển active/approved và bật đăng ký mailbox theo domain.";
+  return "Sau khi duyệt: tạo mailbox metadata BillionMail và gán quyền admin cho requester.";
+}
+
+function logimailTypeLabel(type: PlatformLogimailRequestType) {
+  if (type === "account") return "Tài khoản";
+  if (type === "domain") return "Domain";
+  return "Mailbox";
 }
 
 function formatPaymentListRow(payment: PlatformSubscriptionPayment, index: number) {
@@ -1686,6 +2051,7 @@ async function configurePlatformCommands() {
     { command: "menu", description: "Mở trung tâm thao tác" },
     { command: "inbox", description: "Việc platform cần xử lý" },
     { command: "payments", description: "Duyệt gói chủ quán" },
+    { command: "logimail", description: "Duyệt LogiMail và mã bảo mật" },
     { command: "tenants", description: "Quản lý quán nhanh" },
     { command: "health", description: "Kiểm tra hệ thống" },
     { command: "backup", description: "Xem và chạy backup" },
@@ -1745,6 +2111,28 @@ function formatPlatformSubscriptionApprovalRequested(event: PlatformSubscription
     `Tạo: ${escapeHtml(formatShortDate(payment.createdAt ?? event.occurredAt ?? new Date().toISOString()))}`,
     "",
     "Cần duyệt hoặc từ chối để chủ quán không phải chờ trên dashboard."
+  ]);
+}
+
+function formatPlatformLogimailApprovalRequested(event: PlatformLogimailApprovalRequestedJob) {
+  const request = event.logimail;
+  const risk = request.riskFlags?.length ? request.riskFlags.join(", ") : "không có";
+  return htmlLines([
+    `📮 <b>LogiMail cần phê duyệt</b>`,
+    "",
+    `Loại: <b>${escapeHtml(logimailTypeLabel(request.requestType))}</b>`,
+    `Mục tiêu: <code>${escapeHtml(request.targetValue)}</code>`,
+    request.workspaceName ? `Workspace: ${escapeHtml(request.workspaceName)}${request.workspaceSlug ? ` (${escapeHtml(request.workspaceSlug)})` : ""}` : null,
+    request.requesterEmail ? `Requester: ${escapeHtml(request.requesterEmail)}` : request.requesterUserId ? `Requester: ${escapeHtml(request.requesterUserId)}` : null,
+    request.mailHostname ? `Mail host: ${escapeHtml(request.mailHostname)}` : null,
+    request.displayName ? `Tên hiển thị: ${escapeHtml(request.displayName)}` : null,
+    request.quotaMb ? `Quota: ${Number(request.quotaMb)}MB` : null,
+    request.plannedRecordCount ? `DNS dự kiến: ${Number(request.plannedRecordCount)} records` : null,
+    `Cờ rủi ro: ${escapeHtml(risk)}`,
+    request.purpose ? `Mục đích: ${escapeHtml(truncateVisible(request.purpose, 180))}` : null,
+    `Tạo: ${escapeHtml(formatShortDate(request.createdAt ?? event.occurredAt ?? new Date().toISOString()))}`,
+    "",
+    "Duyệt trên Telegram sẽ ghi metadata LogiMail và audit platform."
   ]);
 }
 
@@ -1905,6 +2293,11 @@ function appUrl(path = "/") {
 
 function platformAdminUrl(path = "/") {
   const base = readEnv("PLATFORM_ADMIN_PUBLIC_URL", "https://admin.logivn.com").replace(/\/$/, "");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function domainControlUrl(path = "/") {
+  const base = readEnv("PLATFORM_DOMAIN_CONTROL_PUBLIC_URL", "https://domain.logivn.com").replace(/\/$/, "");
   return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 

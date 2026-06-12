@@ -93,6 +93,9 @@ export function AiControl({ snapshot }: { snapshot: Snapshot }) {
       </div>
 
       <SectionCard title="Khoá API AI & định tuyến runtime">
+        <p className="text-sm text-slate-400">
+          Provider legacy như Qwen/DashScope đã được rút khỏi form cấu hình và chỉ còn được giữ ở lớp tương thích ngược của runtime.
+        </p>
         <div className="grid gap-3 xl:grid-cols-2">
           {snapshot.aiControl.providerConfigs.map((provider) => (
             <form key={provider.provider} action={updateAiProviderConfigAction} className="rounded-lg border border-white/10 bg-white/[0.035] p-4">

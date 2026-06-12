@@ -142,6 +142,9 @@ export const eventRoutes = {
   "platform.subscription.approval_requested": [
     route("platform.telegram.notifications", "platform.subscription.approval_requested", "critical")
   ],
+  "platform.logimail.approval_requested": [
+    route("platform.telegram.notifications", "platform.logimail.approval_requested", "critical")
+  ],
   "platform.subscription.confirmed": [
     route("platform.telegram.notifications", "platform.subscription.confirmed", "critical")
   ],

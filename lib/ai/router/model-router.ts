@@ -8,6 +8,7 @@ import { runBedrockConverseChat } from "@/lib/ai/providers/bedrock-converse";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
 import { assertMimoDailyTaskTokenBudget, recordMimoDailyTaskTokenUsage } from "@/lib/ai/providers/mimo-quota";
 import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
+import { resolveProviderTimeoutMs } from "@/lib/ai/router/provider-timeouts";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
 
 export async function chooseAiProviderOrder(request: Pick<AiCompletionRequest, "taskType" | "preferredProvider" | "options">) {
@@ -68,11 +69,15 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
         await assertMimoDailyTaskTokenBudget(request.taskType, request.options?.maxTokens ?? null);
       }
 
+      const timeoutMs = resolveProviderTimeoutMs(provider, request.taskType, request.options?.timeoutMs);
+      const options = request.options ? { ...request.options } : {};
+      if (timeoutMs) options.timeoutMs = timeoutMs;
+
       const result = await runProviderChat({
         config,
         model,
         messages: request.messages,
-        options: request.options
+        options
       });
       const estimatedCostVnd = estimateAiCostVnd(config, result.inputTokens, result.outputTokens);
       const completed: AiCompletionResult = {

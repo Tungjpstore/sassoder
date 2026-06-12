@@ -1,0 +1,25 @@
+[Unit]
+Description=LogiMail server-side Web Push worker
+After=network-online.target logimail-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logimail
+Group=logimail
+WorkingDirectory=/opt/logimail
+Environment=NODE_ENV=production
+Environment=HOME=/var/lib/logimail
+Environment=LOGIMAIL_PUBLIC_URL=https://mail.logivn.com
+EnvironmentFile=-/etc/logimail/logimail.env
+ExecStart=/usr/bin/npm --workspace @logivn/logimail-web run push-worker -- --interval-ms=45000
+SyslogIdentifier=logimail-push-worker
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -75,6 +75,7 @@ const eventSchema = z
       "platform.alert",
       "platform.tenant.created",
       "platform.subscription.approval_requested",
+      "platform.logimail.approval_requested",
       "platform.subscription.confirmed",
       "platform.subscription.rejected",
       "platform.tenant.status_changed",

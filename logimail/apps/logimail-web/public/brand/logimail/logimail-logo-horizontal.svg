@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 128" role="img" aria-labelledby="title desc">
+  <title id="title">LogiMail horizontal logo</title>
+  <desc id="desc">Horizontal LogiMail logo using the LogiVN green and orange brand system.</desc>
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#0F4D3A"/>
+  <path d="M64 27 94 38v22c0 24-12.7 39.2-30 47.6C46.7 99.2 34 84 34 60V38l30-11Z" fill="#FFF7EB"/>
+  <rect x="42" y="50" width="44" height="32" rx="5" fill="#0F4D3A"/>
+  <path d="M44 54 64 68l20-14" fill="none" stroke="#FFF7EB" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="92" cy="38" r="15" fill="#F28C28"/>
+  <path d="m85.5 38.3 4.7 4.7 8.7-10" fill="none" stroke="#FFF7EB" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="146" y="78" fill="#0F4D3A" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="800" letter-spacing="0">Logi</text>
+  <text x="267" y="78" fill="#F28C28" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="800" letter-spacing="0">Mail</text>
+  <text x="149" y="101" fill="#68736D" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" letter-spacing="2.4">MAILOPS NỘI BỘ</text>
+</svg>

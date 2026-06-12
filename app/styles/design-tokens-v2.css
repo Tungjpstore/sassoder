@@ -1,0 +1,268 @@
+/* ============================================================
+ * LogiVN Landing v2 — Design System
+ * --
+ * One coherent system. Conversion-first, modern, minimal.
+ * Brand-locked: jade #0F4D3A · orange #F28C28 · ivory #FFF7EB
+ *               charcoal #2B2B2B · sage #A9C5A1
+ *
+ * Scoped under [data-ds="v2"]. Existing pages untouched.
+ * ============================================================ */
+
+[data-ds="v2"] {
+  /* ---- Brand ---- */
+  --jade: #0F4D3A;
+  --jade-700: #0C3D2E;
+  --jade-900: #071F18;
+  --jade-300: #4F8E66;
+  --orange: #F28C28;
+  --orange-600: #D9741A;
+  --orange-300: #F8B86A;
+  --ivory: #FFF7EB;
+  --charcoal: #2B2B2B;
+  --sage: #A9C5A1;
+  --sage-100: #EAF1E6;
+
+  /* ---- Surfaces (light) ---- */
+  --bg: #FCFAF4;
+  --surface: #FFFFFF;
+  --surface-2: #F6F4EC;
+  --surface-ink: var(--jade);
+
+  /* ---- Text ---- */
+  --text: #1C2620;
+  --text-muted: #5A655D;
+  --text-faint: #8A938B;
+  --on-jade: #F3F8F1;
+  --on-orange: #2A1705;
+
+  /* ---- Lines ---- */
+  --line: rgba(15, 77, 58, 0.10);
+  --line-strong: rgba(15, 77, 58, 0.18);
+
+  /* ---- Accents ---- */
+  --primary: var(--jade);
+  --primary-soft: var(--sage-100);
+  --accent: var(--orange);
+  --accent-soft: #FDEBD6;
+
+  /* ---- Feedback ---- */
+  --ok-bg: #E4F0E5;
+  --ok-fg: #1C6B3F;
+  --warn-bg: #FDEBD6;
+  --warn-fg: #B5670F;
+
+  /* ---- Type ---- */
+  --font-display: var(--font-v2-display), "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-v2-sans), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-v2-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-hero: clamp(2.25rem, 4.2vw, 3.75rem);
+  --fs-h2: clamp(1.625rem, 2.6vw, 2.5rem);
+  --fs-h3: 1.1875rem;
+  --fs-lead: clamp(1.0625rem, 1.3vw, 1.1875rem);
+  --fs-body: 1rem;
+  --fs-sm: 0.9375rem;
+  --fs-xs: 0.8125rem;
+  --fs-eyebrow: 0.75rem;
+
+  --lh-tight: 1.05;
+  --lh-snug: 1.2;
+  --lh-body: 1.6;
+  --tracking-eyebrow: 0.18em;
+  --tracking-tight: -0.025em;
+  --tracking-tighter: -0.035em;
+
+  /* ---- Space (8pt) ---- */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-12: 2.5rem;
+  --s-16: 3.25rem;
+  --s-20: 4.25rem;
+  --s-28: 6rem;
+
+  /* ---- Radius ---- */
+  --r-sm: 0.5rem;
+  --r-md: 0.875rem;
+  --r-lg: 1.25rem;
+  --r-xl: 1.75rem;
+  --r-pill: 999px;
+
+  /* ---- Shadow (soft, layered) ---- */
+  --sh-sm: 0 1px 2px rgba(20, 35, 28, 0.05);
+  --sh-md: 0 6px 20px rgba(20, 35, 28, 0.07);
+  --sh-lg: 0 18px 48px rgba(20, 35, 28, 0.10);
+  --sh-xl: 0 36px 80px rgba(20, 35, 28, 0.14);
+  --sh-accent: 0 16px 36px rgba(242, 140, 40, 0.28);
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 220ms;
+
+  --container: 76rem;
+
+  color-scheme: light;
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-ds="v2"] *,
+[data-ds="v2"] *::before,
+[data-ds="v2"] *::after {
+  box-sizing: border-box;
+}
+
+[data-ds="v2"] :where(h1, h2, h3, h4) {
+  font-family: var(--font-display);
+  letter-spacing: var(--tracking-tight);
+  margin: 0;
+}
+
+[data-ds="v2"] :where(p) {
+  margin: 0;
+}
+
+[data-ds="v2"] :where(a) {
+  color: inherit;
+  text-decoration: none;
+}
+
+[data-ds="v2"] :where(:focus-visible) {
+  outline: 2px solid var(--jade);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ---- Reveal animation ---- */
+@keyframes v2-fade-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-ds="v2"] * { animation: none !important; transition: none !important; }
+}
+
+/* ============================================================
+ * Premium typographic helpers
+ * ============================================================ */
+[data-ds="v2"] {
+  font-feature-settings: "ss01" on, "ss02" on, "cv11" on;
+}
+
+[data-ds="v2"] :where(h1, h2, h3, h4, .v2-display) {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+[data-ds="v2"] .v2-display {
+  font-size: var(--fs-hero);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-tight);
+  font-weight: 700;
+}
+
+/* Brushed underline highlight under inline accent words */
+[data-ds="v2"] .v2-mark {
+  position: relative;
+  display: inline-block;
+  color: var(--orange);
+  white-space: nowrap;
+}
+[data-ds="v2"] .v2-mark::after {
+  content: "";
+  position: absolute;
+  left: -2%;
+  right: -2%;
+  bottom: 6%;
+  height: 0.42em;
+  background: linear-gradient(120deg, transparent 0%, rgba(242,140,40,0.28) 18%, rgba(242,140,40,0.42) 50%, rgba(242,140,40,0.28) 82%, transparent 100%);
+  border-radius: 999px;
+  z-index: -1;
+  transform: skewX(-6deg);
+}
+
+/* Live status pill — slow pulse */
+[data-ds="v2"] .v2-live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
+  padding: 0 0.875rem 0 0.625rem;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--sh-sm);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+[data-ds="v2"] .v2-live-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ok-fg);
+}
+[data-ds="v2"] .v2-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 2px solid var(--ok-fg);
+  opacity: 0.5;
+  animation: v2-pulse 1.8s ease-out infinite;
+}
+@keyframes v2-pulse {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Eyebrow with leading bar */
+[data-ds="v2"] .v2-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: var(--fs-eyebrow);
+  font-weight: 700;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+[data-ds="v2"] .v2-eyebrow::before {
+  content: "";
+  width: 1.75rem;
+  height: 1px;
+  background: var(--line-strong);
+}
+
+/* Section number — large monospace ordinal */
+[data-ds="v2"] .v2-ordinal {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" on;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--orange);
+  letter-spacing: 0.04em;
+}
+
+/* Diagonal stripe for sections */
+[data-ds="v2"] .v2-stripes::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--line) 0,
+    var(--line) 1px,
+    transparent 1px,
+    transparent 14px
+  );
+  mask-image: radial-gradient(ellipse at center, black 0%, transparent 70%);
+}

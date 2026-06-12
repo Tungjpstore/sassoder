@@ -17,6 +17,10 @@ const bedrockBaseUrl = "https://bedrock-runtime.us-east-1.amazonaws.com";
 
 const providerOrder: AiProvider[] = ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "claude", "vercel_gateway", "qwen"];
 
+function isOperationalProviderVisible(provider: AiProvider) {
+  return provider !== "qwen";
+}
+
 type ProviderDefinition = {
   provider: AiProvider;
   protocol: AiProviderProtocol;
@@ -370,7 +374,7 @@ export async function availableResolvedAiProviders() {
 }
 
 export function getAiProviderReadiness(): AiProviderReadiness[] {
-  return providerDefinitions().map((definition) => {
+  return providerDefinitions().filter((definition) => isOperationalProviderVisible(definition.provider)).map((definition) => {
     const config = buildProviderConfig(definition);
     const configured = Boolean(config.apiKey);
     return {
@@ -397,7 +401,7 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
 
 export async function getResolvedAiProviderReadiness(): Promise<AiProviderReadiness[]> {
   return Promise.all(
-    providerDefinitions().map(async (definition) => {
+    providerDefinitions().filter((definition) => isOperationalProviderVisible(definition.provider)).map(async (definition) => {
       const { config, override } = await buildResolvedProviderConfig(definition);
       const configured = Boolean(config.apiKey);
       const envConfigured = Boolean(readEnv(definition.keyEnvNames));

@@ -95,6 +95,26 @@ const platformSubscriptionStatusSchema = z.object({
   changedAt: optionalIsoDateTime
 });
 
+const platformLogimailApprovalSchema = z.object({
+  requestId: z.string().uuid(),
+  requestType: z.enum(["account", "domain", "mailbox"]),
+  requesterUserId: z.string().uuid().nullable().optional(),
+  requesterEmail: z.string().max(180).nullable().optional(),
+  workspaceId: z.string().uuid().nullable().optional(),
+  workspaceName: z.string().max(180).nullable().optional(),
+  workspaceSlug: z.string().max(120).nullable().optional(),
+  targetValue: z.string().min(1).max(254),
+  purpose: z.string().max(1000).nullable().optional(),
+  domain: z.string().max(253).nullable().optional(),
+  mailHostname: z.string().max(253).nullable().optional(),
+  emailAddress: z.string().max(254).nullable().optional(),
+  displayName: z.string().max(120).nullable().optional(),
+  quotaMb: z.number().int().min(128).max(102400).nullable().optional(),
+  riskFlags: z.array(z.string().max(80)).max(20).optional(),
+  plannedRecordCount: z.number().int().min(0).max(200).optional(),
+  createdAt: optionalIsoDateTime
+});
+
 export const platformTenantCreatedJobSchema = z.object({
   type: z.literal("platform.tenant.created"),
   eventId: z.string().min(8).max(180),
@@ -161,10 +181,22 @@ export const platformSubscriptionStatusChangedJobSchema = z.object({
   subscription: platformSubscriptionStatusSchema
 });
 
+export const platformLogimailApprovalRequestedJobSchema = z.object({
+  type: z.literal("platform.logimail.approval_requested"),
+  eventId: z.string().min(8).max(180),
+  tenantId: z.string().min(1).optional(),
+  restaurantId: z.string().uuid().optional(),
+  branchId: z.string().nullable().optional(),
+  occurredAt: isoDateTimeSchema.optional(),
+  source: z.enum(["system", "devops", "telegram", "dashboard"]).optional(),
+  logimail: platformLogimailApprovalSchema
+});
+
 export const platformTelegramJobSchema = z.discriminatedUnion("type", [
   platformAlertJobSchema,
   platformTenantCreatedJobSchema,
   platformSubscriptionApprovalRequestedJobSchema,
+  platformLogimailApprovalRequestedJobSchema,
   platformSubscriptionConfirmedJobSchema,
   platformSubscriptionRejectedJobSchema,
   platformTenantStatusChangedJobSchema,
@@ -175,6 +207,7 @@ export type PlatformTelegramJob = z.infer<typeof platformTelegramJobSchema>;
 export type PlatformAlertJob = z.infer<typeof platformAlertJobSchema>;
 export type PlatformTenantCreatedJob = z.infer<typeof platformTenantCreatedJobSchema>;
 export type PlatformSubscriptionApprovalRequestedJob = z.infer<typeof platformSubscriptionApprovalRequestedJobSchema>;
+export type PlatformLogimailApprovalRequestedJob = z.infer<typeof platformLogimailApprovalRequestedJobSchema>;
 export type PlatformSubscriptionConfirmedJob = z.infer<typeof platformSubscriptionConfirmedJobSchema>;
 export type PlatformSubscriptionRejectedJob = z.infer<typeof platformSubscriptionRejectedJobSchema>;
 export type PlatformTenantStatusChangedJob = z.infer<typeof platformTenantStatusChangedJobSchema>;

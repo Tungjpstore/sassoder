@@ -1,0 +1,49 @@
+{
+  "name": "LogiMail",
+  "short_name": "LogiMail",
+  "id": "/mail/inbox",
+  "start_url": "/mail/inbox?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "description": "Internal Email Platform & MailOps for LogiVN",
+  "background_color": "#F8F7F2",
+  "theme_color": "#0F3D2E",
+  "categories": ["business", "productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Hộp thư đến",
+      "short_name": "Inbox",
+      "description": "Mở hộp thư đến LogiMail",
+      "url": "/mail/inbox?source=pwa-shortcut",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Soạn email",
+      "short_name": "Soạn",
+      "description": "Tạo email mới trong LogiMail",
+      "url": "/mail/compose?source=pwa-shortcut",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "logimail",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace @logivn/logimail-web run dev",
+    "check": "bash scripts/check.sh",
+    "check:secrets": "bash scripts/check-secrets.sh",
+    "smoke:api:web": "cd apps/logimail-web && npx --no-install tsx scripts/smoke-api-routes.ts",
+    "typecheck:web": "npm --workspace @logivn/logimail-web run typecheck",
+    "typecheck:api": "npm --workspace @logivn/logimail-api run typecheck"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
+}

@@ -17,6 +17,7 @@ const ownerPermissions = [
   "platform.refresh",
   "content.write",
   "billing.write",
+  "logimail.approve",
   "tenants.write",
   "tenants.suspend",
   "tenants.restore",
@@ -99,7 +100,7 @@ type PlatformAdminVerification = {
 
 const fallbackRolePermissions: Record<PlatformAdminRole, PlatformAdminPermission[]> = {
   owner: [...ownerPermissions],
-  ops: ["platform.read", "platform.refresh", "security.read", "release.read", "governance.read", "sessions.revoke"],
+  ops: ["platform.read", "platform.refresh", "logimail.approve", "security.read", "release.read", "governance.read", "sessions.revoke"],
   billing: ["platform.read", "platform.refresh", "billing.write", "governance.read"],
   content: ["platform.read", "platform.refresh", "content.write", "governance.read"],
   support: ["platform.read", "platform.refresh", "tenants.suspend", "tenants.restore", "users.block", "users.restore", "governance.read"],

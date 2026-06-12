@@ -29,3 +29,6 @@ prisma/dev.db
 .codex/
 .codex-kit/
 codex/
+.vscode/
+.codex-artifacts/
+logimail/supabase/.temp/

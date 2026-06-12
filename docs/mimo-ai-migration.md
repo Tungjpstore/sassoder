@@ -6,6 +6,8 @@ Luồng AI cũ dùng Qwen/DashScope đã được chuyển sang Xiaomi MiMo API 
 
 Provider chính là `mimo` với model mạnh nhất `mimo-v2.5-pro`. Fallback mặc định là `deepseek`, rồi `gemini`.
 
+Cutover production ngày `2026-06-09` đã hoàn tất trên `logivn.com` với một bổ sung quan trọng: timeout sàn cho MiMo ở các task owner/report/tool được nới riêng trong router để `mimo-v2.5-pro` có đủ thời gian phản hồi trước khi bị đẩy sang fallback.
+
 Các task hiện hữu vẫn đi qua cùng surface:
 
 | Task hiện có | Internal task/router | Primary model | Fallback |
@@ -80,6 +82,17 @@ MIMO_DAILY_TOKENS_OCR="10666666"
 
 If MiMo hits the daily task cap, times out, returns 429, or returns a 5xx provider error, the router records the failed attempt and continues to DeepSeek/Gemini without changing endpoint mapping.
 
+Timeout floor hiện tại để giữ owner/admin dùng MiMo trước fallback:
+
+| Task type | Router timeout floor for MiMo |
+| --- | ---: |
+| `customer_ordering` | 8s |
+| `tool` | 20s |
+| `dashboard_operation` | 24s |
+| `analytics_reasoning` | 30s |
+| `business_insight` | 30s |
+| `batch_report` | 30s |
+
 ## Pro/Premium Quotas
 
 Billing request quotas remain unchanged. MiMo token caps are provider-side guardrails and do not replace plan entitlements.
@@ -124,6 +137,33 @@ group by metadata->>'taskType'
 order by tokens desc;
 ```
 
+Production smoke proof from `2026-06-09 11:53Z` onward for restaurant `tung`:
+
+- `Chatbot` -> `provider = mimo`, `model = mimo-v2.5-pro`, `taskType = customer_ordering`
+- `AdminAssistant` -> `provider = mimo`, `model = mimo-v2.5-pro`, `taskType = dashboard_operation`
+- `WeeklyReport` -> `provider = mimo`, `model = mimo-v2.5-pro`, first successful attempt recorded in `providerAttempts`
+- `SummarizeOrder` -> `provider = mimo`, `model = mimo-v2.5-pro`, `taskType = dashboard_operation`
+- `MenuSuggestion` -> `provider = mimo`, `model = mimo-v2.5-pro`, `taskType = dashboard_operation`
+
+Useful verification query for the latest smoke window:
+
+```sql
+select created_at,
+       feature_key,
+       provider,
+       model,
+       status,
+       metadata->>'intent' as intent,
+       metadata->>'taskType' as task_type,
+       metadata->'providerAttempts'->0->>'provider' as first_provider,
+       metadata->'providerAttempts'->0->>'status' as first_status,
+       metadata->'providerAttempts'->0->>'latencyMs' as first_latency_ms,
+       jsonb_array_length(coalesce(metadata->'providerAttempts', '[]'::jsonb)) as attempt_count
+from public.ai_usage_logs
+where created_at >= timestamptz '2026-06-09T11:53:40Z'
+order by created_at desc;
+```
+
 ## Test Cases
 
 Run these after setting env:
@@ -140,6 +180,8 @@ Manual smoke checklist:
 3. Menu OCR from image returns the same JSON draft shape as before.
 4. Weekly/monthly report generation logs `taskType = 'analytics_reasoning'` or `batch_report`.
 5. Temporarily set `MIMO_DAILY_TOKEN_GUARD_ENABLED=true` and a tiny `MIMO_DAILY_TOKENS_DASHBOARD_OPERATION`; confirm router falls back to DeepSeek/Gemini and logs failed `mimo` attempt.
+
+Current production caveat: fallback order is configured as `mimo,deepseek,gemini`, but production still needs real `DEEPSEEK_API_KEY` and `GEMINI_API_KEY` on both Vercel and VPS before fallback can be considered fully armed.
 
 ## Secret Handling
 

@@ -1,3 +1,4 @@
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { readEnv, requiredEnv } from "../shared/env.js";
 import { supabaseAdmin } from "../shared/supabase.js";
 import { assertSignedToken, createSignedToken, tokenHash } from "../telegram-bot/crypto.mjs";
@@ -63,6 +64,61 @@ export type PlatformTenantAction = {
   subscriptionCreatedAt: string | null;
   suspendedReason: string | null;
   deletedAt: string | null;
+};
+
+export type PlatformLogimailRequestType = "account" | "domain" | "mailbox";
+
+export type PlatformLogimailRequest = {
+  id: string;
+  type: PlatformLogimailRequestType;
+  title: string;
+  detail: string;
+  requesterUserId: string;
+  requesterEmail: string | null;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  workspaceSlug: string | null;
+  targetValue: string;
+  purpose: string | null;
+  riskFlags: string[];
+  plannedRecordCount: number;
+  createdAt: string;
+};
+
+export type PlatformLogimailSecurityCode = {
+  id: string;
+  domain: string | null;
+  purpose: "account_access" | "account_signup" | "password_reset";
+  code: string | null;
+  codeHint: string;
+  status: "active" | "used" | "expired" | "revoked";
+  expiresAt: string;
+  createdAt: string;
+  createdBy: string | null;
+  consumedEmail: string | null;
+};
+
+export type PlatformLogimailDomain = {
+  id: string;
+  domain: string;
+  mailHostname: string;
+  workspaceId: string | null;
+  workspaceName: string | null;
+  workspaceSlug: string | null;
+  status: string;
+  approvalStatus: string;
+  registrationEnabled: boolean;
+  mailboxCount: number;
+  dns: {
+    mx: string;
+    spf: string;
+    dkim: string;
+    dmarc: string;
+    ptr: string;
+    lastCheckedAt: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
 };
 
 type BackupJobStatus = "queued" | "running" | "success" | "warn" | "failed" | "cancelled";
@@ -513,6 +569,182 @@ export async function getPendingSubscriptionPayment(paymentId: string): Promise<
   return data ? normalizePlatformSubscriptionPayment(data as Record<string, unknown>) : null;
 }
 
+export async function listPendingLogimailRequests(limit = 6): Promise<PlatformLogimailRequest[]> {
+  const [accountsResult, domainsResult, mailboxesResult] = await Promise.all([
+    logimailDb().from("account_requests").select("id,user_id,email,full_name,company_name,purpose,requested_workspace_name,requested_slug,status,created_at,updated_at").eq("status", "pending").order("created_at", { ascending: true }).limit(limit),
+    logimailDb().from("domain_requests").select("id,workspace_id,requested_by,domain,mail_hostname,purpose,dns_plan,risk_flags,status,created_at,updated_at").eq("status", "pending").order("created_at", { ascending: true }).limit(limit),
+    logimailDb().from("mailbox_requests").select("id,workspace_id,domain_id,requested_by,local_part,email_address,display_name,quota_mb,status,created_at,updated_at").eq("status", "pending").order("created_at", { ascending: true }).limit(limit)
+  ]);
+  if (isMissingLogimailSchema(accountsResult.error) || isMissingLogimailSchema(domainsResult.error) || isMissingLogimailSchema(mailboxesResult.error)) return [];
+  if (accountsResult.error) throw accountsResult.error;
+  if (domainsResult.error) throw domainsResult.error;
+  if (mailboxesResult.error) throw mailboxesResult.error;
+
+  const accounts = (accountsResult.data ?? []) as Record<string, unknown>[];
+  const domains = (domainsResult.data ?? []) as Record<string, unknown>[];
+  const mailboxes = (mailboxesResult.data ?? []) as Record<string, unknown>[];
+  const requesterIds = uniqueStrings([...accounts.map((row) => row.user_id), ...domains.map((row) => row.requested_by), ...mailboxes.map((row) => row.requested_by)]);
+  const workspaceIds = uniqueStrings([...domains.map((row) => row.workspace_id), ...mailboxes.map((row) => row.workspace_id)]);
+  const domainIds = uniqueStrings(mailboxes.map((row) => row.domain_id));
+  const [profiles, workspaces, mailboxDomains] = await Promise.all([
+    readLogimailProfiles(requesterIds),
+    readLogimailWorkspaces(workspaceIds),
+    readLogimailDomains(domainIds)
+  ]);
+  const profileById = new Map(profiles.map((row) => [String(row.id), row]));
+  const workspaceById = new Map(workspaces.map((row) => [String(row.id), row]));
+  const domainById = new Map(mailboxDomains.map((row) => [String(row.id), row]));
+
+  return [
+    ...accounts.map((row) => normalizeLogimailAccountRequest(row)),
+    ...domains.map((row) => normalizeLogimailDomainRequest(row, workspaceById.get(String(row.workspace_id)), profileById.get(String(row.requested_by)))),
+    ...mailboxes.map((row) => normalizeLogimailMailboxRequest(row, workspaceById.get(String(row.workspace_id)), domainById.get(String(row.domain_id)), profileById.get(String(row.requested_by))))
+  ]
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+    .slice(0, limit);
+}
+
+export async function getPendingLogimailRequest(type: PlatformLogimailRequestType, requestId: string): Promise<PlatformLogimailRequest | null> {
+  const row = await readRawPendingLogimailRequest(type, requestId);
+  if (!row) return null;
+
+  if (type === "account") return normalizeLogimailAccountRequest(row);
+  if (type === "domain") {
+    const [workspace, profile] = await Promise.all([
+      readLogimailWorkspace(String(row.workspace_id)),
+      readLogimailProfile(String(row.requested_by))
+    ]);
+    return normalizeLogimailDomainRequest(row, workspace ?? undefined, profile ?? undefined);
+  }
+
+  const [workspace, domain, profile] = await Promise.all([
+    readLogimailWorkspace(String(row.workspace_id)),
+    readLogimailDomain(String(row.domain_id)),
+    readLogimailProfile(String(row.requested_by))
+  ]);
+  return normalizeLogimailMailboxRequest(row, workspace ?? undefined, domain ?? undefined, profile ?? undefined);
+}
+
+export async function listActiveLogimailSecurityCodes(limit = 8): Promise<PlatformLogimailSecurityCode[]> {
+  await runLogimailSecurityCodeMaintenance("platform_devops_bot:auto");
+  const { data, error } = await logimailDb()
+    .from("security_codes")
+    .select("id,domain,purpose,code_hash,code_ciphertext,code_hint,status,max_uses,used_count,expires_at,created_by,consumed_email,consumed_at,replaced_by,metadata,created_at")
+    .eq("status", "active")
+    .eq("purpose", "account_signup")
+    .order("expires_at", { ascending: true })
+    .limit(limit);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+  return ((data ?? []) as Record<string, unknown>[]).map((row) => normalizeLogimailSecurityCode(row));
+}
+
+export async function listLogimailDomainsForTelegram(limit = 8): Promise<PlatformLogimailDomain[]> {
+  const { data, error } = await logimailDb()
+    .from("domains")
+    .select("id,workspace_id,domain,mail_hostname,status,approval_status,registration_enabled,spf_status,dkim_status,dmarc_status,mx_status,ptr_status,last_checked_at,created_at,updated_at")
+    .order("domain", { ascending: true })
+    .limit(limit);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const workspaceIds = uniqueStrings(rows.map((row) => row.workspace_id));
+  const [workspaces, mailboxCounts] = await Promise.all([
+    readLogimailWorkspaces(workspaceIds),
+    readLogimailMailboxCounts(rows.map((row) => String(row.id)))
+  ]);
+  const workspaceById = new Map(workspaces.map((workspace) => [String(workspace.id), workspace]));
+
+  return rows.map((row) => normalizeLogimailDomainForTelegram(row, workspaceById.get(String(row.workspace_id)), mailboxCounts.get(String(row.id)) ?? 0));
+}
+
+export async function createLogimailSecurityCodeFromTelegram(actor: string) {
+  const created = await createLogimailSecurityCode({
+    domain: await defaultLogimailSecurityCodeDomain(),
+    purpose: "account_signup",
+    actor,
+    metadata: { source: "platform_devops_bot" }
+  });
+  await writePlatformAuditLog({ actor, action: "logimail_security_code_created_telegram", targetType: "logimail_security_code", targetId: String(created.row.id), metadata: { domain: created.row.domain, purpose: created.row.purpose, expiresAt: created.row.expires_at } });
+  return { codeId: String(created.row.id), code: created.code, domain: created.row.domain, expiresAt: created.row.expires_at };
+}
+
+export async function rotateLogimailSecurityCodeFromTelegram(codeId: string, actor: string) {
+  const current = await readLogimailSecurityCode(codeId);
+  if (!current) throw new Error("logimail_security_code_not_found");
+  if (String(current.status) === "active") {
+    const { data, error } = await logimailDb()
+      .from("security_codes")
+      .update({ status: "revoked", revoked_by: actor, revoked_at: new Date().toISOString(), metadata: { ...asRecord(current.metadata), revokedReason: "telegram_rotate" } })
+      .eq("id", codeId)
+      .eq("status", "active")
+      .select("id")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error("logimail_security_code_not_active");
+  }
+  const created = await createLogimailSecurityCode({
+    domain: stringField(current, "domain"),
+    purpose: securityCodePurpose(current.purpose),
+    actor,
+    metadata: { source: "platform_devops_bot", replacedFrom: codeId, replacementReason: "manual_rotate" }
+  });
+  await logimailDb().from("security_codes").update({ replaced_by: created.row.id }).eq("id", codeId).then(throwOnError);
+  await writePlatformAuditLog({ actor, action: "logimail_security_code_rotated_telegram", targetType: "logimail_security_code", targetId: codeId, metadata: { replacementId: created.row.id, domain: created.row.domain } });
+  return { codeId: String(created.row.id), code: created.code, domain: created.row.domain, expiresAt: created.row.expires_at };
+}
+
+export async function revokeLogimailSecurityCodeFromTelegram(codeId: string, actor: string) {
+  const { data, error } = await logimailDb()
+    .from("security_codes")
+    .update({ status: "revoked", revoked_by: actor, revoked_at: new Date().toISOString(), metadata: { revokedBy: actor, revokedFrom: "platform_devops_bot" } })
+    .eq("id", codeId)
+    .eq("status", "active")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("logimail_security_code_not_active");
+  await writePlatformAuditLog({ actor, action: "logimail_security_code_revoked_telegram", targetType: "logimail_security_code", targetId: codeId });
+  return { codeId, status: "revoked" };
+}
+
+export async function approveLogimailRequestFromTelegram(type: PlatformLogimailRequestType, requestId: string, actor: string) {
+  if (type === "account") return approveLogimailAccountRequest(requestId, actor);
+  if (type === "domain") return approveLogimailDomainRequest(requestId, actor);
+  return approveLogimailMailboxRequest(requestId, actor);
+}
+
+export async function rejectLogimailRequestFromTelegram(type: PlatformLogimailRequestType, requestId: string, actor: string, reason = "Từ chối từ LogiVN DevOps Bot") {
+  const now = new Date().toISOString();
+  const current = await getRawPendingLogimailRequest(type, requestId);
+  const { data, error } = await logimailDb()
+    .from(logimailRequestTable(type))
+    .update({
+      status: "rejected",
+      reviewed_at: now,
+      rejection_reason: reason,
+      metadata: { ...asRecord(current.metadata), reviewedByActor: actor, reviewedFrom: "platform_devops_bot", rejectionReason: reason }
+    })
+    .eq("id", requestId)
+    .eq("status", "pending")
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("logimail_request_not_pending");
+
+  await writeLogimailAudit({
+    workspaceId: stringField(current, "workspace_id"),
+    actor,
+    action: `logimail.${type}_request_rejected_telegram`,
+    targetType: `${type}_request`,
+    targetId: requestId,
+    metadata: { reason }
+  });
+  await writePlatformAuditLog({ actor, action: "logimail_request_rejected_telegram", targetType: "logimail_request", targetId: `${type}:${requestId}`, metadata: { requestType: type, reason } });
+  return { requestId, requestType: type, status: "rejected" };
+}
+
 export async function listPlatformTenantActions(limit = 6): Promise<PlatformTenantAction[]> {
   const [restaurantsResult, subscriptionsResult] = await Promise.all([
     db()
@@ -615,6 +847,347 @@ function normalizePlatformTenantAction(restaurant: Record<string, unknown>, subs
     suspendedReason: stringField(restaurant, "suspended_reason"),
     deletedAt: stringField(restaurant, "deleted_at")
   };
+}
+
+function normalizeLogimailAccountRequest(row: Record<string, unknown>): PlatformLogimailRequest {
+  const email = String(row.email ?? "");
+  const workspaceName = stringField(row, "requested_workspace_name") ?? stringField(row, "company_name") ?? `LogiMail ${email}`;
+  return {
+    id: String(row.id),
+    type: "account",
+    title: email,
+    detail: workspaceName,
+    requesterUserId: String(row.user_id),
+    requesterEmail: email,
+    workspaceId: null,
+    workspaceName,
+    workspaceSlug: stringField(row, "requested_slug"),
+    targetValue: email,
+    purpose: stringField(row, "purpose"),
+    riskFlags: [],
+    plannedRecordCount: 0,
+    createdAt: String(row.created_at)
+  };
+}
+
+function normalizeLogimailDomainRequest(row: Record<string, unknown>, workspace?: Record<string, unknown>, profile?: Record<string, unknown>): PlatformLogimailRequest {
+  const dnsPlan = asRecord(row.dns_plan);
+  return {
+    id: String(row.id),
+    type: "domain",
+    title: String(row.domain ?? "domain"),
+    detail: `MX host ${String(row.mail_hostname ?? "")}`,
+    requesterUserId: String(row.requested_by),
+    requesterEmail: stringField(profile, "email"),
+    workspaceId: String(row.workspace_id),
+    workspaceName: stringField(workspace, "name"),
+    workspaceSlug: stringField(workspace, "slug"),
+    targetValue: String(row.domain ?? ""),
+    purpose: stringField(row, "purpose"),
+    riskFlags: Array.isArray(row.risk_flags) ? row.risk_flags.map(String) : [],
+    plannedRecordCount: Array.isArray(dnsPlan.plannedRecords) ? dnsPlan.plannedRecords.length : 0,
+    createdAt: String(row.created_at)
+  };
+}
+
+function normalizeLogimailMailboxRequest(row: Record<string, unknown>, workspace?: Record<string, unknown>, domain?: Record<string, unknown>, profile?: Record<string, unknown>): PlatformLogimailRequest {
+  const riskFlags = domain && (domain.status !== "active" || domain.approval_status !== "approved") ? ["domain_not_active"] : [];
+  return {
+    id: String(row.id),
+    type: "mailbox",
+    title: String(row.email_address ?? "mailbox"),
+    detail: stringField(row, "display_name") ?? `${Number(row.quota_mb ?? 0)}MB`,
+    requesterUserId: String(row.requested_by),
+    requesterEmail: stringField(profile, "email"),
+    workspaceId: String(row.workspace_id),
+    workspaceName: stringField(workspace, "name"),
+    workspaceSlug: stringField(workspace, "slug"),
+    targetValue: String(row.email_address ?? ""),
+    purpose: domain ? `${String(domain.domain ?? "domain")} · ${String(domain.status ?? "unknown")}` : null,
+    riskFlags,
+    plannedRecordCount: 0,
+    createdAt: String(row.created_at)
+  };
+}
+
+function normalizeLogimailSecurityCode(row: Record<string, unknown>): PlatformLogimailSecurityCode {
+  return {
+    id: String(row.id),
+    domain: stringField(row, "domain"),
+    purpose: securityCodePurpose(row.purpose),
+    code: decryptLogimailSecurityCode(stringField(row, "code_ciphertext")) ?? (stringField(row, "code_hint") ? `••••-${stringField(row, "code_hint")}` : null),
+    codeHint: stringField(row, "code_hint") ?? "",
+    status: securityCodeStatus(row.status),
+    expiresAt: String(row.expires_at),
+    createdAt: String(row.created_at),
+    createdBy: stringField(row, "created_by"),
+    consumedEmail: stringField(row, "consumed_email")
+  };
+}
+
+function normalizeLogimailDomainForTelegram(row: Record<string, unknown>, workspace?: Record<string, unknown>, mailboxCount = 0): PlatformLogimailDomain {
+  return {
+    id: String(row.id),
+    domain: String(row.domain ?? ""),
+    mailHostname: stringField(row, "mail_hostname") ?? readEnv("LOGIMAIL_MAIL_HOSTNAME", "mail.logivn.com"),
+    workspaceId: stringField(row, "workspace_id"),
+    workspaceName: stringField(workspace, "name"),
+    workspaceSlug: stringField(workspace, "slug"),
+    status: String(row.status ?? "unknown"),
+    approvalStatus: String(row.approval_status ?? "unknown"),
+    registrationEnabled: Boolean(row.registration_enabled),
+    mailboxCount,
+    dns: {
+      mx: String(row.mx_status ?? "unknown"),
+      spf: String(row.spf_status ?? "unknown"),
+      dkim: String(row.dkim_status ?? "unknown"),
+      dmarc: String(row.dmarc_status ?? "unknown"),
+      ptr: String(row.ptr_status ?? "unknown"),
+      lastCheckedAt: stringField(row, "last_checked_at")
+    },
+    createdAt: String(row.created_at ?? new Date(0).toISOString()),
+    updatedAt: String(row.updated_at ?? row.created_at ?? new Date(0).toISOString())
+  };
+}
+
+async function runLogimailSecurityCodeMaintenance(actor: string) {
+  await revokeDeprecatedLogimailAccessCodes(actor);
+  return rotateExpiredLogimailSecurityCodes(actor);
+}
+
+async function revokeDeprecatedLogimailAccessCodes(actor: string) {
+  const { error } = await logimailDb()
+    .from("security_codes")
+    .update({ status: "revoked", revoked_by: actor, revoked_at: new Date().toISOString(), metadata: { revokedBy: actor, revokedReason: "deprecated_account_access" } })
+    .eq("status", "active")
+    .eq("purpose", "account_access");
+  if (error && !isMissingLogimailSchema(error)) throw error;
+}
+
+async function rotateExpiredLogimailSecurityCodes(actor: string) {
+  const { data, error } = await logimailDb()
+    .from("security_codes")
+    .select("id,domain,purpose,metadata")
+    .eq("status", "active")
+    .neq("purpose", "account_access")
+    .lte("expires_at", new Date().toISOString())
+    .limit(20);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+
+  const created: Array<{ row: Record<string, unknown>; code: string }> = [];
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const { data: expired, error: updateError } = await logimailDb()
+      .from("security_codes")
+      .update({ status: "expired", metadata: { ...asRecord(row.metadata), expiredBy: actor, expiredAt: new Date().toISOString() } })
+      .eq("id", String(row.id))
+      .eq("status", "active")
+      .select("id")
+      .maybeSingle();
+    if (updateError) throw updateError;
+    if (!expired) continue;
+    const replacement = await createLogimailSecurityCode({
+      domain: stringField(row, "domain"),
+      purpose: securityCodePurpose(row.purpose),
+      actor,
+      metadata: { source: actor, replacedFrom: String(row.id), replacementReason: "expired" }
+    });
+    await logimailDb().from("security_codes").update({ replaced_by: replacement.row.id }).eq("id", String(row.id)).then(throwOnError);
+    created.push(replacement);
+  }
+  return created;
+}
+
+async function createLogimailSecurityCode(input: { domain: string | null; purpose?: "account_access" | "account_signup" | "password_reset"; actor: string; ttlHours?: number; metadata?: Record<string, unknown> }) {
+  const domain = input.domain ? normalizeLogimailDomain(input.domain) : null;
+  const purpose = input.purpose ?? "account_signup";
+  await revokeActiveSiblingLogimailSecurityCodes({ domain, purpose, actor: input.actor });
+  const expiresAt = new Date(Date.now() + normalizeSecurityCodeTtl(input.ttlHours) * 60 * 60 * 1000).toISOString();
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const code = generateLogimailSecurityCode();
+    const { data, error } = await logimailDb()
+      .from("security_codes")
+      .insert({
+        domain,
+        purpose,
+        code_hash: hashLogimailSecurityCode(code),
+        code_ciphertext: encryptLogimailSecurityCode(code),
+        code_hint: logimailSecurityCodeHint(code),
+        status: "active",
+        max_uses: 1,
+        used_count: 0,
+        expires_at: expiresAt,
+        created_by: input.actor,
+        metadata: input.metadata ?? {}
+      })
+      .select("id,domain,purpose,expires_at")
+      .single();
+    if (!error && data) return { row: data as Record<string, unknown>, code };
+    if (error?.code !== "23505") throw error;
+  }
+  throw new Error("logimail_security_code_generation_failed");
+}
+
+async function revokeActiveSiblingLogimailSecurityCodes(input: { domain: string | null; purpose: "account_access" | "account_signup" | "password_reset"; actor: string }) {
+  const query = logimailDb()
+    .from("security_codes")
+    .update({
+      status: "revoked",
+      revoked_by: input.actor,
+      revoked_at: new Date().toISOString(),
+      metadata: { revokedBy: input.actor, revokedReason: "replaced_by_new_active_code" }
+    })
+    .eq("status", "active")
+    .eq("purpose", input.purpose);
+  const { error } = input.domain ? await query.eq("domain", input.domain) : await query.is("domain", null);
+  if (error && !isMissingLogimailSchema(error)) throw error;
+}
+
+async function readLogimailSecurityCode(codeId: string) {
+  const { data, error } = await logimailDb().from("security_codes").select("*").eq("id", codeId).maybeSingle();
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
+async function defaultLogimailSecurityCodeDomain() {
+  const { data, error } = await logimailDb()
+    .from("domains")
+    .select("domain")
+    .eq("status", "active")
+    .eq("approval_status", "approved")
+    .eq("registration_enabled", true)
+    .order("domain")
+    .limit(1)
+    .maybeSingle();
+  if (!error && data?.domain) return String(data.domain);
+  return normalizeLogimailDomain(readEnv("LOGIMAIL_DOMAIN", "logivn.com"));
+}
+
+async function approveLogimailAccountRequest(requestId: string, actor: string) {
+  const request = await getRawPendingLogimailRequest("account", requestId);
+  const now = new Date().toISOString();
+  const email = String(request.email ?? "").toLowerCase();
+  const workspaceName = stringField(request, "requested_workspace_name") ?? stringField(request, "company_name") ?? `LogiMail ${email}`;
+  const slug = await uniqueLogimailWorkspaceSlug(stringField(request, "requested_slug") ?? stringField(request, "company_name") ?? email);
+  await claimLogimailApprovalRequest({ table: "account_requests", requestId, metadata: request.metadata, actor, now, extraMetadata: { plannedWorkspaceSlug: slug } });
+
+  let workspace: Record<string, unknown>;
+  try {
+    await logimailDb().from("profiles").upsert({
+      id: String(request.user_id),
+      email,
+      full_name: stringField(request, "full_name") ?? email,
+      role: "owner",
+      account_status: "approved",
+      updated_at: now
+    }, { onConflict: "id" }).then(throwOnError);
+
+    const { data, error: workspaceError } = await logimailDb()
+      .from("workspaces")
+      .insert({ name: workspaceName, slug, owner_id: String(request.user_id), plan: "internal", status: "active" })
+      .select("id,name,slug")
+      .single();
+    if (workspaceError) throw workspaceError;
+    workspace = data as Record<string, unknown>;
+
+    await logimailDb().from("workspace_members").upsert({ workspace_id: workspace.id, user_id: String(request.user_id), role: "owner" }, { onConflict: "workspace_id,user_id" }).then(throwOnError);
+    await logimailDb().from("quotas").upsert({ workspace_id: workspace.id }, { onConflict: "workspace_id" }).then(throwOnError);
+    await finalizeLogimailApprovalRequest({
+      table: "account_requests",
+      requestId,
+      metadata: request.metadata,
+      actor,
+      extraMetadata: { provisionedWorkspaceId: workspace.id, provisionedWorkspaceSlug: workspace.slug }
+    });
+  } catch (error) {
+    await markLogimailApprovalProvisioningFailed("account_requests", requestId, request.metadata, actor, error);
+    throw error;
+  }
+
+  await writeLogimailAudit({ workspaceId: String(workspace.id), actor, action: "logimail.account_request_approved_telegram", targetType: "account_request", targetId: requestId, metadata: { email, workspaceId: workspace.id, workspaceSlug: workspace.slug } });
+  await writePlatformAuditLog({ actor, action: "logimail_request_approved_telegram", targetType: "logimail_request", targetId: `account:${requestId}`, metadata: { requestType: "account", email, workspaceId: workspace.id } });
+  return { requestId, requestType: "account", status: "approved", workspaceId: String(workspace.id), workspaceSlug: String(workspace.slug) };
+}
+
+async function approveLogimailDomainRequest(requestId: string, actor: string) {
+  const request = await getRawPendingLogimailRequest("domain", requestId);
+  const now = new Date().toISOString();
+  await claimLogimailApprovalRequest({ table: "domain_requests", requestId, metadata: request.metadata, actor, now });
+
+  let domain: Record<string, unknown>;
+  try {
+    const { data, error } = await logimailDb().from("domains").upsert({
+      workspace_id: String(request.workspace_id),
+      domain: String(request.domain),
+      mail_hostname: String(request.mail_hostname),
+      approval_status: "approved",
+      registration_enabled: true,
+      status: "active",
+      updated_at: now
+    }, { onConflict: "workspace_id,domain" }).select("id,domain").single();
+    if (error) throw error;
+    domain = data as Record<string, unknown>;
+
+    await finalizeLogimailApprovalRequest({
+      table: "domain_requests",
+      requestId,
+      metadata: request.metadata,
+      actor,
+      provisionedColumn: "provisioned_domain_id",
+      provisionedId: String(domain.id),
+      extraMetadata: { provisionedDomainId: domain.id }
+    });
+  } catch (error) {
+    await markLogimailApprovalProvisioningFailed("domain_requests", requestId, request.metadata, actor, error);
+    throw error;
+  }
+
+  await writeLogimailAudit({ workspaceId: String(request.workspace_id), actor, action: "logimail.domain_request_approved_telegram", targetType: "domain_request", targetId: requestId, metadata: { domain: request.domain, provisionedDomainId: domain.id } });
+  await writePlatformAuditLog({ actor, action: "logimail_request_approved_telegram", targetType: "logimail_request", targetId: `domain:${requestId}`, metadata: { requestType: "domain", workspaceId: request.workspace_id, domain: request.domain, provisionedDomainId: domain.id } });
+  return { requestId, requestType: "domain", status: "approved", domainId: String(domain.id) };
+}
+
+async function approveLogimailMailboxRequest(requestId: string, actor: string) {
+  const request = await getRawPendingLogimailRequest("mailbox", requestId);
+  const { data: domain, error: domainError } = await logimailDb().from("domains").select("id,workspace_id,status,approval_status").eq("id", String(request.domain_id)).maybeSingle();
+  if (domainError) throw domainError;
+  if (!domain || domain.workspace_id !== request.workspace_id || domain.status !== "active" || domain.approval_status !== "approved") throw new Error("logimail_domain_not_active");
+  const now = new Date().toISOString();
+  await claimLogimailApprovalRequest({ table: "mailbox_requests", requestId, metadata: request.metadata, actor, now });
+
+  let mailbox: Record<string, unknown>;
+  try {
+    const { data, error } = await logimailDb().from("mailboxes").upsert({
+      workspace_id: String(request.workspace_id),
+      domain_id: String(request.domain_id),
+      email_address: String(request.email_address),
+      display_name: stringField(request, "display_name"),
+      quota_mb: Number(request.quota_mb ?? 1024),
+      status: "active",
+      provider: "billionmail",
+      updated_at: now
+    }, { onConflict: "email_address" }).select("id,email_address").single();
+    if (error) throw error;
+    mailbox = data as Record<string, unknown>;
+
+    await logimailDb().from("mailbox_permissions").upsert({ mailbox_id: mailbox.id, user_id: String(request.requested_by), permission: "admin" }, { onConflict: "mailbox_id,user_id" }).then(throwOnError);
+    await finalizeLogimailApprovalRequest({
+      table: "mailbox_requests",
+      requestId,
+      metadata: request.metadata,
+      actor,
+      provisionedColumn: "provisioned_mailbox_id",
+      provisionedId: String(mailbox.id),
+      extraMetadata: { provisionedMailboxId: mailbox.id }
+    });
+  } catch (error) {
+    await markLogimailApprovalProvisioningFailed("mailbox_requests", requestId, request.metadata, actor, error);
+    throw error;
+  }
+
+  await writeLogimailAudit({ workspaceId: String(request.workspace_id), actor, action: "logimail.mailbox_request_approved_telegram", targetType: "mailbox_request", targetId: requestId, metadata: { emailAddress: request.email_address, provisionedMailboxId: mailbox.id } });
+  await writePlatformAuditLog({ actor, action: "logimail_request_approved_telegram", targetType: "logimail_request", targetId: `mailbox:${requestId}`, metadata: { requestType: "mailbox", workspaceId: request.workspace_id, emailAddress: request.email_address, provisionedMailboxId: mailbox.id } });
+  return { requestId, requestType: "mailbox", status: "approved", mailboxId: String(mailbox.id) };
 }
 
 export async function confirmPlatformSubscriptionPayment(paymentId: string, actor: string) {
@@ -929,8 +1502,8 @@ function normalizeAdminRole(value: unknown): PlatformAdminRole {
 }
 
 function platformTelegramAccessForAdminRole(role: PlatformAdminRole): { telegramRole: PlatformTelegramRole; scopes: string[] } {
-  if (role === "owner") return { telegramRole: "ADMIN", scopes: ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"] };
-  if (role === "ops") return { telegramRole: "SRE", scopes: ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"] };
+  if (role === "owner") return { telegramRole: "ADMIN", scopes: ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "logimail.approve", "tenants.read", "tenants.manage"] };
+  if (role === "ops") return { telegramRole: "SRE", scopes: ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "logimail.approve", "tenants.read", "tenants.manage"] };
   if (role === "billing") return { telegramRole: "DEV", scopes: ["billing.approve", "tenants.read"] };
   if (role === "support") return { telegramRole: "SUPPORT", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"] };
   return { telegramRole: "DEV", scopes: ["infra.read", "queues.read", "incidents.read", "tenants.read"] };
@@ -962,8 +1535,8 @@ async function consumePlatformSession(id: string) {
 
 function defaultScopes(role: PlatformTelegramRole) {
   if (role === "SUPPORT") return ["infra.read", "queues.read", "incidents.read", "tenants.read", "support.grants.request"];
-  if (role === "SRE") return ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.manage"];
-  if (role === "ADMIN") return ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.manage"];
+  if (role === "SRE") return ["infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "logimail.approve", "tenants.manage"];
+  if (role === "ADMIN") return ["platform.admin", "infra.read", "backup.trigger", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "logimail.approve", "tenants.manage"];
   return ["infra.read", "queues.read", "incidents.read", "deploy.read"];
 }
 
@@ -1275,6 +1848,290 @@ function isMissingBackupSchema(error: { code?: string; message?: string } | null
   );
 }
 
+function isMissingLogimailSchema(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return (
+    error.code === "42P01" ||
+    error.code === "42703" ||
+    error.code === "PGRST202" ||
+    error.code === "PGRST204" ||
+    error.code === "PGRST205" ||
+    /logimail|account_requests|domain_requests|mailbox_requests|Could not find|does not exist/i.test(error.message ?? "")
+  );
+}
+
+async function readLogimailProfiles(ids: string[]) {
+  if (!ids.length) return [] as Record<string, unknown>[];
+  const { data, error } = await logimailDb().from("profiles").select("id,email,full_name,account_status").in("id", ids);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+async function readLogimailProfile(id: string) {
+  if (!id) return null;
+  const { data, error } = await logimailDb().from("profiles").select("id,email,full_name,account_status").eq("id", id).maybeSingle();
+  if (isMissingLogimailSchema(error)) return null;
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
+async function readLogimailWorkspaces(ids: string[]) {
+  if (!ids.length) return [] as Record<string, unknown>[];
+  const { data, error } = await logimailDb().from("workspaces").select("id,name,slug").in("id", ids);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+async function readLogimailWorkspace(id: string) {
+  if (!id) return null;
+  const { data, error } = await logimailDb().from("workspaces").select("id,name,slug").eq("id", id).maybeSingle();
+  if (isMissingLogimailSchema(error)) return null;
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
+async function readLogimailDomains(ids: string[]) {
+  if (!ids.length) return [] as Record<string, unknown>[];
+  const { data, error } = await logimailDb().from("domains").select("id,workspace_id,domain,status,approval_status,registration_enabled").in("id", ids);
+  if (isMissingLogimailSchema(error)) return [];
+  if (error) throw error;
+  return (data ?? []) as Record<string, unknown>[];
+}
+
+async function readLogimailDomain(id: string) {
+  if (!id) return null;
+  const { data, error } = await logimailDb().from("domains").select("id,workspace_id,domain,status,approval_status,registration_enabled").eq("id", id).maybeSingle();
+  if (isMissingLogimailSchema(error)) return null;
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
+async function readLogimailMailboxCounts(domainIds: string[]) {
+  const counts = new Map<string, number>();
+  const ids = uniqueStrings(domainIds);
+  if (!ids.length) return counts;
+  const { data, error } = await logimailDb().from("mailboxes").select("domain_id").in("domain_id", ids).limit(5000);
+  if (isMissingLogimailSchema(error)) return counts;
+  if (error) throw error;
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const domainId = stringField(row, "domain_id");
+    if (domainId) counts.set(domainId, (counts.get(domainId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+async function getRawPendingLogimailRequest(type: PlatformLogimailRequestType, requestId: string) {
+  const data = await readRawPendingLogimailRequest(type, requestId);
+  if (!data) throw new Error("logimail_request_not_pending");
+  return data;
+}
+
+async function readRawPendingLogimailRequest(type: PlatformLogimailRequestType, requestId: string) {
+  const { data, error } = await logimailDb().from(logimailRequestTable(type)).select("*").eq("id", requestId).eq("status", "pending").maybeSingle();
+  if (isMissingLogimailSchema(error)) return null;
+  if (error) throw error;
+  return data as Record<string, unknown> | null;
+}
+
+async function claimLogimailApprovalRequest(input: {
+  table: string;
+  requestId: string;
+  metadata: unknown;
+  actor: string;
+  now: string;
+  extraMetadata?: Record<string, unknown>;
+}) {
+  const { data, error } = await logimailDb()
+    .from(input.table)
+    .update({
+      status: "approved",
+      reviewed_at: input.now,
+      metadata: {
+        ...asRecord(input.metadata),
+        reviewedByActor: input.actor,
+        reviewedFrom: "platform_devops_bot",
+        provisioningStatus: "provisioning",
+        ...(input.extraMetadata ?? {})
+      }
+    })
+    .eq("id", input.requestId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("logimail_request_not_pending");
+}
+
+async function finalizeLogimailApprovalRequest(input: {
+  table: string;
+  requestId: string;
+  metadata: unknown;
+  actor: string;
+  provisionedColumn?: string;
+  provisionedId?: string;
+  extraMetadata?: Record<string, unknown>;
+}) {
+  const update: Record<string, unknown> = {
+    metadata: {
+      ...asRecord(input.metadata),
+      reviewedByActor: input.actor,
+      reviewedFrom: "platform_devops_bot",
+      provisioningStatus: "metadata_ready",
+      ...(input.extraMetadata ?? {})
+    }
+  };
+  if (input.provisionedColumn && input.provisionedId) update[input.provisionedColumn] = input.provisionedId;
+
+  const { data, error } = await logimailDb()
+    .from(input.table)
+    .update(update)
+    .eq("id", input.requestId)
+    .eq("status", "approved")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("logimail_request_finalize_failed");
+}
+
+async function markLogimailApprovalProvisioningFailed(table: string, requestId: string, metadata: unknown, actor: string, error: unknown) {
+  const { error: updateError } = await logimailDb()
+    .from(table)
+    .update({
+      metadata: {
+        ...asRecord(metadata),
+        reviewedByActor: actor,
+        reviewedFrom: "platform_devops_bot",
+        provisioningStatus: "failed",
+        provisioningError: errorMessage(error)
+      }
+    })
+    .eq("id", requestId)
+    .eq("status", "approved");
+  if (updateError && !isMissingLogimailSchema(updateError)) throw updateError;
+}
+
+async function uniqueLogimailWorkspaceSlug(value: string) {
+  const base = slugBaseFromText(value);
+  for (let index = 0; index < 25; index += 1) {
+    const candidate = index === 0 ? base : `${base}-${index + 1}`.slice(0, 63);
+    const { data, error } = await logimailDb().from("workspaces").select("id").eq("slug", candidate).maybeSingle();
+    if (error) throw error;
+    if (!data) return candidate;
+  }
+  return `${base.slice(0, 54)}-${Date.now().toString(36)}`;
+}
+
+function normalizeLogimailDomain(value: string) {
+  const domain = value.trim().toLowerCase();
+  if (!/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(domain)) throw new Error("logimail_invalid_domain");
+  return domain;
+}
+
+function securityCodePurpose(value: unknown): "account_access" | "account_signup" | "password_reset" {
+  return value === "account_signup" || value === "password_reset" ? value : "account_access";
+}
+
+function securityCodeStatus(value: unknown): PlatformLogimailSecurityCode["status"] {
+  if (value === "used" || value === "expired" || value === "revoked") return value;
+  return "active";
+}
+
+function logimailSecurityCodeSecret() {
+  const secret = readEnv("LOGIMAIL_SECURITY_CODE_SECRET") || "";
+  if (secret.length < 16) throw new Error("logimail_security_code_secret_missing");
+  return secret;
+}
+
+function logimailSecurityCodeKey() {
+  return createHash("sha256").update(logimailSecurityCodeSecret()).digest();
+}
+
+function normalizeLogimailSecurityCodeValue(value: string) {
+  const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (normalized.length < 8 || normalized.length > 32) throw new Error("logimail_security_code_invalid");
+  return normalized;
+}
+
+function hashLogimailSecurityCode(code: string) {
+  return createHmac("sha256", logimailSecurityCodeSecret()).update(normalizeLogimailSecurityCodeValue(code)).digest("hex");
+}
+
+function encryptLogimailSecurityCode(code: string) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", logimailSecurityCodeKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(code, "utf8"), cipher.final()]);
+  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
+}
+
+function decryptLogimailSecurityCode(value: string | null) {
+  if (!value) return null;
+  try {
+    const [ivText, tagText, encryptedText] = value.split(".");
+    if (!ivText || !tagText || !encryptedText) return null;
+    const decipher = createDecipheriv("aes-256-gcm", logimailSecurityCodeKey(), Buffer.from(ivText, "base64url"));
+    decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(encryptedText, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function generateLogimailSecurityCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = randomBytes(10);
+  let value = "LM";
+  for (let index = 0; index < 10; index += 1) value += alphabet[bytes[index] % alphabet.length];
+  return `${value.slice(0, 2)}-${value.slice(2, 6)}-${value.slice(6, 10)}-${value.slice(10)}`;
+}
+
+function logimailSecurityCodeHint(code: string) {
+  return normalizeLogimailSecurityCodeValue(code).slice(-4);
+}
+
+function normalizeSecurityCodeTtl(value?: number) {
+  if (!Number.isFinite(value ?? NaN)) return 24;
+  return Math.min(168, Math.max(1, Math.round(Number(value))));
+}
+
+async function writeLogimailAudit(input: { workspaceId?: string | null; actor: string; action: string; targetType: string; targetId: string; metadata?: Record<string, unknown> }) {
+  const { error } = await logimailDb().from("audit_logs").insert({
+    workspace_id: input.workspaceId ?? null,
+    actor_id: null,
+    action: input.action,
+    target_type: input.targetType,
+    target_id: input.targetId,
+    metadata: { ...(input.metadata ?? {}), actor: input.actor, source: "platform_devops_bot" }
+  });
+  if (error && !isMissingLogimailSchema(error)) throw error;
+}
+
+function logimailRequestTable(type: PlatformLogimailRequestType) {
+  if (type === "account") return "account_requests";
+  if (type === "domain") return "domain_requests";
+  return "mailbox_requests";
+}
+
+function uniqueStrings(values: unknown[]) {
+  return Array.from(new Set(values.map((value) => (typeof value === "string" ? value : value ? String(value) : "")).filter(Boolean)));
+}
+
+function slugBaseFromText(value: string) {
+  const ascii = value.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const slug = ascii.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 55);
+  return /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) && slug.length >= 3 ? slug : `logimail-${Date.now().toString(36)}`;
+}
+
+function errorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "LogiMail provisioning failed.";
+  return message.slice(0, 500);
+}
+
+function throwOnError(result: { error: unknown }) {
+  if (result.error) throw result.error;
+}
+
 async function resolveBackupEnvironment(preferred: string) {
   const normalized = preferred.trim() || "prod";
   const current = await db()
@@ -1442,6 +2299,11 @@ function platformBackupRpoRisk(input: { ageHours: number | null; latestStatus?: 
 
 function db() {
   return supabaseAdmin() as any;
+}
+
+function logimailDb() {
+  const client = db();
+  return typeof client.schema === "function" ? client.schema("logimail") : client;
 }
 
 function sessionSecret() {

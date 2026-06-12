@@ -1,0 +1,27 @@
+[Unit]
+Description=LogiMail backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=logimail
+Group=logimail
+WorkingDirectory=/opt/logimail
+Environment=NODE_ENV=production
+Environment=PORT=8787
+Environment=HOSTNAME=127.0.0.1
+Environment=HOME=/var/lib/logimail
+Environment=LOGIMAIL_PUBLIC_URL=https://mail.logivn.com
+Environment=LOGIMAIL_API_BASE_PATH=/api/logimail
+EnvironmentFile=-/etc/logimail/logimail.env
+ExecStart=/usr/bin/npm --workspace @logivn/logimail-api run start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

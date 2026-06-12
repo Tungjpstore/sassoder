@@ -1,0 +1,8 @@
+{
+  "generatedAt": "2026-06-09T13:12:16.224Z",
+  "provider": "xAI",
+  "endpoint": "https://api.x.ai/v1/images/generations",
+  "model": "grok-imagine-image-quality",
+  "prompt": "Use case: logo-brand\nAsset type: professional brand concept board for an internal SaaS email operations product.\nPrimary request: Create a polished LogiMail logo exploration synchronized with the existing LogiVN brand identity.\nBrand context: LogiVN uses deep Vietnamese green #0F4D3A, warm orange #F28C28, ivory #FFF7EB, sage #A9C5A1, rounded app-like mark, friendly geometric wordmark. LogiMail is the internal email platform and AI MailOps dashboard for LogiVN.\nSubject: four vector-friendly logo directions for LogiMail: a rounded-square mail shield, a folded envelope with delivery signal, an inbox/ops monogram, and a horizontal lockup with clean wordmark.\nStyle: premium but practical B2B SaaS, flat vector style, simple geometry, generous white space, crisp edges, readable at small app-icon size, no gradients, no shadows, no photorealism.\nTypography direction: geometric sans, stable proportions, exact visible wordmark text only if text appears: LogiMail.\nColor constraints: use #0F4D3A as primary, #F28C28 as warm accent, #FFF7EB as background, #A9C5A1 as support, neutral text #2B2B2B. Avoid purple, neon, blue-heavy fintech look, beige-only palettes, visual clutter, tiny unreadable details, stock mockups, watermarks.\nComposition: clean brand identity board on ivory background showing the concepts, icon-only variants, horizontal lockup, monochrome dark variant, and small app icon preview.",
+  "output": "logimail/apps/logimail-web/public/brand/logimail/generated/xai-logimail-concept-board-20260609.jpg"
+}

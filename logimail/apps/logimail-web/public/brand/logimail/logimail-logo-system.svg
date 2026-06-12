@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" role="img" aria-labelledby="title desc">
+  <title id="title">LogiMail logo system board</title>
+  <desc id="desc">Brand board showing LogiMail logo variants, colors, and type scale.</desc>
+  <rect width="1200" height="800" fill="#FFF7EB"/>
+  <text x="80" y="96" fill="#0F4D3A" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="800" letter-spacing="0">LogiMail</text>
+  <text x="80" y="132" fill="#68736D" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="700" letter-spacing="2.8">BỘ NHẬN DIỆN LOGIVN MAILOPS</text>
+
+  <rect x="80" y="180" width="520" height="220" rx="8" fill="#FFFFFF" stroke="#DCE4DA"/>
+  <text x="112" y="228" fill="#2B2B2B" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">Logo ngang</text>
+  <g transform="translate(112 258) scale(.92)">
+    <rect x="8" y="8" width="112" height="112" rx="24" fill="#0F4D3A"/>
+    <path d="M64 27 94 38v22c0 24-12.7 39.2-30 47.6C46.7 99.2 34 84 34 60V38l30-11Z" fill="#FFF7EB"/>
+    <rect x="42" y="50" width="44" height="32" rx="5" fill="#0F4D3A"/>
+    <path d="M44 54 64 68l20-14" fill="none" stroke="#FFF7EB" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="92" cy="38" r="15" fill="#F28C28"/>
+    <path d="m85.5 38.3 4.7 4.7 8.7-10" fill="none" stroke="#FFF7EB" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="146" y="78" fill="#0F4D3A" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="800" letter-spacing="0">Logi</text>
+    <text x="267" y="78" fill="#F28C28" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="52" font-weight="800" letter-spacing="0">Mail</text>
+    <text x="149" y="101" fill="#68736D" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="700" letter-spacing="2.4">MAILOPS NỘI BỘ</text>
+  </g>
+
+  <rect x="640" y="180" width="220" height="220" rx="8" fill="#0F4D3A"/>
+  <text x="672" y="228" fill="#FFF7EB" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">Đảo màu</text>
+  <g transform="translate(686 254)">
+    <rect x="8" y="8" width="112" height="112" rx="24" fill="#FFF7EB"/>
+    <path d="M64 27 94 38v22c0 24-12.7 39.2-30 47.6C46.7 99.2 34 84 34 60V38l30-11Z" fill="#0F4D3A"/>
+    <rect x="42" y="50" width="44" height="32" rx="5" fill="#FFF7EB"/>
+    <path d="M44 54 64 68l20-14" fill="none" stroke="#0F4D3A" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="92" cy="38" r="15" fill="#F28C28"/>
+    <path d="m85.5 38.3 4.7 4.7 8.7-10" fill="none" stroke="#FFF7EB" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <rect x="900" y="180" width="220" height="220" rx="8" fill="#FFFFFF" stroke="#DCE4DA"/>
+  <text x="932" y="228" fill="#2B2B2B" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">Biểu tượng</text>
+  <g transform="translate(946 254)">
+    <rect x="8" y="8" width="112" height="112" rx="24" fill="#0F4D3A"/>
+    <path d="M64 27 94 38v22c0 24-12.7 39.2-30 47.6C46.7 99.2 34 84 34 60V38l30-11Z" fill="#FFF7EB"/>
+    <rect x="42" y="50" width="44" height="32" rx="5" fill="#0F4D3A"/>
+    <path d="M44 54 64 68l20-14" fill="none" stroke="#FFF7EB" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="92" cy="38" r="15" fill="#F28C28"/>
+    <path d="m85.5 38.3 4.7 4.7 8.7-10" fill="none" stroke="#FFF7EB" stroke-width="4.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <rect x="80" y="450" width="1040" height="170" rx="8" fill="#FFFFFF" stroke="#DCE4DA"/>
+  <text x="112" y="500" fill="#2B2B2B" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="800">Bảng màu</text>
+  <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="800" fill="#2B2B2B">
+    <rect x="112" y="530" width="86" height="58" rx="8" fill="#0F4D3A"/><text x="216" y="566">#0F4D3A Xanh</text>
+    <rect x="386" y="530" width="86" height="58" rx="8" fill="#F28C28"/><text x="490" y="566">#F28C28 Tín hiệu</text>
+    <rect x="652" y="530" width="86" height="58" rx="8" fill="#A9C5A1"/><text x="756" y="566">#A9C5A1 Sage</text>
+    <rect x="910" y="530" width="86" height="58" rx="8" fill="#2B2B2B"/><text x="1014" y="566">#2B2B2B Chữ</text>
+  </g>
+
+  <text x="80" y="704" fill="#0F4D3A" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="32" font-weight="800">Sora cho tiêu đề sản phẩm</text>
+  <text x="80" y="738" fill="#2B2B2B" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="500">Inter cho dashboard, bảng dữ liệu, biểu mẫu, cảnh báo và nội dung vận hành.</text>
+</svg>

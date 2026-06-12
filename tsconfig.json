@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
+    "logimail",
     "**/* 2",
     "**/* 2.*",
     "**/* 3",

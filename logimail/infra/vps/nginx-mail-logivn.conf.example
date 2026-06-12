@@ -1,0 +1,125 @@
+# Nginx template cho luong LogiMail mot subdomain.
+# Host public: https://mail.logivn.com
+# Luu y: SMTP/SMTPS/submission/IMAP/IMAPS khong di qua Nginx.
+# Neu BillionMail dang bind 80/443 truc tiep, hay doi web UI cua BillionMail sang
+# loopback/high port truoc khi enable file nay, de tranh tranh chap cong.
+# Mac dinh scaffold dat BillionMail HTTP_PORT=8081 va HTTPS_PORT=8443.
+# Webmail RoundCube cua BillionMail chay qua PHP-FPM socket tren host.
+
+map $http_upgrade $logimail_connection_upgrade {
+  default upgrade;
+  "" close;
+}
+
+upstream logimail_web {
+  server 127.0.0.1:3000;
+  keepalive 32;
+}
+
+upstream logimail_api {
+  server 127.0.0.1:8787;
+  keepalive 16;
+}
+
+server {
+  listen 80;
+  listen [::]:80;
+  server_name mail.logivn.com;
+
+  location /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+  }
+
+  location / {
+    return 301 https://$host$request_uri;
+  }
+}
+
+server {
+  listen 443 ssl http2;
+  listen [::]:443 ssl http2;
+  server_name mail.logivn.com;
+
+  ssl_certificate /etc/letsencrypt/live/mail.logivn.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/mail.logivn.com/privkey.pem;
+  include /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+  client_max_body_size 25m;
+
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto https;
+  proxy_http_version 1.1;
+
+  # Supabase/Next auth flows can return several Set-Cookie headers. Mobile
+  # browsers with stale PWA/session cookies hit this path most often, and the
+  # default Nginx proxy header buffer can turn a valid redirect into 502.
+  proxy_buffer_size 32k;
+  proxy_buffers 8 32k;
+  proxy_busy_buffers_size 64k;
+
+  # Keep the lightweight operational health endpoint on the API service.
+  # Authenticated product API routes live in the Next.js app so they can share
+  # the Supabase/RLS boundary with the PWA.
+  location = /api/logimail/health {
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $logimail_connection_upgrade;
+    proxy_pass http://logimail_api;
+  }
+
+  location /api/logimail/ {
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $logimail_connection_upgrade;
+    proxy_pass http://logimail_web;
+  }
+
+  location = /roundcube {
+    return 301 /roundcube/;
+  }
+
+  location /roundcube/ {
+    alias /opt/BillionMail/webmail-data/public_html/;
+    index index.php;
+    try_files $uri $uri/ /roundcube/index.php?$query_string;
+  }
+
+  location ~ ^/roundcube/(?<roundcube_script>.+\.php)$ {
+    alias /opt/BillionMail/webmail-data/public_html/$roundcube_script;
+    include fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /var/www/html/public_html/$roundcube_script;
+    fastcgi_param DOCUMENT_ROOT /var/www/html/public_html;
+    fastcgi_param SCRIPT_NAME /$roundcube_script;
+    fastcgi_param HTTPS on;
+    fastcgi_param HTTP_X_FORWARDED_PROTO https;
+    fastcgi_param HTTP_X_FORWARDED_PREFIX /roundcube;
+    fastcgi_pass unix:/opt/BillionMail/php-sock/php-fpm.sock;
+  }
+
+  # BillionMail admin uses a random SafePath from /opt/BillionMail/.env.
+  # Do not expose it by default on the shared LogiVN VPS. Prefer SSH tunnel:
+  # ssh -L 8443:127.0.0.1:8443 root@<vps> and open https://127.0.0.1:8443/<SafePath>
+  # If public access is approved later, add exact protected locations for that SafePath.
+
+  location /_next/ {
+    proxy_pass http://logimail_web;
+  }
+
+  location ~ ^/(dashboard|login|register|manifest\.json|sw\.js|icons/|brand/) {
+    proxy_pass http://logimail_web;
+  }
+
+  location = / {
+    return 302 /dashboard;
+  }
+
+  location / {
+    proxy_pass http://logimail_web;
+  }
+}

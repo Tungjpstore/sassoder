@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 320" role="img" aria-labelledby="title desc">
+  <title id="title">LogiMail stacked logo</title>
+  <desc id="desc">Stacked LogiMail logo with mail shield mark and centered wordmark.</desc>
+  <rect x="116" y="24" width="128" height="128" rx="28" fill="#0F4D3A"/>
+  <path d="M180 46.5 214.3 59v25.1c0 27.4-14.5 44.8-34.3 54.4-19.8-9.6-34.3-27-34.3-54.4V59L180 46.5Z" fill="#FFF7EB"/>
+  <rect x="154.9" y="72.8" width="50.3" height="36.6" rx="5.7" fill="#0F4D3A"/>
+  <path d="m157.1 77.4 22.9 16 22.9-16" fill="none" stroke="#FFF7EB" stroke-width="6.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="212" cy="58" r="17.1" fill="#F28C28"/>
+  <path d="m204.6 58.3 5.4 5.4 9.9-11.4" fill="none" stroke="#FFF7EB" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="180" y="222" text-anchor="middle" fill="#0F4D3A" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="800" letter-spacing="0">Logi</text>
+  <text x="180" y="277" text-anchor="middle" fill="#F28C28" font-family="Sora, Inter, ui-sans-serif, system-ui, sans-serif" font-size="54" font-weight="800" letter-spacing="0">Mail</text>
+</svg>

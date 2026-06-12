@@ -16,6 +16,7 @@ import { updateSession } from "@/lib/supabase/proxy";
 import {
   PLATFORM_ADMIN_INTERNAL_PREFIX,
   isPlatformAdminHost,
+  isPlatformDomainControlHost,
   platformAdminInternalPath,
   platformAdminUrl
 } from "@/lib/platform-admin-url";
@@ -194,6 +195,7 @@ export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const cookieHeader = request.headers.get("cookie");
   const platformAdminHost = isPlatformAdminHost(host);
+  const platformDomainControlHost = isPlatformDomainControlHost(host);
 
   if (!pathname.startsWith("/auth/clear-session") && shouldRepairOversizedSupabaseCookieHeader(cookieHeader)) {
     return repairOversizedSupabaseCookieHeader(request);
@@ -217,9 +219,11 @@ export async function proxy(request: NextRequest) {
 
   if (platformAdminHost && !pathname.startsWith("/api") && !pathname.startsWith("/auth")) {
     const url = request.nextUrl.clone();
-    url.pathname = platformAdminInternalPath(pathname);
+    const publicPath = platformDomainControlHost && pathname === "/" ? "/domains" : pathname;
+    url.pathname = platformAdminInternalPath(publicPath);
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set("x-logivn-platform-admin-host", "1");
+    if (platformDomainControlHost) requestHeaders.set("x-logivn-domain-control-host", "1");
     return NextResponse.rewrite(url, {
       request: {
         headers: requestHeaders

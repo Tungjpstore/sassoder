@@ -1,0 +1,11 @@
+# LogiMail MailOps least-privilege sudoers example.
+# Copy to /etc/sudoers.d/logimail-mailagent with chmod 440 after updating paths.
+
+User_Alias LOGIMAIL_AGENT = mailagent
+
+Cmnd_Alias LOGIMAIL_HEALTH = /opt/logimail/infra/mailops-agent/healthcheck.sh, /opt/logimail/infra/mailops-agent/check-dns.sh, /opt/logimail/infra/mailops-agent/check-mail-queue.sh
+Cmnd_Alias LOGIMAIL_BACKUP = /opt/logimail/infra/mailops-agent/backup.sh, /opt/logimail/infra/vps/backup-billionmail.sh, /opt/logimail/infra/vps/restore-dry-run.sh
+Cmnd_Alias LOGIMAIL_RESTART = /opt/logimail/infra/mailops-agent/restart-safe.sh, /opt/logimail/infra/vps/restart-safe.sh
+
+LOGIMAIL_AGENT ALL=(root) NOPASSWD: LOGIMAIL_HEALTH, LOGIMAIL_BACKUP
+LOGIMAIL_AGENT ALL=(root) LOGIMAIL_RESTART

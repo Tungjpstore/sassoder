@@ -242,6 +242,53 @@ export async function notifyPlatformSubscriptionStatusChanged(input: {
   }
 }
 
+export async function notifyPlatformLogimailApprovalRequested(input: {
+  requestId: string;
+  requestType: "account" | "domain" | "mailbox";
+  requesterUserId?: string | null;
+  requesterEmail?: string | null;
+  workspaceId?: string | null;
+  workspaceName?: string | null;
+  workspaceSlug?: string | null;
+  targetValue: string;
+  purpose?: string | null;
+  domain?: string | null;
+  mailHostname?: string | null;
+  emailAddress?: string | null;
+  displayName?: string | null;
+  quotaMb?: number | null;
+  riskFlags?: string[];
+  plannedRecordCount?: number;
+  createdAt?: string | null;
+  source?: "dashboard" | "system" | "devops";
+}) {
+  await publishPlatformEventSafely({
+    type: "platform.logimail.approval_requested",
+    eventId: `platform.logimail.approval_requested:${input.requestType}:${input.requestId}`,
+    tenantId: "platform",
+    source: input.source ?? "dashboard",
+    logimail: {
+      requestId: input.requestId,
+      requestType: input.requestType,
+      requesterUserId: input.requesterUserId ?? null,
+      requesterEmail: input.requesterEmail ?? null,
+      workspaceId: input.workspaceId ?? null,
+      workspaceName: input.workspaceName ?? null,
+      workspaceSlug: input.workspaceSlug ?? null,
+      targetValue: input.targetValue,
+      purpose: input.purpose ?? null,
+      domain: input.domain ?? null,
+      mailHostname: input.mailHostname ?? null,
+      emailAddress: input.emailAddress ?? null,
+      displayName: input.displayName ?? null,
+      quotaMb: input.quotaMb ?? null,
+      riskFlags: input.riskFlags ?? [],
+      plannedRecordCount: input.plannedRecordCount ?? 0,
+      createdAt: input.createdAt ?? new Date().toISOString()
+    }
+  });
+}
+
 async function publishPlatformEventSafely(event: OperationalEvent) {
   try {
     await publishOperationalEvent(event);
