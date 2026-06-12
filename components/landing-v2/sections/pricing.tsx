@@ -102,53 +102,64 @@ export function Pricing() {
           ))}
         </RevealStagger>
 
-        {/* Detailed feature comparison table — scrolls horizontally on mobile so values don't wrap awkwardly */}
+        {/* Detailed feature comparison — stacks cleanly on mobile, 3-col table on sm+ */}
         <div className="mx-auto w-full max-w-4xl">
-          <div className="overflow-x-auto rounded-[var(--r-xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-sm)]">
-            <div className="min-w-[40rem]">
-              {/* Sticky-ish header row */}
-              <div className="grid grid-cols-[2fr_1fr_1fr] items-center gap-2 border-b border-[var(--line)] bg-[var(--surface-2)]/60 px-[var(--s-5)] py-[var(--s-4)] md:px-[var(--s-6)]">
-                <span className="text-[length:var(--fs-xs)] font-semibold uppercase tracking-[var(--tracking-eyebrow)] text-[var(--text-faint)]">
-                  So sánh chi tiết
-                </span>
-                <span className="text-center text-[length:var(--fs-sm)] font-bold text-[var(--text)]">Pro</span>
-                <span className="flex items-center justify-center gap-1.5 text-center text-[length:var(--fs-sm)] font-bold text-[var(--jade)]">
-                  Premium
-                </span>
-              </div>
+          <div className="overflow-hidden rounded-[var(--r-xl)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-sm)]">
+            {/* Header row — desktop only */}
+            <div className="hidden grid-cols-[2fr_1fr_1fr] items-center gap-2 border-b border-[var(--line)] bg-[var(--surface-2)]/60 px-[var(--s-6)] py-[var(--s-4)] sm:grid">
+              <span className="text-[length:var(--fs-xs)] font-semibold uppercase tracking-[var(--tracking-eyebrow)] text-[var(--text-faint)]">
+                So sánh chi tiết
+              </span>
+              <span className="text-center text-[length:var(--fs-sm)] font-bold text-[var(--text)]">Pro</span>
+              <span className="text-center text-[length:var(--fs-sm)] font-bold text-[var(--jade)]">Premium</span>
+            </div>
 
-              {comparisonRows.map((row) => (
-                <div key={row.category}>
-                  {/* Category label */}
-                  <div className="border-b border-[var(--line)] bg-[var(--primary-soft)]/40 px-[var(--s-5)] py-2.5 md:px-[var(--s-6)]">
-                    <span className="text-[length:var(--fs-xs)] font-bold uppercase tracking-[var(--tracking-eyebrow)] text-[var(--jade)]">
-                      {row.category}
+            {comparisonRows.map((row) => (
+              <div key={row.category}>
+                {/* Category label */}
+                <div className="border-b border-[var(--line)] bg-[var(--primary-soft)]/40 px-[var(--s-5)] py-2.5 sm:px-[var(--s-6)]">
+                  <span className="text-[length:var(--fs-xs)] font-bold uppercase tracking-[var(--tracking-eyebrow)] text-[var(--jade)]">
+                    {row.category}
+                  </span>
+                </div>
+
+                {row.features.map((feat, idx) => (
+                  <div
+                    key={feat.label}
+                    className={[
+                      "border-b border-[var(--line)] px-[var(--s-5)] py-[var(--s-4)] last:border-b-0 sm:px-[var(--s-6)] sm:py-[var(--s-3)]",
+                      "sm:grid sm:grid-cols-[2fr_1fr_1fr] sm:items-center sm:gap-2",
+                      idx % 2 === 1 ? "sm:bg-[var(--surface-2)]/30" : ""
+                    ].join(" ")}
+                  >
+                    <span className="block text-[length:var(--fs-sm)] font-medium leading-snug text-[var(--text)] sm:font-normal">
+                      {feat.label}
                     </span>
-                  </div>
-                  {row.features.map((feat, idx) => (
-                    <div
-                      key={feat.label}
-                      className={[
-                        "grid grid-cols-[2fr_1fr_1fr] items-center gap-2 px-[var(--s-5)] py-[var(--s-3)] md:px-[var(--s-6)]",
-                        idx % 2 === 1 ? "bg-[var(--surface-2)]/30" : ""
-                      ].join(" ")}
-                    >
-                      <span className="text-[length:var(--fs-sm)] leading-snug text-[var(--text)]">{feat.label}</span>
-                      <div className="flex justify-center text-center">
+
+                    {/* Mobile: two labeled mini-cells */}
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:hidden">
+                      <div className="flex flex-col items-center gap-1.5 rounded-[var(--r-md)] bg-[var(--surface-2)]/60 px-2 py-2">
+                        <span className="text-[length:var(--fs-xs)] font-semibold uppercase tracking-wide text-[var(--text-faint)]">Pro</span>
                         <CompareCell value={feat.pro} />
                       </div>
-                      <div className="flex justify-center text-center">
+                      <div className="flex flex-col items-center gap-1.5 rounded-[var(--r-md)] bg-[var(--primary-soft)]/40 px-2 py-2">
+                        <span className="text-[length:var(--fs-xs)] font-semibold uppercase tracking-wide text-[var(--jade)]">Premium</span>
                         <CompareCell value={feat.premium} featured />
                       </div>
                     </div>
-                  ))}
-                </div>
-              ))}
-            </div>
+
+                    {/* Desktop: inline cells */}
+                    <div className="hidden justify-center sm:flex">
+                      <CompareCell value={feat.pro} />
+                    </div>
+                    <div className="hidden justify-center sm:flex">
+                      <CompareCell value={feat.premium} featured />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
-          <p className="mt-2 text-center text-[length:var(--fs-xs)] text-[var(--text-faint)] sm:hidden">
-            Vuốt ngang để xem đầy đủ →
-          </p>
         </div>
 
         <p className="text-center text-[length:var(--fs-sm)] text-[var(--text-muted)]">

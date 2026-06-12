@@ -33,7 +33,7 @@ export function ImageFrame({
       {glow !== "none" ? (
         <div
           aria-hidden
-          className="pointer-events-none absolute -inset-6 -z-10 rounded-[var(--r-xl)] opacity-60 blur-3xl"
+          className="pointer-events-none absolute inset-0 -z-10 origin-center scale-[1.08] rounded-[var(--r-xl)] opacity-60 blur-3xl"
           style={{
             background:
               glow === "orange"
