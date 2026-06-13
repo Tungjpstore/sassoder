@@ -91,12 +91,14 @@ for each row execute function public.set_updated_at();
 alter table public.staff_payroll_deductions enable row level security;
 alter table public.staff_payroll_profiles enable row level security;
 
-create policy if not exists staff_payroll_deductions_admin_all on public.staff_payroll_deductions
+drop policy if exists staff_payroll_deductions_admin_all on public.staff_payroll_deductions;
+create policy staff_payroll_deductions_admin_all on public.staff_payroll_deductions
   for all
   using (auth.uid() in (select id from public.users where restaurant_id = staff_payroll_deductions.restaurant_id and role = 'ADMIN'))
   with check (auth.uid() in (select id from public.users where restaurant_id = staff_payroll_deductions.restaurant_id and role = 'ADMIN'));
 
-create policy if not exists staff_payroll_profiles_admin_all on public.staff_payroll_profiles
+drop policy if exists staff_payroll_profiles_admin_all on public.staff_payroll_profiles;
+create policy staff_payroll_profiles_admin_all on public.staff_payroll_profiles
   for all
   using (auth.uid() in (select id from public.users where restaurant_id = staff_payroll_profiles.restaurant_id and role = 'ADMIN'))
   with check (auth.uid() in (select id from public.users where restaurant_id = staff_payroll_profiles.restaurant_id and role = 'ADMIN'));
