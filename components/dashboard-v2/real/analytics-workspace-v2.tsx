@@ -5,7 +5,6 @@ import { Banknote, BarChart3, Receipt, ShoppingBasket, TrendingDown, TrendingUp,
 import { MetricCard, EmptyState, Badge } from "../primitives";
 import { AreaChart, BarChart, DonutChart, type Point } from "../charts";
 import { Toolbar } from "../workspace-ui";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { cn } from "@/lib/utils";
@@ -47,7 +46,7 @@ export function RealAnalyticsWorkspaceV2({ report, restaurantId, period = "month
   const totalCategoryRevenue = report.categoryRows.reduce((s, r) => s + r.revenue, 0) || 1;
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Báo cáo" title="Phân tích kinh doanh">
         <RealtimeStatusBadge state={rtState} />
         <div className="inline-flex rounded-[var(--d-r-pill)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-1">
@@ -136,13 +135,6 @@ export function RealAnalyticsWorkspaceV2({ report, restaurantId, period = "month
         <Signal label="Đơn đã thanh toán" value={String(report.paidOrders)} tone="ok" />
       </section>
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/payments", label: "Đối soát thanh toán", hint: "Xác nhận VietQR & tiền mặt", icon: <Banknote size={14} /> },
-          { href: "/dashboard/menu", label: "Menu món", hint: "Tối ưu giá & combo", icon: <ShoppingBasket size={14} /> },
-          { href: "/dashboard/promotions", label: "Khuyến mãi", hint: "Đẩy doanh thu giờ vắng", icon: <TrendingUp size={14} /> }
-        ]}
-      />
     </div>
   );
 }

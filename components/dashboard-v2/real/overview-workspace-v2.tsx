@@ -21,16 +21,12 @@ import {
   Eye,
   QrCode,
   RefreshCw,
-  TrendingUp,
-  Truck,
-  Users,
-  Utensils
+  TrendingUp
 } from "lucide-react";
 import { Sparkline } from "../charts";
 import { Toolbar } from "../workspace-ui";
 import { Drawer } from "../overlay";
-import { NextSteps } from "../cross-link";
-import { Badge, EmptyState, Panel } from "../primitives";
+import { Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
@@ -78,10 +74,7 @@ type Props = {
   overdueTables: number;
   paymentWaiting: number;
   openOrderCount: number;
-  serviceHealthScore: number;
   kitchenLoad: number;
-  bestSellerName?: string | null;
-  topItemRevenue: number;
 };
 
 type StatusFilter = "all" | "pending" | "ordering" | "completed" | "waiting_payment" | "waiting_confirm";
@@ -126,10 +119,7 @@ export function RealOverviewWorkspaceV2({
   overdueTables,
   paymentWaiting,
   openOrderCount,
-  serviceHealthScore,
-  kitchenLoad,
-  bestSellerName,
-  topItemRevenue
+  kitchenLoad
 }: Props) {
   const router = useRouter();
   const toast = useToast();
@@ -220,12 +210,9 @@ export function RealOverviewWorkspaceV2({
   const detail = recentOrders.find((o) => o.id === detailId) ?? null;
 
   const sparkRevenue = hourlyRevenueToday.length > 0 ? hourlyRevenueToday.map((r) => r.revenue) : [0];
-  const sparkOrders = hourlyRevenueToday.length > 0 ? hourlyRevenueToday.map((r) => r.orderCount) : [0];
 
   const KPIS = [
     { label: "Doanh thu hôm nay", value: formatVnd(operations.todayRevenue), helper: monthRevenue > 0 ? `Tháng: ${formatVnd(monthRevenue)}` : "Chưa có doanh thu tháng", icon: <TrendingUp size={16} />, spark: sparkRevenue, sparkColor: "var(--d-jade)" },
-    { label: "Đơn hôm nay", value: String(operations.todayOrders), helper: `${operations.pending} mới · ${operations.ordering} đang làm`, icon: <Check size={16} />, spark: sparkOrders, sparkColor: "var(--d-orange)" },
-    { label: "Vé trung bình", value: formatVnd(operations.averageTicket), helper: bestSellerName ? `Bán chạy: ${bestSellerName}` : "Theo dõi món bán chạy", icon: <Users size={16} /> },
     { label: "Tiền chờ thu", value: formatVnd(operations.openOrderTotal), helper: `${paymentWaiting} bill · ${openOrderCount} đơn mở`, icon: <Banknote size={16} />, tone: paymentWaiting > 0 ? "orange" : "jade" }
   ];
 
@@ -238,7 +225,7 @@ export function RealOverviewWorkspaceV2({
   ];
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow={`Ca bán · ${restaurantName}`} title="Tổng quan hôm nay">
         <RealtimeStatusBadge state={rtState} />
         <Button variant="secondary" size="md" onClick={manualRefresh} disabled={refreshing}>
@@ -246,25 +233,17 @@ export function RealOverviewWorkspaceV2({
         </Button>
       </Toolbar>
 
-      <section className="grid grid-cols-2 gap-[var(--d-s-3)] lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-[var(--d-s-3)]">
         {KPIS.map((k) => (
-          <div key={k.label} className="flex flex-col gap-2 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
-            <div className="flex items-center justify-between">
-              <span className={cn("grid h-8 w-8 place-items-center rounded-[var(--d-r-md)]", k.tone === "orange" ? "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]" : "bg-[var(--d-primary-soft)] text-[var(--d-primary)]")}>{k.icon}</span>
-              {k.spark ? <Sparkline data={k.spark} stroke={k.sparkColor ?? "var(--d-jade)"} className="h-7 w-14 shrink-0" /> : null}
+          <div key={k.label} className="flex items-center gap-3 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-2.5 shadow-[var(--d-sh-sm)]">
+            <span className={cn("grid h-9 w-9 flex-none place-items-center rounded-[var(--d-r-md)]", k.tone === "orange" ? "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]" : "bg-[var(--d-primary-soft)] text-[var(--d-primary)]")}>{k.icon}</span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{k.label}</p>
+              <p className="d-num text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{k.value}</p>
             </div>
-            <p className="d-num text-[1.5rem] font-bold leading-none text-[var(--d-text)]">{k.value}</p>
-            <p className="text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{k.label}</p>
-            {k.helper ? <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{k.helper}</p> : null}
+            {k.spark ? <Sparkline data={k.spark} stroke={k.sparkColor ?? "var(--d-jade)"} className="hidden h-7 w-14 shrink-0 sm:block" /> : null}
           </div>
         ))}
-      </section>
-
-      <section className="-mx-1 flex gap-[var(--d-s-3)] overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:mx-0 lg:grid lg:grid-cols-4 lg:overflow-visible lg:px-0">
-        <div className="min-w-[150px] shrink-0 lg:min-w-0"><ShiftSignal label="Sức khoẻ ca" value={`${serviceHealthScore}%`} helper={serviceHealthScore >= 82 ? "Ổn định" : serviceHealthScore >= 62 ? "Cần theo dõi" : "Cần xử lý"} tone={serviceHealthScore >= 82 ? "ok" : serviceHealthScore >= 62 ? "orange" : "danger"} /></div>
-        <div className="min-w-[150px] shrink-0 lg:min-w-0"><ShiftSignal label="Tải bếp" value={String(kitchenLoad)} helper={`${operations.pending} mới · ${operations.ordering} đang làm`} tone={kitchenLoad >= 8 ? "danger" : kitchenLoad >= 4 ? "orange" : "ok"} /></div>
-        <div className="min-w-[150px] shrink-0 lg:min-w-0"><ShiftSignal label="Bàn hoạt động" value={`${activeTables}/${totalTables || 0}`} helper={overdueTables > 0 ? `${overdueTables} bàn quá giờ` : "Không có bàn quá giờ"} tone={overdueTables > 0 ? "danger" : activeTables > 0 ? "orange" : "ok"} /></div>
-        <div className="min-w-[150px] shrink-0 lg:min-w-0"><ShiftSignal label="Bán chạy" value={bestSellerName ?? "—"} helper={topItemRevenue > 0 ? `DT: ${formatVnd(topItemRevenue)}` : "Chưa đủ dữ liệu"} tone="info" /></div>
       </section>
 
       <section className="flex flex-col gap-[var(--d-s-4)]">
@@ -305,49 +284,12 @@ export function RealOverviewWorkspaceV2({
         {visible.length === 0 ? (
           <EmptyState icon={<Bell size={22} />} title="Không có đơn ở mục này" description="Đơn mới sẽ hiện ngay khi khách gọi món." />
         ) : (
-          <div className="grid gap-[var(--d-s-3)] sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-[var(--d-s-3)] sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {visible.map((o) => (
               <OrderCard key={o.id} order={o} nowMs={nowMs} onDetail={() => setDetailId(o.id)} />
             ))}
           </div>
         )}
-      </section>
-
-      <section className="grid gap-[var(--d-s-3)] lg:grid-cols-3">
-        <Panel className="p-[var(--d-s-5)]">
-          <p className="d-eyebrow text-[var(--d-orange-600)]">Lối tắt</p>
-          <h3 className="mt-1 text-[length:var(--d-fs-h3)] font-semibold text-[var(--d-text)]">Mở workspace</h3>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <ShortcutLink href="/dashboard/orders" icon={<ChefHat size={16} />} label="Đơn hàng realtime" sub={`${operations.pending + operations.ordering} đơn mở`} />
-            <ShortcutLink href="/dashboard/kitchen" icon={<ChefHat size={16} />} label="Màn hình bếp" sub={`${kitchenLoad} món đang làm`} />
-            <ShortcutLink href="/dashboard/tables" icon={<Users size={16} />} label="Bàn & QR" sub={`${activeTables}/${totalTables || 0} bàn bận`} />
-            <ShortcutLink href="/dashboard/payments" icon={<CreditCard size={16} />} label="Thu tiền" sub={`${paymentWaiting} bill chờ`} />
-          </div>
-        </Panel>
-
-        <Panel className="p-[var(--d-s-5)] lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="d-eyebrow text-[var(--d-orange-600)]">Doanh thu theo giờ</p>
-              <h3 className="mt-1 text-[length:var(--d-fs-h3)] font-semibold text-[var(--d-text)]">Hôm nay</h3>
-            </div>
-            <span className="d-num text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{hourlyRevenueToday.length} khung</span>
-          </div>
-          <div className="mt-3 grid grid-cols-12 gap-1">
-            {hourlyRevenueToday.slice(0, 12).map((h) => {
-              const max = Math.max(...hourlyRevenueToday.map((row) => row.revenue), 1);
-              const pct = (h.revenue / max) * 100;
-              return (
-                <div key={h.label} className="flex flex-col items-center gap-1">
-                  <div className="flex h-24 w-full items-end">
-                    <span className="block w-full rounded-[var(--d-r-sm)] bg-[var(--d-jade)]" style={{ height: `${Math.max(2, pct)}%` }} />
-                  </div>
-                  <span className="d-num text-[length:var(--d-fs-2xs)] text-[var(--d-text-faint)]">{h.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        </Panel>
       </section>
 
       {detail ? (
@@ -390,47 +332,7 @@ export function RealOverviewWorkspaceV2({
           </div>
         </Drawer>
       ) : null}
-
-      <NextSteps
-        items={[
-          { href: "/dashboard/orders", label: "Đơn hàng realtime", hint: `${operations.pending + operations.ordering} đơn mở`, icon: <ChefHat size={14} />, tone: operations.pending > 0 ? "orange" : "jade" },
-          { href: "/dashboard/payments", label: "Đối soát thanh toán", hint: `${paymentWaiting} bill chờ`, icon: <CreditCard size={14} />, tone: paymentWaiting > 0 ? "orange" : "neutral" },
-          { href: "/dashboard/kitchen", label: "Màn hình bếp", hint: `${kitchenLoad} món đang làm`, icon: <ChefHat size={14} /> },
-          { href: "/dashboard/tables", label: "Bàn & QR", hint: `${activeTables}/${totalTables || 0} bàn bận`, icon: <Users size={14} />, tone: overdueTables > 0 ? "danger" : "neutral" },
-          { href: "/dashboard/inventory", label: "Kho hàng", hint: "Cảnh báo & nhập kho", icon: <RefreshCw size={14} /> },
-          { href: "/dashboard/analytics", label: "Báo cáo", hint: "Phân tích chuyên sâu", icon: <TrendingUp size={14} /> }
-        ]}
-      />
     </div>
-  );
-}
-
-function ShiftSignal({ label, value, helper, tone }: { label: string; value: string; helper: string; tone: "ok" | "orange" | "danger" | "info" }) {
-  const cls: Record<string, string> = {
-    ok: "border-[var(--d-jade)]/25 bg-[var(--d-primary-soft)] text-[var(--d-primary)]",
-    orange: "border-[var(--d-orange)]/25 bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]",
-    danger: "border-[var(--d-danger-fg)]/25 bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
-    info: "border-[var(--d-line)] bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
-  };
-  return (
-    <div className={cn("flex flex-col gap-1 rounded-[var(--d-r-md)] border bg-[var(--d-surface)] p-[var(--d-s-4)]", cls[tone])}>
-      <p className="text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)]">{label}</p>
-      <p className="d-num text-[length:var(--d-fs-h2)] font-bold leading-tight">{value}</p>
-      <p className="text-[length:var(--d-fs-xs)] opacity-80">{helper}</p>
-    </div>
-  );
-}
-
-function ShortcutLink({ href, icon, label, sub }: { href: string; icon: React.ReactNode; label: string; sub: string }) {
-  return (
-    <Link href={href} className="flex items-center gap-3 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3 transition hover:border-[var(--d-jade)]">
-      <span className="grid h-9 w-9 place-items-center rounded-[var(--d-r-md)] bg-[var(--d-primary-soft)] text-[var(--d-primary)]">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{label}</span>
-        <span className="block text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{sub}</span>
-      </span>
-      <ArrowRight size={14} className="text-[var(--d-text-faint)]" />
-    </Link>
   );
 }
 

@@ -243,7 +243,7 @@ const scenarioTemplates: ScenarioTemplate[] = [
     sampleReply: "Mình rất tiếc vì trải nghiệm này. Mình sẽ chuyển quản lý kiểm tra ngay, bạn gửi giúp mã đơn hoặc thời gian ghé quán nhé.",
     prompt: "Xử lý khiếu nại F&B với thái độ bình tĩnh. Xin lỗi ngắn, thu thập dữ kiện, chuyển người thật, không hứa bồi thường.",
     channels: ["website", "messenger", "zalo", "telegram", "whatsapp"],
-    actionHref: "/dashboard/ai-control",
+    actionHref: "/dashboard/settings",
     requiredCategories: ["policy"],
     optionalSignalTypes: [],
     readyAction: "Bật kịch bản handoff cho mọi channel có khách nhắn trực tiếp.",

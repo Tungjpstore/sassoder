@@ -124,32 +124,32 @@ export function MetricCard({
     <Tag
       href={href}
       className={cn(
-        "group flex flex-col gap-[var(--d-s-2)] rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]",
+        "group flex items-center gap-3 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-2.5 shadow-[var(--d-sh-sm)]",
         href && "transition-colors duration-[var(--d-dur)] hover:border-[var(--d-line-strong)] hover:bg-[var(--d-surface-2)]",
         className
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        {icon ? (
-          <span className={cn("grid h-9 w-9 flex-none place-items-center rounded-[var(--d-r-md)]", tones[tone])}>
-            {icon}
-          </span>
-        ) : null}
-        <span className="text-[length:var(--d-fs-2xs)] font-semibold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">
+      {icon ? (
+        <span className={cn("grid h-9 w-9 flex-none place-items-center rounded-[var(--d-r-md)]", tones[tone])}>
+          {icon}
+        </span>
+      ) : null}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[length:var(--d-fs-2xs)] font-semibold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">
           {label}
         </span>
-      </div>
-      <p className="d-num text-[1.5rem] font-bold leading-none text-[var(--d-text)]">{value}</p>
-      {(helper || trend) && (
-        <p className="flex items-center gap-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-          {trend ? (
-            <span className={cn("d-num font-semibold", trendTone)}>
-              {trend.direction === "up" ? "↑" : trend.direction === "down" ? "↓" : "→"} {trend.delta}
-            </span>
-          ) : null}
-          {helper ? <span className="truncate">{helper}</span> : null}
-        </p>
-      )}
+        <span className="d-num block truncate text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{value}</span>
+        {(helper || trend) && (
+          <span className="flex items-center gap-1.5 truncate text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            {trend ? (
+              <span className={cn("d-num font-semibold", trendTone)}>
+                {trend.direction === "up" ? "↑" : trend.direction === "down" ? "↓" : "→"} {trend.delta}
+              </span>
+            ) : null}
+            {helper ? <span className="truncate">{helper}</span> : null}
+          </span>
+        )}
+      </span>
     </Tag>
   );
 }

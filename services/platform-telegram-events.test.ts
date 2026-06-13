@@ -15,7 +15,6 @@ const tenantSingleConnectionMigrationSource = read("supabase/migrations/20260605
 const platformEventTypes = [
   "platform.tenant.created",
   "platform.subscription.approval_requested",
-  "platform.logimail.approval_requested",
   "platform.subscription.confirmed",
   "platform.subscription.rejected",
   "platform.tenant.status_changed",

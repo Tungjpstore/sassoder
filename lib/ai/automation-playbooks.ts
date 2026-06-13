@@ -177,7 +177,7 @@ const playbookTemplates: AiAutomationPlaybookTemplate[] = [
     requiredCapabilities: ["provider", "recommendations", "workflow_runs"],
     safetyMode: "manual_only",
     channels: ["AI Ops", "Analytics"],
-    actions: [{ id: "open-ai-ops", label: "Mở AI Ops", href: "/dashboard/ai-ops" }]
+    actions: [{ id: "open-ai-ops", label: "Mở tổng quan", href: "/dashboard" }]
   },
   {
     id: "playbook-customer-support-faq",

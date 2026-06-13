@@ -30,14 +30,7 @@ const mutableMemoryStatuses = new Set(["active", "archived", "deleted"]);
 
 function revalidateAiOperatingSurfaces() {
   revalidatePath("/dashboard");
-  revalidatePath("/dashboard/ai-ops");
-  revalidatePath("/dashboard/ai-control");
-  revalidatePath("/dashboard/ai-execution");
-  revalidatePath("/dashboard/ai-apply");
-  revalidatePath("/dashboard/ai-automation");
-  revalidatePath("/dashboard/ai-menu");
-  revalidatePath("/dashboard/ai-growth");
-  revalidatePath("/dashboard/ai-support");
+  revalidatePath("/dashboard/logibot-ai");
 }
 
 export async function runAiOperationalSweepAction() {
@@ -343,5 +336,5 @@ export async function updateRestaurantAiMemoryStatusAction(formData: FormData) {
     actorUserId: session.userId
   });
 
-  revalidatePath("/dashboard/ai-control");
+  revalidatePath("/dashboard/logibot-ai");
 }

@@ -8,8 +8,6 @@ export type ActiveSection =
   | "backup"
   | "queues"
   | "redis"
-  | "domains"
-  | "logimail"
   | "telegram"
   | "tenants"
   | "ai"

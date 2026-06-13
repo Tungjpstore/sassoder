@@ -42,7 +42,6 @@ import { MetricCard, Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
-import { NextSteps } from "../cross-link";
 import { MobileCollapse } from "../mobile-collapse";
 import {
   createInventoryCategoryAction,
@@ -388,7 +387,7 @@ export function RealInventoryWorkspaceV2(props: Props) {
   ];
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Kho & giá vốn" title="Kho hàng">
         <RealtimeStatusBadge state={rtState} />
         <Button variant="secondary" size="md" onClick={() => void refreshAlerts()}>
@@ -535,13 +534,6 @@ export function RealInventoryWorkspaceV2(props: Props) {
         onError={(msg) => toast.error(msg)}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/menu", label: "Menu món", hint: "Liên kết công thức tại từng món", icon: <ChefHat size={14} /> },
-          { href: "/dashboard/kitchen", label: "Bếp", hint: "Tiêu thụ thực tế", icon: <PackageCheck size={14} /> },
-          { href: "/dashboard/analytics", label: "Báo cáo", hint: "Giá vốn, lãi gộp", icon: <FileText size={14} /> }
-        ]}
-      />
     </div>
   );
 }

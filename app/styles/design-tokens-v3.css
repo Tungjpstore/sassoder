@@ -1,0 +1,192 @@
+/* ============================================================
+ * LogiVN Landing v3 — Motion & Surface extensions
+ * --
+ * ADDITIVE layer on top of design-tokens-v2.css. Imported ONLY by
+ * the v3 preview tree, so the production landing is untouched.
+ * Brand values are NOT changed — we only add motion, gradient,
+ * glow and glass helpers. Everything stays scoped under
+ * [data-ds="v2"] so v2 brand tokens resolve as-is.
+ * ============================================================ */
+
+[data-ds="v2"] {
+  /* ---- Motion: richer easing + duration scale ---- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur-slow: 420ms;
+  --dur-slower: 720ms;
+
+  /* ---- Brand gradients (composed from existing brand vars) ---- */
+  --grad-jade: linear-gradient(135deg, var(--jade-700) 0%, var(--jade) 60%, var(--jade-300) 130%);
+  --grad-jade-orange: linear-gradient(120deg, var(--jade) 0%, var(--jade-300) 42%, var(--orange) 100%);
+  --grad-orange: linear-gradient(135deg, var(--orange-600) 0%, var(--orange) 55%, var(--orange-300) 120%);
+  --grad-text: linear-gradient(100deg, var(--jade) 0%, var(--jade-300) 38%, var(--orange-600) 78%, var(--orange) 100%);
+
+  /* ---- Glow tokens (brand-tinted, for hero/cta/cards) ---- */
+  --glow-jade: 0 24px 70px -18px rgba(15, 77, 58, 0.45);
+  --glow-orange: 0 24px 70px -18px rgba(242, 140, 40, 0.5);
+
+  /* ---- Glass surface ---- */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(15, 77, 58, 0.12);
+}
+
+/* ============================================================
+ * Gradient text — clip a brand gradient onto inline text
+ * ============================================================ */
+[data-ds="v2"] .v3-grad-text {
+  background: var(--grad-text);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ============================================================
+ * Glass card
+ * ============================================================ */
+[data-ds="v2"] .v3-glass {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+/* ============================================================
+ * Fine grain / noise overlay (pure CSS, no image asset)
+ * ============================================================ */
+[data-ds="v2"] .v3-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.4;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ============================================================
+ * Aurora background — animated brand mesh (code-driven, no PNG)
+ * ============================================================ */
+[data-ds="v2"] .v3-aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+[data-ds="v2"] .v3-aurora__blob {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(72px);
+  opacity: 0.55;
+  will-change: transform;
+}
+[data-ds="v2"] .v3-aurora__blob--1 {
+  width: 46rem; height: 46rem;
+  top: -16rem; left: -12rem;
+  background: radial-gradient(circle at 30% 30%, var(--sage-100), transparent 68%);
+  animation: v3-drift-a 22s ease-in-out infinite;
+}
+[data-ds="v2"] .v3-aurora__blob--2 {
+  width: 40rem; height: 40rem;
+  top: -8rem; right: -14rem;
+  background: radial-gradient(circle at 60% 40%, var(--accent-soft), transparent 66%);
+  animation: v3-drift-b 26s ease-in-out infinite;
+}
+[data-ds="v2"] .v3-aurora__blob--3 {
+  width: 38rem; height: 38rem;
+  bottom: -18rem; left: 28%;
+  background: radial-gradient(circle at 50% 50%, rgba(79, 142, 102, 0.28), transparent 70%);
+  animation: v3-drift-c 30s ease-in-out infinite;
+}
+[data-ds="v2"] .v3-aurora__grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(to right, rgba(15, 77, 58, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 77, 58, 0.05) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 0%, transparent 75%);
+}
+
+@keyframes v3-drift-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(6rem, 3rem, 0) scale(1.08); }
+}
+@keyframes v3-drift-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(-5rem, 4rem, 0) scale(1.1); }
+}
+@keyframes v3-drift-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(4rem, -4rem, 0) scale(1.06); }
+}
+
+/* ============================================================
+ * Shimmer sweep — for primary CTA
+ * ============================================================ */
+[data-ds="v2"] .v3-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+[data-ds="v2"] .v3-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -120%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  transform: skewX(-18deg);
+  animation: v3-shimmer-sweep 4.5s ease-in-out infinite;
+}
+@keyframes v3-shimmer-sweep {
+  0%, 60% { left: -120%; }
+  100% { left: 140%; }
+}
+
+/* ============================================================
+ * Marquee
+ * ============================================================ */
+[data-ds="v2"] .v3-marquee {
+  display: flex;
+  width: max-content;
+  animation: v3-marquee var(--marquee-dur, 40s) linear infinite;
+}
+[data-ds="v2"] .v3-marquee--reverse {
+  animation-direction: reverse;
+}
+[data-ds="v2"] .v3-marquee-group:hover .v3-marquee {
+  animation-play-state: paused;
+}
+@keyframes v3-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* ============================================================
+ * Floating bob — for hero decorative chips
+ * ============================================================ */
+[data-ds="v2"] .v3-float {
+  animation: v3-float 6s ease-in-out infinite;
+  will-change: transform;
+}
+[data-ds="v2"] .v3-float--slow { animation-duration: 8.5s; }
+@keyframes v3-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* ============================================================
+ * Reduced motion — kill all v3 ambient animation
+ * ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  [data-ds="v2"] .v3-aurora__blob,
+  [data-ds="v2"] .v3-shimmer::after,
+  [data-ds="v2"] .v3-marquee,
+  [data-ds="v2"] .v3-float {
+    animation: none !important;
+  }
+}

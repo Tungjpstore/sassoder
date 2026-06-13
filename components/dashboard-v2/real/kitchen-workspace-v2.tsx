@@ -13,7 +13,6 @@ import { Bell, Check, ChefHat, Clock3, Flame, RefreshCw, TimerReset, Utensils, X
 import { Badge, EmptyState } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
 import { fetchKitchenOrders, readCachedKitchenOrders, writeCachedKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
 import { formatVnd } from "@/lib/money";
@@ -324,13 +323,6 @@ export function RealKitchenWorkspaceV2({
         </div>
       )}
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/orders", label: "Đơn hàng realtime", hint: "Quay lại điều phối", icon: <Utensils size={14} /> },
-          { href: "/dashboard/inventory", label: "Kho nguyên liệu", hint: "Kiểm tra tồn kho", icon: <ChefHat size={14} /> },
-          { href: "/dashboard/menu", label: "Menu món", hint: "Bật / tắt món", icon: <Flame size={14} /> }
-        ]}
-      />
     </div>
   );
 }

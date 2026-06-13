@@ -15,7 +15,6 @@ import { FilterTabs, Toolbar } from "../workspace-ui";
 import { MetricCard, EmptyState, Badge } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
 import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -150,7 +149,7 @@ export function RealReservationsWorkspaceV2(props: Props) {
   const selected = reservations.find((r) => r.id === selectedId) ?? null;
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Đặt bàn trước" title="Đặt bàn">
         <RealtimeStatusBadge state={rtState} />
         <Button variant="primary" size="md" onClick={() => setCreateOpen(true)}><Plus size={15} /> Tạo đặt bàn</Button>
@@ -264,13 +263,6 @@ export function RealReservationsWorkspaceV2(props: Props) {
         }}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/tables", label: "Sơ đồ bàn", hint: "Ghép bàn cho đặt trước", icon: <CalendarClock size={14} /> },
-          { href: "/dashboard/orders", label: "Đơn đang phục vụ", hint: "Đơn theo bàn", icon: <Users size={14} /> },
-          { href: "/dashboard/settings?section=online", label: "Cấu hình đặt bàn", hint: "Cọc, ETA, kênh nhận", icon: <Wallet size={14} /> }
-        ]}
-      />
     </div>
   );
 }

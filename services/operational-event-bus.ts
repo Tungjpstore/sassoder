@@ -99,26 +99,6 @@ type PlatformSubscriptionStatusSnapshot = {
   changedAt?: string | null;
 };
 
-type PlatformLogimailApprovalSnapshot = {
-  requestId: string;
-  requestType: "account" | "domain" | "mailbox";
-  requesterUserId?: string | null;
-  requesterEmail?: string | null;
-  workspaceId?: string | null;
-  workspaceName?: string | null;
-  workspaceSlug?: string | null;
-  targetValue: string;
-  purpose?: string | null;
-  domain?: string | null;
-  mailHostname?: string | null;
-  emailAddress?: string | null;
-  displayName?: string | null;
-  quotaMb?: number | null;
-  riskFlags?: string[];
-  plannedRecordCount?: number;
-  createdAt?: string | null;
-};
-
 type OperationalOrderSnapshot = {
   id: string;
   displayCode?: string;
@@ -393,10 +373,6 @@ export type OperationalEvent =
       restaurantId: string;
       subscription: PlatformSubscriptionStatusSnapshot;
     })
-  | (PlatformOperationalEvent & {
-      type: "platform.logimail.approval_requested";
-      logimail: PlatformLogimailApprovalSnapshot;
-    })
   | (BaseOperationalEvent & {
       type: "sla.warning";
       sla: {
@@ -601,8 +577,7 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "platform.subscription.confirmed" ||
     type === "platform.subscription.rejected" ||
     type === "platform.tenant.status_changed" ||
-    type === "platform.subscription.status_changed" ||
-    type === "platform.logimail.approval_requested"
+    type === "platform.subscription.status_changed"
   ) {
     return 1;
   }

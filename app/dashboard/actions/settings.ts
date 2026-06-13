@@ -78,7 +78,6 @@ async function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<type
   revalidatePath("/dashboard/reservations");
   revalidatePath("/dashboard/orders");
   revalidatePath("/dashboard/inventory");
-  revalidatePath("/dashboard/ai-ops");
   revalidatePath(`/r/${session.restaurant.slug}`);
 }
 

@@ -159,7 +159,7 @@ export function RealSettingsWorkspaceV2(props: Props) {
   }
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Hệ thống" title="Cài đặt">
         <span className="inline-flex h-9 items-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
           Sẵn sàng <span className="d-num font-bold text-[var(--d-text)]">{props.setupReadiness.score}%</span>

@@ -414,6 +414,35 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
   const [needsUnlock, setNeedsUnlock] = useState(false);
   const [taskLoading, setTaskLoading] = useState(false);
   const [taskMessage, setTaskMessage] = useState<string | null>(null);
+  const [downloadingIndex, setDownloadingIndex] = useState<number | null>(null);
+
+  const downloadAttachment = useCallback(async (index: number, filename: string) => {
+    setDownloadingIndex(index);
+    setError(null);
+    try {
+      const token = await authToken();
+      const response = await fetch(`/api/logimail/mail/messages/${id}/attachments/${index}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        throw new Error(body?.error?.message ?? 'Không tải được tệp đính kèm.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename || 'attachment';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : 'Không tải được tệp đính kèm.');
+    } finally {
+      setDownloadingIndex(null);
+    }
+  }, [id]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -533,7 +562,19 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
           <pre className="mail-body-text">{message.bodyText}</pre>
           {message.attachments.length ? (
             <div className="attachment-list">
-              {message.attachments.map((attachment) => <span key={`${attachment.filename}-${attachment.size}`}>{attachment.filename} · {attachment.contentType} {formatSize(attachment.size)}</span>)}
+              {message.attachments.map((attachment) => (
+                <button
+                  key={`${attachment.index}-${attachment.filename}`}
+                  type="button"
+                  className="attachment-chip"
+                  onClick={() => void downloadAttachment(attachment.index, attachment.filename)}
+                  disabled={downloadingIndex === attachment.index}
+                >
+                  {downloadingIndex === attachment.index ? <Loader2 size={13} aria-hidden="true" /> : <Paperclip size={13} aria-hidden="true" />}
+                  <span>{attachment.filename}</span>
+                  <small>{attachment.contentType} {formatSize(attachment.size)}</small>
+                </button>
+              ))}
             </div>
           ) : null}
         </>

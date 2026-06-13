@@ -342,10 +342,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       overdueTables={overdueTables}
       paymentWaiting={paymentWaiting}
       openOrderCount={openOrderCount}
-      serviceHealthScore={serviceHealthScore}
       kitchenLoad={kitchenLoad}
-      bestSellerName={bestSeller?.name ?? null}
-      topItemRevenue={bestSeller?.revenue ?? 0}
     />
   );
 }

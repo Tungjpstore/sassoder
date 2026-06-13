@@ -103,7 +103,6 @@ test("AI security events capture blocked tools and approval replay attempts", ()
 test("AI security event feed is tenant-scoped and visible to admin surfaces only", () => {
   const service = read("services/ai-security-event-service.ts");
   const route = read("app/api/admin/ai/security-events/route.ts");
-  const page = read("app/dashboard/ai-production/page.tsx");
 
   assert.match(service, /from\("ai_security_events"\)/);
   assert.match(service, /\.eq\("restaurant_id", input\.restaurantId\)/);
@@ -112,8 +111,6 @@ test("AI security event feed is tenant-scoped and visible to admin surfaces only
   assert.match(service, /return \{ schemaReady: false, events: \[\], highRiskCount: 0 \}/);
   assert.match(route, /assertSameOriginRequest\(request\)/);
   assert.match(route, /requireOperationalDashboardApiSession\(\{ adminOnly: true, feature: "ai_owner_assistant" \}\)/);
-  assert.match(page, /listRecentAiSecurityEvents\(\{ restaurantId: session\.restaurantId, limit: 8 \}\)/);
-  assert.match(page, /<SecurityEventPanel feed=\{securityEventFeed\} \/>/);
 });
 
 test("AI schema snapshot includes production indexes, triggers and service-role-only audit tables", () => {

@@ -62,7 +62,7 @@ const AI_OPS_COMMANDS = {
   tinhhinh: {
     intent: "overview",
     permission: "dashboard.view",
-    route: "/dashboard/ai-ops",
+    route: "/dashboard",
     prompt: "Tóm tắt tình hình vận hành hiện tại: đơn, thanh toán, bếp, bàn và rủi ro cần xử lý ngay. Chỉ dùng dữ liệu thật."
   },
   tonkho: {
@@ -990,7 +990,7 @@ async function buildTenantOpsMenuKeyboard(keyboard: InlineKeyboard, connection: 
       .row()
       .text("Kết nối", callbacks.status)
       .row()
-      .url("Dashboard", absoluteAppUrl("/dashboard/ai-ops"));
+      .url("Dashboard", absoluteAppUrl("/dashboard"));
     return;
   }
 
@@ -1060,7 +1060,7 @@ async function replyWithOwnerBriefings(ctx: Context, preferredConnection?: Teleg
     .text("Làm mới", callbacks.briefings)
     .text("AI Ops mới", callbacks.tinhhinh)
     .row()
-    .url("Mở AI Ops", absoluteAppUrl("/dashboard/ai-ops"));
+    .url("Mở Dashboard", absoluteAppUrl("/dashboard"));
 
   if (briefings.length === 0) {
     await ctx.reply("Chưa có AI Ops brief nào từ Telegram. Bấm AI Ops để tạo brief đầu tiên.", { reply_markup: keyboard });
@@ -1545,8 +1545,8 @@ function aiOpsSpec(command: AiOpsCommand, message: string) {
   return {
     intent: undefined,
     permission: "dashboard.view",
-    route: "/dashboard/ai-ops",
-    actionLabel: "Mở AI Ops",
+    route: "/dashboard",
+    actionLabel: "Mở Dashboard",
     message
   };
 }

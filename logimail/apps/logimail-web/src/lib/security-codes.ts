@@ -368,3 +368,85 @@ function retentionHoursValue(value?: number) {
 export function displayCodeFromRow(row: Pick<SecurityCodeRow, 'code_ciphertext' | 'code_hint'>) {
   return decryptCode(row.code_ciphertext) ?? (row.code_hint ? `••••-${row.code_hint}` : null);
 }
+
+export type SecurityCodeView = {
+  id: string;
+  domain: string | null;
+  purpose: SecurityCodePurpose;
+  code: string | null;
+  codeHint: string;
+  status: SecurityCodeRow['status'];
+  usedCount: number;
+  maxUses: number;
+  expiresAt: string;
+  createdAt: string;
+  consumedEmail: string | null;
+};
+
+export async function listActiveSecurityCodes(limit = 50): Promise<SecurityCodeView[]> {
+  const { data, error } = await store()
+    .from('security_codes')
+    .select('*')
+    .eq('status', 'active')
+    .order('expires_at', { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(supabaseErrorMessage(error));
+  return ((data ?? []) as SecurityCodeRow[]).map((row) => ({
+    id: row.id,
+    domain: row.domain,
+    purpose: row.purpose,
+    code: displayCodeFromRow(row),
+    codeHint: row.code_hint,
+    status: row.status,
+    usedCount: row.used_count,
+    maxUses: row.max_uses,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    consumedEmail: row.consumed_email,
+  }));
+}
+
+async function getSecurityCodeById(id: string) {
+  const { data, error } = await store().from('security_codes').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(supabaseErrorMessage(error));
+  return (data as SecurityCodeRow | null) ?? null;
+}
+
+export async function rotateSecurityCode(input: { codeId: string; actor: string }) {
+  const current = await getSecurityCodeById(input.codeId);
+  if (!current) throw new Error('security_code_not_found');
+  if (current.status === 'active') {
+    const { data, error } = await store()
+      .from('security_codes')
+      .update({ status: 'revoked', revoked_by: input.actor, revoked_at: new Date().toISOString(), metadata: metadataWith(current.metadata, { revokedReason: 'rotated' }) })
+      .eq('id', current.id)
+      .eq('status', 'active')
+      .select('id')
+      .maybeSingle();
+    if (error) throw new Error(supabaseErrorMessage(error));
+    if (!data) throw new Error('security_code_inactive');
+  }
+  const replacement = await createSecurityCode({
+    domain: current.domain,
+    purpose: current.purpose,
+    createdBy: input.actor,
+    metadata: { replacedFrom: current.id, replacementReason: 'manual_rotate' },
+  });
+  await store().from('security_codes').update({ replaced_by: replacement.row.id }).eq('id', current.id);
+  return { id: replacement.row.id, code: replacement.code, domain: replacement.row.domain, expiresAt: replacement.row.expires_at };
+}
+
+export async function revokeSecurityCode(input: { codeId: string; actor: string }) {
+  const current = await getSecurityCodeById(input.codeId);
+  if (!current) throw new Error('security_code_not_found');
+  const { data, error } = await store()
+    .from('security_codes')
+    .update({ status: 'revoked', revoked_by: input.actor, revoked_at: new Date().toISOString(), metadata: metadataWith(current.metadata, { revokedReason: 'manual_revoke' }) })
+    .eq('id', input.codeId)
+    .in('status', ['active', 'expired'])
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error(supabaseErrorMessage(error));
+  if (!data) throw new Error('security_code_inactive');
+  return { codeId: input.codeId, status: 'revoked' as const };
+}

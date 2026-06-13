@@ -17,7 +17,6 @@ import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { OrderDetailDrawer, type OrderDetail } from "../order-detail-drawer";
 import { RealtimeStatusBadge, playOrderChime, type RealtimeState } from "../realtime";
-import { NextSteps } from "../cross-link";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -457,14 +456,6 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
         }}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/kitchen", label: "Vào bếp", hint: "Hàng đợi món", icon: <ChefHat size={14} /> },
-          { href: "/dashboard/payments", label: "Đối soát thu", hint: "Bill chờ thanh toán", icon: <CreditCard size={14} /> },
-          { href: "/dashboard/tables", label: "Sơ đồ bàn", hint: "Trạng thái bàn realtime", icon: <Utensils size={14} /> },
-          { href: "/dashboard/online", label: "Đơn online", hint: "Pickup & giao hàng", icon: <Truck size={14} /> }
-        ]}
-      />
     </div>
   );
 }

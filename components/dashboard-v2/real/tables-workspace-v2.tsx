@@ -7,7 +7,6 @@ import { Button } from "../button";
 import { Badge, EmptyState, MetricCard, SwitchControl } from "../primitives";
 import { Drawer, Modal } from "../overlay";
 import { FilterTabs, Toolbar } from "../workspace-ui";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
@@ -178,7 +177,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
   }
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Vận hành" title="Bàn &amp; QR">
         <RealtimeStatusBadge state={rtState} />
         <Button variant={editMode ? "primary" : "secondary"} size="md" onClick={() => setEditMode((v) => !v)}><Move size={15} /> {editMode ? "Lưu sơ đồ" : "Sửa sơ đồ"}</Button>
@@ -306,13 +305,6 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
         pending={pending}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/orders", label: "Đơn hàng đang phục vụ", hint: "Theo dõi đơn theo bàn", icon: <Users size={14} /> },
-          { href: "/dashboard/reservations", label: "Đặt bàn trước", hint: "Lịch đặt sắp tới", icon: <Move size={14} /> },
-          { href: "/dashboard/settings?section=tables", label: "Cấu hình bàn & QR", hint: "Khu vực, sức chứa", icon: <QrCode size={14} /> }
-        ]}
-      />
     </div>
   );
 }

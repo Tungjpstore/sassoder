@@ -7,7 +7,7 @@ import { parseAiMorningBriefRecipientsInput } from "@/lib/ai/morning-brief";
 import { retryAiMorningBriefEmail, updateAiMorningBriefPreferences } from "@/services/ai-morning-brief-service";
 
 function statusRedirect(param: "settings" | "retry", value: string) {
-  redirect(`/dashboard/ai-ops?${param}=${encodeURIComponent(value)}`);
+  redirect(`/dashboard?${param}=${encodeURIComponent(value)}`);
 }
 
 export async function updateAiMorningBriefPreferencesAction(formData: FormData) {
@@ -27,7 +27,6 @@ export async function updateAiMorningBriefPreferencesAction(formData: FormData) 
   });
 
   revalidatePath("/dashboard");
-  revalidatePath("/dashboard/ai-ops");
   statusRedirect("settings", result.schemaReady ? "saved" : "schema");
 }
 
@@ -43,6 +42,5 @@ export async function retryAiMorningBriefEmailAction(formData: FormData) {
   });
 
   revalidatePath("/dashboard");
-  revalidatePath("/dashboard/ai-ops");
   statusRedirect("retry", result.emailStatus ?? "schema");
 }

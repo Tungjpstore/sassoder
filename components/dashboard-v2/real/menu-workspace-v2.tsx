@@ -23,8 +23,8 @@ import { MetricCard, Badge, EmptyState, SwitchControl } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
+import { AiImageStudio, MenuAiImportModal, type MenuAiAccess } from "./menu/menu-ai";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
 import {
@@ -44,6 +44,8 @@ function formatVnd(n: number) {
   return `${n.toLocaleString("vi-VN")}₫`;
 }
 
+export type { MenuAiAccess } from "./menu/menu-ai";
+
 type Props = {
   restaurantId: string;
   categories: AdminMenuCategory[];
@@ -52,9 +54,10 @@ type Props = {
   restaurantName: string;
   ingredients: InventoryIngredient[];
   recipeMenuItems: InventoryRecipeMenuItem[];
+  ai: MenuAiAccess;
 };
 
-export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topItemNames, ingredients, recipeMenuItems }: Props) {
+export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topItemNames, restaurantName, ingredients, recipeMenuItems, ai }: Props) {
   const router = useRouter();
   const toast = useToast();
   const [tab, setTab] = useState("all");
@@ -62,6 +65,7 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
+  const [aiImportOpen, setAiImportOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const rtState = useDashboardRealtime({
@@ -138,15 +142,12 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
   }
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Quản lý" title="Menu món">
         <RealtimeStatusBadge state={rtState} />
-        <a
-          href="/dashboard/ai-menu"
-          className="inline-flex h-10 items-center gap-1.5 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)] transition hover:border-[var(--d-jade)] hover:text-[var(--d-primary)]"
-        >
-          <Sparkles size={15} /> AI Menu Studio
-        </a>
+        <Button variant="secondary" size="md" onClick={() => setAiImportOpen(true)}>
+          <Sparkles size={15} /> AI nhập menu
+        </Button>
         <Button variant="secondary" size="md" onClick={() => setCreateCategoryOpen(true)}>
           <FolderPlus size={15} /> Thêm danh mục
         </Button>
@@ -212,6 +213,8 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
           recipeLines={recipeMenuItems.find((r) => r.id === selected.id)?.recipeLines ?? []}
           recipeSummary={recipeMenuItems.find((r) => r.id === selected.id) ?? null}
           pending={pending}
+          aiImage={ai.image}
+          restaurantName={restaurantName}
           onClose={() => setSelectedId(null)}
           onToggle={(v) => toggleItem(selected.id, v)}
           onSave={saveItem}
@@ -223,6 +226,8 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
       <CreateMenuItemModal
         open={createOpen}
         categories={categories}
+        aiImage={ai.image}
+        restaurantName={restaurantName}
         onClose={() => setCreateOpen(false)}
         onCreated={() => {
           setCreateOpen(false);
@@ -230,6 +235,14 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
           toast.success("Đã thêm món mới");
         }}
         onError={(msg) => toast.error(msg)}
+      />
+
+      <MenuAiImportModal
+        open={aiImportOpen}
+        ocr={ai.ocr}
+        voiceEnabled={ai.voiceEnabled}
+        onClose={() => setAiImportOpen(false)}
+        onImported={() => router.refresh()}
       />
 
       <CreateCategoryModal
@@ -243,14 +256,6 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
         onError={(msg) => toast.error(msg)}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/inventory", label: "Kho nguyên liệu", hint: "Liên kết công thức", icon: <Coffee size={14} /> },
-          { href: "/dashboard/promotions", label: "Khuyến mãi", hint: "Tạo combo & ưu đãi", icon: <Sparkles size={14} /> },
-          { href: "/dashboard/ai-menu", label: "AI Menu Studio", hint: "Tối ưu menu bằng AI", icon: <Sparkles size={14} /> },
-          { href: "/dashboard/online", label: "Bán online", hint: "Hiển thị menu cho khách", icon: <Utensils size={14} /> }
-        ]}
-      />
     </div>
   );
 }
@@ -325,6 +330,8 @@ function MenuItemDrawer({
   recipeLines,
   recipeSummary,
   pending,
+  aiImage,
+  restaurantName,
   onClose,
   onToggle,
   onSave,
@@ -337,6 +344,8 @@ function MenuItemDrawer({
   recipeLines: InventoryRecipeMenuItem["recipeLines"];
   recipeSummary: InventoryRecipeMenuItem | null;
   pending: boolean;
+  aiImage: MenuAiAccess["image"];
+  restaurantName: string;
   onClose: () => void;
   onToggle: (v: boolean) => void;
   onSave: (fd: FormData) => void;
@@ -348,6 +357,7 @@ function MenuItemDrawer({
   const [editingImage, setEditingImage] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [removeExisting, setRemoveExisting] = useState(false);
+  const [aiAppliedUrl, setAiAppliedUrl] = useState<string | null>(null);
   const formId = `menu-edit-${item.id}`;
 
   function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -359,6 +369,7 @@ function MenuItemDrawer({
     const url = URL.createObjectURL(file);
     setImagePreview(url);
     setRemoveExisting(false);
+    setAiAppliedUrl(null);
   }
 
   return (
@@ -431,7 +442,7 @@ function MenuItemDrawer({
       >
         <input type="hidden" name="itemId" value={item.id} />
         <input type="hidden" name="isAvailable" value={String(available)} />
-        <input type="hidden" name="image" value={removeExisting ? "" : item.image_url ?? ""} />
+        <input type="hidden" name="image" value={removeExisting ? "" : aiAppliedUrl ?? item.image_url ?? ""} />
 
         {/* Image upload */}
         <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
@@ -450,6 +461,9 @@ function MenuItemDrawer({
               {imagePreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+              ) : aiAppliedUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={aiAppliedUrl} alt={item.name} className="h-full w-full object-cover" />
               ) : !removeExisting && item.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" />
@@ -474,14 +488,17 @@ function MenuItemDrawer({
                       className="hidden"
                     />
                   </label>
-                  {(imagePreview || item.image_url) ? (
+                  {(imagePreview || aiAppliedUrl || item.image_url) ? (
                     <label className="flex h-9 items-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
                       <input
                         type="checkbox"
                         checked={removeExisting}
                         onChange={(e) => {
                           setRemoveExisting(e.target.checked);
-                          if (e.target.checked) setImagePreview(null);
+                          if (e.target.checked) {
+                            setImagePreview(null);
+                            setAiAppliedUrl(null);
+                          }
                         }}
                         className="h-4 w-4 accent-[var(--d-orange)]"
                       />
@@ -496,6 +513,21 @@ function MenuItemDrawer({
                 </p>
               )}
             </div>
+          </div>
+
+          <div className="mt-3">
+            <AiImageStudio
+              formId={formId}
+              defaultDishName={item.name}
+              restaurantName={restaurantName}
+              access={aiImage}
+              appliedUrl={aiAppliedUrl}
+              onApply={(url) => {
+                setAiAppliedUrl(url);
+                setImagePreview(null);
+                setRemoveExisting(false);
+              }}
+            />
           </div>
         </section>
 
@@ -587,28 +619,36 @@ function MenuItemDrawer({
 function CreateMenuItemModal({
   open,
   categories,
+  aiImage,
+  restaurantName,
   onClose,
   onCreated,
   onError
 }: {
   open: boolean;
   categories: AdminMenuCategory[];
+  aiImage: MenuAiAccess["image"];
+  restaurantName: string;
   onClose: () => void;
   onCreated: () => void;
   onError: (msg: string) => void;
 }) {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [aiAppliedUrl, setAiAppliedUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const formId = "menu-create-form";
   if (!open) return null;
   return (
     <Modal open onClose={onClose} title="Thêm món mới" subtitle="Menu món" size="md">
       <form
+        id={formId}
         action={async (fd) => {
           if (submitting) return;
           setSubmitting(true);
           try {
             await createMenuItemAction(fd);
             setImagePreview(null);
+            setAiAppliedUrl(null);
             onCreated();
           } catch (e) {
             onError(e instanceof Error ? e.message : "Không thêm được món");
@@ -619,7 +659,7 @@ function CreateMenuItemModal({
         className={cn("grid gap-3", categories.length === 0 && "opacity-60 pointer-events-none")}
         encType="multipart/form-data"
       >
-        <input type="hidden" name="image" value="" />
+        <input type="hidden" name="image" value={aiAppliedUrl ?? ""} />
         {categories.length === 0 ? (
           <p className="rounded-[var(--d-r-md)] border border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-orange-600)]">
             Cần tạo ít nhất một danh mục trước. Bấm "Thêm danh mục" trên toolbar.
@@ -671,6 +711,9 @@ function CreateMenuItemModal({
             {imagePreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={imagePreview} alt="" className="h-full w-full object-cover" />
+            ) : aiAppliedUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={aiAppliedUrl} alt="" className="h-full w-full object-cover" />
             ) : (
               <div className="flex flex-col items-center gap-1 text-[var(--d-text-faint)]">
                 <ImageIcon size={28} />
@@ -689,6 +732,7 @@ function CreateMenuItemModal({
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   setImagePreview(file ? URL.createObjectURL(file) : null);
+                  if (file) setAiAppliedUrl(null);
                 }}
                 className="hidden"
               />
@@ -696,6 +740,18 @@ function CreateMenuItemModal({
             <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">PNG / JPG / WebP, tối đa ~5MB. Bỏ qua sẽ hiện icon mặc định trên menu khách.</p>
           </div>
         </div>
+
+        <AiImageStudio
+          formId={formId}
+          defaultDishName=""
+          restaurantName={restaurantName}
+          access={aiImage}
+          appliedUrl={aiAppliedUrl}
+          onApply={(url) => {
+            setAiAppliedUrl(url);
+            setImagePreview(null);
+          }}
+        />
 
         <div className="mt-1 flex justify-end gap-2 border-t border-[var(--d-line)] pt-3">
           <Button type="button" variant="secondary" size="md" onClick={onClose}>

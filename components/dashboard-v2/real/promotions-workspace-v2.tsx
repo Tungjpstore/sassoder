@@ -38,7 +38,6 @@ import { Badge, EmptyState, MetricCard } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { formatVnd } from "@/lib/money";
@@ -174,7 +173,7 @@ export function RealPromotionsWorkspaceV2({
   const selected = selectedId ? campaigns.find((c) => c.id === selectedId) ?? null : null;
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Marketing" title="Khuyến mãi">
         <RealtimeStatusBadge state={rtState} />
         <Button variant="primary" onClick={() => setCreating(true)}><Plus size={15} /> Tạo khuyến mãi</Button>
@@ -225,13 +224,6 @@ export function RealPromotionsWorkspaceV2({
 
       {creating ? <CreateModal freeItemOptions={freeItemOptions} onClose={() => setCreating(false)} /> : null}
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/menu", label: "Menu món", hint: "Chọn món tặng / combo", icon: <Tag size={14} /> },
-          { href: "/dashboard/online", label: "Bán online", hint: "Kích hoạt khuyến mãi online", icon: <Gift size={14} /> },
-          { href: "/dashboard/analytics", label: "Báo cáo", hint: "Hiệu quả chiến dịch", icon: <TrendingUp size={14} /> }
-        ]}
-      />
     </div>
   );
 }

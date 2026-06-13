@@ -8,7 +8,6 @@ import { DataTable, FilterTabs, Toolbar, type Column } from "../workspace-ui";
 import { DonutChart } from "../charts";
 import { Button } from "../button";
 import { Drawer } from "../overlay";
-import { NextSteps } from "../cross-link";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
@@ -109,7 +108,7 @@ export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, ban
   ];
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Vận hành" title="Thanh toán">
         <RealtimeStatusBadge state={rtState} />
       </Toolbar>
@@ -164,13 +163,6 @@ export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, ban
         confirming={confirming}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/orders", label: "Đơn hàng realtime", hint: "Quay lại điều phối đơn", icon: <Receipt size={14} /> },
-          { href: "/dashboard/analytics", label: "Báo cáo doanh thu", hint: "Theo ngày / tuần / tháng", icon: <Wallet size={14} /> },
-          { href: "/dashboard/settings?section=payments", label: "Cài đặt VietQR", hint: bankCode ? "Đã có tài khoản" : "Chưa cấu hình", icon: <Banknote size={14} />, tone: bankCode ? "neutral" : "orange" }
-        ]}
-      />
     </div>
   );
 }

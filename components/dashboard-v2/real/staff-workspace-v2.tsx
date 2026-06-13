@@ -36,7 +36,6 @@ import { MetricCard, Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
-import { NextSteps } from "../cross-link";
 import {
   createStaffAction,
   manualClockInStaffAction,
@@ -146,7 +145,6 @@ export function RealStaffWorkspaceV2(props: Props) {
     () => bundle.approvals.filter((a) => a.status === "pending").length,
     [bundle.approvals]
   );
-  const totalAttendanceEvents = bundle.attendanceFeed?.length ?? 0;
 
   const visible = useMemo(() => {
     if (tab === "all") return bundle.members;
@@ -205,7 +203,7 @@ export function RealStaffWorkspaceV2(props: Props) {
   ];
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Đội ngũ vận hành" title="Nhân viên">
         <RealtimeStatusBadge state={rtState === "idle" ? "connecting" : rtState} />
         <Button variant="secondary" size="md" onClick={() => setAdvancedOpen(true)}>
@@ -227,10 +225,10 @@ export function RealStaffWorkspaceV2(props: Props) {
       ) : null}
 
       <section className="grid grid-cols-2 gap-[var(--d-s-3)] lg:grid-cols-4">
-        <MetricCard icon={<Users size={18} />} label="Tổng nhân sự" value={String(totalMembers)} helper={`${managerCount} quản lý · ${staffCount} nhân viên`} tone="jade" />
-        <MetricCard icon={<ShieldCheck size={18} />} label="Đang làm" value={String(onlineCount)} helper="Online 15 phút gần nhất" tone="info" />
-        <MetricCard icon={<Clock3 size={18} />} label="Chờ duyệt" value={String(pendingApprovals)} helper={`${totalAttendanceEvents} sự kiện chấm công`} tone={pendingApprovals > 0 ? "danger" : "neutral"} />
-        <MetricCard icon={<UserCog size={18} />} label="Đã khoá" value={String(blockedCount)} helper={`${bundle.roles?.length ?? 0} role`} tone={blockedCount > 0 ? "orange" : "neutral"} />
+        <StaffStat icon={<Users size={16} />} label="Tổng nhân sự" value={String(totalMembers)} tone="jade" />
+        <StaffStat icon={<ShieldCheck size={16} />} label="Đang làm" value={String(onlineCount)} tone="info" />
+        <StaffStat icon={<Clock3 size={16} />} label="Chờ duyệt" value={String(pendingApprovals)} tone={pendingApprovals > 0 ? "danger" : "neutral"} />
+        <StaffStat icon={<UserCog size={16} />} label="Đã khoá" value={String(blockedCount)} tone={blockedCount > 0 ? "orange" : "neutral"} />
       </section>
 
       {/* View tabs — chuyển đổi giữa các góc nhìn quản lý nhân sự */}
@@ -334,13 +332,25 @@ export function RealStaffWorkspaceV2(props: Props) {
         }}
       />
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/orders", label: "Đơn hàng realtime", hint: "Phân công theo nhân viên", icon: <Users size={14} /> },
-          { href: "/dashboard/settings?section=permissions", label: "Phân quyền", hint: "Vai trò & nhóm quyền", icon: <ShieldCheck size={14} /> },
-          { href: "/dashboard/analytics", label: "Báo cáo", hint: "Hiệu suất nhân sự", icon: <UserCog size={14} /> }
-        ]}
-      />
+    </div>
+  );
+}
+
+function StaffStat({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone: "jade" | "info" | "danger" | "orange" | "neutral" }) {
+  const toneCls: Record<string, string> = {
+    jade: "bg-[var(--d-primary-soft)] text-[var(--d-primary)]",
+    info: "bg-[var(--d-info-bg)] text-[var(--d-info-fg)]",
+    danger: "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
+    orange: "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]",
+    neutral: "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
+  };
+  return (
+    <div className="flex items-center gap-2.5 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-3)] py-2 shadow-[var(--d-sh-sm)]">
+      <span className={cn("grid h-8 w-8 flex-none place-items-center rounded-[var(--d-r-md)]", toneCls[tone])}>{icon}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{label}</span>
+        <span className="d-num block text-[length:var(--d-fs-h3)] font-bold leading-tight text-[var(--d-text)]">{value}</span>
+      </span>
     </div>
   );
 }

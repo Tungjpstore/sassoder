@@ -36,7 +36,7 @@ export type MailMessageDetail = MailMessageSummary & {
   bodyText: string;
   messageId: string | null;
   references: string | null;
-  attachments: Array<{ filename: string; contentType: string; size: number | null }>;
+  attachments: Array<{ index: number; filename: string; contentType: string; size: number | null }>;
 };
 
 export type SendMailAttachment = {
@@ -347,12 +347,37 @@ export async function getMailMessage(session: MailSession, mailbox: AuthorizedMa
       bodyText: parsed?.text?.trim() || (typeof parsed?.html === 'string' ? htmlToText(parsed.html) : '') || '(Email này chưa có nội dung text an toàn để hiển thị.)',
       messageId: parsed?.messageId?.trim() || null,
       references: referencesLine(parsed?.references),
-      attachments: (parsed?.attachments ?? []).map((attachment) => ({
+      attachments: (parsed?.attachments ?? []).map((attachment, index) => ({
+        index,
         filename: attachment.filename ?? 'attachment',
         contentType: attachment.contentType,
         size: typeof attachment.size === 'number' ? attachment.size : null,
       })),
     } satisfies MailMessageDetail;
+  });
+}
+
+export async function getMailAttachment(
+  session: Pick<MailSession, 'email' | 'password'>,
+  mailbox: AuthorizedMailbox,
+  folder: MailFolderKey,
+  uid: number,
+  index: number,
+) {
+  return withImap(session, mailbox, async (client) => {
+    const folders = await client.list();
+    const folderPath = folderPathFor(folder, folders);
+    await client.mailboxOpen(folderPath, { readOnly: true });
+    const message = await client.fetchOne(String(uid), { uid: true, source: { maxLength: 25 * 1024 * 1024 } }, { uid: true });
+    if (!message || !message.source) return null;
+    const parsed = await simpleParser(message.source);
+    const attachment = parsed.attachments?.[index];
+    if (!attachment) return null;
+    return {
+      filename: cleanAttachmentFilename(attachment.filename ?? 'attachment'),
+      contentType: cleanMailHeaderValue(attachment.contentType, 120) || 'application/octet-stream',
+      content: await bufferFrom(attachment.content as Buffer),
+    };
   });
 }
 

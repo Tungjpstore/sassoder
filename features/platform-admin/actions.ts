@@ -20,22 +20,6 @@ import {
   updatePlatformAiProviderConfig
 } from "@/services/platform-ai-provider-config-service";
 import {
-  approveLogimailRequest,
-  checkAllLogimailDomainDnsForAdmin,
-  checkLogimailDomainDnsForAdmin,
-  createLogimailDomainForAdmin,
-  rejectLogimailRequest,
-  removeLogimailDomainForAdmin,
-  setLogimailDomainRegistrationForAdmin,
-  updateLogimailDomainForAdmin
-} from "@/services/logimail-admin-service";
-import {
-  createLogimailSecurityCodeForAdmin,
-  revokeLogimailSecurityCodeForAdmin,
-  runLogimailSecurityCodeMaintenance,
-  rotateLogimailSecurityCodeForAdmin
-} from "@/services/logimail-security-code-service";
-import {
   invalidatePlatformAdminSnapshotCache,
   writePlatformAuditLog,
   resolveBillingAnomaly,
@@ -173,57 +157,6 @@ const paymentActionSchema = z.object({
   reason: z.string().trim().max(300).optional()
 });
 
-const logimailApprovalActionSchema = z.object({
-  requestType: z.enum(["account", "domain", "mailbox"]),
-  requestId: z.string().uuid(),
-  reason: actionReasonSchema
-});
-
-const logimailSecurityCodeCreateSchema = z.object({
-  domain: z.preprocess(
-    (value) => (typeof value === "string" ? value.trim().toLowerCase() || undefined : undefined),
-    z.string().regex(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/).optional()
-  ),
-  purpose: z.enum(["account_signup", "password_reset"]).default("account_signup"),
-  ttlHours: z.coerce.number().int().min(1).max(168).default(24)
-});
-
-const logimailSecurityCodeActionSchema = z.object({
-  codeId: z.string().uuid()
-});
-
-const logimailDomainCreateSchema = z.object({
-  domain: z.preprocess(
-    (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-    z.string().regex(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/)
-  ),
-  mailHostname: z.preprocess(
-    (value) => (typeof value === "string" ? value.trim().toLowerCase() || undefined : undefined),
-    z.string().regex(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/).optional()
-  ),
-  workspaceId: z.preprocess((value) => (typeof value === "string" ? value.trim() || undefined : undefined), z.string().uuid().optional()),
-  registrationEnabled: z.enum(["true", "false"]).default("true")
-});
-
-const logimailDomainUpdateSchema = z.object({
-  domainId: z.string().uuid(),
-  mailHostname: z.preprocess(
-    (value) => (typeof value === "string" ? value.trim().toLowerCase() || undefined : undefined),
-    z.string().regex(/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/).optional()
-  ),
-  status: z.enum(["pending", "active", "warning", "failed", "disabled"]),
-  registrationEnabled: z.enum(["true", "false"]).default("false")
-});
-
-const logimailDomainIdSchema = z.object({
-  domainId: z.string().uuid()
-});
-
-const logimailDomainRegistrationSchema = z.object({
-  domainId: z.string().uuid(),
-  enabled: z.enum(["true", "false"])
-});
-
 const billingAnomalySchema = z.object({
   key: z.enum(["premium_trial_subscription", "pending_without_payment", "pending_payment_missing_policy"]),
   subscriptionId: z.string().uuid().optional(),
@@ -334,7 +267,7 @@ function revalidateAdmin() {
   revalidateTag("public-active-plans", "max");
   revalidatePath("/");
   revalidatePath("/pricing");
-  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security", "/services", "/backup", "/ops", "/alerts", "/logs", "/domains", "/logimail"].forEach((path) => {
+  ["/", "/site", "/plans", "/billing", "/tenants", "/users", "/ai", "/security", "/services", "/backup", "/ops", "/alerts", "/logs"].forEach((path) => {
     revalidatePath(platformAdminInternalPath(path));
   });
 }
@@ -863,134 +796,6 @@ export async function rejectSubscriptionPaymentAction(formData: FormData) {
   });
 
   await rejectSubscriptionPayment({ paymentId: parsed.paymentId, reason: parsed.reason, rejectedBy: session.actor });
-  revalidateAdmin();
-}
-
-export async function approveLogimailRequestAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailApprovalActionSchema.parse({
-    requestType: formData.get("requestType"),
-    requestId: formData.get("requestId")
-  });
-
-  await approveLogimailRequest({ type: parsed.requestType, requestId: parsed.requestId, actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function rejectLogimailRequestAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailApprovalActionSchema.parse({
-    requestType: formData.get("requestType"),
-    requestId: formData.get("requestId"),
-    reason: formData.get("reason")
-  });
-
-  await rejectLogimailRequest({ type: parsed.requestType, requestId: parsed.requestId, actor: session.actor, reason: parsed.reason });
-  revalidateAdmin();
-}
-
-export async function createLogimailSecurityCodeAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailSecurityCodeCreateSchema.parse({
-    domain: formData.get("domain"),
-    purpose: formData.get("purpose") || "account_signup",
-    ttlHours: formData.get("ttlHours") || 24
-  });
-
-  await createLogimailSecurityCodeForAdmin({ domain: parsed.domain, purpose: parsed.purpose, ttlHours: parsed.ttlHours, actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function runLogimailSecurityCodeMaintenanceAction(_formData?: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  await runLogimailSecurityCodeMaintenance({ actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function rotateLogimailSecurityCodeAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailSecurityCodeActionSchema.parse({ codeId: formData.get("codeId") });
-
-  await rotateLogimailSecurityCodeForAdmin({ codeId: parsed.codeId, actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function revokeLogimailSecurityCodeAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailSecurityCodeActionSchema.parse({ codeId: formData.get("codeId") });
-
-  await revokeLogimailSecurityCodeForAdmin({ codeId: parsed.codeId, actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function createLogimailDomainAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailDomainCreateSchema.parse({
-    domain: formData.get("domain"),
-    mailHostname: formData.get("mailHostname"),
-    workspaceId: formData.get("workspaceId"),
-    registrationEnabled: formData.get("registrationEnabled") || "true"
-  });
-
-  await createLogimailDomainForAdmin({
-    domain: parsed.domain,
-    mailHostname: parsed.mailHostname,
-    workspaceId: parsed.workspaceId,
-    registrationEnabled: parsed.registrationEnabled === "true",
-    actor: session.actor
-  });
-  revalidateAdmin();
-}
-
-export async function updateLogimailDomainAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailDomainUpdateSchema.parse({
-    domainId: formData.get("domainId"),
-    mailHostname: formData.get("mailHostname"),
-    status: formData.get("status"),
-    registrationEnabled: formData.get("registrationEnabled") || "false"
-  });
-
-  await updateLogimailDomainForAdmin({
-    domainId: parsed.domainId,
-    mailHostname: parsed.mailHostname,
-    status: parsed.status,
-    registrationEnabled: parsed.registrationEnabled === "true",
-    actor: session.actor
-  });
-  revalidateAdmin();
-}
-
-export async function toggleLogimailDomainRegistrationAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailDomainRegistrationSchema.parse({
-    domainId: formData.get("domainId"),
-    enabled: formData.get("enabled")
-  });
-
-  await setLogimailDomainRegistrationForAdmin({ domainId: parsed.domainId, enabled: parsed.enabled === "true", actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function checkLogimailDomainDnsAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailDomainIdSchema.parse({ domainId: formData.get("domainId") });
-
-  await checkLogimailDomainDnsForAdmin({ domainId: parsed.domainId, actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function checkAllLogimailDomainDnsAction(_formData?: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  await checkAllLogimailDomainDnsForAdmin({ actor: session.actor });
-  revalidateAdmin();
-}
-
-export async function removeLogimailDomainAction(formData: FormData) {
-  const session = await requirePlatformAdmin("logimail.approve");
-  const parsed = logimailDomainIdSchema.parse({ domainId: formData.get("domainId") });
-
-  await removeLogimailDomainForAdmin({ domainId: parsed.domainId, actor: session.actor });
   revalidateAdmin();
 }
 

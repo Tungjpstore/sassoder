@@ -716,8 +716,8 @@ async function executeStaffingWorkflow(input: {
       action({
         id: "open-ai-automation-staff",
         type: "link",
-        label: "Mở AI Automation",
-        href: "/dashboard/ai-automation",
+        label: "Mở phân ca nhân sự",
+        href: "/dashboard/staff",
         intent: "staff",
         priority: "secondary",
         safety: "safe"
@@ -949,13 +949,6 @@ async function confirmationPlan(input: { contract: OwnerAgentToolContract; messa
 function revalidateAgentSurfaces(route: string) {
   revalidatePath(route);
   revalidatePath("/dashboard");
-  revalidatePath("/dashboard/ai-ops");
-  revalidatePath("/dashboard/ai-execution");
-  revalidatePath("/dashboard/ai-apply");
-  revalidatePath("/dashboard/ai-automation");
-  revalidatePath("/dashboard/ai-menu");
-  revalidatePath("/dashboard/ai-growth");
-  revalidatePath("/dashboard/ai-support");
 }
 
 export async function executeOwnerAgentCommand(input: ExecuteOwnerAgentCommandInput): Promise<OwnerAgentExecutionResult> {

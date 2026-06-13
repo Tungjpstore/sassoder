@@ -7,7 +7,6 @@ import {
   DeploymentCenter,
   FeatureFlagsCenter,
   IncidentCenter,
-  LogimailControl,
   LogsPlatform,
   QueueCenter,
   RedisCenter,
@@ -46,7 +45,6 @@ export function PlatformAdminConsole({
       {activeSection === "services" || activeSection === "backup" ? <ServicesCenter snapshot={snapshot} /> : null}
       {activeSection === "queues" ? <QueueCenter snapshot={snapshot} /> : null}
       {activeSection === "redis" ? <RedisCenter snapshot={snapshot} /> : null}
-      {activeSection === "domains" || activeSection === "logimail" ? <LogimailControl snapshot={snapshot} /> : null}
       {activeSection === "telegram" ? <TelegramOpsCenter snapshot={snapshot} session={session} /> : null}
       {activeSection === "logs" ? <LogsPlatform snapshot={snapshot} /> : null}
       {activeSection === "alerts" ? <AlertCenter snapshot={snapshot} /> : null}

@@ -23,8 +23,7 @@ export type NavItem = {
 };
 
 export const appNavigation: NavItem[] = [
-  { href: '/dashboard', label: 'Tong quan', icon: Activity, group: 'core' },
-  { href: '/mail', label: 'Hop thu', icon: Inbox, group: 'mail' },
+  { href: '/control', label: 'Điều khiển', icon: Activity, group: 'core' },
   { href: '/mailboxes', label: 'Mailbox', icon: Mail, group: 'mail' },
   { href: '/domains', label: 'Domain & DNS', icon: Globe2, group: 'core' },
   { href: '/domains/current/deliverability', label: 'Deliverability', icon: MailCheck, group: 'core' },
@@ -39,5 +38,5 @@ export const appNavigation: NavItem[] = [
 ];
 
 export const mobileNavigation = appNavigation.filter((item) =>
-  ['/dashboard', '/mail', '/domains', '/ops', '/settings/security'].includes(item.href),
+  ['/control', '/mailboxes', '/domains', '/ops', '/settings/security'].includes(item.href),
 );

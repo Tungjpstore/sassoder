@@ -9,8 +9,6 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
 import { getBackupHealth } from "@/services/backup-service";
-import { getLogimailApprovalQueue } from "@/services/logimail-admin-service";
-import { emptySecurityCodeCenter } from "@/services/logimail-security-code-service";
 import { listPlatformAiProviderConfigs, type PlatformAiProviderConfigSummary } from "@/services/platform-ai-provider-config-service";
 import { invalidateMenuCache } from "@/services/menu-service";
 import { notifyPlatformTenantStatusChanged } from "@/services/platform-telegram-events";
@@ -2408,25 +2406,6 @@ async function readPlatformAdminSnapshot() {
     warnings.push(`Không đọc được backup health: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   });
-  const logimailApprovalQueue = await getLogimailApprovalQueue().catch((error) => {
-    warnings.push(`Không đọc được hàng đợi duyệt LogiMail: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      schemaReady: false,
-      generatedAt: new Date().toISOString(),
-      summary: { pendingTotal: 0, accounts: 0, domains: 0, mailboxes: 0, risk: "blocked" as const },
-      requests: [],
-      securityCodes: emptySecurityCodeCenter(["Không đọc được mã bảo mật LogiMail."]),
-      domainControl: {
-        schemaReady: false,
-        generatedAt: new Date().toISOString(),
-        summary: { total: 0, active: 0, registrationEnabled: 0, warning: 0, cloudflareReady: false },
-        workspaces: [],
-        domains: [],
-        warnings: ["Không đọc được domain LogiMail."]
-      },
-      warnings: ["Không đọc được LogiMail approval queue."]
-    };
-  });
 
   const [v2PlansResult, v2SubscriptionsResult, v2PaymentsResult] = await Promise.all([
     supabase.from("subscription_plans").select("id,code,name,description,monthly_price,metadata").is("deleted_at", null).order("display_order", { ascending: true }),
@@ -2936,7 +2915,6 @@ async function readPlatformAdminSnapshot() {
       integrationWarnings: integrations.filter((item) => item.status !== "configured").length,
       backupOpenAlerts: backupHealth?.openAlerts.length ?? 0,
       backupRpoRisk: backupHealth?.rpoRisk ?? "high",
-      logimailPendingApprovals: logimailApprovalQueue.summary.pendingTotal,
       adminCapabilities: adminCapabilities.length,
       guardedMutations: adminMutations.filter((item) => item.status === "live").length,
       highRiskMutations: adminMutations.filter((item) => item.risk === "high").length,
@@ -2974,7 +2952,6 @@ async function readPlatformAdminSnapshot() {
     aiControl,
     mapControl,
     backup: backupHealth,
-    logimail: logimailApprovalQueue,
     integrations,
     cronJobs,
     projectAtlas,
@@ -3098,13 +3075,6 @@ async function readPlatformAdminSnapshot() {
         status: backupHealth?.rpoRisk === "high" ? "needs_review" : cronJobs.every((job) => job.status === "configured") ? "live" : "needs_config",
         owner: "DevOps",
         note: `Theo dõi env, Vercel Cron, R2 readiness, backup RPO ${backupHealth?.rpoRisk ?? "unknown"}, persistent cache và rollback/deploy guardrails.`
-      },
-      {
-        key: "logimail",
-        name: "LogiMail approvals",
-        status: logimailApprovalQueue.schemaReady ? (logimailApprovalQueue.summary.pendingTotal ? "needs_review" : "live") : "needs_config",
-        owner: "DevOps",
-        note: `${logimailApprovalQueue.summary.pendingTotal} yêu cầu LogiMail đang chờ duyệt: ${logimailApprovalQueue.summary.accounts} tài khoản, ${logimailApprovalQueue.summary.domains} domain, ${logimailApprovalQueue.summary.mailboxes} mailbox.`
       },
       {
         key: "governance",

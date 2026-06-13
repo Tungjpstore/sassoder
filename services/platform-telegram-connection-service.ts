@@ -270,14 +270,14 @@ function platformTelegramAccessForRole(role: PlatformAdminRole): { telegramRole:
   if (role === "owner") {
     return {
       telegramRole: "ADMIN",
-      scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "logimail.approve", "tenants.read", "tenants.manage"]
+      scopes: ["platform.admin", "infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "billing.approve", "tenants.read", "tenants.manage"]
     };
   }
 
   if (role === "ops") {
     return {
       telegramRole: "SRE",
-      scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "logimail.approve", "tenants.read", "tenants.manage"]
+      scopes: ["infra.read", "queues.read", "queues.retry", "incidents.read", "incidents.manage", "deploy.read", "tenants.read", "tenants.manage"]
     };
   }
 

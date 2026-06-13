@@ -13,6 +13,7 @@ import {
   publicMailSession,
   readMailSessionCookie,
 } from '@/lib/mail-session';
+import { enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const limited = enforceRateLimit(request, 'mail-session-unlock', 8, 60_000);
+  if (limited) return limited;
+
   const auth = await requireAuth(request, 'write');
   if (!auth.ok) return auth.response;
 

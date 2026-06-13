@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 
 const focusableSelector = [
@@ -30,12 +30,23 @@ export function useDialogFocusTrap({
   open: boolean;
 }) {
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
-  const handleDialogKeyDown = useCallback(
-    (event: KeyboardEvent) => {
+  useEffect(() => {
+    if (!open) return;
+
+    previouslyFocusedElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+
+    // Định nghĩa handler bên trong effect + đọc onClose qua ref để effect KHÔNG
+    // phụ thuộc identity của callback. Nếu phụ thuộc, mỗi lần component cha
+    // re-render (vd gõ vào input controlled) effect sẽ chạy lại và requestAnimationFrame
+    // kéo focus về phần tử đầu tiên → không gõ liên tục được trong overlay.
+    function handleDialogKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
 
@@ -63,15 +74,7 @@ export function useDialogFocusTrap({
         event.preventDefault();
         firstElement.focus({ preventScroll: true });
       }
-    },
-    [containerRef, onClose]
-  );
-
-  useEffect(() => {
-    if (!open) return;
-
-    previouslyFocusedElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
+    }
 
     document.addEventListener("keydown", handleDialogKeyDown);
     document.body.style.overflow = "hidden";
@@ -88,5 +91,5 @@ export function useDialogFocusTrap({
       document.body.style.overflow = previousOverflow;
       previouslyFocusedElementRef.current?.focus({ preventScroll: true });
     };
-  }, [containerRef, handleDialogKeyDown, open]);
+  }, [containerRef, open]);
 }

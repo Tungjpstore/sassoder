@@ -119,7 +119,7 @@ export function RealBillingV2({ billing, billingError, tableCount, menuItemCount
   const aiPercent = aiQuota ? usagePercent(aiQuota.used, aiQuota.limit) : 0;
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       {/* 1. Status row mỏng */}
       <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
         <div className="flex flex-wrap items-center gap-3">

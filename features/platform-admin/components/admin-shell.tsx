@@ -25,7 +25,7 @@ function Sidebar({ activeSection, snapshot }: { activeSection: ActiveSection; sn
           <span className="grid h-9 w-9 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-sm font-black text-white">LV</span>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">LogiVN Control</p>
-            <p className="text-[11px] font-medium text-slate-500">admin.logivn.com · LogiMail Ops</p>
+            <p className="text-[11px] font-medium text-slate-500">admin.logivn.com</p>
           </div>
         </div>
 

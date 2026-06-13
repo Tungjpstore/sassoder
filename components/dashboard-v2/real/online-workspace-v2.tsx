@@ -28,7 +28,6 @@ import { Badge, EmptyState, MetricCard } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Drawer } from "../overlay";
-import { NextSteps } from "../cross-link";
 import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
 import { StoreDeliveryMapPreview } from "@/components/maps/store-delivery-map-preview";
 import { useToast } from "@/components/dashboard/toast-provider";
@@ -210,7 +209,7 @@ export function RealOnlineWorkspaceV2({
   );
 
   return (
-    <div className="flex flex-col gap-[var(--d-s-5)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Pickup & giao hàng" title="Đặt online">
         <a
           href="/dashboard/settings?section=online"
@@ -329,14 +328,6 @@ export function RealOnlineWorkspaceV2({
         </Drawer>
       ) : null}
 
-      <NextSteps
-        items={[
-          { href: "/dashboard/settings?section=online", label: "Cấu hình bán online", hint: "Map, vùng giao, phí ship", icon: <Settings2 size={14} /> },
-          { href: "/dashboard/orders", label: "Đơn hàng", hint: "Tất cả kênh", icon: <ShoppingBag size={14} /> },
-          { href: "/dashboard/kitchen", label: "Bếp", hint: "Chuẩn bị món", icon: <PackageCheck size={14} /> },
-          { href: "/dashboard/menu", label: "Menu món", hint: "Bật/tắt món bán online", icon: <Package size={14} /> }
-        ]}
-      />
     </div>
   );
 }

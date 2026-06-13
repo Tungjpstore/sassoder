@@ -1,8 +1,10 @@
 import { Suspense } from "react";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
-import { RealMenuWorkspaceV2 } from "@/components/dashboard-v2/real/menu-workspace-v2";
+import { RealMenuWorkspaceV2, type MenuAiAccess } from "@/components/dashboard-v2/real/menu-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { hasFeature } from "@/services/subscription-service";
+import { getMenuAiUsageSummary } from "@/services/menu-ai-usage-service";
 import { getAdminReport } from "@/services/dashboard-report-service";
 import { listMenuForAdmin } from "@/services/menu-service";
 import { listInventoryIngredients, listInventoryRecipeMenuItems } from "@/services/inventory-service";
@@ -11,6 +13,17 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminMenuPage() {
   const { session, entitlement } = await requireDashboardAccess("menu_management");
+
+  const imageLimit = entitlement.features["ai_image_generation"]?.limitValue ?? null;
+  const ocrLimit = entitlement.features["ai_menu_ocr"]?.limitValue ?? null;
+  const usage = await getMenuAiUsageSummary({ restaurantId: session.restaurantId, imageLimit, ocrLimit });
+
+  const ai: MenuAiAccess = {
+    image: { enabled: hasFeature(entitlement, "ai_image_generation"), used: usage.image.used, limit: usage.image.limit },
+    ocr: { enabled: hasFeature(entitlement, "ai_menu_ocr"), used: usage.ocr.used, limit: usage.ocr.limit },
+    voiceEnabled: hasFeature(entitlement, "ai_voice_input")
+  };
+
   return (
     <AdminShell
       title="Menu món"
@@ -20,13 +33,13 @@ export default async function AdminMenuPage() {
       subtitle="Quản lý danh mục món ăn, giá bán, hình ảnh, công thức và tình trạng phục vụ"
     >
       <Suspense fallback={<MenuWorkspaceSkeleton />}>
-        <MenuWorkspaceContent restaurantId={session.restaurantId} restaurantName={session.restaurant.name} />
+        <MenuWorkspaceContent restaurantId={session.restaurantId} restaurantName={session.restaurant.name} ai={ai} />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function MenuWorkspaceContent({ restaurantId, restaurantName }: { restaurantId: string; restaurantName: string }) {
+async function MenuWorkspaceContent({ restaurantId, restaurantName, ai }: { restaurantId: string; restaurantName: string; ai: MenuAiAccess }) {
   const { categories, report, ingredients, recipeMenuItems } = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "menu",
@@ -51,6 +64,7 @@ async function MenuWorkspaceContent({ restaurantId, restaurantName }: { restaura
       restaurantName={restaurantName}
       ingredients={ingredients}
       recipeMenuItems={recipeMenuItems}
+      ai={ai}
     />
   );
 }

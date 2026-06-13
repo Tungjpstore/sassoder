@@ -1383,12 +1383,18 @@ export function buildImageGenerationPrompt(input: {
   }
   if (input.kind === "food_photo") {
     base.push(
-      "Asset type: realistic food photo for a digital menu card, square 1024x1024.",
-      "Composition: hero dish centered, 45-degree camera angle, enough margin for cropping, no text overlays.",
-      "Style: natural Vietnamese food photography, appetizing steam/texture, real ingredients, honest portion size.",
-      "Lighting: soft side light, warm highlights, clean shadows, commercial menu quality.",
-      "Hard rule: the generated dish must match the specific dish named in the creative brief; if no dish is provided, do not invent a random dish."
+      "Asset type: realistic food photo for a digital menu card, square 1024x1024, no text/price/watermark/QR overlays."
     );
+    if (creativeDirection) {
+      base.push(
+        "ART DIRECTION PRIORITY: the user creative brief above fully defines this image — BOTH the subject (which food/drink/scene to render) AND the styling (plating, background, props, camera angle, lighting, mood). Follow the brief literally and never override it with a generic default. Only fall back to the reference dish from context when the brief does not name a subject; and only use default appetizing Vietnamese menu styling when the brief gives no styling direction."
+      );
+    } else {
+      base.push(
+        "Subject: render exactly the dish named in the context above; do not invent a different dish.",
+        "Default styling (no custom brief given): appetizing natural Vietnamese food photography, hero dish centered at a 45-degree angle, soft warm side light, clean uncluttered background, honest portion size, commercial menu quality."
+      );
+    }
   }
   return base.join("\n");
 }
