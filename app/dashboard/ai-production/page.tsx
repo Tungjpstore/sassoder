@@ -16,7 +16,7 @@ import {
   Sparkles,
   type LucideIcon
 } from "lucide-react";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { Badge } from "@/components/ui/badge";
 import type {
   AiProductionGuardrail,

@@ -210,6 +210,15 @@ export const adminOrderIdSchema = z.object({
   orderId: z.string().uuid()
 });
 
+export const adminOrderItemParamsSchema = z.object({
+  orderId: z.string().uuid(),
+  itemId: z.string().uuid()
+});
+
+export const orderItemPreparedSchema = z.object({
+  prepared: z.boolean()
+});
+
 export const adminOrderCleanupSchema = z.object({
   mode: z.enum(["cancel", "delete_test"]),
   statuses: z
@@ -254,9 +263,17 @@ export const createReservationSchema = z.object({
   startsAt: z.string().datetime(),
   customerNote: z.string().trim().max(300).optional().or(z.literal("")),
   idempotencyKey: z.string().uuid().optional(),
+  tableId: reservationTableAreaInput,
   preferredTableAreaId: reservationTableAreaInput,
   preferredSeatingZone: reservationSeatingZoneInput,
   preferredTableKind: reservationTableKindInput
+});
+
+export const reservationFloorSchema = z.object({
+  restaurantSlug: z.string().min(1),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  startsAt: z.string().datetime(),
+  partySize: z.coerce.number().int().min(1).max(100)
 });
 
 export const publicReservationAccessSchema = z.object({
@@ -1438,3 +1455,43 @@ export const attendanceManualAdjustmentSchema = z
     message: "Giờ kết ca phải sau giờ vào ca.",
     path: ["clockOutAt"]
   });
+
+
+const percentSchema = z.coerce.number().finite().min(0).max(100);
+const moneySchema = z.coerce.number().int().min(0).max(1_000_000_000);
+
+export const staffPayrollDeductionsSchema = z
+  .object({
+    bhxhEmployeePercent: percentSchema,
+    bhytEmployeePercent: percentSchema,
+    bhtnEmployeePercent: percentSchema,
+    bhxhEmployerPercent: percentSchema,
+    bhytEmployerPercent: percentSchema,
+    bhtnEmployerPercent: percentSchema,
+    enablePersonalIncomeTax: z.coerce.boolean().optional(),
+    personalRelief: moneySchema,
+    dependentReliefPerPerson: moneySchema,
+    insuranceBaseMin: moneySchema,
+    insuranceBaseMax: moneySchema
+  })
+  .refine((value) => value.insuranceBaseMax >= value.insuranceBaseMin, {
+    message: "Trần BHXH phải lớn hơn hoặc bằng sàn BHXH.",
+    path: ["insuranceBaseMax"]
+  });
+
+export const staffPayrollProfileSchema = z.object({
+  staffMemberId: z.string().uuid(),
+  baseSalary: moneySchema,
+  hourlyRate: z.preprocess(
+    (value) => (value === "" || value === null ? null : value),
+    z.coerce.number().int().min(0).max(1_000_000_000).nullable()
+  ),
+  dependentCount: z.coerce.number().int().min(0).max(20),
+  enrolledInInsurance: z.coerce.boolean().optional(),
+  applyPersonalIncomeTax: z.coerce.boolean().optional(),
+  insuranceBaseAmount: z.preprocess(
+    (value) => (value === "" || value === null ? null : value),
+    z.coerce.number().int().min(0).max(1_000_000_000).nullable()
+  ),
+  note: z.string().trim().max(500).optional().or(z.literal(""))
+});

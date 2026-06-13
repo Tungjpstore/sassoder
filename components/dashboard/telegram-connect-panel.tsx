@@ -484,23 +484,23 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
   const primaryConnection = activeConnections[0] ?? null;
 
   return (
-    <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-      <div className="grid gap-4 border-b border-[var(--border)] p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
+    <section className="overflow-hidden rounded-xl border border-[var(--d-line)] bg-[var(--d-surface)]">
+      <div className="grid gap-4 border-b border-[var(--d-line)] p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--primary-soft)] text-[var(--primary)]">
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--d-primary-soft)] text-[var(--d-primary)]">
               <Send size={18} aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <p className="text-base font-semibold text-[var(--foreground)]">Telegram cho chủ quán</p>
-              <p className="mt-0.5 text-sm font-medium text-[var(--muted-foreground)]">
+              <p className="text-base font-semibold text-[var(--d-text)]">Telegram cho chủ quán</p>
+              <p className="mt-0.5 text-sm font-medium text-[var(--d-text-muted)]">
                 {connected ? `${activeConnections.length} tài khoản đang nhận cảnh báo` : "Kết nối một lần, nhận cảnh báo và thao tác nhanh trên điện thoại."}
               </p>
             </div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <span className={cn("inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold", connected ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--soft-surface)] text-[var(--muted-foreground)]")}>
+          <span className={cn("inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold", connected ? "bg-[var(--d-primary-soft)] text-[var(--d-primary)]" : "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]")}>
             {connected ? <CheckCircle2 size={15} /> : <ShieldCheck size={15} />}
             {connected ? "Đã kết nối" : status ? "Chưa kết nối" : "Đang kiểm tra"}
           </span>
@@ -537,13 +537,13 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
         )}
 
         {token ? (
-          <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-3">
+          <div className="rounded-xl border border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] p-3">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-[var(--primary)]">Link đã tạo</p>
-                <p className="mt-1 text-sm font-medium text-[var(--foreground)]">Mở Telegram rồi bấm Start. Nếu không thấy phản hồi, copy lệnh dự phòng và dán vào bot.</p>
-                <p className="mt-2 break-all font-mono text-xs font-semibold text-[var(--muted-foreground)]">{token.startCommand}</p>
-                <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Có hiệu lực tới khi kết nối hoặc bạn thu hồi link.</p>
+                <p className="text-sm font-semibold text-[var(--d-primary)]">Link đã tạo</p>
+                <p className="mt-1 text-sm font-medium text-[var(--d-text)]">Mở Telegram rồi bấm Start. Nếu không thấy phản hồi, copy lệnh dự phòng và dán vào bot.</p>
+                <p className="mt-2 break-all font-mono text-xs font-semibold text-[var(--d-text-muted)]">{token.startCommand}</p>
+                <p className="mt-1 text-xs font-medium text-[var(--d-text-muted)]">Có hiệu lực tới khi kết nối hoặc bạn thu hồi link.</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="secondary" onClick={copyStartCommand}>
@@ -555,7 +555,7 @@ export function TelegramConnectPanel({ branches }: { branches: TelegramBranchOpt
                   Thu hồi link
                 </Button>
                 {token.startUrl ? (
-                  <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--primary)] px-4 text-sm font-semibold text-[#FFF7EB]">
+                  <a href={token.startUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--d-jade)] px-4 text-sm font-semibold text-[var(--d-on-jade)]">
                     <Send size={16} />
                     Mở Telegram
                   </a>
@@ -606,15 +606,15 @@ function SetupFlow({
     <div className="grid gap-4">
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px_auto] lg:items-end">
         <div>
-          <p className="text-sm font-semibold text-[var(--foreground)]">Bắt đầu trong 30 giây</p>
-          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Tạo link riêng cho tài khoản đang đăng nhập. Link không tự hết hạn, chỉ dùng một lần hoặc thu hồi khi gửi nhầm.</p>
+          <p className="text-sm font-semibold text-[var(--d-text)]">Bắt đầu trong 30 giây</p>
+          <p className="mt-1 text-sm font-medium text-[var(--d-text-muted)]">Tạo link riêng cho tài khoản đang đăng nhập. Link không tự hết hạn, chỉ dùng một lần hoặc thu hồi khi gửi nhầm.</p>
         </div>
         <label className="grid gap-2 text-sm font-semibold">
           Phạm vi
           <select
             value={selectedBranchId}
             onChange={(event) => setSelectedBranchId(event.target.value)}
-            className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold outline-none transition focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--ring)]"
+            className="h-11 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-sm font-semibold outline-none transition focus:border-[var(--d-primary)] focus:ring-2 focus:ring-[var(--d-jade)]"
           >
             <option value="">Toàn quán</option>
             {activeBranches.map((branch) => (
@@ -632,12 +632,12 @@ function SetupFlow({
 
       <div className="grid gap-3 md:grid-cols-3">
         {TELEGRAM_SETUP_STEPS.map((step, index) => (
-          <div key={step.key} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--soft-surface)]">
+          <div key={step.key} className="overflow-hidden rounded-lg border border-[var(--d-line)] bg-[var(--d-surface-2)]">
             <img src={step.image} alt="" className="aspect-[4/3] w-full object-cover" loading="lazy" />
             <div className="p-3">
-              <p className="text-xs font-semibold text-[var(--muted-foreground)]">Bước {index + 1}</p>
-              <p className="mt-1 text-sm font-semibold text-[var(--foreground)]">{step.title}</p>
-              <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{step.description}</p>
+              <p className="text-xs font-semibold text-[var(--d-text-muted)]">Bước {index + 1}</p>
+              <p className="mt-1 text-sm font-semibold text-[var(--d-text)]">{step.title}</p>
+              <p className="mt-1 text-xs font-medium leading-5 text-[var(--d-text-muted)]">{step.description}</p>
             </div>
           </div>
         ))}
@@ -676,15 +676,15 @@ function ConnectedFlow({
   return (
     <div className="grid gap-4">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <div className="rounded-lg border border-[var(--primary)]/20 bg-[var(--primary-soft)] p-4">
-          <p className="text-sm font-semibold text-[var(--primary)]">Đang hoạt động</p>
-          <p className="mt-2 text-xl font-semibold text-[var(--foreground)]">{activeConnectionCount} kết nối Telegram</p>
-          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
+        <div className="rounded-lg border border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] p-4">
+          <p className="text-sm font-semibold text-[var(--d-primary)]">Đang hoạt động</p>
+          <p className="mt-2 text-xl font-semibold text-[var(--d-text)]">{activeConnectionCount} kết nối Telegram</p>
+          <p className="mt-1 text-sm font-medium text-[var(--d-text-muted)]">
             {primaryConnection ? `${primaryConnection.displayName}${primaryConnection.username ? ` @${primaryConnection.username}` : ""}` : "Sẵn sàng nhận cảnh báo"}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
             {botStartUrl ? (
-              <a href={botStartUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+              <a href={botStartUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-sm font-semibold text-[var(--d-text)]">
                 <ExternalLink size={15} />
                 Mở bot
               </a>
@@ -692,9 +692,9 @@ function ConnectedFlow({
           </div>
         </div>
 
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-4">
-          <p className="text-sm font-semibold text-[var(--foreground)]">Gửi thử một tín hiệu</p>
-          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">Chọn một flow vận hành để kiểm tra card Telegram thật.</p>
+        <div className="rounded-lg border border-[var(--d-line)] bg-[var(--d-surface-2)] p-4">
+          <p className="text-sm font-semibold text-[var(--d-text)]">Gửi thử một tín hiệu</p>
+          <p className="mt-1 text-sm font-medium text-[var(--d-text-muted)]">Chọn một flow vận hành để kiểm tra card Telegram thật.</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
             {TELEGRAM_TEST_ACTIONS.map(({ kind, label, Icon }) => (
               <Button
@@ -713,34 +713,34 @@ function ConnectedFlow({
         </div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-semibold text-[var(--foreground)]">Luồng tự động</p>
-          <span className="inline-flex h-8 items-center gap-2 rounded-lg bg-[var(--primary-soft)] px-3 text-xs font-semibold text-[var(--primary)]">
+          <p className="text-sm font-semibold text-[var(--d-text)]">Luồng tự động</p>
+          <span className="inline-flex h-8 items-center gap-2 rounded-lg bg-[var(--d-primary-soft)] px-3 text-xs font-semibold text-[var(--d-primary)]">
             <CheckCircle2 size={14} />
             Đang bảo vệ vận hành
           </span>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-5">
           {TELEGRAM_AUTOMATION_RULES.map(({ label, detail, Icon }) => (
-            <div key={label} className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+            <div key={label} className="min-w-0 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3">
               <div className="flex items-center gap-2">
-                <Icon size={15} className="shrink-0 text-[var(--primary)]" />
-                <p className="truncate text-sm font-semibold text-[var(--foreground)]">{label}</p>
+                <Icon size={15} className="shrink-0 text-[var(--d-primary)]" />
+                <p className="truncate text-sm font-semibold text-[var(--d-text)]">{label}</p>
               </div>
-              <p className="mt-1 text-xs font-medium leading-5 text-[var(--muted-foreground)]">{detail}</p>
+              <p className="mt-1 text-xs font-medium leading-5 text-[var(--d-text-muted)]">{detail}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="grid gap-3 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <p className="text-sm font-semibold text-[var(--foreground)]">Rule nhận cảnh báo</p>
-            <p className="mt-1 text-xs font-medium text-[var(--muted-foreground)]">Bật/tắt nhanh các tín hiệu chính. Rule nâng cao nằm trong phần Nâng cao.</p>
+            <p className="text-sm font-semibold text-[var(--d-text)]">Rule nhận cảnh báo</p>
+            <p className="mt-1 text-xs font-medium text-[var(--d-text-muted)]">Bật/tắt nhanh các tín hiệu chính. Rule nâng cao nằm trong phần Nâng cao.</p>
           </div>
-          <span className={cn("inline-flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-semibold", policySchemaReady ? "bg-[var(--primary-soft)] text-[var(--primary)]" : "bg-[var(--accent-soft)] text-[var(--accent-strong)]")}>
+          <span className={cn("inline-flex h-8 items-center gap-2 rounded-lg px-3 text-xs font-semibold", policySchemaReady ? "bg-[var(--d-primary-soft)] text-[var(--d-primary)]" : "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]")}>
             {policySchemaReady ? <ShieldCheck size={14} /> : <AlertTriangle size={14} />}
             {policySchemaReady ? `${policies.filter((policy) => policy.enabled).length} đang bật` : "Cần migration"}
           </span>
@@ -755,24 +755,24 @@ function ConnectedFlow({
               aria-pressed={policy.enabled}
               className={cn(
                 "flex min-h-[72px] items-start justify-between gap-3 rounded-lg border p-3 text-left transition disabled:opacity-60",
-                policy.enabled ? "border-[var(--primary)]/25 bg-[var(--primary-soft)]" : "border-[var(--border)] bg-[var(--soft-surface)] hover:bg-[var(--surface)]"
+                policy.enabled ? "border-[var(--d-primary)]/25 bg-[var(--d-primary-soft)]" : "border-[var(--d-line)] bg-[var(--d-surface-2)] hover:bg-[var(--d-surface)]"
               )}
             >
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold text-[var(--foreground)]">{policy.label}</span>
-                <span className="mt-1 block text-xs font-medium text-[var(--muted-foreground)]">
+                <span className="block truncate text-sm font-semibold text-[var(--d-text)]">{policy.label}</span>
+                <span className="mt-1 block text-xs font-medium text-[var(--d-text-muted)]">
                   P{policy.priority}
                   {policy.escalationAfterSeconds ? ` · leo thang ${Math.round(policy.escalationAfterSeconds / 60)}p` : ""}
                 </span>
               </span>
-              <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-md", policy.enabled ? "bg-[var(--surface)] text-[var(--primary)]" : "bg-[var(--surface)] text-[var(--muted-foreground)]")}>
+              <span className={cn("grid h-7 w-7 shrink-0 place-items-center rounded-md", policy.enabled ? "bg-[var(--d-surface)] text-[var(--d-primary)]" : "bg-[var(--d-surface)] text-[var(--d-text-muted)]")}>
                 {policyUpdatingEvent === policy.eventType ? <RefreshCw size={14} className="animate-spin" /> : policy.enabled ? <CheckCircle2 size={14} /> : <BellRing size={14} />}
               </span>
             </button>
           ))}
         </div>
         {incidents.length > 0 ? (
-          <div className="rounded-lg border border-[var(--accent)]/25 bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent-strong)]">
+          <div className="rounded-lg border border-[var(--d-orange-600)]/25 bg-[var(--d-accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--d-orange-600)]">
             {incidents[0].title}
             {incidents.length > 1 ? ` · +${incidents.length - 1} incident` : ""}
           </div>
@@ -806,16 +806,16 @@ function AdvancedTelegramPanel({
   retryFailedNotifications: (notificationId?: string) => void;
 }) {
   return (
-    <details className="rounded-lg border border-[var(--border)] bg-[var(--soft-surface)]">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm font-semibold text-[var(--foreground)]">
+    <details className="rounded-lg border border-[var(--d-line)] bg-[var(--d-surface-2)]">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-sm font-semibold text-[var(--d-text)]">
         <span className="inline-flex items-center gap-2">
           <MoreHorizontal size={16} />
           Nâng cao
         </span>
-        <span className="text-xs font-medium text-[var(--muted-foreground)]">Queue, retry, kết nối</span>
+        <span className="text-xs font-medium text-[var(--d-text-muted)]">Queue, retry, kết nối</span>
       </summary>
 
-      <div className="grid gap-3 border-t border-[var(--border)] p-3">
+      <div className="grid gap-3 border-t border-[var(--d-line)] p-3">
         <div className="grid gap-2 md:grid-cols-4">
           <StatusTile label="Kết nối" value={activeConnections.length || "0"} tone={activeConnections.length > 0 ? "success" : "neutral"} />
           <StatusTile label="Lỗi gửi" value={failedCount} tone={failedCount > 0 ? "warning" : "success"} />
@@ -835,22 +835,22 @@ function AdvancedTelegramPanel({
         ) : null}
 
         {activeConnections.length > 0 ? (
-          <div className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+          <div className="overflow-hidden rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)]">
             {activeConnections.map((connection) => (
-              <div key={connection.id} className="grid gap-1 border-b border-[var(--border)] px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center">
+              <div key={connection.id} className="grid gap-1 border-b border-[var(--d-line)] px-3 py-2 text-sm last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center">
                 <span className="min-w-0">
-                  <span className="block truncate font-semibold text-[var(--foreground)]">
+                  <span className="block truncate font-semibold text-[var(--d-text)]">
                     {connection.displayName}
                     {connection.username ? ` @${connection.username}` : ""}
                   </span>
-                  <span className="block text-xs font-medium text-[var(--muted-foreground)]">{connection.role} · {formatDateTime(connection.lastSeenAt ?? connection.connectedAt)}</span>
+                  <span className="block text-xs font-medium text-[var(--d-text-muted)]">{connection.role} · {formatDateTime(connection.lastSeenAt ?? connection.connectedAt)}</span>
                 </span>
                 <button
                   type="button"
                   aria-label="Ngắt kết nối Telegram"
                   onClick={() => revokeConnection(connection.id)}
                   disabled={revokingConnectionId === connection.id}
-                  className="inline-grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] text-[var(--accent-strong)] transition hover:bg-[var(--accent-soft)] disabled:opacity-50"
+                  className="inline-grid h-8 w-8 place-items-center rounded-md border border-[var(--d-line)] text-[var(--d-orange-600)] transition hover:bg-[var(--d-accent-soft)] disabled:opacity-50"
                 >
                   {revokingConnectionId === connection.id ? <RefreshCw size={14} className="animate-spin" /> : <Unlink size={14} />}
                 </button>
@@ -862,20 +862,20 @@ function AdvancedTelegramPanel({
         {recentNotifications.length ? (
           <div className="grid gap-2">
             {recentNotifications.slice(0, 3).map((notification) => (
-              <div key={notification.id} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
+              <div key={notification.id} className="grid gap-1 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-xs">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate font-semibold text-[var(--foreground)]">{notification.title}</span>
-                  <span className={cn("shrink-0 font-semibold", notification.status === "sent" ? "text-[var(--primary)]" : "text-[var(--accent-strong)]")}>{notification.status}</span>
+                  <span className="truncate font-semibold text-[var(--d-text)]">{notification.title}</span>
+                  <span className={cn("shrink-0 font-semibold", notification.status === "sent" ? "text-[var(--d-primary)]" : "text-[var(--d-orange-600)]")}>{notification.status}</span>
                 </div>
                 <div className="flex min-w-0 items-center justify-between gap-2">
-                  <span className="truncate text-[var(--muted-foreground)]">{notification.eventType} · {formatDateTime(notification.sentAt ?? notification.failedAt ?? notification.createdAt)}</span>
+                  <span className="truncate text-[var(--d-text-muted)]">{notification.eventType} · {formatDateTime(notification.sentAt ?? notification.failedAt ?? notification.createdAt)}</span>
                   {isRetryableStatus(notification.status) ? (
                     <button
                       type="button"
                       aria-label="Retry Telegram notification"
                       onClick={() => retryFailedNotifications(notification.id)}
                       disabled={retryState === "loading"}
-                      className="inline-grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--border)] text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:opacity-50"
+                      className="inline-grid h-7 w-7 shrink-0 place-items-center rounded-md border border-[var(--d-line)] text-[var(--d-primary)] transition hover:bg-[var(--d-primary-soft)] disabled:opacity-50"
                     >
                       {retryingNotificationId === notification.id ? <RefreshCw size={13} className="animate-spin" /> : <RotateCcw size={13} />}
                     </button>
@@ -889,12 +889,12 @@ function AdvancedTelegramPanel({
         {queueJobs.length > 0 ? (
           <div className="grid gap-2">
             {queueJobs.map((job, index) => (
-              <div key={`${job.id ?? "job"}-${index}`} className="grid gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-xs">
+              <div key={`${job.id ?? "job"}-${index}`} className="grid gap-1 rounded-lg border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-xs">
                 <div className="flex min-w-0 items-center justify-between gap-3">
-                  <span className="truncate font-semibold text-[var(--foreground)]">{job.name ?? "telegram job"}{job.state ? ` · ${job.state}` : ""}</span>
-                  <span className="shrink-0 font-semibold text-[var(--accent-strong)]">{job.attemptsMade} lần</span>
+                  <span className="truncate font-semibold text-[var(--d-text)]">{job.name ?? "telegram job"}{job.state ? ` · ${job.state}` : ""}</span>
+                  <span className="shrink-0 font-semibold text-[var(--d-orange-600)]">{job.attemptsMade} lần</span>
                 </div>
-                <span className="truncate text-[var(--muted-foreground)]">
+                <span className="truncate text-[var(--d-text-muted)]">
                   {job.failedReason ?? "Không có lỗi chi tiết"} · {formatDateTime(job.failedAt ?? job.processedAt ?? job.createdAt)}
                 </span>
               </div>
@@ -910,7 +910,7 @@ function InlineMessage({ kind, message }: { kind: "success" | "error"; message: 
   if (!message) return null;
   const success = kind === "success";
   return (
-    <div className={cn("flex gap-2 rounded-lg border p-3 text-sm font-semibold", success ? "border-[var(--primary)]/20 bg-[var(--primary-soft)] text-[var(--primary)]" : "border-[var(--accent)]/25 bg-[var(--accent-soft)] text-[var(--accent-strong)]")}>
+    <div className={cn("flex gap-2 rounded-lg border p-3 text-sm font-semibold", success ? "border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] text-[var(--d-primary)]" : "border-[var(--d-orange-600)]/25 bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]")}>
       {success ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
       <span>{message}</span>
     </div>
@@ -928,9 +928,9 @@ function testKindLabel(kind: TelegramTestKind) {
 
 function StatusTile({ label, value, tone }: { label: string; value: string | number; tone: "success" | "warning" | "neutral" }) {
   return (
-    <div className={cn("rounded-lg border px-3 py-2", tone === "success" && "border-[var(--primary)]/20 bg-[var(--primary-soft)]", tone === "warning" && "border-[var(--accent)]/25 bg-[var(--accent-soft)]", tone === "neutral" && "border-[var(--border)] bg-[var(--surface)]")}>
-      <p className="text-xs font-semibold text-[var(--muted-foreground)]">{label}</p>
-      <p className="mt-1 metric-number text-xl font-semibold text-[var(--foreground)]">{value}</p>
+    <div className={cn("rounded-lg border px-3 py-2", tone === "success" && "border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)]", tone === "warning" && "border-[var(--d-orange-600)]/25 bg-[var(--d-accent-soft)]", tone === "neutral" && "border-[var(--d-line)] bg-[var(--d-surface)]")}>
+      <p className="text-xs font-semibold text-[var(--d-text-muted)]">{label}</p>
+      <p className="mt-1 metric-number text-xl font-semibold text-[var(--d-text)]">{value}</p>
     </div>
   );
 }

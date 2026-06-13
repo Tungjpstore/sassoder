@@ -22,11 +22,14 @@ export function PasswordPolicyList({ password, confirmPassword }: PasswordPolicy
         ];
 
   return (
-    <ul aria-label="Yêu cầu mật khẩu" className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3 text-xs font-semibold leading-5 text-[var(--muted-foreground)] sm:grid-cols-2">
+    <ul
+      aria-label="Yêu cầu mật khẩu"
+      className="grid gap-2 rounded-[var(--d-r-md,0.75rem)] border border-[var(--d-line,#e3e8e4)] bg-[var(--d-surface-2,#f2f5ef)] p-3 text-xs font-semibold leading-5 text-[var(--d-text-muted,#586259)] sm:grid-cols-2"
+    >
       {[...checks, ...matchCheck].map((item) => {
         const Icon = item.passed ? CheckCircle2 : Circle;
         return (
-          <li key={item.id} className={item.passed ? "flex items-center gap-2 text-[var(--primary-strong)]" : "flex items-center gap-2"}>
+          <li key={item.id} className={item.passed ? "flex items-center gap-2 text-[var(--d-ok-fg,#1c6b3f)]" : "flex items-center gap-2"}>
             <Icon className="h-4 w-4 shrink-0" />
             <span>{item.label}</span>
           </li>

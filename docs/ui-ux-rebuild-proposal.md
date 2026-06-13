@@ -1,4 +1,4 @@
-# 📐 Đề xuất Rebuild UI/UX - LogiVN Platform
+ 📐 Đề xuất Rebuild UI/UX - LogiVN Platform
 
 **Ngày phân tích:** 11/06/2026
 **Phạm vi:** Landing Page + Dashboard + Design System

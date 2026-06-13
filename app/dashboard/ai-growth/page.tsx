@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { AiOwnerActionLauncher } from "@/components/dashboard/ai-owner-action-launcher";
 import { AiOperatingLoop } from "@/components/dashboard/ai-operating-loop";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { Badge } from "@/components/ui/badge";
 import { buildAiAutomationPlaybooks } from "@/lib/ai/automation-playbooks";
 import {

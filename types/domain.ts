@@ -151,6 +151,7 @@ export type OrderDto = {
   };
   table: { id?: string; name: string } | null;
   items: Array<{
+    id?: string;
     quantity: number;
     price: number;
     modifiers?: Array<{
@@ -163,6 +164,7 @@ export type OrderDto = {
       lineTotal: number;
     }>;
     modifierSummary?: string | null;
+    preparedAt?: string | null;
     note: string | null;
     menuItem: { id?: string; name: string } | null;
   }>;

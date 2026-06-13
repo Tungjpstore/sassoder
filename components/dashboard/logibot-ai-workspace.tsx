@@ -131,18 +131,18 @@ function CommandPalette({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[var(--z-dashboard-modal)] grid place-items-start justify-center bg-[#111827]/22 px-3 pt-[10vh] backdrop-blur-sm"
+          className="fixed inset-0 z-[var(--z-dashboard-modal)] grid place-items-start justify-center bg-[var(--d-text)]/20 px-3 pt-[10vh] backdrop-blur-sm"
           onClick={onClose}
         >
           <motion.section
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -12, scale: 0.98 }}
-            className="w-full max-w-[680px] overflow-hidden rounded-[26px] border border-[#111827]/[0.08] bg-[#FFFEFA] shadow-[0_28px_90px_rgba(17,24,39,0.22)]"
+            className="w-full max-w-[680px] overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-md)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center gap-3 border-b border-[#111827]/[0.06] px-4 py-3">
-              <Search size={18} className="shrink-0 text-[#6B7280]" />
+            <div className="flex items-center gap-3 border-b border-[var(--d-line)] px-4 py-3">
+              <Search size={18} className="shrink-0 text-[var(--d-text-muted)]" />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -151,9 +151,9 @@ function CommandPalette({
                 autoComplete="off"
                 aria-label="Tìm lệnh LogiBot"
                 placeholder="Ra lệnh cho LogiBot…"
-                className="h-11 min-w-0 flex-1 border-0 bg-transparent text-sm font-medium text-[#111827] outline-none placeholder:text-[#9CA3AF]"
+                className="h-11 min-w-0 flex-1 border-0 bg-transparent text-[length:var(--d-fs-sm)] font-medium text-[var(--d-text)] outline-none placeholder:text-[var(--d-text-faint)]"
               />
-              <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full text-[#6B7280] transition hover:bg-[#111827]/[0.05] hover:text-[#111827]" aria-label="Đóng command">
+              <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-full text-[var(--d-text-muted)] transition hover:bg-[var(--d-surface-2)] hover:text-[var(--d-text)]" aria-label="Đóng command">
                 <X size={18} />
               </button>
             </div>
@@ -168,16 +168,16 @@ function CommandPalette({
                       onCommand(item.prompt);
                       onClose();
                     }}
-                    className="flex min-h-14 w-full items-center gap-3 rounded-2xl px-3 text-left transition hover:bg-[#0F5132]/[0.055]"
+                    className="flex min-h-14 w-full items-center gap-3 rounded-[var(--d-r-md)] px-3 text-left transition hover:bg-[var(--d-surface-2)]"
                   >
-                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#0F5132]/[0.08] text-[#0F5132]">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--d-r-md)] bg-[var(--d-primary-soft)] text-[var(--d-primary)]">
                       <Icon size={17} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold text-[#111827]">{item.label}</span>
-                      <span className="block truncate text-xs font-medium text-[#6B7280]">Chỉ đọc dữ liệu thật sau khi chạy</span>
+                      <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{item.label}</span>
+                      <span className="block truncate text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)]">Chỉ đọc dữ liệu thật sau khi chạy</span>
                     </span>
-                    <ArrowRight size={16} className="shrink-0 text-[#0F5132]" />
+                    <ArrowRight size={16} className="shrink-0 text-[var(--d-primary)]" />
                   </button>
                 );
               })}
@@ -290,7 +290,7 @@ export function LogibotAiWorkspace({ workspace }: { workspace: LogibotWorkspaceD
   return (
     <section
       className={cn(
-        "overflow-hidden rounded-[24px] border border-[#111827]/[0.07] bg-[#FFFEFA]/72 p-1.5 shadow-[0_22px_70px_rgba(17,24,39,0.065)] backdrop-blur-xl transition-[height,box-shadow,background-color] duration-200",
+        "overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)]/80 p-1.5 shadow-[var(--d-sh-md)] backdrop-blur-xl transition-[height,box-shadow,background-color] duration-200",
         isExpanded
           ? "fixed inset-2 z-[var(--z-dashboard-modal)] h-[calc(100dvh_-_1rem)] min-h-0 sm:inset-4 sm:h-[calc(100dvh_-_2rem)]"
           : "h-[calc(100dvh_-_112px_-_var(--dashboard-mobile-content-bottom))] min-h-[min(540px,calc(100dvh_-_128px))] md:h-[calc(100dvh_-_112px)] lg:h-[calc(100dvh_-_92px)]"

@@ -1,4 +1,5 @@
 import { RestaurantOnboardingFlow } from "@/components/dashboard/restaurant-onboarding-flow";
+import "@/app/styles/dashboard-tokens-v2.css";
 
 const previewPlans = [
   {

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { OnlineWorkspace } from "@/components/dashboard/online-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealOnlineWorkspaceV2 } from "@/components/dashboard-v2/real/online-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { buildTenantUrl } from "@/lib/tenant-domain";
@@ -37,7 +37,7 @@ async function OnlineWorkspaceContent({ restaurantId }: { restaurantId: string }
   const onlineUrl = buildTenantUrl(data.restaurant.slug, "/");
 
   return (
-    <OnlineWorkspace
+    <RealOnlineWorkspaceV2
       restaurant={data.restaurant}
       stats={data.stats}
       recentOrders={data.recentOrders}

@@ -1,10 +1,11 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { MenuWorkspace } from "@/components/dashboard/menu-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealMenuWorkspaceV2 } from "@/components/dashboard-v2/real/menu-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { getAdminReport } from "@/services/dashboard-report-service";
 import { listMenuForAdmin } from "@/services/menu-service";
+import { listInventoryIngredients, listInventoryRecipeMenuItems } from "@/services/inventory-service";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export default async function AdminMenuPage() {
       restaurantName={session.restaurant.name}
       restaurantId={session.restaurantId}
       entitlement={entitlement}
-      subtitle="Quản lý danh mục món ăn, giá bán, hình ảnh và tình trạng phục vụ"
+      subtitle="Quản lý danh mục món ăn, giá bán, hình ảnh, công thức và tình trạng phục vụ"
     >
       <Suspense fallback={<MenuWorkspaceSkeleton />}>
         <MenuWorkspaceContent restaurantId={session.restaurantId} restaurantName={session.restaurant.name} />
@@ -26,27 +27,30 @@ export default async function AdminMenuPage() {
 }
 
 async function MenuWorkspaceContent({ restaurantId, restaurantName }: { restaurantId: string; restaurantName: string }) {
-  const { categories, report } = await readThroughDashboardWorkspaceCache({
+  const { categories, report, ingredients, recipeMenuItems } = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "menu",
     ttlSeconds: 15,
     load: async () => {
-      const [categories, report] = await Promise.all([
+      const [categories, report, ingredients, recipeMenuItems] = await Promise.all([
         listMenuForAdmin(restaurantId),
-        getAdminReport(restaurantId)
+        getAdminReport(restaurantId),
+        listInventoryIngredients(restaurantId).catch(() => []),
+        listInventoryRecipeMenuItems(restaurantId).catch(() => [])
       ]);
-
-      return { categories, report };
+      return { categories, report, ingredients, recipeMenuItems };
     }
   });
 
   return (
-    <MenuWorkspace
+    <RealMenuWorkspaceV2
       restaurantId={restaurantId}
       categories={categories}
       topItemIds={report.topItems.map((item) => item.id)}
       topItemNames={report.topItems.map((item) => item.name)}
       restaurantName={restaurantName}
+      ingredients={ingredients}
+      recipeMenuItems={recipeMenuItems}
     />
   );
 }

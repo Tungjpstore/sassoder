@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { QrCode, ShoppingBag } from "lucide-react";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
-import { RemoteOrderClient } from "@/components/customer/remote-order-client";
+import { RemoteClientV2 } from "@/components/customer-v2/remote/remote-client-v2";
 import { Button } from "@/components/ui/button";
 import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getCachedPublicMenu } from "@/services/menu-service";
+import "@/app/styles/customer-tokens-v2.css";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +40,7 @@ export default async function TenantMenuFallbackPage({
 
   if (restaurant.online_ordering_enabled && (restaurant.pickup_enabled || restaurant.delivery_enabled)) {
     return (
-      <RemoteOrderClient
+      <RemoteClientV2
         restaurant={{
           id: restaurant.id,
           name: restaurant.name,

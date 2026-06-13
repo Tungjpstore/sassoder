@@ -1,39 +1,46 @@
 "use client";
 
-import Image from "next/image";
 import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
   BadgeCheck,
+  Building2,
   CheckCircle2,
   Clock3,
   Coffee,
   CreditCard,
+  Hash,
+  ImagePlus,
   Info,
   Layers3,
   ListChecks,
-  RotateCcw,
   Loader2,
   LocateFixed,
   MapPin,
-  MousePointerClick,
+  Minus,
+  Phone,
+  Plus,
   PlusCircle,
   QrCode,
+  Rocket,
+  RotateCcw,
+  ScanLine,
   Search,
   ShieldCheck,
   Sparkles,
   Store,
-  Smartphone,
   Table2,
+  Tag,
   Utensils,
   Wand2,
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { onboardingAction } from "@/app/dashboard/actions";
-import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import { fontVars } from "@/components/landing-v2/fonts";
 import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
 import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
 import { featureCatalog, planCatalog } from "@/lib/billing/catalog";
@@ -44,21 +51,13 @@ import { createSlug } from "@/lib/slug";
 import { createMapSessionToken, fetchAddressPredictions, resolveAddressPrediction } from "@/services/maps/client-address-service";
 import type { AddressAutocompletePrediction } from "@/services/maps/types";
 import { InteractiveStorePreview } from "@/components/dashboard/interactive-store-preview";
-import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 type BusinessPreset = {
   id: string;
   label: string;
   value: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER";
   icon: typeof Coffee;
-};
-
-type OnboardingVisual = {
-  src: string;
-  alt: string;
-  eyebrow: string;
-  title: string;
-  caption: string;
 };
 
 type StepMeta = {
@@ -121,7 +120,6 @@ type OnboardingDraft = {
 type StoredOnboardingDraft = Partial<Omit<OnboardingDraft, "version">> & {
   version?: 1 | 2;
 };
-type MobileOnboardingStepId = "identity" | "location" | "plan" | "review" | "tables" | "menu";
 type OcrDraft = {
   categories: Array<{
     name: string;
@@ -156,50 +154,22 @@ const businessPresets: BusinessPreset[] = [
   { id: "custom", label: "Khác", value: "OTHER", icon: PlusCircle }
 ];
 
-const steps = ["Thông tin quán", "Chọn gói", "Thiết lập", "Bàn & QR", "Menu"];
+const steps = ["Thông tin quán", "Chọn gói", "Bàn & QR", "Menu"];
+
+/* Motion presets — định nghĩa lại sau lần refactor trước (đang được tham chiếu ở SectionCard + step wrapper). */
+const onboardingEase = [0.22, 1, 0.36, 1] as const;
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: onboardingEase } }
+};
+const stepTransition = { duration: 0.3, ease: onboardingEase };
+
 const launchMessages = [
   "Đang chuẩn bị quán của bạn...",
   "Khởi tạo dashboard vận hành...",
   "Tạo bàn và QR ordering system...",
   "Lưu menu đầu tiên...",
   "Bật checklist sẵn sàng bán thật..."
-];
-const onboardingVisuals: OnboardingVisual[] = [
-  {
-    src: "/onboarding/flow/store-profile.png",
-    alt: "Minh hoạ tạo hồ sơ quán trên LogiVN",
-    eyebrow: "Hồ sơ quán",
-    title: "Thông tin đủ để mở dashboard",
-    caption: "Tên, loại hình, vị trí và hotline được đóng gói thành hồ sơ vận hành đầu tiên."
-  },
-  {
-    src: "/onboarding/flow/plan-selection.png",
-    alt: "Minh hoạ chọn gói vận hành LogiVN",
-    eyebrow: "Gói vận hành",
-    title: "Chọn gói phù hợp quy mô hiện tại",
-    caption: "Mỗi gói được giải thích bằng tính năng thật, không chỉ bằng giá."
-  },
-  {
-    src: "/onboarding/flow/setup-checklist.png",
-    alt: "Minh hoạ kiểm tra tiến độ thiết lập quán",
-    eyebrow: "Kiểm tra",
-    title: "Rà lại các phần cần sẵn sàng",
-    caption: "Checklist giúp chủ quán biết còn thiếu gì trước khi bấm khởi tạo."
-  },
-  {
-    src: "/onboarding/flow/table-qr.png",
-    alt: "Minh hoạ tạo bàn và mã QR gọi món",
-    eyebrow: "Bàn & QR",
-    title: "Sinh QR cho khu vực phục vụ",
-    caption: "Tạo sẵn bàn mẫu để sau onboarding có thể in QR ngay."
-  },
-  {
-    src: "/onboarding/flow/menu-import.png",
-    alt: "Minh hoạ nhập menu đầu tiên",
-    eyebrow: "Menu",
-    title: "Tạo menu đầu tiên để bán ngay",
-    caption: "Có thể nhập một món nhanh hoặc dùng AI đọc ảnh menu để tăng tốc."
-  }
 ];
 
 const stepDetails: StepMeta[] = [
@@ -219,30 +189,20 @@ const stepDetails: StepMeta[] = [
   },
   {
     eyebrow: "Bước 3",
-    title: "Kiểm tra sẵn sàng",
-    description: "Một checklist ngắn để chắc chắn hồ sơ, gói, bàn và menu đã đủ điều kiện khởi tạo.",
-    outcome: "Không bị lạc giữa nhiều thao tác trước khi mở dashboard.",
-    icon: ListChecks
-  },
-  {
-    eyebrow: "Bước 4",
     title: "Bàn & QR",
     description: "Tạo số bàn ban đầu để sau khi vào dashboard có thể in QR hoặc chỉnh sơ đồ phục vụ.",
     outcome: "QR ordering được dựng sẵn thay vì bắt đầu từ trang trắng.",
     icon: QrCode
   },
   {
-    eyebrow: "Bước 5",
+    eyebrow: "Bước 4",
     title: "Menu đầu tiên",
     description: "Thêm món mẫu hoặc dùng AI đọc ảnh menu để LogiVN tạo danh mục bán hàng đầu tiên.",
     outcome: "Dashboard mở ra với dữ liệu thật, không phải empty state lạnh lẽo.",
     icon: Wand2
   }
 ];
-const fieldClass =
-  "h-11 w-full rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10";
-const iconFieldClass = `${fieldClass} pl-10`;
-const sectionLine = "border-[#d8dee9]";
+
 const fallbackPlanFeatures: Record<string, string[]> = {
   pro: [
     "Tối đa 20 bàn và QR theo bàn",
@@ -310,6 +270,12 @@ const planAiKeys: BillingFeatureKey[] = [
   "advanced_ai_assistant",
   "automation_workflow"
 ];
+
+const field =
+  "h-11 w-full rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] font-medium text-[var(--d-text)] outline-none transition placeholder:text-[var(--d-text-faint)] focus:border-[var(--d-jade)] focus:ring-2 focus:ring-[var(--d-jade)]/15";
+const iconField = `${field} pl-10`;
+const fieldLabel = "grid gap-1.5 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]";
+const microLabel = "grid gap-1.5 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]";
 
 function formatVnd(value: number) {
   return `${new Intl.NumberFormat("vi-VN").format(value)}đ`;
@@ -509,97 +475,6 @@ function fileToBase64(file: File) {
   });
 }
 
-function StepHeader({ meta, right }: { meta: StepMeta; right?: ReactNode }) {
-  const Icon = meta.icon;
-
-  return (
-    <div className={`dashboard-onboarding-step-header shrink-0 border-b ${sectionLine} bg-white px-4 py-4 sm:px-5`}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="flex min-w-0 gap-3">
-          <span className="dashboard-onboarding-step-icon grid h-11 w-11 shrink-0 place-items-center rounded-md bg-[#0F4D3A] text-white">
-            <Icon className="h-5 w-5" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">{meta.eyebrow}</p>
-            <h2 className="mt-1 text-xl font-black text-[#111827] sm:text-2xl">{meta.title}</h2>
-            <p className="mt-1 max-w-2xl text-sm font-semibold leading-5 text-[#667085]">{meta.description}</p>
-          </div>
-        </div>
-        {right ? <div className="min-w-0 shrink-0">{right}</div> : null}
-      </div>
-      <p className="mt-3 rounded-md border border-[#0F4D3A]/12 bg-[#eef7f2] px-3 py-2 text-xs font-black leading-5 text-[#0F4D3A]">
-        {meta.outcome}
-      </p>
-    </div>
-  );
-}
-
-function SupportLine({ label, value, active = false }: { label: string; value: string; active?: boolean }) {
-  return (
-    <div className={`dashboard-onboarding-support-line flex min-h-9 items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-[11px] lg:min-h-10 lg:px-3 lg:text-xs ${active ? "is-active" : ""}`}>
-      <span className="font-bold text-[#667085]">{label}</span>
-      <span className={`min-w-0 truncate text-right font-black ${active ? "text-[#0F4D3A]" : "text-[#111827]"}`}>{value}</span>
-    </div>
-  );
-}
-
-function StepSupportPanel({ step, children, preview }: { step: number; children: ReactNode; preview?: ReactNode }) {
-  const visual = onboardingVisuals[step] ?? onboardingVisuals[0];
-
-  return (
-    <aside className={`dashboard-onboarding-support order-first min-h-0 rounded-lg border ${sectionLine} bg-[#f5faf7] p-3 lg:order-last lg:self-start lg:w-[330px] shrink-0`}>
-      {preview && (
-        <div className="hidden lg:block w-full mb-4">
-          {preview}
-        </div>
-      )}
-      <div className="dashboard-onboarding-support-inner grid grid-cols-[88px_minmax(0,1fr)] gap-3 sm:grid-cols-[124px_minmax(0,1fr)] lg:block">
-        <div className={`dashboard-onboarding-visual-card relative aspect-square overflow-hidden rounded-md border border-[#d8dee9] bg-white ${preview ? "lg:hidden" : ""}`}>
-          <Image
-            src={visual.src}
-            alt={visual.alt}
-            fill
-            sizes="(min-width: 1024px) 300px, 124px"
-            priority={step === 0}
-            className="object-cover"
-          />
-        </div>
-        <div className="min-w-0 self-center lg:mt-3">
-          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-[#0F4D3A]">{visual.eyebrow}</p>
-          <h3 className="mt-1 text-base font-black leading-tight text-[#111827]">{visual.title}</h3>
-          <p className="mt-2 hidden text-xs font-semibold leading-5 text-[#667085] sm:block">{visual.caption}</p>
-          <div className="mt-2 grid grid-cols-2 gap-1.5 lg:mt-3 lg:grid-cols-1 lg:gap-2">{children}</div>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function OnboardingButton({
-  children,
-  onClick,
-  disabled = false,
-  type = "button",
-  className = ""
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  type?: "button" | "submit";
-  className?: string;
-}) {
-  return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`dashboard-onboarding-primary-button inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50 ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function PlanDisplayModeToggle({
   mode,
   onChange,
@@ -610,15 +485,28 @@ function PlanDisplayModeToggle({
   compact?: boolean;
 }) {
   return (
-    <div className={`dashboard-plan-mode-toggle ${compact ? "is-compact" : ""}`} role="tablist" aria-label="Chọn chế độ hiển thị gói">
+    <div
+      role="tablist"
+      aria-label="Chọn chế độ hiển thị gói"
+      className="inline-flex shrink-0 items-center gap-1 rounded-[var(--d-r-pill)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-1"
+    >
       {planDisplayModes.map((item) => {
         const active = mode === item.id;
         const Icon = item.icon;
         return (
-          <button key={item.id} type="button" role="tab" aria-selected={active} className={active ? "is-active" : ""} onClick={() => onChange(item.id)}>
-            <Icon className="h-4 w-4" />
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(item.id)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-[var(--d-r-pill)] px-3 py-1.5 text-[length:var(--d-fs-xs)] font-semibold transition",
+              active ? "bg-[var(--d-jade)] text-[var(--d-on-jade)] shadow-[var(--d-sh-sm)]" : "text-[var(--d-text-muted)] hover:text-[var(--d-text)]"
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
             <span>{compact ? item.compactLabel : item.label}</span>
-            {!compact ? <small>{item.caption}</small> : null}
           </button>
         );
       })}
@@ -633,12 +521,12 @@ function PlanModeContent({ plan, mode, compact = false }: { plan: OnboardingPlan
 
   if (mode === "decision") {
     return (
-      <div className={`dashboard-plan-mode-content is-decision ${compact ? "is-compact" : ""}`}>
-        <p className="dashboard-plan-mode-summary">{catalog.heroLabel}</p>
-        <div className="dashboard-plan-highlight-list">
+      <div className="mt-3 grid gap-2">
+        <p className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{catalog.heroLabel}</p>
+        <div className="grid gap-1.5">
           {rows.map((row) => (
-            <span key={row.label}>
-              <CheckCircle2 className="h-4 w-4" />
+            <span key={row.label} className="flex items-center gap-2 text-[length:var(--d-fs-sm)] font-medium text-[var(--d-text)]">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--d-jade)]" />
               {row.label}
             </span>
           ))}
@@ -648,14 +536,19 @@ function PlanModeContent({ plan, mode, compact = false }: { plan: OnboardingPlan
   }
 
   return (
-    <div className={`dashboard-plan-mode-content ${compact ? "is-compact" : ""}`}>
+    <div className="mt-3 grid gap-1.5">
       {visibleRows.map((row) => (
-        <div key={row.label} className={`dashboard-plan-entitlement-row is-${row.state}`}>
-          <span>{row.label}</span>
-          <strong>{row.value}</strong>
+        <div
+          key={row.label}
+          className="flex items-center justify-between gap-3 rounded-[var(--d-r-sm)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-2.5 py-1.5 text-[length:var(--d-fs-xs)]"
+        >
+          <span className="min-w-0 truncate font-medium text-[var(--d-text-muted)]">{row.label}</span>
+          <strong className={cn("shrink-0 font-bold", row.state === "locked" ? "text-[var(--d-text-faint)]" : "text-[var(--d-text)]")}>{row.value}</strong>
         </div>
       ))}
-      {visibleRows.length < rows.length ? <p className="dashboard-plan-mode-more">+{rows.length - visibleRows.length} mục trong chi tiết gói</p> : null}
+      {visibleRows.length < rows.length ? (
+        <p className="text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-faint)]">+{rows.length - visibleRows.length} mục trong chi tiết gói</p>
+      ) : null}
     </div>
   );
 }
@@ -673,7 +566,6 @@ function PlanFeaturesModal({
 }) {
   const panelRef = useRef<HTMLElement | null>(null);
   const groups = planFeatureGroups(plan);
-  const isPremium = plan.code.toLowerCase() === "premium";
   const narrative = planNarrative(plan);
   const comparisonPlans = allPlans.length > 0 ? allPlans : [plan];
   const portalTarget = useDashboardOverlay(true);
@@ -684,7 +576,8 @@ function PlanFeaturesModal({
 
   return createPortal(
     <div
-      className="dashboard-modal-root dashboard-plan-modal-backdrop fixed inset-0 isolate z-[60] grid place-items-center bg-[#102a1f]/72 px-3 py-4 backdrop-blur-sm"
+      data-dash="v2"
+      className={cn(fontVars, "fixed inset-0 isolate z-[var(--d-z-modal)] grid place-items-center bg-[var(--d-jade-900)]/70 px-3 py-4 backdrop-blur-sm")}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -693,76 +586,76 @@ function PlanFeaturesModal({
       <section
         ref={panelRef}
         tabIndex={-1}
-        className="dashboard-plan-modal max-h-[min(780px,92svh)] w-full max-w-[920px] overflow-hidden rounded-lg border border-white/20 bg-white text-[#111827] shadow-[0_26px_100px_rgba(15,42,31,0.28)] outline-none"
+        className="flex max-h-[min(780px,92svh)] w-full max-w-[920px] flex-col overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] text-[var(--d-text)] shadow-[var(--d-sh-lg)] outline-none"
         role="dialog"
         aria-modal="true"
         aria-labelledby="plan-features-title"
       >
-        <div className="dashboard-plan-modal-head border-b border-[#d8dee9] bg-[#f5faf7] px-4 py-4 sm:px-5">
+        <div className="shrink-0 border-b border-[var(--d-line)] bg-[var(--d-surface-2)] px-4 py-4 sm:px-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">{narrative.badge}</p>
-              <h3 id="plan-features-title" className="mt-1 text-2xl font-black">
+              <p className="d-eyebrow text-[var(--d-jade)]">{narrative.badge}</p>
+              <h3 id="plan-features-title" className="mt-1 font-[var(--d-font-display)] text-[1.5rem] font-bold">
                 Toàn bộ tính năng gói {planDisplayName(plan)}
               </h3>
-              <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-[#667085]">
+              <p className="mt-2 max-w-2xl text-[length:var(--d-fs-sm)] font-medium leading-[var(--d-lh-body)] text-[var(--d-text-muted)]">
                 Đối chiếu trực tiếp theo quyền lợi vận hành thật: bán hàng, AI, báo cáo, quota, nhân sự và các phần cần Premium để mở khóa.
               </p>
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-md border border-[#d8dee9] bg-white text-[#475467] transition hover:border-[#0F4D3A]/35 hover:text-[#0F4D3A]"
+              className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[var(--d-text-muted)] transition hover:border-[var(--d-jade)] hover:text-[var(--d-jade)]"
               aria-label="Đóng popup tính năng"
             >
               <X className="h-5 w-5" />
             </button>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <div className="dashboard-plan-modal-stat rounded-md border border-[#d8dee9] bg-white px-3 py-2">
-              <p className="text-[11px] font-bold text-[#667085]">Giá</p>
-              <p className="mt-1 text-lg font-black text-[#0F4D3A]">{formatVnd(plan.monthly_price)}/tháng</p>
+            <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2">
+              <p className="text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">Giá</p>
+              <p className="d-num mt-1 text-[1.0625rem] font-bold text-[var(--d-jade)]">{formatVnd(plan.monthly_price)}/tháng</p>
             </div>
-            <div className="dashboard-plan-modal-stat rounded-md border border-[#d8dee9] bg-white px-3 py-2">
-              <p className="text-[11px] font-bold text-[#667085]">Dùng thử</p>
-              <p className="mt-1 text-lg font-black text-[#111827]">{plan.trial_days} ngày</p>
+            <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2">
+              <p className="text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">Dùng thử</p>
+              <p className="d-num mt-1 text-[1.0625rem] font-bold text-[var(--d-text)]">{plan.trial_days} ngày</p>
             </div>
-            <div className={`dashboard-plan-modal-stat rounded-md border px-3 py-2 ${isPremium ? "border-[#F28C28]/35 bg-[#fff7ed]" : "border-[#0F4D3A]/20 bg-[#eef7f2]"}`}>
-              <p className="text-[11px] font-bold text-[#667085]">Phù hợp</p>
-              <p className={`mt-1 text-sm font-black ${isPremium ? "text-[#9a4a17]" : "text-[#0F4D3A]"}`}>
-                {isPremium ? "AI nâng cao" : "QR ordering ngày đầu"}
-              </p>
+            <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-accent-soft)] px-3 py-2">
+              <p className="text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">Phù hợp</p>
+              <p className="mt-1 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-orange-600)]">{narrative.decision}</p>
             </div>
           </div>
         </div>
-        <div className="dashboard-plan-modal-body max-h-[52svh] overflow-y-auto px-4 py-4 sm:px-5">
-          <div className={`dashboard-plan-modal-summary rounded-lg border p-4 ${isPremium ? "border-[#F28C28]/28 bg-[#fff7ed]" : "border-[#0F4D3A]/16 bg-[#eef7f2]"}`}>
-            <p className="text-sm font-black text-[#111827]">{narrative.decision}</p>
-            <p className="mt-1 text-sm font-semibold leading-6 text-[#475467]">{narrative.fit}</p>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+          <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-primary-soft)] p-4">
+            <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{narrative.decision}</p>
+            <p className="mt-1 text-[length:var(--d-fs-sm)] font-medium leading-[var(--d-lh-body)] text-[var(--d-text-muted)]">{narrative.fit}</p>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {groups.map((group) => (
-              <div key={group.title} className="dashboard-plan-feature-group rounded-lg border border-[#d8dee9] bg-white p-3">
-                <div className="dashboard-plan-feature-group-head flex items-start justify-between gap-3">
-                  <p className="flex min-w-0 items-center gap-2 text-sm font-black text-[#111827]">
-                    <Sparkles className="h-4 w-4 shrink-0 text-[#0F4D3A]" />
+              <div key={group.title} className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="flex min-w-0 items-center gap-2 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">
+                    <Sparkles className="h-4 w-4 shrink-0 text-[var(--d-jade)]" />
                     {group.title}
                   </p>
-                  <span className="dashboard-plan-feature-count">{group.includedCount}/{group.totalCount}</span>
+                  <span className="shrink-0 rounded-[var(--d-r-pill)] bg-[var(--d-primary-soft)] px-2 py-0.5 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-jade)]">
+                    {group.includedCount}/{group.totalCount}
+                  </span>
                 </div>
                 <ul className="mt-3 grid gap-2">
                   {group.items.map((feature) => (
-                    <li key={feature.key} className={`dashboard-plan-feature-item is-${feature.state}`}>
-                      <span className="dashboard-plan-feature-icon">
+                    <li key={feature.key} className="flex items-start gap-2">
+                      <span className={cn("mt-0.5 shrink-0", feature.state === "locked" ? "text-[var(--d-text-faint)]" : "text-[var(--d-jade)]")}>
                         {feature.state === "included" ? <CheckCircle2 className="h-4 w-4" /> : feature.state === "trial" ? <Clock3 className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="dashboard-plan-feature-title-row">
-                          <strong>{feature.label}</strong>
-                          <em>{feature.badge}</em>
+                        <span className="flex items-center justify-between gap-2">
+                          <strong className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{feature.label}</strong>
+                          <em className="shrink-0 not-italic text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-text-faint)]">{feature.badge}</em>
                         </span>
-                        <span className="dashboard-plan-feature-value">{feature.value}</span>
-                        <span className="dashboard-plan-feature-description">{feature.description}</span>
+                        <span className="block text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-jade)]">{feature.value}</span>
+                        <span className="block text-[length:var(--d-fs-xs)] leading-5 text-[var(--d-text-muted)]">{feature.description}</span>
                       </span>
                     </li>
                   ))}
@@ -770,46 +663,48 @@ function PlanFeaturesModal({
               </div>
             ))}
           </div>
-          <div className="dashboard-plan-modal-comparison mt-4 rounded-lg border border-[#d8dee9] bg-white p-3">
+          <div className="mt-4 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm font-black text-[#111827]">So sánh nhanh các gói đang có</p>
-              <span className="text-xs font-bold text-[#667085]">Giá, số tính năng và định hướng sử dụng</span>
+              <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">So sánh nhanh các gói đang có</p>
+              <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Giá, số tính năng và định hướng sử dụng</span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {comparisonPlans.map((item) => {
                 const active = item.code === plan.code;
                 const itemNarrative = planNarrative(item);
-
                 return (
-                  <article key={item.id} className={`rounded-md border p-3 ${active ? "border-[#0F4D3A] bg-[#eef7f2]" : "border-[#d8dee9] bg-[#fbfcfb]"}`}>
+                  <article key={item.id} className={cn("rounded-[var(--d-r-md)] border p-3", active ? "border-[var(--d-jade)] bg-[var(--d-primary-soft)]" : "border-[var(--d-line)] bg-[var(--d-surface-2)]")}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#0F4D3A]">{item.code}</p>
-                        <p className="mt-1 text-base font-black text-[#111827]">{planDisplayName(item)}</p>
+                        <p className="d-eyebrow text-[var(--d-jade)]">{item.code}</p>
+                        <p className="mt-1 text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">{planDisplayName(item)}</p>
                       </div>
-                      {active ? <BadgeCheck className="h-5 w-5 text-[#0F4D3A]" /> : null}
+                      {active ? <BadgeCheck className="h-5 w-5 text-[var(--d-jade)]" /> : null}
                     </div>
-                    <p className="mt-3 text-xl font-black text-[#111827]">{formatVnd(item.monthly_price)}<span className="text-xs font-bold text-[#667085]">/tháng</span></p>
-                    <p className="mt-2 text-xs font-semibold leading-5 text-[#667085]">{itemNarrative.promise}</p>
-                    <p className="mt-2 text-xs font-black text-[#0F4D3A]">{planFeatureCount(item)} tính năng được mô tả</p>
+                    <p className="d-num mt-3 text-[1.25rem] font-bold text-[var(--d-text)]">
+                      {formatVnd(item.monthly_price)}
+                      <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">/tháng</span>
+                    </p>
+                    <p className="mt-2 text-[length:var(--d-fs-xs)] font-medium leading-5 text-[var(--d-text-muted)]">{itemNarrative.promise}</p>
+                    <p className="mt-2 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-jade)]">{planFeatureCount(item)} tính năng được mô tả</p>
                   </article>
                 );
               })}
             </div>
           </div>
         </div>
-        <div className="grid gap-2 border-t border-[#d8dee9] bg-white px-4 py-3 sm:flex sm:items-center sm:justify-end sm:px-5">
+        <div className="grid shrink-0 gap-2 border-t border-[var(--d-line)] bg-[var(--d-surface)] px-4 py-3 sm:flex sm:items-center sm:justify-end sm:px-5">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-11 items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-black text-[#475467] transition hover:border-[#0F4D3A]/35"
+            className="inline-flex h-11 items-center justify-center rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)] transition hover:border-[var(--d-jade)]"
           >
             Xem lại
           </button>
           <button
             type="button"
             onClick={onSelect}
-            className="dashboard-onboarding-primary-button inline-flex h-11 items-center justify-center gap-2 rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e]"
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-[var(--d-r-md)] bg-[var(--d-jade)] px-5 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-on-jade)] transition hover:bg-[var(--d-jade-700)]"
           >
             Chọn {planDisplayName(plan)}
             <ArrowRight className="h-4 w-4" />
@@ -821,23 +716,24 @@ function PlanFeaturesModal({
   );
 }
 
-function StepNavigator({
-  steps,
+function Stepper({
   step,
   furthestStep,
   onSelect
 }: {
-  steps: string[];
   step: number;
   furthestStep: number;
-  onSelect: (nextStep: number) => void;
+  onSelect: (next: number) => void;
 }) {
   return (
-    <nav className="dashboard-onboarding-stepper -mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <nav
+      aria-label="Các bước tạo quán"
+      className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+    >
       {steps.map((label, index) => {
         const active = step === index;
+        const done = index < step;
         const disabled = index > furthestStep;
-
         return (
           <button
             key={label}
@@ -845,23 +741,88 @@ function StepNavigator({
             onClick={() => onSelect(index)}
             disabled={disabled}
             aria-current={active ? "step" : undefined}
-            aria-label={`${label}${disabled ? " chưa mở" : active ? " đang làm" : " đã mở"}`}
-            className={`dashboard-onboarding-step-button flex min-h-11 shrink-0 items-center gap-2 rounded-md border px-3 text-sm font-black transition ${
+            className={cn(
+              "group inline-flex min-h-11 shrink-0 items-center gap-2.5 rounded-[var(--d-r-pill)] border px-3.5 text-[length:var(--d-fs-sm)] font-semibold transition-all duration-[var(--d-dur)]",
               active
-                ? "is-active border-[#0F4D3A] bg-[#0F4D3A] text-white"
-                : disabled
-                  ? "cursor-not-allowed border-[#d8dee9] bg-[#f8fafc] text-[#98a2b3]"
-                  : "border-[#d8dee9] bg-white text-[#475467] hover:border-[#0F4D3A]/35"
-            }`}
+                ? "border-transparent bg-[var(--d-jade)] text-[var(--d-on-jade)] shadow-[var(--d-sh-sm)]"
+                : done
+                  ? "border-[var(--d-jade)]/30 bg-[var(--d-primary-soft)] text-[var(--d-jade)] hover:bg-[var(--d-sage-100)]"
+                  : disabled
+                    ? "cursor-not-allowed border-[var(--d-line)] bg-[var(--d-surface-2)] text-[var(--d-text-faint)]"
+                    : "border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[var(--d-text-muted)] hover:border-[var(--d-jade)] hover:text-[var(--d-text)]"
+            )}
           >
-            <span className={`grid h-6 w-6 place-items-center rounded-md text-xs ${active ? "bg-white/20 text-white" : "bg-[#eef7f2] text-[#0F4D3A]"}`}>
-              {index < step ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
+            <span
+              className={cn(
+                "grid h-6 w-6 shrink-0 place-items-center rounded-full text-[length:var(--d-fs-2xs)] font-bold transition",
+                active ? "bg-white/20 text-white" : done ? "bg-[var(--d-jade)] text-white" : "bg-[var(--d-surface-2)] text-[var(--d-text-faint)]"
+              )}
+            >
+              {done ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
             </span>
             <span className="whitespace-nowrap">{label}</span>
           </button>
         );
       })}
     </nav>
+  );
+}
+
+function SummaryRow({ icon: Icon, label, value, active = false }: { icon?: LucideIcon; label: string; value: string; active?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-[length:var(--d-fs-xs)] transition hover:border-[var(--d-jade)]/30">
+      <span className="inline-flex items-center gap-2 font-semibold text-[var(--d-text-muted)]">
+        {Icon ? <Icon className={cn("h-3.5 w-3.5", active ? "text-[var(--d-jade)]" : "text-[var(--d-text-faint)]")} /> : null}
+        {label}
+      </span>
+      <span className={cn("min-w-0 truncate text-right font-bold", active ? "text-[var(--d-jade)]" : "text-[var(--d-text)]")}>{value}</span>
+    </div>
+  );
+}
+
+function SectionCard({
+  icon: Icon,
+  title,
+  description,
+  badge,
+  tone = "jade",
+  children
+}: {
+  icon?: LucideIcon;
+  title: string;
+  description?: string;
+  badge?: ReactNode;
+  tone?: "jade" | "orange";
+  children: ReactNode;
+}) {
+  return (
+    <motion.section
+      variants={fadeUp}
+      initial="hidden"
+      animate="show"
+      className="grid gap-4 rounded-[var(--d-r-xl)] border border-[var(--d-line)] bg-[var(--d-surface)] p-5 shadow-[var(--d-sh-sm)] transition-shadow duration-[var(--d-dur)] hover:shadow-[var(--d-sh-md)] sm:p-6"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          {Icon ? (
+            <span
+              className={cn(
+                "grid h-10 w-10 shrink-0 place-items-center rounded-[var(--d-r-md)]",
+                tone === "orange" ? "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]" : "bg-[var(--d-primary-soft)] text-[var(--d-jade)]"
+              )}
+            >
+              <Icon className="h-5 w-5" />
+            </span>
+          ) : null}
+          <div className="min-w-0">
+            <h3 className="text-[length:var(--d-fs-h2)] font-bold leading-[var(--d-lh-snug)] text-[var(--d-text)]">{title}</h3>
+            {description ? <p className="mt-1 text-[length:var(--d-fs-sm)] leading-[var(--d-lh-body)] text-[var(--d-text-muted)]">{description}</p> : null}
+          </div>
+        </div>
+        {badge ? <div className="shrink-0">{badge}</div> : null}
+      </div>
+      {children}
+    </motion.section>
   );
 }
 
@@ -879,7 +840,6 @@ export function RestaurantOnboardingFlow({
   const placeSessionTokenRef = useRef(createMapSessionToken());
   const [state, action, pending] = useActionState(onboardingAction, undefined);
   const [step, setStep] = useState(0);
-  const [mobileStep, setMobileStep] = useState<MobileOnboardingStepId>("identity");
   const [furthestStep, setFurthestStep] = useState(0);
   const [name, setName] = useState("");
   const [slugInput, setSlugInput] = useState("quan-moi");
@@ -935,7 +895,7 @@ export function RestaurantOnboardingFlow({
   const displayedSlugInput = slugEdited ? slugInput : suggestedSlug;
   const slug = createSlug(displayedSlugInput) || suggestedSlug;
   const slugReady = slugStatus === "available";
-  const progress = [22, 42, 70, 88, 100][step] ?? 22;
+  const progress = [25, 55, 80, 100][step] ?? 25;
   const selectedProvince = provinces.find((item) => item.code === provinceCode) ?? null;
   const selectedWard = wards.find((item) => item.code === wardCode) ?? null;
   const provinceLabel = selectedProvince?.name || province;
@@ -970,7 +930,7 @@ export function RestaurantOnboardingFlow({
   const setupTasks = setupRunway.tasks;
   const setupDoneCount = setupRunway.doneCount;
   const setupProgress = setupRunway.progress;
-  const nextStepLabel = step === 4 ? "Hoàn tất" : "Tiếp tục";
+  const nextStepLabel = step === 3 ? "Hoàn tất" : "Tiếp tục";
   const nextStepDisabled = (step === 0 && !canContinueInfo) || (step === 1 && !selectedPlan);
   const canSubmitOnboarding = setupRunway.canLaunch;
   const launching = pending || submitStarted;
@@ -982,37 +942,6 @@ export function RestaurantOnboardingFlow({
     hasStructuredAddress ? "" : "địa chỉ",
     hasValidHotline ? "" : "hotline"
   ].filter(Boolean);
-  const mobileSteps: Array<{ id: MobileOnboardingStepId; label: string; progress: number }> = [
-    { id: "identity", label: "Định danh", progress: 16 },
-    { id: "location", label: "Vị trí", progress: 32 },
-    { id: "plan", label: "Gói", progress: 50 },
-    { id: "review", label: "Rà lại", progress: 66 },
-    { id: "tables", label: "Bàn", progress: 82 },
-    { id: "menu", label: "Menu", progress: 100 }
-  ];
-  const mobileStepIndex = Math.max(0, mobileSteps.findIndex((item) => item.id === mobileStep));
-  const mobileCurrentStep = mobileSteps[mobileStepIndex] ?? mobileSteps[0];
-  const mobileHasMenu = confirmedMenuItems.length > 0 || itemName.trim().length >= 2;
-  const mobileCanContinue =
-    mobileStep === "identity"
-      ? canContinueIdentity
-      : mobileStep === "location"
-        ? canContinueInfo
-        : mobileStep === "plan"
-          ? Boolean(selectedPlan)
-          : mobileStep === "tables"
-            ? tableCount > 0
-            : true;
-  const mobileMissingReason =
-    mobileStep === "identity"
-      ? missingInfoLabels.filter((label) => label !== "địa chỉ").slice(0, 2).join(", ")
-      : mobileStep === "location" && !hasStructuredAddress
-        ? "địa chỉ"
-        : mobileStep === "plan" && !selectedPlan
-          ? "gói vận hành"
-          : mobileStep === "menu" && !mobileHasMenu
-            ? "một món đầu tiên"
-            : "";
 
   useEffect(() => {
     const draft = readOnboardingDraft(draftKey);
@@ -1139,8 +1068,8 @@ export function RestaurantOnboardingFlow({
 
         setProvince(payload.data?.selectedProvince?.name ?? "");
         setWards(payload.data?.wards ?? []);
-        setWardCode((current) => (payload.data?.wards ?? []).some((item) => item.code === current) ? current : "");
-        setWard((current) => (payload.data?.wards ?? []).some((item) => item.name === current) ? current : "");
+        setWardCode((current) => ((payload.data?.wards ?? []).some((item) => item.code === current) ? current : ""));
+        setWard((current) => ((payload.data?.wards ?? []).some((item) => item.name === current) ? current : ""));
       } catch (error) {
         if (!disposed) setAddressError(error instanceof Error ? error.message : "Không tải được danh mục xã/phường.");
       } finally {
@@ -1269,27 +1198,6 @@ export function RestaurantOnboardingFlow({
     const nextTableLimit = getOnboardingTableLimit(plan.code);
     setPlanCode(plan.code);
     setTableCount((value) => Math.min(nextTableLimit, Math.max(1, plan.code === "premium" ? Math.max(value, 24) : value)));
-  }
-
-  function openMobileStep(nextStep: MobileOnboardingStepId) {
-    setMobileStep(nextStep);
-  }
-
-  function advanceMobile() {
-    const nextStep = mobileSteps[mobileStepIndex + 1];
-    if (nextStep) setMobileStep(nextStep.id);
-  }
-
-  function retreatMobile() {
-    const previousStep = mobileSteps[mobileStepIndex - 1];
-    if (previousStep) setMobileStep(previousStep.id);
-  }
-
-  function mobileStepFromRunwayTarget(targetStep: number): MobileOnboardingStepId {
-    if (targetStep === 1) return "plan";
-    if (targetStep === 3) return "tables";
-    if (targetStep === 4) return "menu";
-    return "identity";
   }
 
   function handleMenuOcrImage(file: File | null) {
@@ -1450,7 +1358,6 @@ export function RestaurantOnboardingFlow({
   }
 
   const currentStepMeta = stepDetails[step] ?? stepDetails[0];
-  const CurrentStepIcon = currentStepMeta.icon;
   const selectedPlanNarrative = selectedPlan ? planNarrative(selectedPlan) : null;
   const actionHint = launching
     ? launchMessages[launchMessageIndex]
@@ -1458,9 +1365,9 @@ export function RestaurantOnboardingFlow({
       ? `Cần thêm ${missingInfoLabels.slice(0, 3).join(", ")}`
       : step === 1 && !selectedPlan
         ? "Chọn một gói để tiếp tục"
-        : step === 4 && !canSubmitOnboarding
+        : step === 3 && !canSubmitOnboarding
           ? "Cần ít nhất một món hoặc menu đã xác nhận"
-          : step === 4
+          : step === 3
             ? "Sẵn sàng tạo dashboard thật cho quán"
             : "Có thể tiếp tục bước tiếp theo";
   const slugStatusCopy =
@@ -1497,7 +1404,19 @@ export function RestaurantOnboardingFlow({
   );
 
   return (
-    <main className="dashboard-onboarding-shell min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
+    <main data-dash="v2" className={cn(fontVars, "relative min-h-svh w-full overflow-x-hidden bg-[var(--d-bg)] text-[var(--d-text)]")}>
+      {/* Decorative background */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div
+          className="absolute -left-32 -top-40 h-[28rem] w-[28rem] rounded-full opacity-50 blur-3xl"
+          style={{ background: "radial-gradient(circle, rgba(15,77,58,0.18) 0%, transparent 70%)" }}
+        />
+        <div
+          className="absolute -right-32 top-24 h-[26rem] w-[26rem] rounded-full opacity-50 blur-3xl"
+          style={{ background: "radial-gradient(circle, rgba(242,140,40,0.16) 0%, transparent 70%)" }}
+        />
+      </div>
+
       <form
         action={action}
         onSubmit={(event) => {
@@ -1508,7 +1427,7 @@ export function RestaurantOnboardingFlow({
           setSubmitStarted(true);
           setLaunchMessageIndex(0);
         }}
-        className="dashboard-onboarding-form mx-auto flex h-svh w-full max-w-6xl flex-col gap-3 overflow-hidden px-3 py-3 sm:px-4"
+        className="relative z-10 mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 pb-6 pt-5 sm:px-6"
       >
         <input type="hidden" name="name" value={name} />
         <input type="hidden" name="slug" value={slug} />
@@ -1531,951 +1450,465 @@ export function RestaurantOnboardingFlow({
         <input type="hidden" name="brandDescription" value="" />
         <input type="hidden" name="generatedLogoUrl" value="" />
 
-        <section className="onboarding-mobile-shell md:hidden" aria-label="Tạo quán mới trên mobile">
-          <header className="onboarding-mobile-brandbar">
-            <div className="flex min-w-0 items-center justify-between gap-3">
-              <LogiVNLogo href="/" className="h-7" priority />
-              <span className="onboarding-mobile-pill">{draftSavedAt > 0 ? "Nháp đã lưu" : "Tạo quán"}</span>
-            </div>
-            <div className="onboarding-mobile-progress-row">
-              <span>{mobileCurrentStep.label}</span>
-              <strong>{mobileCurrentStep.progress}%</strong>
-            </div>
-            <div className="onboarding-mobile-rail" aria-hidden="true">
-              {mobileSteps.map((item, index) => (
-                <span key={item.id} className={index <= mobileStepIndex ? "is-active" : ""} />
-              ))}
-            </div>
-          </header>
-
-          <div className="onboarding-mobile-screen">
-            {mobileStep === "identity" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 1</p>
-                <h1>Định danh quán</h1>
-                <label className="onboarding-mobile-field">
-                  <span>Tên quán</span>
-                  <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Nhập tên quán" />
-                </label>
-                <label className="onboarding-mobile-field">
-                  <span>Mã quán</span>
-                  <span className="onboarding-mobile-input-wrap">
-                    <input
-                      value={displayedSlugInput}
-                      onChange={(event) => {
-                        setSlugEdited(true);
-                        setSlugInput(createSlug(event.target.value));
-                      }}
-                      placeholder="quan-cua-ban"
-                    />
-                    {slugStatus === "checking" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    {slugStatus === "available" ? <CheckCircle2 className="h-4 w-4" /> : null}
-                  </span>
-                </label>
-                <div className={`onboarding-mobile-inline-status ${slugReady ? "is-ok" : "is-warning"}`}>
-                  <span>{slug}.logivn.com</span>
-                  <strong>{slugStatus === "available" ? "Khả dụng" : slugStatus === "checking" ? "Đang kiểm tra" : slugStatus === "taken" ? "Đã dùng" : "Cần kiểm tra"}</strong>
-                </div>
-                <div className="onboarding-mobile-chip-grid" aria-label="Loại hình quán">
-                  {businessPresets.map((preset) => {
-                    const Icon = preset.icon;
-                    const active = businessPresetId === preset.id;
-                    return (
-                      <button key={preset.id} type="button" onClick={() => setBusinessPresetId(preset.id)} className={active ? "is-active" : ""} aria-pressed={active}>
-                        <Icon className="h-4 w-4" />
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {selectedPreset.value === "OTHER" ? (
-                  <label className="onboarding-mobile-field">
-                    <span>Danh mục riêng</span>
-                    <input value={customBusinessType} onChange={(event) => setCustomBusinessType(event.target.value)} placeholder="Bakery, pub, homestay cafe..." />
-                  </label>
-                ) : null}
-                <label className="onboarding-mobile-field">
-                  <span>Hotline</span>
-                  <input value={hotline} onChange={(event) => setHotline(event.target.value)} placeholder="0901234567" inputMode="tel" />
-                </label>
-              </div>
-            ) : null}
-
-            {mobileStep === "location" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 1b</p>
-                <h1>Ghim nơi bán</h1>
-                <label className="onboarding-mobile-field">
-                  <span>Địa chỉ hoặc mốc gần quán</span>
-                  <input
-                    value={streetAddress}
-                    onChange={(event) => {
-                      setStreetAddress(event.target.value);
-                      clearSelectedAddress();
-                    }}
-                    placeholder="12 Nguyễn Huệ, Quận 1"
-                  />
-                </label>
-                <div className="onboarding-mobile-two-actions">
-                  <button type="button" onClick={() => void handleUseCurrentPosition()} disabled={locationPending}>
-                    {locationPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
-                    GPS
-                  </button>
-                  <button type="button" onClick={() => void searchAddressSuggestions()} disabled={addressSearching || finalAddress.trim().length < 6}>
-                    {addressSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                    Tìm
-                  </button>
-                </div>
-                {addressResults.length > 0 ? (
-                  <div className="onboarding-mobile-list" aria-label="Gợi ý địa chỉ">
-                    {addressResults.slice(0, 3).map((result, index) => (
-                      <button key={result.id} type="button" onClick={() => void chooseAddressSuggestion(result)}>
-                        <span>{index + 1}</span>
-                        <strong>{result.shortLabel || result.address}</strong>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                <details className="onboarding-mobile-details">
-                  <summary>Tỉnh/xã thủ công</summary>
-                  <div className="grid gap-2 pt-3">
-                    <select value={provinceCode} onChange={(event) => chooseProvince(event.target.value)}>
-                      <option value="">{adminLoading ? "Đang tải..." : "Chọn tỉnh/thành"}</option>
-                      {provinces.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
-                    </select>
-                    <select value={wardCode} onChange={(event) => chooseWard(event.target.value)} disabled={!provinceCode || adminLoading}>
-                      <option value="">{provinceCode ? "Chọn xã/phường" : "Chọn tỉnh trước"}</option>
-                      {wards.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
-                    </select>
-                    <input value={district} onChange={(event) => { setDistrict(event.target.value); clearSelectedAddress(); }} placeholder="Huyện cũ / thôn ấp" />
-                  </div>
-                </details>
-                {locationError || addressError ? <p className="onboarding-mobile-warning">{locationError || addressError}</p> : null}
-                {hasPinnedLocation ? <p className="onboarding-mobile-success">{locationQualityLabel(locationAccuracy)}</p> : null}
-              </div>
-            ) : null}
-
-            {mobileStep === "plan" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 2</p>
-                <h1>Gói vận hành</h1>
-                <div className="onboarding-mobile-recommendation">Đang chọn: <strong>{selectedPlan ? planDisplayName(selectedPlan) : "LogiVN Pro"}</strong></div>
-                <PlanDisplayModeToggle mode={planDisplayMode} onChange={setPlanDisplayMode} compact />
-                <div className="onboarding-mobile-plan-list">
-                  {plans.map((plan) => {
-                    const active = plan.code === planCode;
-                    const catalog = billingPlanFor(plan);
-                    const isPremium = catalog.code === "premium";
-                    const narrative = planNarrative(plan);
-                    return (
-                      <article key={plan.id} className={`${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""}`}>
-                        <div>
-                          <span className="onboarding-mobile-plan-badge">{narrative.badge}</span>
-                          <h2>{planDisplayName(plan)}</h2>
-                          <p className="onboarding-mobile-plan-price">{formatVnd(plan.monthly_price)}/tháng · thử {plan.trial_days} ngày</p>
-                          <p>{narrative.promise}</p>
-                        </div>
-                        <PlanModeContent plan={plan} mode={planDisplayMode} compact />
-                        <div className="onboarding-mobile-plan-actions">
-                          <button type="button" onClick={() => setFeaturePlan(plan)}>Chi tiết</button>
-                          <button type="button" className="is-primary" onClick={() => selectPlan(plan)}>{active ? "Đã chọn" : "Chọn"}</button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {mobileStep === "review" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 3</p>
-                <h1>{setupDoneCount}/{setupTasks.length} mục sẵn sàng</h1>
-                <div className="onboarding-mobile-review-list">
-                  {setupTasks.map((item) => (
-                    <button key={item.id} type="button" onClick={() => openMobileStep(mobileStepFromRunwayTarget(item.targetStep))}>
-                      <span>{item.label}</span>
-                      {item.done ? <CheckCircle2 className="h-5 w-5" /> : <span className="onboarding-mobile-empty-dot" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {mobileStep === "tables" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 4</p>
-                <h1>Bàn & QR</h1>
-                <div className="onboarding-mobile-stepper">
-                  <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))}>-</button>
-                  <strong>{tableCount}</strong>
-                  <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))}>+</button>
-                </div>
-                <p className="onboarding-mobile-success">Giới hạn gói: tối đa {selectedPlanTableLimit} bàn.</p>
-                <div className="onboarding-mobile-preset-grid">
-                  {tablePresetOptions.map((count) => (
-                    <button key={count} type="button" onClick={() => setTableCount(count)} className={tableCount === count ? "is-active" : ""}>{count}</button>
-                  ))}
-                </div>
-                <div className="onboarding-mobile-table-preview">
-                  {[0, 1, 2].map((index) => <span key={index}>{formatTableName(index)}</span>)}
-                </div>
-                <p className="onboarding-mobile-success">QR sẵn sau khi tạo quán.</p>
-              </div>
-            ) : null}
-
-            {mobileStep === "menu" ? (
-              <div className="onboarding-mobile-pane">
-                <p className="onboarding-mobile-eyebrow">Bước 5</p>
-                <h1>Menu đầu tiên</h1>
-                <div className="onboarding-mobile-segment"><span className="is-active">Nhập nhanh</span><span>AI menu</span></div>
-                <label className="onboarding-mobile-field"><span>Tên món</span><input value={itemName} onChange={(event) => setItemName(event.target.value)} placeholder="Cà phê sữa đá" /></label>
-                <label className="onboarding-mobile-field"><span>Giá</span><input value={itemPrice} onChange={(event) => setItemPrice(event.target.value.replace(/\D/g, ""))} placeholder="28000" inputMode="numeric" /></label>
-                <label className="onboarding-mobile-field"><span>Danh mục</span><input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} placeholder="Cà phê" /></label>
-                <details className="onboarding-mobile-details">
-                  <summary>AI đọc ảnh menu</summary>
-                  <div className="grid gap-2 pt-3">
-                    <input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => handleMenuOcrImage(event.target.files?.[0] ?? null)} />
-                    <textarea value={menuOcrText} onChange={(event) => setMenuOcrText(event.target.value)} placeholder="Dán menu thô" />
-                    <button type="button" onClick={() => void runMenuOcr()} disabled={menuOcrLoading || (!menuOcrText.trim() && !menuOcrImage)}>{menuOcrLoading ? "Đang đọc..." : "Quét menu"}</button>
-                  </div>
-                </details>
-                {menuOcrError ? <p className="onboarding-mobile-warning">{menuOcrError}</p> : null}
-                {ocrDraftItems.length > 0 ? (
-                  <div className="onboarding-mobile-list" aria-label="Món AI đã đọc">
-                    {ocrDraftItems.slice(0, 3).map((item) => (
-                      <button key={`${item.categoryName}-${item.name}-${item.price}`} type="button" onClick={() => setConfirmedMenuItems(ocrDraftItems)}>
-                        <strong>{item.name}</strong>
-                        <span>{formatVnd(item.price)}</span>
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {ocrDraftItems.length > 0 ? <button type="button" className="onboarding-mobile-confirm" onClick={() => setConfirmedMenuItems(ocrDraftItems)}>Xác nhận {ocrDraftItems.length} món</button> : null}
-                <p className="onboarding-mobile-success">Đã xác nhận: {confirmedMenuItems.length || (itemName.trim() ? 1 : 0)} món.</p>
-                {state?.error ? <p className="onboarding-mobile-warning">{state.error}</p> : null}
-              </div>
-            ) : null}
-          </div>
-
-          <footer className="onboarding-mobile-actionbar">
-            {mobileMissingReason ? <p>Cần thêm {mobileMissingReason}</p> : <p>{launching ? launchMessages[launchMessageIndex] : "Sẵn sàng tiếp tục"}</p>}
-            <div>
-              <button type="button" onClick={retreatMobile} disabled={mobileStepIndex === 0 || launching}>Quay lại</button>
-              {mobileStep === "menu" ? (
-                <button type="submit" disabled={launching || !canSubmitOnboarding}>{launching ? "Đang tạo..." : "Tạo dashboard"}</button>
-              ) : (
-                <button type="button" onClick={advanceMobile} disabled={!mobileCanContinue || launching}>Tiếp tục</button>
-              )}
-            </div>
-          </footer>
-        </section>
-
-        <header className={`dashboard-onboarding-header hidden shrink-0 rounded-lg border ${sectionLine} bg-white p-3 md:block`}>
-          <div className="dashboard-onboarding-hero-bar grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-stretch">
-            <div className="flex min-w-0 gap-3">
-              <div className="dashboard-onboarding-logo-mark shrink-0 rounded-md border border-[#d8dee9] bg-white px-2 py-1">
-                <LogiVNLogo href="/" className="h-8" priority />
-              </div>
+        {/* Header — gradient hero gọn */}
+        <header
+          className="relative overflow-hidden rounded-[var(--d-r-xl)] p-4 shadow-[var(--d-sh-md)] sm:p-5"
+          style={{ background: "linear-gradient(135deg, var(--d-jade-900) 0%, var(--d-jade) 65%, var(--d-jade-700) 100%)" }}
+        >
+          <div
+            className="pointer-events-none absolute inset-0 opacity-60"
+            style={{ backgroundImage: "radial-gradient(120% 90% at 100% 0%, rgba(242,140,40,0.26) 0%, transparent 55%)" }}
+          />
+          <div className="relative z-10 flex flex-col gap-3.5">
+            <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">SMART ORDERING. BETTER SERVICE.</p>
-                <h1 className="mt-1 text-xl font-black text-[#111827] sm:text-2xl">Tạo quán mới trong một mạch</h1>
-                <p className="mt-1 max-w-2xl text-sm font-semibold leading-5 text-[#667085]">
-                  {currentStepMeta.outcome}
-                </p>
+                <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-white/65">Bước {step + 1}/{steps.length}</p>
+                <h1 className="mt-1 truncate font-[var(--d-font-display)] text-[1.375rem] font-bold leading-tight tracking-[var(--d-track-tight)] text-white sm:text-[1.625rem]">
+                  {launching ? "Đang khởi tạo quán..." : currentStepMeta.title}
+                </h1>
               </div>
-            </div>
-            <div className="dashboard-onboarding-live-card rounded-lg border border-[#0F4D3A]/12 bg-[#eef7f2] p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#0F4D3A]">Trạng thái</p>
-                  <p className="mt-1 truncate text-base font-black text-[#111827]">{launching ? "Đang khởi tạo quán" : currentStepMeta.title}</p>
-                </div>
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-white text-[#0F4D3A] shadow-sm">
-                  {launching ? <Loader2 className="h-5 w-5 animate-spin" /> : <CurrentStepIcon className="h-5 w-5" />}
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-[var(--d-r-pill)] bg-white/10 px-3 py-1.5 text-[length:var(--d-fs-2xs)] font-semibold text-white/85">
+                  <Clock3 className="h-3.5 w-3.5 text-[var(--d-orange-300)]" />
+                  <span className="hidden sm:inline">{draftStatusLabel}</span>
                 </span>
+                {draftSavedAt > 0 ? (
+                  <button
+                    type="button"
+                    onClick={clearDraft}
+                    aria-label="Xoá bản nháp"
+                    className="grid h-8 w-8 place-items-center rounded-[var(--d-r-md)] text-white/70 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                  </button>
+                ) : null}
               </div>
-              <div className="mt-3 flex items-center gap-3">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-white">
-                  <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${progress}%` }} />
-                </div>
-                <span className="w-10 text-right text-xs font-black text-[#0F4D3A]">{progress}%</span>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="h-1.5 flex-1 overflow-hidden rounded-[var(--d-r-pill)] bg-white/15">
+                <motion.div
+                  className="h-full rounded-[var(--d-r-pill)]"
+                  style={{ background: "linear-gradient(90deg, var(--d-orange-300), var(--d-orange))" }}
+                  animate={{ width: `${progress}%` }}
+                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                />
               </div>
+              <span className="d-num w-9 shrink-0 text-right text-[length:var(--d-fs-xs)] font-bold text-white/90">{progress}%</span>
             </div>
-          </div>
-          <div className="dashboard-onboarding-status-grid mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="dashboard-onboarding-status-card">
-              <ShieldCheck className="h-4 w-4 text-[#0F4D3A]" />
-              <span>Bảo mật</span>
-              <strong>{email ? "Đã xác thực" : "Phiên local"}</strong>
-            </div>
-            <div className="dashboard-onboarding-status-card">
-              <Clock3 className="h-4 w-4 text-[#0F4D3A]" />
-              <span>Bản nháp</span>
-              <strong>{draftStatusLabel}</strong>
-            </div>
-            <div className="dashboard-onboarding-status-card">
-              <Layers3 className="h-4 w-4 text-[#0F4D3A]" />
-              <span>Gói</span>
-              <strong>{selectedPlan ? planDisplayName(selectedPlan) : "Chưa chọn"}</strong>
-            </div>
-            <div className="dashboard-onboarding-status-card">
-              <Smartphone className="h-4 w-4 text-[#0F4D3A]" />
-              <span>Sẵn sàng</span>
-              <strong>{setupDoneCount}/{setupTasks.length} mục</strong>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {draftRestored ? (
-              <span className="rounded-full border border-[#0F4D3A]/20 bg-[#eef7f2] px-3 py-1 text-xs font-black text-[#0F4D3A]">
-                Đã khôi phục bản nháp
-              </span>
-            ) : null}
-            {draftSavedAt > 0 ? (
-              <button
-                type="button"
-                onClick={clearDraft}
-                className="inline-flex min-h-8 items-center gap-1 rounded-md px-2 text-xs font-black text-[#667085] transition hover:bg-[#f8fafc] hover:text-[#111827]"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Xoá nháp
-              </button>
-            ) : null}
-          </div>
-          <div className="mt-3">
-            <StepNavigator steps={steps} step={step} furthestStep={furthestStep} onSelect={openStep} />
           </div>
         </header>
 
-        <section className="dashboard-onboarding-main hidden min-h-0 flex-1 md:block">
-          <div className={`dashboard-onboarding-frame flex h-full min-h-0 flex-col overflow-hidden rounded-lg border ${sectionLine} bg-white`}>
-            <AnimatePresence mode="wait">
-              {step === 0 && (
-                <motion.div
-                  key="step-0"
-                  initial={{ opacity: 0, x: 15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -15 }}
-                  transition={{ duration: 0.22 }}
-                  className="flex flex-col h-full min-h-0"
-                >
-                  <StepHeader
-                    meta={stepDetails[0]}
-                    right={
-                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                        <MousePointerClick className="h-4 w-4" />
-                        Nhập nhanh
-                      </span>
-                    }
-                  />
-                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <StepSupportPanel step={0} preview={storePreview}>
-                      <SupportLine label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
-                      <SupportLine label="Mã quán" value={slug} active={slugReady} />
-                      <SupportLine label="Loại hình" value={selectedPreset.label} active />
-                      <SupportLine label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
-                      <SupportLine label="GPS" value={hasPinnedLocation ? "Đã ghim" : "Có thể chỉnh sau"} active={hasPinnedLocation} />
-                    </StepSupportPanel>
-                    <div className="grid min-w-0 content-start gap-4">
-                    <label className="grid gap-2 text-sm font-black">
-                      Tên quán
-                      <input
-                        value={name}
-                        onChange={(event) => setName(event.target.value)}
-                        className={fieldClass}
-                        placeholder="Nhập tên quán"
-                      />
-                    </label>
-                    <label className="grid gap-2 text-sm font-black">
-                      Mã quán & đường dẫn riêng
-                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                        <span className="relative min-w-0">
-                          <input
-                            value={displayedSlugInput}
-                            onChange={(event) => {
-                              setSlugEdited(true);
-                              setSlugInput(createSlug(event.target.value));
-                            }}
-                            className={`${fieldClass} pr-10 font-mono uppercase tracking-[0.04em]`}
-                            placeholder="quan-cua-ban"
-                          />
-                          {slugStatus === "checking" ? <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#98a2b3]" /> : null}
-                          {slugStatus === "available" ? <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#0F4D3A]" /> : null}
-                        </span>
-                        <span className="min-h-11 rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 py-2 font-mono text-xs font-black text-[#475467] sm:flex sm:items-center">
-                          {slug}.logivn.com
-                        </span>
-                      </div>
-                      {slugStatusCopy ? (
-                        <span className={`text-xs font-bold ${slugReady ? "text-[#0F4D3A]" : "text-[#9a4a17]"}`}>{slugStatusCopy}</span>
-                      ) : null}
-                    </label>
-                    <div className="grid gap-2">
-                      <p className="text-sm font-black">Loại hình</p>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                        {businessPresets.map((preset) => {
-                          const Icon = preset.icon;
-                          const active = businessPresetId === preset.id;
-                          return (
-                            <button
-                              key={preset.id}
-                              type="button"
-                              onClick={() => setBusinessPresetId(preset.id)}
-                              aria-pressed={active}
-                              className={`flex h-14 items-center justify-center gap-2 rounded-md border px-2 text-sm font-black transition premium-glow-border ${
-                                active ? "border-[#0F4D3A] bg-[#0F4D3A] text-white is-active" : "border-[#d8dee9] bg-white text-[#475467] hover:border-[#0F4D3A]/35"
-                              }`}
-                            >
-                              <Icon className="h-4 w-4" />
-                              {preset.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {selectedPreset.value === "OTHER" ? (
-                        <label className="grid gap-2 text-sm font-black">
-                          Danh mục riêng
-                          <input
-                            value={customBusinessType}
-                            onChange={(event) => setCustomBusinessType(event.target.value)}
-                            className={fieldClass}
-                            placeholder="Ví dụ: bakery, pub, homestay cafe..."
-                          />
-                        </label>
-                      ) : null}
-                    </div>
-                    <div className="grid gap-3">
-                      <div className="grid gap-2">
-                        <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                          <p className="text-sm font-black">Địa chỉ quán</p>
-                          <span className="text-[11px] font-bold text-[#667085]">Tỉnh/xã là tuỳ chọn.</span>
-                        </div>
-                        <label className="grid gap-1.5 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
-                          Nhập nhanh địa chỉ hoặc mốc gần quán
-                          <span className="relative">
-                            <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#98a2b3]" />
-                            <input
-                              value={streetAddress}
-                              onChange={(event) => {
-                                setStreetAddress(event.target.value);
-                                clearSelectedAddress();
-                              }}
-                              className={iconFieldClass}
-                              placeholder="12 Nguyễn Huệ, Quận 1 hoặc tên tòa nhà"
-                            />
-                          </span>
-                        </label>
-                        <details className={`rounded-md border ${sectionLine} bg-white p-3`}>
-                          <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.08em] text-[#0F4D3A] marker:text-[#F28C28]">
-                            Chọn tỉnh/xã thủ công nếu cần
-                          </summary>
-                          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                            <label className="grid gap-1.5 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
-                              Tỉnh/TP
-                              <select value={provinceCode} onChange={(event) => chooseProvince(event.target.value)} className={fieldClass}>
-                                <option value="">{adminLoading ? "Đang tải..." : "Chọn tỉnh/thành"}</option>
-                                {provinces.map((item) => (
-                                  <option key={item.code} value={item.code}>
-                                    {item.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="grid gap-1.5 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
-                              Xã/Phường
-                              <select value={wardCode} onChange={(event) => chooseWard(event.target.value)} className={fieldClass} disabled={!provinceCode || adminLoading}>
-                                <option value="">{provinceCode ? "Chọn xã/phường" : "Chọn tỉnh trước"}</option>
-                                {wards.map((item) => (
-                                  <option key={item.code} value={item.code}>
-                                    {item.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="grid gap-1.5 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
-                              Huyện cũ / thôn ấp
-                              <input
-                                value={district}
-                                onChange={(event) => {
-                                  setDistrict(event.target.value);
-                                  clearSelectedAddress();
-                                }}
-                                className={fieldClass}
-                                placeholder="Tuỳ chọn để dễ tìm"
-                              />
-                            </label>
-                          </div>
-                        </details>
-                        <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-                          <p className="min-w-0 truncate text-xs font-bold text-[#667085]">{finalAddress || "Chưa đủ thông tin"}</p>
-                          <button
-                            type="button"
-                            onClick={() => void handleUseCurrentPosition()}
-                            disabled={locationPending}
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#0F4D3A]/20 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A] disabled:opacity-60"
-                          >
-                            {locationPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
-                            GPS
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void searchAddressSuggestions()}
-                            disabled={addressSearching || finalAddress.trim().length < 6}
-                            className="inline-flex h-11 items-center justify-center gap-2 rounded-md border border-[#0F4D3A]/20 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A] disabled:opacity-60"
-                          >
-                            {addressSearching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-                            Kiểm tra
-                          </button>
-                          {locationError ? <p className="text-xs font-bold text-[#9a4a17] sm:col-span-3">{locationError}</p> : null}
-                          {addressResults.length > 0 ? (
-                            <div className={`divide-y ${sectionLine} border-y ${sectionLine} sm:col-span-3`}>
-                              {addressResults.map((result) => (
-                                <button
-                                  key={result.id}
-                                  type="button"
-                                  onClick={() => chooseAddressSuggestion(result)}
-                                  className="grid w-full gap-1 py-2 text-left transition hover:text-[#0F4D3A]"
-                                >
-                                  <span className="text-sm font-black">{result.shortLabel || result.address}</span>
-                                  <span className="text-xs font-semibold text-[#667085]">{result.address}</span>
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
-                          {addressError ? <p className="text-xs font-bold text-[#9a4a17] sm:col-span-3">{addressError}</p> : null}
-                          {hasPinnedLocation ? <p className="text-xs font-black text-[#0F4D3A] sm:col-span-3">{locationQualityLabel(locationAccuracy)}</p> : null}
-                        </div>
-                      </div>
-                      <label className="grid gap-2 text-sm font-black">
-                        Hotline
-                        <input value={hotline} onChange={(event) => setHotline(event.target.value)} className={fieldClass} placeholder="0901234567" />
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
 
-              {step === 1 && (
-                <motion.div
-                  key="step-1"
-                  initial={{ opacity: 0, x: 15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -15 }}
-                  transition={{ duration: 0.22 }}
-                  className="flex flex-col h-full min-h-0"
-                >
-                  <StepHeader
-                    meta={stepDetails[1]}
-                    right={
-                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
-                        <Sparkles className="h-4 w-4" />
-                        {selectedPlanNarrative?.badge ?? "So sánh gói"}
-                      </span>
-                    }
-                  />
-                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <StepSupportPanel step={1} preview={storePreview}>
-                      <SupportLine label="Đang chọn" value={selectedPlan ? planDisplayName(selectedPlan) : "Chưa chọn"} active={Boolean(selectedPlan)} />
-                      <SupportLine label="Dùng thử" value={selectedPlan ? `${selectedPlan.trial_days} ngày` : "-"} active={Boolean(selectedPlan)} />
-                      <SupportLine label="Chi phí" value={selectedPlan ? formatVnd(selectedPlan.monthly_price) : "-"} active={Boolean(selectedPlan)} />
-                      <SupportLine label="Bàn khởi tạo" value={`${tableCount} bàn`} active />
-                    </StepSupportPanel>
-                  <div className="dashboard-plan-stage grid min-w-0 content-start gap-3 lg:grid-cols-2">
-                    <div className="dashboard-plan-decision-panel rounded-lg border border-[#0F4D3A]/14 bg-[#f7fbf7] p-4 lg:col-span-2">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-black uppercase tracking-[0.14em] text-[#0F4D3A]">Quyết định nhanh</p>
-                          <h3 className="mt-1 text-lg font-black text-[#111827]">Chọn theo cách quán vận hành, không chỉ theo giá</h3>
-                          <p className="mt-1 max-w-2xl text-sm font-semibold leading-6 text-[#667085]">
-                            {selectedPlanNarrative?.fit ?? "Mở popup tính năng để xem toàn bộ quyền lợi trước khi tiếp tục."}
-                          </p>
-                        </div>
-                        <PlanDisplayModeToggle mode={planDisplayMode} onChange={setPlanDisplayMode} />
-                      </div>
-                    </div>
-                    {plans.map((plan) => {
-                      const active = planCode === plan.code;
-                      const isPremium = plan.code.toLowerCase() === "premium";
-                      const narrative = planNarrative(plan);
-                      const planTableLimit = getOnboardingTableLimit(plan.code);
-                      return (
-                        <article
-                          key={plan.code}
-                          aria-current={active ? "true" : undefined}
-                          className={`dashboard-plan-card overflow-hidden rounded-[24px] border bg-white p-5 text-left transition premium-glow-border ${active ? "is-active" : ""} ${isPremium ? "is-premium" : ""} ${
-                            active ? "border-[#0F4D3A] shadow-[0_24px_62px_rgba(15,77,58,0.16)]" : "border-[#d8dee9] shadow-[0_14px_38px_rgba(15,42,31,0.06)] hover:border-[#0F4D3A]/35"
-                          }`}
-                        >
-                          <div className="flex min-h-8 items-center justify-between gap-3">
-                            <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-[10px] font-black uppercase tracking-[0.12em] ${isPremium ? "bg-[#F28C28] text-white" : "bg-[#eef7f2] text-[#0F4D3A]"}`}>
-                              {isPremium ? "Scale plan" : "Starter plan"}
-                            </span>
-                            <span className={`inline-flex min-h-8 items-center rounded-full border px-3 text-[10px] font-black uppercase tracking-[0.12em] ${active ? "border-[#0F4D3A]/20 bg-[#0F4D3A] text-white" : "border-[#d8dee9] bg-[#fbfcfb] text-[#667085]"}`}>
-                              {active ? "Đang chọn" : narrative.badge}
-                            </span>
-                          </div>
-                          <div className="mt-4 flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-[#0F4D3A]">{plan.code}</p>
-                              <h3 className="mt-1 text-xl font-black">{planDisplayName(plan)}</h3>
-                            </div>
-                            <ShieldCheck className={`mt-1 h-5 w-5 shrink-0 ${isPremium ? "text-[#F28C28]" : "text-[#0F4D3A]"}`} />
-                          </div>
-                          <p className="mt-3 text-3xl font-black">
-                            {formatVnd(plan.monthly_price)}
-                            <span className="text-sm font-bold text-[#667085]"> /tháng</span>
-                          </p>
-                          <p className="mt-2 text-xs font-black text-[#0F4D3A]">Dùng thử {plan.trial_days} ngày · {planFeatureCount(plan)} tính năng</p>
-                          <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-black text-[#111827]">
-                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{planTableLimit} bàn</span>
-                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "50 nhân viên" : "10 nhân viên"}</span>
-                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "2.000 món" : "500 món"}</span>
-                            <span className="flex min-h-11 items-center justify-center rounded-xl border border-[#d8dee9]/70 bg-[#fbfcfb] px-3 py-2 text-center">{isPremium ? "AI nâng cao" : "AI cơ bản"}</span>
-                          </div>
-                          <p className="mt-4 rounded-xl border border-[#0F4D3A]/12 bg-[#eef7f2] px-3 py-3 text-xs font-black leading-relaxed text-[#254236]">
-                            {narrative.promise}
-                          </p>
-                          <PlanModeContent plan={plan} mode={planDisplayMode} />
-                          <button
-                            type="button"
-                            onClick={() => setFeaturePlan(plan)}
-                            className="dashboard-plan-feature-button mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-[#0F4D3A]/18 bg-[#eef7f2] px-3 text-sm font-black text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 hover:bg-[#e5f3ec]"
-                          >
-                            <Info className="h-4 w-4" />
-                            Xem chi tiết gói
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => selectPlan(plan)}
-                            aria-pressed={active}
-                            className={`dashboard-plan-select-button mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-md text-sm font-black ${active ? "bg-[#0F4D3A] text-white" : "bg-white text-[#0F4D3A] ring-1 ring-[#0F4D3A]/20 hover:bg-[#eef7f2]"}`}
-                          >
-                            Chọn {planDisplayName(plan)}
-                            {active ? <CheckCircle2 className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
-                          </button>
-                        </article>
-                      );
-                    })}
-                    {plans.length > 0 ? (
-                      <section className="dashboard-plan-compare rounded-lg border border-[#d8dee9] bg-white p-4 lg:col-span-2">
-                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-sm font-black text-[#111827]">Bảng nhìn nhanh</p>
-                            <p className="mt-1 text-xs font-semibold text-[#667085]">Mở popup để xem toàn bộ tính năng chi tiết của từng gói.</p>
-                          </div>
-                          <span className="inline-flex min-h-8 items-center gap-2 rounded-full bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                            <ShieldCheck className="h-4 w-4" />
-                            Có thể đổi gói sau
+        <Stepper step={step} furthestStep={furthestStep} onSelect={openStep} />
+
+        {draftRestored ? (
+          <p className="inline-flex w-fit items-center gap-1.5 rounded-[var(--d-r-pill)] border border-[var(--d-jade)]/20 bg-[var(--d-primary-soft)] px-3 py-1 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-jade)]">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Đã khôi phục bản nháp đã lưu
+          </p>
+        ) : null}
+
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+          {/* Step content */}
+          <div className="min-w-0">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`step-${step}`}
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={stepTransition}
+                className="grid gap-4"
+              >
+                {step === 0 ? (
+                  <>
+                    <SectionCard icon={Store} title="Thông tin quán">
+                      <label className={fieldLabel}>
+                        Tên quán
+                        <input value={name} onChange={(event) => setName(event.target.value)} className={field} placeholder="Nhập tên quán" />
+                      </label>
+                      <label className={fieldLabel}>
+                        Mã quán & đường dẫn riêng
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                          <span className="relative min-w-0">
+                            <input
+                              value={displayedSlugInput}
+                              onChange={(event) => {
+                                setSlugEdited(true);
+                                setSlugInput(createSlug(event.target.value));
+                              }}
+                              className={cn(field, "pr-10 font-[var(--d-font-mono)] uppercase tracking-[0.04em]")}
+                              placeholder="quan-cua-ban"
+                            />
+                            {slugStatus === "checking" ? <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[var(--d-text-faint)]" /> : null}
+                            {slugStatus === "available" ? <CheckCircle2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--d-jade)]" /> : null}
+                          </span>
+                          <span className="flex min-h-11 items-center rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 font-[var(--d-font-mono)] text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+                            {slug}.logivn.com
                           </span>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {plans.map((plan) => {
-                            const narrative = planNarrative(plan);
+                        {slugStatusCopy ? (
+                          <span className={cn("text-[length:var(--d-fs-xs)] font-semibold", slugReady ? "text-[var(--d-jade)]" : "text-[var(--d-warn-fg)]")}>{slugStatusCopy}</span>
+                        ) : null}
+                      </label>
+                      <div className="grid gap-2">
+                        <p className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Loại hình</p>
+                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                          {businessPresets.map((preset) => {
+                            const Icon = preset.icon;
+                            const active = businessPresetId === preset.id;
                             return (
-                              <button
-                                key={`compare-${plan.code}`}
+                              <motion.button
+                                key={preset.id}
                                 type="button"
-                                onClick={() => setFeaturePlan(plan)}
-                                className="grid gap-1 rounded-md border border-[#d8dee9] bg-[#fbfcfb] p-3 text-left transition hover:border-[#0F4D3A]/35 hover:bg-[#f6faf7]"
+                                onClick={() => setBusinessPresetId(preset.id)}
+                                aria-pressed={active}
+                                whileTap={{ scale: 0.95 }}
+                                className={cn(
+                                  "flex h-[88px] flex-col items-center justify-center gap-2 rounded-[var(--d-r-lg)] border text-[length:var(--d-fs-xs)] font-semibold transition-all duration-[var(--d-dur)]",
+                                  active
+                                    ? "border-[var(--d-jade)] bg-[var(--d-primary-soft)] text-[var(--d-jade)] shadow-[0_8px_22px_rgba(15,77,58,0.16)]"
+                                    : "border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[var(--d-text-muted)] hover:-translate-y-0.5 hover:border-[var(--d-jade)] hover:text-[var(--d-text)]"
+                                )}
                               >
-                                <span className="flex items-center justify-between gap-3 text-sm font-black text-[#111827]">
-                                  {planDisplayName(plan)}
-                                  <span className="text-[#0F4D3A]">{formatVnd(plan.monthly_price)}</span>
+                                <span
+                                  className={cn(
+                                    "grid h-10 w-10 place-items-center rounded-full transition",
+                                    active ? "text-white" : "bg-[var(--d-surface-2)] text-[var(--d-text-faint)]"
+                                  )}
+                                  style={active ? { background: "linear-gradient(135deg, var(--d-jade), var(--d-jade-700))" } : undefined}
+                                >
+                                  <Icon className="h-[18px] w-[18px]" />
                                 </span>
-                                <span className="text-xs font-semibold leading-5 text-[#667085]">{narrative.fit}</span>
-                              </button>
+                                {preset.label}
+                              </motion.button>
                             );
                           })}
                         </div>
-                      </section>
-                    ) : null}
+                        {selectedPreset.value === "OTHER" ? (
+                          <label className={fieldLabel}>
+                            Danh mục riêng
+                            <input value={customBusinessType} onChange={(event) => setCustomBusinessType(event.target.value)} className={field} placeholder="Ví dụ: bakery, pub, homestay cafe..." />
+                          </label>
+                        ) : null}
+                      </div>
+                      <label className={fieldLabel}>
+                        Hotline
+                        <input value={hotline} onChange={(event) => setHotline(event.target.value)} className={field} placeholder="0901234567" inputMode="tel" />
+                      </label>
+                    </SectionCard>
+
+                    <SectionCard icon={MapPin} title="Địa điểm" description="Nhập nhanh địa chỉ hoặc mốc gần quán. Tỉnh/xã là tuỳ chọn.">
+                      <label className={microLabel}>
+                        Địa chỉ hoặc mốc gần quán
+                        <span className="relative">
+                          <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--d-text-faint)]" />
+                          <input
+                            value={streetAddress}
+                            onChange={(event) => {
+                              setStreetAddress(event.target.value);
+                              clearSelectedAddress();
+                            }}
+                            className={iconField}
+                            placeholder="12 Nguyễn Huệ, Quận 1 hoặc tên tòa nhà"
+                          />
+                        </span>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleUseCurrentPosition()}
+                          disabled={locationPending}
+                          className="inline-flex h-11 items-center justify-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-jade)] transition hover:border-[var(--d-jade)] disabled:opacity-60"
+                        >
+                          {locationPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
+                          Dùng GPS
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void searchAddressSuggestions()}
+                          disabled={addressSearching || finalAddress.trim().length < 6}
+                          className="inline-flex h-11 items-center justify-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-jade)] transition hover:border-[var(--d-jade)] disabled:opacity-60"
+                        >
+                          {addressSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                          Tìm địa chỉ
+                        </button>
+                      </div>
+                      {addressResults.length > 0 ? (
+                        <div className="grid gap-1.5">
+                          {addressResults.map((result, index) => (
+                            <button
+                              key={result.id}
+                              type="button"
+                              onClick={() => void chooseAddressSuggestion(result)}
+                              className="flex items-center gap-3 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-left transition hover:border-[var(--d-jade)] hover:bg-[var(--d-surface-2)]"
+                            >
+                              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[var(--d-r-sm)] bg-[var(--d-primary-soft)] text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-jade)]">{index + 1}</span>
+                              <span className="min-w-0 truncate text-[length:var(--d-fs-sm)] font-medium text-[var(--d-text)]">{result.shortLabel || result.address}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <details className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3">
+                        <summary className="cursor-pointer text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-jade)]">
+                          Chọn tỉnh/xã thủ công nếu cần
+                        </summary>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <label className={microLabel}>
+                            Tỉnh/TP
+                            <select value={provinceCode} onChange={(event) => chooseProvince(event.target.value)} className={field}>
+                              <option value="">{adminLoading ? "Đang tải..." : "Chọn tỉnh/thành"}</option>
+                              {provinces.map((item) => (
+                                <option key={item.code} value={item.code}>{item.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className={microLabel}>
+                            Xã/Phường
+                            <select value={wardCode} onChange={(event) => chooseWard(event.target.value)} className={field} disabled={!provinceCode || adminLoading}>
+                              <option value="">{provinceCode ? "Chọn xã/phường" : "Chọn tỉnh trước"}</option>
+                              {wards.map((item) => (
+                                <option key={item.code} value={item.code}>{item.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className={microLabel}>
+                            Huyện cũ / thôn ấp
+                            <input
+                              value={district}
+                              onChange={(event) => {
+                                setDistrict(event.target.value);
+                                clearSelectedAddress();
+                              }}
+                              className={field}
+                              placeholder="Tuỳ chọn để dễ tìm"
+                            />
+                          </label>
+                        </div>
+                      </details>
+                      <p className="truncate text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)]">{finalAddress || "Chưa đủ thông tin địa chỉ"}</p>
+                      {locationError || addressError ? (
+                        <p className="rounded-[var(--d-r-md)] border border-[var(--d-warn-fg)]/30 bg-[var(--d-warn-bg)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-warn-fg)]">{locationError || addressError}</p>
+                      ) : null}
+                      {hasPinnedLocation ? (
+                        <p className="inline-flex w-fit items-center gap-1.5 rounded-[var(--d-r-pill)] bg-[var(--d-ok-bg)] px-3 py-1 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-ok-fg)]">
+                          <LocateFixed className="h-3.5 w-3.5" />
+                          {locationQualityLabel(locationAccuracy)}
+                        </p>
+                      ) : null}
+                    </SectionCard>
+                  </>
+                ) : null}
+
+                {step === 1 ? (
+                  <SectionCard
+                    icon={CreditCard}
+                    title="Chọn gói vận hành"
+                    description="Chọn theo cách quán vận hành, không chỉ theo giá. Có thể đổi gói sau."
+                    badge={<PlanDisplayModeToggle mode={planDisplayMode} onChange={setPlanDisplayMode} />}
+                  >
+                    <p className="text-[length:var(--d-fs-sm)] font-medium text-[var(--d-text-muted)]">{selectedPlanNarrative?.fit ?? "Mở popup tính năng để xem toàn bộ quyền lợi."}</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {plans.map((plan) => {
+                        const active = planCode === plan.code;
+                        const isPremium = plan.code.toLowerCase() === "premium";
+                        const narrative = planNarrative(plan);
+                        const planTableLimit = getOnboardingTableLimit(plan.code);
+                        return (
+                          <motion.article
+                            key={plan.code}
+                            aria-current={active ? "true" : undefined}
+                            whileHover={{ y: -4 }}
+                            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                            className={cn(
+                              "relative flex flex-col overflow-hidden rounded-[var(--d-r-xl)] border bg-[var(--d-surface)] p-5 text-left transition-shadow",
+                              active
+                                ? "border-[var(--d-jade)] shadow-[0_18px_44px_rgba(15,77,58,0.18)] ring-2 ring-[var(--d-jade)]/30"
+                                : "border-[var(--d-line)] shadow-[var(--d-sh-sm)] hover:shadow-[var(--d-sh-md)]"
+                            )}
+                          >
+                            <div
+                              className="absolute inset-x-0 top-0 h-1"
+                              style={{ background: isPremium ? "linear-gradient(90deg, var(--d-orange), var(--d-orange-600))" : "linear-gradient(90deg, var(--d-jade), var(--d-jade-300))" }}
+                            />
+                            {isPremium ? (
+                              <span
+                                className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-[var(--d-r-pill)] px-2.5 py-1 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-white shadow-[var(--d-sh-sm)]"
+                                style={{ background: "linear-gradient(135deg, var(--d-orange), var(--d-orange-600))" }}
+                              >
+                                <Sparkles className="h-3 w-3" /> Khuyên dùng
+                              </span>
+                            ) : null}
+                            <span className={cn("mt-1.5 inline-flex w-fit items-center rounded-[var(--d-r-pill)] px-2.5 py-1 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)]", isPremium ? "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]" : "bg-[var(--d-primary-soft)] text-[var(--d-jade)]")}>
+                              {isPremium ? "Scale plan" : "Starter plan"}
+                            </span>
+                            <h4 className="mt-3 text-[1.375rem] font-bold text-[var(--d-text)]">{planDisplayName(plan)}</h4>
+                            <p className="d-num mt-1 text-[2rem] font-bold leading-none text-[var(--d-text)]">
+                              {formatVnd(plan.monthly_price)}
+                              <span className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)]"> /tháng</span>
+                            </p>
+                            <p className="mt-1.5 inline-flex items-center gap-1.5 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-jade)]">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              Dùng thử {plan.trial_days} ngày · {planFeatureCount(plan)} tính năng
+                            </p>
+                            <div className="mt-4 grid grid-cols-2 gap-2 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-text)]">
+                              <span className="flex min-h-9 items-center justify-center gap-1.5 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-2 text-center"><Table2 className="h-3.5 w-3.5 text-[var(--d-jade)]" />{planTableLimit} bàn</span>
+                              <span className="flex min-h-9 items-center justify-center rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-2 text-center">{isPremium ? "50 nhân viên" : "10 nhân viên"}</span>
+                              <span className="flex min-h-9 items-center justify-center rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-2 text-center">{isPremium ? "2.000 món" : "500 món"}</span>
+                              <span className="flex min-h-9 items-center justify-center gap-1.5 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-2 text-center"><Sparkles className="h-3.5 w-3.5 text-[var(--d-orange-600)]" />{isPremium ? "AI nâng cao" : "AI cơ bản"}</span>
+                            </div>
+                            <PlanModeContent plan={plan} mode={planDisplayMode} />
+                            <div className="mt-auto grid gap-2 pt-4">
+                              <button
+                                type="button"
+                                onClick={() => setFeaturePlan(plan)}
+                                className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-jade)] transition hover:border-[var(--d-jade)] hover:bg-[var(--d-surface-2)]"
+                              >
+                                <Info className="h-4 w-4" />
+                                Xem chi tiết gói
+                              </button>
+                              <motion.button
+                                type="button"
+                                onClick={() => selectPlan(plan)}
+                                aria-pressed={active}
+                                whileTap={{ scale: 0.98 }}
+                                className={cn(
+                                  "flex h-11 w-full items-center justify-center gap-2 rounded-[var(--d-r-md)] text-[length:var(--d-fs-sm)] font-bold transition",
+                                  active ? "text-white shadow-[0_8px_22px_rgba(15,77,58,0.25)]" : "border border-[var(--d-jade)]/30 bg-[var(--d-surface)] text-[var(--d-jade)] hover:bg-[var(--d-primary-soft)]"
+                                )}
+                                style={active ? { background: "linear-gradient(135deg, var(--d-jade), var(--d-jade-700))" } : undefined}
+                              >
+                                {active ? "Đang chọn" : `Chọn ${planDisplayName(plan)}`}
+                                {active ? <CheckCircle2 className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+                              </motion.button>
+                            </div>
+                          </motion.article>
+
+                        );
+                      })}
+                    </div>
                     {plans.length === 0 ? (
-                      <p className="rounded-md border border-[#F28C28]/30 bg-[#fff7ed] p-4 text-sm font-semibold text-[#9a4a17]">
+                      <p className="rounded-[var(--d-r-md)] border border-[var(--d-warn-fg)]/30 bg-[var(--d-warn-bg)] p-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-warn-fg)]">
                         Chưa đọc được cấu hình gói dịch vụ. Vui lòng tải lại trang trước khi tiếp tục.
                       </p>
                     ) : null}
-                  </div>
-                </div>
-                {featurePlan ? (
-                  <PlanFeaturesModal
-                    plan={featurePlan}
-                    allPlans={plans}
-                    onClose={() => setFeaturePlan(null)}
-                    onSelect={() => {
-                      selectPlan(featurePlan);
-                      setFeaturePlan(null);
-                    }}
-                  />
+                  </SectionCard>
                 ) : null}
-                </motion.div>
-              )}
 
-              {step === 2 && (
-                <motion.div
-                  key="step-2"
-                  initial={{ opacity: 0, x: 15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -15 }}
-                  transition={{ duration: 0.22 }}
-                  className="flex flex-col h-full min-h-0"
-                >
-                  <StepHeader
-                    meta={stepDetails[2]}
-                    right={
-                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                        <BadgeCheck className="h-4 w-4" />
-                        {setupProgress}% sẵn sàng
-                      </span>
-                    }
-                  />
-                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <StepSupportPanel step={2} preview={storePreview}>
-                      <div className="col-span-2 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
-                        <div className="flex items-center justify-between text-xs font-black">
-                          <span className="text-[#667085]">Tiến độ</span>
-                          <span className="text-[#0F4D3A]">{setupProgress}%</span>
-                        </div>
-                        <div className="mt-2 h-1.5 rounded-full bg-[#eef7f2]">
-                          <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
-                        </div>
-                      </div>
-                      <SupportLine label="Sẵn sàng" value={`${setupDoneCount}/${setupTasks.length}`} active={setupDoneCount === setupTasks.length} />
-                      <SupportLine label="Mở quán" value={canSubmitOnboarding ? "Có thể tạo" : "Cần menu"} active={canSubmitOnboarding} />
-                    </StepSupportPanel>
-                  <div className="grid min-w-0 content-start gap-4">
-                    <div className={`rounded-lg border ${sectionLine} bg-white p-4`}>
-                      <div className="flex items-center justify-between text-sm font-black">
-                        <span>Tiến độ hoàn tất</span>
-                        <span className="text-[#0F4D3A]">{setupProgress}%</span>
-                      </div>
-                      <div className="mt-3 h-1.5 rounded-full bg-[#eef7f2]">
-                        <div className="h-full rounded-full bg-[#0F4D3A] transition-[width]" style={{ width: `${setupProgress}%` }} />
-                      </div>
-                      <p className="mt-3 text-sm font-bold text-[#667085]">{setupDoneCount}/{setupTasks.length} mục sẵn sàng</p>
+                {step === 2 ? (
+                  <SectionCard icon={QrCode} title="Bàn & QR" description={`Giới hạn gói: tối đa ${selectedPlanTableLimit} bàn. QR mỗi bàn sẵn sàng sau khi tạo quán.`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className="grid h-11 w-11 place-items-center rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[length:var(--d-fs-h2)] font-bold text-[var(--d-text)] transition hover:border-[var(--d-jade)]">−</button>
+                      <span className="d-num rounded-[var(--d-r-md)] bg-[var(--d-jade)] px-5 py-2.5 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-on-jade)]">{tableCount} bàn</span>
+                      <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))} className="grid h-11 w-11 place-items-center rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[length:var(--d-fs-h2)] font-bold text-[var(--d-text)] transition hover:border-[var(--d-jade)]">+</button>
                     </div>
-                    <div className={`divide-y ${sectionLine} border-y ${sectionLine}`}>
-                      {setupTasks.map((item) => (
-                        <div key={item.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 py-3 text-sm font-black">
-                          <span className="flex items-center gap-3">
-                            {item.done ? <CheckCircle2 className="h-5 w-5 text-[#0F4D3A]" /> : <span className="h-5 w-5 rounded-full border border-[#98a2b3]" />}
-                            <span>{item.label}</span>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => advanceTo(item.targetStep)}
-                            className={`min-h-11 rounded-md px-3 ${item.done ? "text-[#0F4D3A]" : "text-[#98a2b3] hover:text-[#0F4D3A]"}`}
-                          >
-                            {item.done ? "Đã áp dụng" : "Mở"}
-                          </button>
+                    <div className="flex flex-wrap gap-2">
+                      {tablePresetOptions.map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => setTableCount(count)}
+                          className={cn(
+                            "min-h-9 rounded-[var(--d-r-md)] border px-4 text-[length:var(--d-fs-sm)] font-bold transition",
+                            tableCount === count ? "border-[var(--d-jade)] bg-[var(--d-primary-soft)] text-[var(--d-jade)]" : "border-[var(--d-line-strong)] bg-[var(--d-surface)] text-[var(--d-text-muted)] hover:border-[var(--d-jade)]"
+                          )}
+                        >
+                          {count} bàn
+                        </button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                      {Array.from({ length: Math.min(tableCount, 12) }).map((_, index) => (
+                        <div key={index} className={cn("rounded-[var(--d-r-md)] border p-3", index === 2 ? "border-[var(--d-orange)]/40 bg-[var(--d-accent-soft)]" : "border-[var(--d-line)] bg-[var(--d-surface)]")}>
+                          <Table2 className={cn("h-4 w-4", index === 2 ? "text-[var(--d-orange-600)]" : "text-[var(--d-jade)]")} />
+                          <p className="mt-3 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{formatTableName(index)}</p>
+                          <p className="mt-1 text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)]">{index === 2 ? "Đang phục vụ" : "Trống"}</p>
                         </div>
                       ))}
                     </div>
-                  </div>
-                </div>
-              </motion.div>
-            )}
+                  </SectionCard>
+                ) : null}
 
-              {step === 3 && (
-                <motion.div
-                  key="step-3"
-                  initial={{ opacity: 0, x: 15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -15 }}
-                  transition={{ duration: 0.22 }}
-                  className="flex flex-col h-full min-h-0"
-                >
-                  <StepHeader
-                    meta={stepDetails[3]}
-                    right={
-                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 text-xs font-black text-[#0F4D3A]">
-                        <Table2 className="h-4 w-4" />
-                        {tableCount} bàn
-                      </span>
-                    }
-                  />
-                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button type="button" onClick={() => setTableCount((value) => Math.max(1, value - 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>-</button>
-                        <span className="rounded-md bg-[#0F4D3A] px-4 py-2.5 text-sm font-black text-white">Tổng bàn: {tableCount}</span>
-                        <button type="button" onClick={() => setTableCount((value) => Math.min(selectedPlanTableLimit, value + 1))} className={`h-11 min-w-11 rounded-md border ${sectionLine} bg-white px-4 font-black`}>+</button>
-                        <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
-                          {selectedPlan ? planDisplayName(selectedPlan) : planCode}
-                        </span>
-                        <span className={`rounded-md border ${sectionLine} bg-white px-4 py-2.5 text-sm font-bold text-[#667085]`}>
-                          Tối đa {selectedPlanTableLimit} bàn
-                        </span>
-                      </div>
-                      <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
-                        {Array.from({ length: Math.min(tableCount, 12) }).map((_, index) => (
-                          <div key={index} className={`rounded-md border p-3 ${index === 2 ? "border-[#F28C28]/35 bg-[#fff7ed]" : "border-[#d8dee9] bg-white"}`}>
-                            <Table2 className={`h-4 w-4 ${index === 2 ? "text-[#9a4a17]" : "text-[#0F4D3A]"}`} />
-                            <p className="mt-3 text-sm font-black">{formatTableName(index)}</p>
-                            <p className="mt-1 text-xs font-semibold text-[#667085]">{index === 2 ? "Đang phục vụ" : "Trống"}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <StepSupportPanel step={3} preview={storePreview}>
-                    <SupportLine label="Tổng bàn" value={`${tableCount}`} active />
-                    <SupportLine label="QR mẫu" value="Sẵn sàng" active />
-                    <div className="col-span-2 flex items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 lg:col-span-1">
-                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-[#d8dee9] bg-white">
-                        <QrCode className="h-8 w-8 text-[#111827]" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-black text-[#111827]">{name || "LogiVN"} QR</p>
-                        <p className="mt-0.5 text-xs font-bold text-[#667085]">In sau khi tạo quán</p>
-                      </div>
-                    </div>
-                  </StepSupportPanel>
-                </div>
-              </motion.div>
-            )}
-
-              {step === 4 && (
-                <motion.div
-                  key="step-4"
-                  initial={{ opacity: 0, x: 15 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -15 }}
-                  transition={{ duration: 0.22 }}
-                  className="flex flex-col h-full min-h-0"
-                >
-                  <StepHeader
-                    meta={stepDetails[4]}
-                    right={
-                      <span className="inline-flex min-h-9 items-center gap-2 rounded-full border border-[#F28C28]/22 bg-[#fff7ed] px-3 text-xs font-black text-[#9a4a17]">
-                        <Wand2 className="h-4 w-4" />
-                        AI menu tuỳ chọn
-                      </span>
-                    }
-                  />
-                  <div className="dashboard-onboarding-scroll grid min-h-0 flex-1 gap-4 overflow-y-auto p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_auto]">
-                    <StepSupportPanel step={4} preview={storePreview}>
-                      <SupportLine label="Món đầu" value={shortText(itemName)} active={Boolean(itemName.trim())} />
-                      <SupportLine label="Menu quét" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : "Tuỳ chọn"} active={confirmedMenuItems.length > 0} />
-                      <SupportLine label="Trạng thái" value={canSubmitOnboarding ? "Có thể tạo" : "Cần món"} active={canSubmitOnboarding} />
-                      <div className="col-span-2 hidden items-center gap-3 rounded-md border border-white/70 bg-white px-3 py-2.5 sm:flex lg:col-span-1">
-                        <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-md border border-[#d8dee9] bg-white">
-                          <Image
-                            src="/onboarding/flow/launch-dashboard.png"
-                            alt="Minh hoạ dashboard sẵn sàng vận hành"
-                            fill
-                            sizes="48px"
-                            className="object-cover"
-                          />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-black text-[#111827]">Dashboard</p>
-                          <p className="mt-0.5 text-xs font-bold text-[#667085]">Mở sau khi hoàn tất</p>
-                        </div>
-                      </div>
-                    </StepSupportPanel>
-                    <div className="grid min-w-0 content-start gap-4">
-                    <div className={`grid gap-4 rounded-lg border ${sectionLine} bg-white p-4`}>
-                    <label className="grid gap-2 text-sm font-black">
+                {step === 3 ? (
+                  <SectionCard icon={Wand2} tone="orange" title="Menu đầu tiên" description="Thêm một món nhanh hoặc dùng AI đọc ảnh menu để tạo danh mục bán hàng đầu tiên.">
+                    <label className={fieldLabel}>
                       Tên món
-                      <input value={itemName} onChange={(event) => setItemName(event.target.value)} className={fieldClass} placeholder="Cà phê sữa đá" />
+                      <input value={itemName} onChange={(event) => setItemName(event.target.value)} className={field} placeholder="Cà phê sữa đá" />
                     </label>
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="grid gap-2 text-sm font-black">
+                      <label className={fieldLabel}>
                         Giá
-                        <input value={itemPrice} onChange={(event) => setItemPrice(event.target.value.replace(/\D/g, ""))} className={fieldClass} placeholder="28000" />
+                        <input value={itemPrice} onChange={(event) => setItemPrice(event.target.value.replace(/\D/g, ""))} className={field} placeholder="28000" inputMode="numeric" />
                       </label>
-                      <label className="grid gap-2 text-sm font-black">
+                      <label className={fieldLabel}>
                         Danh mục
-                        <input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} className={fieldClass} placeholder="Cà phê, món chính, đặc sản..." />
+                        <input value={itemCategory} onChange={(event) => setItemCategory(event.target.value)} className={field} placeholder="Cà phê, món chính, đặc sản..." />
                       </label>
                     </div>
-                    <details className={`rounded-lg border ${sectionLine} bg-white p-4`}>
-                      <summary className="cursor-pointer text-sm font-black text-[#0F4D3A] marker:text-[#F28C28]">
-                        Nhập menu từ ảnh hoặc dán menu
-                      </summary>
-                      <div className="mt-2 flex items-start justify-end gap-3">
+                    <details className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-4">
+                      <summary className="flex cursor-pointer items-center justify-between gap-3 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-jade)]">
+                        <span className="inline-flex items-center gap-2">
+                          <Wand2 className="h-4 w-4" />
+                          Nhập menu từ ảnh hoặc dán menu (AI)
+                        </span>
                         {menuOcrQuota ? (
-                          <span className="shrink-0 rounded-full border border-[#0F4D3A]/10 bg-[#eef7f2] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-[#0F4D3A]">
-                            {menuOcrQuota.remaining}/{menuOcrQuota.limit}
-                          </span>
+                          <span className="rounded-[var(--d-r-pill)] bg-[var(--d-primary-soft)] px-2.5 py-0.5 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-jade)]">{menuOcrQuota.remaining}/{menuOcrQuota.limit}</span>
                         ) : null}
-                      </div>
+                      </summary>
                       <div className="mt-3 grid gap-3">
-                        <label className="grid gap-2 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
+                        <label className={microLabel}>
                           Ảnh menu giấy
-                          <div className="relative">
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp"
-                              className={fieldClass}
-                              onChange={(event) => {
-                                const file = event.target.files?.[0] ?? null;
-                                if (file && file.size > 5 * 1024 * 1024) {
-                                  setMenuOcrError("Ảnh menu tối đa 5MB. Vui lòng chụp/nén lại ảnh rõ hơn.");
-                                  setMenuOcrImage(null);
-                                  return;
-                                }
-                                setMenuOcrError("");
-                                setMenuOcrImage(file);
-                              }}
-                            />
-                            {menuOcrLoading && (
-                              <div className="absolute inset-0 bg-[#0F4D3A]/5 border border-[#0f4d3a]/25 rounded-md overflow-hidden z-20 pointer-events-none">
-                                <div className="animate-laser-scan" />
-                              </div>
-                            )}
-                          </div>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            className={cn(field, "py-2.5")}
+                            onChange={(event) => handleMenuOcrImage(event.target.files?.[0] ?? null)}
+                          />
                         </label>
-                        <label className="grid gap-2 text-xs font-black uppercase tracking-[0.08em] text-[#667085]">
+                        <label className={microLabel}>
                           Hoặc dán menu thô
-                          <div className="relative">
-                            <textarea
-                              value={menuOcrText}
-                              onChange={(event) => setMenuOcrText(event.target.value)}
-                              className="w-full min-h-24 rounded-md border border-[#d8dee9] bg-white px-3 py-3 text-sm font-semibold normal-case tracking-normal text-[#111827] outline-none focus:border-[#0F4D3A]/70 focus:ring-2 focus:ring-[#0F4D3A]/10"
-                              placeholder={"CÀ PHÊ\nCà phê sữa đá 28000\nBạc xỉu 35000"}
-                            />
-                            {menuOcrLoading && (
-                              <div className="absolute inset-0 bg-[#0F4D3A]/5 border border-[#0f4d3a]/25 rounded-md overflow-hidden z-20 pointer-events-none">
-                                <div className="animate-laser-scan" />
-                              </div>
-                            )}
-                          </div>
+                          <textarea
+                            value={menuOcrText}
+                            onChange={(event) => setMenuOcrText(event.target.value)}
+                            className="min-h-24 w-full rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-3 py-3 text-[length:var(--d-fs-sm)] font-medium normal-case tracking-normal text-[var(--d-text)] outline-none transition focus:border-[var(--d-jade)] focus:ring-2 focus:ring-[var(--d-jade)]/15"
+                            placeholder={"CÀ PHÊ\nCà phê sữa đá 28000\nBạc xỉu 35000"}
+                          />
                         </label>
                         <button
                           type="button"
                           onClick={() => void runMenuOcr()}
                           disabled={menuOcrLoading || (!menuOcrText.trim() && !menuOcrImage)}
-                          className="flex h-11 items-center justify-center gap-2 rounded-md border border-[#0F4D3A]/20 bg-[#eef7f2] text-sm font-black text-[#0F4D3A] disabled:opacity-50"
+                          className="flex h-11 items-center justify-center gap-2 rounded-[var(--d-r-md)] border border-[var(--d-jade)]/30 bg-[var(--d-primary-soft)] text-[length:var(--d-fs-sm)] font-bold text-[var(--d-jade)] transition hover:bg-[var(--d-sage-100)] disabled:opacity-50"
                         >
-                          {menuOcrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                          {menuOcrLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
                           {menuOcrLoading ? "Đang đọc menu..." : "Quét menu"}
                         </button>
-                        {menuOcrError ? <p className="text-xs font-bold text-[#9a4a17]">{menuOcrError}</p> : null}
+                        {menuOcrError ? <p className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-warn-fg)]">{menuOcrError}</p> : null}
                       </div>
 
                       {ocrDraftItems.length > 0 ? (
-                        <div className={`mt-4 divide-y ${sectionLine} border-y ${sectionLine}`}>
-                          <div className="flex items-center justify-between gap-3 py-2">
-                            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">
-                              Đã đọc được {ocrDraftItems.length} món
-                            </p>
-                            <span className="text-xs font-bold text-[#667085]">{Math.round((menuOcrDraft?.confidence ?? 0) * 100)}% tin cậy</span>
+                        <div className="mt-4 grid gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="d-eyebrow text-[var(--d-jade)]">Đã đọc được {ocrDraftItems.length} món</p>
+                            <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{Math.round((menuOcrDraft?.confidence ?? 0) * 100)}% tin cậy</span>
                           </div>
-                          {ocrDraftItems.slice(0, 8).map((item) => (
-                            <div key={`${item.categoryName}-${item.name}`} className="grid grid-cols-[minmax(0,1fr)_90px] gap-3 py-2 text-sm">
-                              <div className="min-w-0">
-                                <p className="truncate font-black text-[#111827]">{item.name}</p>
-                                <p className="text-xs font-semibold text-[#667085]">{item.categoryName}</p>
+                          <div className="grid gap-1.5">
+                            {ocrDraftItems.slice(0, 8).map((item) => (
+                              <div key={`${item.categoryName}-${item.name}`} className="grid grid-cols-[minmax(0,1fr)_90px] gap-3 border-t border-[var(--d-line)] pt-1.5 text-[length:var(--d-fs-sm)] first:border-t-0 first:pt-0">
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold text-[var(--d-text)]">{item.name}</p>
+                                  <p className="text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)]">{item.categoryName}</p>
+                                </div>
+                                <p className="d-num text-right font-bold text-[var(--d-jade)]">{formatVnd(item.price)}</p>
                               </div>
-                              <p className="text-right font-black text-[#0F4D3A]">{formatVnd(item.price)}</p>
-                            </div>
-                          ))}
-                          {ocrDraftItems.length > 8 ? <p className="py-2 text-xs font-semibold text-[#667085]">Còn {ocrDraftItems.length - 8} món khác sẽ được lưu cùng.</p> : null}
+                            ))}
+                          </div>
+                          {ocrDraftItems.length > 8 ? <p className="text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)]">Còn {ocrDraftItems.length - 8} món khác sẽ được lưu cùng.</p> : null}
                           <button
                             type="button"
                             onClick={() => setConfirmedMenuItems(ocrDraftItems)}
-                            className="my-3 flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[#0F4D3A] text-sm font-black text-white"
+                            className="mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-[var(--d-r-md)] bg-[var(--d-jade)] text-[length:var(--d-fs-sm)] font-bold text-[var(--d-on-jade)] transition hover:bg-[var(--d-jade-700)]"
                           >
                             <CheckCircle2 className="h-4 w-4" />
                             Xác nhận thêm {ocrDraftItems.length} món
@@ -2483,72 +1916,178 @@ export function RestaurantOnboardingFlow({
                         </div>
                       ) : null}
                       {confirmedMenuItems.length > 0 ? (
-                        <p className="mt-3 rounded-md border border-[#0F4D3A]/16 bg-[#eef7f2] px-3 py-2 text-xs font-black text-[#0F4D3A]">
+                        <p className="mt-3 rounded-[var(--d-r-md)] border border-[var(--d-jade)]/20 bg-[var(--d-primary-soft)] px-3 py-2 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-jade)]">
                           Đã xác nhận {confirmedMenuItems.length} món. Khi hoàn tất, LogiVN sẽ tạo danh mục và món thật trong menu quán.
                         </p>
                       ) : null}
                     </details>
-                    </div>
-                    {state?.error ? <p className="rounded-md border border-[#F28C28]/30 bg-[#fff7ed] p-3 text-sm font-semibold text-[#9a4a17]">{state.error}</p> : null}
-                  </div>
-                </div>
+                    {state?.error ? (
+                      <p className="rounded-[var(--d-r-md)] border border-[var(--d-danger-fg)]/30 bg-[var(--d-danger-bg)] p-3 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-danger-fg)]">{state.error}</p>
+                    ) : null}
+                  </SectionCard>
+                ) : null}
               </motion.div>
-            )}
-          </AnimatePresence>
-            <footer className={`dashboard-onboarding-action-bar shrink-0 border-t ${sectionLine} bg-white p-3`}>
-              <div className="dashboard-onboarding-action-layout flex items-center justify-between gap-3">
-                <div className="dashboard-onboarding-action-summary min-w-0">
-                  <p className="truncate text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">{currentStepMeta.title}</p>
-                  <p className="mt-0.5 text-sm font-semibold leading-5 text-[#667085]">{actionHint}</p>
-                </div>
-                <div className="dashboard-onboarding-action-buttons flex min-w-0 shrink-0 items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setStep((current) => Math.max(0, current - 1))}
-                    disabled={step === 0 || launching}
-                    className={`inline-flex min-h-11 items-center justify-center rounded-md border ${sectionLine} bg-white px-4 text-sm font-black text-[#475467] transition disabled:pointer-events-none disabled:opacity-40`}
-                  >
-                    Quay lại
-                  </button>
-                  {step < 4 ? (
-                    <OnboardingButton onClick={() => advanceTo(step + 1)} disabled={nextStepDisabled || launching} className="min-w-0 flex-1 sm:flex-none">
-                      {nextStepLabel}
-                    </OnboardingButton>
-                  ) : (
-                    <OnboardingButton type="submit" disabled={launching || !canSubmitOnboarding} className="min-w-0 flex-1 sm:flex-none">
-                      {launching ? "Đang tạo..." : nextStepLabel}
-                    </OnboardingButton>
-                  )}
-                </div>
-              </div>
-            </footer>
+            </AnimatePresence>
           </div>
-        </section>
-        {launching ? (
-          <div className="fixed inset-0 z-50 grid place-items-center bg-[#0B2F24]/88 px-4 text-white backdrop-blur-sm">
-            <section className="w-full max-w-[420px] rounded-lg border border-white/15 bg-white/10 p-5 shadow-[0_24px_90px_rgba(0,0,0,0.28)]">
-              <div className="flex items-center gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-md bg-white text-[#0F4D3A]">
-                  <Loader2 className="h-6 w-6 animate-spin" />
+
+          {/* Summary panel — chỉ hiện trên desktop để mobile gọn, tập trung từng bước */}
+          <aside className="hidden gap-3 lg:grid lg:sticky lg:top-5 lg:self-start">
+            <div className="overflow-hidden rounded-[var(--d-r-xl)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-md)]">
+              <div
+                className="relative flex items-center gap-2 px-4 py-3.5 text-white"
+                style={{ background: "linear-gradient(135deg, var(--d-jade), var(--d-jade-700))" }}
+              >
+                <span className="grid h-8 w-8 place-items-center rounded-[var(--d-r-md)] bg-white/15">
+                  <Store className="h-4 w-4" />
                 </span>
-                <div className="min-w-0">
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-white/70">Launch</p>
-                  <h2 className="truncate text-xl font-black">{launchMessages[launchMessageIndex]}</h2>
+                <div>
+                  <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-white/70">Quán của bạn</p>
+                  <p className="text-[length:var(--d-fs-sm)] font-bold">Xem trước trực tiếp</p>
                 </div>
               </div>
-              <div className="mt-5 grid gap-2">
-                {launchMessages.map((message, index) => (
-                  <div key={message} className="flex items-center gap-2 text-sm font-bold text-white/80">
-                    <span className={`h-2 w-2 rounded-full ${index <= launchMessageIndex ? "bg-[#F28C28]" : "bg-white/25"}`} />
-                    <span>{message}</span>
-                  </div>
-                ))}
+              <div className="p-3">{storePreview}</div>
+            </div>
+
+            <div className="grid gap-1.5 rounded-[var(--d-r-xl)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3 shadow-[var(--d-sh-sm)]">
+              <SummaryRow icon={Store} label="Tên" value={shortText(name)} active={name.trim().length >= 2} />
+              <SummaryRow icon={Hash} label="Mã quán" value={slug} active={slugReady} />
+              <SummaryRow icon={Building2} label="Loại hình" value={selectedPreset.value === "OTHER" ? shortText(customBusinessType, selectedPreset.label) : selectedPreset.label} active={hasBusinessType} />
+              <SummaryRow icon={MapPin} label="Địa chỉ" value={hasStructuredAddress ? "Đã có" : "Cần nhập"} active={hasStructuredAddress} />
+              <SummaryRow icon={CreditCard} label="Gói" value={selectedPlan ? planDisplayName(selectedPlan) : "Chưa chọn"} active={Boolean(selectedPlan)} />
+              <SummaryRow icon={Table2} label="Bàn" value={`${tableCount} bàn`} active />
+              <SummaryRow icon={Utensils} label="Món đầu" value={confirmedMenuItems.length > 0 ? `${confirmedMenuItems.length} món` : itemName.trim() ? "1 món" : "Chưa có"} active={canSubmitOnboarding} />
+            </div>
+          </aside>
+        </div>
+
+        {/* Sticky action bar */}
+        <footer className="sticky bottom-0 z-30 -mx-4 border-t border-[var(--d-line)] bg-[var(--d-surface)]/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 backdrop-blur-sm sm:-mx-6 sm:px-6">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <div className="min-w-0 sm:flex-1">
+              <p className="d-eyebrow text-[var(--d-jade)]">{currentStepMeta.title}</p>
+              <p className="truncate text-[length:var(--d-fs-xs)] font-medium text-[var(--d-text-muted)] sm:text-[length:var(--d-fs-sm)]">{actionHint}</p>
+            </div>
+            <div className="flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
+              <button
+                type="button"
+                onClick={() => setStep((current) => Math.max(0, current - 1))}
+                disabled={step === 0 || launching}
+                className="inline-flex h-12 flex-1 items-center justify-center rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)] transition hover:border-[var(--d-jade)] disabled:pointer-events-none disabled:opacity-40 sm:h-11 sm:flex-none"
+              >
+                Quay lại
+              </button>
+              {step < 3 ? (
+                <motion.button
+                  type="button"
+                  onClick={() => advanceTo(step + 1)}
+                  disabled={nextStepDisabled || launching}
+                  whileTap={{ scale: 0.98 }}
+                  className="group inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-[var(--d-r-md)] px-6 text-[length:var(--d-fs-sm)] font-bold text-white shadow-[0_10px_26px_rgba(15,77,58,0.28)] transition disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none sm:h-11 sm:flex-none"
+                  style={{ background: "linear-gradient(135deg, var(--d-jade), var(--d-jade-700))" }}
+                >
+                  {nextStepLabel}
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                </motion.button>
+              ) : (
+                <motion.button
+                  type="submit"
+                  disabled={launching || !canSubmitOnboarding}
+                  whileTap={{ scale: 0.98 }}
+                  className="group inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-[var(--d-r-md)] px-6 text-[length:var(--d-fs-sm)] font-bold text-white shadow-[0_10px_26px_rgba(242,140,40,0.30)] transition disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none sm:h-11 sm:flex-none"
+                  style={{
+                    background: canSubmitOnboarding && !launching
+                      ? "linear-gradient(135deg, var(--d-orange), var(--d-orange-600))"
+                      : "linear-gradient(135deg, var(--d-jade), var(--d-jade-700))"
+                  }}
+                >
+                  {launching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4 transition-transform group-hover:-translate-y-0.5" />}
+                  {launching ? "Đang tạo..." : "Tạo quán ngay"}
+                </motion.button>
+              )}
+            </div>
+          </div>
+        </footer>
+
+        {featurePlan ? (
+          <PlanFeaturesModal
+            plan={featurePlan}
+            allPlans={plans}
+            onClose={() => setFeaturePlan(null)}
+            onSelect={() => {
+              selectPlan(featurePlan);
+              setFeaturePlan(null);
+            }}
+          />
+        ) : null}
+
+        {launching ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[var(--d-z-modal)] grid place-items-center px-4 backdrop-blur-md"
+            style={{ background: "radial-gradient(circle at 50% 25%, rgba(15,77,58,0.92) 0%, rgba(7,31,24,0.97) 70%)" }}
+          >
+            <motion.section
+              initial={{ opacity: 0, scale: 0.92, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+              className="w-full max-w-[440px] overflow-hidden rounded-[var(--d-r-xl)] border border-white/15 bg-white/[0.08] p-6 text-white shadow-[0_30px_80px_rgba(0,0,0,0.45)]"
+            >
+              <div className="flex flex-col items-center text-center">
+                <div className="relative grid h-20 w-20 place-items-center">
+                  <motion.span
+                    className="absolute inset-0 rounded-full border-[3px] border-white/15 border-t-[var(--d-orange)]"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  />
+                  <span className="grid h-14 w-14 place-items-center rounded-full text-white" style={{ background: "linear-gradient(135deg, var(--d-orange), var(--d-orange-600))" }}>
+                    <Rocket className="h-7 w-7" />
+                  </span>
+                </div>
+                <p className="mt-5 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-white/60">Đang khởi tạo quán</p>
+                <AnimatePresence mode="wait">
+                  <motion.h2
+                    key={launchMessageIndex}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -8 }}
+                    transition={{ duration: 0.25 }}
+                    className="mt-1 font-[var(--d-font-display)] text-[1.25rem] font-bold"
+                  >
+                    {launchMessages[launchMessageIndex]}
+                  </motion.h2>
+                </AnimatePresence>
               </div>
-              <p className="mt-5 text-sm font-semibold leading-6 text-white/72">
+
+              <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-white/15">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ background: "linear-gradient(90deg, var(--d-orange-300), var(--d-orange))" }}
+                  animate={{ width: `${((launchMessageIndex + 1) / launchMessages.length) * 100}%` }}
+                  transition={{ ease: [0.22, 1, 0.36, 1] }}
+                />
+              </div>
+
+              <ul className="mt-5 grid gap-2.5">
+                {launchMessages.map((message, index) => {
+                  const done = index < launchMessageIndex;
+                  const current = index === launchMessageIndex;
+                  return (
+                    <li key={message} className={cn("flex items-center gap-2.5 text-[length:var(--d-fs-sm)] font-medium transition", done || current ? "text-white" : "text-white/45")}>
+                      <span className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-full", done ? "bg-[var(--d-orange)]" : current ? "bg-white/20" : "bg-white/10")}>
+                        {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : current ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      </span>
+                      {message}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <p className="mt-5 text-center text-[length:var(--d-fs-xs)] font-medium leading-[var(--d-lh-body)] text-white/65">
                 LogiVN đang tạo dữ liệu thật cho quán. Giữ màn hình này mở trong vài giây.
               </p>
-            </section>
-          </div>
+            </motion.section>
+          </motion.div>
         ) : null}
       </form>
     </main>

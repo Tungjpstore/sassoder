@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { PaymentsWorkspace } from "@/components/dashboard/payments-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealPaymentsWorkspaceV2 } from "@/components/dashboard-v2/real/payments-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
@@ -57,7 +57,7 @@ async function PaymentsWorkspaceContent({ restaurantId }: { restaurantId: string
   ];
 
   return (
-    <PaymentsWorkspace
+    <RealPaymentsWorkspaceV2
       stats={stats}
       transactions={report.paymentTransactions}
       restaurantId={restaurantId}

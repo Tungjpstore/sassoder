@@ -1,0 +1,494 @@
+/* ============================================================
+ * LogiVN Dashboard v2 — Design Tokens
+ * --
+ * Kế thừa brand từ landing v2 (design-tokens-v2.css) để dashboard
+ * và trang marketing đồng bộ nhận diện. Scoped dưới [data-dash="v2"].
+ * Nền phẳng sạch, không wallpaper/glass !important như bản cũ.
+ * ============================================================ */
+
+[data-dash="v2"] {
+  /* ---- Brand (đồng bộ landing) ---- */
+  --d-jade: #0F4D3A;
+  --d-jade-700: #0C3D2E;
+  --d-jade-900: #071F18;
+  --d-jade-300: #4F8E66;
+  --d-orange: #F28C28;
+  --d-orange-600: #D9741A;
+  --d-orange-300: #F8B86A;
+  --d-sage: #A9C5A1;
+  --d-sage-100: #EAF1E6;
+
+  /* ---- Surfaces ---- */
+  --d-bg: #F7F8F5;
+  --d-surface: #FFFFFF;
+  --d-surface-2: #F2F5EF;
+  --d-surface-3: #E9EEE4;
+  --d-shell: #FFFFFF;
+
+  /* ---- Text ---- */
+  --d-text: #16201A;
+  --d-text-muted: #586259;
+  --d-text-faint: #8A938B;
+  --d-on-jade: #F3F8F1;
+
+  /* ---- Lines ---- */
+  --d-line: rgba(15, 77, 58, 0.10);
+  --d-line-strong: rgba(15, 77, 58, 0.18);
+
+  /* ---- Accents ---- */
+  --d-primary: var(--d-jade);
+  --d-primary-soft: var(--d-sage-100);
+  --d-accent: var(--d-orange);
+  --d-accent-soft: #FDEBD6;
+}
+
+[data-dash="v2"] {
+  /* ---- Feedback ---- */
+  --d-ok-bg: #E4F0E5;
+  --d-ok-fg: #1C6B3F;
+  --d-warn-bg: #FDEBD6;
+  --d-warn-fg: #B5670F;
+  --d-danger-bg: #FCE6E1;
+  --d-danger-fg: #B43A26;
+  --d-info-bg: #E2EEF0;
+  --d-info-fg: #27686A;
+
+  /* ---- Type ---- */
+  --d-font-display: var(--font-v2-display), "Sora", ui-sans-serif, system-ui, sans-serif;
+  --d-font-sans: var(--font-v2-sans), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --d-font-mono: var(--font-v2-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --d-fs-display: clamp(1.5rem, 2.2vw, 2rem);
+  --d-fs-h1: 1.375rem;
+  --d-fs-h2: 1.125rem;
+  --d-fs-h3: 1rem;
+  --d-fs-body: 0.9375rem;
+  --d-fs-sm: 0.875rem;
+  --d-fs-xs: 0.8125rem;
+  --d-fs-2xs: 0.6875rem;
+
+  --d-lh-tight: 1.15;
+  --d-lh-snug: 1.3;
+  --d-lh-body: 1.55;
+  --d-track-tight: -0.02em;
+  --d-track-wide: 0.12em;
+
+  /* ---- Space (8pt) ---- */
+  --d-s-1: 0.25rem;
+  --d-s-2: 0.5rem;
+  --d-s-3: 0.75rem;
+  --d-s-4: 1rem;
+  --d-s-5: 1.25rem;
+  --d-s-6: 1.5rem;
+  --d-s-8: 2rem;
+  --d-s-10: 2.5rem;
+
+  /* ---- Radius ---- */
+  --d-r-sm: 0.5rem;
+  --d-r-md: 0.75rem;
+  --d-r-lg: 1rem;
+  --d-r-xl: 1.25rem;
+  --d-r-pill: 999px;
+
+  /* ---- Shadow ---- */
+  --d-sh-sm: 0 1px 2px rgba(20, 35, 28, 0.05);
+  --d-sh-md: 0 6px 18px rgba(20, 35, 28, 0.07);
+  --d-sh-lg: 0 16px 40px rgba(20, 35, 28, 0.10);
+
+  /* ---- Motion ---- */
+  --d-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --d-dur: 200ms;
+
+  /* ---- Layout ---- */
+  --d-sidebar-w: 248px;
+  --d-rail-w: 76px;
+  --d-topbar-h: 60px;
+
+  /* ---- Z-index (tái dùng thang cũ) ---- */
+  --d-z-shell: 40;
+  --d-z-popover: 60;
+  --d-z-drawer: 80;
+  --d-z-modal: 100;
+  --d-z-toast: 200;
+  --d-z-confirm: 220;
+}
+
+/* ---- Base ---- */
+[data-dash="v2"] {
+  background: var(--d-bg);
+  color: var(--d-text);
+  font-family: var(--d-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* Bridge legacy dashboard body components into v2 shell.
+   * Production workspaces still use the real DB-backed components under
+   * components/dashboard/*; map their old design tokens to v2 tokens so all
+   * workspaces visually match the preview without replacing backend logic. */
+  --background: var(--d-bg);
+  --foreground: var(--d-text);
+  --muted-foreground: var(--d-text-muted);
+  --outline: var(--d-text-faint);
+  --surface: var(--d-surface);
+  --surface-2: var(--d-surface-2);
+  --surface-3: var(--d-surface-3);
+  --dashboard-shell: var(--d-shell);
+  --dashboard-panel: var(--d-surface);
+  --border: var(--d-line);
+  --primary: var(--d-primary);
+  --primary-hover: var(--d-jade-700);
+  --primary-soft: var(--d-primary-soft);
+  --accent: var(--d-accent);
+  --accent-strong: var(--d-orange-600);
+  --accent-soft: var(--d-accent-soft);
+  --danger-soft: var(--d-danger-bg);
+  --success-soft: var(--d-ok-bg);
+  --z-dashboard-toast: var(--d-z-toast);
+  --z-dashboard-shell: var(--d-z-shell);
+  --admin-content-max: 1180px;
+  --dashboard-mobile-content-bottom: calc(var(--d-s-10) + env(safe-area-inset-bottom));
+}
+[data-dash="v2"] *,
+[data-dash="v2"] *::before,
+[data-dash="v2"] *::after { box-sizing: border-box; }
+
+[data-dash="v2"] :where(h1, h2, h3, h4) {
+  font-family: var(--d-font-display);
+  letter-spacing: var(--d-track-tight);
+  font-weight: 700;
+  margin: 0;
+}
+[data-dash="v2"] :where(p) { margin: 0; }
+[data-dash="v2"] :where(a) { color: inherit; text-decoration: none; }
+
+[data-dash="v2"] .d-num {
+  font-family: var(--d-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+[data-dash="v2"] .d-eyebrow {
+  font-size: var(--d-fs-2xs);
+  font-weight: 700;
+  letter-spacing: var(--d-track-wide);
+  text-transform: uppercase;
+  color: var(--d-text-faint);
+}
+
+[data-dash="v2"] :where(:focus-visible) {
+  outline: 2px solid var(--d-jade);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-dash="v2"] * { animation: none !important; transition: none !important; }
+}
+
+/* ---- Overlay scroll lock (dùng chung) ---- */
+.dashboard-overlay-open { overflow: hidden !important; }
+
+/* ---- Reveal ---- */
+@keyframes d-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes d-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes d-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes d-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes d-modal-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* ---- Legacy body harmonization inside v2 shell ---- */
+[data-dash="v2"] :where(.dashboard-panel, .admin-card, .admin-section, .dashboard-stat-card, .dashboard-workspace-card) {
+  border-color: var(--d-line) !important;
+  background: var(--d-surface) !important;
+  border-radius: var(--d-r-lg) !important;
+  box-shadow: var(--d-sh-sm) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-eyebrow, .admin-eyebrow) {
+  color: var(--d-text-faint) !important;
+  font-size: var(--d-fs-2xs) !important;
+  letter-spacing: var(--d-track-wide) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-page-title, .admin-title) {
+  color: var(--d-text) !important;
+  font-family: var(--d-font-display) !important;
+  letter-spacing: var(--d-track-tight) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-workspace, .dashboard-density) {
+  color: var(--d-text);
+}
+
+[data-dash="v2"] :where(input, select, textarea) {
+  border-color: var(--d-line) !important;
+  background-color: var(--d-surface) !important;
+  color: var(--d-text) !important;
+  border-radius: var(--d-r-md) !important;
+}
+
+[data-dash="v2"] :where(table) {
+  border-color: var(--d-line) !important;
+}
+
+[data-dash="v2"] :where(th) {
+  color: var(--d-text-faint) !important;
+  background: var(--d-surface-2) !important;
+}
+
+[data-dash="v2"] :where(td) {
+  border-color: var(--d-line) !important;
+}
+
+/* ---- Settings forms harmonization ---- */
+[data-dash="v2"] :where(.dashboard-panel) {
+  padding: var(--d-s-5) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-section-title, .admin-section-title) {
+  color: var(--d-text) !important;
+  font-family: var(--d-font-display) !important;
+  font-size: var(--d-fs-h3) !important;
+  font-weight: 600 !important;
+  letter-spacing: var(--d-track-tight) !important;
+  line-height: var(--d-lh-snug) !important;
+  margin: 0 !important;
+}
+
+[data-dash="v2"] :where(.dashboard-body-copy) {
+  color: var(--d-text-muted) !important;
+  font-size: var(--d-fs-sm) !important;
+  line-height: var(--d-lh-body) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-subpanel) {
+  border: 1px solid var(--d-line) !important;
+  background: var(--d-surface-2) !important;
+  border-radius: var(--d-r-md) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-settings-toggle-card) {
+  border-color: var(--d-line) !important;
+  background: var(--d-surface) !important;
+  border-radius: var(--d-r-md) !important;
+  transition: border-color var(--d-dur) var(--d-ease), background-color var(--d-dur) var(--d-ease);
+}
+
+[data-dash="v2"] :where(.dashboard-settings-toggle-card:hover) {
+  border-color: var(--d-line-strong) !important;
+  background: var(--d-surface-2) !important;
+}
+
+[data-dash="v2"] :where(.dashboard-stat-icon) {
+  background: var(--d-primary-soft) !important;
+  color: var(--d-primary) !important;
+  border-radius: var(--d-r-md) !important;
+  display: grid !important;
+  place-items: center !important;
+}
+
+[data-dash="v2"] :where(.dashboard-secondary-action) {
+  border: 1px solid var(--d-line-strong) !important;
+  background: var(--d-surface) !important;
+  color: var(--d-text) !important;
+  border-radius: var(--d-r-md) !important;
+  font-size: var(--d-fs-sm) !important;
+  font-weight: 600 !important;
+  height: 2.5rem !important;
+  padding: 0 0.875rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  transition: border-color var(--d-dur) var(--d-ease), background-color var(--d-dur) var(--d-ease);
+}
+
+[data-dash="v2"] :where(.dashboard-secondary-action:hover) {
+  border-color: var(--d-jade) !important;
+  background: var(--d-surface-2) !important;
+}
+
+[data-dash="v2"] :where(.metric-number) {
+  font-family: var(--d-font-mono) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: -0.01em !important;
+}
+
+[data-dash="v2"] :where(label) {
+  color: var(--d-text) !important;
+}
+
+/* ---- Action color patches ---- */
+[data-dash="v2"] :where(.text-\[var\(--primary\)\]) {
+  color: var(--d-primary) !important;
+}
+[data-dash="v2"] :where(.text-\[var\(--accent\)\], .text-\[var\(--accent-strong\)\]) {
+  color: var(--d-orange-600) !important;
+}
+[data-dash="v2"] :where(.bg-\[var\(--primary-soft\)\]) {
+  background: var(--d-primary-soft) !important;
+}
+[data-dash="v2"] :where(.bg-\[var\(--accent-soft\)\]) {
+  background: var(--d-accent-soft) !important;
+}
+[data-dash="v2"] :where(.bg-\[var\(--soft-surface\)\]) {
+  background: var(--d-surface-2) !important;
+}
+[data-dash="v2"] :where(.bg-\[var\(--surface-container\)\]) {
+  background: var(--d-surface-2) !important;
+}
+[data-dash="v2"] :where(.text-\[var\(--foreground\)\]) {
+  color: var(--d-text) !important;
+}
+[data-dash="v2"] :where(.text-\[var\(--muted-foreground\)\]) {
+  color: var(--d-text-muted) !important;
+}
+
+/* ---- Buttons inside legacy areas ---- */
+[data-dash="v2"] :where(button[type="submit"], button.dashboard-primary-action) {
+  border-radius: var(--d-r-md) !important;
+}
+
+/* ---- Round corners cleanup ---- */
+[data-dash="v2"] :where(.rounded-xl) {
+  border-radius: var(--d-r-md) !important;
+}
+[data-dash="v2"] :where(.rounded-2xl) {
+  border-radius: var(--d-r-lg) !important;
+}
+[data-dash="v2"] :where(.rounded-full) {
+  border-radius: var(--d-r-pill) !important;
+}
+
+/* ---- Billing surfaces — đè hex hardcode về token v2 ---- */
+[data-dash="v2"] :where(.billing-flow-surface),
+[data-dash="v2"] :where(.billing-status-panel) {
+  border-radius: var(--d-r-lg) !important;
+  border-color: var(--d-line) !important;
+  background: var(--d-surface) !important;
+  box-shadow: var(--d-sh-sm) !important;
+}
+
+[data-dash="v2"] :where(.billing-status-panel) {
+  background: linear-gradient(135deg, var(--d-primary-soft), var(--d-accent-soft)) !important;
+  border-color: var(--d-line-strong) !important;
+}
+
+[data-dash="v2"] :where(.billing-current-plan-card),
+[data-dash="v2"] :where(.billing-benefits-panel),
+[data-dash="v2"] :where(.billing-usage-card),
+[data-dash="v2"] :where(.billing-readiness-item) {
+  border-radius: var(--d-r-md) !important;
+  border-color: var(--d-line) !important;
+  background: var(--d-surface) !important;
+}
+
+[data-dash="v2"] :where(.billing-current-plan-card) {
+  background: var(--d-surface-2) !important;
+}
+
+[data-dash="v2"] :where(.billing-plan-price) {
+  font-family: var(--d-font-display) !important;
+  font-weight: 800 !important;
+  font-size: var(--d-fs-display) !important;
+  color: var(--d-text) !important;
+}
+
+[data-dash="v2"] :where(.billing-renewal-date) {
+  color: var(--d-text-muted) !important;
+}
+
+[data-dash="v2"] :where(.billing-step-header-subtitle) {
+  color: var(--d-text-muted) !important;
+}
+
+[data-dash="v2"] :where(.billing-payment-qr) {
+  border-radius: var(--d-r-md) !important;
+}
+
+/* ---- Phủ hex hardcode billing — màu xanh jade variants ---- */
+[data-dash="v2"] :where([class*="bg-[#EAF7EF]"]) { background: var(--d-ok-bg) !important; }
+[data-dash="v2"] :where([class*="bg-[#E8F4EC]"]) { background: var(--d-primary-soft) !important; }
+[data-dash="v2"] :where([class*="bg-[#D8F0E1]"]) { background: var(--d-primary-soft) !important; }
+[data-dash="v2"] :where([class*="bg-[#0F6B3F]"]) { background: var(--d-jade) !important; }
+[data-dash="v2"] :where([class*="text-[#0F6B3F]"]) { color: var(--d-ok-fg) !important; }
+[data-dash="v2"] :where([class*="border-[#CFE8D8]"]) { border-color: var(--d-jade)!important; }
+[data-dash="v2"] :where([class*="ring-[#0F6B3F]"]) { --tw-ring-color: var(--d-jade) !important; }
+
+/* ---- Phủ hex hardcode billing — màu cam orange variants ---- */
+[data-dash="v2"] :where([class*="bg-[#FFF0DB]"]) { background: var(--d-accent-soft) !important; }
+[data-dash="v2"] :where([class*="bg-[#FFF5E8]"]) { background: var(--d-accent-soft) !important; }
+[data-dash="v2"] :where([class*="bg-[#FFF9EF]"]) { background: var(--d-surface-2) !important; }
+[data-dash="v2"] :where([class*="bg-[#F2983A]"]) { background: var(--d-orange) !important; }
+[data-dash="v2"] :where([class*="text-[#B96618]"]) { color: var(--d-orange-600) !important; }
+[data-dash="v2"] :where([class*="text-[#9B5417]"]) { color: var(--d-orange-600) !important; }
+[data-dash="v2"] :where([class*="text-[#CF741B]"]) { color: var(--d-orange-600) !important; }
+[data-dash="v2"] :where([class*="text-[#E37A1F]"]) { color: var(--d-orange-600) !important; }
+[data-dash="v2"] :where([class*="border-[#F4D7AF]"]) { border-color: var(--d-orange) !important; }
+[data-dash="v2"] :where([class*="border-[#F3D3AA]"]) { border-color: var(--d-orange) !important; }
+[data-dash="v2"] :where([class*="border-[#F2B36E]"]) { border-color: var(--d-orange) !important; }
+
+/* ---- Phủ hex hardcode billing — màu đỏ danger variants ---- */
+[data-dash="v2"] :where([class*="bg-[#FFF1EC]"]) { background: var(--d-danger-bg) !important; }
+[data-dash="v2"] :where([class*="text-[#B94724]"]) { color: var(--d-danger-fg) !important; }
+[data-dash="v2"] :where([class*="border-[#F6D2C9]"]) { border-color: var(--d-danger-fg) !important; }
+
+/* ---- Phủ hex hardcode billing — neutrals ---- */
+[data-dash="v2"] :where([class*="bg-[#FFFDF8]"]) { background: var(--d-surface) !important; }
+[data-dash="v2"] :where([class*="bg-[#D8D0C3]"]) { background: var(--d-surface-3) !important; }
+[data-dash="v2"] :where([class*="border-[#E8E0D5]"]) { border-color: var(--d-line) !important; }
+[data-dash="v2"] :where([class*="border-[#E3DBCF]"]) { border-color: var(--d-line) !important; }
+[data-dash="v2"] :where([class*="border-[#DED6CA]"]) { border-color: var(--d-line) !important; }
+[data-dash="v2"] :where([class*="border-[#E0E9DD]"]) { border-color: var(--d-line) !important; }
+[data-dash="v2"] :where([class*="text-[#151915]"]) { color: var(--d-text) !important; }
+[data-dash="v2"] :where([class*="text-[#111713]"]) { color: var(--d-text) !important; }
+[data-dash="v2"] :where([class*="text-[#7A817B]"]) { color: var(--d-text-muted) !important; }
+[data-dash="v2"] :where([class*="text-[#6F766F]"]) { color: var(--d-text-muted) !important; }
+[data-dash="v2"] :where([class*="text-[#667069]"]) { color: var(--d-text-muted) !important; }
+[data-dash="v2"] :where([class*="text-[#A59D91]"]) { color: var(--d-text-faint) !important; }
+
+/* ---- Phủ rounded variants billing ---- */
+[data-dash="v2"] :where([class*="rounded-[18px]"]),
+[data-dash="v2"] :where([class*="rounded-[22px]"]) {
+  border-radius: var(--d-r-lg) !important;
+}
+[data-dash="v2"] :where([class*="rounded-[14px]"]),
+[data-dash="v2"] :where([class*="rounded-[12px]"]),
+[data-dash="v2"] :where([class*="rounded-[10px]"]) {
+  border-radius: var(--d-r-md) !important;
+}
+
+/* ---- font-black trên billing → font-bold cho đỡ chói ---- */
+[data-dash="v2"] :where(.billing-flow-surface) :where(.font-black),
+[data-dash="v2"] :where(.billing-status-panel) :where(.font-black),
+[data-dash="v2"] :where(.billing-current-plan-card) :where(.font-black),
+[data-dash="v2"] :where(.billing-benefits-panel) :where(.font-black) {
+  font-weight: 700 !important;
+}
+
+/* ---- Profile banner gradient — chuyển sang token v2 ---- */
+[data-dash="v2"] :where([class*="from-[#0F4D3A]"][class*="to-[#F28C28]"]) {
+  background: linear-gradient(135deg, var(--d-jade), var(--d-orange)) !important;
+}
+
+/* ---- Soft surface + container fallback ---- */
+[data-dash="v2"] :where([class*="bg-[var(--surface)]"]) { background: var(--d-surface) !important; }
+[data-dash="v2"] :where([class*="bg-[var(--surface-container)]"]) { background: var(--d-surface-2) !important; }
+
+/* ---- Settings billing layout — stack đẹp hơn khi co màn hình ---- */
+[data-dash="v2"] .billing-status-top {
+  grid-template-columns: 1fr !important;
+  gap: var(--d-s-3);
+}
+@media (min-width: 1024px) {
+  [data-dash="v2"] .billing-status-top {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+}
+@media (min-width: 1280px) {
+  [data-dash="v2"] .billing-status-top {
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
+    align-items: center;
+  }
+}

@@ -1,4 +1,4 @@
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { LogibotAiWorkspace, type LogibotWorkspaceData } from "@/components/dashboard/logibot-ai-workspace";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";

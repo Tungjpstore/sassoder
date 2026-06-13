@@ -160,8 +160,11 @@ export async function updatePaymentSettingsAction(
   return runUpdatePaymentSettingsAction(_prevState, formData);
 }
 
-export async function updateRestaurantSettingsAction(formData: FormData) {
-  return runUpdateRestaurantSettingsAction(formData);
+export async function updateRestaurantSettingsAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  return runUpdateRestaurantSettingsAction(_prevState, formData);
 }
 
 export async function applyAiSetupBrandAction(
@@ -171,8 +174,11 @@ export async function applyAiSetupBrandAction(
   return runApplyAiSetupBrandAction(_prevState, formData);
 }
 
-export async function updateReportScheduleAction(formData: FormData) {
-  return runUpdateReportScheduleAction(formData);
+export async function updateReportScheduleAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
+  return runUpdateReportScheduleAction(_prevState, formData);
 }
 
 export async function createStoreBranchAction(

@@ -1862,6 +1862,85 @@ export async function getReservationAvailability(input: {
   return { restaurant: settings, slots };
 }
 
+export type ReservationFloorTable = {
+  id: string;
+  name: string;
+  capacity: number;
+  area: string | null;
+  floorLabel: string | null;
+  seatingZone: string | null;
+  tableKind: string;
+  available: boolean;
+  fitsParty: boolean;
+  reason: "available" | "too_small" | "busy";
+};
+
+/* getReservationFloor — sơ đồ bàn công khai cho 1 khung giờ.
+ * Chỉ trả tình trạng trống/bận + thuộc tính bàn, KHÔNG lộ thông tin khách
+ * đang giữ bàn. Dùng để khách chọn bàn trực tiếp trên sơ đồ; server vẫn là
+ * nơi quyết định bàn có đặt được hay không khi tạo đặt bàn. */
+export async function getReservationFloor(input: {
+  restaurantSlug: string;
+  date: string;
+  startsAt: string;
+  partySize: number;
+}) {
+  const settings = await getSettingsBySlug(input.restaurantSlug);
+  if (!settings) throw new AppError("Không tìm thấy quán", 404);
+  await assertFeatureEntitlement(settings.id, "reservations");
+  await expireReservationHolds(settings.id);
+
+  const startsAt = new Date(input.startsAt);
+  if (!Number.isFinite(startsAt.getTime())) throw new AppError("Khung giờ đặt bàn không hợp lệ", 400);
+  const duration = Number(settings.reservation_duration_minutes);
+  const buffer = Number(settings.reservation_buffer_minutes);
+  const endsAt = addMinutes(startsAt, duration);
+  const lockEnd = addMinutes(endsAt, buffer);
+
+  if (!settings.reservations_enabled) {
+    return { restaurant: settings, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), tables: [] as ReservationFloorTable[] };
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const [tablesResult, locks, activeBillTableIds] = await Promise.all([
+    supabase
+      .from("tables")
+      .select(candidateTableSelect)
+      .eq("restaurant_id", settings.id)
+      .eq("is_bookable", true)
+      .eq("is_hidden", false)
+      .eq("is_under_maintenance", false)
+      .order("reservation_priority", { ascending: true })
+      .order("capacity", { ascending: true })
+      .order("name", { ascending: true }),
+    getNearbyActiveLocks(settings.id, startsAt, lockEnd),
+    getActiveBillTableIds(settings.id)
+  ]);
+  throwIfSupabaseError(tablesResult.error);
+
+  const tables: ReservationFloorTable[] = ((tablesResult.data ?? []) as unknown as CandidateReservationTable[]).map((table) => {
+    const fitsParty = Number(table.capacity) >= input.partySize;
+    const lockedNow =
+      hasNearTermActiveBill(table.id, startsAt, activeBillTableIds) ||
+      locks.some((lock) => lock.table_id === table.id && overlap(new Date(lock.starts_at), new Date(lock.ends_at), startsAt, lockEnd));
+    const available = fitsParty && !lockedNow;
+    return {
+      id: table.id,
+      name: table.name,
+      capacity: Number(table.capacity),
+      area: table.area ?? null,
+      floorLabel: table.floor_label ?? null,
+      seatingZone: table.seating_zone ?? null,
+      tableKind: table.table_kind,
+      available,
+      fitsParty,
+      reason: available ? "available" : !fitsParty ? "too_small" : "busy"
+    };
+  });
+
+  return { restaurant: settings, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), tables };
+}
+
 export async function createReservation(input: {
   restaurantSlug: string;
   customerName: string;
@@ -1871,6 +1950,7 @@ export async function createReservation(input: {
   startsAt: string;
   customerNote?: string;
   idempotencyKey?: string;
+  tableId?: string;
   preferredTableAreaId?: string;
   preferredSeatingZone?: ReservationSeatingZone;
   preferredTableKind?: ReservationTableKind;
@@ -1897,8 +1977,18 @@ export async function createReservation(input: {
   assertReservationInsideOperatingHours(settings, startsAt, endsAt);
   const lockEnd = addMinutes(endsAt, buffer);
   const availableTables = await getAvailableTables(settings.id, input.partySize, startsAt, lockEnd, preferences);
-  const table = availableTables[0];
-  if (!table) throw new AppError("Khung giờ này vừa hết bàn phù hợp. Vui lòng chọn giờ khác.", 409);
+  // Khách có thể chọn bàn cụ thể trên sơ đồ. KHÔNG tin tableId từ client:
+  // chỉ chấp nhận nếu bàn đó thực sự nằm trong danh sách bàn hợp lệ (đủ chỗ,
+  // cho đặt, không trùng giờ). Nếu không → 409. Không có tableId → tự xếp bàn.
+  const table = input.tableId ? availableTables.find((candidate) => candidate.id === input.tableId) : availableTables[0];
+  if (!table) {
+    throw new AppError(
+      input.tableId
+        ? "Bàn bạn chọn vừa hết chỗ cho khung giờ này. Vui lòng chọn bàn khác."
+        : "Khung giờ này vừa hết bàn phù hợp. Vui lòng chọn giờ khác.",
+      409
+    );
+  }
 
   const depositAmount = calculateDepositAmount(settings, input.partySize);
   if (depositAmount > 0) {
@@ -1908,7 +1998,7 @@ export async function createReservation(input: {
     throw new AppError("Quán đang bật nhận cọc nhưng chưa cấu hình ngân hàng VietQR.", 400);
   }
 
-  const accessToken = input.idempotencyKey ?? randomUUID();
+  const accessToken = randomUUID();
   const tokenHash = hashToken(accessToken);
   const now = new Date();
   const needsDeposit = depositAmount > 0;

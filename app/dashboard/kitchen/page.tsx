@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { KitchenBoard } from "@/components/dashboard/kitchen-board";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { RealKitchenWorkspaceV2 } from "@/components/dashboard-v2/real/kitchen-workspace-v2";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { listKitchenOrdersForRestaurant } from "@/services/order-service";
 
@@ -26,7 +26,7 @@ export default async function AdminKitchenPage() {
 
 async function KitchenBoardContent({ restaurantId }: { restaurantId: string }) {
   const initialOrders = await listKitchenOrdersForRestaurant(restaurantId);
-  return <KitchenBoard initialOrders={initialOrders} restaurantId={restaurantId} />;
+  return <RealKitchenWorkspaceV2 initialOrders={initialOrders} restaurantId={restaurantId} />;
 }
 
 function KitchenBoardSkeleton() {

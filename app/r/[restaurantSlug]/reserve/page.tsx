@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
-import { ReservationClient } from "@/components/customer/reservation-client";
+import { ReserveClientV2 } from "@/components/customer-v2/reserve/reserve-client-v2";
 import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getPublicReservationPreferenceOptionsBySlug, getPublicReservationSettingsBySlug } from "@/services/reservation-service";
+import "@/app/styles/customer-tokens-v2.css";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +34,7 @@ export default async function PublicReservationPage({
   const preferenceOptions = await getPublicReservationPreferenceOptionsBySlug(restaurantSlug);
 
   return (
-    <ReservationClient
+    <ReserveClientV2
       restaurant={{
         name: restaurant.name,
         slug: restaurant.slug,

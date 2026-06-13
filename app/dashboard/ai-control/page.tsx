@@ -29,7 +29,7 @@ import {
   updateAiAutomationRunStatusAction,
   updateRestaurantAiMemoryStatusAction
 } from "@/app/dashboard/actions";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-cards";
 import { Badge } from "@/components/ui/badge";
 import { getAiFutureCapabilities, type AiFutureCapability } from "@/lib/ai/future-capabilities";

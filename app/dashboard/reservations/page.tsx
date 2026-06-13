@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealReservationsWorkspaceV2 } from "@/components/dashboard-v2/real/reservations-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { buildTenantUrl } from "@/lib/tenant-domain";
@@ -52,7 +52,7 @@ async function ReservationsWorkspaceContent({ restaurantId }: { restaurantId: st
   });
 
   return (
-    <ReservationsWorkspace
+    <RealReservationsWorkspaceV2
       restaurantId={restaurantId}
       settings={settings}
       initialReservations={JSON.parse(JSON.stringify(reservations))}

@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { InventoryWorkspaceV2 } from "@/components/dashboard/inventory-workspace-v2";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealInventoryWorkspaceV2 } from "@/components/dashboard-v2/real/inventory-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { getInventoryWorkspaceData } from "@/services/inventory-service";
@@ -58,7 +58,7 @@ async function InventoryWorkspaceContent({
   });
 
   return (
-    <InventoryWorkspaceV2
+    <RealInventoryWorkspaceV2
       restaurantId={restaurantId}
       snapshot={inventory.snapshot}
       categories={inventory.categories}

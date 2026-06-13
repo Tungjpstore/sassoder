@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { AdminDashboardClientLayout } from "@/components/dashboard/dashboard-client-layout";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealOverviewWorkspaceV2 } from "@/components/dashboard-v2/real/overview-workspace-v2";
 import { AppError } from "@/lib/response";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
@@ -330,52 +330,22 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
   ] as const;
 
   return (
-    <AdminDashboardClientLayout
+    <RealOverviewWorkspaceV2
       restaurantId={restaurantId}
-      showOnboardedWelcome={showOnboardedWelcome}
       restaurantName={dashboard.restaurant.name}
       operations={operations}
-      tenantUrl={tenantUrl}
-      setupReadiness={setupReadiness}
-      tableCount={totalTables}
-      menuItemCount={dashboard.menuItems}
-      tables={tables}
       recentOrders={recentOrders}
-      topItems={topItems}
-      monthRevenue={monthRevenue}
       hourlyRevenueToday={hourlyRevenueToday}
-      orderSourcesToday={orderSourcesToday}
-      paymentMethodsToday={paymentMethodsToday}
-      inventory={{
-        schemaReady: inventory.schemaReady,
-        lowStockCount: inventory.lowStockCount,
-        activeIngredientCount: inventory.activeIngredientCount,
-        recipeCoveragePercent: inventory.recipeCoveragePercent,
-        recipeReadyItemCount: inventory.recipeReadyItemCount,
-        menuItemCount: inventory.menuItemCount,
-        lowStockIngredients: inventory.lowStockIngredients
-      }}
-      latestMorningBrief={latestMorningBrief}
+      monthRevenue={monthRevenue}
       activeTables={activeTables}
       totalTables={totalTables}
       overdueTables={overdueTables}
       paymentWaiting={paymentWaiting}
       openOrderCount={openOrderCount}
-      bestSeller={bestSeller}
-      focusedTables={focusedTables}
-      recentActionOrders={recentActionOrders}
-      maxHourlyRevenue={maxHourlyRevenue}
-      maxHourlyOrders={maxHourlyOrders}
-      peakHours={peakHours}
-      totalSourceOrders={totalSourceOrders}
-      totalPaymentValue={totalPaymentValue}
-      kitchenLoad={kitchenLoad}
       serviceHealthScore={serviceHealthScore}
-      salesForecast={salesForecast}
-      showActivationPanel={showActivationPanel}
-      priorityCards={priorityCards}
-      shiftSignals={shiftSignals}
-      activationRunway={activationRunway}
+      kitchenLoad={kitchenLoad}
+      bestSellerName={bestSeller?.name ?? null}
+      topItemRevenue={bestSeller?.revenue ?? 0}
     />
   );
 }

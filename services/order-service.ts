@@ -170,9 +170,11 @@ type RawOrder = {
     | null;
   items:
     | Array<{
+        id?: string;
         quantity: number;
         price: number;
         modifier_snapshot?: Json | null;
+        prepared_at?: string | null;
         note: string | null;
         menuItem: { id?: string; name: string } | { id?: string; name: string }[] | null;
       }>
@@ -243,10 +245,10 @@ type MutableOrderRow = {
 };
 
 const orderSelect =
-  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
+  "id,restaurant_id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,bill_id,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),restaurant:restaurants(name,address,store_lat,store_lng,bank_code,bank_account,bank_account_name),table:tables(id,name),bill:table_bills(id,status,total,payment_method,created_at,updated_at,paid_at,closed_at),items:order_items(id,quantity,price,note,prepared_at,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const kitchenOrderSelect =
-  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(quantity,price,note,modifier_snapshot,menuItem:menu_items(id,name))";
+  "id,branch_id,branch_assignment_source,status,subtotal,discount_amount,promotion_id,promotion_code,total,fulfillment_type,payment_method,payment_status,paid_at,customer_session_id,customer_name,customer_phone,customer_note,delivery_address,delivery_lat,delivery_lng,delivery_distance_km,delivery_fee,service_fee,delivery_status,delivery_route_geometry,delivery_route_duration_minutes,delivery_quote_snapshot,delivery_tracking_updated_at,delivery_courier_id,delivery_assigned_at,created_at,updated_at,accepted_at,served_at,service_due_at,deliveryCourier:delivery_couriers(id,name,phone,status),table:tables(id,name),items:order_items(id,quantity,price,note,prepared_at,modifier_snapshot,menuItem:menu_items(id,name))";
 
 const legacyOrderSelect = orderSelect.replace("branch_id,branch_assignment_source,", "");
 const legacyKitchenOrderSelect = kitchenOrderSelect.replace("branch_id,branch_assignment_source,", "");
@@ -282,7 +284,7 @@ function writeKitchenOrdersCache(restaurantId: string, data: OrderDto[]) {
 }
 
 function removeOrderItemModifierColumns(select: string) {
-  return select.replace("quantity,price,note,modifier_snapshot,", "quantity,price,note,");
+  return select.replace("id,quantity,price,note,prepared_at,modifier_snapshot,", "id,quantity,price,note,");
 }
 
 export function invalidateRestaurantOrderCache(restaurantId: string) {
@@ -421,7 +423,7 @@ function isMissingOrderItemModifierSchema(error: PostgrestError | null | undefin
   const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
   return (
     (error.code === "42703" || error.code === "PGRST204") &&
-    /base_price|modifier_total|modifier_snapshot/i.test(message)
+    /base_price|modifier_total|modifier_snapshot|prepared_at/i.test(message)
   );
 }
 
@@ -752,10 +754,12 @@ function mapOrder(order: RawOrder): OrderDto {
       const modifiers = parseOrderItemModifierSnapshot(item.modifier_snapshot);
       const summary = modifierNote(modifiers);
       return {
+        id: item.id,
         quantity: item.quantity,
         price: item.price,
         modifiers,
         modifierSummary: summary || null,
+        preparedAt: item.prepared_at ?? null,
         note: customerOrderItemNote(item.note, summary),
         menuItem: firstOrNull(item.menuItem)
       };
@@ -1994,6 +1998,53 @@ export async function markOrderCompleted(restaurantId: string, orderId: string, 
   invalidateRestaurantOrderCache(restaurantId);
   invalidateRestaurantDashboardCache(restaurantId);
   return updated;
+}
+
+/* markOrderItemPrepared — đánh dấu 1 món trong đơn đã làm xong / hoàn tác.
+ * Không đổi trạng thái cấp đơn (giữ backend 1:1) — chỉ set order_items.prepared_at.
+ * prepared=false → hoàn tác (prepared_at=null). */
+export async function markOrderItemPrepared(
+  restaurantId: string,
+  orderId: string,
+  itemId: string,
+  prepared: boolean
+) {
+  const supabase = createAdminSupabaseClient();
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id,status")
+    .eq("id", orderId)
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  if (!order) throw new AppError("Không tìm thấy đơn hàng", 404);
+  if (order.status === "paid" || order.status === "cancelled") {
+    throw new AppError("Đơn đã kết thúc, không thể cập nhật món", 400);
+  }
+
+  const { data: updatedItem, error: updateError } = await supabase
+    .from("order_items")
+    .update({ prepared_at: prepared ? new Date().toISOString() : null })
+    .eq("id", itemId)
+    .eq("order_id", orderId)
+    .select("id,prepared_at")
+    .maybeSingle();
+
+  if (isMissingOrderItemModifierSchema(updateError)) {
+    throw new AppError(
+      "Tính năng đánh dấu món cần cập nhật cơ sở dữ liệu (cột prepared_at). Vui lòng chạy migration mới nhất.",
+      409
+    );
+  }
+  throwIfSupabaseError(updateError);
+  if (!updatedItem) throw new AppError("Không tìm thấy món trong đơn", 404);
+
+  invalidateRestaurantOrderCache(restaurantId);
+  invalidateRestaurantDashboardCache(restaurantId);
+
+  return getOrderDto(orderId, supabase);
 }
 
 export async function updateOrderDeliveryStatus(

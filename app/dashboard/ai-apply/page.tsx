@@ -22,7 +22,7 @@ import {
 } from "@/app/dashboard/actions";
 import { AiOwnerActionLauncher } from "@/components/dashboard/ai-owner-action-launcher";
 import { AiOperatingLoop } from "@/components/dashboard/ai-operating-loop";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { Badge } from "@/components/ui/badge";
 import type { AiApplyPlan, AiApplyPlanRisk, AiApplyPlanStatus } from "@/lib/ai/apply-layer";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";

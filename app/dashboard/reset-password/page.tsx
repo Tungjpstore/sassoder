@@ -21,11 +21,5 @@ export default async function ResetPasswordPage({
   const user = await getAuthUser();
   if (!user && !requiresOtp) redirect("/dashboard/forgot-password?expired=1");
 
-  return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
-        <ResetPasswordForm email={user?.email ?? resetEmail} requiresOtp={!user && requiresOtp} nextPath={nextPath} />
-      </section>
-    </main>
-  );
+  return <ResetPasswordForm email={user?.email ?? resetEmail} requiresOtp={!user && requiresOtp} nextPath={nextPath} />;
 }

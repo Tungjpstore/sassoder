@@ -831,3 +831,83 @@ export async function forceStaffSessionsLogoutAction(_prevState: StaffActionStat
     return { error: staffActionError(error) };
   }
 }
+
+
+import {
+  upsertStaffPayrollDeductions,
+  upsertStaffPayrollProfile,
+  type StaffPayrollDeductions
+} from "@/features/staff/services/staff-payroll-service";
+import {
+  staffPayrollDeductionsSchema,
+  staffPayrollProfileSchema
+} from "@/lib/validators";
+
+export async function updateStaffPayrollDeductionsAction(
+  _prevState: StaffActionState | undefined,
+  formData: FormData
+): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffPayrollDeductionsSchema.parse({
+      bhxhEmployeePercent: formData.get("bhxhEmployeePercent"),
+      bhytEmployeePercent: formData.get("bhytEmployeePercent"),
+      bhtnEmployeePercent: formData.get("bhtnEmployeePercent"),
+      bhxhEmployerPercent: formData.get("bhxhEmployerPercent"),
+      bhytEmployerPercent: formData.get("bhytEmployerPercent"),
+      bhtnEmployerPercent: formData.get("bhtnEmployerPercent"),
+      enablePersonalIncomeTax: formData.get("enablePersonalIncomeTax") === "true",
+      personalRelief: formData.get("personalRelief"),
+      dependentReliefPerPerson: formData.get("dependentReliefPerPerson"),
+      insuranceBaseMin: formData.get("insuranceBaseMin"),
+      insuranceBaseMax: formData.get("insuranceBaseMax")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+    await upsertStaffPayrollDeductions({
+      restaurantId: session.restaurantId,
+      actorUserId: session.userId,
+      values: parsed as Partial<StaffPayrollDeductions>
+    });
+    revalidatePath("/dashboard/staff");
+    return { success: "Đã cập nhật cấu hình lương BHXH/TNCN." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateStaffPayrollProfileAction(
+  _prevState: StaffActionState | undefined,
+  formData: FormData
+): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffPayrollProfileSchema.parse({
+      staffMemberId: formData.get("staffMemberId"),
+      baseSalary: formData.get("baseSalary"),
+      hourlyRate: formData.get("hourlyRate"),
+      dependentCount: formData.get("dependentCount"),
+      enrolledInInsurance: formData.get("enrolledInInsurance") === "true",
+      applyPersonalIncomeTax: formData.get("applyPersonalIncomeTax") === "true",
+      insuranceBaseAmount: formData.get("insuranceBaseAmount"),
+      note: formData.get("note")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+    await upsertStaffPayrollProfile({
+      restaurantId: session.restaurantId,
+      staffMemberId: parsed.staffMemberId,
+      values: {
+        baseSalary: parsed.baseSalary,
+        hourlyRate: parsed.hourlyRate,
+        dependentCount: parsed.dependentCount,
+        enrolledInInsurance: Boolean(parsed.enrolledInInsurance),
+        applyPersonalIncomeTax: Boolean(parsed.applyPersonalIncomeTax),
+        insuranceBaseAmount: parsed.insuranceBaseAmount,
+        note: parsed.note || null
+      }
+    });
+    revalidatePath("/dashboard/staff");
+    return { success: "Đã cập nhật hồ sơ lương cho nhân viên." };
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}

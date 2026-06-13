@@ -438,7 +438,8 @@ create table public.order_items (
   base_price integer not null check (base_price > 0),
   modifier_total integer not null default 0 check (modifier_total >= 0),
   modifier_snapshot jsonb not null default '[]'::jsonb check (jsonb_typeof(modifier_snapshot) = 'array'),
-  note text
+  note text,
+  prepared_at timestamptz
 );
 
 create table public.payment_logs (
@@ -1196,6 +1197,7 @@ create unique index orders_restaurant_remote_idempotency_idx
   on public.orders (restaurant_id, idempotency_key)
   where table_id is null and idempotency_key is not null;
 create index order_items_order_id_idx on public.order_items (order_id);
+create index order_items_prepared_at_idx on public.order_items (order_id, prepared_at);
 create index payment_logs_order_created_idx on public.payment_logs (order_id, created_at desc);
 create unique index payment_logs_transition_key_idx
   on public.payment_logs (transition_key)

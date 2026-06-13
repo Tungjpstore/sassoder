@@ -24,7 +24,7 @@ import {
   updateAiMorningBriefPreferencesAction,
   updateAiOperationInsightStatusAction
 } from "@/app/dashboard/actions";
-import { AdminShell } from "@/components/dashboard/app-shell";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { AiOwnerActionLauncher } from "@/components/dashboard/ai-owner-action-launcher";
 import { AiOperatingLoop } from "@/components/dashboard/ai-operating-loop";
 import { AiRecommendationCards } from "@/components/dashboard/ai-recommendation-cards";

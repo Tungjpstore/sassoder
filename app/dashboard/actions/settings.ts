@@ -113,12 +113,23 @@ export async function updatePaymentSettingsAction(
   return { success: "Đã lưu thông tin ngân hàng. VietQR sẽ dùng thông tin này cho đơn mới." };
 }
 
-export async function updateRestaurantSettingsAction(formData: FormData) {
+const restaurantSettingsSuccessMessages: Record<string, string> = {
+  profile: "Đã lưu hồ sơ quán.",
+  hours: "Đã lưu giờ hoạt động.",
+  receipt: "Đã lưu mẫu hoá đơn.",
+  brand: "Đã lưu thương hiệu.",
+  notifications: "Đã lưu cảnh báo vận hành."
+};
+
+export async function updateRestaurantSettingsAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
   const session = await requireSession();
   assertAdmin(session.role);
   const current = (await getRestaurantDashboard(session.restaurantId)).restaurant;
   const section = String(formData.get("settingsSection") ?? "profile");
-  const parsed = restaurantSettingsSchema.parse({
+  const parsed = restaurantSettingsSchema.safeParse({
     name: formData.get("name") ?? current.name,
     businessType: formData.get("businessType") ?? current.business_type ?? "",
     contactEmail: formData.get("contactEmail") ?? current.contact_email ?? "",
@@ -137,11 +148,20 @@ export async function updateRestaurantSettingsAction(formData: FormData) {
     receiptShowQr: section === "receipt" ? formData.get("receiptShowQr") === "true" : current.receipt_show_qr
   });
 
-  await updateRestaurantSettings(session.restaurantId, {
-    ...parsed,
-    logoFile: formData.get("logoFile"),
-    removeLogo: section === "profile" && formData.get("removeLogo") === "true"
-  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra lại thông tin cài đặt quán." };
+  }
+
+  try {
+    await updateRestaurantSettings(session.restaurantId, {
+      ...parsed.data,
+      logoFile: formData.get("logoFile"),
+      removeLogo: section === "profile" && formData.get("removeLogo") === "true"
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không lưu được cài đặt quán." };
+  }
+
   invalidateRestaurantDashboardCache(session.restaurantId);
   invalidateMenuCache();
   await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview", "payments", "reservations", "tables"]);
@@ -152,6 +172,7 @@ export async function updateRestaurantSettingsAction(formData: FormData) {
   revalidatePath("/dashboard/reservations");
   revalidatePath("/dashboard/tables");
   revalidatePath("/dashboard");
+  return { success: restaurantSettingsSuccessMessages[section] ?? "Đã lưu cài đặt quán." };
 }
 
 export async function applyAiSetupBrandAction(
@@ -192,7 +213,10 @@ export async function applyAiSetupBrandAction(
   return { success: parsed.data.includeLogo ? "Đã áp dụng slogan, mô tả và logo AI vào hồ sơ quán." : "Đã áp dụng slogan và mô tả AI vào hồ sơ quán." };
 }
 
-export async function updateReportScheduleAction(formData: FormData) {
+export async function updateReportScheduleAction(
+  _prevState: { error?: string; success?: string } | undefined,
+  formData: FormData
+) {
   const session = await requireOperationalAdminSession("scheduled_reports");
   const parsed = reportScheduleSchema.safeParse({
     enabled: formData.get("enabled") === "true",
@@ -207,23 +231,28 @@ export async function updateReportScheduleAction(formData: FormData) {
   });
 
   if (!parsed.success) {
-    throw new Error("Vui lòng kiểm tra email nhận báo cáo và lịch gửi.");
+    return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra email nhận báo cáo và lịch gửi." };
   }
 
-  await updateReportSchedule(session.restaurantId, {
-    enabled: parsed.data.enabled ?? false,
-    frequency: parsed.data.frequency,
-    recipients: parsed.data.recipients,
-    sendHour: parsed.data.sendHour,
-    sendDayOfWeek: parsed.data.sendDayOfWeek,
-    sendDayOfMonth: parsed.data.sendDayOfMonth,
-    sendMonth: parsed.data.sendMonth,
-    includeCsv: parsed.data.includeCsv ?? false,
-    includeJson: parsed.data.includeJson ?? false
-  });
+  try {
+    await updateReportSchedule(session.restaurantId, {
+      enabled: parsed.data.enabled ?? false,
+      frequency: parsed.data.frequency,
+      recipients: parsed.data.recipients,
+      sendHour: parsed.data.sendHour,
+      sendDayOfWeek: parsed.data.sendDayOfWeek,
+      sendDayOfMonth: parsed.data.sendDayOfMonth,
+      sendMonth: parsed.data.sendMonth,
+      includeCsv: parsed.data.includeCsv ?? false,
+      includeJson: parsed.data.includeJson ?? false
+    });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Không lưu được lịch gửi báo cáo." };
+  }
 
   revalidatePath("/dashboard/settings");
   revalidatePath("/dashboard/analytics");
+  return { success: "Đã lưu lịch gửi báo cáo qua email." };
 }
 
 export async function createStoreBranchAction(

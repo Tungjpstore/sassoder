@@ -1,6 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { TablesWorkspace } from "@/components/dashboard/tables-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealTablesWorkspaceV2 } from "@/components/dashboard-v2/real/tables-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { listActiveTableBranches, listTablesWithStatus } from "@/services/table-service";
@@ -48,7 +48,7 @@ async function TablesWorkspaceContent({
   });
 
   return (
-    <TablesWorkspace
+    <RealTablesWorkspaceV2
       restaurantId={restaurantId}
       restaurantSlug={restaurantSlug}
       restaurantName={restaurantName}

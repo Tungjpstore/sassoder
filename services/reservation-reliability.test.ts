@@ -74,7 +74,8 @@ test("reservation booking retries are tenant-scoped and idempotent", () => {
       on public.reservations (restaurant_id, idempotency_key)
       where idempotency_key is not null`)
   );
-  assert.match(reservationServiceSql, /const accessToken = input\.idempotencyKey \?\? randomUUID\(\);/);
+  assert.match(reservationServiceSql, /const accessToken = randomUUID\(\);/);
+  assert.doesNotMatch(reservationServiceSql, /const accessToken = input\.idempotencyKey \?\? randomUUID\(\);/);
   assert.match(reservationServiceSql, /getIdempotentReservationResult\(supabase, settings, input\.idempotencyKey\)/);
   assert.match(reservationServiceSql, /\(reservationError as \{ code\?: string \} \| null\)\?\.code === "23505" && input\.idempotencyKey/);
 });

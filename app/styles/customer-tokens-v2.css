@@ -1,0 +1,303 @@
+/* ============================================================
+ * LogiVN Customer v2 — Design Tokens (mobile-first ordering)
+ * --
+ * Dùng cho luồng KHÁCH HÀNG: gọi món QR tại bàn, đặt món online,
+ * đặt bàn trước. Kế thừa brand từ landing/dashboard v2 nhưng thêm
+ * token riêng cho ordering trên điện thoại (sticky cart bar, bottom
+ * sheet, safe-area, tap target ≥ 44–56px).
+ *
+ * Scoped dưới [data-shop="v2"]. Không đụng theme .stitch-customer cũ.
+ * ============================================================ */
+
+[data-shop="v2"] {
+  /* ---- Brand (đồng bộ v2) ---- */
+  --jade: #0F4D3A;
+  --jade-700: #0C3D2E;
+  --jade-900: #071F18;
+  --jade-300: #4F8E66;
+  --orange: #F28C28;
+  --orange-600: #D9741A;
+  --orange-300: #F8B86A;
+  --sage: #A9C5A1;
+  --sage-100: #EAF1E6;
+
+  /* ---- Surfaces ---- */
+  --bg: #FCFAF4;
+  --surface: #FFFFFF;
+  --surface-2: #F6F4EC;
+  --surface-3: #EDEAE0;
+
+  /* ---- Text ---- */
+  --text: #1C2620;
+  --text-muted: #5A655D;
+  --text-faint: #8A938B;
+  --on-jade: #F3F8F1;
+  --on-orange: #2A1705;
+
+  /* ---- Lines ---- */
+  --line: rgba(15, 77, 58, 0.10);
+  --line-strong: rgba(15, 77, 58, 0.18);
+
+  /* ---- Accents ---- */
+  --primary: var(--jade);
+  --primary-soft: var(--sage-100);
+  --accent: var(--orange);
+  --accent-soft: #FDEBD6;
+
+  /* ---- Feedback ---- */
+  --ok-bg: #E4F0E5;
+  --ok-fg: #1C6B3F;
+  --warn-bg: #FDEBD6;
+  --warn-fg: #B5670F;
+  --danger-bg: #FCE6E1;
+  --danger-fg: #B43A26;
+  --info-bg: #E2EEF0;
+  --info-fg: #27686A;
+
+  /* ---- Type ---- */
+  --font-display: var(--font-v2-display), "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-v2-sans), "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-v2-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-display: clamp(1.5rem, 5vw, 1.875rem);
+  --fs-h1: 1.375rem;
+  --fs-h2: 1.125rem;
+  --fs-h3: 1rem;
+  --fs-body: 0.9375rem;
+  --fs-sm: 0.875rem;
+  --fs-xs: 0.8125rem;
+  --fs-2xs: 0.6875rem;
+
+  --lh-tight: 1.15;
+  --lh-snug: 1.3;
+  --lh-body: 1.55;
+  --track-tight: -0.02em;
+  --track-wide: 0.1em;
+
+  /* ---- Space (8pt) ---- */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.25rem;
+  --s-6: 1.5rem;
+  --s-8: 2rem;
+  --s-10: 2.5rem;
+
+  /* ---- Radius ---- */
+  --r-sm: 0.5rem;
+  --r-md: 0.75rem;
+  --r-lg: 1rem;
+  --r-xl: 1.25rem;
+  --r-2xl: 1.5rem;
+  --r-pill: 999px;
+
+  /* ---- Shadow ---- */
+  --sh-sm: 0 1px 2px rgba(20, 35, 28, 0.05);
+  --sh-md: 0 6px 18px rgba(20, 35, 28, 0.08);
+  --sh-lg: 0 16px 40px rgba(20, 35, 28, 0.12);
+  --sh-sheet: 0 -8px 32px rgba(20, 35, 28, 0.14);
+  --sh-accent: 0 12px 28px rgba(242, 140, 40, 0.28);
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur: 200ms;
+
+  /* ---- Mobile ordering layout ---- */
+  --shop-max: 30rem;            /* khung canh giữa trên desktop, full-bleed mobile */
+  --topbar-h: 56px;
+  --cartbar-h: 64px;
+  --tap-min: 44px;              /* tap target tối thiểu */
+  --tap-cta: 56px;              /* nút hành động chính một tay */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* ---- Z-index ---- */
+  --z-topbar: 40;
+  --z-cartbar: 50;
+  --z-overlay: 80;
+  --z-sheet: 90;
+  --z-toast: 200;
+
+  color-scheme: light;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+[data-shop="v2"] *,
+[data-shop="v2"] *::before,
+[data-shop="v2"] *::after {
+  box-sizing: border-box;
+}
+
+[data-shop="v2"] :where(h1, h2, h3, h4) {
+  font-family: var(--font-display);
+  letter-spacing: var(--track-tight);
+  font-weight: 700;
+  margin: 0;
+}
+[data-shop="v2"] :where(p) { margin: 0; }
+[data-shop="v2"] :where(a) { color: inherit; text-decoration: none; }
+[data-shop="v2"] :where(button) { font-family: inherit; }
+
+[data-shop="v2"] :where(:focus-visible) {
+  outline: 2px solid var(--jade);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* tabular numbers cho tiền/SL */
+[data-shop="v2"] .shop-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-shop="v2"] * { animation: none !important; transition: none !important; }
+}
+
+/* ---- Scroll lock khi mở sheet/overlay ---- */
+.shop-scroll-lock { overflow: hidden !important; }
+
+/* ---- Animations ---- */
+@keyframes shop-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shop-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes shop-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes shop-pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* ---- Live dot (realtime) ---- */
+[data-shop="v2"] .shop-live-dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ok-fg);
+}
+[data-shop="v2"] .shop-live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 2px solid var(--ok-fg);
+  opacity: 0.5;
+  animation: shop-pulse 1.8s ease-out infinite;
+}
+@keyframes shop-pulse {
+  0% { transform: scale(0.8); opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* ---- Hide scrollbar cho category rail ngang ---- */
+[data-shop="v2"] .shop-no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+[data-shop="v2"] .shop-no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ============================================================
+ * Motion & loading layer — làm UI "sống": reveal, stagger,
+ * chuyển màn, skeleton shimmer, top progress, pop số lượng.
+ * ============================================================ */
+
+/* Reveal khi vào màn / khi phần tử xuất hiện */
+[data-shop="v2"] .shop-screen-in {
+  animation: shop-screen-in 360ms var(--ease) both;
+}
+@keyframes shop-screen-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Stagger cho danh sách (món, dòng giỏ, timeline...) */
+[data-shop="v2"] .shop-stagger > * {
+  animation: shop-fade-up 420ms var(--ease) both;
+}
+[data-shop="v2"] .shop-stagger > *:nth-child(1) { animation-delay: 20ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(2) { animation-delay: 55ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(3) { animation-delay: 90ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(4) { animation-delay: 125ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(5) { animation-delay: 160ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(6) { animation-delay: 195ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(7) { animation-delay: 230ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(8) { animation-delay: 265ms; }
+[data-shop="v2"] .shop-stagger > *:nth-child(n + 9) { animation-delay: 300ms; }
+
+/* Cart bar trượt lên */
+[data-shop="v2"] .shop-slide-up {
+  animation: shop-slide-up 320ms var(--ease) both;
+}
+@keyframes shop-slide-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Pop khi số lượng đổi */
+[data-shop="v2"] .shop-pop {
+  animation: shop-pop 280ms var(--ease);
+}
+@keyframes shop-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.28); }
+  100% { transform: scale(1); }
+}
+
+/* Skeleton shimmer */
+[data-shop="v2"] .shop-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+}
+[data-shop="v2"] .shop-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
+  animation: shop-shimmer 1.3s infinite;
+}
+@keyframes shop-shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* Top progress bar (đang gửi / đang tính phí) */
+[data-shop="v2"] .shop-topbar-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2.5px;
+  overflow: hidden;
+  background: transparent;
+}
+[data-shop="v2"] .shop-topbar-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: shop-indeterminate 1.05s var(--ease) infinite;
+}
+@keyframes shop-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+
+/* Spinner dùng chung */
+[data-shop="v2"] .shop-spin { animation: shop-spin 0.7s linear infinite; }
+@keyframes shop-spin { to { transform: rotate(360deg); } }
+
+/* Pulse nhẹ cho khối "đang chờ xác nhận" */
+[data-shop="v2"] .shop-breathe { animation: shop-breathe 2s var(--ease) infinite; }
+@keyframes shop-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}

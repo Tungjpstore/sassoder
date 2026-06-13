@@ -1,7 +1,6 @@
 import { Suspense } from "react";
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
-import { OrdersBoard } from "@/components/dashboard/orders-board";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealOrdersWorkspaceV2 } from "@/components/dashboard-v2/real/orders-workspace-v2";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { listOrdersForRestaurant } from "@/services/order-service";
 import { listOpenServiceRequests } from "@/services/service-request-service";
@@ -36,17 +35,12 @@ async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { resta
   const initialRequests = JSON.parse(JSON.stringify(serviceRequests));
 
   return (
-    <div className="dashboard-order-service-shell grid gap-3 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <div className="dashboard-order-live-panel xl:sticky xl:top-[92px] xl:h-[calc(100vh-112px)]">
-        <AdminLiveActionCenter
-          initialOrders={initialOrders}
-          initialRequests={initialRequests}
-          restaurantId={restaurantId}
-          variant="panel"
-        />
-      </div>
-      <OrdersBoard initialOrders={initialOrders} restaurantId={restaurantId} canManageTestOrders={canManageTestOrders} />
-    </div>
+    <RealOrdersWorkspaceV2
+      initialOrders={initialOrders}
+      initialRequests={initialRequests}
+      restaurantId={restaurantId}
+      canManageTestOrders={canManageTestOrders}
+    />
   );
 }
 

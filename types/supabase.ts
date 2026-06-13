@@ -901,6 +901,7 @@ export type Database = {
           modifier_total: number;
           modifier_snapshot: Json;
           note: string | null;
+          prepared_at: string | null;
         };
         Insert: {
           id?: string;
@@ -912,6 +913,7 @@ export type Database = {
           modifier_total?: number;
           modifier_snapshot?: Json;
           note?: string | null;
+          prepared_at?: string | null;
         };
         Update: {
           quantity?: number;
@@ -920,6 +922,7 @@ export type Database = {
           modifier_total?: number;
           modifier_snapshot?: Json;
           note?: string | null;
+          prepared_at?: string | null;
         };
         Relationships: [];
       };

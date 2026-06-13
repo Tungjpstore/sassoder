@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
-import { CustomerOrderClient } from "@/components/customer/order-client";
+import { DineInClientV2 } from "@/components/customer-v2/dine-in/dine-in-client-v2";
 import { createSeoMetadata } from "@/lib/seo/metadata";
 import { getCachedPublicMenu } from "@/services/menu-service";
 import { getPublicTable } from "@/services/table-service";
+import "@/app/styles/customer-tokens-v2.css";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,7 @@ export default async function CustomerTablePage({
   if (!table) notFound();
 
   return (
-    <CustomerOrderClient
+    <DineInClientV2
       restaurant={{
         id: restaurant.id,
         name: restaurant.name,

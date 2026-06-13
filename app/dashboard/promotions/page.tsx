@@ -1,5 +1,5 @@
-import { AdminShell } from "@/components/dashboard/app-shell";
-import { PromotionsWorkspace } from "@/components/dashboard/promotions-workspace";
+import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
+import { RealPromotionsWorkspaceV2 } from "@/components/dashboard-v2/real/promotions-workspace-v2";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { listMenuForAdmin } from "@/services/menu-service";
 import { getPromotionStatus, listPromotions, listPromotionUsageSummary } from "@/services/promotion-service";
@@ -37,7 +37,7 @@ export default async function AdminPromotionsPage() {
       entitlement={entitlement}
       subtitle="Tạo chiến dịch giảm giá, mã ưu đãi và chương trình giữ chân khách"
     >
-      <PromotionsWorkspace campaigns={campaignsWithStatus} usage={usage} freeItemOptions={freeItemOptions} />
+      <RealPromotionsWorkspaceV2 restaurantId={session.restaurantId} campaigns={campaignsWithStatus} usage={usage} freeItemOptions={freeItemOptions} />
     </AdminShell>
   );
 }

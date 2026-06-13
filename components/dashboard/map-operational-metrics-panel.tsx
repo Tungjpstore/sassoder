@@ -1,6 +1,10 @@
 import { Activity, AlertTriangle, CheckCircle2, Clock3, DatabaseZap, Route, ShieldCheck, Truck } from "lucide-react";
 import { formatVnd } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import type { getMapOperationalMetrics } from "@/services/map-ops-service";
+
+/* MapOperationalMetricsPanel — read-only panel sức khoẻ map & delivery quote.
+ * Đã chuyển sang design token v2 (var(--d-*)) để khớp Settings v2. */
 
 type MapOperationalMetrics = Awaited<ReturnType<typeof getMapOperationalMetrics>>;
 
@@ -20,13 +24,13 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <div className="rounded-2xl border border-[#ece7dd] bg-[#fbfaf7] px-3 py-3">
+    <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-3">
       <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf7ef] text-[#0f6944]">{icon}</span>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--d-r-md)] bg-[var(--d-primary-soft)] text-[var(--d-primary)]">{icon}</span>
         <span className="min-w-0">
-          <span className="block text-[11px] font-bold text-[#667166]">{label}</span>
-          <strong className="mt-0.5 block text-sm text-[#101813]">{value}</strong>
-          <span className="mt-1 block text-[11px] font-semibold leading-4 text-[#667166]">{detail}</span>
+          <span className="block text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{label}</span>
+          <strong className="d-num mt-0.5 block text-[length:var(--d-fs-sm)] text-[var(--d-text)]">{value}</strong>
+          <span className="mt-1 block text-[length:var(--d-fs-2xs)] font-semibold leading-4 text-[var(--d-text-muted)]">{detail}</span>
         </span>
       </div>
     </div>
@@ -39,21 +43,21 @@ export function MapOperationalMetricsPanel({ metrics }: { metrics: MapOperationa
   const policyCostToday = metrics.policy.usage.reduce((sum, item) => sum + item.estimatedCostVnd, 0);
   const healthTone =
     metrics.health.status === "critical"
-      ? "border-[#f2c7b8] bg-[#fff4ef] text-[#9f341b]"
+      ? "border-[var(--d-danger-fg)]/30 bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]"
       : metrics.health.status === "warning"
-        ? "border-[#f4dfaa] bg-[#fff8e6] text-[#8a5a00]"
-        : "border-[#d7e5d9] bg-[#f3faf4] text-[#0f6944]";
+        ? "border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]"
+        : "border-[var(--d-ok-fg)]/30 bg-[var(--d-ok-bg)] text-[var(--d-ok-fg)]";
 
   return (
-    <section className="rounded-[14px] border border-[#dcebdc] bg-white p-4 shadow-[0_1px_2px_rgba(29,39,32,0.04)]">
+    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-extrabold text-[#101813]">Sức khỏe map & delivery quote</h3>
-          <p className="mt-1 text-xs font-medium leading-5 text-[#667166]">
+          <h3 className="text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">Sức khoẻ map &amp; delivery quote</h3>
+          <p className="mt-1 text-[length:var(--d-fs-xs)] leading-5 text-[var(--d-text-muted)]">
             Tổng hợp {metrics.windowHours} giờ gần nhất từ provider logs, cache logs và delivery quote metrics.
           </p>
         </div>
-        <span className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-black ${healthTone}`}>
+        <span className={cn("inline-flex h-9 items-center gap-2 rounded-[var(--d-r-md)] border px-3 text-[length:var(--d-fs-xs)] font-bold", healthTone)}>
           {metrics.health.status === "healthy" ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
           {metrics.health.status === "critical" ? "Critical" : metrics.health.status === "warning" ? "Warning" : "Healthy"}
         </span>
@@ -93,46 +97,49 @@ export function MapOperationalMetricsPanel({ metrics }: { metrics: MapOperationa
       </div>
 
       <div className="mt-3 grid gap-2 md:grid-cols-3">
-        <div className="rounded-xl border border-[#ece7dd] bg-[#fbfaf7] px-3 py-2 text-xs font-semibold text-[#667166]">
-          <span className="flex items-center gap-2 text-[#101813]">
-            <ShieldCheck size={14} className="text-[#0f6944]" />
+        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+          <span className="flex items-center gap-2 text-[var(--d-text)]">
+            <ShieldCheck size={14} className="text-[var(--d-primary)]" />
             Provider policy
           </span>
           <span className="mt-1 block">
             Disabled: {[...metrics.policy.disabledProviders, ...metrics.policy.disabledGeocoders, ...metrics.policy.disabledRouters].join(", ") || "không"}
           </span>
         </div>
-        <div className="rounded-xl border border-[#ece7dd] bg-[#fbfaf7] px-3 py-2 text-xs font-semibold text-[#667166]">
-          <span className="flex items-center gap-2 text-[#101813]">
-            <Activity size={14} className="text-[#0f6944]" />
+        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+          <span className="flex items-center gap-2 text-[var(--d-text)]">
+            <Activity size={14} className="text-[var(--d-primary)]" />
             Cost guard hôm nay
           </span>
           <span className="mt-1 block">
             {formatVnd(policyCostToday)}{metrics.policy.maxDailyCostVnd ? ` / ${formatVnd(metrics.policy.maxDailyCostVnd)}` : " · chưa đặt ngưỡng"}
           </span>
         </div>
-        <div className="rounded-xl border border-[#ece7dd] bg-[#fbfaf7] px-3 py-2 text-xs font-semibold text-[#667166]">
-          <span className="flex items-center gap-2 text-[#101813]">
-            <Route size={14} className="text-[#0f6944]" />
+        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+          <span className="flex items-center gap-2 text-[var(--d-text)]">
+            <Route size={14} className="text-[var(--d-primary)]" />
             Circuit breaker
           </span>
           <span className="mt-1 block">{openCircuitCount > 0 ? `${openCircuitCount} provider đang mở circuit` : "Không có circuit đang mở"}</span>
         </div>
       </div>
 
-      <div className="mt-4 rounded-xl border border-[#ece7dd] bg-[#fbfaf7] p-3">
+      <div className="mt-4 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-black uppercase text-[#667166]">Release readiness</span>
-          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${metrics.readiness.status === "ready" ? "bg-[#e8f6eb] text-[#0f6944]" : metrics.readiness.status === "critical" ? "bg-[#fff0e8] text-[#9f341b]" : "bg-[#fff8e1] text-[#8a5a00]"}`}>
+          <span className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Release readiness</span>
+          <span className={cn(
+            "rounded-[var(--d-r-pill)] px-2.5 py-1 text-[length:var(--d-fs-2xs)] font-bold",
+            metrics.readiness.status === "ready" ? "bg-[var(--d-ok-bg)] text-[var(--d-ok-fg)]" : metrics.readiness.status === "critical" ? "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]" : "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]"
+          )}>
             {metrics.readiness.readyCount}/{metrics.readiness.totalCount} sẵn sàng
           </span>
         </div>
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {metrics.readiness.items.map((item) => (
-            <div key={item.key} className="rounded-lg border border-[#ece7dd] bg-white px-3 py-2 text-xs font-semibold text-[#667166]">
-              <span className="flex items-center justify-between gap-2 text-[#101813]">
+            <div key={item.key} className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+              <span className="flex items-center justify-between gap-2 text-[var(--d-text)]">
                 <span>{item.label}</span>
-                <span className={item.ready ? "text-[#0f6944]" : item.severity === "critical" ? "text-[#9f341b]" : "text-[#8a5a00]"}>
+                <span className={item.ready ? "text-[var(--d-ok-fg)]" : item.severity === "critical" ? "text-[var(--d-danger-fg)]" : "text-[var(--d-orange-600)]"}>
                   {item.ready ? "OK" : item.severity === "critical" ? "Thiếu" : "Cảnh báo"}
                 </span>
               </span>
@@ -147,16 +154,17 @@ export function MapOperationalMetricsPanel({ metrics }: { metrics: MapOperationa
           {metrics.health.warnings.map((warning) => (
             <div
               key={warning.code}
-              className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+              className={cn(
+                "rounded-[var(--d-r-md)] border px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold",
                 warning.severity === "critical"
-                  ? "border-[#f2c7b8] bg-[#fff4ef] text-[#7c2d12]"
-                  : "border-[#f4dfaa] bg-[#fffaf0] text-[#6f4d08]"
-              }`}
+                  ? "border-[var(--d-danger-fg)]/30 bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]"
+                  : "border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]"
+              )}
             >
               <span className="flex items-start gap-2">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>
-                  <strong className="block text-[13px]">{warning.title}</strong>
+                  <strong className="block text-[length:var(--d-fs-sm)]">{warning.title}</strong>
                   <span className="mt-0.5 block leading-5">{warning.detail}</span>
                 </span>
               </span>
@@ -166,8 +174,8 @@ export function MapOperationalMetricsPanel({ metrics }: { metrics: MapOperationa
       ) : null}
 
       {metrics.provider.breakdown.length > 0 ? (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-[#ece7dd]">
-          <div className="grid min-w-[620px] grid-cols-[1fr_1fr_90px_90px_100px_110px] bg-[#fbfaf7] px-3 py-2 text-xs font-bold text-[#667166]">
+        <div className="mt-4 overflow-x-auto rounded-[var(--d-r-md)] border border-[var(--d-line)]">
+          <div className="grid min-w-[620px] grid-cols-[1fr_1fr_90px_90px_100px_110px] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text-faint)]">
             <span>Provider</span>
             <span>Operation</span>
             <span>Calls</span>
@@ -176,18 +184,18 @@ export function MapOperationalMetricsPanel({ metrics }: { metrics: MapOperationa
             <span>Cost</span>
           </div>
           {metrics.provider.breakdown.slice(0, 8).map((row) => (
-            <div key={`${row.provider}:${row.operation}`} className="grid min-w-[620px] grid-cols-[1fr_1fr_90px_90px_100px_110px] border-t border-[#ece7dd] px-3 py-2 text-xs font-semibold text-[#101813]">
+            <div key={`${row.provider}:${row.operation}`} className="grid min-w-[620px] grid-cols-[1fr_1fr_90px_90px_100px_110px] border-t border-[var(--d-line)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text)]">
               <span>{row.provider}</span>
               <span>{row.operation}</span>
-              <span>{row.requests}</span>
-              <span>{formatPercent(row.failureRate)}</span>
-              <span>{row.avgLatencyMs}ms</span>
-              <span>{formatVnd(row.estimatedCostVnd)}</span>
+              <span className="d-num">{row.requests}</span>
+              <span className="d-num">{formatPercent(row.failureRate)}</span>
+              <span className="d-num">{row.avgLatencyMs}ms</span>
+              <span className="d-num">{formatVnd(row.estimatedCostVnd)}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="mt-4 rounded-xl border border-[#ece7dd] bg-[#fbfaf7] px-4 py-3 text-sm font-semibold text-[#667166]">
+        <div className="mt-4 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-4 py-3 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)]">
           Chưa có metric map trong cửa sổ này. Khi khách tìm địa chỉ hoặc quote giao hàng, panel sẽ tự có dữ liệu.
         </div>
       )}

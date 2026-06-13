@@ -139,8 +139,9 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
     .from("orders")
     .select("id,status,total,payment_method,fulfillment_type,created_at,table:tables(name),items:order_items(quantity,menuItem:menu_items(name))")
     .eq("restaurant_id", restaurantId)
+    .not("status", "in", "(paid,cancelled)")
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(8);
   const topOrdersPromise = supabase
     .from("orders")
     .select("id,status,payment_status,total,items:order_items(quantity,price,menuItem:menu_items(id,name))")

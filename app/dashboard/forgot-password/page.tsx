@@ -18,14 +18,5 @@ export default async function ForgotPasswordPage({
   const initialEmail = firstParam(params.email)?.trim().toLowerCase() ?? "";
   const nextPath = safeProtectedDashboardNextPath(params.next);
 
-  return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center gap-4 px-4 py-6 sm:px-5">
-        {firstParam(params.expired) ? (
-          <p className="rounded-md border border-[#F28C28]/35 bg-[#fff7ed] p-3 text-center text-sm font-semibold text-[#9a4a17]">Mã đặt lại đã hết hạn.</p>
-        ) : null}
-        <ForgotPasswordForm initialEmail={initialEmail} nextPath={nextPath} />
-      </section>
-    </main>
-  );
+  return <ForgotPasswordForm initialEmail={initialEmail} nextPath={nextPath} expired={Boolean(firstParam(params.expired))} />;
 }

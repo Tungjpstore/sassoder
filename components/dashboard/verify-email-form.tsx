@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
 import { resendEmailOtpAction, verifyEmailOtpAction } from "@/app/dashboard/actions";
-import { LogiVNLogo } from "@/components/brand/logivn-logo";
+import {
+  AuthAlert,
+  AuthCard,
+  AuthField,
+  AuthHeader,
+  AuthScaffold,
+  AuthSecondaryButton,
+  AuthSubmit
+} from "@/components/dashboard/auth-v2/auth-scaffold";
 import { buildDashboardLoginPath } from "@/lib/auth-onboarding-intent";
 import { buildOtpCooldownStorageKey, normalizeOtpDigits, otpCooldownExpiresAt, remainingOtpCooldownSeconds } from "@/lib/auth-otp-flow";
 
@@ -83,11 +91,13 @@ export function OtpInput({
   );
 
   return (
-    <div className="flex justify-center gap-1 sm:gap-2" onPaste={handlePaste}>
+    <div className="flex justify-center gap-1.5 sm:gap-2" onPaste={handlePaste}>
       {Array.from({ length: 6 }).map((_, i) => (
         <input
           key={i}
-          ref={(el) => { inputsRef.current[i] = el; }}
+          ref={(el) => {
+            inputsRef.current[i] = el;
+          }}
           type="text"
           inputMode="numeric"
           maxLength={1}
@@ -96,7 +106,7 @@ export function OtpInput({
           onKeyDown={(e) => handleKeyDown(i, e)}
           aria-label={`Số OTP thứ ${i + 1}`}
           disabled={disabled}
-          className="h-12 w-11 rounded-md border border-[#d8dee9] bg-[#f8fafc] text-center text-xl font-black text-[#111827] outline-none transition focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10 disabled:cursor-not-allowed disabled:opacity-60 sm:w-12"
+          className="h-12 w-11 rounded-[var(--d-r-md)] border border-[var(--d-line-strong)] bg-[var(--d-surface)] text-center text-xl font-bold text-[var(--d-text)] outline-none transition focus:border-[var(--d-jade)] focus:ring-2 focus:ring-[var(--d-jade)]/15 disabled:cursor-not-allowed disabled:opacity-60 sm:w-12"
           autoComplete={i === 0 ? "one-time-code" : "off"}
         />
       ))}
@@ -160,76 +170,64 @@ export function VerifyEmailForm({ email, nextPath = "" }: { email: string; nextP
   }, [cooldownStorageKey, resendState?.success]);
 
   return (
-    <main className="min-h-svh overflow-x-hidden bg-[#f7f8fa] text-[#111827]">
-      <section className="auth-fade-in mx-auto flex min-h-svh w-full max-w-[400px] flex-col justify-center px-4 py-6 sm:px-5">
-        <div className="w-full rounded-lg border border-[#d8dee9] bg-white p-4 sm:p-5">
-          <div className="mb-4 flex flex-col items-center text-center">
-            <LogiVNLogo href="/" className="h-10" priority />
-            <h1 className="mt-4 text-2xl font-black tracking-[-0.03em] text-[#111827]">Xác thực email</h1>
-            {effectiveEmail ? <p className="mt-2 text-xs font-bold text-[#667085]">{effectiveEmail}</p> : null}
-            <p className="mt-2 max-w-[280px] text-sm font-semibold leading-6 text-[#667085]">
-              Nhập mã 6 số vừa gửi qua email. Mã chỉ dùng một lần và sẽ hết hạn sau ít phút.
+    <AuthScaffold>
+      <AuthHeader
+        title="Xác thực email"
+        subtitle="Nhập mã 6 số vừa gửi qua email. Mã chỉ dùng một lần và sẽ hết hạn sau ít phút."
+        meta={effectiveEmail ? <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-faint)]">{effectiveEmail}</span> : null}
+      />
+
+      <AuthCard>
+        <form ref={formRef} action={verifyAction} className="grid gap-4">
+          {!normalizedEmail ? (
+            <AuthField
+              label="Email đăng ký"
+              name="visibleEmail"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="admin@example.com"
+              value={manualEmail}
+              onChange={(event) => setManualEmail(event.target.value)}
+            />
+          ) : null}
+          <input type="hidden" name="email" value={effectiveEmail} />
+          <input type="hidden" name="token" value={otp} />
+          <input type="hidden" name="next" value={nextPath} />
+
+          <OtpInput value={otp} disabled={verifyPending} onChange={setOtp} />
+
+          {verifyState?.error ? (
+            <AuthAlert tone="warn" className="text-center">
+              {verifyState.error}
+            </AuthAlert>
+          ) : null}
+          {verifyPending ? (
+            <p className="text-center text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+              Đang kiểm tra mã và chuẩn bị chuyển sang bước thiết lập quán...
             </p>
-          </div>
+          ) : null}
 
-            <form ref={formRef} action={verifyAction} className="grid gap-4">
-              {!normalizedEmail ? (
-                <label className="grid gap-2 text-sm font-semibold text-[#344054]">
-                  Email đăng ký
-                  <input
-                    value={manualEmail}
-                    onChange={(event) => setManualEmail(event.target.value)}
-                    name="visibleEmail"
-                    type="email"
-                    inputMode="email"
-                    className="h-12 rounded-md border border-[#d8dee9] bg-[#f8fafc] px-3 text-sm font-semibold text-[#111827] outline-none transition placeholder:text-[#98a2b3] focus:border-[#0F4D3A]/70 focus:bg-white focus:ring-2 focus:ring-[#0F4D3A]/10"
-                    placeholder="admin@example.com"
-                    autoComplete="email"
-                  />
-                </label>
-              ) : null}
-              <input type="hidden" name="email" value={effectiveEmail} />
-              <input type="hidden" name="token" value={otp} />
-              <input type="hidden" name="next" value={nextPath} />
+          <AuthSubmit disabled={verifyPending || !canVerify}>{verifyPending ? "Đang xác thực..." : "Xác nhận mã"}</AuthSubmit>
+        </form>
 
-              <OtpInput value={otp} disabled={verifyPending} onChange={setOtp} />
+        <form action={resendAction} onSubmit={handleResendSubmit} className="mt-4">
+          <input type="hidden" name="email" value={effectiveEmail} />
+          <input type="hidden" name="next" value={nextPath} />
+          <AuthSecondaryButton type="submit" disabled={!canResend}>
+            {resendPending ? "Đang gửi..." : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
+          </AuthSecondaryButton>
+          {resendState?.success ? <p className="mt-3 text-center text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-ok-fg)]">{resendState.success}</p> : null}
+          {resendState?.error ? <p className="mt-3 text-center text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-warn-fg)]">{resendState.error}</p> : null}
+        </form>
 
-              {verifyState?.error && (
-                <p className="rounded-md border border-[#F28C28]/35 bg-[#fff7ed] p-3 text-center text-sm font-semibold text-[#9a4a17]">
-                  {verifyState.error}
-                </p>
-              )}
-              {verifyPending ? (
-                <p className="text-center text-xs font-bold text-[#667085]">Đang kiểm tra mã và chuẩn bị chuyển sang bước thiết lập quán...</p>
-              ) : null}
-
-              <button
-                className="flex h-12 w-full items-center justify-center rounded-md bg-[#0F4D3A] px-5 text-sm font-black text-white transition hover:bg-[#0b3d2e] disabled:pointer-events-none disabled:opacity-50"
-                disabled={verifyPending || !canVerify}
-              >
-                {verifyPending ? "Đang xác thực..." : "Xác nhận mã"}
-              </button>
-            </form>
-
-            <form action={resendAction} onSubmit={handleResendSubmit} className="mt-4">
-              <input type="hidden" name="email" value={effectiveEmail} />
-              <input type="hidden" name="next" value={nextPath} />
-              <button
-                type="submit"
-                className="flex h-11 w-full items-center justify-center rounded-md border border-[#d8dee9] bg-white px-4 text-sm font-bold text-[#0F4D3A] transition hover:border-[#0F4D3A]/35 disabled:opacity-50"
-                disabled={!canResend}
-              >
-                {resendPending ? "Đang gửi..." : cooldown > 0 ? `Gửi lại sau ${cooldown}s` : "Gửi lại mã"}
-              </button>
-              {resendState?.success && <p className="mt-3 text-center text-sm font-semibold text-[#0F4D3A]">{resendState.success}</p>}
-              {resendState?.error && <p className="mt-3 text-center text-sm font-semibold text-[#9a4a17]">{resendState.error}</p>}
-            </form>
-
-            <Link className="mt-4 inline-flex min-h-11 w-full items-center justify-center text-center text-sm font-semibold text-[#0F4D3A] transition hover:text-[#0b3d2e]" href={loginHref}>
-              Quay lại đăng nhập
-            </Link>
-        </div>
-      </section>
-    </main>
+        <Link
+          className="mt-4 inline-flex min-h-10 w-full items-center justify-center text-center text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-jade)] transition hover:text-[var(--d-jade-700)]"
+          href={loginHref}
+        >
+          Quay lại đăng nhập
+        </Link>
+      </AuthCard>
+    </AuthScaffold>
   );
 }
