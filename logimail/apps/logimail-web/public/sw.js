@@ -1,12 +1,11 @@
-const CACHE_NAME = 'logimail-shell-v5';
+const CACHE_NAME = 'logimail-shell-v6';
 const SHELL_ASSETS = [
-  '/mail/inbox',
-  '/mail/compose',
-  '/mail/settings/notifications',
-  '/auth/login',
   '/manifest.json',
   '/icons/icon.svg',
+  '/icons/icon-192.png',
 ];
+
+const OFFLINE_HTML = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LogiMail</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f8f7f2;color:#24352f}.box{max-width:28rem;margin:1rem;padding:1.25rem;border:1px solid #ded8cb;border-radius:.75rem;background:#fff}.box strong{color:#0f4d3a}</style></head><body><main class="box"><strong>LogiMail đang ngoại tuyến.</strong><p>Vui lòng kiểm tra kết nối rồi tải lại trang.</p></main></body></html>`;
 
 function safeUrl(value, fallback = '/mail/inbox') {
   try {
@@ -59,7 +58,7 @@ async function showLogimailNotification(input) {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS)));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_ASSETS)).catch(() => undefined));
   self.skipWaiting();
 });
 
@@ -72,13 +71,32 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith('/api/')) return;
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/_next/') || url.pathname === '/sw.js') return;
   if (event.request.method !== 'GET') return;
 
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then((cached) => cached || caches.match('/mail/inbox') || caches.match('/auth/login'))));
+  if (event.request.mode === 'navigate') {
+    event.respondWith(fetch(event.request).catch(() => new Response(OFFLINE_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } })));
+    return;
+  }
+
+  event.respondWith(
+    caches.match(event.request).then((cached) => cached || fetch(event.request).then((response) => {
+      if (response.ok && SHELL_ASSETS.includes(url.pathname)) {
+        const copy = response.clone();
+        event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy)));
+      }
+      return response;
+    }))
+  );
 });
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'LOGIMAIL_CLEAR_SW_CACHE') {
+    const task = caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))));
+    if (typeof event.waitUntil === 'function') event.waitUntil(task);
+    return;
+  }
   if (event.data?.type !== 'LOGIMAIL_SHOW_NOTIFICATION') return;
   const task = showLogimailNotification(event.data.payload);
   if (typeof event.waitUntil === 'function') event.waitUntil(task);

@@ -409,9 +409,11 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   assert.match(mailNotificationPage, /MailNotificationSettingsView/);
   assert.match(middleware, /domain\.logivn\.com/);
   assert.match(middleware, /domainControlPrefixes/);
-  assert.match(serviceWorker, /logimail-shell-v5/);
-  assert.match(serviceWorker, /\/mail\/inbox/);
-  assert.match(serviceWorker, /\/mail\/settings\/notifications/);
+  assert.match(serviceWorker, /logimail-shell-v6/);
+  assert.doesNotMatch(serviceWorker, /\n\s*'\/mail\/inbox',/);
+  assert.doesNotMatch(serviceWorker, /\n\s*'\/auth\/login',/);
+  assert.match(serviceWorker, /url\.pathname\.startsWith\('\/_next\/'\)/);
+  assert.match(serviceWorker, /event\.request\.mode === 'navigate'/);
   assert.match(serviceWorker, /LOGIMAIL_SHOW_NOTIFICATION/);
   assert.match(serviceWorker, /notificationclick/);
   assert.match(serviceWorker, /action: 'reply'/);
