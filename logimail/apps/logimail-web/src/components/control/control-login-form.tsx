@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, LogIn } from 'lucide-react';
+import { normalizeAuthError } from '@/lib/auth-errors';
 import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 
 export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: string }>) {
@@ -11,9 +12,17 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState(0);
+
+  useEffect(() => {
+    if (retryAfterSeconds <= 0 || loading) return undefined;
+    const timer = window.setTimeout(() => setRetryAfterSeconds((current) => Math.max(0, current - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retryAfterSeconds, loading]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (retryAfterSeconds > 0 || loading) return;
     setLoading(true);
     setError(null);
     try {
@@ -25,7 +34,9 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
       router.push(redirectTo);
       router.refresh();
     } catch (signInError) {
-      setError(signInError instanceof Error ? signInError.message : 'Không đăng nhập được.');
+      const authError = normalizeAuthError(signInError, 'Không đăng nhập được.');
+      setError(authError.message);
+      setRetryAfterSeconds(authError.retryAfterSeconds);
       setLoading(false);
     }
   }
@@ -57,9 +68,9 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
           required
         />
       </label>
-      <button className="button-link button-reset primary" type="submit" disabled={loading || !email || !password}>
+      <button className="button-link button-reset primary" type="submit" disabled={loading || retryAfterSeconds > 0 || !email || !password}>
         {loading ? <Loader2 size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
-        <span>{loading ? 'Đang đăng nhập' : 'Đăng nhập điều khiển'}</span>
+        <span>{loading ? 'Đang đăng nhập' : retryAfterSeconds > 0 ? `Thử lại sau ${retryAfterSeconds}s` : 'Đăng nhập điều khiển'}</span>
       </button>
       <p className="control-login-hint">Khu vực này chỉ dành cho admin/owner LogiMail. Tài khoản thường sẽ được chuyển về trang quản lý domain.</p>
       <p className="control-login-hint"><a href="/auth/forgot-password">Quên mật khẩu?</a></p>

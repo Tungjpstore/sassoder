@@ -2,12 +2,14 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { normalizeAuthError } from '@/lib/auth-errors';
 import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 
 type FormState = {
   loading: boolean;
   message: string | null;
   error: string | null;
+  retryAfterSeconds?: number;
 };
 
 export type AuthDomainOption = {
@@ -96,9 +98,22 @@ export function AuthLoginForm({ domains }: Readonly<{ domains: AuthDomainOption[
   const [domain, setDomain] = useState(firstDomain(domains));
   const [password, setPassword] = useState('');
   const email = useMemo(() => emailFromParts(localPart, domain), [localPart, domain]);
+  const retryAfterSeconds = state.retryAfterSeconds ?? 0;
+
+  useEffect(() => {
+    if (retryAfterSeconds <= 0 || state.loading) return undefined;
+    const timer = window.setTimeout(() => {
+      setState((current) => ({
+        ...current,
+        retryAfterSeconds: Math.max(0, (current.retryAfterSeconds ?? 0) - 1),
+      }));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [retryAfterSeconds, state.loading]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (retryAfterSeconds > 0 || state.loading) return;
     setState({ loading: true, message: null, error: null });
     try {
       const { error } = await getSupabaseBrowserClient().auth.signInWithPassword({ email, password });
@@ -108,7 +123,8 @@ export function AuthLoginForm({ domains }: Readonly<{ domains: AuthDomainOption[
       router.push('/mail/inbox');
       router.refresh();
     } catch (error) {
-      setState({ loading: false, message: null, error: error instanceof Error ? error.message : 'Không đăng nhập được.' });
+      const authError = normalizeAuthError(error, 'Không đăng nhập được.');
+      setState({ loading: false, message: null, error: authError.message, retryAfterSeconds: authError.retryAfterSeconds });
     }
   }
 
@@ -125,7 +141,7 @@ export function AuthLoginForm({ domains }: Readonly<{ domains: AuthDomainOption[
       <div className="auth-row">
         <a href="/auth/forgot-password">Quên mật khẩu?</a>
       </div>
-      <button className="button-link button-reset primary" type="submit" disabled={state.loading}>{state.loading ? 'Đang xử lý' : 'Đăng nhập'}</button>
+      <button className="button-link button-reset primary" type="submit" disabled={state.loading || retryAfterSeconds > 0}>{state.loading ? 'Đang xử lý' : retryAfterSeconds > 0 ? `Thử lại sau ${retryAfterSeconds}s` : 'Đăng nhập'}</button>
       <p className="auth-inline-copy">Chưa có email? <a href="/auth/register">Đăng ký</a></p>
     </form>
   );
@@ -176,7 +192,8 @@ export function AuthRegisterForm({ domains }: Readonly<{ domains: AuthDomainOpti
       setPassword('');
       setConfirmPassword('');
     } catch (error) {
-      setState({ loading: false, message: null, error: error instanceof Error ? error.message : 'Không đăng ký được.' });
+      const authError = normalizeAuthError(error, 'Không đăng ký được.');
+      setState({ loading: false, message: null, error: authError.message, retryAfterSeconds: authError.retryAfterSeconds });
     }
   }
 
@@ -230,7 +247,8 @@ export function ForgotPasswordForm({ domains }: Readonly<{ domains: AuthDomainOp
       setPassword('');
       setConfirmPassword('');
     } catch (error) {
-      setState({ loading: false, message: null, error: error instanceof Error ? error.message : 'Không đổi được mật khẩu.' });
+      const authError = normalizeAuthError(error, 'Không đổi được mật khẩu.');
+      setState({ loading: false, message: null, error: authError.message, retryAfterSeconds: authError.retryAfterSeconds });
     }
   }
 
@@ -275,7 +293,8 @@ export function InviteAcceptForm() {
       router.push('/mail/inbox');
       router.refresh();
     } catch (error) {
-      setState({ loading: false, message: null, error: error instanceof Error ? error.message : 'Không cập nhật được mật khẩu.' });
+      const authError = normalizeAuthError(error, 'Không cập nhật được mật khẩu.');
+      setState({ loading: false, message: null, error: authError.message, retryAfterSeconds: authError.retryAfterSeconds });
     }
   }
 
