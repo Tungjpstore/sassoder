@@ -96,7 +96,10 @@
     "mermaid": "11.15.0",
     "postcss": "8.5.12",
     "prismjs": "1.30.0",
-    "tmp": "0.2.6",
+    "tmp": "0.2.7",
+    "lighthouse": {
+      "ws": "7.5.11"
+    },
     "@copilotkit/runtime": {
       "uuid": "11.1.1"
     },
