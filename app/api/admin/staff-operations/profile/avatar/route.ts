@@ -3,7 +3,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { AppError } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
-import { uploadStaffSelfAvatar } from "@/features/staff/services/staff-self-service";
+import { uploadStaffSelfAvatar, uploadStaffMemberAvatarByAdmin } from "@/features/staff/services/staff-self-service";
 
 export const preferredRegion = "sin1";
 
@@ -21,7 +21,11 @@ export async function POST(request: Request) {
     assertSameOriginRequest(request, { requireOrigin: true });
     const session = await requireOperationalDashboardApiSession({ feature: "staff_management" });
     const formData = await request.formData();
-    const data = await uploadStaffSelfAvatar({ session, file: formData.get("avatar") });
+    const file = formData.get("avatar");
+    const staffMemberId = typeof formData.get("staffMemberId") === "string" ? String(formData.get("staffMemberId")).trim() : "";
+    const data = staffMemberId
+      ? await uploadStaffMemberAvatarByAdmin({ session, staffMemberId, file })
+      : await uploadStaffSelfAvatar({ session, file });
     await invalidateStaffOperationsBundleCache(session.restaurantId);
     return NextResponse.json({ success: true, message: "Đã tải ảnh đại diện.", data, meta: { generatedAt: new Date().toISOString() }, errors: [] });
   } catch (error) {

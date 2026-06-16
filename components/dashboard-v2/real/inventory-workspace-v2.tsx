@@ -42,20 +42,19 @@ import { MetricCard, Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
-import { MobileCollapse } from "../mobile-collapse";
 import {
   createInventoryCategoryAction,
   createInventoryIngredientAction,
   deactivateInventoryIngredientAction,
   recordInventoryMovementAction,
-  refreshInventoryAlertsAction,
-  updateInventoryAlertStatusAction,
   updateInventoryIngredientAction
 } from "@/app/dashboard/actions";
 import { InventoryWorkspaceV2 as LegacyInventoryWorkbench } from "@/components/dashboard/inventory-workspace-v2";
+import { SmartIntakePanel } from "./inventory/smart-intake";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { formatVnd } from "@/lib/money";
+import { cn } from "@/lib/utils";
 import type {
   InventoryAlert,
   InventoryCategory,
@@ -124,7 +123,9 @@ export function RealInventoryWorkspaceV2(props: Props) {
   const toast = useToast();
   const [tab, setTab] = useState<StockTab>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [receiveId, setReceiveId] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [intakeOpen, setIntakeOpen] = useState(false);
   const [createIngredientOpen, setCreateIngredientOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -159,36 +160,18 @@ export function RealInventoryWorkspaceV2(props: Props) {
     () => ingredients.reduce((s, i) => s + i.onHandQuantity * i.referenceUnitCost, 0),
     [ingredients]
   );
-  const aiAction = intelligence.actionQueue[0];
 
-  const healthTone: "jade" | "info" | "orange" | "danger" =
-    intelligence.healthScore >= 80 ? "jade" : intelligence.healthScore >= 60 ? "info" : intelligence.healthScore >= 40 ? "orange" : "danger";
+  // Map gợi ý số lượng nhập (AI reorder) để mặc định nhanh khi nhập kho.
+  const reorderQtyByIngredient = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of intelligence.reorderSuggestions) {
+      const qty = s.reorderQuantity > 0 ? s.reorderQuantity : Math.max(s.minimumQuantity, 1);
+      map.set(s.ingredientId, qty);
+    }
+    return map;
+  }, [intelligence.reorderSuggestions]);
 
-  // Lô sắp / đã hết hạn — surface để tránh lãng phí (HSD).
-  const expiringBatches = useMemo(() => {
-    const now = Date.now();
-    const horizonMs = 7 * 24 * 60 * 60 * 1000;
-    return warehouse.stockBalances
-      .filter((b) => {
-        if (b.status === "expired") return true;
-        if (!b.expirationDate) return false;
-        const diff = new Date(b.expirationDate).getTime() - now;
-        return Number.isFinite(diff) && diff <= horizonMs && b.onHandQuantity > 0;
-      })
-      .sort((a, b) => {
-        const ta = a.expirationDate ? new Date(a.expirationDate).getTime() : Number.POSITIVE_INFINITY;
-        const tb = b.expirationDate ? new Date(b.expirationDate).getTime() : Number.POSITIVE_INFINITY;
-        return ta - tb;
-      })
-      .slice(0, 12);
-  }, [warehouse.stockBalances]);
-
-  const openAlerts = useMemo(
-    () => warehouse.alerts.filter((a) => a.status === "open" || a.status === "acknowledged").slice(0, 8),
-    [warehouse.alerts]
-  );
-
-  const recentPurchaseOrders = useMemo(() => warehouse.purchaseOrders.slice(0, 6), [warehouse.purchaseOrders]);
+  const receiveTarget = ingredients.find((i) => i.id === receiveId) ?? null;
 
   // Build map: ingredient.id -> menuItems sử dụng nguyên liệu này
   const menuItemsByIngredient = useMemo(() => {
@@ -255,44 +238,6 @@ export function RealInventoryWorkspaceV2(props: Props) {
     }
   }
 
-  // Nhập nhanh theo đề xuất đặt hàng của AI.
-  function quickReorderReceive(s: InventoryReorderSuggestion) {
-    const qty = s.reorderQuantity > 0 ? s.reorderQuantity : Math.max(s.minimumQuantity, 1);
-    void recordMovement(
-      s.ingredientId,
-      "receive",
-      qty,
-      "Nhập nhanh theo đề xuất tối ưu kho (AI)",
-      `Đã nhập ${qty} ${s.unit} cho ${s.name}`
-    );
-  }
-
-  // Alert lifecycle inline: ack / resolve / dismiss.
-  function changeAlertStatus(alertId: string, status: "acknowledged" | "resolved" | "dismissed", successMsg: string) {
-    startTransition(async () => {
-      try {
-        const fd = new FormData();
-        fd.set("alertId", alertId);
-        fd.set("status", status);
-        await updateInventoryAlertStatusAction(fd);
-        toast.success(successMsg);
-        router.refresh();
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Không cập nhật được cảnh báo");
-      }
-    });
-  }
-
-  async function refreshAlerts() {
-    try {
-      await refreshInventoryAlertsAction();
-      toast.success("Đã làm mới cảnh báo kho");
-      router.refresh();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Không làm mới được cảnh báo");
-    }
-  }
-
   function saveIngredient(fd: FormData) {
     startTransition(async () => {
       try {
@@ -338,14 +283,16 @@ export function RealInventoryWorkspaceV2(props: Props) {
     },
     {
       key: "stock",
-      header: "Tồn / Tối thiểu",
+      header: "Tồn kho",
+      width: "1.1fr",
       render: (i) => {
         const st = stockState(i);
         return (
-          <span className="d-num text-[var(--d-text-muted)]">
-            <span className={st.key !== "ok" ? "font-bold text-[var(--d-danger-fg)]" : "font-bold text-[var(--d-text)]"}>{i.onHandQuantity}</span>
-            {" / "}
-            {i.minimumQuantity} {i.unit}
+          <span className="flex items-baseline gap-1.5">
+            <span className={cn("d-num text-[length:var(--d-fs-h2)] font-bold leading-none", st.key === "out" ? "text-[var(--d-danger-fg)]" : st.key === "low" ? "text-[var(--d-orange-600)]" : "text-[var(--d-text)]")}>
+              {i.onHandQuantity}
+            </span>
+            <span className="text-[length:var(--d-fs-2xs)] text-[var(--d-text-faint)]">{i.unit} · tối thiểu {i.minimumQuantity}</span>
           </span>
         );
       }
@@ -378,11 +325,27 @@ export function RealInventoryWorkspaceV2(props: Props) {
     {
       key: "status",
       header: "Trạng thái",
-      align: "right",
       render: (i) => {
         const st = stockState(i);
         return <Badge tone={st.tone}>{st.label}</Badge>;
       }
+    },
+    {
+      key: "receive",
+      header: "Nhập kho",
+      align: "right",
+      render: (i) => (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setReceiveId(i.id);
+          }}
+          className="inline-flex h-8 items-center gap-1 rounded-[var(--d-r-md)] bg-[var(--d-jade)] px-2.5 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-on-jade)] transition hover:opacity-90"
+        >
+          <ArrowDownToLine size={13} /> Nhập
+        </button>
+      )
     }
   ];
 
@@ -390,11 +353,11 @@ export function RealInventoryWorkspaceV2(props: Props) {
     <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Kho & giá vốn" title="Kho hàng">
         <RealtimeStatusBadge state={rtState} />
-        <Button variant="secondary" size="md" onClick={() => void refreshAlerts()}>
-          <Sparkles size={15} /> Quét cảnh báo
-        </Button>
         <Button variant="secondary" size="md" onClick={() => setCreateCategoryOpen(true)}>
           <FolderPlus size={15} /> Nhóm nguyên liệu
+        </Button>
+        <Button variant="secondary" size="md" onClick={() => setIntakeOpen(true)}>
+          <PackageCheck size={15} /> Nhập kho nhanh
         </Button>
         <Button variant="primary" size="md" onClick={() => setCreateIngredientOpen(true)}>
           <Plus size={15} /> Thêm nguyên liệu
@@ -410,54 +373,6 @@ export function RealInventoryWorkspaceV2(props: Props) {
         <MetricCard icon={<TrendingDown size={18} />} label="Hết hàng" value={String(counts.out)} helper={`${warehouse.openAlertCount} cảnh báo mở`} tone={counts.out > 0 ? "danger" : "neutral"} />
         <MetricCard icon={<FileText size={18} />} label="Giá trị kho" value={formatVnd(inventoryValue)} helper={`${snapshot.recipeReadyItemCount}/${snapshot.menuItemCount} món sẵn`} tone="info" />
       </section>
-
-      <section className="grid grid-cols-2 gap-[var(--d-s-3)] lg:grid-cols-4">
-        <MetricCard icon={<ShoppingCart size={18} />} label="PO đang mở" value={String(warehouse.openPurchaseOrderCount)} helper={`${warehouse.purchaseOrderCount} đơn tổng`} tone={warehouse.openPurchaseOrderCount > 0 ? "info" : "neutral"} />
-        <MetricCard icon={<CalendarClock size={18} />} label="Lô sắp hết hạn" value={String(warehouse.expiringBatchCount)} helper={`${warehouse.batchCount} lô theo dõi`} tone={warehouse.expiringBatchCount > 0 ? "orange" : "neutral"} />
-        <MetricCard icon={<Activity size={18} />} label="Sức khoẻ kho" value={`${Math.round(intelligence.healthScore)}/100`} helper={`Tiêu thụ tuần ${formatVnd(intelligence.weeklyUsageValue)}`} tone={healthTone} />
-        <MetricCard icon={<Wallet size={18} />} label="Giá trị nhập dự kiến" value={formatVnd(intelligence.projectedPurchaseValue)} helper={`${intelligence.reorderSuggestions.length} đề xuất đặt hàng`} tone={intelligence.projectedPurchaseValue > 0 ? "jade" : "neutral"} />
-      </section>
-
-      {intelligence.aiBrief ? (
-        <div className="flex flex-col gap-3 rounded-[var(--d-r-lg)] border border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)]/50 p-[var(--d-s-4)] sm:flex-row sm:items-start">
-          <Sparkles size={18} className="flex-none text-[var(--d-orange-600)]" />
-          <div className="flex-1">
-            <p className="text-[length:var(--d-fs-sm)] text-[var(--d-text)]">
-              <span className="font-semibold">AI tóm tắt kho:</span> {intelligence.aiBrief}
-            </p>
-            {aiAction ? (
-              <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-                Ưu tiên: {aiAction.detail || aiAction.title}
-              </p>
-            ) : null}
-          </div>
-          <Button variant="secondary" size="sm" onClick={() => setAdvancedOpen(true)}>Mở bảng điều khiển</Button>
-        </div>
-      ) : null}
-
-      <MobileCollapse title="Phân tích & cảnh báo kho" hint="Đề xuất đặt hàng · lô sắp hết hạn · PO gần đây">
-        <InventoryOptimizationPanel
-          intelligence={intelligence}
-          pendingId={pendingId}
-          onQuickReorder={quickReorderReceive}
-        />
-
-        <ExpiringBatchesPanel batches={expiringBatches} expiringCount={warehouse.expiringBatchCount} />
-
-        <AlertLifecyclePanel
-          alerts={openAlerts}
-          totalOpen={warehouse.openAlertCount}
-          pending={pendingAction}
-          onRefresh={() => void refreshAlerts()}
-          onChangeStatus={changeAlertStatus}
-        />
-
-        <RecentPurchaseOrdersPanel
-          purchaseOrders={recentPurchaseOrders}
-          totalOpen={warehouse.openPurchaseOrderCount}
-          onManage={() => setAdvancedOpen(true)}
-        />
-      </MobileCollapse>
 
       <FilterTabs
         active={tab}
@@ -534,7 +449,116 @@ export function RealInventoryWorkspaceV2(props: Props) {
         onError={(msg) => toast.error(msg)}
       />
 
+      {receiveTarget ? (
+        <QuickReceiveModal
+          item={receiveTarget}
+          suggestedQty={reorderQtyByIngredient.get(receiveTarget.id) ?? null}
+          pending={pendingId === receiveTarget.id}
+          onClose={() => setReceiveId(null)}
+          onReceive={(qty) => {
+            void recordReceive(receiveTarget, qty);
+            setReceiveId(null);
+          }}
+        />
+      ) : null}
+
+      <SmartIntakePanel
+        open={intakeOpen}
+        onClose={() => setIntakeOpen(false)}
+        canProcurement={props.inventoryFeatures.procurement}
+        canAiOcr={props.inventoryFeatures.aiOcr}
+        onCommitted={() => router.refresh()}
+      />
+
     </div>
+  );
+}
+
+function QuickReceiveModal({
+  item,
+  suggestedQty,
+  pending,
+  onClose,
+  onReceive
+}: {
+  item: InventoryIngredient;
+  suggestedQty: number | null;
+  pending: boolean;
+  onClose: () => void;
+  onReceive: (qty: number) => void;
+}) {
+  const defaultQty = suggestedQty && suggestedQty > 0 ? suggestedQty : Math.max(item.minimumQuantity, 1);
+  const [qty, setQty] = useState<number>(defaultQty);
+  const st = stockState(item);
+
+  return (
+    <Modal open onClose={onClose} title={`Nhập kho · ${item.name}`} subtitle="Nhập nhanh" size="sm">
+      <div className="flex flex-col gap-[var(--d-s-4)]">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3 text-center">
+            <p className="text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Tồn hiện tại</p>
+            <p className={cn("d-num mt-1 text-[length:var(--d-fs-h2)] font-bold leading-none", st.key === "out" ? "text-[var(--d-danger-fg)]" : st.key === "low" ? "text-[var(--d-orange-600)]" : "text-[var(--d-text)]")}>{item.onHandQuantity}</p>
+            <p className="mt-0.5 text-[length:var(--d-fs-2xs)] text-[var(--d-text-faint)]">{item.unit}</p>
+          </div>
+          <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3 text-center">
+            <p className="text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Tối thiểu</p>
+            <p className="d-num mt-1 text-[length:var(--d-fs-h2)] font-bold leading-none text-[var(--d-text-muted)]">{item.minimumQuantity}</p>
+            <p className="mt-0.5 text-[length:var(--d-fs-2xs)] text-[var(--d-text-faint)]">{item.unit}</p>
+          </div>
+          <div className="rounded-[var(--d-r-md)] border border-[var(--d-jade)]/40 bg-[var(--d-primary-soft)]/40 p-3 text-center">
+            <p className="text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-primary)]">Sau khi nhập</p>
+            <p className="d-num mt-1 text-[length:var(--d-fs-h2)] font-bold leading-none text-[var(--d-primary)]">{item.onHandQuantity + (Number.isFinite(qty) ? qty : 0)}</p>
+            <p className="mt-0.5 text-[length:var(--d-fs-2xs)] text-[var(--d-text-faint)]">{item.unit}</p>
+          </div>
+        </div>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Số lượng nhập ({item.unit})</span>
+          <input
+            type="number"
+            min={0}
+            step="any"
+            value={Number.isFinite(qty) ? qty : ""}
+            onChange={(e) => setQty(Number(e.target.value))}
+            autoFocus
+            className="d-num h-12 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-h3)] font-bold outline-none focus:border-[var(--d-jade)]"
+          />
+        </label>
+
+        <div className="flex flex-wrap gap-1.5">
+          {[defaultQty, item.minimumQuantity || 10, (item.minimumQuantity || 10) * 2]
+            .filter((v, idx, arr) => v > 0 && arr.indexOf(v) === idx)
+            .map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => setQty(preset)}
+                className="d-num inline-flex h-8 items-center rounded-[var(--d-r-pill)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)] transition hover:border-[var(--d-jade)] hover:text-[var(--d-primary)]"
+              >
+                +{preset} {item.unit}
+              </button>
+            ))}
+          {suggestedQty && suggestedQty > 0 ? (
+            <span className="inline-flex h-8 items-center gap-1 rounded-[var(--d-r-pill)] bg-[var(--d-accent-soft)] px-2.5 text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-orange-600)]">
+              <Sparkles size={11} /> AI gợi ý {suggestedQty}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-[var(--d-line)] pt-3">
+          <Button type="button" variant="secondary" size="md" onClick={onClose}>Huỷ</Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="md"
+            disabled={pending || !Number.isFinite(qty) || qty <= 0}
+            onClick={() => onReceive(qty)}
+          >
+            <ArrowDownToLine size={15} /> Nhập {Number.isFinite(qty) && qty > 0 ? `${qty} ${item.unit}` : "kho"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -715,6 +739,7 @@ function IngredientDrawer({
           <label className="flex flex-col gap-1.5">
             <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Tồn hiện tại</span>
             <input
+              key={`onhand-${item.onHandQuantity}`}
               name="onHandQuantity"
               type="number"
               min={0}
@@ -988,329 +1013,5 @@ function CreateInventoryCategoryModal({
         </div>
       </form>
     </Modal>
-  );
-}
-
-const urgencyTone: Record<"high" | "medium" | "low", "danger" | "orange" | "info"> = {
-  high: "danger",
-  medium: "orange",
-  low: "info"
-};
-
-const urgencyLabel: Record<"high" | "medium" | "low", string> = {
-  high: "Khẩn cấp",
-  medium: "Nên đặt",
-  low: "Theo dõi"
-};
-
-function formatExpiry(date: string | null): { label: string; tone: "danger" | "orange" | "neutral" } {
-  if (!date) return { label: "Không rõ HSD", tone: "neutral" };
-  const diffMs = new Date(date).getTime() - Date.now();
-  if (!Number.isFinite(diffMs)) return { label: "Không rõ HSD", tone: "neutral" };
-  const days = Math.round(diffMs / (24 * 60 * 60 * 1000));
-  if (days < 0) return { label: `Đã hết hạn ${Math.abs(days)} ngày`, tone: "danger" };
-  if (days === 0) return { label: "Hết hạn hôm nay", tone: "danger" };
-  if (days <= 3) return { label: `Còn ${days} ngày`, tone: "danger" };
-  return { label: `Còn ${days} ngày`, tone: "orange" };
-}
-
-/* Panel AI tối ưu kho — reorder suggestions + waste + price signals. */
-function InventoryOptimizationPanel({
-  intelligence,
-  pendingId,
-  onQuickReorder
-}: {
-  intelligence: InventoryIntelligence;
-  pendingId: string | null;
-  onQuickReorder: (s: InventoryReorderSuggestion) => void;
-}) {
-  const { reorderSuggestions, wasteSignals, priceSignals } = intelligence;
-  if (reorderSuggestions.length === 0 && wasteSignals.length === 0 && priceSignals.length === 0) return null;
-
-  return (
-    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
-      <div className="flex items-center gap-2">
-        <Sparkles size={16} className="text-[var(--d-primary)]" />
-        <p className="d-eyebrow text-[var(--d-primary)]">AI tối ưu kho</p>
-      </div>
-
-      <div className="mt-3 grid gap-[var(--d-s-3)] lg:grid-cols-3">
-        {/* Đề xuất đặt hàng */}
-        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-[var(--d-s-3)]">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Đề xuất đặt hàng</span>
-            <Badge tone="jade">{reorderSuggestions.length}</Badge>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {reorderSuggestions.length === 0 ? (
-              <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">Tồn kho đang đủ, chưa cần đặt thêm.</p>
-            ) : (
-              reorderSuggestions.slice(0, 6).map((s) => (
-                <div key={s.ingredientId} className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{s.name}</span>
-                      <span className="block text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">
-                        Tồn <span className="d-num">{s.onHandQuantity}</span>/{s.minimumQuantity} {s.unit}
-                        {s.daysLeft !== null ? ` · còn ${s.daysLeft} ngày` : ""}
-                      </span>
-                    </span>
-                    <Badge tone={urgencyTone[s.urgency]}>{urgencyLabel[s.urgency]}</Badge>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2">
-                    <span className="d-num text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-                      Đặt <span className="font-bold text-[var(--d-text)]">{s.reorderQuantity} {s.unit}</span> · {formatVnd(s.estimatedCost)}
-                    </span>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={pendingId === s.ingredientId}
-                      onClick={() => onQuickReorder(s)}
-                    >
-                      <ArrowDownToLine size={13} /> {pendingId === s.ingredientId ? "Đang nhập…" : "Nhập nhanh"}
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Tín hiệu lãng phí */}
-        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-[var(--d-s-3)]">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Tín hiệu lãng phí</span>
-            <Badge tone={wasteSignals.length > 0 ? "orange" : "neutral"}>{wasteSignals.length}</Badge>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {wasteSignals.length === 0 ? (
-              <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">Không có hao hụt đáng kể gần đây.</p>
-            ) : (
-              wasteSignals.slice(0, 6).map((w) => (
-                <div key={w.ingredientId} className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-2.5">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{w.name}</span>
-                    <span className="block text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">{w.movementCount} lần · {w.wasteQuantity} {w.unit}</span>
-                  </span>
-                  <span className="d-num shrink-0 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-danger-fg)]">−{formatVnd(w.wasteCost)}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Biến động giá */}
-        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-[var(--d-s-3)]">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Biến động giá nhập</span>
-            <Badge tone={priceSignals.length > 0 ? "info" : "neutral"}>{priceSignals.length}</Badge>
-          </div>
-          <div className="mt-2 grid gap-2">
-            {priceSignals.length === 0 ? (
-              <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">Giá nhập ổn định.</p>
-            ) : (
-              priceSignals.slice(0, 6).map((p) => {
-                const up = p.changePercent >= 0;
-                return (
-                  <div key={p.ingredientId} className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-2.5">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{p.name}</span>
-                      <span className="d-num block text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">{formatVnd(p.previousUnitCost)} → {formatVnd(p.latestUnitCost)}</span>
-                    </span>
-                    <span className={`d-num inline-flex shrink-0 items-center gap-1 text-[length:var(--d-fs-xs)] font-bold ${up ? "text-[var(--d-danger-fg)]" : "text-[var(--d-primary)]"}`}>
-                      {up ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
-                      {up ? "+" : ""}{Math.round(p.changePercent)}%
-                    </span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* Cảnh báo HSD / lô sắp - đã hết hạn. */
-function ExpiringBatchesPanel({
-  batches,
-  expiringCount
-}: {
-  batches: InventoryStockBalance[];
-  expiringCount: number;
-}) {
-  if (batches.length === 0 && expiringCount === 0) return null;
-
-  return (
-    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)]/40 p-[var(--d-s-4)]">
-      <div className="flex items-center gap-2">
-        <CalendarClock size={16} className="text-[var(--d-orange-600)]" />
-        <p className="d-eyebrow text-[var(--d-orange-600)]">Cảnh báo hạn sử dụng</p>
-        <Badge tone="orange">{expiringCount}</Badge>
-      </div>
-      {batches.length === 0 ? (
-        <p className="mt-3 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">Có {expiringCount} lô cần theo dõi HSD. Mở bảng điều khiển để xem chi tiết.</p>
-      ) : (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {batches.map((b) => {
-            const exp = b.status === "expired" ? { label: "Đã hết hạn", tone: "danger" as const } : formatExpiry(b.expirationDate);
-            return (
-              <div key={b.id} className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-2.5">
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{b.ingredientName}</span>
-                  <span className="block truncate text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">
-                    {b.batchCode ? `Lô ${b.batchCode}` : "Không mã lô"}
-                    {b.locationName ? ` · ${b.locationName}` : ""}
-                    {" · "}<span className="d-num">{b.onHandQuantity}</span> {b.ingredientUnit}
-                  </span>
-                </span>
-                <Badge tone={exp.tone === "neutral" ? "neutral" : exp.tone}>{exp.label}</Badge>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* Alert lifecycle inline — ack / resolve / dismiss. */
-function AlertLifecyclePanel({
-  alerts,
-  totalOpen,
-  pending,
-  onRefresh,
-  onChangeStatus
-}: {
-  alerts: InventoryAlert[];
-  totalOpen: number;
-  pending: boolean;
-  onRefresh: () => void;
-  onChangeStatus: (alertId: string, status: "acknowledged" | "resolved" | "dismissed", successMsg: string) => void;
-}) {
-  if (alerts.length === 0 && totalOpen === 0) return null;
-
-  const severityTone: Record<InventoryAlert["severity"], "danger" | "orange" | "info" | "neutral"> = {
-    critical: "danger",
-    high: "danger",
-    medium: "orange",
-    low: "info"
-  };
-
-  return (
-    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <BellRing size={16} className="text-[var(--d-orange-600)]" />
-          <p className="d-eyebrow text-[var(--d-orange-600)]">Cảnh báo kho</p>
-          <Badge tone={totalOpen > 0 ? "orange" : "neutral"}>{totalOpen} mở</Badge>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onRefresh}>
-          <Sparkles size={13} /> Quét lại
-        </Button>
-      </div>
-      {alerts.length === 0 ? (
-        <p className="mt-3 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">Không có cảnh báo cần xử lý ngay.</p>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {alerts.map((a) => (
-            <div key={a.id} className="flex flex-col gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-2.5 sm:flex-row sm:items-center">
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2">
-                  <Badge tone={severityTone[a.severity]}>{a.severity}</Badge>
-                  <span className="truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{a.title}</span>
-                </span>
-                {a.detail || a.ingredientName ? (
-                  <span className="mt-0.5 block truncate text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">
-                    {a.ingredientName ? `${a.ingredientName} · ` : ""}{a.detail ?? ""}
-                  </span>
-                ) : null}
-              </span>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                {a.status === "open" ? (
-                  <Button variant="ghost" size="sm" disabled={pending} onClick={() => onChangeStatus(a.id, "acknowledged", "Đã tiếp nhận cảnh báo")}>
-                    <Check size={13} /> Tiếp nhận
-                  </Button>
-                ) : null}
-                <Button variant="secondary" size="sm" disabled={pending} onClick={() => onChangeStatus(a.id, "resolved", "Đã xử lý cảnh báo")}>
-                  <Check size={13} /> Đã xử lý
-                </Button>
-                <Button variant="ghost" size="sm" disabled={pending} onClick={() => onChangeStatus(a.id, "dismissed", "Đã bỏ qua cảnh báo")}>
-                  <X size={13} /> Bỏ qua
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/* Danh sách PO gần đây (read-friendly) — quản lý chi tiết trong Drawer legacy. */
-function RecentPurchaseOrdersPanel({
-  purchaseOrders,
-  totalOpen,
-  onManage
-}: {
-  purchaseOrders: InventoryWarehouseCommandCenter["purchaseOrders"];
-  totalOpen: number;
-  onManage: () => void;
-}) {
-  if (purchaseOrders.length === 0 && totalOpen === 0) return null;
-
-  const statusTone: Record<string, "jade" | "orange" | "info" | "neutral" | "danger"> = {
-    draft: "neutral",
-    submitted: "info",
-    ordered: "info",
-    partially_received: "orange",
-    received: "jade",
-    cancelled: "danger"
-  };
-  const statusLabel: Record<string, string> = {
-    draft: "Nháp",
-    submitted: "Đã gửi",
-    ordered: "Đã đặt",
-    partially_received: "Nhận một phần",
-    received: "Đã nhận",
-    cancelled: "Đã huỷ"
-  };
-
-  return (
-    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <ClipboardList size={16} className="text-[var(--d-primary)]" />
-          <p className="d-eyebrow text-[var(--d-primary)]">Đơn đặt hàng gần đây</p>
-          <Badge tone={totalOpen > 0 ? "info" : "neutral"}>{totalOpen} đang mở</Badge>
-        </div>
-        <Button variant="secondary" size="sm" onClick={onManage}>
-          <ShoppingCart size={13} /> Quản lý PO
-        </Button>
-      </div>
-      {purchaseOrders.length === 0 ? (
-        <p className="mt-3 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">Chưa có đơn đặt hàng. Tạo PO trong bảng điều khiển nâng cao.</p>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {purchaseOrders.map((po) => (
-            <div key={po.id} className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-2.5">
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2">
-                  <span className="truncate text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{po.poNumber}</span>
-                  <Badge tone={statusTone[po.status] ?? "neutral"}>{statusLabel[po.status] ?? po.status}</Badge>
-                </span>
-                <span className="block truncate text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">
-                  {po.supplierName ?? "Chưa gán NCC"}
-                  {po.expectedDeliveryAt ? ` · giao ${formatExpiry(po.expectedDeliveryAt).label.toLowerCase()}` : ""}
-                  {` · ${po.lineCount} dòng`}
-                </span>
-              </span>
-              <span className="d-num shrink-0 text-right text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{formatVnd(po.totalAmount)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
   );
 }

@@ -94,12 +94,9 @@ test("inventory command center keeps the default workspace compact with quick op
   assert.match(inventoryWorkspaceSource, /function InventoryWorkbenchShell/);
   assert.match(inventoryWorkspaceSource, /function QuickOperationDrawer/);
   assert.match(inventoryWorkspaceSource, /count: number/);
-  assert.match(inventoryWorkspaceSource, /const activeSignals = commandSignals\.filter/);
-  assert.match(inventoryWorkspaceSource, /const visibleSignals = showAllSignals \? commandSignals : prioritizedSignals\.slice\(0, 2\)/);
   assert.match(inventoryWorkspaceSource, /const visibleActions = showMoreActions \? \[\.\.\.primaryActions, \.\.\.secondaryActions\] : primaryActions/);
-  assert.match(inventoryWorkspaceSource, /Chỉ số nền/);
+  assert.match(inventoryWorkspaceSource, /Thao tác nhanh/);
   assert.match(inventoryWorkspaceSource, /Thêm thao tác/);
-  assert.match(inventoryWorkspaceSource, /aria-expanded=\{showCommandMetrics\}/);
   assert.match(inventoryWorkspaceSource, /const QUICK_OPTION_LIMIT = 80/);
   assert.match(inventoryWorkspaceSource, /function getQuickIngredientOptions/);
   assert.match(inventoryWorkspaceSource, /function getQuickStockOptions/);

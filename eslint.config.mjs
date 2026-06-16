@@ -1,4 +1,5 @@
 import nextVitals from "eslint-config-next/core-web-vitals";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = [
   {
@@ -6,6 +7,9 @@ const eslintConfig = [
   },
   ...nextVitals,
   {
+    plugins: {
+      "react-hooks": reactHooks
+    },
     rules: {
       // Cosmetic-only: literal ' and " render fine in JSX. Disabled project-wide to
       // avoid noisy escapes across Vietnamese copy.

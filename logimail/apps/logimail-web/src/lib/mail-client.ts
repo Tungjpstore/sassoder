@@ -7,6 +7,8 @@ import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import type StreamTransport from 'nodemailer/lib/stream-transport';
 import type { AuthorizedMailbox } from '@/lib/mail-access';
 import type { MailSession } from '@/lib/mail-session';
+import { commitDomainQuotaUsage, enforceSendingQuota } from '@/lib/deliverability/quota';
+import { findSuppressedRecipients } from '@/lib/deliverability/bounce';
 
 export type MailFolderKey = 'inbox' | 'sent' | 'drafts' | 'spam' | 'trash' | 'archive';
 
@@ -34,6 +36,7 @@ export type MailMessageSummary = {
 export type MailMessageDetail = MailMessageSummary & {
   cc: string;
   bodyText: string;
+  bodyHtml: string | null;
   messageId: string | null;
   references: string | null;
   attachments: Array<{ index: number; filename: string; contentType: string; size: number | null }>;
@@ -117,14 +120,113 @@ function createImapClient(session: Pick<MailSession, 'email' | 'password'>, mail
 }
 
 async function withImap<T>(session: Pick<MailSession, 'email' | 'password'>, mailbox: AuthorizedMailbox | null, action: (client: ImapFlow) => Promise<T>) {
+  const client = await acquireImapClient(session, mailbox);
+  try {
+    const result = await action(client);
+    releaseImapClient(session, mailbox, client);
+    return result;
+  } catch (error) {
+    // Never return a connection that errored mid-command to the pool.
+    try {
+      if (client.usable) await client.logout().catch(() => client.close());
+      else client.close();
+    } catch {
+      // ignore teardown failures
+    }
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IMAP connection pool
+//
+// Reuses authenticated IMAP connections across requests instead of opening a
+// fresh TLS + LOGIN handshake on every operation. Each pooled connection is
+// health-checked with NOOP before reuse and evicted when idle, unusable, or
+// when an operation fails. Callers always re-open the target mailbox, so a
+// reused connection carries no stale folder state.
+// ---------------------------------------------------------------------------
+
+type PooledImapClient = { client: ImapFlow; lastUsed: number };
+
+const POOL_MAX_PER_KEY = 3;
+const POOL_IDLE_TTL_MS = 60_000;
+const imapPool = new Map<string, PooledImapClient[]>();
+let poolSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function poolKey(session: Pick<MailSession, 'email'>, mailbox?: AuthorizedMailbox | null) {
+  const config = imapConfig(mailbox);
+  return `${config.host}:${config.port}:${session.email.toLowerCase()}`;
+}
+
+function closeQuietly(client: ImapFlow) {
+  try {
+    client.close();
+  } catch {
+    // ignore
+  }
+}
+
+function schedulePoolSweep() {
+  if (poolSweepTimer) return;
+  poolSweepTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, list] of imapPool) {
+      const fresh = list.filter((pooled) => {
+        if (now - pooled.lastUsed > POOL_IDLE_TTL_MS || !pooled.client.usable) {
+          closeQuietly(pooled.client);
+          return false;
+        }
+        return true;
+      });
+      if (fresh.length) imapPool.set(key, fresh);
+      else imapPool.delete(key);
+    }
+    if (imapPool.size === 0 && poolSweepTimer) {
+      clearInterval(poolSweepTimer);
+      poolSweepTimer = null;
+    }
+  }, POOL_IDLE_TTL_MS);
+  // Do not keep the event loop alive solely for the sweep timer.
+  (poolSweepTimer as unknown as { unref?: () => void }).unref?.();
+}
+
+async function acquireImapClient(session: Pick<MailSession, 'email' | 'password'>, mailbox?: AuthorizedMailbox | null) {
+  const key = poolKey(session, mailbox);
+  const list = imapPool.get(key);
+  while (list && list.length) {
+    const pooled = list.pop();
+    if (!pooled) break;
+    if (Date.now() - pooled.lastUsed > POOL_IDLE_TTL_MS || !pooled.client.usable) {
+      closeQuietly(pooled.client);
+      continue;
+    }
+    try {
+      await pooled.client.noop();
+      return pooled.client;
+    } catch {
+      closeQuietly(pooled.client);
+    }
+  }
   const client = createImapClient(session, mailbox);
   await client.connect();
-  try {
-    return await action(client);
-  } finally {
-    if (client.usable) await client.logout().catch(() => undefined);
-    else client.close();
+  return client;
+}
+
+function releaseImapClient(session: Pick<MailSession, 'email' | 'password'>, mailbox: AuthorizedMailbox | null, client: ImapFlow) {
+  if (!client.usable) {
+    closeQuietly(client);
+    return;
   }
+  const key = poolKey(session, mailbox);
+  const list = imapPool.get(key) ?? [];
+  if (list.length >= POOL_MAX_PER_KEY) {
+    void client.logout().catch(() => closeQuietly(client));
+    return;
+  }
+  list.push({ client, lastUsed: Date.now() });
+  imapPool.set(key, list);
+  schedulePoolSweep();
 }
 
 function addressLine(addresses?: MessageAddressObject[]) {
@@ -217,6 +319,27 @@ function splitRecipients(value: string | undefined) {
     .filter(Boolean);
 }
 
+const MAX_HTML_BYTES = 1.5 * 1024 * 1024;
+
+// Server-side defense-in-depth scrub. The browser renders this inside a
+// sandboxed iframe (no script execution), so this is a second layer that
+// strips active content, event handlers and dangerous URL schemes before the
+// markup ever reaches the client.
+function sanitizeEmailHtml(value: string | undefined | null): string | null {
+  if (typeof value !== 'string') return null;
+  let html = value.slice(0, MAX_HTML_BYTES);
+  html = html
+    .replace(/<\s*(script|iframe|object|embed|noscript|template|base)[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+    .replace(/<\s*(script|iframe|object|embed|link|meta|base)\b[^>]*>/gi, ' ')
+    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
+    .replace(/\son\w+\s*=\s*[^\s>]+/gi, '')
+    .replace(/(href|src|xlink:href)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '$1=$2#$2')
+    .replace(/(href|src|xlink:href)\s*=\s*("|')\s*data:text\/html[^"']*\2/gi, '$1=$2#$2')
+    .replace(/<\s*style[\s\S]*?expression\s*\([\s\S]*?<\s*\/\s*style\s*>/gi, ' ');
+  return html.trim() || null;
+}
+
 function cleanMailHeaderValue(value: string | undefined, max = 4000) {
   return value?.replace(/[\r\n]/g, ' ').trim().slice(0, max) || undefined;
 }
@@ -285,9 +408,17 @@ async function bufferFrom(value: Buffer | Readable) {
 }
 
 export async function verifyMailCredentials(email: string, password: string, mailbox: AuthorizedMailbox | null) {
-  await withImap({ email, password }, mailbox, async (client) => {
+  // Always use a fresh, non-pooled connection so the supplied password is truly
+  // authenticated against the server (a pooled connection is keyed by email and
+  // could otherwise validate a wrong password).
+  const client = createImapClient({ email, password }, mailbox);
+  await client.connect();
+  try {
     await client.noop();
-  });
+  } finally {
+    if (client.usable) await client.logout().catch(() => client.close());
+    else client.close();
+  }
 }
 
 export async function listMailFolders(session: Pick<MailSession, 'email' | 'password'>, mailbox: AuthorizedMailbox) {
@@ -314,21 +445,106 @@ export async function listMailFolders(session: Pick<MailSession, 'email' | 'pass
   });
 }
 
-export async function listMailMessages(session: Pick<MailSession, 'email' | 'password'>, mailbox: AuthorizedMailbox, folder: MailFolderKey, limit = 40) {
+export type ListMailOptions = { limit?: number; page?: number; query?: string };
+
+export type ListMailResult = {
+  folderPath: string;
+  messages: MailMessageSummary[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+};
+
+function searchCriteria(query: string) {
+  const q = query.trim().slice(0, 120);
+  return { or: [{ subject: q }, { from: q }, { to: q }] };
+}
+
+export async function listMailMessages(
+  session: Pick<MailSession, 'email' | 'password'>,
+  mailbox: AuthorizedMailbox,
+  folder: MailFolderKey,
+  limit = 40,
+  opts: ListMailOptions = {},
+): Promise<ListMailResult> {
+  const pageSize = Math.min(100, Math.max(1, opts.limit ?? limit));
+  const page = Math.max(0, Math.floor(opts.page ?? 0));
+  const query = opts.query?.trim() ?? '';
+
   return withImap(session, mailbox, async (client) => {
     const folders = await client.list();
     const folderPath = folderPathFor(folder, folders);
-    await client.mailboxOpen(folderPath, { readOnly: true });
-    const uids = await client.search({ all: true }, { uid: true });
-    if (!uids || uids.length === 0) return { folderPath, messages: [] as MailMessageSummary[] };
+    const mailboxInfo = await client.mailboxOpen(folderPath, { readOnly: true });
+    const exists = typeof mailboxInfo.exists === 'number' ? mailboxInfo.exists : 0;
 
-    const latest = [...uids].sort((left, right) => right - left).slice(0, Math.min(100, Math.max(1, limit)));
+    const empty: ListMailResult = { folderPath, messages: [], total: 0, page, pageSize, hasMore: false };
+    if (exists === 0) return empty;
+
+    let targetUids: number[];
+    let total: number;
+
+    if (query) {
+      // Server-side IMAP SEARCH across subject/from/to, newest first, paginated.
+      const matched = (await client.search(searchCriteria(query), { uid: true })) || [];
+      total = matched.length;
+      if (total === 0) return empty;
+      const sorted = [...matched].sort((left, right) => right - left);
+      targetUids = sorted.slice(page * pageSize, page * pageSize + pageSize);
+    } else {
+      // Sequence-range window of the newest messages — avoids scanning all UIDs.
+      total = exists;
+      const hi = exists - page * pageSize;
+      if (hi < 1) return { ...empty, total };
+      const lo = Math.max(1, hi - pageSize + 1);
+      const range = `${lo}:${hi}`;
+      const messages: MailMessageSummary[] = [];
+      for await (const message of client.fetch(range, { uid: true, envelope: true, flags: true, internalDate: true, size: true })) {
+        messages.push(messageSummary(folder, message));
+      }
+      messages.sort((left, right) => right.uid - left.uid);
+      return { folderPath, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
+    }
+
+    if (targetUids.length === 0) return { ...empty, total };
     const messages: MailMessageSummary[] = [];
-    for await (const message of client.fetch(latest, { uid: true, envelope: true, flags: true, internalDate: true, size: true }, { uid: true })) {
+    for await (const message of client.fetch(targetUids, { uid: true, envelope: true, flags: true, internalDate: true, size: true }, { uid: true })) {
       messages.push(messageSummary(folder, message));
     }
     messages.sort((left, right) => right.uid - left.uid);
-    return { folderPath, messages };
+    return { folderPath, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
+  });
+}
+
+export type MailActionKind = 'read' | 'unread' | 'flag' | 'unflag' | 'trash' | 'archive' | 'spam';
+
+export async function applyMailAction(
+  session: Pick<MailSession, 'email' | 'password'>,
+  mailbox: AuthorizedMailbox,
+  folder: MailFolderKey,
+  uids: number[],
+  action: MailActionKind,
+) {
+  if (uids.length === 0) return { affected: 0 };
+  return withImap(session, mailbox, async (client) => {
+    const folders = await client.list();
+    const folderPath = folderPathFor(folder, folders);
+    await client.mailboxOpen(folderPath, { readOnly: false });
+
+    if (action === 'read') await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
+    else if (action === 'unread') await client.messageFlagsRemove(uids, ['\\Seen'], { uid: true });
+    else if (action === 'flag') await client.messageFlagsAdd(uids, ['\\Flagged'], { uid: true });
+    else if (action === 'unflag') await client.messageFlagsRemove(uids, ['\\Flagged'], { uid: true });
+    else {
+      const targetKey: MailFolderKey = action === 'trash' ? 'trash' : action === 'archive' ? 'archive' : 'spam';
+      if (folder === targetKey) {
+        if (action === 'trash') await client.messageDelete(uids, { uid: true });
+      } else {
+        const targetPath = folderPathFor(targetKey, folders);
+        await client.messageMove(uids, targetPath, { uid: true });
+      }
+    }
+    return { affected: uids.length };
   });
 }
 
@@ -345,6 +561,7 @@ export async function getMailMessage(session: MailSession, mailbox: AuthorizedMa
       ...messageSummary(folder, message),
       cc: parsedAddressText(parsed?.cc) || addressLine(message.envelope?.cc),
       bodyText: parsed?.text?.trim() || (typeof parsed?.html === 'string' ? htmlToText(parsed.html) : '') || '(Email này chưa có nội dung text an toàn để hiển thị.)',
+      bodyHtml: sanitizeEmailHtml(typeof parsed?.html === 'string' ? parsed.html : null),
       messageId: parsed?.messageId?.trim() || null,
       references: referencesLine(parsed?.references),
       attachments: (parsed?.attachments ?? []).map((attachment, index) => ({
@@ -383,6 +600,19 @@ export async function getMailAttachment(
 
 export async function sendMailThroughMailbox(session: MailSession, mailbox: AuthorizedMailbox, input: SendMailInput) {
   const sanitized = validateSendInput(input);
+
+  // Per-Sending_Domain quota enforcement (R4.3, R18.3, R20.2). Domains without a
+  // configured quota row are allowed. Usage is committed after a successful send.
+  const quota = await enforceSendingQuota(session.email);
+  if (!quota.allowed) throw new Error('quota_exceeded');
+
+  // Block sends to suppressed recipients (R5.4).
+  if (quota.workspaceId) {
+    const recipients = [...sanitized.to, ...sanitized.cc, ...sanitized.bcc];
+    const suppressed = await findSuppressedRecipients(quota.workspaceId, recipients);
+    if (suppressed.length > 0) throw new Error('suppressed');
+  }
+
   const localPart = session.email.split('@')[0];
   const mailboxName = mailbox.displayName?.trim();
   const profileName = mailbox.profileFullName?.trim();
@@ -428,6 +658,9 @@ export async function sendMailThroughMailbox(session: MailSession, mailbox: Auth
     const sentPath = folderPathFor('sent', folders);
     await client.append(sentPath, raw, ['\\Seen'], new Date()).catch(() => undefined);
   }).catch(() => undefined);
+
+  // Count the successful send against the Sending_Domain's daily quota (R18.3).
+  if (quota.domainId) await commitDomainQuotaUsage(quota.domainId).catch(() => undefined);
 
   return {
     messageId: sent.messageId || compiled.messageId,

@@ -6,7 +6,7 @@
  * Nền phẳng sạch, không wallpaper/glass !important như bản cũ.
  * ============================================================ */
 
-[data-dash="v2"] {
+:root {
   /* ---- Brand (đồng bộ landing) ---- */
   --d-jade: #0F4D3A;
   --d-jade-700: #0C3D2E;
@@ -98,11 +98,25 @@
   /* ---- Motion ---- */
   --d-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --d-dur: 200ms;
+  --d-motion-fast: 140ms;
+  --d-motion-base: 220ms;
+  --d-motion-slow: 360ms;
+  --d-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ---- Layout ---- */
   --d-sidebar-w: 248px;
   --d-rail-w: 76px;
   --d-topbar-h: 60px;
+
+  /* ---- Mobile / Touch / Safe-area (staff-hr-redesign) ---- */
+  --d-touch-min: 44px;
+  --d-touch-gap: 8px;
+  --d-safe-top: env(safe-area-inset-top, 0px);
+  --d-safe-right: env(safe-area-inset-right, 0px);
+  --d-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --d-safe-left: env(safe-area-inset-left, 0px);
+  --d-bottomnav-h: 72px;
+  --d-heroclock-h: 168px;
 
   /* ---- Z-index (tái dùng thang cũ) ---- */
   --d-z-shell: 40;
@@ -182,6 +196,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-motion-fast: 0ms;
+    --d-motion-base: 0ms;
+    --d-motion-slow: 0ms;
+    --d-dur: 0ms;
+  }
   [data-dash="v2"] * { animation: none !important; transition: none !important; }
 }
 

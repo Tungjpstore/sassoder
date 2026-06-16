@@ -9,6 +9,8 @@ import type { MailFolder, MailFolderKey, MailMessageDetail, MailMessageSummary, 
 
 type ApiEnvelope<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
 
+type MailActionKind = 'read' | 'unread' | 'flag' | 'unflag' | 'trash' | 'archive' | 'spam';
+
 type ApiError = Error & { code?: string; status?: number };
 
 type SessionData = {
@@ -307,24 +309,75 @@ function FolderPanel({ folders, active }: Readonly<{ folders: MailFolder[]; acti
   );
 }
 
-function MessageList({ messages, folder }: Readonly<{ messages: MailMessageSummary[]; folder: MailFolderKey }>) {
+function MessageRows({
+  messages,
+  folder,
+  activeId,
+  selectedUids,
+  onOpen,
+  onToggleSelect,
+}: Readonly<{
+  messages: MailMessageSummary[];
+  folder: MailFolderKey;
+  activeId: string | null;
+  selectedUids: Set<number>;
+  onOpen: (message: MailMessageSummary) => void;
+  onToggleSelect: (uid: number) => void;
+}>) {
   if (!messages.length) return <div className="message-list"><p className="muted-copy">Không có email trong thư mục này.</p></div>;
   return (
     <section className="message-list" aria-label="Danh sách email">
       {messages.map((message) => (
-        <Link className={`message-row ${message.unread ? 'unread' : ''}`} href={`/mail/message/${message.id}`} key={message.id}>
-          <div>
-            <strong>{folder === 'sent' ? message.to || message.from : message.from}</strong>
-            <time>{formatDate(message.date)}</time>
-          </div>
-          <h2>{message.subject}</h2>
-          <p>{formatSize(message.size)}</p>
-          {message.flagged ? <span className="mail-flag"><Star size={12} aria-hidden="true" /> Đánh dấu</span> : null}
-        </Link>
+        <div
+          key={message.id}
+          className={`message-row selectable ${message.unread ? 'unread' : ''} ${activeId === message.id ? 'active' : ''}`.trim()}
+        >
+          <input
+            type="checkbox"
+            className="message-select"
+            aria-label="Chọn email"
+            checked={selectedUids.has(message.uid)}
+            onChange={() => onToggleSelect(message.uid)}
+          />
+          <button type="button" className="message-open button-reset" onClick={() => onOpen(message)}>
+            <div className="message-open-line">
+              <strong>{folder === 'sent' ? message.to || message.from : message.from}</strong>
+              <time>{formatDate(message.date)}</time>
+            </div>
+            <h2>{message.subject}</h2>
+            <div className="message-open-foot">
+              <span>{formatSize(message.size)}</span>
+              {message.flagged ? <span className="mail-flag"><Star size={12} aria-hidden="true" /> Đánh dấu</span> : null}
+            </div>
+          </button>
+        </div>
       ))}
     </section>
   );
 }
+
+function MessageSkeleton() {
+  return (
+    <section className="message-list" aria-hidden="true">
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div className="message-row skeleton" key={index}>
+          <div className="skeleton-line w-60" />
+          <div className="skeleton-line w-90" />
+          <div className="skeleton-line w-30" />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+const BULK_ACTIONS: Array<{ key: MailActionKind; label: string; icon: typeof Inbox }> = [
+  { key: 'read', label: 'Đã đọc', icon: MailOpen },
+  { key: 'unread', label: 'Chưa đọc', icon: Inbox },
+  { key: 'flag', label: 'Gắn sao', icon: Star },
+  { key: 'archive', label: 'Lưu trữ', icon: Archive },
+  { key: 'spam', label: 'Spam', icon: ShieldCheck },
+  { key: 'trash', label: 'Xoá', icon: Trash2 },
+];
 
 export function MailInboxClient({
   folder,
@@ -333,13 +386,22 @@ export function MailInboxClient({
 }: Readonly<{ folder: MailFolderKey; mailboxes: MailUiMailbox[]; showFolderPanel?: boolean }>) {
   const [folders, setFolders] = useState<MailFolder[]>([]);
   const [messages, setMessages] = useState<MailMessageSummary[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [needsUnlock, setNeedsUnlock] = useState(false);
-  const [query, setQuery] = useState('');
+  const [queryInput, setQueryInput] = useState('');
+  const [activeQuery, setActiveQuery] = useState('');
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const pageSize = 50;
+
+  const load = useCallback(async (nextPage: number, query: string) => {
     if (!mailboxes.length) return;
     setLoading(true);
     setError(null);
@@ -350,12 +412,17 @@ export function MailInboxClient({
         setNeedsUnlock(true);
         return;
       }
+      const params = new URLSearchParams({ folder, limit: String(pageSize), page: String(nextPage) });
+      if (query) params.set('q', query);
       const [folderData, messageData] = await Promise.all([
         apiFetch<{ folders: MailFolder[] }>('/api/logimail/mail/folders'),
-        apiFetch<{ messages: MailMessageSummary[] }>(`/api/logimail/mail/messages?folder=${folder}&limit=50`),
+        apiFetch<{ messages: MailMessageSummary[]; total: number; hasMore: boolean }>(`/api/logimail/mail/messages?${params.toString()}`),
       ]);
       setFolders(folderData.folders);
       setMessages(messageData.messages);
+      setTotal(messageData.total ?? messageData.messages.length);
+      setHasMore(Boolean(messageData.hasMore));
+      setPage(nextPage);
       setNeedsUnlock(false);
     } catch (apiError) {
       const errorCode = (apiError as ApiError).code;
@@ -366,62 +433,220 @@ export function MailInboxClient({
     }
   }, [folder, mailboxes.length]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(0, ''); }, [load]);
 
-  const visibleMessages = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return messages;
-    return messages.filter((message) => [message.from, message.to, message.subject].some((value) => value.toLowerCase().includes(needle)));
-  }, [messages, query]);
+  // Debounced server-side search.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const trimmed = queryInput.trim();
+      if (trimmed !== activeQuery) {
+        setActiveQuery(trimmed);
+        setSelected(new Set());
+        void load(0, trimmed);
+      }
+    }, 450);
+    return () => window.clearTimeout(handle);
+  }, [queryInput, activeQuery, load]);
+
+  const toggleSelect = useCallback((uid: number) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  }, []);
+
+  const allSelected = messages.length > 0 && selected.size === messages.length;
+  const toggleSelectAll = useCallback(() => {
+    setSelected((current) => (current.size === messages.length ? new Set() : new Set(messages.map((message) => message.uid))));
+  }, [messages]);
+
+  const runBulk = useCallback(async (action: MailActionKind) => {
+    if (selected.size === 0) return;
+    setBulkBusy(true);
+    setError(null);
+    try {
+      await apiFetch('/api/logimail/mail/messages/actions', {
+        method: 'POST',
+        body: JSON.stringify({ folder, action, uids: Array.from(selected) }),
+      });
+      const clearedActive = activeId ? messages.find((m) => m.id === activeId && selected.has(m.uid)) : null;
+      setSelected(new Set());
+      if (clearedActive) setActiveId(null);
+      await load(page, activeQuery);
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Không thực hiện được thao tác.');
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [activeId, activeQuery, folder, load, messages, page, selected]);
 
   if (!mailboxes.length) return <p className="muted-copy">Chưa có mailbox được cấp quyền.</p>;
-  if (needsUnlock) return <MailUnlockPanel mailboxes={mailboxes} selectedEmail={session?.session?.email} onUnlocked={(next) => { setSession(next); setNeedsUnlock(false); void load(); }} />;
+  if (needsUnlock) return <MailUnlockPanel mailboxes={mailboxes} selectedEmail={session?.session?.email} onUnlocked={() => { setNeedsUnlock(false); void load(0, activeQuery); }} />;
 
   return (
     <div className="mail-native-stack">
       <div className="toolbar mail-toolbar">
         <label className="mail-inline-search">
           <Search size={15} aria-hidden="true" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm trong thư mục" aria-label="Tìm trong thư mục" />
+          <input value={queryInput} onChange={(event) => setQueryInput(event.target.value)} placeholder="Tìm theo người gửi / tiêu đề (toàn hộp thư)" aria-label="Tìm trong hộp thư" />
         </label>
-        <button className="icon-text-button" type="button" onClick={() => void load()} disabled={loading}>
+        <button className="icon-text-button" type="button" onClick={() => void load(page, activeQuery)} disabled={loading}>
           <RefreshCcw size={15} aria-hidden="true" />
           {loading ? 'Đang tải' : 'Làm mới'}
         </button>
         {session?.session ? <span className="status-badge success">{session.session.email}</span> : null}
-        <span className="status-badge info">{visibleMessages.length}/{messages.length}</span>
+        <span className="status-badge info">{messages.length}/{total}{activeQuery ? ' (tìm)' : ''}</span>
         {error ? <span className="status-badge danger">{error}</span> : null}
       </div>
-      <div className={`inbox-layout native ${showFolderPanel ? '' : 'mail-list-only'}`.trim()}>
+
+      {selected.size > 0 ? (
+        <div className="mail-bulk-bar" role="toolbar" aria-label="Thao tác hàng loạt">
+          <span>{selected.size} đã chọn</span>
+          {BULK_ACTIONS.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button key={action.key} type="button" className={`icon-text-button ${action.key === 'trash' ? 'danger' : ''}`.trim()} disabled={bulkBusy} onClick={() => void runBulk(action.key)}>
+                <Icon size={14} aria-hidden="true" />{action.label}
+              </button>
+            );
+          })}
+          <button type="button" className="icon-text-button" onClick={() => setSelected(new Set())}><X size={14} aria-hidden="true" />Bỏ chọn</button>
+        </div>
+      ) : null}
+
+      <div className={`inbox-layout native ${showFolderPanel ? '' : 'mail-list-only'} ${activeId ? 'has-active' : ''}`.trim()}>
         {showFolderPanel ? <FolderPanel folders={folders} active={folder} /> : null}
-        {loading ? <section className="message-list"><p className="muted-copy">Đang tải email...</p></section> : <MessageList messages={visibleMessages} folder={folder} />}
-        <aside className="reading-pane empty-reading-pane">
-          <MailOpen size={22} aria-hidden="true" />
-          <h2>{folderMeta[folder].label}</h2>
-          <p>{visibleMessages.length ? `${visibleMessages.length} email` : 'Thư mục trống'}</p>
-        </aside>
+        <div className="message-column">
+          {messages.length > 0 ? (
+            <div className="message-list-head">
+              <label className="message-select-all">
+                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} aria-label="Chọn tất cả" />
+                <span>Chọn tất cả</span>
+              </label>
+              <div className="message-pager">
+                <button type="button" className="icon-text-button" disabled={page === 0 || loading} onClick={() => void load(page - 1, activeQuery)}>Trước</button>
+                <span>Trang {page + 1}</span>
+                <button type="button" className="icon-text-button" disabled={!hasMore || loading} onClick={() => void load(page + 1, activeQuery)}>Sau</button>
+              </div>
+            </div>
+          ) : null}
+          {loading ? <MessageSkeleton /> : <MessageRows messages={messages} folder={folder} activeId={activeId} selectedUids={selected} onOpen={(message) => setActiveId(message.id)} onToggleSelect={toggleSelect} />}
+        </div>
+        {activeId ? (
+          <MailReadingPane
+            messageId={activeId}
+            sessionEmail={session?.session?.email ?? null}
+            sessionMailboxId={session?.session?.mailboxId ?? null}
+            onClose={() => setActiveId(null)}
+            onNeedUnlock={() => setNeedsUnlock(true)}
+            onChanged={() => void load(page, activeQuery)}
+          />
+        ) : (
+          <aside className="reading-pane empty-reading-pane">
+            <MailOpen size={22} aria-hidden="true" />
+            <h2>{folderMeta[folder].label}</h2>
+            <p>{messages.length ? 'Chọn một email để đọc' : 'Thư mục trống'}</p>
+          </aside>
+        )}
       </div>
     </div>
   );
 }
 
-export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mailboxes: MailUiMailbox[] }>) {
+function MailHtmlBody({ html, fallbackText }: Readonly<{ html: string; fallbackText: string }>) {
+  const [showImages, setShowImages] = useState(false);
+  const [showPlain, setShowPlain] = useState(false);
+
+  const srcDoc = useMemo(() => {
+    const imgSrc = showImages ? 'img-src data: https:;' : "img-src data:;";
+    const csp = `default-src 'none'; style-src 'unsafe-inline'; ${imgSrc} font-src data: https:; media-src data:;`;
+    return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank"><style>html,body{margin:0;padding:12px;font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:1.6;color:#2B2B2B;word-break:break-word;}img{max-width:100%;height:auto;}a{color:#0F4D3A;}table{max-width:100%;}</style></head><body>${html}</body></html>`;
+  }, [html, showImages]);
+
+  if (showPlain) {
+    return (
+      <div className="mail-html-wrap">
+        <div className="mail-html-toolbar">
+          <button type="button" className="icon-text-button" onClick={() => setShowPlain(false)}>Xem bản HTML</button>
+        </div>
+        <pre className="mail-body-text">{fallbackText}</pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mail-html-wrap">
+      <div className="mail-html-toolbar">
+        {!showImages ? (
+          <button type="button" className="icon-text-button" onClick={() => setShowImages(true)}>Hiển thị ảnh từ xa</button>
+        ) : (
+          <span className="status-badge info">Đang tải ảnh từ xa</span>
+        )}
+        <button type="button" className="icon-text-button" onClick={() => setShowPlain(true)}>Xem bản chữ</button>
+      </div>
+      <iframe
+        className="mail-html-frame"
+        title="Nội dung email"
+        sandbox=""
+        referrerPolicy="no-referrer"
+        srcDoc={srcDoc}
+      />
+    </div>
+  );
+}
+
+function MailReadingPane({
+  messageId,
+  sessionEmail,
+  sessionMailboxId,
+  onClose,
+  onNeedUnlock,
+  onChanged,
+}: Readonly<{
+  messageId: string;
+  sessionEmail: string | null;
+  sessionMailboxId: string | null;
+  onClose?: () => void;
+  onNeedUnlock?: () => void;
+  onChanged?: () => void;
+}>) {
   const router = useRouter();
   const [message, setMessage] = useState<MailMessageDetail | null>(null);
-  const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [needsUnlock, setNeedsUnlock] = useState(false);
   const [taskLoading, setTaskLoading] = useState(false);
   const [taskMessage, setTaskMessage] = useState<string | null>(null);
   const [downloadingIndex, setDownloadingIndex] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setTaskMessage(null);
+    try {
+      const data = await apiFetch<{ message: MailMessageDetail }>(`/api/logimail/mail/messages/${messageId}`);
+      setMessage(data.message);
+      onChanged?.();
+    } catch (apiError) {
+      const errorCode = (apiError as ApiError).code;
+      if (errorCode === 'mail_session_required') onNeedUnlock?.();
+      else setError(apiError instanceof Error ? apiError.message : 'Không mở được email.');
+    } finally {
+      setLoading(false);
+    }
+    // onChanged/onNeedUnlock intentionally excluded to avoid reload loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageId]);
+
+  useEffect(() => { void load(); }, [load]);
 
   const downloadAttachment = useCallback(async (index: number, filename: string) => {
     setDownloadingIndex(index);
     setError(null);
     try {
       const token = await authToken();
-      const response = await fetch(`/api/logimail/mail/messages/${id}/attachments/${index}`, {
+      const response = await fetch(`/api/logimail/mail/messages/${messageId}/attachments/${index}`, {
         headers: { authorization: `Bearer ${token}` },
       });
       if (!response.ok) {
@@ -442,64 +667,22 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
     } finally {
       setDownloadingIndex(null);
     }
-  }, [id]);
+  }, [messageId]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [data, sessionData] = await Promise.all([
-        apiFetch<{ message: MailMessageDetail }>(`/api/logimail/mail/messages/${id}`),
-        apiFetch<SessionData>('/api/logimail/mail/session').catch(() => null),
-      ]);
-      setMessage(data.message);
-      setSession(sessionData);
-      setNeedsUnlock(false);
-    } catch (apiError) {
-      const errorCode = (apiError as ApiError).code;
-      if (errorCode === 'mail_session_required') {
-        const sessionData = await apiFetch<SessionData>('/api/logimail/mail/session').catch(() => null);
-        setSession(sessionData);
-        setNeedsUnlock(true);
-      } else {
-        setError(apiError instanceof Error ? apiError.message : 'Không mở được email.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const startReply = useCallback(() => {
-    if (!message) return;
-    const draft = buildReplyDraft(message, session?.session?.email);
+  const navigateCompose = useCallback((draft: MailComposeInitialDraft, marker: Record<string, string>) => {
     if (typeof window !== 'undefined') window.sessionStorage.setItem(REPLY_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    const params = new URLSearchParams({ reply: '1', to: draft.to ?? '', subject: draft.subject ?? '' });
+    const params = new URLSearchParams({ ...marker, subject: draft.subject ?? '' });
+    if (draft.to) params.set('to', draft.to);
     if (draft.from) params.set('from', draft.from);
     router.push(`/mail/compose?${params.toString()}`);
-  }, [message, router, session?.session?.email]);
+  }, [router]);
 
-  const startReplyAll = useCallback(() => {
-    if (!message) return;
-    const draft = buildReplyAllDraft(message, session?.session?.email);
-    if (typeof window !== 'undefined') window.sessionStorage.setItem(REPLY_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    const params = new URLSearchParams({ replyAll: '1', subject: draft.subject ?? '' });
-    if (draft.from) params.set('from', draft.from);
-    router.push(`/mail/compose?${params.toString()}`);
-  }, [message, router, session?.session?.email]);
-
-  const startForward = useCallback(() => {
-    if (!message) return;
-    const draft = buildForwardDraft(message, session?.session?.email);
-    if (typeof window !== 'undefined') window.sessionStorage.setItem(REPLY_DRAFT_STORAGE_KEY, JSON.stringify(draft));
-    const params = new URLSearchParams({ forward: '1', subject: draft.subject ?? '' });
-    if (draft.from) params.set('from', draft.from);
-    router.push(`/mail/compose?${params.toString()}`);
-  }, [message, router, session?.session?.email]);
+  const startReply = useCallback(() => { if (message) navigateCompose(buildReplyDraft(message, sessionEmail), { reply: '1' }); }, [message, navigateCompose, sessionEmail]);
+  const startReplyAll = useCallback(() => { if (message) navigateCompose(buildReplyAllDraft(message, sessionEmail), { replyAll: '1' }); }, [message, navigateCompose, sessionEmail]);
+  const startForward = useCallback(() => { if (message) navigateCompose(buildForwardDraft(message, sessionEmail), { forward: '1' }); }, [message, navigateCompose, sessionEmail]);
 
   const createTask = useCallback(async () => {
-    if (!message || !session?.session?.mailboxId) return;
+    if (!message || !sessionMailboxId) return;
     setTaskLoading(true);
     setTaskMessage(null);
     setError(null);
@@ -507,7 +690,7 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
       await apiFetch('/api/logimail/team/tasks', {
         method: 'POST',
         body: JSON.stringify({
-          mailboxId: session.session.mailboxId,
+          mailboxId: sessionMailboxId,
           messageUid: message.uid,
           subject: message.subject,
           customerEmail: firstEmailAddress(message.from).toLowerCase(),
@@ -521,14 +704,16 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
     } finally {
       setTaskLoading(false);
     }
-  }, [message, session?.session?.mailboxId]);
-
-  if (needsUnlock) return <MailUnlockPanel mailboxes={mailboxes} selectedEmail={session?.session?.email} onUnlocked={(next) => { setSession(next); setNeedsUnlock(false); void load(); }} />;
+  }, [message, sessionMailboxId]);
 
   return (
     <section className="reading-pane full-reading-pane">
       <div className="mail-detail-actions">
-        <Link className="button-link secondary" href="/mail/inbox">Hộp thư</Link>
+        {onClose ? (
+          <button className="button-link secondary button-reset" type="button" onClick={onClose}>Đóng</button>
+        ) : (
+          <Link className="button-link secondary" href="/mail/inbox">Hộp thư</Link>
+        )}
         <div className="mail-detail-action-group">
           <button className="button-link button-reset primary" type="button" onClick={startReply} disabled={!message || loading}>
             <Reply size={15} aria-hidden="true" />
@@ -559,7 +744,7 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
             {message.cc ? <p>CC: {message.cc}</p> : null}
             <span>{formatDate(message.date)} {message.size ? `· ${formatSize(message.size)}` : ''}</span>
           </header>
-          <pre className="mail-body-text">{message.bodyText}</pre>
+          {message.bodyHtml ? <MailHtmlBody html={message.bodyHtml} fallbackText={message.bodyText} /> : <pre className="mail-body-text">{message.bodyText}</pre>}
           {message.attachments.length ? (
             <div className="attachment-list">
               {message.attachments.map((attachment) => (
@@ -580,6 +765,34 @@ export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mail
         </>
       ) : null}
     </section>
+  );
+}
+
+export function MailMessageClient({ id, mailboxes }: Readonly<{ id: string; mailboxes: MailUiMailbox[] }>) {
+  const router = useRouter();
+  const [session, setSession] = useState<SessionData | null>(null);
+  const [needsUnlock, setNeedsUnlock] = useState(false);
+
+  const loadSession = useCallback(async () => {
+    const data = await apiFetch<SessionData>('/api/logimail/mail/session').catch(() => null);
+    setSession(data);
+    setNeedsUnlock(!data?.unlocked);
+  }, []);
+
+  useEffect(() => { void loadSession(); }, [loadSession]);
+
+  if (needsUnlock) {
+    return <MailUnlockPanel mailboxes={mailboxes} selectedEmail={session?.session?.email} onUnlocked={() => { setNeedsUnlock(false); void loadSession(); }} />;
+  }
+
+  return (
+    <MailReadingPane
+      messageId={id}
+      sessionEmail={session?.session?.email ?? null}
+      sessionMailboxId={session?.session?.mailboxId ?? null}
+      onNeedUnlock={() => setNeedsUnlock(true)}
+      onClose={() => router.push('/mail/inbox')}
+    />
   );
 }
 

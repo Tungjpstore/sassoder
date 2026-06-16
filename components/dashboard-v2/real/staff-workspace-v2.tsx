@@ -11,7 +11,7 @@
  *  - Drawer "Quản lý nâng cao" mở legacy StaffRedesignWorkspace cho contracts/devices/reviews/shift templates
  */
 
-import { useActionState, useEffect, useMemo, useState, useTransition } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -48,8 +48,10 @@ import {
   type StaffActionState
 } from "@/app/dashboard/actions/staff";
 import { useStaffMobileRealtime } from "@/features/staff/components/mobile/use-staff-mobile-realtime";
+import { uploadStaffMemberAvatar } from "@/features/staff/api/client";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { staffPermissionLabel } from "@/lib/staff-permissions";
+import { isStaffRecentlyActive, describeTodayAttendance, describeRole, MetricStrip, StatusPill, StaffIdentityCard } from "@/features/staff/ui";
 import { cn } from "@/lib/utils";
 import type { StaffOperationsBundle, StaffOpsMember } from "@/features/staff/types";
 import type { StaffPayrollDeductions, StaffPayrollProfile } from "@/features/staff/services/staff-payroll-compute";
@@ -65,7 +67,7 @@ type Props = {
 };
 
 type Tab = "all" | "online" | "manager" | "staff" | "blocked";
-type View = "team" | "shifts" | "payroll" | "attendance" | "settings";
+type View = "team" | "shifts" | "attendance" | "payroll" | "compliance";
 
 const ROLE_LABEL: Record<string, string> = {
   owner: "Chủ quán",
@@ -101,17 +103,11 @@ const APPROVAL_TYPE_LABEL: Record<string, string> = {
 };
 
 function isOnlineMember(m: StaffOpsMember) {
-  if (!m.lastSeenAt) return false;
-  return Date.now() - new Date(m.lastSeenAt).getTime() < 15 * 60_000;
+  return isStaffRecentlyActive(m.lastSeenAt);
 }
 
 function shiftLabel(m: StaffOpsMember) {
-  if (m.todayAttendanceState === "on_time") return "Đúng giờ";
-  if (m.todayAttendanceState === "late") return `Trễ ${m.lateMinutesToday}p`;
-  if (m.todayAttendanceState === "overtime") return `Tăng ca ${m.overtimeMinutesToday}p`;
-  if (m.todayAttendanceState === "early_leave") return "Về sớm";
-  if (m.todayAttendanceState === "absent") return "Vắng";
-  return "Chưa chấm công";
+  return describeTodayAttendance(m).label;
 }
 
 function initials(name: string) {
@@ -125,7 +121,6 @@ export function RealStaffWorkspaceV2(props: Props) {
   const [tab, setTab] = useState<Tab>("all");
   const [view, setView] = useState<View>("team");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
   const rtState = useStaffMobileRealtime({ restaurantId, onRefresh: () => router.refresh() });
@@ -141,6 +136,10 @@ export function RealStaffWorkspaceV2(props: Props) {
     [bundle.members]
   );
   const blockedCount = useMemo(() => bundle.members.filter((m) => m.accountStatus === "blocked").length, [bundle.members]);
+  const attentionToday = useMemo(
+    () => bundle.members.filter((m) => m.todayAttendanceState === "late" || m.todayAttendanceState === "absent" || m.todayAttendanceState === "early_leave").length,
+    [bundle.members]
+  );
   const pendingApprovals = useMemo(
     () => bundle.approvals.filter((a) => a.status === "pending").length,
     [bundle.approvals]
@@ -163,7 +162,12 @@ export function RealStaffWorkspaceV2(props: Props) {
       width: "1.6fr",
       render: (m) => (
         <span className="inline-flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--d-primary-soft)] text-[length:var(--d-fs-sm)] font-bold text-[var(--d-primary)]">{initials(m.fullName)}</span>
+          {m.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={m.avatarUrl} alt={m.fullName} className="h-9 w-9 rounded-full border border-[var(--d-line)] object-cover" />
+          ) : (
+            <span className="grid h-9 w-9 place-items-center rounded-full bg-[var(--d-primary-soft)] text-[length:var(--d-fs-sm)] font-bold text-[var(--d-primary)]">{initials(m.fullName)}</span>
+          )}
           <span>
             <span className="block text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{m.fullName}</span>
             <span className="block text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">
@@ -173,7 +177,7 @@ export function RealStaffWorkspaceV2(props: Props) {
         </span>
       )
     },
-    { key: "role", header: "Vai trò", render: (m) => <Badge tone={ROLE_TONE[m.roleCode] ?? "neutral"}>{ROLE_LABEL[m.roleCode] ?? m.roleTitle}</Badge> },
+    { key: "role", header: "Vai trò", render: (m) => <StatusPill descriptor={describeRole(m.roleCode, m.roleTitle)} /> },
     {
       key: "branch",
       header: "Chi nhánh",
@@ -206,9 +210,6 @@ export function RealStaffWorkspaceV2(props: Props) {
     <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Đội ngũ vận hành" title="Nhân viên">
         <RealtimeStatusBadge state={rtState === "idle" ? "connecting" : rtState} />
-        <Button variant="secondary" size="md" onClick={() => setAdvancedOpen(true)}>
-          <Settings2 size={15} /> Quản lý chi tiết
-        </Button>
         <Button variant="primary" size="md" onClick={() => setCreateOpen(true)}>
           <Plus size={15} /> Mời nhân viên
         </Button>
@@ -224,21 +225,26 @@ export function RealStaffWorkspaceV2(props: Props) {
         </div>
       ) : null}
 
-      <section className="grid grid-cols-2 gap-[var(--d-s-3)] lg:grid-cols-4">
-        <StaffStat icon={<Users size={16} />} label="Tổng nhân sự" value={String(totalMembers)} tone="jade" />
-        <StaffStat icon={<ShieldCheck size={16} />} label="Đang làm" value={String(onlineCount)} tone="info" />
-        <StaffStat icon={<Clock3 size={16} />} label="Chờ duyệt" value={String(pendingApprovals)} tone={pendingApprovals > 0 ? "danger" : "neutral"} />
-        <StaffStat icon={<UserCog size={16} />} label="Đã khoá" value={String(blockedCount)} tone={blockedCount > 0 ? "orange" : "neutral"} />
+      <section>
+        <p className="d-eyebrow mb-2">Hôm nay</p>
+        <MetricStrip
+          items={[
+            { label: "Đang trong ca", value: String(onlineCount), tone: "ok" },
+            { label: "Đi muộn / vắng", value: String(attentionToday), tone: attentionToday > 0 ? "orange" : "neutral" },
+            { label: "Chờ duyệt", value: String(pendingApprovals), tone: pendingApprovals > 0 ? "danger" : "neutral" },
+            { label: "Tổng đội ngũ", value: String(totalMembers), tone: "jade" }
+          ]}
+        />
       </section>
 
       {/* View tabs — chuyển đổi giữa các góc nhìn quản lý nhân sự */}
       <nav className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
         {([
           { key: "team", label: "Đội ngũ", icon: <Users size={14} /> },
-          { key: "shifts", label: "Ca làm", icon: <Clock3 size={14} /> },
-          { key: "payroll", label: "Bảng lương", icon: <UserCog size={14} /> },
-          { key: "attendance", label: "Hoạt động", icon: <ShieldCheck size={14} /> },
-          { key: "settings", label: "Cấu hình chấm công", icon: <Settings2 size={14} /> }
+          { key: "shifts", label: "Ca & Lịch", icon: <Clock3 size={14} /> },
+          { key: "attendance", label: "Chấm công & Duyệt", icon: <ShieldCheck size={14} /> },
+          { key: "payroll", label: "Lương", icon: <UserCog size={14} /> },
+          { key: "compliance", label: "Hồ sơ & Tuân thủ", icon: <FolderOpen size={14} /> }
         ] as const).map((v) => {
           const on = view === v.key;
           return (
@@ -293,11 +299,14 @@ export function RealStaffWorkspaceV2(props: Props) {
       ) : null}
 
       {view === "attendance" ? (
-        <AttendanceView bundle={bundle} onChanged={() => router.refresh()} />
+        <div className="flex flex-col gap-[var(--d-s-4)]">
+          <AttendanceView bundle={bundle} onChanged={() => router.refresh()} />
+          <AttendanceSettingsView bundle={bundle} onChanged={() => router.refresh()} />
+        </div>
       ) : null}
 
-      {view === "settings" ? (
-        <AttendanceSettingsView bundle={bundle} onChanged={() => router.refresh()} />
+      {view === "compliance" ? (
+        <AdvancedStaffPanel bundle={bundle} onChanged={() => router.refresh()} />
       ) : null}
 
       {selected ? (
@@ -310,17 +319,6 @@ export function RealStaffWorkspaceV2(props: Props) {
         />
       ) : null}
 
-      <Drawer
-        open={advancedOpen}
-        onClose={() => setAdvancedOpen(false)}
-        width="lg"
-        title="Quản lý nhân sự chi tiết"
-        subtitle="HĐLĐ, tài liệu, đánh giá, thiết bị, role"
-        contentClassName="px-2 sm:px-3"
-      >
-        <AdvancedStaffPanel bundle={bundle} onChanged={() => router.refresh()} />
-      </Drawer>
-
       <CreateStaffModal
         open={createOpen}
         bundle={bundle}
@@ -328,29 +326,9 @@ export function RealStaffWorkspaceV2(props: Props) {
         onCreated={() => {
           setCreateOpen(false);
           router.refresh();
-          toast.success("Đã mời nhân viên — mã NV và mật khẩu đã được tạo");
         }}
       />
 
-    </div>
-  );
-}
-
-function StaffStat({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string; tone: "jade" | "info" | "danger" | "orange" | "neutral" }) {
-  const toneCls: Record<string, string> = {
-    jade: "bg-[var(--d-primary-soft)] text-[var(--d-primary)]",
-    info: "bg-[var(--d-info-bg)] text-[var(--d-info-fg)]",
-    danger: "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
-    orange: "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]",
-    neutral: "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
-  };
-  return (
-    <div className="flex items-center gap-2.5 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-3)] py-2 shadow-[var(--d-sh-sm)]">
-      <span className={cn("grid h-8 w-8 flex-none place-items-center rounded-[var(--d-r-md)]", toneCls[tone])}>{icon}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-[length:var(--d-fs-2xs)] uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{label}</span>
-        <span className="d-num block text-[length:var(--d-fs-h3)] font-bold leading-tight text-[var(--d-text)]">{value}</span>
-      </span>
     </div>
   );
 }
@@ -553,6 +531,13 @@ function StaffMemberDrawer({
       }
     >
       <div className="flex flex-col gap-[var(--d-s-4)]">
+        <StaffIdentityCard
+          fullName={member.fullName}
+          employeeCode={member.employeeCode}
+          role={describeRole(member.roleCode, member.roleTitle)}
+          shift={describeTodayAttendance(member)}
+          avatarUrl={member.avatarUrl}
+        />
         {/* Tabs */}
         <FilterTabs
           active={tab}
@@ -598,6 +583,54 @@ function StaffMemberDrawer({
   );
 }
 
+function StaffAvatarUploader({ member }: { member: StaffOpsMember }) {
+  const router = useRouter();
+  const toast = useToast();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function handleFile(file: File | null) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      await uploadStaffMemberAvatar(member.id, file);
+      toast.success("Đã cập nhật ảnh đại diện nhân viên");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không thể tải ảnh đại diện.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <section className="flex items-center gap-[var(--d-s-4)] rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
+      {member.avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={member.avatarUrl} alt={member.fullName} className="h-16 w-16 rounded-full border border-[var(--d-line)] object-cover" />
+      ) : (
+        <span className="grid h-16 w-16 place-items-center rounded-full bg-[var(--d-primary-soft)] text-[length:var(--d-fs-h3)] font-bold text-[var(--d-primary)]">{initials(member.fullName)}</span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Ảnh đại diện</p>
+        <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">JPG, PNG hoặc WebP, tối đa 3MB. Đồng bộ ngay với app nhân viên.</p>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        disabled={uploading}
+        onChange={(event) => void handleFile(event.currentTarget.files?.[0] ?? null)}
+      />
+      <Button type="button" variant="secondary" size="md" disabled={uploading} onClick={() => inputRef.current?.click()}>
+        {uploading ? "Đang tải…" : member.avatarUrl ? "Đổi ảnh" : "Tải ảnh"}
+      </Button>
+    </section>
+  );
+}
+
 function ProfilePanel({
   member,
   bundle,
@@ -613,6 +646,8 @@ function ProfilePanel({
     <form id={formId} action={(fd) => onSave(fd)} className="flex flex-col gap-[var(--d-s-4)]">
       <input type="hidden" name="userId" value={member.userId} />
       <input type="hidden" name="roleCode" value={member.roleCode} />
+
+      <StaffAvatarUploader member={member} />
 
       <section className="grid gap-3 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] sm:grid-cols-2">
         <FormField label="Họ tên" name="fullName" defaultValue={member.fullName} required full />
@@ -951,7 +986,62 @@ function CreateStaffModal({
 }) {
   const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<StaffActionState | null>(null);
   if (!open) return null;
+
+  function copy(value: string | null | undefined, label: string) {
+    if (!value) return;
+    navigator.clipboard.writeText(value).then(
+      () => toast.success(`Đã sao chép ${label}`),
+      () => toast.error("Không sao chép được")
+    );
+  }
+
+  function finish() {
+    setResult(null);
+    onCreated();
+  }
+
+  if (result) {
+    return (
+      <Modal open onClose={finish} title="Đã tạo nhân viên" subtitle="Thông tin đăng nhập PWA" size="md">
+        <div className="grid gap-3">
+          <div className="rounded-[var(--d-r-md)] border border-[var(--d-jade)]/30 bg-[var(--d-primary-soft)] p-3">
+            <p className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-primary)]">
+              Gửi mã nhân viên và mật khẩu này cho nhân viên qua kênh an toàn (Telegram, gọi điện). Nhân viên sẽ được yêu cầu đổi mật khẩu ngay sau lần đăng nhập đầu tại <code className="rounded bg-[var(--d-surface)] px-1 font-mono">/staff</code>.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3">
+              <div className="min-w-0">
+                <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Mã nhân viên</p>
+                <p className="d-num mt-1 break-all font-mono text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{result.employeeCode ?? "—"}</p>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={() => copy(result.employeeCode, "mã nhân viên")}>
+                <Copy size={13} /> Copy
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-3">
+              <div className="min-w-0">
+                <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Mật khẩu lần đầu</p>
+                <p className="d-num mt-1 break-all font-mono text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{result.temporaryPassword ?? "—"}</p>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={() => copy(result.temporaryPassword, "mật khẩu")}>
+                <Copy size={13} /> Copy
+              </Button>
+            </div>
+          </div>
+          <div className="mt-1 flex justify-end gap-2 border-t border-[var(--d-line)] pt-3">
+            <Button type="button" variant="secondary" size="md" onClick={() => setResult(null)}>
+              <Plus size={15} /> Tạo nhân viên khác
+            </Button>
+            <Button type="button" variant="primary" size="md" onClick={finish}>Xong</Button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
   return (
     <Modal open onClose={onClose} title="Mời nhân viên" subtitle="Nhân sự" size="md">
       <form
@@ -964,7 +1054,8 @@ function CreateStaffModal({
               toast.error(res.error);
               return;
             }
-            onCreated();
+            toast.success("Đã tạo nhân viên — mã NV và mật khẩu đã sẵn sàng");
+            setResult(res);
           } catch (e) {
             toast.error(e instanceof Error ? e.message : "Không tạo được nhân viên");
           } finally {
@@ -978,12 +1069,12 @@ function CreateStaffModal({
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="Họ tên" name="fullName" required full placeholder="VD: Nguyễn Văn A" />
-          <FormField label="Email login dashboard" name="email" type="email" required placeholder="email@quan.vn" />
-          <FormField label="Mật khẩu khởi tạo" name="password" type="text" required placeholder="Tối thiểu 6 ký tự" />
+          <FormField label="Email login dashboard" name="email" type="email" placeholder="Để trống = tạo email nội bộ" />
+          <FormField label="Mật khẩu lần đầu" name="password" type="text" placeholder="Để trống = tự tạo mật khẩu mạnh (≥ 8 ký tự)" />
           <FormField label="PIN tạo đơn (4 số)" name="pin" maxLength={4} placeholder="VD: 1234" />
           <FormField label="SĐT" name="phone" placeholder="0901234567" />
           <FormField label="Ngày sinh" name="dateOfBirth" type="date" />
-          <FormField label="Quê quán" name="hometown" />
+          <FormField label="Quê quán" name="hometown" placeholder="Không bắt buộc" />
           <FormSelect
             label="Vai trò"
             name="roleCode"

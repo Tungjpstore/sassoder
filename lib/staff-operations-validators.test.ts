@@ -346,6 +346,10 @@ test("staff HR workspace access and actions are permission-first, not ADMIN-only
   assert.doesNotMatch(permissionServiceSource, /adminBaselinePermissions/);
   assert.match(permissionServiceSource, /const accountFallback = member \? null : fallbackRoleCode/);
   assert.match(permissionServiceSource, /mergeEffectivePermissions\(rolePermissions, accountPermissions\)/);
+  // An toàn: chủ quán/ADMIN không bao giờ bị khoá khỏi quản lý nhân sự dù hồ sơ cấu hình sai.
+  assert.match(permissionServiceSource, /applyAdministratorPermissionFloor/);
+  assert.match(permissionServiceSource, /const effectivePermissions = applyAdministratorPermissionFloor\(user\.role, roleCode, permissions\)/);
+  assert.match(permissionServiceSource, /roleCode === "owner" \? "owner" : "manager"/);
 });
 
 test("staff HR completion wires incidents, safe quick actions and stricter attendance guards", () => {

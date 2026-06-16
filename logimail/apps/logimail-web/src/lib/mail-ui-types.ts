@@ -37,6 +37,7 @@ export type MailMessageSummary = {
 export type MailMessageDetail = MailMessageSummary & {
   cc: string;
   bodyText: string;
+  bodyHtml: string | null;
   messageId: string | null;
   references: string | null;
   attachments: Array<{ index: number; filename: string; contentType: string; size: number | null }>;

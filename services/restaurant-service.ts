@@ -774,13 +774,26 @@ export async function createRestaurantUser(input: {
     hometown: input.hometown ?? null,
     mustChangeAppPassword: input.mustChangeAppPassword ?? true,
     notes: input.notes ?? null
+  }).catch(async (profileError) => {
+    // Rollback the half-created account so we never leave an orphan user
+    // (e.g. duplicate PIN) without a staff profile.
+    await supabase.from("users").delete().eq("id", authUser.user.id);
+    await supabase.auth.admin.deleteUser(authUser.user.id);
+    throw profileError;
   });
 
-  await syncStaffPrimaryBranch(supabase, {
-    restaurantId: input.restaurantId,
-    userId: authUser.user.id,
-    branchId: input.branchId ?? null
-  });
+  try {
+    await syncStaffPrimaryBranch(supabase, {
+      restaurantId: input.restaurantId,
+      userId: authUser.user.id,
+      branchId: input.branchId ?? null
+    });
+  } catch (branchError) {
+    await supabase.from("staff_members").delete().eq("restaurant_id", input.restaurantId).eq("user_id", authUser.user.id);
+    await supabase.from("users").delete().eq("id", authUser.user.id);
+    await supabase.auth.admin.deleteUser(authUser.user.id);
+    throw branchError;
+  }
 
   return {
     ...data,

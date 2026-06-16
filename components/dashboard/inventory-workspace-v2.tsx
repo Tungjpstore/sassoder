@@ -1162,48 +1162,6 @@ export function InventoryWorkspaceV2({
       onClick: () => openWorkbenchTab("alerts")
     }
   ];
-  const commandSignals: InventoryCommandSignal[] = [
-    {
-      id: "stock-risk",
-      label: "Thiếu hàng",
-      value: stockSignalCount.toLocaleString("vi-VN"),
-      count: stockSignalCount,
-      detail: `${stockRiskInsights.lowOrOutCount.toLocaleString("vi-VN")} thấp/hết · ${stockRiskInsights.expiringCount.toLocaleString("vi-VN")} sát HSD`,
-      icon: AlertTriangle,
-      tone: stockSignalCount > 0 ? "yellow" : "green",
-      onClick: () => openWorkbenchTab("stock")
-    },
-    {
-      id: "purchase",
-      label: "Mua hàng",
-      value: purchasePlan.urgentLineCount.toLocaleString("vi-VN"),
-      count: purchasePlan.urgentLineCount + warehouse.openPurchaseOrderCount + stockRiskInsights.incomingCount,
-      detail: `${warehouse.openPurchaseOrderCount.toLocaleString("vi-VN")} PO mở · ${stockRiskInsights.incomingCount.toLocaleString("vi-VN")} dòng đang về`,
-      icon: Truck,
-      tone: purchasePlan.urgentLineCount > 0 || warehouse.openPurchaseOrderCount > 0 ? "blue" : "green",
-      onClick: () => openWorkbenchTab("purchasing")
-    },
-    {
-      id: "control",
-      label: "Kiểm soát",
-      value: auditReport.openControlAlertCount.toLocaleString("vi-VN"),
-      count: auditReport.openControlAlertCount + auditReport.unreasonedMovementCount,
-      detail: `${auditReport.unreasonedMovementCount.toLocaleString("vi-VN")} movement thiếu lý do`,
-      icon: ShieldCheck,
-      tone: auditReport.openControlAlertCount > 0 || auditReport.unreasonedMovementCount > 0 ? "red" : "green",
-      onClick: () => openWorkbenchTab("audit")
-    },
-    {
-      id: "branch-balance",
-      label: "Cân kho",
-      value: branchBalancingReport.suggestedTransferCount.toLocaleString("vi-VN"),
-      count: branchBalancingReport.suggestedTransferCount + branchBalancingReport.openTransferCount,
-      detail: `${branchBalancingReport.openTransferCount.toLocaleString("vi-VN")} transfer mở · ${branchBalancingReport.centralLocationCount.toLocaleString("vi-VN")} kho trung tâm`,
-      icon: GitBranch,
-      tone: branchBalancingReport.suggestedTransferCount > 0 ? "yellow" : "green",
-      onClick: () => openWorkbenchTab("balancing")
-    }
-  ];
   const healthSegments = [
     {
       label: "An toàn",
@@ -1354,14 +1312,6 @@ export function InventoryWorkspaceV2({
 
       <InventoryCommandCenter
         quickActions={quickActions}
-        commandSignals={commandSignals}
-        urgentActions={urgentActions}
-        availableValue={inventoryAnalytics.workingCapital.availableValue}
-        riskValue={stockRiskInsights.riskValue}
-        openAlertCount={warehouse.openAlertCount}
-        openPurchaseOrderCount={warehouse.openPurchaseOrderCount}
-        operationalSignalCount={operationalSignalCount}
-        onOpenOperationalDetails={() => setShowOperationalDetails(true)}
         onOpenAdvancedInsights={() => {
           setShowOperationalDetails(true);
           setShowAdvancedInsights(true);
@@ -1594,201 +1544,65 @@ function InventoryPageHeader({
 
 function InventoryCommandCenter({
   quickActions,
-  commandSignals,
-  urgentActions,
-  availableValue,
-  riskValue,
-  openAlertCount,
-  openPurchaseOrderCount,
-  operationalSignalCount,
-  onOpenOperationalDetails,
   onOpenAdvancedInsights
 }: {
   quickActions: InventoryQuickAction[];
-  commandSignals: InventoryCommandSignal[];
-  urgentActions: InventoryIntelligence["actionQueue"];
-  availableValue: number;
-  riskValue: number;
-  openAlertCount: number;
-  openPurchaseOrderCount: number;
-  operationalSignalCount: number;
-  onOpenOperationalDetails: () => void;
   onOpenAdvancedInsights: () => void;
 }) {
   const primaryActions = quickActions.slice(0, 5);
   const secondaryActions = quickActions.slice(5);
-  const [showAllSignals, setShowAllSignals] = useState(false);
-  const [showCommandMetrics, setShowCommandMetrics] = useState(false);
   const [showMoreActions, setShowMoreActions] = useState(false);
-  const activeSignals = commandSignals.filter((signal) => signal.count > 0);
-  const prioritizedSignals = activeSignals.length > 0 ? activeSignals : commandSignals;
-  const visibleSignals = showAllSignals ? commandSignals : prioritizedSignals.slice(0, 2);
-  const hiddenSignalCount = Math.max(0, commandSignals.length - visibleSignals.length);
   const visibleActions = showMoreActions ? [...primaryActions, ...secondaryActions] : primaryActions;
-  const metricsPanelId = "inventory-command-metrics";
-  const signalPanelId = "inventory-command-signals";
   const actionPanelId = "inventory-command-actions";
 
   return (
     <section className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_18px_50px_rgba(17,24,39,0.05)]">
-      <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="dashboard-eyebrow">Command center</p>
-              <h2 className="dashboard-section-title mt-1">Việc cần xử lý</h2>
-            </div>
-            <Badge tone={operationalSignalCount > 0 ? "yellow" : "green"}>{operationalSignalCount.toLocaleString("vi-VN")} tín hiệu</Badge>
-          </div>
-
-          <div className="mt-3 grid gap-2">
-            {urgentActions.length === 0 ? (
-              <div className="rounded-2xl border border-emerald-100 bg-white px-3 py-3">
-                <div className="flex items-center gap-2 text-sm font-black text-emerald-700">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Kho đang ổn
-                </div>
-                <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">Không có việc gấp trong hàng đợi vận hành.</p>
-              </div>
-            ) : (
-              urgentActions.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={onOpenOperationalDetails}
-                  className="grid gap-1 rounded-2xl border border-amber-200 bg-white px-3 py-3 text-left transition hover:border-amber-300 hover:bg-amber-50/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="line-clamp-1 text-sm font-black text-[var(--foreground)]">{item.title}</p>
-                    <Badge tone={item.priority === "high" ? "red" : "yellow"}>{item.valueLabel}</Badge>
-                  </div>
-                  <p className="line-clamp-2 text-xs font-bold text-[var(--muted-foreground)]">{item.detail}</p>
-                </button>
-              ))
-            )}
-          </div>
-
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-black text-[var(--foreground)]">Thao tác nhanh</p>
+        <div className="flex flex-wrap items-center gap-1">
+          {secondaryActions.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowMoreActions((current) => !current)}
+              aria-expanded={showMoreActions}
+              aria-controls={actionPanelId}
+              className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+            >
+              <Layers3 className="h-4 w-4" />
+              {showMoreActions ? "Thu gọn" : "Thêm thao tác"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => setShowCommandMetrics((current) => !current)}
-            aria-expanded={showCommandMetrics}
-            aria-controls={metricsPanelId}
-            className="mt-3 flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-white px-3 py-3 text-left transition hover:bg-[var(--surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+            onClick={onOpenAdvancedInsights}
+            className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
           >
-            <span className="inline-flex min-w-0 items-center gap-2 text-sm font-black text-[var(--foreground)]">
-              <PackageCheck className="h-4 w-4 text-[var(--primary)]" />
-              Chỉ số nền
-            </span>
-            <span className="min-w-0 truncate text-right text-xs font-black text-[var(--muted-foreground)]">
-              {formatVnd(availableValue)} · rủi ro {formatVnd(riskValue)}
-            </span>
+            <Sparkles className="h-4 w-4" />
+            AI & phân tích
           </button>
-
-          {showCommandMetrics ? (
-            <div id={metricsPanelId} className="mt-2 grid gap-2 sm:grid-cols-2">
-              <MiniMetric label="Tồn khả dụng" value={formatVnd(availableValue)} />
-              <MiniMetric label="Rủi ro tồn" value={formatVnd(riskValue)} />
-              <MiniMetric label="Alert mở" value={openAlertCount.toLocaleString("vi-VN")} />
-              <MiniMetric label="PO mở" value={openPurchaseOrderCount.toLocaleString("vi-VN")} />
-            </div>
-          ) : null}
-        </div>
-
-        <div className="grid min-w-0 gap-3">
-          <div className="rounded-2xl border border-[var(--border)] bg-white p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-black text-[var(--foreground)]">Điểm nóng</p>
-              {hiddenSignalCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAllSignals((current) => !current)}
-                  aria-expanded={showAllSignals}
-                  aria-controls={signalPanelId}
-                  className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
-                >
-                  <Layers3 className="h-4 w-4" />
-                  {showAllSignals ? "Thu gọn" : `${hiddenSignalCount.toLocaleString("vi-VN")} mục khác`}
-                </button>
-              ) : null}
-            </div>
-            <div id={signalPanelId} className="mt-3 grid gap-2 md:grid-cols-2">
-              {visibleSignals.map((signal) => (
-                <CommandSignalButton key={signal.id} signal={signal} />
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[var(--border)] bg-white p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-black text-[var(--foreground)]">Thao tác nhanh</p>
-              <div className="flex flex-wrap items-center gap-1">
-                {secondaryActions.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setShowMoreActions((current) => !current)}
-                    aria-expanded={showMoreActions}
-                    aria-controls={actionPanelId}
-                    className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
-                  >
-                    <Layers3 className="h-4 w-4" />
-                    {showMoreActions ? "Thu gọn" : "Thêm thao tác"}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={onOpenAdvancedInsights}
-                  className="inline-flex h-9 items-center gap-2 rounded-xl px-2 text-xs font-black text-[var(--primary)] transition hover:bg-[var(--primary-soft)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
-                >
-                  <Sparkles className="h-4 w-4" />
-                  AI & phân tích
-                </button>
-              </div>
-            </div>
-            <div id={actionPanelId} className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              {visibleActions.map((action) => {
-                const Icon = action.icon;
-                return (
-                  <button
-                    key={action.label}
-                    type="button"
-                    onClick={action.onClick}
-                    title={action.description}
-                    className={`grid min-h-[72px] gap-1 rounded-2xl border px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${quickActionToneClass(action.tone)}`}
-                  >
-                    <span className="flex items-center justify-between gap-2">
-                      <Icon className="h-4 w-4" />
-                      <span className="rounded-full bg-white/75 px-2 py-0.5 text-[11px] font-black opacity-80">{action.value}</span>
-                    </span>
-                    <span className="text-sm font-black">{action.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
       </div>
+      <div id={actionPanelId} className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {visibleActions.map((action) => {
+          const Icon = action.icon;
+          return (
+            <button
+              key={action.label}
+              type="button"
+              onClick={action.onClick}
+              title={action.description}
+              className={`grid min-h-[72px] gap-1 rounded-2xl border px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)] ${quickActionToneClass(action.tone)}`}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <Icon className="h-4 w-4" />
+                <span className="rounded-full bg-white/75 px-2 py-0.5 text-[11px] font-black opacity-80">{action.value}</span>
+              </span>
+              <span className="text-sm font-black">{action.label}</span>
+            </button>
+          );
+        })}
+      </div>
     </section>
-  );
-}
-
-function CommandSignalButton({ signal }: { signal: InventoryCommandSignal }) {
-  const Icon = signal.icon;
-
-  return (
-    <button
-      type="button"
-      onClick={signal.onClick}
-      className="grid gap-2 rounded-2xl border border-[var(--border)] bg-white p-3 text-left transition hover:border-[var(--primary)] hover:bg-[var(--soft-surface)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
-    >
-      <span className="flex items-center justify-between gap-3">
-        <span className={`grid h-9 w-9 place-items-center rounded-xl ${summaryToneClass(signal.tone)}`}>
-          <Icon className="h-4 w-4" />
-        </span>
-        <Badge tone={signal.tone}>{signal.value}</Badge>
-      </span>
-      <span className="text-sm font-black text-[var(--foreground)]">{signal.label}</span>
-      <span className="line-clamp-1 text-xs font-bold text-[var(--muted-foreground)]">{signal.detail}</span>
-    </button>
   );
 }
 

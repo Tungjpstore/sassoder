@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   BarChart3,
   Bell,
@@ -21,6 +22,7 @@ import {
   Send,
   X,
   UserRound,
+  Wallet,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -44,9 +46,16 @@ import {
   type StaffSessionHeartbeatResult
 } from "@/features/staff/api/client";
 import { useStaffMobileRealtime } from "@/features/staff/components/mobile/use-staff-mobile-realtime";
+import { resolveStaffModules, type StaffModule, type StaffModuleId } from "@/features/staff/components/mobile/module-registry";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
-import type { StaffOperationsBundle, StaffOpsApprovalItem, StaffOpsAttendanceFeedItem, StaffOpsMobileWorkItem, StaffOpsShiftAssignment } from "@/features/staff/types";
+import type { StaffOperationsBundle, StaffOpsApprovalItem, StaffOpsAttendanceFeedItem, StaffOpsMobileOps, StaffOpsMobileWorkItem, StaffOpsShiftAssignment } from "@/features/staff/types";
 import { cn } from "@/lib/utils";
+import { summarizePayroll, DEFAULT_PAYROLL_DEDUCTIONS, type StaffPayrollDeductions, type StaffPayrollProfile } from "@/features/staff/services/staff-payroll-compute";
+
+type StaffPayrollSelfView = {
+  deductions: StaffPayrollDeductions;
+  profile: StaffPayrollProfile | null;
+};
 
 type StaffMobileRedesignWorkspaceProps = {
   initialBundle: StaffOperationsBundle;
@@ -54,10 +63,12 @@ type StaffMobileRedesignWorkspaceProps = {
   restaurantName: string;
   restaurantSlug: string;
   userId: string;
+  payrollSelf?: StaffPayrollSelfView | null;
+  effectivePermissions?: string[];
   enableHeartbeat?: boolean;
 };
 
-type StaffAppTab = "home" | "schedule" | "requests" | "reports";
+type StaffAppTab = StaffModuleId;
 type ClockSource = "gps" | "qr" | "wifi";
 
 type GpsPoint = {
@@ -129,12 +140,11 @@ type IncidentDraft = {
   severity: NonNullable<StaffIncidentReportPayload["severity"]>;
 };
 
-const tabs: Array<{ key: StaffAppTab; label: string; icon: LucideIcon }> = [
-  { key: "home", label: "Ca", icon: Grid2X2 },
-  { key: "schedule", label: "Lịch ca", icon: CalendarDays },
-  { key: "requests", label: "Yêu cầu", icon: ListChecks },
-  { key: "reports", label: "Hồ sơ", icon: UserRound }
-];
+const ROLE_MODULE_IDS: StaffModuleId[] = ["kitchen", "cashier", "service", "delivery", "accounting", "marketing", "ops"];
+
+function isRoleModuleTab(tab: StaffAppTab): tab is "kitchen" | "cashier" | "service" | "delivery" | "accounting" | "marketing" | "ops" {
+  return (ROLE_MODULE_IDS as string[]).includes(tab);
+}
 
 function todayInputValue() {
   const now = new Date();
@@ -142,7 +152,9 @@ function todayInputValue() {
 }
 
 function normalizeTab(value: string | null): StaffAppTab {
-  if (value === "schedule" || value === "requests" || value === "reports" || value === "home") return value;
+  const moduleIds: StaffAppTab[] = ["home", "kitchen", "cashier", "service", "delivery", "accounting", "marketing", "ops", "schedule", "requests", "inbox", "profile"];
+  if (value && moduleIds.includes(value as StaffAppTab)) return value as StaffAppTab;
+  if (value === "reports") return "profile";
   if (value === "attendance" || value === "today") return "home";
   if (value === "work") return "home";
   return "home";
@@ -387,9 +399,13 @@ function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?
   return <span className={cn("inline-flex min-h-7 items-center rounded-full px-2.5 text-xs font-bold", tone === "success" && "bg-[#DDF8E9] text-[#0F4D3A]", tone === "danger" && "bg-[#FFF0D9] text-[#A33D10]", tone === "warning" && "bg-[#FFF0D9] text-[#93540A]", tone === "neutral" && "bg-[#ECE9E3] text-[#595650]")}>{children}</span>;
 }
 
-export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
+export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, payrollSelf = null, effectivePermissions = [], enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
   const [bundle, setBundle] = useState(initialBundle);
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<StaffAppTab>("home");
+  const moduleNav = useMemo(() => resolveStaffModules(new Set(effectivePermissions)), [effectivePermissions]);
+  const allowedModuleIds = useMemo(() => new Set(moduleNav.allowed.map((module) => module.id)), [moduleNav]);
+  const resolvedTab: StaffAppTab = allowedModuleIds.has(activeTab) ? activeTab : "home";
   const [selectedBranchId, setSelectedBranchId] = useState(initialBundle.members[0]?.primaryBranchId ?? initialBundle.branches[0]?.id ?? "");
   const [message, setMessage] = useState<{ tone: "success" | "warning" | "neutral"; text: string } | null>(null);
   const [selectedClockSource, setSelectedClockSource] = useState<ClockSource>(initialBundle.premium.gpsAttendance ? "gps" : "wifi");
@@ -429,7 +445,14 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     }
   }, []);
 
-  useStaffMobileRealtime({ restaurantId, onRefresh: refreshBundle });
+  // Realtime: làm mới bundle (client) + nạp lại server props (effectivePermissions) để
+  // phân giải lại module khi admin đổi vai trò/quyền — Req 10.10.
+  const handleRealtimeRefresh = useCallback(async () => {
+    await refreshBundle();
+    router.refresh();
+  }, [refreshBundle, router]);
+
+  useStaffMobileRealtime({ restaurantId, onRefresh: handleRealtimeRefresh });
 
   const offlineQueue = useOfflineAttendanceQueue({ restaurantId, userId, onSynced: refreshBundle });
   const pendingOfflineClockIn = offlineQueue.queue.some((item) => item.action === "clock_in");
@@ -813,12 +836,11 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         </div>
       </header>
 
-      <section className="mx-auto grid w-full max-w-6xl gap-4 px-4 pb-[calc(7.25rem+env(safe-area-inset-bottom))] pt-5 lg:grid-cols-[minmax(390px,460px)_minmax(0,1fr)] lg:px-5 lg:pb-10">
-        <div className="min-w-0 space-y-4">
-          {message ? <MessageBar message={message} /> : null}
+      <section className="mx-auto w-full max-w-[640px] space-y-4 px-4 pb-[calc(7.25rem+env(safe-area-inset-bottom))] pt-5">
+        {message ? <MessageBar message={message} /> : null}
           {attendanceBlockedByOffline ? <MessageBar message={{ tone: "warning", text: pendingOfflineClockIn ? "Có check-in offline đang chờ đồng bộ." : "Có kết ca offline đang chờ đồng bộ." }} /> : null}
           {staleOpenAttendance && activeAttendance ? <MessageBar message={{ tone: "warning", text: `Phiên công chưa kết từ ${formatDate(activeAttendance.clockInAt)} lúc ${shortTime(activeAttendance.clockInAt)}. Hãy kết ca hoặc báo quản lý kết ca hộ trước khi vào ca mới.` }} /> : null}
-          {activeTab === "home" ? (
+          {resolvedTab === "home" ? (
             <HomeTab
               staffName={staff.fullName}
               workItems={workItems}
@@ -826,6 +848,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
               onRunWorkItem={runWorkItem}
               currentShift={todayAssignments[0] ?? upcomingAssignments[0] ?? null}
               activeDuration={activeAttendance ? activeDuration : null}
+              overflowModules={moduleNav.overflow}
+              onOpenModule={(id) => { setActiveTab(id); writeTabToUrl(id); }}
               clockCard={
                 <ClockControlCard
                   machine={attendanceMachine}
@@ -857,15 +881,20 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
               }
             />
           ) : null}
-          {activeTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} /> : null}
-          {activeTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
-          {activeTab === "reports" ? <ProfileTab staff={staff} bundle={bundle} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
-        </div>
-
-        <aside className="hidden min-w-0 space-y-5 lg:block">
-          <AppCard className="p-5"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Đang hoạt động</p><h2 className="mt-2 text-2xl font-black text-[#2B2B2B]">{staff.fullName}</h2><p className="mt-1 text-sm font-semibold text-[#5E5A54]">{staff.roleTitle} · {selectedBranchName}</p><div className="mt-4 grid grid-cols-3 gap-2"><MiniStat label="Ca" value={todayAssignments.length || upcomingAssignments.length} /><MiniStat label="Việc" value={workItems.length} /><MiniStat label="Tin" value={bundle.unreadNotificationCount} /></div></AppCard>
-          <AppCard className="p-5"><p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Chấm công</p><div className="mt-3 flex items-center justify-between"><div><p className="text-xl font-black text-[#2B2B2B]">{activeAttendance ? "Đang trong ca" : "Chưa vào ca"}</p><p className="mt-1 text-xs font-semibold text-[#5E5A54]">{activeAttendance ? activeDuration : selectedBranchName}</p></div><StatusPill tone={activeAttendance ? "success" : "neutral"}>{mounted && offlineQueue.isOnline ? "Online" : "Offline"}</StatusPill></div></AppCard>
-        </aside>
+          {resolvedTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} /> : null}
+          {resolvedTab === "inbox" ? <InboxTab notifications={bundle.notifications} unreadCount={bundle.unreadNotificationCount} onMarkRead={markNotificationsRead} /> : null}
+          {resolvedTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
+          {isRoleModuleTab(resolvedTab) ? (
+            <RoleModuleTab
+              moduleId={resolvedTab}
+              ops={bundle.mobileOps}
+              workItems={workItems}
+              processingKey={processingWorkItemKey}
+              onRunWorkItem={runWorkItem}
+              restaurantSlug={restaurantSlug}
+            />
+          ) : null}
+          {resolvedTab === "profile" ? <ProfileTab staff={staff} bundle={bundle} payrollSelf={payrollSelf} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
       </section>
 
       <QrScannerSheet
@@ -876,23 +905,89 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         onClose={() => setQrScannerOpen(false)}
       />
 
-      <nav className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-50 grid h-[82px] grid-cols-4 border-t px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2" aria-label="Staff app navigation">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.key;
-          return <button key={tab.key} type="button" onClick={() => { setActiveTab(tab.key); writeTabToUrl(tab.key); }} className={cn("grid min-h-14 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#3F3D39]")}><Icon size={23} strokeWidth={active ? 2.7 : 2.1} /><span className="mt-0.5 truncate">{tab.label}</span><span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-[#0F4D3A]" : "bg-transparent")} /></button>;
+      <nav
+        className="staff-brand-bottom-nav fixed inset-x-0 bottom-0 z-50 grid h-[82px] border-t px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2"
+        style={{ gridTemplateColumns: `repeat(${moduleNav.nav.length}, minmax(0, 1fr))` }}
+        aria-label="Staff app navigation"
+      >
+        {moduleNav.nav.map((module) => {
+          const Icon = module.icon;
+          const active = resolvedTab === module.id;
+          return (
+            <button
+              key={module.id}
+              type="button"
+              onClick={() => { setActiveTab(module.id); writeTabToUrl(module.id); }}
+              aria-current={active ? "page" : undefined}
+              className={cn("grid min-h-14 place-items-center rounded-xl text-xs font-semibold transition", active ? "text-[#0F4D3A]" : "text-[#3F3D39]")}
+            >
+              <Icon size={23} strokeWidth={active ? 2.7 : 2.1} />
+              <span className="mt-0.5 truncate">{module.label}</span>
+              <span className={cn("h-1.5 w-1.5 rounded-full", active ? "bg-[#0F4D3A]" : "bg-transparent")} />
+            </button>
+          );
         })}
       </nav>
     </main>
   );
 }
 
-function MessageBar({ message }: { message: { tone: "success" | "warning" | "neutral"; text: string } }) {
-  return <div className={cn("rounded-2xl border px-4 py-3 text-sm font-bold", message.tone === "success" && "border-[#0F4D3A]/20 bg-[#DDF8E9] text-[#0F4D3A]", message.tone === "warning" && "border-[#F28C28]/30 bg-[#FFF0D9] text-[#93540A]", message.tone === "neutral" && "border-[#D8D1C7] bg-white text-[#3F3D39]")}>{message.text}</div>;
+function MessageBar({ message }: { message: { tone: "success" | "warning" | "neutral"; text: string } }) {  return <div className={cn("rounded-2xl border px-4 py-3 text-sm font-bold", message.tone === "success" && "border-[#0F4D3A]/20 bg-[#DDF8E9] text-[#0F4D3A]", message.tone === "warning" && "border-[#F28C28]/30 bg-[#FFF0D9] text-[#93540A]", message.tone === "neutral" && "border-[#D8D1C7] bg-white text-[#3F3D39]")}>{message.text}</div>;
 }
 
-function MiniStat({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="rounded-xl bg-[#F5F8F1] p-3"><p className="text-[10px] font-black uppercase tracking-[0.08em] text-[#5E5A54]">{label}</p><p className="mt-1 text-xl font-black text-[#2B2B2B]">{value}</p></div>;
+function MiniStat({ label, value }: { label: string; value: ReactNode }) {  return <div className="rounded-xl bg-[#F5F8F1] p-3"><p className="text-[10px] font-black uppercase tracking-[0.08em] text-[#5E5A54]">{label}</p><p className="mt-1 text-xl font-black text-[#2B2B2B]">{value}</p></div>;
+}
+
+function InboxTab({
+  notifications,
+  unreadCount,
+  onMarkRead
+}: {
+  notifications: StaffOperationsBundle["notifications"];
+  unreadCount: number;
+  onMarkRead: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <AppCard className="p-5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Hộp thư</p>
+            <h2 className="mt-1 text-2xl font-black text-[#2B2B2B]">Thông báo</h2>
+          </div>
+          {unreadCount > 0 ? (
+            <button type="button" onClick={onMarkRead} className="min-h-11 shrink-0 rounded-xl bg-[#0F4D3A] px-4 text-sm font-black text-white">
+              Đọc tất cả ({unreadCount})
+            </button>
+          ) : (
+            <StatusPill tone="success">Đã đọc hết</StatusPill>
+          )}
+        </div>
+      </AppCard>
+      {notifications.length === 0 ? (
+        <AppCard className="p-8 text-center">
+          <Bell className="mx-auto text-[#0F4D3A]" />
+          <p className="mt-3 font-black text-[#2B2B2B]">Chưa có thông báo</p>
+          <p className="mt-1 text-sm font-semibold text-[#5E5A54]">Thông báo ca, duyệt và nhắc việc sẽ hiện ở đây.</p>
+        </AppCard>
+      ) : (
+        <div className="space-y-2">
+          {notifications.map((n) => (
+            <AppCard key={n.id} className={cn("p-4", n.status === "unread" && "ring-1 ring-[#0F4D3A]/25")}>
+              <div className="flex items-start gap-3">
+                <span className={cn("mt-1 h-2.5 w-2.5 shrink-0 rounded-full", n.status === "unread" ? "bg-[#0F4D3A]" : "bg-[#D8D1C7]")} />
+                <div className="min-w-0 flex-1">
+                  <p className="font-black text-[#2B2B2B]">{n.title}</p>
+                  {n.body ? <p className="mt-0.5 text-sm font-semibold text-[#5E5A54]">{n.body}</p> : null}
+                  <p className="mt-1 text-xs font-bold text-[#8A867E]">{formatDate(n.createdAt)} · {shortTime(n.createdAt)}</p>
+                </div>
+              </div>
+            </AppCard>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ClockControlCard({
@@ -1155,7 +1250,7 @@ function QrScannerSheet({
   );
 }
 
-function HomeTab({ staffName, workItems, processingKey, onRunWorkItem, currentShift, activeDuration, clockCard }: { staffName: string; workItems: StaffOpsMobileWorkItem[]; processingKey: string | null; onRunWorkItem: (item: StaffOpsMobileWorkItem) => void; currentShift: StaffOpsShiftAssignment | null; activeDuration: string | null; clockCard: ReactNode }) {
+function HomeTab({ staffName, workItems, processingKey, onRunWorkItem, currentShift, activeDuration, clockCard, overflowModules, onOpenModule }: { staffName: string; workItems: StaffOpsMobileWorkItem[]; processingKey: string | null; onRunWorkItem: (item: StaffOpsMobileWorkItem) => void; currentShift: StaffOpsShiftAssignment | null; activeDuration: string | null; clockCard: ReactNode; overflowModules: StaffModule[]; onOpenModule: (id: StaffModuleId) => void }) {
   const visibleWorkItems = workItems.slice(0, 2);
   const hiddenWorkItemCount = Math.max(0, workItems.length - visibleWorkItems.length);
   return (
@@ -1172,6 +1267,28 @@ function HomeTab({ staffName, workItems, processingKey, onRunWorkItem, currentSh
       </section>
 
       {clockCard}
+
+      {overflowModules.length ? (
+        <section className="space-y-2">
+          <h2 className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Khu vực làm việc</h2>
+          <div className="grid grid-cols-3 gap-2">
+            {overflowModules.map((module) => {
+              const Icon = module.icon;
+              return (
+                <button
+                  key={module.id}
+                  type="button"
+                  onClick={() => onOpenModule(module.id)}
+                  className="grid min-h-20 place-items-center gap-1.5 rounded-2xl border border-[#E5DDD2] bg-[#FFFDF8] p-2 text-center transition active:scale-[0.98]"
+                >
+                  <Icon size={22} className="text-[#0F4D3A]" />
+                  <span className="text-[11px] font-bold leading-tight text-[#3F3D39]">{module.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -1191,6 +1308,183 @@ function HomeTab({ staffName, workItems, processingKey, onRunWorkItem, currentSh
           </AppCard>
         )) : <AppCard className="grid min-h-20 place-items-center p-4 text-center"><div><Check className="mx-auto text-[#0F4D3A]" size={19} /><p className="mt-2 text-sm font-black">Không có việc đang chờ</p></div></AppCard>}
         {hiddenWorkItemCount ? <p className="px-1 text-xs font-bold text-[#5E5A54]">Còn {hiddenWorkItemCount} việc trong tab Yêu cầu.</p> : null}
+      </section>
+    </div>
+  );
+}
+
+type RoleModuleId = "kitchen" | "cashier" | "service" | "delivery" | "accounting" | "marketing" | "ops";
+
+type RoleModuleMetric = { label: string; value: number };
+type RoleModuleLink = { label: string; href: string };
+type RoleModuleConfig = {
+  title: string;
+  description: string;
+  kinds: StaffOpsMobileWorkItem["kind"][];
+  metrics: (ops: StaffOpsMobileOps) => RoleModuleMetric[];
+  links: RoleModuleLink[];
+};
+
+const ROLE_MODULE_CONFIG: Record<RoleModuleId, RoleModuleConfig> = {
+  kitchen: {
+    title: "Bếp",
+    description: "Hàng chờ món và tiến độ chế biến trong ca của bạn.",
+    kinds: ["kitchen_order"],
+    metrics: (ops) => [
+      { label: "Đang nấu", value: ops.cookingOrders },
+      { label: "Chờ nhận", value: ops.pendingOrders }
+    ],
+    links: [
+      { label: "Màn hình bếp", href: "/dashboard/kitchen" },
+      { label: "Kho nguyên liệu", href: "/dashboard/inventory" }
+    ]
+  },
+  cashier: {
+    title: "Thu ngân",
+    description: "Xác nhận thanh toán và đóng bàn trong ca.",
+    kinds: ["payment_waiting"],
+    metrics: (ops) => [
+      { label: "Chờ thu", value: ops.waitingPayments },
+      { label: "Việc khẩn", value: ops.urgentCount }
+    ],
+    links: [
+      { label: "Thanh toán", href: "/dashboard/payments" },
+      { label: "Bàn", href: "/dashboard/tables" }
+    ]
+  },
+  service: {
+    title: "Phục vụ",
+    description: "Bàn được giao, đơn tại chỗ và yêu cầu của khách.",
+    kinds: ["order_pending", "service_request"],
+    metrics: (ops) => [
+      { label: "Đơn chờ", value: ops.pendingOrders },
+      { label: "Yêu cầu bàn", value: ops.serviceRequests }
+    ],
+    links: [
+      { label: "Đơn hàng", href: "/dashboard/orders" },
+      { label: "Bàn", href: "/dashboard/tables" },
+      { label: "Đặt bàn", href: "/dashboard/reservations" }
+    ]
+  },
+  delivery: {
+    title: "Giao hàng",
+    description: "Đơn online và trạng thái giao trong ca.",
+    kinds: ["order_pending"],
+    metrics: (ops) => [
+      { label: "Đơn chờ", value: ops.pendingOrders },
+      { label: "Việc khẩn", value: ops.urgentCount }
+    ],
+    links: [
+      { label: "Đơn online", href: "/dashboard/online" },
+      { label: "Đơn hàng", href: "/dashboard/orders" }
+    ]
+  },
+  accounting: {
+    title: "Kế toán",
+    description: "Đối soát dòng tiền, báo cáo cuối ca và nhật ký.",
+    kinds: [],
+    metrics: (ops) => [{ label: "Chờ thu", value: ops.waitingPayments }],
+    links: [
+      { label: "Thanh toán", href: "/dashboard/payments" },
+      { label: "Báo cáo", href: "/dashboard/analytics" }
+    ]
+  },
+  marketing: {
+    title: "Marketing",
+    description: "Khuyến mãi, kênh online và hiệu quả bán.",
+    kinds: [],
+    metrics: () => [],
+    links: [
+      { label: "Khuyến mãi", href: "/dashboard/promotions" },
+      { label: "Kênh online", href: "/dashboard/online" },
+      { label: "Báo cáo", href: "/dashboard/analytics" }
+    ]
+  },
+  ops: {
+    title: "Điều hành",
+    description: "Duyệt yêu cầu, phân ca và theo dõi đội ngũ trong ca.",
+    kinds: ["order_pending", "kitchen_order", "payment_waiting", "service_request"],
+    metrics: (ops) => [
+      { label: "Việc khẩn", value: ops.urgentCount },
+      { label: "Chờ thu", value: ops.waitingPayments }
+    ],
+    links: [
+      { label: "Nhân sự", href: "/dashboard/staff" },
+      { label: "Đơn hàng", href: "/dashboard/orders" },
+      { label: "Báo cáo", href: "/dashboard/analytics" }
+    ]
+  }
+};
+
+function RoleModuleTab({
+  moduleId,
+  ops,
+  workItems,
+  processingKey,
+  onRunWorkItem
+}: {
+  moduleId: RoleModuleId;
+  ops: StaffOpsMobileOps;
+  workItems: StaffOpsMobileWorkItem[];
+  processingKey: string | null;
+  onRunWorkItem: (item: StaffOpsMobileWorkItem) => void;
+  restaurantSlug: string;
+}) {
+  const config = ROLE_MODULE_CONFIG[moduleId];
+  const relevantItems = config.kinds.length ? workItems.filter((item) => config.kinds.includes(item.kind)) : [];
+  const metrics = config.metrics(ops);
+
+  return (
+    <div className="space-y-3">
+      <section className="rounded-2xl border border-[#E5DDD2] bg-[#FFFDF8] p-4">
+        <p className="text-xs font-black uppercase tracking-[0.12em] text-[#0F4D3A]">Khu vực vận hành</p>
+        <h1 className="mt-1 text-xl font-black leading-tight text-[#2B2B2B]">{config.title}</h1>
+        <p className="mt-1.5 text-sm font-semibold text-[#5E5A54]">{config.description}</p>
+      </section>
+
+      {metrics.length ? (
+        <div className="grid grid-cols-2 gap-2">
+          {metrics.map((metric) => (
+            <div key={metric.label} className="rounded-xl border border-[#E5DDD2] bg-[#F5F8F1] p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.08em] text-[#5E5A54]">{metric.label}</p>
+              <p className="mt-1 text-2xl font-black text-[#2B2B2B]">{metric.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {config.kinds.length ? (
+        <section className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Việc cần xử lý</h2>
+            <StatusPill tone={relevantItems.length ? "warning" : "success"}>{relevantItems.length || "0"}</StatusPill>
+          </div>
+          {relevantItems.length ? relevantItems.map((item) => (
+            <AppCard key={item.id} className="p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-black text-[#2B2B2B]">{item.title}</p>
+                  <p className="mt-1 line-clamp-1 text-xs font-semibold text-[#5E5A54]">{item.subtitle}</p>
+                </div>
+                <StatusPill tone={item.priority === "high" ? "danger" : item.priority === "medium" ? "warning" : "neutral"}>{item.priority === "high" ? "Gấp" : item.priority === "medium" ? "Vừa" : "Thấp"}</StatusPill>
+              </div>
+              {item.action ? <ShellButton onClick={() => onRunWorkItem(item)} disabled={processingKey === item.id} className="mt-3 min-h-11 w-full text-sm">{processingKey === item.id ? "Đang xử lý..." : item.actionLabel ?? "Xử lý"}</ShellButton> : null}
+            </AppCard>
+          )) : <AppCard className="grid min-h-20 place-items-center p-4 text-center"><div><Check className="mx-auto text-[#0F4D3A]" size={19} /><p className="mt-2 text-sm font-black">Không có việc đang chờ</p></div></AppCard>}
+        </section>
+      ) : null}
+
+      <section className="space-y-2">
+        <h2 className="text-xs font-black uppercase tracking-[0.12em] text-[#5E5A54]">Mở màn hình quản lý</h2>
+        <div className="grid gap-2">
+          {config.links.map((link) => (
+            <a key={link.href} href={link.href} className="flex min-h-12 items-center justify-between rounded-xl border border-[#E5DDD2] bg-[#FFFDF8] px-4 text-sm font-bold text-[#2B2B2B] transition active:scale-[0.99]">
+              <span>{link.label}</span>
+              <ChevronRight size={18} className="text-[#5E5A54]" />
+            </a>
+          ))}
+        </div>
+        <p className="px-1 text-xs font-semibold text-[#5E5A54]">Quyền truy cập từng màn hình vẫn được kiểm soát theo phân quyền của bạn.</p>
       </section>
     </div>
   );
@@ -1232,7 +1526,7 @@ function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubm
   );
 }
 
-function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onAvatarFile, onSubmitProfile, onSubmitIncident, savingProfile, uploadingAvatar, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onAvatarFile: (file: File | null) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; uploadingAvatar: boolean; submittingIncident: boolean }) {
+function ProfileTab({ staff, bundle, payrollSelf, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onAvatarFile, onSubmitProfile, onSubmitIncident, savingProfile, uploadingAvatar, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; payrollSelf: StaffPayrollSelfView | null; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onAvatarFile: (file: File | null) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; uploadingAvatar: boolean; submittingIncident: boolean }) {
   const timesheet = bundle.timesheets.find((item) => item.staffMemberId === staff.id);
   const attendanceCount = timesheet?.attendanceCount ?? 0;
   const score = timesheet?.attendanceScore ?? 100;
@@ -1240,6 +1534,19 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
   const attendanceRows = bundle.attendanceFeed.filter((item) => item.staffMemberId === staff.id).slice(0, 7).reverse();
   const incidents = bundle.incidents.filter((item) => item.staffMemberId === staff.id).slice(0, 4);
   const maxMinutes = Math.max(...attendanceRows.map(attendanceWorkMinutes), 1);
+  const payProfile = payrollSelf?.profile ?? null;
+  const paySummary = payProfile
+    ? summarizePayroll({
+        grossMonthlySalary: payProfile.baseSalary,
+        baseSalary: payProfile.baseSalary,
+        dependentCount: payProfile.dependentCount,
+        enrolledInInsurance: payProfile.enrolledInInsurance,
+        applyPersonalIncomeTax: payProfile.applyPersonalIncomeTax,
+        insuranceBaseAmount: payProfile.insuranceBaseAmount,
+        deductions: payrollSelf?.deductions ?? DEFAULT_PAYROLL_DEDUCTIONS
+      })
+    : null;
+  const vnd = (n: number) => `${Math.round(n).toLocaleString("vi-VN")}₫`;
   return (
     <div className="space-y-4">
       <AppCard className="p-4">
@@ -1251,6 +1558,21 @@ function ProfileTab({ staff, bundle, profileDraft, incidentDraft, onProfileDraft
           </div>
         </div>
       </AppCard>
+
+      <details className="staff-brand-panel p-4">
+        <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-base font-black text-[#2B2B2B]"><span className="flex items-center gap-2"><Wallet size={18} /> Lương của tôi</span><ChevronDown size={18} className="text-[#0F4D3A]" /></summary>
+        {paySummary && payProfile ? (
+          <div className="mt-3 grid gap-2">
+            <div className="flex items-center justify-between rounded-xl bg-[#F5F8F1] px-4 py-3"><span className="text-sm font-bold text-[#5E5A54]">Lương cơ bản</span><span className="text-base font-black text-[#2B2B2B]">{vnd(payProfile.baseSalary)}</span></div>
+            <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Bảo hiểm (NV đóng)</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.totalEmployeeInsurance)}</span></div>
+            <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Thuế TNCN</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.personalIncomeTax)}</span></div>
+            <div className="flex items-center justify-between rounded-xl bg-[#DDF8E9] px-4 py-3"><span className="text-sm font-black text-[#0F4D3A]">Thực nhận (ước tính)</span><span className="text-lg font-black text-[#0F4D3A]">{vnd(paySummary.netIncome)}</span></div>
+            <p className="px-1 text-[11px] font-semibold text-[#8A867E]">Số liệu chỉ để tham khảo theo cấu hình hiện tại, chưa gồm thưởng/phụ cấp/tăng ca thực tế.</p>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm font-semibold text-[#5E5A54]">Chưa có hồ sơ lương. Liên hệ quản lý để được thiết lập.</p>
+        )}
+      </details>
 
       <details className="staff-brand-panel p-4">
         <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-base font-black text-[#2B2B2B]"><span className="flex items-center gap-2"><UserRound size={18} /> Cập nhật hồ sơ</span><ChevronDown size={18} className="text-[#0F4D3A]" /></summary>

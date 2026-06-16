@@ -9,6 +9,6 @@ function requestHost(headersList: Headers) {
 
 export default async function DashboardPage() {
   const host = requestHost(await headers());
-  if (host === 'domain.logivn.com') redirect('/control');
+  if (host === 'domain.logivn.com') redirect('/');
   redirect('/mail/inbox');
 }

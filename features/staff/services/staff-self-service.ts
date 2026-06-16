@@ -5,6 +5,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { publishOperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { uploadStaffAvatarFile } from "@/features/staff/services/staff-avatar-service";
+import { assertStaffActionPermission } from "@/services/staff-permission-service";
 import type { SessionProfile } from "@/types/domain";
 
 function isMissingStaffSelfServiceSchema(error: { code?: string; message?: string } | null | undefined) {
@@ -139,7 +140,69 @@ export async function uploadStaffSelfAvatar({
   return { avatarUrl };
 }
 
-export async function createStaffIncidentReport({
+/**
+ * Admin/quản lý tải ảnh đại diện hộ một nhân sự (luồng quản lý nhân viên).
+ * Gác quyền `staff.edit`; cập nhật avatar_url của đúng staff member trong nhà hàng.
+ */
+export async function uploadStaffMemberAvatarByAdmin({
+  session,
+  staffMemberId,
+  file
+}: {
+  session: SessionProfile;
+  staffMemberId: string;
+  file: FormDataEntryValue | null;
+}) {
+  if (!staffMemberId) throw new AppError("Thiếu mã nhân sự để cập nhật ảnh.", 400);
+  await assertStaffActionPermission(session, "staff.edit");
+
+  const supabase = createAdminSupabaseClient() as any;
+  const target = await supabase
+    .from("staff_members")
+    .select("id,full_name,archived_at")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", staffMemberId)
+    .maybeSingle();
+
+  if (target.error) {
+    if (isMissingStaffSelfServiceSchema(target.error)) throw new AppError("Schema hồ sơ nhân viên chưa sẵn sàng.", 400);
+    throw new AppError(target.error.message, 400);
+  }
+  if (!target.data) throw new AppError("Không tìm thấy nhân sự để cập nhật ảnh.", 404);
+
+  const avatarUrl = await uploadStaffAvatarFile({
+    restaurantId: session.restaurantId,
+    staffMemberId,
+    file
+  });
+
+  const result = await supabase
+    .from("staff_members")
+    .update({ avatar_url: avatarUrl })
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", staffMemberId)
+    .select("id,avatar_url")
+    .single();
+
+  if (result.error) {
+    if (isMissingStaffSelfServiceSchema(result.error)) throw new AppError("Schema ảnh đại diện nhân viên chưa sẵn sàng.", 400);
+    throw new AppError(result.error.message, 400);
+  }
+
+  await writeStaffActivityLog({
+    restaurantId: session.restaurantId,
+    actorUserId: session.userId,
+    entityType: "staff_member",
+    entityId: staffMemberId,
+    action: "staff.avatar_uploaded",
+    severity: "info",
+    reason: "Quản lý cập nhật ảnh đại diện cho nhân sự.",
+    afterState: result.data,
+    metadata: { source: "dashboard_staff_management", uploadType: "file" }
+  });
+
+  return { avatarUrl };
+}export async function createStaffIncidentReport({
   session,
   input
 }: {

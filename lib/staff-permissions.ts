@@ -229,8 +229,7 @@ export const STAFF_ROLE_TEMPLATES: StaffRoleTemplate[] = [
       "attendance.view",
       "presence.view",
       "customers.view",
-      "reservations.manage",
-      "orders.manage"
+      "reservations.manage"
     ]
   },
   {
@@ -282,8 +281,7 @@ export const STAFF_ROLE_TEMPLATES: StaffRoleTemplate[] = [
       "activity_logs.view",
       "activity_logs.export",
       "attendance.clock",
-      "attendance.view",
-      "payments.manage"
+      "attendance.view"
     ]
   },
   {

@@ -66,6 +66,30 @@ function mergeEffectivePermissions(...permissionSets: StaffPermissionKey[][]) {
   return withDefaultEligibleStaffPermissions(Array.from(new Set(permissionSets.flat())));
 }
 
+/**
+ * Sàn quyền cho tài khoản quản trị nhà hàng.
+ *
+ * Chủ quán (role_code = "owner") và mọi tài khoản users.role = "ADMIN" PHẢI luôn
+ * giữ được quyền quản lý nhân sự, kể cả khi hồ sơ staff_members bị cấu hình sai
+ * (role_code lệch, role_id null, staff_role_permissions bị xoá bớt, hoặc users.permissions rỗng).
+ *
+ * - roleCode = "owner"  -> sàn = template owner (toàn quyền, gồm cả gói dịch vụ).
+ * - ADMIN khác          -> sàn = template manager (toàn quyền vận hành, không chạm gói dịch vụ).
+ *
+ * Đây là sàn cộng thêm (floor), không thay thế quyền đã có; quyền tuỳ biến vẫn được giữ.
+ */
+function applyAdministratorPermissionFloor(
+  userRole: "ADMIN" | "STAFF",
+  roleCode: string | null | undefined,
+  permissions: StaffPermissionKey[]
+) {
+  if (userRole !== "ADMIN" && roleCode !== "owner") return permissions;
+  const floorCode = roleCode === "owner" ? "owner" : "manager";
+  const floorTemplate = STAFF_ROLE_TEMPLATES.find((role) => role.code === floorCode);
+  if (!floorTemplate) return permissions;
+  return mergeEffectivePermissions(permissions, floorTemplate.permissions);
+}
+
 async function readPermissionsForRole({
   supabase,
   restaurantId,
@@ -160,11 +184,12 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
       })
     : accountPermissions;
   const permissions = mergeEffectivePermissions(rolePermissions, accountPermissions);
+  const effectivePermissions = applyAdministratorPermissionFloor(user.role, roleCode, permissions);
 
   return {
     staffMemberId: member?.id ?? null,
     roleCode,
-    permissions
+    permissions: effectivePermissions
   };
 }
 

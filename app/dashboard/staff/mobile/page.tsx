@@ -5,6 +5,8 @@ import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { StaffMobileRedesignWorkspace } from "@/features/staff/components/staff-mobile-redesign-workspace";
 import { getStaffPasswordGateForSession } from "@/features/staff/services/staff-app-auth-service";
 import { getStaffOperationsBundle } from "@/features/staff/services/staff-operations-service";
+import { getStaffPayrollSelfView } from "@/features/staff/services/staff-payroll-service";
+import { getStaffEffectivePermissions } from "@/services/staff-permission-service";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -51,12 +53,18 @@ async function StaffMobileContent({
 }) {
   const passwordGatePromise = getStaffPasswordGateForSession(session);
   const bundlePromise = getStaffOperationsBundle(restaurantId, userId, { scope: "self" });
+  const payrollPromise = getStaffPayrollSelfView({ restaurantId, userId }).catch(() => null);
+  const permissionsPromise = getStaffEffectivePermissions(session)
+    .then((result) => result.permissions as string[])
+    .catch(() => [] as string[]);
   const passwordGate = await passwordGatePromise;
   if (passwordGate.mustChangePassword) {
     redirect(`/staff/change-password?${new URLSearchParams({ next: "/dashboard/staff/mobile" }).toString()}`);
   }
 
   const bundle = await bundlePromise;
+  const payrollSelf = await payrollPromise;
+  const effectivePermissions = await permissionsPromise;
 
   return (
     <StaffMobileRedesignWorkspace
@@ -65,6 +73,8 @@ async function StaffMobileContent({
       restaurantName={restaurantName}
       restaurantSlug={restaurantSlug}
       userId={userId}
+      payrollSelf={payrollSelf}
+      effectivePermissions={effectivePermissions}
       enableHeartbeat={bundle.members.length > 0}
     />
   );

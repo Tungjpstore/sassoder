@@ -2779,13 +2779,15 @@ export async function updateInventoryIngredient(
     shelfCode?: string;
     storageNote?: string;
     reorderLeadDays?: number;
+    onHandQuantity?: number;
+    actorUserId?: string;
   }
 ) {
   const supabase = await createServerSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
   const currentResult = await db
     .from("ingredients")
-    .select("metadata")
+    .select("metadata, on_hand_quantity")
     .eq("restaurant_id", restaurantId)
     .eq("id", input.ingredientId)
     .maybeSingle();
@@ -2815,6 +2817,27 @@ export async function updateInventoryIngredient(
 
   if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi sua nguyen lieu.", 400);
   throwIfSupabaseError(error);
+
+  // On-hand is ledger-managed: when the editor sets an absolute target quantity,
+  // reconcile it by recording an adjustment movement for the delta so the ledger stays consistent.
+  if (typeof input.onHandQuantity === "number" && input.actorUserId) {
+    const currentOnHand = Number(currentResult.data?.on_hand_quantity ?? 0);
+    const targetOnHand = input.onHandQuantity;
+    const delta = Number((targetOnHand - currentOnHand).toFixed(4));
+    if (delta !== 0) {
+      await recordInventoryMovement(restaurantId, {
+        ingredientId: input.ingredientId,
+        movementType: delta > 0 ? "adjust_increase" : "adjust_decrease",
+        quantity: Math.abs(delta),
+        unitCost: delta > 0 ? input.referenceUnitCost : undefined,
+        reason: "Dieu chinh ton khi sua nguyen lieu",
+        sourceType: "manual",
+        metadata: { recordedFrom: "ingredient_edit", previousOnHand: currentOnHand, targetOnHand },
+        actorUserId: input.actorUserId
+      });
+    }
+  }
+
   return data as { id: string };
 }
 
@@ -3136,9 +3159,20 @@ export async function recordInventoryMovement(
     target_transfer_id: null
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi ghi ledger kho.", 400);
-  if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Ton kho khong du de ghi phieu giam hoac hao hut.", 400);
+  if (isMissingInventorySchemaError(error) && error?.code !== "P0001") {
+    throw new AppError("Can chay migration inventory truoc khi ghi ledger kho.", 400);
+  }
+  if (error?.code === "P0001" || error?.message) {
+    const message = error?.message ?? "";
+    if (/scope mismatch/i.test(message)) {
+      throw new AppError("Tai khoan chua gan dung nha hang de ghi nghiep vu kho.", 403);
+    }
+    if (/quantity cannot be zero/i.test(message)) {
+      throw new AppError("So luong ghi kho phai khac 0.", 400);
+    }
+    if (/stock negative|batch negative|over-reserved|balance is missing|ingredient is missing/i.test(message)) {
+      throw new AppError("Ton kho khong du de ghi phieu giam hoac hao hut.", 400);
+    }
   }
   throwIfSupabaseError(error);
   if (!data) throw new AppError(inventoryMutationError, 500);

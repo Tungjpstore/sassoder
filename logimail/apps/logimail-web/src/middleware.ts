@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 const MAIL_HOST = 'mail.logivn.com';
 const DOMAIN_CONTROL_HOST = 'domain.logivn.com';
 
-const domainControlPrefixes = ['/control', '/domains', '/mailboxes', '/ops', '/settings', '/team', '/onboarding'];
+const domainControlPrefixes = ['/domains', '/mailboxes', '/ops', '/settings', '/team', '/onboarding'];
 
 function startsWithPath(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -41,12 +41,7 @@ export async function middleware(request: NextRequest) {
   }
 
   if (hostname === DOMAIN_CONTROL_HOST) {
-    if (pathname === '/') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/control';
-      return NextResponse.redirect(url);
-    }
-
+    // domain.logivn.com '/' renders the management console directly (see app/page.tsx).
     if (pathname === '/mail' || pathname.startsWith('/mail/')) {
       return redirectToHost(request, MAIL_HOST, pathname);
     }

@@ -3781,8 +3781,8 @@ body.customer-logibot-surface .customer-logibot-mobile-icon {
 .staff-brand-topbar,
 .staff-brand-mobile-header,
 .staff-brand-bottom-nav {
-  border-color: rgba(15, 77, 58, 0.14) !important;
-  background: rgba(255, 253, 248, 0.96) !important;
+  border-color: color-mix(in srgb, var(--d-jade) 14%, transparent);
+  background: rgba(255, 253, 248, 0.96);
   box-shadow: 0 14px 30px rgba(15, 42, 31, 0.045);
   backdrop-filter: blur(18px);
 }
@@ -3790,7 +3790,7 @@ body.customer-logibot-surface .customer-logibot-mobile-icon {
 .staff-brand-sidebar {
   background:
     linear-gradient(180deg, rgba(255, 253, 248, 0.96), rgba(245, 248, 241, 0.88)),
-    linear-gradient(90deg, rgba(15, 77, 58, 0.045), transparent 28%) !important;
+    linear-gradient(90deg, color-mix(in srgb, var(--d-jade) 4.5%, transparent), transparent 28%);
 }
 
 .staff-brand-bottom-nav {
@@ -3798,7 +3798,7 @@ body.customer-logibot-surface .customer-logibot-mobile-icon {
 }
 
 .staff-brand-panel {
-  border: 1px solid rgba(15, 77, 58, 0.14);
+  border: 1px solid color-mix(in srgb, var(--d-jade) 14%, transparent);
   border-radius: 0.5rem;
   background:
     linear-gradient(180deg, rgba(255, 253, 248, 0.99), rgba(255, 250, 242, 0.96));
@@ -3826,12 +3826,12 @@ body.customer-logibot-surface .customer-logibot-mobile-icon {
 .staff-brand-page button,
 .staff-brand-page a {
   touch-action: manipulation;
-  -webkit-tap-highlight-color: rgba(15, 77, 58, 0.12);
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--d-jade) 12%, transparent);
 }
 
 .staff-brand-page button:focus-visible,
 .staff-brand-page a:focus-visible {
-  outline: 2px solid rgba(15, 77, 58, 0.72);
+  outline: 2px solid color-mix(in srgb, var(--d-jade) 72%, transparent);
   outline-offset: 3px;
 }
 
@@ -3840,21 +3840,21 @@ body.customer-logibot-surface .customer-logibot-mobile-icon {
 }
 
 .staff-brand-accent-surface {
-  background: linear-gradient(135deg, rgba(15, 77, 58, 0.1), rgba(242, 140, 40, 0.09)) !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--d-jade) 10%, transparent), color-mix(in srgb, var(--d-orange) 9%, transparent)) !important;
 }
 
 .staff-brand-page input,
 .staff-brand-page select,
 .staff-brand-page textarea {
-  border-color: rgba(15, 77, 58, 0.16) !important;
+  border-color: color-mix(in srgb, var(--d-jade) 16%, transparent) !important;
   background-color: rgba(255, 253, 248, 0.94) !important;
 }
 
 .staff-brand-page input:focus,
 .staff-brand-page select:focus,
 .staff-brand-page textarea:focus {
-  border-color: rgba(15, 77, 58, 0.72) !important;
-  box-shadow: 0 0 0 4px rgba(15, 77, 58, 0.1) !important;
+  border-color: color-mix(in srgb, var(--d-jade) 72%, transparent) !important;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--d-jade) 10%, transparent) !important;
 }
 
 .staff-cockpit-shell {

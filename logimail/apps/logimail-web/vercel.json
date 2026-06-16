@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/logimail/cron/warmup-tick",
+      "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/logimail/cron/alerts-scan",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/logimail/cron/key-rotation-step",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/logimail/cron/placement-collect",
+      "schedule": "15 3 * * *"
+    }
+  ]
+}

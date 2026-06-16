@@ -56,6 +56,37 @@ export async function listStaffPayrollProfiles(restaurantId: string): Promise<St
   return (data as any[]).map(mapProfileRow);
 }
 
+/* Self-scoped: cho phép NHÂN VIÊN xem lương của CHÍNH MÌNH (read-only) trên PWA.
+ * Dùng service-role + lọc theo staff_member của user, không nới RLS ADMIN-only. */
+export async function getStaffPayrollSelfView(input: {
+  restaurantId: string;
+  userId: string;
+}): Promise<{ deductions: StaffPayrollDeductions; profile: StaffPayrollProfile | null }> {
+  const supabase = createAdminSupabaseClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = supabase as any;
+
+  const memberResult = await db
+    .from("staff_members")
+    .select("id,archived_at,employment_status")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+
+  const member = memberResult.data as { id: string; archived_at: string | null; employment_status: string } | null;
+  if (!member || member.archived_at) return { deductions: DEFAULT_PAYROLL_DEDUCTIONS, profile: null };
+
+  const [deductionsResult, profileResult] = await Promise.all([
+    db.from("staff_payroll_deductions").select("*").eq("restaurant_id", input.restaurantId).maybeSingle(),
+    db.from("staff_payroll_profiles").select("*").eq("restaurant_id", input.restaurantId).eq("staff_member_id", member.id).maybeSingle()
+  ]);
+
+  return {
+    deductions: deductionsResult.data ? mapDeductionsRow(deductionsResult.data) : DEFAULT_PAYROLL_DEDUCTIONS,
+    profile: profileResult.data ? mapProfileRow(profileResult.data) : null
+  };
+}
+
 export async function upsertStaffPayrollDeductions(input: {
   restaurantId: string;
   actorUserId: string;

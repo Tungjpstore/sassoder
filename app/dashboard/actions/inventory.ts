@@ -378,7 +378,9 @@ export async function updateInventoryIngredientAction(formData: FormData) {
     storageArea: parsed.storageArea || undefined,
     shelfCode: parsed.shelfCode || undefined,
     storageNote: parsed.storageNote || undefined,
-    reorderLeadDays: parsed.reorderLeadDays
+    reorderLeadDays: parsed.reorderLeadDays,
+    onHandQuantity: parsed.onHandQuantity,
+    actorUserId: session.userId
   });
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
