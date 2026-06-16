@@ -24,6 +24,30 @@ function redirectToHost(request: NextRequest, hostname: string, pathname: string
   return NextResponse.redirect(url);
 }
 
+function authErrorCode(error: unknown) {
+  if (!error || typeof error !== 'object' || !('code' in error)) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
+function authErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '';
+}
+
+function isStaleRefreshTokenError(error: unknown) {
+  const code = authErrorCode(error);
+  const message = authErrorMessage(error).toLowerCase();
+  return code === 'refresh_token_already_used' || code === 'refresh_token_not_found' || message.includes('invalid refresh token');
+}
+
+function clearSupabaseAuthCookies(request: NextRequest, response: NextResponse) {
+  for (const cookie of request.cookies.getAll()) {
+    if (cookie.name.startsWith('sb-') && cookie.name.includes('auth-token')) {
+      response.cookies.set(cookie.name, '', { path: '/', maxAge: 0 });
+    }
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const hostname = requestHostname(request);
   const pathname = request.nextUrl.pathname;
@@ -66,7 +90,16 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  try {
+    const { error } = await supabase.auth.getUser();
+    if (isStaleRefreshTokenError(error)) clearSupabaseAuthCookies(request, response);
+  } catch (error) {
+    if (isStaleRefreshTokenError(error)) {
+      clearSupabaseAuthCookies(request, response);
+    } else {
+      console.warn('[logimail-middleware] Supabase auth check failed', authErrorMessage(error));
+    }
+  }
   return response;
 }
 
