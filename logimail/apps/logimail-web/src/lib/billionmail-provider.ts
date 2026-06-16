@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { billionMailBridgeMailboxEndpoint, billionMailProviderReadiness, readBillionMailProviderConfig } from '@/lib/billionmail-config';
+
 type BillionMailJson = {
   success?: boolean;
   code?: number;
@@ -8,7 +10,7 @@ type BillionMailJson = {
   data?: unknown;
 };
 
-type MailboxInput = {
+export type MailboxInput = {
   email: string;
   localPart: string;
   domain: string;
@@ -17,22 +19,21 @@ type MailboxInput = {
   quotaMb?: number;
 };
 
-function readConfig() {
-  const baseUrl = process.env.BILLIONMAIL_BASE_URL?.trim() ?? '';
-  const apiToken = process.env.BILLIONMAIL_API_TOKEN?.trim() || process.env.BILLIONMAIL_API_KEY?.trim() || '';
-  const apiPrefix = process.env.BILLIONMAIL_API_PREFIX?.trim() || '/api';
-  return { baseUrl, apiToken, apiPrefix };
+export function assertBillionMailProviderConfigured() {
+  const readiness = billionMailProviderReadiness();
+  if (!readiness.ready) throw new Error(`missing_billionmail_config:${readiness.missing.join(',')}`);
+  return readBillionMailProviderConfig();
 }
 
-export function assertBillionMailProviderConfigured() {
-  const config = readConfig();
+export function assertBillionMailDirectProviderConfigured() {
+  const config = readBillionMailProviderConfig();
   const missing = [!config.baseUrl ? 'BILLIONMAIL_BASE_URL' : null, !config.apiToken ? 'BILLIONMAIL_API_TOKEN' : null].filter(Boolean);
-  if (missing.length) throw new Error(`missing_billionmail_config:${missing.join(',')}`);
+  if (missing.length) throw new Error(`missing_billionmail_direct_config:${missing.join(',')}`);
   return config;
 }
 
 function endpoint(path: string) {
-  const config = assertBillionMailProviderConfigured();
+  const config = assertBillionMailDirectProviderConfigured();
   const prefix = config.apiPrefix === '/' ? '' : `/${config.apiPrefix.replace(/^\/+|\/+$/g, '')}`;
   return new URL(`${prefix}/${path.replace(/^\/+/, '')}`, config.baseUrl).toString();
 }
@@ -61,7 +62,7 @@ async function parseResponse(response: Response) {
 }
 
 async function billionMailFetch(path: string, init: RequestInit) {
-  const config = assertBillionMailProviderConfigured();
+  const config = assertBillionMailDirectProviderConfigured();
   const headers = new Headers(init.headers);
   headers.set('accept', 'application/json');
   headers.set('authorization', `Bearer ${config.apiToken}`);
@@ -71,7 +72,7 @@ async function billionMailFetch(path: string, init: RequestInit) {
   return parseResponse(response);
 }
 
-export async function createBillionMailMailbox(input: MailboxInput) {
+export async function createBillionMailMailboxDirect(input: MailboxInput) {
   return billionMailFetch('/mailbox/create', {
     method: 'POST',
     body: JSON.stringify({
@@ -87,7 +88,7 @@ export async function createBillionMailMailbox(input: MailboxInput) {
   });
 }
 
-export async function updateBillionMailMailboxPassword(input: MailboxInput) {
+export async function updateBillionMailMailboxPasswordDirect(input: MailboxInput) {
   return billionMailFetch('/mailbox/update', {
     method: 'POST',
     body: JSON.stringify({
@@ -103,16 +104,53 @@ export async function updateBillionMailMailboxPassword(input: MailboxInput) {
   });
 }
 
-export async function deleteBillionMailMailbox(email: string) {
+export async function deleteBillionMailMailboxDirect(email: string) {
   return billionMailFetch('/mailbox/delete', {
     method: 'POST',
     body: JSON.stringify({ emails: [email] }),
   });
 }
 
+async function bridgeFetch(action: 'create' | 'update' | 'delete', payload: unknown) {
+  const config = assertBillionMailProviderConfigured();
+  if (!config.bridgeBaseUrl || !config.bridgeToken) throw new Error('missing_billionmail_config:BILLIONMAIL_BRIDGE_BASE_URL,BILLIONMAIL_BRIDGE_TOKEN');
+
+  const response = await fetch(billionMailBridgeMailboxEndpoint(config.bridgeBaseUrl), {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${config.bridgeToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ action, payload }),
+    cache: 'no-store',
+  });
+  return parseResponse(response);
+}
+
+function shouldUseDirectProvider() {
+  const config = readBillionMailProviderConfig();
+  return Boolean(config.baseUrl && config.apiToken);
+}
+
+export async function createBillionMailMailbox(input: MailboxInput) {
+  if (shouldUseDirectProvider()) return createBillionMailMailboxDirect(input);
+  return bridgeFetch('create', input);
+}
+
+export async function updateBillionMailMailboxPassword(input: MailboxInput) {
+  if (shouldUseDirectProvider()) return updateBillionMailMailboxPasswordDirect(input);
+  return bridgeFetch('update', input);
+}
+
+export async function deleteBillionMailMailbox(email: string) {
+  if (shouldUseDirectProvider()) return deleteBillionMailMailboxDirect(email);
+  return bridgeFetch('delete', { email });
+}
+
 export function publicBillionMailError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? 'billionmail_provider_error');
-  if (message.startsWith('missing_billionmail_config:')) return 'Chưa cấu hình token API BillionMail để tạo mailbox thật.';
+  if (message.startsWith('missing_billionmail_config:') || message.startsWith('missing_billionmail_direct_config:')) return 'Chưa cấu hình token API BillionMail để tạo mailbox thật.';
   if (message.startsWith('billionmail_provider_error:')) return 'BillionMail chưa tạo được mailbox. Hãy thử lại hoặc báo admin.';
   return message;
 }

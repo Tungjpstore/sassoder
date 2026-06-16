@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { GET as healthGet } from '../src/app/api/logimail/health/route';
 import { requireAuth } from '../src/lib/api-boundary';
+import { billionMailBridgeMailboxEndpoint } from '../src/lib/billionmail-config';
 import { decryptMailboxCredential, encryptMailboxCredential, mailCredentialReadiness } from '../src/lib/mail-credentials';
 import {
   buildSafeDnsPlan,
@@ -78,6 +79,9 @@ test('health route reports missing server config without failing', async () => {
       NEXT_PUBLIC_SUPABASE_URL: undefined,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
       BILLIONMAIL_BASE_URL: undefined,
+      BILLIONMAIL_API_TOKEN: undefined,
+      BILLIONMAIL_BRIDGE_BASE_URL: undefined,
+      BILLIONMAIL_BRIDGE_TOKEN: undefined,
       CLOUDFLARE_ZONE_ID: undefined,
     },
     async () => {
@@ -88,9 +92,13 @@ test('health route reports missing server config without failing', async () => {
       assert.deepEqual(result.body.data.missing, [
         'NEXT_PUBLIC_SUPABASE_URL',
         'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-        'BILLIONMAIL_BASE_URL',
         'CLOUDFLARE_ZONE_ID',
+        'BILLIONMAIL_BASE_URL',
+        'BILLIONMAIL_API_TOKEN',
+        'BILLIONMAIL_BRIDGE_BASE_URL',
+        'BILLIONMAIL_BRIDGE_TOKEN',
       ]);
+      assert.deepEqual(result.body.data.billionmail, { ready: false, mode: 'not_configured' });
     },
   );
 });
@@ -101,6 +109,7 @@ test('health route reports ready when required server config is present', async 
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
       BILLIONMAIL_BASE_URL: 'http://127.0.0.1:8081',
+      BILLIONMAIL_API_TOKEN: 'provider-token',
       CLOUDFLARE_ZONE_ID: 'zone-example',
     },
     async () => {
@@ -108,7 +117,40 @@ test('health route reports ready when required server config is present', async 
       assert.equal(result.status, 200);
       assert.equal(result.body.data.status, 'ready');
       assert.deepEqual(result.body.data.missing, []);
+      assert.deepEqual(result.body.data.billionmail, { ready: true, mode: 'direct' });
     },
+  );
+});
+
+test('health route accepts BillionMail bridge mode for Vercel console deployments', async () => {
+  await withEnv(
+    {
+      NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
+      BILLIONMAIL_BASE_URL: undefined,
+      BILLIONMAIL_API_TOKEN: undefined,
+      BILLIONMAIL_BRIDGE_BASE_URL: 'https://mail.logivn.com/api/logimail/provider-bridge',
+      BILLIONMAIL_BRIDGE_TOKEN: 'bridge-token',
+      CLOUDFLARE_ZONE_ID: 'zone-example',
+    },
+    async () => {
+      const result = await responseJson(healthGet());
+      assert.equal(result.status, 200);
+      assert.equal(result.body.data.status, 'ready');
+      assert.deepEqual(result.body.data.missing, []);
+      assert.deepEqual(result.body.data.billionmail, { ready: true, mode: 'bridge' });
+    },
+  );
+});
+
+test('BillionMail bridge mailbox endpoint preserves nested base path', () => {
+  assert.equal(
+    billionMailBridgeMailboxEndpoint('https://mail.logivn.com/api/logimail/provider-bridge'),
+    'https://mail.logivn.com/api/logimail/provider-bridge/mailbox',
+  );
+  assert.equal(
+    billionMailBridgeMailboxEndpoint('https://mail.logivn.com/api/logimail/provider-bridge/'),
+    'https://mail.logivn.com/api/logimail/provider-bridge/mailbox',
   );
 });
 
@@ -343,6 +385,7 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   const pushStore = routeSource('src/lib/push-subscriptions.ts');
   const webPush = routeSource('src/lib/web-push.ts');
   const mailCredentials = routeSource('src/lib/mail-credentials.ts');
+  const envelopeCrypto = routeSource('src/lib/security/envelope-crypto.ts');
   const pushWorker = routeSource('scripts/logimail-push-worker.ts');
   const middleware = routeSource('src/middleware.ts');
   const serviceWorker = routeSource('public/sw.js');
@@ -377,7 +420,7 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   assert.match(packageJson, /"push-worker"/);
   assert.match(packageJson, /"tsx"/);
   assert.match(webPush, /setVapidDetails/);
-  assert.match(mailCredentials, /LOGIMAIL_CREDENTIAL_ENCRYPTION_KEY/);
+  assert.match(envelopeCrypto, /LOGIMAIL_CREDENTIAL_ENCRYPTION_KEY/);
   assert.match(mailCredentials, /encrypted_imap_password/);
   assert.match(pushStore, /push_subscriptions/);
   assert.match(pushStore, /shouldDisablePushSubscription/);

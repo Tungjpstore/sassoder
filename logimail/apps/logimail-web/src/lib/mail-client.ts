@@ -7,8 +7,6 @@ import type SMTPTransport from 'nodemailer/lib/smtp-transport';
 import type StreamTransport from 'nodemailer/lib/stream-transport';
 import type { AuthorizedMailbox } from '@/lib/mail-access';
 import type { MailSession } from '@/lib/mail-session';
-import { commitDomainQuotaUsage, enforceSendingQuota } from '@/lib/deliverability/quota';
-import { findSuppressedRecipients } from '@/lib/deliverability/bounce';
 
 export type MailFolderKey = 'inbox' | 'sent' | 'drafts' | 'spam' | 'trash' | 'archive';
 
@@ -600,6 +598,10 @@ export async function getMailAttachment(
 
 export async function sendMailThroughMailbox(session: MailSession, mailbox: AuthorizedMailbox, input: SendMailInput) {
   const sanitized = validateSendInput(input);
+  const [{ commitDomainQuotaUsage, enforceSendingQuota }, { findSuppressedRecipients }] = await Promise.all([
+    import('@/lib/deliverability/quota'),
+    import('@/lib/deliverability/bounce'),
+  ]);
 
   // Per-Sending_Domain quota enforcement (R4.3, R18.3, R20.2). Domains without a
   // configured quota row are allowed. Usage is committed after a successful send.
