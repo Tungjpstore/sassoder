@@ -1,19 +1,13 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { ManagementConsole } from '@/components/control/management-console';
+import { DOMAIN_CONTROL_HOST, MAIL_HOST, hostnameFromHeaders, isDomainConsoleHost } from '@/lib/logimail-hosts';
 
 export const dynamic = 'force-dynamic';
 
-const MAIL_HOST = 'mail.logivn.com';
-
-function requestHost(headersList: Headers) {
-  return (headersList.get('x-forwarded-host') ?? headersList.get('host') ?? '').split(',')[0]?.trim().split(':')[0]?.toLowerCase();
-}
-
 export default async function HomePage() {
-  const host = requestHost(await headers());
-  // mail.logivn.com is purely the mailbox client; every other host (domain.logivn.com,
-  // localhost) is the LogiMail management console.
+  const host = hostnameFromHeaders(await headers());
   if (host === MAIL_HOST) redirect('/mail/inbox');
+  if (!isDomainConsoleHost(host)) redirect(`https://${DOMAIN_CONTROL_HOST}/`);
   return <ManagementConsole />;
 }

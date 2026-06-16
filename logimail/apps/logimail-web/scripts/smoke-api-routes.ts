@@ -78,6 +78,8 @@ test('health route reports missing server config without failing', async () => {
     {
       NEXT_PUBLIC_SUPABASE_URL: undefined,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
+      SUPABASE_SECRET_KEY: undefined,
+      SUPABASE_DEFAULT_KEY: undefined,
       BILLIONMAIL_BASE_URL: undefined,
       BILLIONMAIL_API_TOKEN: undefined,
       BILLIONMAIL_BRIDGE_BASE_URL: undefined,
@@ -93,6 +95,7 @@ test('health route reports missing server config without failing', async () => {
         'NEXT_PUBLIC_SUPABASE_URL',
         'NEXT_PUBLIC_SUPABASE_ANON_KEY',
         'CLOUDFLARE_ZONE_ID',
+        'SUPABASE_SECRET_KEY',
         'BILLIONMAIL_BASE_URL',
         'BILLIONMAIL_API_TOKEN',
         'BILLIONMAIL_BRIDGE_BASE_URL',
@@ -108,6 +111,7 @@ test('health route reports ready when required server config is present', async 
     {
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
+      SUPABASE_SECRET_KEY: 'sb_secret_example',
       BILLIONMAIL_BASE_URL: 'http://127.0.0.1:8081',
       BILLIONMAIL_API_TOKEN: 'provider-token',
       CLOUDFLARE_ZONE_ID: 'zone-example',
@@ -127,6 +131,7 @@ test('health route accepts BillionMail bridge mode for Vercel console deployment
     {
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
+      SUPABASE_SECRET_KEY: 'sb_secret_example',
       BILLIONMAIL_BASE_URL: undefined,
       BILLIONMAIL_API_TOKEN: undefined,
       BILLIONMAIL_BRIDGE_BASE_URL: 'https://mail.logivn.com/api/logimail/provider-bridge',
@@ -369,6 +374,10 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   const mailClient = routeSource('src/lib/mail-client.ts');
   const mailAccess = routeSource('src/lib/mail-access.ts');
   const profileForm = routeSource('src/components/profile-settings-form.tsx');
+  const authForms = routeSource('src/components/auth-forms.tsx');
+  const controlLogin = routeSource('src/components/control/control-login-form.tsx');
+  const authLoginClient = routeSource('src/lib/auth-login-client.ts');
+  const authLoginRoute = routeSource('src/app/api/logimail/auth/login/route.ts');
   const meRoute = routeSource('src/app/api/logimail/me/route.ts');
   const sessionRoute = routeSource('src/app/api/logimail/mail/session/route.ts');
   const sendRoute = routeSource('src/app/api/logimail/mail/send/route.ts');
@@ -408,9 +417,20 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   assert.match(mailPage, /redirect\(['"]\/mail\/inbox['"]\)/);
   assert.match(mailNotificationPage, /MailNotificationSettingsView/);
   assert.match(middleware, /domain\.logivn\.com/);
-  assert.match(middleware, /domainControlPrefixes/);
+  assert.match(middleware, /DOMAIN_CONTROL_PREFIXES/);
+  assert.match(middleware, /MAILBOX_PREFIXES/);
   assert.match(middleware, /refresh_token_already_used/);
   assert.match(middleware, /clearSupabaseAuthCookies/);
+  assert.match(authLoginClient, /\/api\/logimail\/auth\/login/);
+  assert.match(authLoginClient, /auth-login-cooldown/);
+  assert.doesNotMatch(authForms, /\.auth\.signInWithPassword/);
+  assert.doesNotMatch(controlLogin, /\.auth\.signInWithPassword/);
+  assert.match(authLoginRoute, /SUPABASE_SECRET_KEY/);
+  assert.match(authLoginRoute, /not_configured/);
+  assert.match(authLoginRoute, /sb-forwarded-for/);
+  assert.match(authLoginRoute, /signInWithPassword/);
+  assert.match(authLoginRoute, /enforceRateLimit/);
+  assert.doesNotMatch(pages, /admin\.logivn\.com/);
   assert.match(serviceWorker, /logimail-shell-v6/);
   assert.doesNotMatch(serviceWorker, /\n\s*'\/mail\/inbox',/);
   assert.doesNotMatch(serviceWorker, /\n\s*'\/auth\/login',/);

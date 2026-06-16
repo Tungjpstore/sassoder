@@ -1,14 +1,11 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
+import { DOMAIN_CONTROL_HOST, hostnameFromHeaders } from '@/lib/logimail-hosts';
 
 export const dynamic = 'force-dynamic';
 
-function requestHost(headersList: Headers) {
-  return (headersList.get('x-forwarded-host') ?? headersList.get('host') ?? '').split(',')[0]?.trim().split(':')[0]?.toLowerCase();
-}
-
 export default async function DashboardPage() {
-  const host = requestHost(await headers());
-  if (host === 'domain.logivn.com') redirect('/');
+  const host = hostnameFromHeaders(await headers());
+  if (host === DOMAIN_CONTROL_HOST) redirect('/');
   redirect('/mail/inbox');
 }

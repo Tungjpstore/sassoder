@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { logimailPasswordLogin, readLoginCooldownSeconds, storeLoginCooldown } from '@/lib/auth-login-client';
 import { normalizeAuthError } from '@/lib/auth-errors';
 import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 
@@ -41,9 +42,12 @@ function emailFromParts(localPart: string, domain: string) {
   return `${cleanLocalPart(localPart)}@${domain}`;
 }
 
-async function createBrowserMailSession(email: string, password: string) {
-  const { data } = await getSupabaseBrowserClient().auth.getSession();
-  const token = data.session?.access_token;
+async function createBrowserMailSession(email: string, password: string, accessToken?: string) {
+  let token = accessToken;
+  if (!token) {
+    const { data } = await getSupabaseBrowserClient().auth.getSession();
+    token = data.session?.access_token;
+  }
   if (!token) return;
   await fetch('/api/logimail/mail/session', {
     method: 'POST',
@@ -101,6 +105,13 @@ export function AuthLoginForm({ domains }: Readonly<{ domains: AuthDomainOption[
   const retryAfterSeconds = state.retryAfterSeconds ?? 0;
 
   useEffect(() => {
+    const storedRetry = readLoginCooldownSeconds(email);
+    if (storedRetry > 0) {
+      setState((current) => ({ ...current, retryAfterSeconds: Math.max(current.retryAfterSeconds ?? 0, storedRetry) }));
+    }
+  }, [email]);
+
+  useEffect(() => {
     if (retryAfterSeconds <= 0 || state.loading) return undefined;
     const timer = window.setTimeout(() => {
       setState((current) => ({
@@ -113,17 +124,22 @@ export function AuthLoginForm({ domains }: Readonly<{ domains: AuthDomainOption[
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const storedRetry = readLoginCooldownSeconds(email);
+    if (storedRetry > 0) {
+      setState({ loading: false, message: null, error: `Bạn thao tác quá nhanh hoặc thử đăng nhập quá nhiều lần. Vui lòng chờ khoảng ${storedRetry} giây rồi thử lại.`, retryAfterSeconds: storedRetry });
+      return;
+    }
     if (retryAfterSeconds > 0 || state.loading) return;
     setState({ loading: true, message: null, error: null });
     try {
-      const { error } = await getSupabaseBrowserClient().auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      await createBrowserMailSession(email, password);
+      const login = await logimailPasswordLogin({ email, password });
+      await createBrowserMailSession(email, password, login.accessToken);
       setState({ loading: false, message: 'Đăng nhập thành công.', error: null });
       router.push('/mail/inbox');
       router.refresh();
     } catch (error) {
       const authError = normalizeAuthError(error, 'Không đăng nhập được.');
+      storeLoginCooldown(email, authError.retryAfterSeconds);
       setState({ loading: false, message: null, error: authError.message, retryAfterSeconds: authError.retryAfterSeconds });
     }
   }
@@ -180,12 +196,16 @@ export function AuthRegisterForm({ domains }: Readonly<{ domains: AuthDomainOpti
         message: `Đã tạo ${email}. Bạn có thể đăng nhập ngay.`,
         error: null,
       });
-      const { error: signInError } = await getSupabaseBrowserClient().auth.signInWithPassword({ email, password });
-      if (!signInError) {
-        await createBrowserMailSession(email, password);
+      try {
+        const login = await logimailPasswordLogin({ email, password });
+        await createBrowserMailSession(email, password, login.accessToken);
         router.push('/mail/inbox');
         router.refresh();
         return;
+      } catch (signInError) {
+        const authError = normalizeAuthError(signInError, 'Không đăng nhập tự động được.');
+        storeLoginCooldown(email, authError.retryAfterSeconds);
+        setState({ loading: false, message: `Đã tạo ${email}. ${authError.message}`, error: null, retryAfterSeconds: authError.retryAfterSeconds });
       }
       setLocalPart('');
       setSecurityCode('');

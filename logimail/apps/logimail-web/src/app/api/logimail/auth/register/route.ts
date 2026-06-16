@@ -67,14 +67,14 @@ function publicErrorMessage(error: unknown) {
   if (message === 'invalid_local_part') return 'Tên email chỉ được dùng chữ, số, dấu chấm, gạch ngang hoặc gạch dưới.';
   if (message === 'invalid_domain') return 'Domain email không hợp lệ.';
   if (message === 'security_code_invalid') return 'Mã bảo mật không hợp lệ cho domain này.';
-  if (message === 'security_code_expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong admin.logivn.com hoặc LogiDev bot.';
+  if (message === 'security_code_expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong domain.logivn.com hoặc LogiDev bot.';
   if (message === 'security_code_used') return 'Mã bảo mật đã được sử dụng. Mỗi mã chỉ tạo được một tài khoản.';
   if (message.startsWith('missing_billionmail_config:') || message.startsWith('billionmail_provider_error:')) return publicBillionMailError(error);
   return publicSecurityCodeError(error);
 }
 
 function codeFailureMessage(reason: 'invalid' | 'expired' | 'used') {
-  if (reason === 'expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong admin.logivn.com hoặc LogiDev bot.';
+  if (reason === 'expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong domain.logivn.com hoặc LogiDev bot.';
   if (reason === 'used') return 'Mã bảo mật đã được sử dụng. Mỗi mã chỉ tạo được một tài khoản.';
   return 'Mã bảo mật không hợp lệ cho domain này.';
 }

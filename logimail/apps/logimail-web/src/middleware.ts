@@ -1,14 +1,6 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
-
-const MAIL_HOST = 'mail.logivn.com';
-const DOMAIN_CONTROL_HOST = 'domain.logivn.com';
-
-const domainControlPrefixes = ['/domains', '/mailboxes', '/ops', '/settings', '/team', '/onboarding'];
-
-function startsWithPath(pathname: string, prefixes: string[]) {
-  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
+import { DOMAIN_CONTROL_HOST, DOMAIN_CONTROL_PREFIXES, MAIL_HOST, MAILBOX_PREFIXES, startsWithPath } from '@/lib/logimail-hosts';
 
 function requestHostname(request: NextRequest) {
   const forwardedHost = request.headers.get('x-forwarded-host') ?? request.headers.get('host');
@@ -59,14 +51,14 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    if (startsWithPath(pathname, domainControlPrefixes) || pathname.startsWith('/dashboard/')) {
+    if (startsWithPath(pathname, DOMAIN_CONTROL_PREFIXES) || pathname.startsWith('/dashboard/')) {
       return redirectToHost(request, DOMAIN_CONTROL_HOST, pathname);
     }
   }
 
   if (hostname === DOMAIN_CONTROL_HOST) {
     // domain.logivn.com '/' renders the management console directly (see app/page.tsx).
-    if (pathname === '/mail' || pathname.startsWith('/mail/')) {
+    if (startsWithPath(pathname, MAILBOX_PREFIXES)) {
       return redirectToHost(request, MAIL_HOST, pathname);
     }
   }

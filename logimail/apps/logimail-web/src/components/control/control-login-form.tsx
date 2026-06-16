@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, LogIn } from 'lucide-react';
+import { logimailPasswordLogin, readLoginCooldownSeconds, storeLoginCooldown } from '@/lib/auth-login-client';
 import { normalizeAuthError } from '@/lib/auth-errors';
-import { getSupabaseBrowserClient } from '@/lib/supabase-browser';
 
 export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: string }>) {
   const router = useRouter();
@@ -15,6 +15,12 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
   const [retryAfterSeconds, setRetryAfterSeconds] = useState(0);
 
   useEffect(() => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    setRetryAfterSeconds((current) => Math.max(current, readLoginCooldownSeconds(normalizedEmail)));
+  }, [email]);
+
+  useEffect(() => {
     if (retryAfterSeconds <= 0 || loading) return undefined;
     const timer = window.setTimeout(() => setRetryAfterSeconds((current) => Math.max(0, current - 1)), 1000);
     return () => window.clearTimeout(timer);
@@ -22,19 +28,23 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+    const storedRetry = readLoginCooldownSeconds(normalizedEmail);
+    if (storedRetry > 0) {
+      setRetryAfterSeconds(storedRetry);
+      setError(`Bạn thao tác quá nhanh hoặc thử đăng nhập quá nhiều lần. Vui lòng chờ khoảng ${storedRetry} giây rồi thử lại.`);
+      return;
+    }
     if (retryAfterSeconds > 0 || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const { error: signInError } = await getSupabaseBrowserClient().auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-      if (signInError) throw signInError;
+      await logimailPasswordLogin({ email: normalizedEmail, password });
       router.push(redirectTo);
       router.refresh();
     } catch (signInError) {
       const authError = normalizeAuthError(signInError, 'Không đăng nhập được.');
+      storeLoginCooldown(normalizedEmail, authError.retryAfterSeconds);
       setError(authError.message);
       setRetryAfterSeconds(authError.retryAfterSeconds);
       setLoading(false);
@@ -72,8 +82,8 @@ export function ControlLoginForm({ redirectTo = '/' }: Readonly<{ redirectTo?: s
         {loading ? <Loader2 size={16} aria-hidden="true" /> : <LogIn size={16} aria-hidden="true" />}
         <span>{loading ? 'Đang đăng nhập' : retryAfterSeconds > 0 ? `Thử lại sau ${retryAfterSeconds}s` : 'Đăng nhập điều khiển'}</span>
       </button>
-      <p className="control-login-hint">Khu vực này chỉ dành cho admin/owner LogiMail. Tài khoản thường sẽ được chuyển về trang quản lý domain.</p>
-      <p className="control-login-hint"><a href="/auth/forgot-password">Quên mật khẩu?</a></p>
+      <p className="control-login-hint">Khu vực này chỉ dành cho admin/owner LogiMail và dùng quyền riêng của hệ thống mail.</p>
+      <p className="control-login-hint"><a href="https://mail.logivn.com/auth/forgot-password">Quên mật khẩu?</a></p>
     </form>
   );
 }

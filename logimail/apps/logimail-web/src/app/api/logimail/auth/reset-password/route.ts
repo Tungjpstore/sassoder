@@ -53,14 +53,14 @@ function publicErrorMessage(error: unknown) {
   if (message === 'password_mismatch') return 'Mật khẩu xác nhận không khớp.';
   if (message === 'invalid_local_part' || message === 'invalid_email') return 'Địa chỉ email không hợp lệ.';
   if (message === 'security_code_invalid') return 'Mã bảo mật không hợp lệ cho email này.';
-  if (message === 'security_code_expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong admin.logivn.com hoặc LogiDev bot.';
+  if (message === 'security_code_expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong domain.logivn.com hoặc LogiDev bot.';
   if (message === 'security_code_used') return 'Mã bảo mật đã được sử dụng.';
   if (message.startsWith('billionmail_provider_error:') || message.startsWith('missing_billionmail_config:')) return publicBillionMailError(error);
   return publicSecurityCodeError(error);
 }
 
 function codeFailureMessage(reason: 'invalid' | 'expired' | 'used') {
-  if (reason === 'expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong admin.logivn.com hoặc LogiDev bot.';
+  if (reason === 'expired') return 'Mã bảo mật đã hết hiệu lực. Admin có thể lấy mã mới trong domain.logivn.com hoặc LogiDev bot.';
   if (reason === 'used') return 'Mã bảo mật đã được sử dụng.';
   return 'Mã bảo mật không hợp lệ cho email này.';
 }

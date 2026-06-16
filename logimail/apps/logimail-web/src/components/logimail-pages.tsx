@@ -385,7 +385,7 @@ export async function CreateMailboxView() {
   const pendingMailboxRequests = data.mailboxRequests.filter((request) => request.status === 'pending');
   return (
     <AppShell {...shellProps(data)}>
-      <PageHeader eyebrow="Mailbox" title="Yêu cầu mailbox mới" description="Mailbox mới bắt buộc qua admin.logivn.com và Telegram approval." />
+      <PageHeader eyebrow="Mailbox" title="Yêu cầu mailbox mới" description="Mailbox mới bắt buộc qua domain.logivn.com và Telegram approval." />
       <section className="form-layout">
         <Panel title="Thông tin mailbox">
           <MailboxRequestForm workspaceId={workspaceId} domains={approvedDomains.map((domain) => ({ id: domain.id, domain: domain.domain }))} />
