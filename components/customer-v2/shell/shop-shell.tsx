@@ -13,7 +13,8 @@ import { Money } from "../ui/primitives";
 export function ShopShell({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
     <div data-shop="v2" className={cn(fontVars, "min-h-[100dvh] bg-[var(--bg)] text-[var(--text)]")}>
-      <div className={cn("relative mx-auto flex min-h-[100dvh] w-full max-w-[var(--shop-max)] flex-col bg-[var(--bg)] sm:shadow-[var(--sh-lg)]", className)}>
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(242,140,40,0.14),transparent_28%),radial-gradient(circle_at_80%_12%,rgba(15,77,58,0.12),transparent_30%)]" aria-hidden />
+      <div className={cn("relative mx-auto flex min-h-[100dvh] w-full max-w-[var(--shop-max)] flex-col bg-[var(--bg)]/95 sm:shadow-[var(--sh-lg)]", className)}>
         {children}
       </div>
     </div>

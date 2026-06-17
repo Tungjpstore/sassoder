@@ -46,10 +46,9 @@ async function StaffWorkspaceContent({
   restaurantName: string;
   restaurantStaffCode: string | null;
 }) {
-  const [bundle, payrollDeductions, payrollProfiles] = await Promise.all([
+  const [bundle, payroll] = await Promise.all([
     getStaffOperationsBundle(restaurantId, userId),
-    getStaffPayrollDeductions(restaurantId).catch(() => DEFAULT_PAYROLL_DEDUCTIONS),
-    listStaffPayrollProfiles(restaurantId).catch(() => [])
+    loadStaffPayroll(restaurantId)
   ]);
 
   return (
@@ -58,10 +57,31 @@ async function StaffWorkspaceContent({
       restaurantId={restaurantId}
       restaurantName={restaurantName}
       restaurantStaffCode={restaurantStaffCode}
-      payrollDeductions={payrollDeductions}
-      payrollProfiles={payrollProfiles}
+      payrollDeductions={payroll.deductions}
+      payrollProfiles={payroll.profiles}
+      payrollDataError={payroll.error}
     />
   );
+}
+
+async function loadStaffPayroll(restaurantId: string) {
+  const [deductionsResult, profilesResult] = await Promise.allSettled([
+    getStaffPayrollDeductions(restaurantId),
+    listStaffPayrollProfiles(restaurantId)
+  ]);
+  const errors = [deductionsResult, profilesResult]
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => payrollErrorMessage(result.reason));
+
+  return {
+    deductions: deductionsResult.status === "fulfilled" ? deductionsResult.value : DEFAULT_PAYROLL_DEDUCTIONS,
+    profiles: profilesResult.status === "fulfilled" ? profilesResult.value : [],
+    error: errors.length ? `Không tải được dữ liệu lương thật: ${errors.join("; ")}` : null
+  };
+}
+
+function payrollErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Lỗi không xác định";
 }
 
 function StaffWorkspaceSkeleton() {

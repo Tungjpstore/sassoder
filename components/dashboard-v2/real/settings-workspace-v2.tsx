@@ -102,6 +102,51 @@ const GROUPS: Array<{ title: string; keys: SettingsSectionKey[] }> = [
   { title: "Đội ngũ & tự động hoá", keys: ["ai_setup", "notifications", "permissions"] }
 ];
 
+function onlineSettingsFingerprint(restaurant: RestaurantRow) {
+  return [
+    restaurant.online_ordering_enabled,
+    restaurant.pickup_enabled,
+    restaurant.delivery_enabled,
+    restaurant.delivery_tracking_enabled,
+    restaurant.online_payment_mode,
+    restaurant.address,
+    restaurant.store_lat,
+    restaurant.store_lng,
+    restaurant.delivery_radius_km,
+    restaurant.free_delivery_radius_km,
+    restaurant.delivery_base_fee,
+    restaurant.delivery_fee_per_km,
+    restaurant.min_order_for_delivery,
+    restaurant.pickup_eta_minutes,
+    restaurant.delivery_eta_minutes,
+    restaurant.map_geocoding_provider,
+    restaurant.map_routing_provider,
+    restaurant.map_default_zoom,
+    restaurant.map_display_style,
+    restaurant.show_store_marker_on_ordering,
+    restaurant.show_customer_distance,
+    restaurant.delivery_area_mode,
+    restaurant.delivery_area_name,
+    restaurant.delivery_area_note,
+    restaurant.delivery_area_ward_count,
+    restaurant.delivery_fee_enabled,
+    restaurant.service_fee_enabled,
+    restaurant.service_fee_type,
+    restaurant.service_fee_percent,
+    restaurant.service_fee_min,
+    restaurant.service_fee_max,
+    restaurant.allow_outside_delivery_area,
+    restaurant.show_delivery_eta,
+    restaurant.require_outside_area_confirmation,
+    restaurant.auto_suggest_nearest_branch,
+    JSON.stringify(restaurant.delivery_fee_tiers ?? null),
+    JSON.stringify(restaurant.delivery_area_polygon ?? null),
+    JSON.stringify(restaurant.delivery_exclusion_zones ?? null)
+  ]
+    .map((value) => String(value ?? ""))
+    .join("|");
+}
+
 function toneBadge(tone: SettingsSectionTone): "ok" | "orange" | "info" | "neutral" {
   return tone;
 }
@@ -269,6 +314,7 @@ export function RealSettingsWorkspaceV2(props: Props) {
             {active === "tables" ? <TablesSection restaurant={props.restaurant} tableCount={props.tableCount} qrMenuUrl={props.qrMenuUrl} /> : null}
             {active === "online" ? (
               <OnlineSectionV2
+                key={`online-${onlineSettingsFingerprint(props.restaurant)}`}
                 settings={props.restaurant as unknown as Parameters<typeof OnlineSectionV2>[0]["settings"]}
                 onlineUrl={props.onlineOrderUrl}
                 branchDeliverySettings={props.branchDeliverySettings}

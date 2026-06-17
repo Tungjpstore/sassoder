@@ -23,8 +23,8 @@ const contentSecurityPolicy = [
 
 const nextConfig: NextConfig = {
   typedRoutes: false,
-  typescript: {
-    ignoreBuildErrors: true
+  turbopack: {
+    root: process.cwd()
   },
   experimental: {
     optimizePackageImports: ["lucide-react"],

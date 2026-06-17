@@ -22,6 +22,7 @@ export type LogibotWorkspaceData = {
   ownerName: string;
   branchName: string;
   branchStatus: string;
+  branchDataError: string | null;
   threadId: string;
 };
 
@@ -231,6 +232,7 @@ export function LogibotAiWorkspace({ workspace }: { workspace: LogibotWorkspaceD
             restaurantId: workspace.restaurantId,
             restaurantName: workspace.restaurantName,
             branchName: workspace.branchName,
+            branchDataError: workspace.branchDataError,
             source: "logibot_ai_workspace_v3"
           }
         }

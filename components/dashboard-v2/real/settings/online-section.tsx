@@ -9,7 +9,8 @@
  *    riêng cho người cần — không nhồi vào layout chính.
  */
 
-import { useActionState, useMemo, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowRight,
@@ -121,7 +122,9 @@ type Props = {
 };
 
 export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, mapOperationalMetrics }: Props) {
+  const router = useRouter();
   const [state, formAction, pending] = useActionState(updateOrderingSettingsAction, undefined);
+  const refreshedSuccessRef = useRef<string | null>(null);
 
   const initialLat = Number(settings.store_lat ?? 10.7769);
   const initialLng = Number(settings.store_lng ?? 106.7009);
@@ -205,8 +208,15 @@ export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, m
     }
   }
 
+  useEffect(() => {
+    if (!state?.success || refreshedSuccessRef.current === state.success) return;
+    refreshedSuccessRef.current = state.success;
+    router.refresh();
+  }, [router, state?.success]);
+
   return (
-    <form action={formAction} className="flex flex-col gap-[var(--d-s-4)]">
+    <div className="flex flex-col gap-[var(--d-s-4)]">
+      <form action={formAction} className="flex flex-col gap-[var(--d-s-4)]">
       {/* Hidden inputs giữ contract backend */}
       <input type="hidden" name="address" value={resolvedAddress ?? settings.address ?? ""} readOnly />
       <input type="hidden" name="storeLat" value={storeLat} readOnly />
@@ -553,6 +563,19 @@ export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, m
         </div>
       </details>
 
+      {/* Sticky save bar */}
+      <div className="sticky bottom-2 z-10 flex flex-wrap items-center justify-between gap-2 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-[var(--d-s-3)] shadow-[var(--d-sh-md)]">
+        <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+          {pinned ? "Đã ghim toạ độ — sẵn sàng lưu." : "Chưa ghim toạ độ — backend sẽ vẫn lưu nhưng khách không tính được khoảng cách."}
+        </p>
+        <Button type="submit" variant="primary" size="md" disabled={pending}>
+          <Save size={15} /> {pending ? "Đang lưu…" : "Lưu cấu hình online"}
+          <ArrowRight size={14} />
+        </Button>
+      </div>
+
+      </form>
+
       {/* Embed sub-tools — chỉ mở khi cần */}
       <details className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
         <summary className="flex cursor-pointer items-center justify-between gap-3 list-none px-[var(--d-s-5)] py-[var(--d-s-4)]">
@@ -580,18 +603,7 @@ export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, m
           </div>
         </details>
       ) : null}
-
-      {/* Sticky save bar */}
-      <div className="sticky bottom-2 z-10 flex flex-wrap items-center justify-between gap-2 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-[var(--d-s-3)] shadow-[var(--d-sh-md)]">
-        <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-          {pinned ? "Đã ghim toạ độ — sẵn sàng lưu." : "Chưa ghim toạ độ — backend sẽ vẫn lưu nhưng khách không tính được khoảng cách."}
-        </p>
-        <Button type="submit" variant="primary" size="md" disabled={pending}>
-          <Save size={15} /> {pending ? "Đang lưu…" : "Lưu cấu hình online"}
-          <ArrowRight size={14} />
-        </Button>
-      </div>
-    </form>
+    </div>
   );
 }
 
@@ -629,6 +641,7 @@ function ToggleCard({
         {hint ? <span className="mt-0.5 block text-[length:var(--d-fs-xs)] leading-5 text-[var(--d-text-muted)]">{hint}</span> : null}
       </span>
       <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-[var(--d-r-sm)] border border-[var(--d-line)] bg-[var(--d-surface-2)]">
+        <input type="hidden" name={name} value="false" />
         <input type="checkbox" name={name} value="true" defaultChecked={defaultChecked} className="peer absolute inset-0 h-full w-full cursor-pointer opacity-0" />
         <Check className="scale-90 text-[var(--d-jade)] opacity-0 transition peer-checked:opacity-100" size={18} />
       </span>

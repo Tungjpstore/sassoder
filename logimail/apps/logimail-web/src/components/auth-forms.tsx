@@ -48,12 +48,18 @@ async function createBrowserMailSession(email: string, password: string, accessT
     const { data } = await getSupabaseBrowserClient().auth.getSession();
     token = data.session?.access_token;
   }
-  if (!token) return;
-  await fetch('/api/logimail/mail/session', {
+  if (!token) throw new Error('Đăng nhập thành công nhưng trình duyệt chưa nhận phiên Supabase. Hãy tải lại trang và thử lại.');
+  const response = await fetch('/api/logimail/mail/session', {
     method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ email, password }),
-  }).catch(() => undefined);
+  });
+  const body = await response.json().catch(() => ({})) as { error?: { message?: string } };
+  if (!response.ok) {
+    throw new Error(body.error?.message ?? 'Đăng nhập thành công nhưng chưa mở khóa được hộp thư. Hãy kiểm tra mật khẩu mailbox.');
+  }
 }
 
 function EmailAddressFields({ domains, localPart, setLocalPart, domain, setDomain, label, autoComplete = 'username' }: EmailAddressFieldsProps) {

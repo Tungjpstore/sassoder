@@ -1,5 +1,6 @@
 export type OwnerStaffSnapshot = {
   schemaReady?: boolean | null;
+  schemaErrors?: string[] | null;
   memberCount?: number | null;
   activeCount?: number | null;
   suspendedCount?: number | null;
@@ -33,6 +34,17 @@ function numberValue(value: unknown) {
 export function buildOwnerStaffContextLine(staff: OwnerStaffSnapshot | null | undefined) {
   if (!staff) return "";
 
+  const schemaErrors = (staff.schemaErrors ?? [])
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    .slice(0, 3);
+
+  if (staff.schemaReady === false) {
+    return [
+      "Nhân sự: snapshot HR chưa sẵn sàng, không được kết luận là chưa có nhân viên.",
+      schemaErrors.length ? `Lỗi dữ liệu: ${schemaErrors.join("; ")}.` : "Cần kiểm tra migration/RLS HR Staff."
+    ].join(" ");
+  }
+
   const pendingTypes = Object.entries(staff.pendingApprovalByType ?? {})
     .filter(([, count]) => numberValue(count) > 0)
     .map(([type, count]) => `${type}:${numberValue(count)}`)
@@ -63,6 +75,7 @@ export function buildOwnerStaffContextLine(staff: OwnerStaffSnapshot | null | un
     `Nhân sự: ${numberValue(staff.activeCount)}/${numberValue(staff.memberCount)} active, ${numberValue(staff.suspendedCount)} tạm khoá, ${numberValue(staff.archivedCount)} lưu trữ, ${numberValue(staff.currentlyClockedIn)} đang check-in, ${numberValue(staff.onlineCount)} online.`,
     `Chấm công/payroll: ${numberValue(staff.attendanceLogCount24h)} log 24h, ${numberValue(staff.lateCount24h)} lượt muộn 24h, ${numberValue(staff.overtimeMinutes24h)} phút tăng ca, ${numberValue(staff.pendingApprovalCount)} yêu cầu chờ duyệt${pendingTypes ? ` (${pendingTypes})` : ""}.`,
     `Ca & chi nhánh: ${numberValue(staff.upcomingShiftCount || staff.shiftCount7d)} ca sắp tới, ${numberValue(staff.assignedBranchCount)} nhân sự đã gán chi nhánh, ${numberValue(staff.unassignedActiveCount)} active chưa gán chi nhánh${roleBreakdown ? `, role ${roleBreakdown}` : ""}${reviewLine}.`,
+    schemaErrors.length ? `Một phần dữ liệu HR chưa tải được: ${schemaErrors.join("; ")}.` : "",
     clockedInNames ? `Đang trong ca: ${clockedInNames}.` : "",
     pendingNames ? `Request chờ: ${pendingNames}.` : "",
     upcomingShiftNames ? `Ca gần tới: ${upcomingShiftNames}.` : ""

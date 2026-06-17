@@ -2380,7 +2380,7 @@ function AttendanceScreen({ bundle }: { bundle: StaffOperationsBundle }) {
               <p className="text-sm font-black uppercase tracking-[0.08em] text-[#0F4D3A] md:col-span-6">Chấm công hộ</p>
               <select name="staffMemberId" className="staff-redesign-input md:col-span-2">{bundle.members.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</select>
               <select name="branchId" className="staff-redesign-input md:col-span-2"><option value="">Chi nhánh theo hồ sơ</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
-              <input name="note" required defaultValue="Chủ quán chấm công hộ sau khi xác nhận trực tiếp với nhân viên" className="staff-redesign-input md:col-span-5" />
+              <input name="note" required minLength={8} placeholder="Ghi lý do chấm hộ, ví dụ: nhân viên quên điện thoại và quản lý đã xác nhận tại quầy" className="staff-redesign-input md:col-span-5" />
               <button type="submit" disabled={clockingIn || !bundle.members.length} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#0F4D3A] text-sm font-black text-white disabled:opacity-60">{clockingIn ? "Đang chấm..." : "Vào ca hộ"}</button>
             </form>
             <ManualClockOutQueue openAttendance={openAttendance} clockOutAction={clockOutAction} clockingOut={clockingOut} />
@@ -2438,13 +2438,7 @@ function AttendanceTable({ feed, members, clockOutAction, clockingOut }: { feed:
               </td>
               <td className="px-7 py-4 text-right">
                 {!item.clockOutAt ? (
-                  <form action={clockOutAction} className="inline-flex">
-                    <input type="hidden" name="attendanceLogId" value={item.id} />
-                    <input type="hidden" name="staffMemberId" value={item.staffMemberId} />
-                    <input type="hidden" name="branchId" value={item.branchId ?? ""} />
-                    <input type="hidden" name="note" value="Kết ca hộ nhanh từ bảng chấm công sau khi quản lý xác nhận" />
-                    <button disabled={clockingOut} className="grid h-11 w-11 place-items-center rounded-xl border border-[#D8D1C7] bg-white" aria-label="Kết ca hộ"><Check size={18} /></button>
-                  </form>
+                  <button type="button" onClick={() => document.getElementById("staff-open-attendance-queue")?.scrollIntoView({ block: "center", behavior: "smooth" })} disabled={clockingOut} className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#D8D1C7] bg-white px-3 text-xs font-black text-[#2B2B2B]" aria-label="Mở queue kết ca hộ">Xử lý</button>
                 ) : <StatusChip tone="success">Đã kết ca</StatusChip>}
               </td>
             </tr>
@@ -2518,7 +2512,7 @@ function ManualClockOutQueue({
                 <p className="mt-0.5 text-xs font-semibold text-[#5E5A54]">{formatDate(item.clockInAt)} {shortTime(item.clockInAt)} · {item.branchName ?? "Chi nhánh"}</p>
                 <p className={cn("mt-1 text-xs font-black", attendanceAgeHours(item) >= 18 ? "text-[#A33D10]" : "text-[#0F4D3A]")}>{attendanceOpenLabel(item)}</p>
               </div>
-              {compact ? <input type="hidden" name="note" value="Chủ quán kết ca hộ sau khi xác nhận giờ ra" /> : <input name="note" required defaultValue="Chủ quán kết ca hộ sau khi xác nhận giờ ra" className="min-h-12 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-bold text-[#2B2B2B] outline-none focus:border-[#0F4D3A]" />}
+              <input name="note" required minLength={8} placeholder="Lý do kết ca hộ" className="min-h-12 rounded-lg border border-[#D8D1C7] bg-white px-3 text-xs font-bold text-[#2B2B2B] outline-none focus:border-[#0F4D3A]" />
               <button type="submit" disabled={clockingOut} className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#D8D1C7] bg-[#FFF7EB] px-3 text-xs font-black text-[#2B2B2B] disabled:opacity-60">
                 {clockingOut ? "Đang kết..." : "Kết ca"}
               </button>
@@ -2565,7 +2559,7 @@ function AttendanceAdjustmentPanel({
               </div>
               <Field label="Giờ vào"><input name="clockInAt" type="datetime-local" defaultValue={dateTimeLocalValue(item.clockInAt)} className="staff-redesign-input" /></Field>
               <Field label="Giờ ra"><input name="clockOutAt" type="datetime-local" defaultValue={dateTimeLocalValue(item.clockOutAt)} className="staff-redesign-input" /></Field>
-              <Field label="Lý do"><input name="note" required defaultValue="Sửa công theo xác nhận quản lý" className="staff-redesign-input" /></Field>
+              <Field label="Lý do"><input name="note" required minLength={8} placeholder="Ghi lý do sửa công" className="staff-redesign-input" /></Field>
               <button type="submit" disabled={adjusting} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-[#0F4D3A] px-3 text-xs font-black text-white disabled:opacity-60">
                 {adjusting ? "Lưu..." : "Lưu"}
               </button>
@@ -2978,7 +2972,7 @@ function MobileAttendanceManagementScreen({
         <form action={clockInAction} className="mt-4 grid gap-3">
           <select name="staffMemberId" className="staff-redesign-input">{bundle.members.map((member) => <option key={member.id} value={member.id}>{member.fullName}</option>)}</select>
           <select name="branchId" className="staff-redesign-input"><option value="">Chi nhánh theo hồ sơ</option>{branchOptions(bundle.branches).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
-          <input type="hidden" name="note" value="Chủ quán chấm công hộ sau khi xác nhận trực tiếp với nhân viên" />
+          <input name="note" required minLength={8} placeholder="Lý do chấm hộ" className="staff-redesign-input" />
           <button type="submit" disabled={clockingIn || !bundle.members.length} className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#0F4D3A] text-sm font-black text-white disabled:opacity-60">{clockingIn ? "Đang xử lý..." : "Vào ca hộ"}</button>
         </form>
         <div className="mt-4 border-t border-[#D8D1C7] pt-4">

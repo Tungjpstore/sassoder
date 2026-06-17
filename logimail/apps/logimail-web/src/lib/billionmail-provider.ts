@@ -3,10 +3,15 @@ import 'server-only';
 import { billionMailBridgeMailboxEndpoint, billionMailProviderReadiness, readBillionMailProviderConfig } from '@/lib/billionmail-config';
 
 type BillionMailJson = {
+  ok?: boolean;
   success?: boolean;
   code?: number;
   msg?: string;
   message?: string;
+  error?: {
+    code?: string;
+    message?: string;
+  };
   data?: unknown;
 };
 
@@ -53,8 +58,8 @@ async function parseResponse(response: Response) {
     }
   }
 
-  if (!response.ok || body?.success === false) {
-    const message = body?.msg || body?.message || `BillionMail HTTP ${response.status}`;
+  if (!response.ok || body?.success === false || body?.ok === false) {
+    const message = body?.msg || body?.message || body?.error?.message || `BillionMail HTTP ${response.status}`;
     throw new Error(`billionmail_provider_error:${message}`);
   }
 
@@ -70,6 +75,23 @@ async function billionMailFetch(path: string, init: RequestInit) {
 
   const response = await fetch(endpoint(path), { ...init, headers, cache: 'no-store' });
   return parseResponse(response);
+}
+
+export function isBillionMailMailboxExistsError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (!message.startsWith('billionmail_provider_error:')) return false;
+  const normalized = message.toLowerCase();
+  return [
+    /mailbox\s+\S+\s+already exists/,
+    /mailbox[\s\S]*already exists/,
+    /mailbox[\s\S]*exists/,
+    /already exists/,
+    /duplicate/,
+    /unique/,
+    /đã tồn tại/,
+    /tồn tại/,
+    /已经存在/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 export async function createBillionMailMailboxDirect(input: MailboxInput) {

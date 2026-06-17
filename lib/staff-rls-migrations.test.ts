@@ -11,6 +11,8 @@ const hardeningSql = readFileSync("supabase/migrations/20260519103000_staff_oper
 const dailyQrWifiSql = readFileSync("supabase/migrations/20260529105500_staff_attendance_daily_qr_wifi.sql", "utf8");
 const antiFraudSql = readFileSync("supabase/migrations/20260601121000_staff_attendance_anti_fraud_hardening.sql", "utf8");
 const avatarOpenRecoverySql = readFileSync("supabase/migrations/20260602143000_staff_avatar_and_open_attendance_recovery.sql", "utf8");
+const privateQrRpcSql = readFileSync("supabase/migrations/20260617085431_staff_hr_security_hardening_private_qr_rpc.sql", "utf8");
+const sourceProofSql = readFileSync("supabase/migrations/20260617134652_staff_attendance_source_proof_hardening.sql", "utf8");
 
 const coreHrTables = [
   "staff_members",
@@ -169,4 +171,37 @@ test("staff avatar and open attendance recovery migration is additive", () => {
   assert.match(avatarOpenRecoverySql, /usage_count = coalesce\(token\.usage_count, 0\) \+ 1/i);
   assert.match(avatarOpenRecoverySql, /grant execute on function public\.consume_staff_attendance_qr_token/i);
   assert.doesNotMatch(avatarOpenRecoverySql, /create unique index/i);
+});
+
+test("staff QR consume RPC keeps privileged code in a private schema", () => {
+  assert.match(privateQrRpcSql, /create schema if not exists app_private/i);
+  assert.doesNotMatch(privateQrRpcSql, /revoke all on schema app_private from public, anon, authenticated/i);
+  assert.match(privateQrRpcSql, /revoke all on schema app_private from public, anon/i);
+  assert.match(privateQrRpcSql, /grant usage on schema app_private to authenticated, service_role/i);
+  assert.match(privateQrRpcSql, /grant execute on function app_private\.current_restaurant_id\(\) to authenticated, service_role/i);
+  assert.match(privateQrRpcSql, /grant execute on function app_private\.current_user_role\(\) to authenticated, service_role/i);
+  assert.match(privateQrRpcSql, /create or replace function app_private\.consume_staff_attendance_qr_token/i);
+  assert.match(privateQrRpcSql, /security definer/i);
+  assert.match(privateQrRpcSql, /revoke all on function app_private\.consume_staff_attendance_qr_token[\s\S]*from public, anon, authenticated/i);
+  assert.match(privateQrRpcSql, /grant execute on function app_private\.consume_staff_attendance_qr_token[\s\S]*to service_role/i);
+  assert.match(privateQrRpcSql, /create or replace function public\.consume_staff_attendance_qr_token/i);
+  assert.match(privateQrRpcSql, /language sql[\s\S]*security invoker/i);
+  assert.match(privateQrRpcSql, /from app_private\.consume_staff_attendance_qr_token/i);
+  assert.match(privateQrRpcSql, /grant execute on function public\.consume_staff_attendance_qr_token[\s\S]*to service_role/i);
+});
+
+test("staff attendance source-proof migration requires QR and WiFi audit evidence", () => {
+  assert.match(sourceProofSql, /attendance_logs_clock_in_qr_source_proof_hardening/i);
+  assert.match(sourceProofSql, /clock_in_source <> 'qr'/i);
+  assert.match(sourceProofSql, /raw_payload ->> 'qrTokenId'/i);
+  assert.match(sourceProofSql, /attendance_logs_clock_out_qr_source_proof_hardening/i);
+  assert.match(sourceProofSql, /clock_out_device ->> 'qrTokenId'/i);
+  assert.match(sourceProofSql, /attendance_logs_clock_in_wifi_source_proof_hardening/i);
+  assert.match(sourceProofSql, /raw_payload ->> 'wifiNetworkId'/i);
+  assert.match(sourceProofSql, /clock_in_device ->> 'wifiNetworkId'/i);
+  assert.match(sourceProofSql, /clock_in_device ->> 'networkIp'/i);
+  assert.match(sourceProofSql, /attendance_logs_clock_out_wifi_source_proof_hardening/i);
+  assert.match(sourceProofSql, /clock_out_device ->> 'wifiNetworkId'/i);
+  assert.match(sourceProofSql, /clock_out_device ->> 'networkIp'/i);
+  assert.match(sourceProofSql, /timestamp with time zone '2026-06-17 00:00:00\+00'/i);
 });

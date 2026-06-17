@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Minus, Plus } from "lucide-react";
+import { ChevronRight, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatVnd } from "@/lib/money";
+import { ShopButton } from "./button";
 
 /* Money — hiển thị tiền VND, tabular-nums */
 export function Money({ value, className }: { value: number; className?: string }) {
@@ -26,6 +27,171 @@ export function Card({
       )}
       {...props}
     />
+  );
+}
+
+export function CustomerStickyActions({
+  children,
+  className
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "sticky bottom-0 z-[var(--z-cartbar)] grid gap-2 border-t border-[var(--line)] bg-[var(--surface)]/95 px-4 pt-3 backdrop-blur-md",
+        className
+      )}
+      style={{ paddingBottom: "calc(var(--s-3) + var(--safe-bottom))" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function CustomerMenuGrid({
+  children,
+  className
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return <div className={cn("grid grid-cols-2 gap-2 shop-stagger sm:gap-3", className)}>{children}</div>;
+}
+
+export function CustomerMenuCard({
+  name,
+  price,
+  meta,
+  imageSlot,
+  quantity,
+  hasOptions,
+  onAdd,
+  onQuantityChange,
+  className
+}: {
+  name: string;
+  price: number;
+  meta?: React.ReactNode;
+  imageSlot: React.ReactNode;
+  quantity: number;
+  hasOptions?: boolean;
+  onAdd: () => void;
+  onQuantityChange?: (next: number) => void;
+  className?: string;
+}) {
+  return (
+    <article
+      className={cn(
+        "group flex min-w-0 flex-col overflow-hidden rounded-[var(--r-lg)] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--sh-sm)] transition-[border-color,box-shadow,transform] duration-[var(--dur)] ease-[var(--ease)] active:scale-[0.995]",
+        "hover:border-[var(--line-strong)] hover:shadow-[var(--sh-md)]",
+        className
+      )}
+    >
+      <span className="relative aspect-[4/3] w-full shrink-0 overflow-hidden border-b border-[var(--line)] bg-[var(--surface-2)]">
+        {imageSlot}
+        {quantity > 0 ? (
+          <span className="shop-pop absolute right-2 top-2 grid min-h-6 min-w-6 place-items-center rounded-full bg-[var(--jade)] px-2 text-[length:var(--fs-2xs)] font-bold text-[var(--on-jade)] shadow-[var(--sh-md)]">
+            {quantity}
+          </span>
+        ) : null}
+      </span>
+      <div className="flex min-h-[142px] flex-1 flex-col p-2.5">
+        <div className="min-w-0 flex-1">
+          <h3 className="line-clamp-2 min-h-[2.6em] text-[length:var(--fs-sm)] font-semibold leading-snug text-[var(--text)]">
+            {name}
+          </h3>
+          {meta ? <div className="mt-0.5 truncate text-[length:var(--fs-2xs)] font-medium text-[var(--text-faint)]">{meta}</div> : null}
+          <Money value={price} className="mt-1 block text-[length:var(--fs-sm)] font-bold text-[var(--text)]" />
+        </div>
+        <div className="mt-2 min-h-10">
+          {quantity > 0 && !hasOptions && onQuantityChange ? (
+            <QtyStepper size="sm" value={quantity} min={0} onChange={onQuantityChange} />
+          ) : (
+            <ShopButton size="sm" fullWidth variant={quantity > 0 ? "secondary" : "primary"} onClick={onAdd} aria-label={`Thêm ${name}`} leftIcon={<Plus size={15} />}>
+              {hasOptions ? (quantity > 0 ? `Chọn (${quantity})` : "Chọn") : "Thêm"}
+            </ShopButton>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export function CustomerDealStrip({
+  title,
+  description,
+  badge,
+  onClick,
+  className
+}: {
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  badge?: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+}) {
+  const content = (
+    <>
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--orange)] text-[var(--on-orange)] shadow-[var(--sh-sm)]">%</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[length:var(--fs-sm)] font-bold text-[var(--orange-600)]">{title}</span>
+        {description ? <span className="mt-0.5 block truncate text-[length:var(--fs-xs)] text-[var(--text-muted)]">{description}</span> : null}
+      </span>
+      {badge ?? <ChevronRight size={18} className="shrink-0 text-[var(--orange-600)]" />}
+    </>
+  );
+  const classes = cn(
+    "flex w-full items-center justify-between gap-3 rounded-[var(--r-lg)] border border-[var(--accent)]/30 bg-[var(--accent-soft)] px-3.5 py-2.5 text-left shadow-[var(--sh-sm)] transition active:scale-[0.99]",
+    className
+  );
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={classes}>
+        {content}
+      </button>
+    );
+  }
+  return <div className={classes}>{content}</div>;
+}
+
+export function CustomerStatusHero({
+  eyebrow,
+  title,
+  description,
+  badge,
+  children,
+  tone = "jade",
+  className
+}: {
+  eyebrow?: React.ReactNode;
+  title: React.ReactNode;
+  description?: React.ReactNode;
+  badge?: React.ReactNode;
+  children?: React.ReactNode;
+  tone?: "jade" | "orange" | "neutral";
+  className?: string;
+}) {
+  return (
+    <Card
+      className={cn(
+        "relative overflow-hidden p-4",
+        tone === "jade" && "bg-[linear-gradient(145deg,var(--jade),var(--jade-700))] text-[var(--on-jade)]",
+        tone === "orange" && "border-[var(--accent)]/25 bg-[var(--accent-soft)]",
+        className
+      )}
+    >
+      <div className="relative z-10 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {eyebrow ? <div className="text-[length:var(--fs-2xs)] font-bold uppercase tracking-[var(--track-wide)] opacity-75">{eyebrow}</div> : null}
+          <h2 className="mt-1 text-[length:var(--fs-h2)] font-bold leading-tight">{title}</h2>
+          {description ? <p className="mt-1 text-[length:var(--fs-xs)] leading-[var(--lh-body)] opacity-80">{description}</p> : null}
+        </div>
+        {badge ? <div className="shrink-0">{badge}</div> : null}
+      </div>
+      {children ? <div className="relative z-10 mt-3">{children}</div> : null}
+    </Card>
   );
 }
 

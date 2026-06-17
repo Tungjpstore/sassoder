@@ -1654,6 +1654,7 @@ export async function clockInStaffAttendance({
     staffDeviceId: deviceTrust.deviceId,
     networkIp: input.network?.ipAddress ?? null,
     networkUserAgent: input.network?.userAgent ?? null,
+    qrTokenId: qrToken?.id ?? null,
     wifiNetworkId: wifiNetwork?.id ?? null
   };
 
@@ -1990,6 +1991,7 @@ export async function clockOutStaffAttendance({
     staffDeviceId: deviceTrust.deviceId,
     networkIp: input.network?.ipAddress ?? null,
     networkUserAgent: input.network?.userAgent ?? null,
+    qrTokenId: qrToken?.id ?? null,
     wifiNetworkId: wifiNetwork?.id ?? null
   };
 

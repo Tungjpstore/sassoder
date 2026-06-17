@@ -322,6 +322,7 @@ test('public registration route uses one-time security codes and provisions real
   const resetRoute = routeSource('src/app/api/logimail/auth/reset-password/route.ts');
   const domainRoute = routeSource('src/app/api/logimail/auth/domains/route.ts');
   const domainRegistry = routeSource('src/lib/registration-domains.ts');
+  const billionmailProvider = routeSource('src/lib/billionmail-provider.ts');
 
   assert.match(registerPage, /AuthRegisterView/);
   assert.match(publicRegisterPage, /AuthRegisterView/);
@@ -339,10 +340,17 @@ test('public registration route uses one-time security codes and provisions real
   assert.match(registerRoute, /validateSecurityCode/);
   assert.match(registerRoute, /consumeSecurityCode/);
   assert.match(registerRoute, /createBillionMailMailbox/);
+  assert.match(registerRoute, /updateBillionMailMailboxPassword/);
+  assert.match(registerRoute, /isBillionMailMailboxExistsError/);
   assert.match(registerRoute, /auth\.admin\.createUser/);
   assert.match(registerRoute, /saveMailboxCredentials/);
+  assert.match(registerRoute, /providerProvisioningMode/);
   assertSourceOrder(registerRoute, 'const validatedCode = await validateSecurityCode', 'await createBillionMailMailbox', 'Registration must validate the code before provisioning a provider mailbox');
+  assertSourceOrder(registerRoute, 'await serviceStore.auth.admin.createUser', 'await createBillionMailMailbox(providerMailboxInput)', 'Registration must create the Supabase auth user before mutating an existing provider mailbox');
+  assertSourceOrder(registerRoute, 'await createBillionMailMailbox(providerMailboxInput)', 'await updateBillionMailMailboxPassword(providerMailboxInput)', 'Registration must only adopt an existing provider mailbox after create reports an existing mailbox');
   assertSourceOrder(registerRoute, 'await saveMailboxCredentials', 'const consumedCode = await consumeSecurityCode', 'Registration must consume the one-time code only after credentials are saved');
+  assert.match(registerRoute, /if \(!isBillionMailMailboxExistsError\(providerError\)\) throw providerError/);
+  assert.match(registerRoute, /if \(providerMailboxCreated && email\)/);
   assert.match(registerRoute, /email_confirm:\s*true/);
   assert.match(registerRoute, /account\.email_registration_create/);
   assert.doesNotMatch(registerRoute, /account\.email_registration_request_create/);
@@ -364,6 +372,27 @@ test('public registration route uses one-time security codes and provisions real
   assert.match(domainRegistry, /registration_enabled/);
   assert.match(domainRegistry, /approval_status/);
   assert.match(domainRegistry, /LOGIMAIL_DOMAIN/);
+  assert.match(billionmailProvider, /body\?\.error\?\.message/);
+  assert.match(billionmailProvider, /isBillionMailMailboxExistsError/);
+  assert.match(billionmailProvider, /mailbox\\s\+\\S\+\\s\+already exists/);
+});
+
+test('security code maintenance is wired to cron', () => {
+  const maintenanceRoute = routeSource('src/app/api/logimail/cron/security-code-maintenance/route.ts');
+  const securityCodes = routeSource('src/lib/security-codes.ts');
+  const vercelConfig = repoSource('apps/logimail-web/vercel.json');
+
+  assert.match(securityCodes, /runSecurityCodeMaintenance/);
+  assert.match(securityCodes, /rotateExpiredSecurityCodes/);
+  assert.match(securityCodes, /ensureActiveSignupCodes/);
+  assert.match(securityCodes, /maintenance_ensure_active/);
+  assert.match(securityCodes, /pruneInactiveSecurityCodes/);
+  assert.match(securityCodes, /LOGIMAIL_SECURITY_CODE_RETENTION_HOURS \?\? 1/);
+  assert.match(maintenanceRoute, /verifyCronRequest/);
+  assert.match(maintenanceRoute, /runSecurityCodeMaintenance/);
+  assert.match(maintenanceRoute, /retentionHours/);
+  assert.match(maintenanceRoute, /cron:security-code-maintenance/);
+  assert.match(vercelConfig, /\/api\/logimail\/cron\/security-code-maintenance/);
 });
 
 test('native mail client keeps RoundCube out of primary inbox and compose flow', () => {
@@ -419,13 +448,19 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   assert.match(middleware, /domain\.logivn\.com/);
   assert.match(middleware, /DOMAIN_CONTROL_PREFIXES/);
   assert.match(middleware, /MAILBOX_PREFIXES/);
-  assert.match(middleware, /refresh_token_already_used/);
-  assert.match(middleware, /clearSupabaseAuthCookies/);
+  assert.doesNotMatch(middleware, /createServerClient/);
+  assert.doesNotMatch(middleware, /auth\.getUser/);
   assert.match(authLoginClient, /\/api\/logimail\/auth\/login/);
   assert.match(authLoginClient, /auth-login-cooldown/);
+  assert.match(authLoginClient, /credentials:\s*'same-origin'/);
   assert.doesNotMatch(authForms, /\.auth\.signInWithPassword/);
   assert.doesNotMatch(controlLogin, /\.auth\.signInWithPassword/);
+  assert.match(authForms, /\/api\/logimail\/mail\/session/);
+  assert.match(authForms, /credentials:\s*'same-origin'/);
+  assert.doesNotMatch(authForms, /catch\(\(\) => undefined\)/);
   assert.match(authLoginRoute, /SUPABASE_SECRET_KEY/);
+  assert.match(authLoginRoute, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(authLoginRoute, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
   assert.match(authLoginRoute, /not_configured/);
   assert.match(authLoginRoute, /sb-forwarded-for/);
   assert.match(authLoginRoute, /signInWithPassword/);

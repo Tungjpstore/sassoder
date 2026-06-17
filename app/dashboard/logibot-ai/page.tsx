@@ -13,15 +13,17 @@ function ownerNameFromEmail(email: string) {
 
 export default async function LogibotAiPage() {
   const { session, entitlement } = await requireDashboardAdminAccess("ai_owner_assistant");
-  const branches = await listActiveStoreBranches(session.restaurantId).catch(() => []);
+  const branchLoad = await loadLogibotBranches(session.restaurantId);
+  const branches = branchLoad.branches;
   const primaryBranch = branches.find((branch) => branch.is_primary) ?? branches[0] ?? null;
 
   const workspace: LogibotWorkspaceData = {
     restaurantId: session.restaurantId,
     restaurantName: session.restaurant.name,
     ownerName: ownerNameFromEmail(session.email),
-    branchName: primaryBranch?.name ?? "Chi nhánh chính",
-    branchStatus: primaryBranch?.temporarily_closed ? "Tạm đóng" : primaryBranch ? "Đang mở" : "Chưa có branch",
+    branchName: branchLoad.error ? "Không tải được chi nhánh" : primaryBranch?.name ?? "Chi nhánh chính",
+    branchStatus: branchLoad.error ? "Lỗi dữ liệu chi nhánh" : primaryBranch?.temporarily_closed ? "Tạm đóng" : primaryBranch ? "Đang mở" : "Chưa có branch",
+    branchDataError: branchLoad.error,
     threadId: buildCopilotThreadId("logivn", "dashboard", session.restaurantId)
   };
 
@@ -40,4 +42,12 @@ export default async function LogibotAiPage() {
       <LogibotAiWorkspace workspace={workspace} />
     </AdminShell>
   );
+}
+
+async function loadLogibotBranches(restaurantId: string) {
+  try {
+    return { branches: await listActiveStoreBranches(restaurantId), error: null };
+  } catch (error) {
+    return { branches: [], error: error instanceof Error ? error.message : "Không tải được dữ liệu chi nhánh" };
+  }
 }

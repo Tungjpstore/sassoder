@@ -1030,6 +1030,7 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
     };
     staff?: {
       schemaReady?: boolean;
+      schemaErrors?: string[];
       memberCount?: number;
       activeCount?: number;
       suspendedCount?: number;
@@ -1108,9 +1109,12 @@ function buildOwnerSnapshotCue(intent: OwnerAiIntent, snapshot?: unknown) {
         ? `Kho hiện có ${data.inventory.lowStockCount ?? 0} nguyên liệu dưới ngưỡng, recipe coverage ${Math.round(Number(data.inventory.recipeCoveragePercent ?? 0))}%, ${data.inventory.openAlertCount ?? 0} alert mở, dự kiến nhập ${formatCurrency(Number(data.inventory.projectedPurchaseValue ?? 0))}, ${data.inventory.wasteSignalCount ?? 0} tín hiệu hao hụt.`
         : "";
     case "staff":
-      return data.staff
-        ? `Nhân sự hiện có ${Number(data.staff.activeCount ?? 0)}/${Number(data.staff.memberCount ?? 0)} người đang hoạt động, ${Number(data.staff.currentlyClockedIn ?? 0)} người đang check-in, ${Number(data.staff.lateCount24h ?? 0)} lượt muộn trong 24h, ${Number(data.staff.pendingApprovalCount ?? 0)} yêu cầu chờ duyệt, ${Number(data.staff.unassignedActiveCount ?? 0)} active chưa gán chi nhánh, review TB ${Number(data.staff.averageReviewScore ?? 0).toFixed(1)}/5 và ${Number(data.staff.upcomingShiftCount ?? data.staff.shiftCount7d ?? 0)} ca sắp tới.`
-        : "";
+      if (!data.staff) return "";
+      if (data.staff.schemaReady === false) {
+        const errors = (data.staff.schemaErrors ?? []).slice(0, 2).join("; ");
+        return `Chưa tải được snapshot nhân sự thật; không kết luận là chưa có nhân viên${errors ? ` (${errors})` : ""}.`;
+      }
+      return `Nhân sự hiện có ${Number(data.staff.activeCount ?? 0)}/${Number(data.staff.memberCount ?? 0)} người đang hoạt động, ${Number(data.staff.currentlyClockedIn ?? 0)} người đang check-in, ${Number(data.staff.lateCount24h ?? 0)} lượt muộn trong 24h, ${Number(data.staff.pendingApprovalCount ?? 0)} yêu cầu chờ duyệt, ${Number(data.staff.unassignedActiveCount ?? 0)} active chưa gán chi nhánh, review TB ${Number(data.staff.averageReviewScore ?? 0).toFixed(1)}/5 và ${Number(data.staff.upcomingShiftCount ?? data.staff.shiftCount7d ?? 0)} ca sắp tới.`;
     case "reports":
       return data.summary24h
         ? `24 giờ gần nhất có ${Number(data.summary24h.orderCount ?? 0)} đơn và ${formatCurrency(Number(data.summary24h.paidRevenue ?? 0))} doanh thu đã thanh toán.`
@@ -1384,6 +1388,7 @@ function scopeStaffAiRowsByBranch(input: {
   shifts: any[] | null;
   branchAssignments: any[] | null;
   reviews: any[] | null;
+  schemaErrors?: string[] | null;
 }) {
   const memberIds = new Set<string>();
   for (const row of [...(input.attendance ?? []), ...(input.approvals ?? []), ...(input.shifts ?? []), ...(input.branchAssignments ?? [])]) {
@@ -1396,7 +1401,8 @@ function scopeStaffAiRowsByBranch(input: {
     approvals: input.approvals ?? [],
     shifts: input.shifts ?? [],
     branchAssignments: input.branchAssignments ?? [],
-    reviews: (input.reviews ?? []).filter((review) => memberIds.has(String(review.staff_member_id)))
+    reviews: (input.reviews ?? []).filter((review) => memberIds.has(String(review.staff_member_id))),
+    schemaErrors: input.schemaErrors ?? []
   };
 }
 
@@ -1702,6 +1708,7 @@ function buildStaffAiSnapshot(input: {
   shifts?: any[] | null;
   branchAssignments?: any[] | null;
   reviews?: any[] | null;
+  schemaErrors?: string[] | null;
 }) {
   const members = input.members ?? [];
   const attendance = input.attendance ?? [];
@@ -1709,6 +1716,7 @@ function buildStaffAiSnapshot(input: {
   const shifts = input.shifts ?? [];
   const branchAssignments = input.branchAssignments ?? [];
   const reviews = input.reviews ?? [];
+  const schemaErrors = (input.schemaErrors ?? []).filter(Boolean).slice(0, 6);
   const now = Date.now();
   const activeMembers = members.filter((member) => member.employment_status === "active" && !member.archived_at);
   const suspendedMembers = members.filter((member) => member.employment_status === "suspended" && !member.archived_at);
@@ -1730,6 +1738,7 @@ function buildStaffAiSnapshot(input: {
 
   return {
     schemaReady: true,
+    schemaErrors,
     memberCount: members.length,
     activeCount: activeMembers.length,
     suspendedCount: suspendedMembers.length,
@@ -1781,6 +1790,33 @@ function buildStaffAiSnapshot(input: {
       status: shift.status
     }))
   };
+}
+
+function buildStaffAiUnavailableSnapshot(schemaErrors: string[]) {
+  return {
+    schemaReady: false,
+    schemaErrors: schemaErrors.filter(Boolean).slice(0, 6),
+    memberCount: null,
+    activeCount: null,
+    onlineCount: null,
+    currentlyClockedIn: null,
+    attendanceLogCount24h: null,
+    pendingApprovalCount: null,
+    upcomingShiftCount: null
+  };
+}
+
+async function safeStaffAiQuery<T>(
+  source: string,
+  query: PromiseLike<{ data: T | null; error: { code?: string; message?: string } | null }>,
+  options: { required?: boolean } = {}
+) {
+  const { data, error } = await query;
+  if (error) {
+    const message = error.message || error.code || "query failed";
+    return { source, data: null, error: `${source}: ${message}`, required: Boolean(options.required) };
+  }
+  return { source, data: data ?? null, error: null, required: Boolean(options.required) };
 }
 
 export async function getOwnerOperationalSnapshot(
@@ -1894,15 +1930,18 @@ export async function getOwnerOperationalSnapshot(
 
   const staffPromise = intentNeeds(intent, ["staff", "reports"])
     ? Promise.all([
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "staff_members",
           supabase
             .from("staff_members")
             .select("id,full_name,role_code,employment_status,last_seen_at,suspended_at,archived_at,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
-            .limit(120)
+            .limit(120),
+          { required: true }
         ),
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "attendance_logs",
           applyBranchScope(
             supabase
               .from("attendance_logs")
@@ -1914,7 +1953,8 @@ export async function getOwnerOperationalSnapshot(
             .order("clock_in_at", { ascending: false })
             .limit(120)
         ),
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "attendance_approval_requests",
           applyBranchScope(
             supabase
               .from("attendance_approval_requests")
@@ -1925,7 +1965,8 @@ export async function getOwnerOperationalSnapshot(
             .order("created_at", { ascending: false })
             .limit(120)
         ),
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "shift_assignments",
           applyBranchScope(
             supabase
               .from("shift_assignments")
@@ -1938,7 +1979,8 @@ export async function getOwnerOperationalSnapshot(
             .order("scheduled_date", { ascending: true })
             .limit(120)
         ),
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "staff_branch_assignments",
           applyBranchScope(
             supabase
               .from("staff_branch_assignments")
@@ -1949,7 +1991,8 @@ export async function getOwnerOperationalSnapshot(
           )
             .limit(160)
         ),
-        safeSupabaseQuery<any[]>(
+        safeStaffAiQuery<any[]>(
+          "staff_reviews",
           supabase
             .from("staff_reviews")
             .select("id,staff_member_id,period_label,score,status,created_at")
@@ -1957,15 +2000,18 @@ export async function getOwnerOperationalSnapshot(
             .order("created_at", { ascending: false })
             .limit(120)
         )
-      ]).then(([members, attendance, approvals, shifts, branchAssignments, reviews]) =>
-        members === null && attendance === null && approvals === null && shifts === null && branchAssignments === null && reviews === null
-          ? null
-          : buildStaffAiSnapshot(
-              branchId
-                ? scopeStaffAiRowsByBranch({ members, attendance, approvals, shifts, branchAssignments, reviews })
-                : { members, attendance, approvals, shifts, branchAssignments, reviews }
-            )
-      )
+      ]).then((results) => {
+        const schemaErrors = results.map((result) => result.error).filter((error): error is string => Boolean(error));
+        const requiredErrors = results.filter((result) => result.required && result.error).map((result) => result.error as string);
+        if (requiredErrors.length) return buildStaffAiUnavailableSnapshot(requiredErrors);
+
+        const [members, attendance, approvals, shifts, branchAssignments, reviews] = results.map((result) => result.error ? [] : result.data);
+        return buildStaffAiSnapshot(
+          branchId
+            ? scopeStaffAiRowsByBranch({ members, attendance, approvals, shifts, branchAssignments, reviews, schemaErrors })
+            : { members, attendance, approvals, shifts, branchAssignments, reviews, schemaErrors }
+        );
+      })
     : Promise.resolve(null);
 
   const [recentOrdersRaw, todayOrdersRaw, menuRaw, tablesRaw, paymentsRaw, promotionsRaw, inventoryRaw, reservationsRaw, staffRaw] = await Promise.all([

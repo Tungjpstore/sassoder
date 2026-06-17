@@ -9,6 +9,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   Coffee,
   FolderPlus,
   ImageIcon,
@@ -54,10 +55,11 @@ type Props = {
   restaurantName: string;
   ingredients: InventoryIngredient[];
   recipeMenuItems: InventoryRecipeMenuItem[];
+  inventoryDataError?: string | null;
   ai: MenuAiAccess;
 };
 
-export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topItemNames, restaurantName, ingredients, recipeMenuItems, ai }: Props) {
+export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topItemNames, restaurantName, ingredients, recipeMenuItems, inventoryDataError = null, ai }: Props) {
   const router = useRouter();
   const toast = useToast();
   const [tab, setTab] = useState("all");
@@ -212,6 +214,7 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
           ingredients={ingredients}
           recipeLines={recipeMenuItems.find((r) => r.id === selected.id)?.recipeLines ?? []}
           recipeSummary={recipeMenuItems.find((r) => r.id === selected.id) ?? null}
+          inventoryDataError={inventoryDataError}
           pending={pending}
           aiImage={ai.image}
           restaurantName={restaurantName}
@@ -329,6 +332,7 @@ function MenuItemDrawer({
   ingredients,
   recipeLines,
   recipeSummary,
+  inventoryDataError,
   pending,
   aiImage,
   restaurantName,
@@ -343,6 +347,7 @@ function MenuItemDrawer({
   ingredients: InventoryIngredient[];
   recipeLines: InventoryRecipeMenuItem["recipeLines"];
   recipeSummary: InventoryRecipeMenuItem | null;
+  inventoryDataError: string | null;
   pending: boolean;
   aiImage: MenuAiAccess["image"];
   restaurantName: string;
@@ -429,6 +434,7 @@ function MenuItemDrawer({
           recipeLines={recipeLines}
           recipeSummary={recipeSummary}
           ingredients={ingredients}
+          inventoryDataError={inventoryDataError}
           onRefresh={onRefresh}
         />
       ) : null}
@@ -826,6 +832,7 @@ function RecipePanel({
   recipeLines,
   recipeSummary,
   ingredients,
+  inventoryDataError,
   onRefresh
 }: {
   itemId: string;
@@ -833,6 +840,7 @@ function RecipePanel({
   recipeLines: InventoryRecipeMenuItem["recipeLines"];
   recipeSummary: InventoryRecipeMenuItem | null;
   ingredients: InventoryIngredient[];
+  inventoryDataError: string | null;
   onRefresh: () => void;
 }) {
   const toast = useToast();
@@ -874,6 +882,21 @@ function RecipePanel({
 
   const usedIngredientIds = new Set(recipeLines.map((l) => l.ingredientId));
   const availableIngredients = ingredients.filter((i) => !usedIngredientIds.has(i.id));
+
+  if (inventoryDataError) {
+    return (
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-danger-fg)]/30 bg-[var(--d-danger-bg)] p-[var(--d-s-4)]">
+        <div className="flex items-start gap-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[var(--d-danger-fg)]" />
+          <div className="min-w-0">
+            <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-danger-fg)]">Không thể hiển thị công thức bằng dữ liệu thật</p>
+            <p className="mt-1 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{inventoryDataError}</p>
+            <p className="mt-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">Kiểm tra schema/RLS của inventory trước khi chỉnh định lượng hoặc chốt giá vốn.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">

@@ -11,6 +11,7 @@ import {
   type StaffPermissionKey,
   type StaffPermissionProfile
 } from "@/lib/staff-permissions";
+import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { staffOperationsCacheKey } from "@/lib/staff-operations-cache";
@@ -291,6 +292,8 @@ type StaffIncidentRow = {
   resolved_at: string | null;
 };
 
+type StaffOpsSchemaMode = "required" | "optional";
+
 function isMissingStaffOperationsSchema(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
   const message = error.message ?? "";
@@ -298,6 +301,13 @@ function isMissingStaffOperationsSchema(error: { code?: string; message?: string
     error.code === "PGRST204" ||
     error.code === "42P01" ||
     /staff_|attendance_|shift_|notifications|permission_key/i.test(message)
+  );
+}
+
+function throwMissingStaffOperationsSchema(tableName: string): never {
+  throw new AppError(
+    `Thiếu hoặc lệch migration HR Staff cho bảng ${tableName}. Vui lòng cập nhật database trước khi vận hành nhân sự.`,
+    503
   );
 }
 
@@ -558,10 +568,21 @@ function buildWeekRange() {
   });
 }
 
-async function readOptionalRows<T>(query: Promise<{ data: T[] | null; error: { code?: string; message?: string } | null }>) {
+async function readStaffOpsRows<T>({
+  query,
+  tableName,
+  mode = "required"
+}: {
+  query: Promise<{ data: T[] | null; error: { code?: string; message?: string } | null }>;
+  tableName: string;
+  mode?: StaffOpsSchemaMode;
+}) {
   const { data, error } = await query;
   if (error) {
-    if (isMissingStaffOperationsSchema(error)) return [] as T[];
+    if (isMissingStaffOperationsSchema(error)) {
+      if (mode === "optional" && process.env.NODE_ENV !== "production") return [] as T[];
+      throwMissingStaffOperationsSchema(tableName);
+    }
     throw error;
   }
   return data ?? [];
@@ -576,10 +597,11 @@ async function readStaffMemberRows(supabase: any, restaurantId: string) {
 
   if (!result.error) return (result.data ?? []) as StaffMemberRow[];
   if (!isMissingStaffOperationsSchema(result.error)) throw result.error;
+  if (process.env.NODE_ENV === "production") throwMissingStaffOperationsSchema("staff_members");
 
   const fallback = await query(legacySelect);
   if (fallback.error) {
-    if (isMissingStaffOperationsSchema(fallback.error)) return [] as StaffMemberRow[];
+    if (isMissingStaffOperationsSchema(fallback.error)) throwMissingStaffOperationsSchema("staff_members");
     throw fallback.error;
   }
 
@@ -726,9 +748,10 @@ export async function getStaffOperationsBundle(
   await ensureDefaultStoreBranch(restaurantId);
   const [users, branches, operations, entitlement] = await Promise.all([
     listRestaurantUsers(restaurantId) as Promise<StaffUserRow[]>,
-    readOptionalRows<BranchRow>(
-      supabase.from("store_branches").select("id,name,address,latitude,longitude,is_primary,is_active").eq("restaurant_id", restaurantId).order("is_primary", { ascending: false })
-    ),
+    readStaffOpsRows<BranchRow>({
+      tableName: "store_branches",
+      query: supabase.from("store_branches").select("id,name,address,latitude,longitude,is_primary,is_active").eq("restaurant_id", restaurantId).order("is_primary", { ascending: false })
+    }),
     getRestaurantOperationsSummary(restaurantId),
     getRestaurantEntitlement(restaurantId)
   ]);
@@ -768,144 +791,167 @@ export async function getStaffOperationsBundle(
     deviceRows,
     incidentRows
   ] = await Promise.all([
-    readOptionalRows<StaffRoleRow>(
-      supabase
+    readStaffOpsRows<StaffRoleRow>({
+      tableName: "staff_roles",
+      query: supabase
         .from("staff_roles")
         .select("id,code,name,description,legacy_permission_profile,role_scope,is_system,preview_actions")
         .eq("restaurant_id", restaurantId)
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
-    ),
-    readOptionalRows<StaffRolePermissionRow>(
-      supabase.from("staff_role_permissions").select("role_id,permission_key").eq("restaurant_id", restaurantId)
-    ),
+    }),
+    readStaffOpsRows<StaffRolePermissionRow>({
+      tableName: "staff_role_permissions",
+      query: supabase.from("staff_role_permissions").select("role_id,permission_key").eq("restaurant_id", restaurantId)
+    }),
     readStaffMemberRows(supabase, restaurantId),
-    readOptionalRows<StaffBranchAssignmentRow>(
-      supabase
+    readStaffOpsRows<StaffBranchAssignmentRow>({
+      tableName: "staff_branch_assignments",
+      query: supabase
         .from("staff_branch_assignments")
         .select("staff_member_id,branch_id,is_primary,assignment_status,ended_at")
         .eq("restaurant_id", restaurantId)
-    ),
-    readOptionalRows<ShiftRow>(
-      supabase
+    }),
+    readStaffOpsRows<ShiftRow>({
+      tableName: "shifts",
+      query: supabase
         .from("shifts")
         .select("id,code,name,branch_id,start_time,end_time,allowed_late_minutes,overtime_threshold_minutes,attendance_radius_meters,recurring_weekdays,is_template")
         .eq("restaurant_id", restaurantId)
         .order("start_time", { ascending: true })
-    ),
-    readOptionalRows<ShiftAssignmentRow>(
-      supabase
+    }),
+    readStaffOpsRows<ShiftAssignmentRow>({
+      tableName: "shift_assignments",
+      query: supabase
         .from("shift_assignments")
         .select("id,shift_id,branch_id,staff_member_id,scheduled_date,status,source")
         .eq("restaurant_id", restaurantId)
         .gte("scheduled_date", weekStart)
         .lte("scheduled_date", weekEnd)
-    ),
-    readOptionalRows<AttendanceRow>(
-      supabase
+    }),
+    readStaffOpsRows<AttendanceRow>({
+      tableName: "attendance_logs",
+      query: supabase
         .from("attendance_logs")
         .select("id,staff_member_id,staff_user_id,branch_id,shift_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
         .eq("restaurant_id", restaurantId)
         .gte("clock_in_at", sevenDaysAgo.toISOString())
         .order("clock_in_at", { ascending: false })
         .limit(100)
-    ),
-    readOptionalRows<AttendanceRow>(
-      supabase
+    }),
+    readStaffOpsRows<AttendanceRow>({
+      tableName: "attendance_logs",
+      query: supabase
         .from("attendance_logs")
         .select("id,staff_member_id,staff_user_id,branch_id,shift_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_in_source,clock_in_distance_meters,late_minutes,work_minutes,overtime_minutes,anomaly_score")
         .eq("restaurant_id", restaurantId)
         .is("clock_out_at", null)
         .order("clock_in_at", { ascending: false })
         .limit(100)
-    ),
-    readOptionalRows<ApprovalRow>(
-      supabase
+    }),
+    readStaffOpsRows<ApprovalRow>({
+      tableName: "attendance_approval_requests",
+      query: supabase
         .from("attendance_approval_requests")
         .select("id,attendance_log_id,staff_member_id,branch_id,request_type,status,reason,requested_payload,review_note,created_at")
         .eq("restaurant_id", restaurantId)
         .order("created_at", { ascending: false })
         .limit(40)
-    ),
-    readOptionalRows<StaffActivityRow>(
-      supabase
+    }),
+    readStaffOpsRows<StaffActivityRow>({
+      tableName: "staff_activity_logs",
+      query: supabase
         .from("staff_activity_logs")
         .select("id,actor_user_id,branch_id,entity_type,entity_id,action,severity,reason,created_at")
         .eq("restaurant_id", restaurantId)
         .order("created_at", { ascending: false })
         .limit(40)
-    ),
+    }),
     shouldLoadAdminExtendedData
-      ? readOptionalRows<LegacyAuditRow>(
-          supabase
+      ? readStaffOpsRows<LegacyAuditRow>({
+          tableName: "audit_logs",
+          mode: "optional",
+          query: supabase
             .from("audit_logs")
             .select("id,actor_user_id,entity_type,entity_id,action,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(20)
-        )
+        })
       : Promise.resolve([] as LegacyAuditRow[]),
-    readOptionalRows<StaffSessionRow>(
-      supabase
+    readStaffOpsRows<StaffSessionRow>({
+      tableName: "staff_sessions",
+      query: supabase
         .from("staff_sessions")
         .select("staff_member_id,branch_id,last_seen_at,forced_logout_at")
         .eq("restaurant_id", restaurantId)
         .order("last_seen_at", { ascending: false })
         .limit(100)
-    ),
-    readOptionalRows<NotificationRow>(
-      notificationVisibilityQuery(supabase, restaurantId, currentUserId, options.scope)
+    }),
+    readStaffOpsRows<NotificationRow>({
+      tableName: "notifications",
+      query: notificationVisibilityQuery(supabase, restaurantId, currentUserId, options.scope)
         .order("created_at", { ascending: false })
         .limit(20)
-    ),
+    }),
     shouldLoadPeopleExtendedData
-      ? readOptionalRows<StaffReviewRow>(
-          supabase
+      ? readStaffOpsRows<StaffReviewRow>({
+          tableName: "staff_reviews",
+          mode: "optional",
+          query: supabase
             .from("staff_reviews")
             .select("id,staff_member_id,period_label,score,status,note,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(120)
-        )
+        })
       : Promise.resolve([] as StaffReviewRow[]),
     shouldLoadPeopleExtendedData
-      ? readOptionalRows<StaffContractRow>(
-          supabase
+      ? readStaffOpsRows<StaffContractRow>({
+          tableName: "staff_contracts",
+          mode: "optional",
+          query: supabase
             .from("staff_contracts")
             .select("id,staff_member_id,contract_type,template_code,contract_number,job_title,work_location,salary_amount,salary_payment_method,working_time,rest_time,start_date,end_date,status,e_signature_status,e_contract_provider,e_contract_id,signed_document_url,note,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(120)
-        )
+        })
       : Promise.resolve([] as StaffContractRow[]),
     shouldLoadPeopleExtendedData
-      ? readOptionalRows<StaffDocumentRow>(
-          supabase
+      ? readStaffOpsRows<StaffDocumentRow>({
+          tableName: "staff_documents",
+          mode: "optional",
+          query: supabase
             .from("staff_documents")
             .select("id,staff_member_id,document_name,document_type,file_url,file_size_bytes,status,note,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(120)
-        )
+        })
       : Promise.resolve([] as StaffDocumentRow[]),
     shouldLoadPeopleExtendedData
-      ? readOptionalRows<StaffDeviceRow>(
-          supabase
+      ? readStaffOpsRows<StaffDeviceRow>({
+          tableName: "staff_devices",
+          mode: "optional",
+          query: supabase
             .from("staff_devices")
             .select("id,staff_member_id,device_name,device_type,serial_number,device_fingerprint,trusted_for_attendance,trusted_at,last_seen_at,issued_at,status,note,created_at")
             .eq("restaurant_id", restaurantId)
             .order("created_at", { ascending: false })
             .limit(120)
-      )
+      })
       : Promise.resolve([] as StaffDeviceRow[]),
-    readOptionalRows<StaffIncidentRow>(
-      supabase
+    readStaffOpsRows<StaffIncidentRow>({
+      tableName: "staff_incident_reports",
+      mode: "optional",
+      query: supabase
         .from("staff_incident_reports")
         .select("id,staff_member_id,branch_id,title,description,severity,status,attachment_url,created_at,updated_at,resolved_at")
         .eq("restaurant_id", restaurantId)
         .order("created_at", { ascending: false })
         .limit(80)
-    )
+    })
   ]);
 
   const rolePermissionMap = new Map<string, StaffPermissionKey[]>();

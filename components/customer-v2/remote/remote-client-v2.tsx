@@ -14,7 +14,6 @@ import {
   Home,
   MapPin,
   Pencil,
-  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -85,7 +84,7 @@ import type { OrderDto } from "@/types/domain";
 import type { PublicMenuCategory, PublicMenuItem, PublicPromotion, PublicStoreBranch } from "@/types";
 import { ShopShell, TopBar, StickyCartBar } from "../shell/shop-shell";
 import { ShopButton } from "../ui/button";
-import { Card, Money, Pill, QtyStepper, MoneyRow, SectionLabel, EmptyState, SegmentedTabs } from "../ui/primitives";
+import { Card, Money, Pill, QtyStepper, MoneyRow, SectionLabel, EmptyState, SegmentedTabs, CustomerMenuGrid, CustomerMenuCard, CustomerDealStrip, CustomerStickyActions, CustomerStatusHero } from "../ui/primitives";
 import { ModifierSheet, type CustomizingItem } from "../dine-in/modifier-sheet";
 
 type FulfillmentMode = RemoteFulfillmentMode;
@@ -1229,11 +1228,7 @@ function RemoteView(props: RemoteViewProps) {
   const showModeToggle = restaurant.deliveryEnabled && restaurant.pickupEnabled;
 
   function StickyActions({ children }: { children: React.ReactNode }) {
-    return (
-      <div className="sticky bottom-0 z-[var(--z-cartbar)] grid gap-2 border-t border-[var(--line)] bg-[var(--surface)]/95 px-4 pt-3 backdrop-blur-md" style={{ paddingBottom: "calc(var(--s-3) + var(--safe-bottom))" }}>
-        {children}
-      </div>
-    );
+    return <CustomerStickyActions>{children}</CustomerStickyActions>;
   }
 
   function renderMenu() {
@@ -1299,23 +1294,17 @@ function RemoteView(props: RemoteViewProps) {
 
           <div className="px-4 py-4 shop-screen-in">
             {restaurant.promotions[0] ? (
-              <button type="button" onClick={() => setScreen("cart")} className="mb-4 flex w-full items-center justify-between gap-3 rounded-[var(--r-lg)] border border-[var(--accent)]/30 bg-[var(--accent-soft)] px-4 py-3 text-left">
-                <span className="min-w-0">
-                  <span className="block text-[length:var(--fs-sm)] font-bold text-[var(--orange-600)]">Ưu đãi hôm nay</span>
-                  <span className="mt-0.5 block truncate text-[length:var(--fs-xs)] text-[var(--text-muted)]">{promotionDescription(restaurant.promotions[0])}</span>
-                </span>
-                <ChevronRight size={18} className="shrink-0 text-[var(--orange-600)]" />
-              </button>
+              <CustomerDealStrip className="mb-4" title="Ưu đãi hôm nay" description={promotionDescription(restaurant.promotions[0])} onClick={() => setScreen("cart")} />
             ) : null}
 
             {visibleItems.length === 0 ? (
               <EmptyState icon={<Search size={22} />} title="Không tìm thấy món" description="Thử từ khóa hoặc danh mục khác nhé." />
             ) : (
-              <div className="grid gap-2 shop-stagger">
+              <CustomerMenuGrid>
                 {visibleItems.map((item) => (
                   <MenuRow key={item.id} item={item} cartLines={cartLines} onAdd={addMenuItem} onDec={(lineId) => updateQuantity(lineId, -1)} onInc={(lineId) => updateQuantity(lineId, 1)} />
                 ))}
-              </div>
+              </CustomerMenuGrid>
             )}
           </div>
         </div>
@@ -1533,7 +1522,7 @@ function RemoteView(props: RemoteViewProps) {
             )}
 
             <Card className="grid gap-3 p-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1.5">
                   <SectionLabel>Tên khách</SectionLabel>
                   <input name="customerName" autoComplete="name" maxLength={120} value={customerName} onChange={(e) => updateCustomerProfile({ customerName: e.target.value })} placeholder="Tên của bạn" className="h-11 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-3 text-[length:var(--fs-sm)] outline-none focus:border-[var(--jade)]" />
@@ -1738,12 +1727,15 @@ function RemoteView(props: RemoteViewProps) {
     const order = activeEntry?.order;
     return (
       <>
-        <section className="bg-[var(--jade)] px-5 pb-10 pt-8 text-center text-[var(--on-jade)]" style={{ paddingTop: "calc(var(--s-8) + var(--safe-top))" }}>
-          <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[var(--on-jade)]/15"><Check size={30} strokeWidth={3} /></div>
-          <h1 className="mt-4 text-[length:var(--fs-display)] font-bold">Đặt hàng thành công!</h1>
-          <p className="mx-auto mt-2 max-w-xs text-[length:var(--fs-sm)] text-[var(--on-jade)]/85">Cảm ơn bạn đã đặt hàng tại {restaurant.name}</p>
-        </section>
-        <div className="-mt-5 flex-1 rounded-t-[var(--r-2xl)] bg-[var(--bg)] px-4 pb-6 pt-5 shop-screen-in">
+        <div className="px-4 pb-2 pt-5" style={{ paddingTop: "calc(var(--s-5) + var(--safe-top))" }}>
+          <CustomerStatusHero
+            eyebrow={order ? orderShortId(order.id) : "Đơn mới"}
+            title="Đặt hàng thành công!"
+            description={`Cảm ơn bạn đã đặt hàng tại ${restaurant.name}. Màn hình này sẽ tự cập nhật khi quán xử lý.`}
+            badge={<span className="grid h-12 w-12 place-items-center rounded-full bg-[var(--on-jade)]/15"><Check size={26} strokeWidth={3} /></span>}
+          />
+        </div>
+        <div className="flex-1 px-4 pb-6 pt-2 shop-screen-in">
           <Card className="p-4 text-center">
             <h2 className="text-[length:var(--fs-h3)] font-bold text-[var(--text)]">{order ? `Đơn ${orderShortId(order.id)}` : "Đơn của bạn"}</h2>
             <p className="mt-1 text-[length:var(--fs-xs)] text-[var(--text-muted)]">Dự kiến: {etaMinutes - 5 > 0 ? `${etaMinutes - 5} - ${etaMinutes}` : etaMinutes} phút</p>
@@ -1960,25 +1952,18 @@ function MenuRow({
   const plainLine = cartLines.find((line) => line.itemId === item.id && !line.modifierSignature);
   const totalQty = cartLines.reduce((sum, line) => sum + (line.itemId === item.id ? line.quantity : 0), 0);
   return (
-    <article className="flex items-center gap-3 rounded-[var(--r-lg)] border border-[var(--line)] bg-[var(--surface)] p-2.5 shadow-[var(--sh-sm)]">
-      <span className="h-[68px] w-[68px] shrink-0 overflow-hidden rounded-[var(--r-md)] border border-[var(--line)]">
-        <ItemThumb src={item.image} alt={item.name} size={68} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h3 className="text-[length:var(--fs-sm)] font-semibold leading-snug text-[var(--text)]">{item.name}</h3>
-        <p className="text-[length:var(--fs-2xs)] text-[var(--text-faint)]">{item.categoryName}</p>
-        <Money value={item.price} className="mt-0.5 block text-[length:var(--fs-sm)] font-bold text-[var(--text)]" />
-      </div>
-      <div className="shrink-0">
-        {totalQty > 0 && !hasModifiers && plainLine ? (
-          <QtyStepper size="sm" value={plainLine.quantity} min={0} onChange={(q) => (q > plainLine.quantity ? onInc(plainLine.lineId) : onDec(plainLine.lineId))} />
-        ) : (
-          <ShopButton size="sm" variant={totalQty > 0 ? "secondary" : "primary"} leftIcon={<Plus size={15} />} onClick={() => onAdd(item)} aria-label={`Thêm ${item.name}`}>
-            {hasModifiers ? (totalQty > 0 ? `Chọn (${totalQty})` : "Chọn") : "Thêm"}
-          </ShopButton>
-        )}
-      </div>
-    </article>
+    <CustomerMenuCard
+      name={item.name}
+      price={item.price}
+      meta={item.categoryName}
+      quantity={totalQty}
+      hasOptions={hasModifiers}
+      onAdd={() => onAdd(item)}
+      onQuantityChange={plainLine ? (q) => (q > plainLine.quantity ? onInc(plainLine.lineId) : onDec(plainLine.lineId)) : undefined}
+      imageSlot={
+        <ItemThumb src={item.image} alt={item.name} size={176} />
+      }
+    />
   );
 }
 

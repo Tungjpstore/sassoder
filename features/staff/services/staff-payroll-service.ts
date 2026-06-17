@@ -11,6 +11,7 @@
  */
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   DEFAULT_PAYROLL_DEDUCTIONS,
@@ -32,27 +33,26 @@ export type { PayrollSummary, PayrollSummaryInput, StaffPayrollDeductions, Staff
 
 export async function getStaffPayrollDeductions(restaurantId: string): Promise<StaffPayrollDeductions> {
   const supabase = await createServerSupabaseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
   const { data, error } = await db
     .from("staff_payroll_deductions")
     .select("*")
     .eq("restaurant_id", restaurantId)
     .maybeSingle();
-  if (error || !data) return DEFAULT_PAYROLL_DEDUCTIONS;
+  throwIfSupabaseError(error, "Không tải được cấu hình lương");
+  if (!data) return DEFAULT_PAYROLL_DEDUCTIONS;
   return mapDeductionsRow(data);
 }
 
 export async function listStaffPayrollProfiles(restaurantId: string): Promise<StaffPayrollProfile[]> {
   const supabase = await createServerSupabaseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
   const { data, error } = await db
     .from("staff_payroll_profiles")
     .select("*")
     .eq("restaurant_id", restaurantId);
-  if (error || !data) return [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  throwIfSupabaseError(error, "Không tải được hồ sơ lương nhân viên");
+  if (!data) return [];
   return (data as any[]).map(mapProfileRow);
 }
 
@@ -63,7 +63,6 @@ export async function getStaffPayrollSelfView(input: {
   userId: string;
 }): Promise<{ deductions: StaffPayrollDeductions; profile: StaffPayrollProfile | null }> {
   const supabase = createAdminSupabaseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
 
   const memberResult = await db
@@ -72,6 +71,7 @@ export async function getStaffPayrollSelfView(input: {
     .eq("restaurant_id", input.restaurantId)
     .eq("user_id", input.userId)
     .maybeSingle();
+  throwIfSupabaseError(memberResult.error, "Không xác thực được hồ sơ nhân viên");
 
   const member = memberResult.data as { id: string; archived_at: string | null; employment_status: string } | null;
   if (!member || member.archived_at) return { deductions: DEFAULT_PAYROLL_DEDUCTIONS, profile: null };
@@ -80,6 +80,9 @@ export async function getStaffPayrollSelfView(input: {
     db.from("staff_payroll_deductions").select("*").eq("restaurant_id", input.restaurantId).maybeSingle(),
     db.from("staff_payroll_profiles").select("*").eq("restaurant_id", input.restaurantId).eq("staff_member_id", member.id).maybeSingle()
   ]);
+
+  throwIfSupabaseError(deductionsResult.error, "Không tải được cấu hình lương cá nhân");
+  throwIfSupabaseError(profileResult.error, "Không tải được hồ sơ lương cá nhân");
 
   return {
     deductions: deductionsResult.data ? mapDeductionsRow(deductionsResult.data) : DEFAULT_PAYROLL_DEDUCTIONS,
@@ -93,7 +96,6 @@ export async function upsertStaffPayrollDeductions(input: {
   values: Partial<StaffPayrollDeductions>;
 }): Promise<void> {
   const supabase = createAdminSupabaseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
   const merged = { ...DEFAULT_PAYROLL_DEDUCTIONS, ...input.values };
   const { error } = await db.from("staff_payroll_deductions").upsert(
@@ -124,7 +126,6 @@ export async function upsertStaffPayrollProfile(input: {
   values: Partial<StaffPayrollProfile>;
 }): Promise<void> {
   const supabase = createAdminSupabaseClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = supabase as any;
   const { error } = await db.from("staff_payroll_profiles").upsert(
     {
@@ -143,7 +144,6 @@ export async function upsertStaffPayrollProfile(input: {
   if (error) throw new Error(error.message);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapDeductionsRow(row: any): StaffPayrollDeductions {
   return {
     bhxhEmployeePercent: Number(row.bhxh_employee_percent ?? DEFAULT_PAYROLL_DEDUCTIONS.bhxhEmployeePercent),
@@ -160,7 +160,6 @@ function mapDeductionsRow(row: any): StaffPayrollDeductions {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapProfileRow(row: any): StaffPayrollProfile {
   return {
     staffMemberId: String(row.staff_member_id),

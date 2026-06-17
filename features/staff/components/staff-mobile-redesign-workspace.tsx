@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttri
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   BarChart3,
   Bell,
   CalendarDays,
@@ -64,6 +65,8 @@ type StaffMobileRedesignWorkspaceProps = {
   restaurantSlug: string;
   userId: string;
   payrollSelf?: StaffPayrollSelfView | null;
+  payrollDataError?: string | null;
+  permissionDataError?: string | null;
   effectivePermissions?: string[];
   enableHeartbeat?: boolean;
 };
@@ -399,7 +402,7 @@ function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?
   return <span className={cn("inline-flex min-h-7 items-center rounded-full px-2.5 text-xs font-bold", tone === "success" && "bg-[#DDF8E9] text-[#0F4D3A]", tone === "danger" && "bg-[#FFF0D9] text-[#A33D10]", tone === "warning" && "bg-[#FFF0D9] text-[#93540A]", tone === "neutral" && "bg-[#ECE9E3] text-[#595650]")}>{children}</span>;
 }
 
-export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, payrollSelf = null, effectivePermissions = [], enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
+export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, payrollSelf = null, payrollDataError = null, permissionDataError = null, effectivePermissions = [], enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
   const [bundle, setBundle] = useState(initialBundle);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<StaffAppTab>("home");
@@ -587,7 +590,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       return;
     }
     if (source === "gps" && !bundle.premium.gpsAttendance) {
-      setMessage({ tone: "warning", text: "Gói hiện tại chưa bật GPS. Vui lòng dùng QR hoặc WiFi tại quán." });
+      setMessage({ tone: "warning", text: "Gói hiện tại chưa bật GPS độc lập. QR/WiFi vẫn cần vị trí chính xác tại quán để chống chấm công từ xa." });
       return;
     }
     if (!selectedBranch?.attendanceLocationConfigured) {
@@ -601,7 +604,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       return;
     }
     if (source === "wifi" && !offlineQueue.isOnline) {
-      setMessage({ tone: "warning", text: "WiFi chấm công cần thiết bị đang online tại mạng quán." });
+      setMessage({ tone: "warning", text: "WiFi chấm công cần thiết bị online bằng mạng quán đã lưu và vẫn phải có GPS chính xác." });
       return;
     }
 
@@ -638,7 +641,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
         if (source === "qr" && isQrAttendanceError(error)) {
           clearQrTokenAfterFailure();
           setQrScannerOpen(true);
-          setMessage({ tone: "warning", text: "QR này không còn hợp lệ cho chi nhánh/ca hiện tại. Hãy quét lại mã mới hoặc chuyển sang GPS/WiFi." });
+          setMessage({ tone: "warning", text: "QR này không còn hợp lệ cho chi nhánh/ca hiện tại. Hãy quét lại mã mới hoặc dùng GPS/WiFi tại quán với vị trí chính xác." });
         } else {
           setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
         }
@@ -838,6 +841,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
 
       <section className="mx-auto w-full max-w-[640px] space-y-4 px-4 pb-[calc(7.25rem+env(safe-area-inset-bottom))] pt-5">
         {message ? <MessageBar message={message} /> : null}
+          {permissionDataError ? <MessageBar message={{ tone: "warning", text: permissionDataError }} /> : null}
           {attendanceBlockedByOffline ? <MessageBar message={{ tone: "warning", text: pendingOfflineClockIn ? "Có check-in offline đang chờ đồng bộ." : "Có kết ca offline đang chờ đồng bộ." }} /> : null}
           {staleOpenAttendance && activeAttendance ? <MessageBar message={{ tone: "warning", text: `Phiên công chưa kết từ ${formatDate(activeAttendance.clockInAt)} lúc ${shortTime(activeAttendance.clockInAt)}. Hãy kết ca hoặc báo quản lý kết ca hộ trước khi vào ca mới.` }} /> : null}
           {resolvedTab === "home" ? (
@@ -894,7 +898,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
               restaurantSlug={restaurantSlug}
             />
           ) : null}
-          {resolvedTab === "profile" ? <ProfileTab staff={staff} bundle={bundle} payrollSelf={payrollSelf} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
+          {resolvedTab === "profile" ? <ProfileTab staff={staff} bundle={bundle} payrollSelf={payrollSelf} payrollDataError={payrollDataError} profileDraft={profileDraft} incidentDraft={incidentDraft} onProfileDraftChange={(patch) => setProfileDraft((current) => ({ ...current, ...patch }))} onIncidentDraftChange={(patch) => setIncidentDraft((current) => ({ ...current, ...patch }))} onAvatarFile={uploadAvatar} onSubmitProfile={submitProfile} onSubmitIncident={submitIncident} savingProfile={savingProfile} uploadingAvatar={uploadingAvatar} submittingIncident={submittingIncident} /> : null}
       </section>
 
       <QrScannerSheet
@@ -1163,7 +1167,7 @@ function QrScannerSheet({
 
     async function startScanner() {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setScannerMessage("Thiết bị chưa cấp quyền camera. Hãy bật camera hoặc dùng GPS/WiFi tại chi nhánh.");
+        setScannerMessage("Thiết bị chưa cấp quyền camera. Hãy bật camera hoặc dùng GPS/WiFi tại chi nhánh với vị trí chính xác.");
         return;
       }
 
@@ -1206,7 +1210,7 @@ function QrScannerSheet({
         };
         void scan();
       } catch {
-        setScannerMessage("Không mở được camera. Hãy cấp quyền camera hoặc chuyển sang GPS/WiFi tại quán.");
+        setScannerMessage("Không mở được camera. Hãy cấp quyền camera hoặc dùng GPS/WiFi tại quán với vị trí chính xác.");
       }
     }
 
@@ -1526,7 +1530,7 @@ function RequestsTab({ draft, onDraftChange, recentRequests, assignments, onSubm
   );
 }
 
-function ProfileTab({ staff, bundle, payrollSelf, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onAvatarFile, onSubmitProfile, onSubmitIncident, savingProfile, uploadingAvatar, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; payrollSelf: StaffPayrollSelfView | null; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onAvatarFile: (file: File | null) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; uploadingAvatar: boolean; submittingIncident: boolean }) {
+function ProfileTab({ staff, bundle, payrollSelf, payrollDataError, profileDraft, incidentDraft, onProfileDraftChange, onIncidentDraftChange, onAvatarFile, onSubmitProfile, onSubmitIncident, savingProfile, uploadingAvatar, submittingIncident }: { staff: StaffOperationsBundle["members"][number]; bundle: StaffOperationsBundle; payrollSelf: StaffPayrollSelfView | null; payrollDataError: string | null; profileDraft: ProfileDraft; incidentDraft: IncidentDraft; onProfileDraftChange: (patch: Partial<ProfileDraft>) => void; onIncidentDraftChange: (patch: Partial<IncidentDraft>) => void; onAvatarFile: (file: File | null) => void; onSubmitProfile: () => void; onSubmitIncident: () => void; savingProfile: boolean; uploadingAvatar: boolean; submittingIncident: boolean }) {
   const timesheet = bundle.timesheets.find((item) => item.staffMemberId === staff.id);
   const attendanceCount = timesheet?.attendanceCount ?? 0;
   const score = timesheet?.attendanceScore ?? 100;
@@ -1561,7 +1565,15 @@ function ProfileTab({ staff, bundle, payrollSelf, profileDraft, incidentDraft, o
 
       <details className="staff-brand-panel p-4">
         <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 text-base font-black text-[#2B2B2B]"><span className="flex items-center gap-2"><Wallet size={18} /> Lương của tôi</span><ChevronDown size={18} className="text-[#0F4D3A]" /></summary>
-        {paySummary && payProfile ? (
+        {payrollDataError ? (
+          <div className="mt-3 flex items-start gap-3 rounded-xl border border-[#F6D2C9] bg-[#FFF1EC] p-4">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[#B94724]" />
+            <div>
+              <p className="text-sm font-black text-[#B94724]">Không tải được dữ liệu lương thật</p>
+              <p className="mt-1 text-xs font-semibold text-[#5E5A54]">{payrollDataError}</p>
+            </div>
+          </div>
+        ) : paySummary && payProfile ? (
           <div className="mt-3 grid gap-2">
             <div className="flex items-center justify-between rounded-xl bg-[#F5F8F1] px-4 py-3"><span className="text-sm font-bold text-[#5E5A54]">Lương cơ bản</span><span className="text-base font-black text-[#2B2B2B]">{vnd(payProfile.baseSalary)}</span></div>
             <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Bảo hiểm (NV đóng)</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.totalEmployeeInsurance)}</span></div>

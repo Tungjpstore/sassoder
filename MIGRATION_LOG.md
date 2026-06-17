@@ -21,12 +21,19 @@ Current release evidence no longer matches the 2026-05-20 pending-batch snapshot
 
 Production migration apply requires reconciliation after the 2026-06-01 tenant/RLS hotfix, and production promotion remains NO-GO until backup/PITR proof, authenticated QA and monitoring sign-off are complete. Use `EXTERNAL_BLOCKERS_STATUS.md` and `npm run release:blockers` as the current evidence path.
 
-Last updated: 2026-06-01
+## 2026-06-17 Staff HR Security Addendum
+
+- Added local migration `20260617085431_staff_hr_security_hardening_private_qr_rpc.sql` to move staff attendance QR token consumption behind a private `app_private` security-definer RPC with a service-role-only public wrapper.
+- The migration preserves `app_private` usage and helper execute grants for `authenticated` and `service_role` so existing tenant RLS helpers continue to work.
+- Added local migration `20260617134652_staff_attendance_source_proof_hardening.sql` to require QR/WiFi attendance logs to carry source-specific audit proof before payroll review.
+- Production apply still requires Supabase dry-run, staging rehearsal, backup/PITR proof, and post-apply QR attendance smoke checks.
+
+Last updated: 2026-06-17
 
 ## Current Snapshot
 
-- Local SQL migration files: 112
-- Tracked migration files: 112
+- Local SQL migration files: 127
+- Tracked migration files: 127
 - Untracked migration files: 0
 - Current integration branch: `codex/p0-production-clean`
 - Current local commit: `879cfbf`
@@ -49,6 +56,12 @@ Production migration remains blocked until:
 
 | Migration | Area | Risk |
 | --- | --- | --- |
+| `20260617134652_staff_attendance_source_proof_hardening.sql` | Staff HR attendance security | P0: DB guardrails require QR token and WiFi network proof on source-specific attendance logs. |
+| `20260617085431_staff_hr_security_hardening_private_qr_rpc.sql` | Staff HR attendance security | P0: moves QR consume mutation into private schema while preserving tenant RLS helper grants. |
+| `20260614090000_logimail_deliverability_backfill.sql` | Logimail deliverability | High: deliverability data backfill must be rehearsed before production apply. |
+| `20260613170000_inventory_actor_scope_jwt_role_fix.sql` | Inventory actor scope | High: fixes JWT role handling in inventory actor scoping. |
+| `20260613120000_order_items_prepared_at.sql` | Orders kitchen timing | Medium-high: adds prepared-at tracking for order item workflow. |
+| `20260612170000_staff_payroll_deductions.sql` | Staff payroll | High: payroll-ready deductions and compensation accounting. |
 | `20260601122332_harden_restaurant_members_view.sql` | Tenant/RLS hardening | P1: forces public view reads through caller RLS and revokes anon access. |
 | `20260601121000_staff_attendance_anti_fraud_hardening.sql` | Staff attendance anti-fraud | High: forward-only attendance integrity constraints and trusted network guardrails. |
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime publication | High: realtime blast radius and table publication scope. |

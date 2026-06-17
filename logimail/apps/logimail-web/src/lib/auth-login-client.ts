@@ -40,6 +40,8 @@ export function storeLoginCooldown(email: string, retryAfterSeconds: number) {
 export async function logimailPasswordLogin(payload: LoginPayload): Promise<LoginResponse> {
   const response = await fetch('/api/logimail/auth/login', {
     method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
   });

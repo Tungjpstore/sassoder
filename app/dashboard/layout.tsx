@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { PushNotificationManager } from "@/components/pwa/push-notification-manager";
 import { noIndexMetadata } from "@/lib/seo/metadata";
 import "@/app/styles/dashboard-tokens-v2.css";
@@ -10,7 +11,9 @@ export default function DashboardLayout({ children }: Readonly<{ children: React
   return (
     <>
       {children}
-      <PushNotificationManager />
+      <Suspense fallback={null}>
+        <PushNotificationManager />
+      </Suspense>
     </>
   );
 }

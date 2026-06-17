@@ -1,7 +1,7 @@
 "use client";
 
 /* RealOrdersWorkspaceV2 — production /dashboard/orders.
- * Layout 100% theo demo orders-demo.tsx (Toolbar + FilterTabs + card grid).
+ * Orders Command Board theo fulfillment lane: DINE_IN / PICKUP / DELIVERY.
  * Backend wiring giữ thật:
  *  - Supabase realtime channel `admin-orders:<restaurantId>`
  *  - Optimistic mutations POST /api/admin/orders/:id/{accept,complete,confirm-payment,cancel}
@@ -9,23 +9,46 @@
  *  - AdminLiveActionCenter mở qua Drawer riêng (Bell button trên Toolbar)
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, ChefHat, Clock3, CreditCard, Eye, Filter, QrCode, Search, Trash2, Truck, Utensils, X } from "lucide-react";
-import { FilterTabs, Toolbar } from "../workspace-ui";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  Bell,
+  Check,
+  ChefHat,
+  Clock3,
+  CreditCard,
+  Eye,
+  Filter,
+  Hash,
+  MapPin,
+  Phone,
+  QrCode,
+  Receipt,
+  Search,
+  ShoppingBag,
+  Trash2,
+  Truck,
+  Utensils,
+  X
+} from "lucide-react";
+import { Toolbar } from "../workspace-ui";
 import { EmptyState, Badge } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
-import { OrderDetailDrawer, type OrderDetail } from "../order-detail-drawer";
 import { RealtimeStatusBadge, playOrderChime, type RealtimeState } from "../realtime";
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
+import { RouteMiniMap } from "@/components/customer/route-mini-map";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import { deliveryStatusLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { cn } from "@/lib/utils";
 import type { OrderDto } from "@/types/domain";
 
 type OrderMutationAction = "accept" | "confirm-payment" | "complete" | "cancel" | "timer";
 type Tab = "all" | "new" | "cooking" | "ready" | "payment";
+type FulfillmentLane = "DINE_IN" | "PICKUP" | "DELIVERY";
+type LaneStatusFilter = "all" | "needs_action" | "preparing" | "ready" | "payment" | "issue";
 
 type Props = {
   initialOrders: OrderDto[];
@@ -42,25 +65,11 @@ function statusToTab(status: string): Tab {
   return "all";
 }
 
-function statusToDetail(status: string): OrderDetail["status"] {
-  if (status === "pending") return "new";
-  if (status === "ordering") return "cooking";
-  if (status === "completed") return "ready";
-  if (status === "waiting_payment" || status === "waiting_confirm") return "payment";
-  return "new";
-}
-
 function nextActionFor(status: string): OrderMutationAction | null {
   if (status === "pending") return "accept";
   if (status === "ordering") return "complete";
   if (status === "completed" || status === "waiting_confirm" || status === "waiting_payment") return "confirm-payment";
   return null;
-}
-
-function channelOf(o: OrderDto): "qr" | "takeaway" | "delivery" | "reservation" {
-  if (o.fulfillmentType === "DELIVERY") return "delivery";
-  if (o.fulfillmentType === "PICKUP") return "takeaway";
-  return "qr";
 }
 
 /* Đơn đã kết thúc → loại khỏi "cần xử lý", ngừng đếm giờ.
@@ -101,10 +110,115 @@ function totalQty(o: OrderDto) {
   return o.items.reduce((s, it) => s + it.quantity, 0);
 }
 
+const lanes: Array<{ key: FulfillmentLane; label: string; shortLabel: string; description: string }> = [
+  { key: "DINE_IN", label: "Tại quán / QR bàn", shortLabel: "Tại quán", description: "Theo bàn, thời gian phục vụ và thu tiền tại bàn" },
+  { key: "PICKUP", label: "Online đến lấy", shortLabel: "Pickup", description: "Theo khách, mã lấy hàng và thời điểm giao món" },
+  { key: "DELIVERY", label: "Giao hàng", shortLabel: "Giao hàng", description: "Theo địa chỉ, ETA, phí giao và tracking" }
+];
+
+const laneIcons: Record<FulfillmentLane, ReactNode> = {
+  DINE_IN: <QrCode size={16} />,
+  PICKUP: <ShoppingBag size={16} />,
+  DELIVERY: <Truck size={16} />
+};
+
+const laneAccent: Record<FulfillmentLane, string> = {
+  DINE_IN: "var(--d-jade)",
+  PICKUP: "var(--d-orange)",
+  DELIVERY: "var(--d-info-fg)"
+};
+
+function statusLabel(status: string) {
+  if (status === "pending") return "Chờ xác nhận";
+  if (status === "ordering") return "Đang chuẩn bị";
+  if (status === "completed") return "Sẵn sàng";
+  if (status === "waiting_payment") return "Chờ thanh toán";
+  if (status === "waiting_confirm") return "Chờ xác nhận tiền";
+  if (status === "paid") return "Đã thu";
+  if (status === "cancelled") return "Đã huỷ";
+  return status;
+}
+
+function statusTone(status: string): "jade" | "orange" | "danger" | "info" | "ok" | "neutral" {
+  if (status === "pending") return "orange";
+  if (status === "ordering") return "info";
+  if (status === "completed") return "ok";
+  if (status === "waiting_payment" || status === "waiting_confirm") return "jade";
+  if (status === "cancelled") return "danger";
+  return "neutral";
+}
+
+function laneLabel(lane: FulfillmentLane) {
+  return lanes.find((item) => item.key === lane)?.label ?? lane;
+}
+
+function laneShortLabel(lane: FulfillmentLane) {
+  return lanes.find((item) => item.key === lane)?.shortLabel ?? lane;
+}
+
+function primaryIdentity(order: OrderDto) {
+  if (order.fulfillmentType === "DINE_IN") return order.table?.name ? `Bàn ${order.table.name}` : "QR tại bàn";
+  if (order.fulfillmentType === "PICKUP") return order.customerName || "Khách đến lấy";
+  return order.customerName || "Khách giao hàng";
+}
+
+function paymentNeedsAttention(order: OrderDto) {
+  return order.status === "waiting_payment" || order.status === "waiting_confirm" || order.paymentStatus === "waiting_confirm";
+}
+
+function deliveryNeedsAttention(order: OrderDto) {
+  if (order.fulfillmentType !== "DELIVERY") return false;
+  if (order.deliveryStatus === "rejected") return true;
+  if (!order.deliveryAddress || !order.deliveryLat || !order.deliveryLng) return true;
+  if (order.deliveryTrackingSnapshot?.locationIsStale) return true;
+  return false;
+}
+
+function laneStatusMatches(order: OrderDto, filter: LaneStatusFilter) {
+  if (filter === "all") return true;
+  if (filter === "needs_action") return order.status === "pending" || paymentNeedsAttention(order) || deliveryNeedsAttention(order);
+  if (filter === "preparing") return order.status === "ordering";
+  if (filter === "ready") return order.status === "completed";
+  if (filter === "payment") return paymentNeedsAttention(order);
+  if (filter === "issue") return deliveryNeedsAttention(order) || elapsedMin(order.createdAt, Date.now()) >= 15;
+  return true;
+}
+
+function actionLabelFor(order: OrderDto) {
+  if (order.status === "pending") return order.fulfillmentType === "DINE_IN" ? "Nhận đơn" : "Xác nhận đơn";
+  if (order.status === "ordering") {
+    if (order.fulfillmentType === "PICKUP") return "Sẵn sàng lấy";
+    if (order.fulfillmentType === "DELIVERY") return "Sẵn sàng giao";
+    return "Báo ra món";
+  }
+  if (order.status === "completed") {
+    if (order.fulfillmentType === "PICKUP") return "Hoàn tất pickup";
+    if (order.fulfillmentType === "DELIVERY") return "Xác nhận thu";
+    return "Thu tiền";
+  }
+  if (order.status === "waiting_payment" || order.status === "waiting_confirm") return "Thu tiền";
+  return "Đóng đơn";
+}
+
+function hasDeliveryMap(order: OrderDto) {
+  return (
+    order.fulfillmentType === "DELIVERY" &&
+    typeof order.restaurant?.storeLat === "number" &&
+    typeof order.restaurant?.storeLng === "number" &&
+    typeof order.deliveryLat === "number" &&
+    typeof order.deliveryLng === "number"
+  );
+}
+
 export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaurantId, canManageTestOrders }: Props) {
   const toast = useToast();
   const [orders, setOrders] = useState<OrderDto[]>(initialOrders);
-  const [tab, setTab] = useState<Tab>("all");
+  const [activeLane, setActiveLane] = useState<FulfillmentLane>("DINE_IN");
+  const [laneFilters, setLaneFilters] = useState<Record<FulfillmentLane, LaneStatusFilter>>({
+    DINE_IN: "all",
+    PICKUP: "all",
+    DELIVERY: "all"
+  });
   const [detailId, setDetailId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [liveOpen, setLiveOpen] = useState(false);
@@ -263,7 +377,7 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
     }
   }
 
-  const counts = useMemo(() => {
+  const statusCounts = useMemo(() => {
     const c: Record<Tab, number> = { all: 0, new: 0, cooking: 0, ready: 0, payment: 0 };
     for (const o of orders) {
       if (isOrderClosed(o)) continue;
@@ -274,9 +388,9 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
     return c;
   }, [orders]);
 
-  const visible = useMemo(() => {
+  const activeOrders = useMemo(() => {
     const live = orders.filter((o) => !isOrderClosed(o));
-    let list = tab === "all" ? live : live.filter((o) => statusToTab(o.status) === tab);
+    let list = live;
     if (channelFilter !== "all") list = list.filter((o) => o.fulfillmentType === channelFilter);
     if (paymentFilter !== "all") {
       list = list.filter((o) => {
@@ -295,21 +409,44 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
       );
     }
     return list;
-  }, [orders, tab, channelFilter, paymentFilter, search]);
+  }, [orders, channelFilter, paymentFilter, search]);
+
+  const laneOrders = useMemo(() => {
+    const grouped: Record<FulfillmentLane, OrderDto[]> = { DINE_IN: [], PICKUP: [], DELIVERY: [] };
+    for (const order of activeOrders) {
+      grouped[order.fulfillmentType].push(order);
+    }
+    for (const lane of lanes) {
+      grouped[lane.key] = grouped[lane.key]
+        .filter((order) => laneStatusMatches(order, laneFilters[lane.key]))
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+    return grouped;
+  }, [activeOrders, laneFilters]);
+
+  const laneTotals = useMemo(() => {
+    const totals: Record<FulfillmentLane, number> = { DINE_IN: 0, PICKUP: 0, DELIVERY: 0 };
+    for (const order of activeOrders) totals[order.fulfillmentType] += 1;
+    return totals;
+  }, [activeOrders]);
+
+  const operationalSummary = useMemo(() => {
+    const live = orders.filter((o) => !isOrderClosed(o));
+    return {
+      open: live.length,
+      needsConfirm: live.filter((o) => o.status === "pending").length,
+      overdue: live.filter((o) => elapsedMin(o.createdAt, nowMs) >= 15).length,
+      payment: live.filter(paymentNeedsAttention).length,
+      deliveryIssues: live.filter(deliveryNeedsAttention).length
+    };
+  }, [nowMs, orders]);
 
   const detail = orders.find((o) => o.id === detailId) ?? null;
-  const tabs: { key: Tab; label: string }[] = [
-    { key: "all", label: "Tất cả" },
-    { key: "new", label: "Đơn mới" },
-    { key: "cooking", label: "Đang làm" },
-    { key: "ready", label: "Sẵn sàng" },
-    { key: "payment", label: "Chờ thu" }
-  ];
   const openRequestsCount = initialRequests?.length ?? 0;
 
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">
-      <Toolbar eyebrow={`Realtime · ${counts.all} đơn đang mở`} title="Đơn hàng">
+      <Toolbar eyebrow={`Realtime · ${statusCounts.all} đơn đang mở`} title="Đơn hàng">
         <RealtimeStatusBadge state={rtState} />
         <div className="relative w-full sm:w-auto">
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--d-text-faint)]" />
@@ -351,37 +488,23 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
 
       <div className={liveOpen ? "grid gap-[var(--d-s-4)] xl:grid-cols-[minmax(0,1fr)_360px]" : "flex flex-col gap-[var(--d-s-4)]"}>
         <div className="flex min-w-0 flex-col gap-[var(--d-s-4)]">
-          <FilterTabs
-            active={tab}
-            onChange={(k) => setTab(k as Tab)}
-            tabs={[
-              { key: "all", label: "Tất cả", count: counts.all },
-              { key: "new", label: "Đơn mới", count: counts.new },
-              { key: "cooking", label: "Đang làm", count: counts.cooking },
-              { key: "ready", label: "Sẵn sàng", count: counts.ready },
-              { key: "payment", label: "Chờ thu", count: counts.payment }
-            ]}
-          />
+          <OrderOperationalSummary summary={operationalSummary} />
 
-          {visible.length === 0 ? (
-            <EmptyState icon={<Utensils size={22} />} title="Không có đơn ở mục này" description="Đơn mới sẽ hiện ngay khi khách gọi món." />
-          ) : (
-            <div className="grid gap-[var(--d-s-3)] sm:grid-cols-2 xl:grid-cols-3">
-              {visible.map((o) => (
-                <OrderCard
-                  key={o.id}
-                  order={o}
-                  nowMs={nowMs}
-                  mutating={mutatingId === o.id}
-                  onAdvance={() => {
-                    const action = nextActionFor(o.status);
-                    if (action) void mutateOrder(o.id, action);
-                  }}
-                  onDetail={() => setDetailId(o.id)}
-                />
-              ))}
-            </div>
-          )}
+          <OrderFlowBoard
+            activeLane={activeLane}
+            laneFilters={laneFilters}
+            laneOrders={laneOrders}
+            laneTotals={laneTotals}
+            nowMs={nowMs}
+            mutatingId={mutatingId}
+            onActiveLaneChange={setActiveLane}
+            onLaneFilterChange={(lane, filter) => setLaneFilters((current) => ({ ...current, [lane]: filter }))}
+            onAdvance={(order) => {
+              const action = nextActionFor(order.status);
+              if (action) void mutateOrder(order.id, action);
+            }}
+            onDetail={(order) => setDetailId(order.id)}
+          />
         </div>
 
         {liveOpen ? (
@@ -412,11 +535,12 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
         ) : null}
       </div>
 
-      <OrderDetailDrawer
-        order={detail ? buildDetail(detail, nowMs) : null}
+      <OrderFlowDetail
+        order={detail}
         open={Boolean(detail)}
-        onClose={() => setDetailId(null)}
+        nowMs={nowMs}
         busy={detail ? mutatingId === detail.id : false}
+        onClose={() => setDetailId(null)}
         onAdvance={detail ? () => {
           const action = nextActionFor(detail.status);
           if (action) void mutateOrder(detail.id, action);
@@ -446,12 +570,14 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
       </div>
 
       <AdvancedFilterModal
+        key={`${filterOpen ? "open" : "closed"}-${channelFilter}-${paymentFilter}`}
         open={filterOpen}
         onClose={() => setFilterOpen(false)}
         channel={channelFilter}
         payment={paymentFilter}
         onChange={(c, p) => {
           setChannelFilter(c);
+          if (c !== "all") setActiveLane(c);
           setPaymentFilter(p);
         }}
       />
@@ -460,136 +586,525 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
   );
 }
 
-function OrderCard({
-  order,
+
+function OrderOperationalSummary({ summary }: { summary: { open: number; needsConfirm: number; overdue: number; payment: number; deliveryIssues: number } }) {
+  const items = [
+    { label: "Đơn đang mở", value: summary.open, helper: "Tất cả luồng", icon: <Receipt size={16} />, tone: "jade" as const },
+    { label: "Cần xác nhận", value: summary.needsConfirm, helper: "Ưu tiên nhận", icon: <ChefHat size={16} />, tone: "orange" as const },
+    { label: "Quá 15 phút", value: summary.overdue, helper: "Cần kiểm tra", icon: <Clock3 size={16} />, tone: "danger" as const },
+    { label: "Chờ thu", value: summary.payment, helper: "VietQR / tiền mặt", icon: <CreditCard size={16} />, tone: "info" as const },
+    { label: "Delivery cần xem", value: summary.deliveryIssues, helper: "Địa chỉ / tracking", icon: <Truck size={16} />, tone: "neutral" as const }
+  ];
+
+  return (
+    <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+      {items.map((item) => (
+        <div key={item.label} className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-3 shadow-[var(--d-sh-sm)]">
+          <div className="flex items-center justify-between gap-3">
+            <span
+              className={cn(
+                "grid h-9 w-9 place-items-center rounded-[var(--d-r-md)]",
+                item.tone === "jade" && "bg-[var(--d-primary-soft)] text-[var(--d-primary)]",
+                item.tone === "orange" && "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]",
+                item.tone === "danger" && "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
+                item.tone === "info" && "bg-[var(--d-info-bg)] text-[var(--d-info-fg)]",
+                item.tone === "neutral" && "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
+              )}
+            >
+              {item.icon}
+            </span>
+            <span className="d-num text-[length:var(--d-fs-h2)] font-bold text-[var(--d-text)]">{item.value}</span>
+          </div>
+          <p className="mt-2 truncate text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{item.label}</p>
+          <p className="mt-0.5 truncate text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{item.helper}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function OrderFlowBoard({
+  activeLane,
+  laneFilters,
+  laneOrders,
+  laneTotals,
   nowMs,
-  mutating,
+  mutatingId,
+  onActiveLaneChange,
+  onLaneFilterChange,
   onAdvance,
   onDetail
 }: {
+  activeLane: FulfillmentLane;
+  laneFilters: Record<FulfillmentLane, LaneStatusFilter>;
+  laneOrders: Record<FulfillmentLane, OrderDto[]>;
+  laneTotals: Record<FulfillmentLane, number>;
+  nowMs: number;
+  mutatingId: string | null;
+  onActiveLaneChange: (lane: FulfillmentLane) => void;
+  onLaneFilterChange: (lane: FulfillmentLane, filter: LaneStatusFilter) => void;
+  onAdvance: (order: OrderDto) => void;
+  onDetail: (order: OrderDto) => void;
+}) {
+  return (
+    <section className="flex min-w-0 flex-col gap-[var(--d-s-3)]">
+      <div className="grid grid-cols-3 gap-1 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-1 shadow-[var(--d-sh-sm)] xl:hidden">
+        {lanes.map((lane) => {
+          const active = activeLane === lane.key;
+          return (
+            <button
+              key={lane.key}
+              type="button"
+              onClick={() => onActiveLaneChange(lane.key)}
+              className={cn(
+                "flex min-h-11 items-center justify-center gap-1.5 rounded-[var(--d-r-md)] px-2 text-[length:var(--d-fs-xs)] font-bold transition-colors",
+                active ? "bg-[var(--d-jade)] text-[var(--d-on-jade)]" : "text-[var(--d-text-muted)] hover:bg-[var(--d-surface-2)] hover:text-[var(--d-text)]"
+              )}
+            >
+              {laneIcons[lane.key]}
+              <span className="truncate">{lane.shortLabel}</span>
+              <span className={cn("d-num grid h-5 min-w-5 place-items-center rounded-full px-1 text-[length:var(--d-fs-2xs)]", active ? "bg-white/20" : "bg-[var(--d-surface-2)] text-[var(--d-text-faint)]")}>{laneTotals[lane.key]}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="xl:hidden">
+        <OrderFlowColumn
+          lane={activeLane}
+          orders={laneOrders[activeLane]}
+          total={laneTotals[activeLane]}
+          filter={laneFilters[activeLane]}
+          nowMs={nowMs}
+          mutatingId={mutatingId}
+          onFilterChange={(filter) => onLaneFilterChange(activeLane, filter)}
+          onAdvance={onAdvance}
+          onDetail={onDetail}
+        />
+      </div>
+
+      <div className="hidden min-w-0 grid-cols-3 gap-[var(--d-s-3)] xl:grid">
+        {lanes.map((lane) => (
+          <OrderFlowColumn
+            key={lane.key}
+            lane={lane.key}
+            orders={laneOrders[lane.key]}
+            total={laneTotals[lane.key]}
+            filter={laneFilters[lane.key]}
+            nowMs={nowMs}
+            mutatingId={mutatingId}
+            onFilterChange={(filter) => onLaneFilterChange(lane.key, filter)}
+            onAdvance={onAdvance}
+            onDetail={onDetail}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function OrderFlowColumn({
+  lane,
+  orders,
+  total,
+  filter,
+  nowMs,
+  mutatingId,
+  onFilterChange,
+  onAdvance,
+  onDetail
+}: {
+  lane: FulfillmentLane;
+  orders: OrderDto[];
+  total: number;
+  filter: LaneStatusFilter;
+  nowMs: number;
+  mutatingId: string | null;
+  onFilterChange: (filter: LaneStatusFilter) => void;
+  onAdvance: (order: OrderDto) => void;
+  onDetail: (order: OrderDto) => void;
+}) {
+  const filters: Array<{ key: LaneStatusFilter; label: string }> = [
+    { key: "all", label: "Tất cả" },
+    { key: "needs_action", label: "Cần xử lý" },
+    { key: "preparing", label: "Đang làm" },
+    { key: "ready", label: "Sẵn sàng" },
+    { key: "payment", label: "Chờ thu" },
+    { key: "issue", label: "Sự cố" }
+  ];
+
+  return (
+    <section className="flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
+      <header className="border-b border-[var(--d-line)] px-[var(--d-s-4)] py-[var(--d-s-4)]">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">
+              <span className="grid h-8 w-8 place-items-center rounded-[var(--d-r-md)] text-white" style={{ background: laneAccent[lane] }}>{laneIcons[lane]}</span>
+              <span className="truncate">{laneLabel(lane)}</span>
+            </p>
+            <p className="mt-1 line-clamp-2 text-[length:var(--d-fs-xs)] leading-5 text-[var(--d-text-muted)]">{lanes.find((item) => item.key === lane)?.description}</p>
+          </div>
+          <span className="d-num grid h-8 min-w-8 place-items-center rounded-full bg-[var(--d-surface-2)] px-2 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text-muted)]">{total}</span>
+        </div>
+
+        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+          {filters.map((item) => {
+            const active = filter === item.key;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => onFilterChange(item.key)}
+                className={cn(
+                  "h-9 shrink-0 rounded-[var(--d-r-pill)] px-3 text-[length:var(--d-fs-xs)] font-bold transition-colors",
+                  active ? "bg-[var(--d-jade)] text-[var(--d-on-jade)]" : "border border-[var(--d-line)] bg-[var(--d-surface-2)] text-[var(--d-text-muted)] hover:text-[var(--d-text)]"
+                )}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--d-s-3)] overflow-y-auto bg-[var(--d-surface-2)]/35 p-[var(--d-s-3)]">
+        {orders.length === 0 ? (
+          <EmptyState icon={laneIcons[lane]} title={`Không có đơn ${laneShortLabel(lane).toLowerCase()}`} description="Khi có đơn mới, hệ thống sẽ đưa vào đúng luồng vận hành tại đây." />
+        ) : (
+          orders.map((order) => {
+            const common = {
+              order,
+              nowMs,
+              mutating: mutatingId === order.id,
+              onAdvance: () => onAdvance(order),
+              onDetail: () => onDetail(order)
+            };
+            if (lane === "PICKUP") return <PickupOrderCard key={order.id} {...common} />;
+            if (lane === "DELIVERY") return <DeliveryOrderCard key={order.id} {...common} />;
+            return <DineInOrderCard key={order.id} {...common} />;
+          })
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CardShell({ order, nowMs, mutating, onAdvance, onDetail, children, accent }: {
   order: OrderDto;
   nowMs: number;
   mutating: boolean;
   onAdvance: () => void;
   onDetail: () => void;
+  children: ReactNode;
+  accent: string;
 }) {
-  const tab = statusToTab(order.status);
-  const accent =
-    tab === "new"
-      ? "var(--d-orange)"
-      : tab === "cooking"
-      ? "var(--d-info-fg)"
-      : tab === "ready"
-      ? "var(--d-ok-fg)"
-      : tab === "payment"
-      ? "var(--d-jade)"
-      : "var(--d-line-strong)";
-  const chipBg =
-    tab === "new"
-      ? "var(--d-accent-soft)"
-      : tab === "cooking"
-      ? "var(--d-info-bg)"
-      : tab === "ready"
-      ? "var(--d-ok-bg)"
-      : tab === "payment"
-      ? "var(--d-primary-soft)"
-      : "var(--d-surface-2)";
-  const chipText =
-    tab === "new"
-      ? "var(--d-orange-600)"
-      : tab === "cooking"
-      ? "var(--d-info-fg)"
-      : tab === "ready"
-      ? "var(--d-ok-fg)"
-      : tab === "payment"
-      ? "var(--d-primary)"
-      : "var(--d-text-muted)";
+  const action = nextActionFor(order.status);
   const min = elapsedMin(order.createdAt, nowMs);
-  const overdue = min >= 10;
-  const ch = channelOf(order);
+  const overdue = min >= 15;
 
   return (
-    <article className="relative flex flex-col overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)] transition hover:-translate-y-0.5 hover:shadow-[var(--d-sh-md)]">
+    <article className="relative flex min-w-0 flex-col overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
       <span className="absolute inset-x-0 top-0 h-1" style={{ background: accent }} />
-      <header className="flex items-start justify-between gap-3 px-[var(--d-s-4)] pb-2 pt-[var(--d-s-4)]">
-        <div className="min-w-0">
-          <p className="text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{order.table?.name ?? (ch === "delivery" ? "Giao hàng" : ch === "takeaway" ? "Mang đi" : "Bàn")}</p>
-          <span className="mt-1 inline-flex items-center gap-1.5 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-            {ch === "delivery" ? <Truck size={13} /> : ch === "takeaway" ? <Utensils size={13} /> : <QrCode size={13} />}
-            {ch === "delivery" ? "Giao hàng" : ch === "takeaway" ? "Mang đi" : "QR tại bàn"}
-            <span className="text-[var(--d-text-faint)]">·</span>
-            <span className="d-num">{totalQty(order)} món</span>
+      <div className="flex min-w-0 flex-col gap-3 p-[var(--d-s-4)] pb-3">
+        {children}
+        <div className="flex items-center justify-between gap-2 border-t border-[var(--d-line)] pt-3">
+          <span className={cn("inline-flex items-center gap-1 text-[length:var(--d-fs-xs)] font-semibold", overdue ? "text-[var(--d-danger-fg)]" : "text-[var(--d-text-faint)]")}>
+            <Clock3 size={13} /> {min === 0 ? "vừa xong" : `${min}'`}
           </span>
+          <span className="d-num text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">{formatVnd(order.total)}</span>
         </div>
-        <span className="inline-flex items-center rounded-[var(--d-r-pill)] px-2.5 py-1 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)]" style={{ background: chipBg, color: chipText }}>
-          {tab === "new" ? "Đơn mới" : tab === "cooking" ? "Đang làm" : tab === "ready" ? "Sẵn sàng" : tab === "payment" ? "Chờ thu" : order.status}
-        </span>
-      </header>
-
-      <p className="line-clamp-2 px-[var(--d-s-4)] pb-3 text-[length:var(--d-fs-sm)] leading-snug text-[var(--d-text-muted)]">
-        {summarizeItems(order)}
-      </p>
-
-      <div className="flex items-center justify-between border-t border-[var(--d-line)] bg-[var(--d-surface-2)]/40 px-[var(--d-s-4)] py-2.5">
-        <span className="d-num text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">{formatVnd(order.total)}</span>
-        <span className={cn("inline-flex items-center gap-1 text-[length:var(--d-fs-xs)] font-semibold", overdue ? "text-[var(--d-danger-fg)]" : "text-[var(--d-text-faint)]")}>
-          <Clock3 size={13} />
-          {min === 0 ? "vừa xong" : `${min}'`}
-        </span>
       </div>
-
-      <div className="grid grid-cols-[auto_1fr]">
-        <button type="button" onClick={onDetail} className="flex h-12 items-center justify-center gap-1.5 border-r border-[var(--d-line)] px-4 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)] transition hover:bg-[var(--d-surface-2)] hover:text-[var(--d-text)]">
-          <Eye size={16} /><span className="hidden sm:inline">Chi tiết</span>
+      <div className="sticky bottom-0 grid grid-cols-[44px_1fr] border-t border-[var(--d-line)] bg-[var(--d-surface)]">
+        <button type="button" onClick={onDetail} className="grid h-12 place-items-center border-r border-[var(--d-line)] text-[var(--d-text-muted)] transition hover:bg-[var(--d-surface-2)] hover:text-[var(--d-text)]" aria-label="Xem chi tiết đơn">
+          <Eye size={16} />
         </button>
         <button
           type="button"
           onClick={onAdvance}
-          disabled={mutating || nextActionFor(order.status) === null}
-          className="flex h-12 items-center justify-center gap-2 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-on-jade)] transition active:scale-[0.99] disabled:opacity-60"
-          style={{ background: accent }}
+          disabled={mutating || action === null}
+          className="flex h-12 items-center justify-center gap-2 px-3 text-[length:var(--d-fs-sm)] font-bold text-white transition active:scale-[0.99] disabled:opacity-60"
+          style={{ background: action ? accent : "var(--d-line-strong)" }}
         >
-          {tab === "new" ? "Nhận đơn" : tab === "cooking" ? "Báo đã ra món" : tab === "ready" ? "Giao cho khách" : tab === "payment" ? "Thu tiền" : "Đóng đơn"}
+          <Check size={15} />
+          <span className="truncate">{action ? actionLabelFor(order) : "Đã xử lý"}</span>
         </button>
       </div>
     </article>
   );
 }
 
-function buildDetail(o: OrderDto, nowMs: number): OrderDetail {
-  const ch = channelOf(o);
-  const elapsed = elapsedMin(o.createdAt, nowMs);
-  return {
-    id: o.id,
-    code: o.id.slice(0, 8).toUpperCase(),
-    table: o.table?.name ?? (ch === "delivery" ? "Giao hàng" : ch === "takeaway" ? "Mang đi" : "Bàn"),
-    channel: ch,
-    customer: o.customerName
-      ? { name: o.customerName, phone: o.customerPhone ?? undefined, address: o.deliveryAddress ?? undefined }
-      : undefined,
-    items: o.items.map((it) => ({
-      name: it.menuItem?.name ?? "Món",
-      qty: it.quantity,
-      price: formatVnd((it.price + (it.modifiers?.reduce((s, m) => s + m.lineTotal, 0) ?? 0)) * it.quantity),
-      note: it.note ?? undefined
-    })),
-    subtotal: formatVnd(o.subtotal ?? o.total),
-    discount: o.discountAmount ? formatVnd(o.discountAmount) : undefined,
-    total: formatVnd(o.total),
-    paymentMethod: o.paymentMethod === "QR" ? "VietQR" : o.paymentMethod === "CASH" ? "Tiền mặt" : undefined,
-    paymentStatus: o.paymentStatus === "paid" ? "paid" : o.paymentStatus === "waiting_confirm" ? "pending" : "unpaid",
-    elapsedMin: elapsed,
-    status: statusToDetail(o.status),
-    delivery: ch === "delivery" && o.deliveryDistanceKm
-      ? {
-          distanceKm: o.deliveryDistanceKm,
-          etaMin: o.deliveryRouteDurationMinutes ?? 0,
-          driverName: o.deliveryCourier?.name ?? undefined,
-          driverPhone: o.deliveryCourier?.phone ?? undefined,
-          progress: o.deliveryStatus === "delivered" ? 1 : o.deliveryStatus === "out_for_delivery" ? 0.6 : o.deliveryStatus === "accepted" ? 0.3 : 0.1
-        }
-      : undefined
-  };
+function DineInOrderCard(props: { order: OrderDto; nowMs: number; mutating: boolean; onAdvance: () => void; onDetail: () => void }) {
+  const { order } = props;
+  const prepared = order.items.filter((item) => item.preparedAt).length;
+  return (
+    <CardShell {...props} accent={laneAccent.DINE_IN}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{primaryIdentity(order)}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]"><QrCode size={13} /> QR tại bàn · <span className="d-num">{totalQty(order)} món</span></p>
+        </div>
+        <Badge tone={statusTone(order.status)}>{statusLabel(order.status)}</Badge>
+      </div>
+      <p className="line-clamp-2 text-[length:var(--d-fs-sm)] leading-5 text-[var(--d-text-muted)]">{summarizeItems(order)}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <MiniMetric label="Món xong" value={`${prepared}/${order.items.length}`} />
+        <MiniMetric label="Thanh toán" value={paymentStatusLabel(order.paymentStatus)} />
+      </div>
+    </CardShell>
+  );
+}
+
+function PickupOrderCard(props: { order: OrderDto; nowMs: number; mutating: boolean; onAdvance: () => void; onDetail: () => void }) {
+  const { order } = props;
+  return (
+    <CardShell {...props} accent={laneAccent.PICKUP}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{primaryIdentity(order)}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]"><ShoppingBag size={13} /> Online đến lấy · mã {order.id.slice(0, 6).toUpperCase()}</p>
+        </div>
+        <Badge tone={statusTone(order.status)}>{statusLabel(order.status)}</Badge>
+      </div>
+      <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2">
+        <p className="flex items-center gap-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]"><Phone size={13} /> {order.customerPhone || "Chưa có SĐT"}</p>
+        <p className="mt-1 line-clamp-1 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{summarizeItems(order)}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <MiniMetric label="Mã lấy" value={order.id.slice(0, 8).toUpperCase()} />
+        <MiniMetric label="Số món" value={`${totalQty(order)} món`} />
+      </div>
+    </CardShell>
+  );
+}
+
+function DeliveryOrderCard(props: { order: OrderDto; nowMs: number; mutating: boolean; onAdvance: () => void; onDetail: () => void }) {
+  const { order } = props;
+  const issue = deliveryNeedsAttention(order);
+  return (
+    <CardShell {...props} accent={issue ? "var(--d-danger-fg)" : laneAccent.DELIVERY}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-[length:var(--d-fs-h2)] font-bold leading-tight text-[var(--d-text)]">{primaryIdentity(order)}</p>
+          <p className="mt-1 flex items-center gap-1.5 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]"><Truck size={13} /> {deliveryStatusLabel(order.deliveryStatus)}</p>
+        </div>
+        <Badge tone={issue ? "danger" : statusTone(order.status)}>{issue ? "Cần xem" : statusLabel(order.status)}</Badge>
+      </div>
+      <p className="line-clamp-2 text-[length:var(--d-fs-sm)] leading-5 text-[var(--d-text-muted)]"><MapPin size={13} className="mr-1 inline text-[var(--d-orange-600)]" />{order.deliveryAddress || "Chưa có địa chỉ giao hàng"}</p>
+      <div className="grid grid-cols-3 gap-2">
+        <MiniMetric label="Km" value={order.deliveryDistanceKm ? `${order.deliveryDistanceKm}km` : "--"} />
+        <MiniMetric label="ETA" value={order.deliveryRouteDurationMinutes ? `${order.deliveryRouteDurationMinutes}'` : "--"} />
+        <MiniMetric label="Phí" value={formatVnd(order.deliveryFee ?? 0)} />
+      </div>
+      {order.deliveryTrackingSnapshot ? (
+        <p className={cn("line-clamp-2 rounded-[var(--d-r-md)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold", order.deliveryTrackingSnapshot.locationIsStale ? "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]" : "bg-[var(--d-info-bg)] text-[var(--d-info-fg)]")}>{order.deliveryTrackingSnapshot.label} · {order.deliveryTrackingSnapshot.detail}</p>
+      ) : null}
+    </CardShell>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2">
+      <p className="truncate text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{label}</p>
+      <p className="mt-0.5 truncate text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text)]">{value}</p>
+    </div>
+  );
+}
+
+function OrderFlowDetail({
+  order,
+  open,
+  nowMs,
+  busy,
+  onClose,
+  onAdvance,
+  onCancel,
+  onTimer
+}: {
+  order: OrderDto | null;
+  open: boolean;
+  nowMs: number;
+  busy: boolean;
+  onClose: () => void;
+  onAdvance?: () => void;
+  onCancel?: () => void;
+  onTimer?: () => void;
+}) {
+  if (!order) return null;
+  const action = nextActionFor(order.status);
+  const canCancel = Boolean(onCancel) && order.paymentStatus !== "paid";
+  const canTimer = Boolean(onTimer) && (order.status === "pending" || order.status === "ordering");
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width="lg"
+      title={primaryIdentity(order)}
+      subtitle={`${laneLabel(order.fulfillmentType)} · mã ${order.id.slice(0, 8).toUpperCase()}`}
+      headerMeta={
+        <>
+          <Badge tone={statusTone(order.status)}>{statusLabel(order.status)}</Badge>
+          <span className="inline-flex items-center gap-1 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]"><Clock3 size={12} />{elapsedMin(order.createdAt, nowMs)} phút</span>
+        </>
+      }
+      footer={
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-[1fr_2fr] gap-2">
+            <Button variant="secondary" size="lg" onClick={onClose}>Đóng</Button>
+            {onAdvance ? <Button variant="primary" size="lg" onClick={onAdvance} disabled={busy || !action}><Check size={16} />{action ? actionLabelFor(order) : "Đã xử lý"}</Button> : null}
+          </div>
+          {(canTimer || canCancel) ? (
+            <div className="grid grid-cols-2 gap-2">
+              {canTimer ? <Button variant="secondary" size="md" onClick={onTimer} disabled={busy}><Clock3 size={15} />+10 phút bếp</Button> : null}
+              {canCancel ? <Button variant="danger" size="md" onClick={onCancel} disabled={busy}><X size={15} />Huỷ đơn</Button> : null}
+            </div>
+          ) : null}
+        </div>
+      }
+    >
+      <div className="flex flex-col gap-[var(--d-s-4)]">
+        {order.fulfillmentType === "DINE_IN" ? <DineInDetail order={order} /> : null}
+        {order.fulfillmentType === "PICKUP" ? <PickupDetail order={order} /> : null}
+        {order.fulfillmentType === "DELIVERY" ? <DeliveryDetail order={order} /> : null}
+        <ItemsDetail order={order} />
+        <PaymentDetail order={order} />
+      </div>
+    </Drawer>
+  );
+}
+
+function DetailSection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <p className="inline-flex items-center gap-2 text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]"><span className="text-[var(--d-primary)]">{icon}</span>{title}</p>
+      {children}
+    </section>
+  );
+}
+
+function DineInDetail({ order }: { order: OrderDto }) {
+  return (
+    <DetailSection title="Vận hành tại bàn" icon={<QrCode size={14} />}>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <MiniMetric label="Bàn" value={order.table?.name || "Chưa rõ"} />
+        <MiniMetric label="Món" value={`${totalQty(order)} món`} />
+        <MiniMetric label="Bill" value={order.bill?.status ?? "Đơn lẻ"} />
+      </div>
+    </DetailSection>
+  );
+}
+
+function PickupDetail({ order }: { order: OrderDto }) {
+  return (
+    <DetailSection title="Thông tin pickup" icon={<Hash size={14} />}>
+      <div className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-[var(--d-s-5)]">
+        <p className="d-eyebrow text-[var(--d-orange-600)]">Mã lấy hàng</p>
+        <p className="d-num mt-1 text-[length:var(--d-fs-display)] font-bold text-[var(--d-text)]">{order.id.slice(0, 8).toUpperCase()}</p>
+        <div className="mt-3 grid gap-2 text-[length:var(--d-fs-sm)] sm:grid-cols-2">
+          <InfoRow label="Khách" value={order.customerName || "Chưa có tên"} />
+          <InfoRow label="Điện thoại" value={order.customerPhone || "Chưa có SĐT"} />
+        </div>
+      </div>
+    </DetailSection>
+  );
+}
+
+function DeliveryDetail({ order }: { order: OrderDto }) {
+  return (
+    <DetailSection title="Giao hàng" icon={<Truck size={14} />}>
+      <div className="grid gap-3">
+        <DeliveryRouteSummary order={order} />
+        <div className="grid gap-2 sm:grid-cols-3">
+          <MiniMetric label="Khoảng cách" value={order.deliveryDistanceKm ? `${order.deliveryDistanceKm} km` : "Chưa có"} />
+          <MiniMetric label="ETA" value={order.deliveryRouteDurationMinutes ? `${order.deliveryRouteDurationMinutes} phút` : "Chưa có"} />
+          <MiniMetric label="Phí giao" value={formatVnd(order.deliveryFee ?? 0)} />
+        </div>
+        <div className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
+          <InfoRow label="Khách" value={order.customerName || "Chưa có tên"} />
+          <InfoRow label="Điện thoại" value={order.customerPhone || "Chưa có SĐT"} />
+          <InfoRow label="Địa chỉ" value={order.deliveryAddress || "Chưa có địa chỉ"} />
+          <InfoRow label="Trạng thái giao" value={deliveryStatusLabel(order.deliveryStatus)} />
+        </div>
+      </div>
+    </DetailSection>
+  );
+}
+
+function DeliveryRouteSummary({ order }: { order: OrderDto }) {
+  if (hasDeliveryMap(order)) {
+    return (
+      <RouteMiniMap
+        origin={{ lat: order.restaurant?.storeLat, lng: order.restaurant?.storeLng }}
+        destination={{ lat: order.deliveryLat, lng: order.deliveryLng }}
+        route={order.deliveryRouteGeometry?.coordinates}
+        distanceKm={order.deliveryDistanceKm}
+        durationMinutes={order.deliveryRouteDurationMinutes}
+        status={order.deliveryStatus}
+        courierLocation={order.deliveryCourierLocation}
+        title="Tuyến giao của đơn này"
+        compact
+      />
+    );
+  }
+
+  return (
+    <div className="rounded-[var(--d-r-lg)] border border-dashed border-[var(--d-line-strong)] bg-[var(--d-surface-2)] p-[var(--d-s-4)]">
+      <p className="flex items-center gap-2 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]"><AlertTriangle size={16} className="text-[var(--d-orange-600)]" />Chưa đủ dữ liệu bản đồ</p>
+      <p className="mt-1 text-[length:var(--d-fs-xs)] leading-5 text-[var(--d-text-muted)]">Cần tọa độ quán và tọa độ khách để hiển thị tuyến giao realtime. Đơn vẫn có thể xử lý bằng địa chỉ văn bản bên dưới.</p>
+    </div>
+  );
+}
+
+function ItemsDetail({ order }: { order: OrderDto }) {
+  return (
+    <DetailSection title={`Món đã gọi (${order.items.length})`} icon={<Utensils size={14} />}>
+      <div className="overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)]">
+        {order.items.map((item, index) => (
+          <div key={item.id ?? index} className={cn("flex items-start justify-between gap-3 px-[var(--d-s-4)] py-[var(--d-s-3)]", index > 0 && "border-t border-[var(--d-line)]")}>
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="d-num grid h-6 min-w-6 place-items-center rounded-[var(--d-r-sm)] bg-[var(--d-primary-soft)] px-1 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-primary)]">{item.quantity}</span>
+              <div className="min-w-0">
+                <p className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">{item.menuItem?.name ?? "Món"}</p>
+                {item.note ? <p className="mt-0.5 text-[length:var(--d-fs-xs)] text-[var(--d-orange-600)]">{item.note}</p> : null}
+              </div>
+            </div>
+            <span className="d-num shrink-0 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{formatVnd((item.price + (item.modifiers?.reduce((sum, modifier) => sum + modifier.lineTotal, 0) ?? 0)) * item.quantity)}</span>
+          </div>
+        ))}
+      </div>
+    </DetailSection>
+  );
+}
+
+function PaymentDetail({ order }: { order: OrderDto }) {
+  return (
+    <DetailSection title="Thanh toán" icon={<CreditCard size={14} />}>
+      <div className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
+        <InfoRow label="Tạm tính" value={formatVnd(order.subtotal ?? order.total)} />
+        {order.discountAmount ? <InfoRow label="Giảm giá" value={`- ${formatVnd(order.discountAmount)}`} /> : null}
+        {order.deliveryFee ? <InfoRow label="Phí giao" value={formatVnd(order.deliveryFee)} /> : null}
+        <div className="my-3 border-t border-[var(--d-line)]" />
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Tổng cộng</span>
+          <span className="d-num text-[length:var(--d-fs-h2)] font-bold text-[var(--d-text)]">{formatVnd(order.total)}</span>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{order.paymentMethod === "QR" ? "VietQR" : order.paymentMethod === "CASH" ? "Tiền mặt" : "Chưa chọn phương thức"}</span>
+          <Badge tone={order.paymentStatus === "paid" ? "ok" : order.paymentStatus === "waiting_confirm" ? "orange" : "neutral"}>{paymentStatusLabel(order.paymentStatus)}</Badge>
+        </div>
+      </div>
+    </DetailSection>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-1.5 text-[length:var(--d-fs-sm)]">
+      <span className="shrink-0 text-[var(--d-text-muted)]">{label}</span>
+      <strong className="min-w-0 text-right font-semibold text-[var(--d-text)]">{value}</strong>
+    </div>
+  );
 }
 
 function AdvancedFilterModal({
@@ -607,10 +1122,6 @@ function AdvancedFilterModal({
 }) {
   const [localChannel, setLocalChannel] = useState(channel);
   const [localPayment, setLocalPayment] = useState(payment);
-  useEffect(() => {
-    setLocalChannel(channel);
-    setLocalPayment(payment);
-  }, [channel, payment, open]);
 
   if (!open) return null;
   return (

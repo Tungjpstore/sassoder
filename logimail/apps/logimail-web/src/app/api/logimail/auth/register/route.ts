@@ -1,6 +1,13 @@
 import { jsonError, jsonOk, requireServerConfig } from '@/lib/api-boundary';
 import { writeAuditLog } from '@/lib/audit-log';
-import { assertBillionMailProviderConfigured, createBillionMailMailbox, deleteBillionMailMailbox, publicBillionMailError } from '@/lib/billionmail-provider';
+import {
+  assertBillionMailProviderConfigured,
+  createBillionMailMailbox,
+  deleteBillionMailMailbox,
+  isBillionMailMailboxExistsError,
+  publicBillionMailError,
+  updateBillionMailMailboxPassword,
+} from '@/lib/billionmail-provider';
 import { saveMailboxCredentials } from '@/lib/mail-credentials';
 import {
   createLogimailServiceStore,
@@ -61,6 +68,7 @@ function passwordField(value: string | null) {
 
 function publicErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : 'Payload không hợp lệ.';
+  if (message === 'address_already_registered') return 'Địa chỉ email này đã tồn tại hoặc chưa thể tạo lúc này.';
   if (message === 'invalid_password') return 'Mật khẩu cần dài từ 10 đến 128 ký tự.';
   if (message === 'weak_password') return 'Mật khẩu cần có cả chữ và số.';
   if (message === 'password_mismatch') return 'Mật khẩu xác nhận không khớp.';
@@ -110,6 +118,7 @@ export async function POST(request: Request) {
   if (!serviceStore) return jsonError('not_configured', 'Chưa cấu hình Supabase service role cho đăng ký LogiMail.', 503);
 
   let providerMailboxCreated = false;
+  let providerProvisioningMode: 'created' | 'adopted' | null = null;
   let createdUserId: string | null = null;
   let createdMailboxId: string | null = null;
   let email = '';
@@ -140,16 +149,6 @@ export async function POST(request: Request) {
     const validatedCode = await validateSecurityCode({ code: securityCode, domain: domain.domain, purpose: 'account_signup' });
     if (!validatedCode.ok) return jsonError('invalid_security_code', codeFailureMessage(validatedCode.reason), 409);
 
-    await createBillionMailMailbox({
-      email,
-      localPart,
-      domain: domain.domain,
-      password,
-      displayName: localPart,
-      quotaMb: DEFAULT_QUOTA_MB,
-    });
-    providerMailboxCreated = true;
-
     const { data: userData, error: createUserError } = await serviceStore.auth.admin.createUser({
       email,
       password,
@@ -166,9 +165,28 @@ export async function POST(request: Request) {
     });
 
     if (createUserError || !userData.user) {
-      throw new Error('Địa chỉ email này đã tồn tại hoặc chưa thể tạo lúc này.');
+      throw new Error('address_already_registered');
     }
     createdUserId = userData.user.id;
+
+    const providerMailboxInput = {
+      email,
+      localPart,
+      domain: domain.domain,
+      password,
+      displayName: localPart,
+      quotaMb: DEFAULT_QUOTA_MB,
+    };
+
+    try {
+      await createBillionMailMailbox(providerMailboxInput);
+      providerMailboxCreated = true;
+      providerProvisioningMode = 'created';
+    } catch (providerError) {
+      if (!isBillionMailMailboxExistsError(providerError)) throw providerError;
+      await updateBillionMailMailboxPassword(providerMailboxInput);
+      providerProvisioningMode = 'adopted';
+    }
 
     const { error: profileError } = await serviceStore.from('profiles').insert({
       id: createdUserId,
@@ -217,7 +235,14 @@ export async function POST(request: Request) {
       action: 'account.email_registration_create',
       targetType: 'mailbox',
       targetId: createdMailboxId,
-      metadata: { email, localPart, domain: domain.domain, securityCodeId: consumedCode.row.id, provider: 'billionmail' },
+      metadata: {
+        email,
+        localPart,
+        domain: domain.domain,
+        securityCodeId: consumedCode.row.id,
+        provider: 'billionmail',
+        providerProvisioningMode: providerProvisioningMode ?? 'created',
+      },
     });
 
     return jsonOk({ email, status: 'active', mailboxId: createdMailboxId, workspaceId: domain.workspace_id }, { status: 201 });

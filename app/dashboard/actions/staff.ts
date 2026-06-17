@@ -545,7 +545,7 @@ export async function manualClockInStaffAction(_prevState: StaffActionState | un
       shiftAssignmentId: formData.get("shiftAssignmentId"),
       source: "manual",
       capturedAt: new Date().toISOString(),
-      note: formData.get("note") || "Chấm công thủ công từ dashboard nhân sự",
+      note: formData.get("note"),
       deviceInfo: {
         mode: "dashboard_staff_manual",
         actorUserId: session.userId
@@ -559,7 +559,7 @@ export async function manualClockInStaffAction(_prevState: StaffActionState | un
     });
 
     await revalidateStaffDashboards(session.restaurantId);
-    return { success: "Đã chấm công thủ công và ghi audit log." };
+    return { success: "Đã ghi nhận chấm công hộ và đưa vào hàng chờ đối soát." };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -574,7 +574,7 @@ export async function manualClockOutStaffAction(_prevState: StaffActionState | u
       branchId: formData.get("branchId"),
       source: "manual",
       capturedAt: new Date().toISOString(),
-      note: formData.get("note") || "Kết ca thủ công từ dashboard nhân sự",
+      note: formData.get("note"),
       deviceInfo: {
         mode: "dashboard_staff_manual",
         actorUserId: session.userId
@@ -588,7 +588,7 @@ export async function manualClockOutStaffAction(_prevState: StaffActionState | u
     });
 
     await revalidateStaffDashboards(session.restaurantId);
-    return { success: "Đã kết ca thủ công và cập nhật công." };
+    return { success: "Đã ghi nhận kết ca hộ và đưa vào hàng chờ đối soát." };
   } catch (error) {
     return { error: staffActionError(error) };
   }
@@ -602,7 +602,7 @@ export async function adjustStaffAttendanceAction(_prevState: StaffActionState |
       staffMemberId: formData.get("staffMemberId"),
       clockInAt: formData.get("clockInAt"),
       clockOutAt: formData.get("clockOutAt"),
-      note: formData.get("note") || "Sửa công từ dashboard nhân sự"
+      note: formData.get("note")
     });
     await assertStaffActionPermission(session, "attendance.edit");
 
@@ -612,7 +612,7 @@ export async function adjustStaffAttendanceAction(_prevState: StaffActionState |
     });
 
     await revalidateStaffDashboards(session.restaurantId);
-    return { success: "Đã sửa công và ghi audit log." };
+    return { success: "Đã sửa công và tạo yêu cầu đối soát trước khi tính lương." };
   } catch (error) {
     return { error: staffActionError(error) };
   }

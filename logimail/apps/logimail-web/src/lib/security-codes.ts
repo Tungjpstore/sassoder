@@ -26,6 +26,10 @@ type SecurityCodeRow = {
   updated_at: string;
 };
 
+type RegistrationDomainRow = {
+  domain: string;
+};
+
 type CreateSecurityCodeInput = {
   domain?: string | null;
   purpose?: SecurityCodePurpose;
@@ -324,11 +328,45 @@ export async function rotateExpiredSecurityCodes(actor = 'logimail-auto-rotate')
 export async function runSecurityCodeMaintenance(input: { actor?: string; retentionHours?: number } = {}) {
   const actor = input.actor ?? 'logimail-maintenance';
   const revokedDeprecated = await revokeDeprecatedAccessCodes(actor);
-  const [replacements, pruned] = await Promise.all([
-    rotateExpiredSecurityCodes(actor),
-    pruneInactiveSecurityCodes(input.retentionHours),
-  ]);
-  return { rotated: replacements.length, pruned, revokedDeprecated, generatedAt: new Date().toISOString() };
+  const replacements = await rotateExpiredSecurityCodes(actor);
+  const ensuredSignupCodes = await ensureActiveSignupCodes(actor);
+  const pruned = await pruneInactiveSecurityCodes(input.retentionHours);
+  return { rotated: replacements.length, ensured: ensuredSignupCodes.length, pruned, revokedDeprecated, generatedAt: new Date().toISOString() };
+}
+
+async function ensureActiveSignupCodes(actor: string) {
+  const { data, error } = await store()
+    .from('domains')
+    .select('domain')
+    .eq('status', 'active')
+    .eq('approval_status', 'approved')
+    .eq('registration_enabled', true);
+  if (error) throw new Error(supabaseErrorMessage(error));
+
+  const ensured: Array<{ id: string; domain: string | null; expiresAt: string }> = [];
+  const now = new Date().toISOString();
+  for (const row of (data ?? []) as RegistrationDomainRow[]) {
+    const domain = normalizeDomain(row.domain);
+    const { data: activeRows, error: activeError } = await store()
+      .from('security_codes')
+      .select('id')
+      .eq('domain', domain)
+      .eq('purpose', 'account_signup')
+      .eq('status', 'active')
+      .gt('expires_at', now)
+      .limit(1);
+    if (activeError) throw new Error(supabaseErrorMessage(activeError));
+    if ((activeRows ?? []).length > 0) continue;
+
+    const replacement = await createSecurityCode({
+      domain,
+      purpose: 'account_signup',
+      createdBy: actor,
+      metadata: { replacementReason: 'maintenance_ensure_active' },
+    });
+    ensured.push({ id: replacement.row.id, domain: replacement.row.domain, expiresAt: replacement.row.expires_at });
+  }
+  return ensured;
 }
 
 async function revokeDeprecatedAccessCodes(actor: string) {
@@ -360,9 +398,9 @@ async function pruneInactiveSecurityCodes(retentionHours?: number) {
 }
 
 function retentionHoursValue(value?: number) {
-  const explicit = value ?? Number(process.env.LOGIMAIL_SECURITY_CODE_RETENTION_HOURS ?? 24);
-  if (!Number.isFinite(explicit)) return 24;
-  return Math.min(720, Math.max(1, Math.round(Number(explicit))));
+  const explicit = value ?? Number(process.env.LOGIMAIL_SECURITY_CODE_RETENTION_HOURS ?? 1);
+  if (!Number.isFinite(explicit)) return 1;
+  return Math.min(720, Math.max(0, Math.round(Number(explicit))));
 }
 
 export function displayCodeFromRow(row: Pick<SecurityCodeRow, 'code_ciphertext' | 'code_hint'>) {

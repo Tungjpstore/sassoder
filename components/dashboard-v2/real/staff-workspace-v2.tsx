@@ -64,6 +64,7 @@ type Props = {
   restaurantStaffCode: string | null;
   payrollDeductions: StaffPayrollDeductions;
   payrollProfiles: StaffPayrollProfile[];
+  payrollDataError?: string | null;
 };
 
 type Tab = "all" | "online" | "manager" | "staff" | "blocked";
@@ -294,6 +295,7 @@ export function RealStaffWorkspaceV2(props: Props) {
           bundle={bundle}
           payrollDeductions={props.payrollDeductions}
           payrollProfiles={props.payrollProfiles}
+          payrollDataError={props.payrollDataError ?? null}
           onChanged={() => router.refresh()}
         />
       ) : null}
@@ -430,15 +432,21 @@ function StaffMemberDrawer({
   const [pending, startTransition] = useTransition();
   const [resetState, resetAction, resetPending] = useActionState(resetStaffAppPasswordAction, undefined);
   const [stateActionState, stateActionFn, statePending] = useActionState(setStaffAccountStateAction, undefined);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
     if (resetState?.success || stateActionState?.success) onChanged();
   }, [resetState, stateActionState, onChanged]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const online = isOnlineMember(member);
   const blocked = member.accountStatus === "blocked";
   const lockExpiry = member.appPasswordLockedUntil ? new Date(member.appPasswordLockedUntil) : null;
-  const isAppLocked = Boolean(lockExpiry && lockExpiry.getTime() > Date.now());
+  const isAppLocked = Boolean(lockExpiry && lockExpiry.getTime() > nowMs);
 
   function copyCode() {
     if (!member.employeeCode) return;
@@ -1511,11 +1519,13 @@ function PayrollView({
   bundle,
   payrollDeductions,
   payrollProfiles,
+  payrollDataError,
   onChanged
 }: {
   bundle: StaffOperationsBundle;
   payrollDeductions: StaffPayrollDeductions;
   payrollProfiles: StaffPayrollProfile[];
+  payrollDataError: string | null;
   onChanged: () => void;
 }) {
   const toast = useToast();
@@ -1560,6 +1570,21 @@ function PayrollView({
   const grandTax = summaries.reduce((s, x) => s + x.deductionSummary.personalIncomeTax, 0);
   const totalWorkHours = summaries.reduce((s, x) => s + x.baseHours, 0);
   const totalOtHours = summaries.reduce((s, x) => s + x.otHours, 0);
+
+  if (payrollDataError) {
+    return (
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-danger-fg)]/30 bg-[var(--d-danger-bg)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
+        <div className="flex items-start gap-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-[var(--d-danger-fg)]" />
+          <div className="min-w-0">
+            <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-danger-fg)]">Không thể hiển thị lương thưởng bằng dữ liệu thật</p>
+            <p className="mt-1 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{payrollDataError}</p>
+            <p className="mt-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-faint)]">Kiểm tra migration, RLS và quyền truy cập bảng staff_payroll_deductions / staff_payroll_profiles trước khi chốt lương.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   function copyAllToCsv() {
     const headers = ["Họ tên", "Chi nhánh", "Giờ làm", "OT", "Mức lương/giờ", "Lương cơ bản", "Lương OT", "Gross", "BH NV đóng", "BH NSDLĐ", "Thuế TNCN", "Net thực lĩnh", "Trễ ca", "Phép có lương", "Phép không lương"];
@@ -1965,7 +1990,7 @@ function AttendanceSettingsView({
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.message || "Không đăng ký được Wi-Fi chấm công");
-      toast.success("Đã đăng ký Wi-Fi cho chi nhánh — nhân viên kết nối Wi-Fi này sẽ chấm công được");
+      toast.success("Đã đăng ký Wi-Fi cho chi nhánh — nhân viên vẫn cần GPS chính xác khi chấm công");
       setWifiLabel("");
       router.refresh();
       onChanged();

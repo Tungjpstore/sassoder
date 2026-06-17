@@ -13,6 +13,10 @@
       "schedule": "30 2 * * *"
     },
     {
+      "path": "/api/logimail/cron/security-code-maintenance",
+      "schedule": "45 2 * * *"
+    },
+    {
       "path": "/api/logimail/cron/placement-collect",
       "schedule": "15 3 * * *"
     }

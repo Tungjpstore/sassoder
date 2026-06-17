@@ -28,8 +28,14 @@ function firstClientIp(request: Request) {
   return forwarded.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
 }
 
-function secretSupabaseKey() {
-  return process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_DEFAULT_KEY || '';
+function serverSupabaseAuthKey() {
+  return (
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_DEFAULT_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    ''
+  );
 }
 
 function readNumberProperty(error: unknown, key: string) {
@@ -75,11 +81,11 @@ export async function POST(request: Request) {
   if (ipLimited) return ipLimited;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-  const key = secretSupabaseKey();
+  const key = serverSupabaseAuthKey();
   if (!url || !key) {
     return jsonError(
       'not_configured',
-      'LogiMail chưa có SUPABASE_SECRET_KEY cho đăng nhập server-side an toàn.',
+      'LogiMail chưa có Supabase URL/key cho đăng nhập server-side.',
       503,
     );
   }

@@ -9,7 +9,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useActionState, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   Bell,
@@ -155,7 +156,16 @@ function SettingsForm({
   encType?: string;
   children: ReactNode;
 }) {
+  const router = useRouter();
   const [state, formAction, pending] = useActionState(action, undefined);
+  const refreshedSuccessRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!state?.success || refreshedSuccessRef.current === state.success) return;
+    refreshedSuccessRef.current = state.success;
+    router.refresh();
+  }, [router, state?.success]);
+
   return (
     <form action={formAction} encType={encType} className="flex flex-col gap-[var(--d-s-4)]">
       <FormFeedback state={state} />

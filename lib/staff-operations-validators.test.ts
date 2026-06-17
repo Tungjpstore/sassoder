@@ -206,7 +206,11 @@ test("attendance capture rejects weak anti-fraud payloads before writing logs", 
   assert.equal(attendanceClockOutSchema.safeParse({ ...base, source: "gps", lat: 21.01, lng: 105.81, accuracyMeters: 18 }).success, true);
   assert.equal(attendanceClockOutSchema.safeParse({ ...base, source: "qr", qrToken: "stqr_abcdefghijklmnopqrstuvwxyz1234567890", lat: 21.01, lng: 105.81, accuracyMeters: 18, deviceInfo: {} }).success, false);
   assert.equal(attendanceClockInSchema.safeParse({ ...base, source: "wifi", lat: 21.01, lng: 105.81, accuracyMeters: 18, deviceInfo: {} }).success, false);
-  assert.equal(attendanceClockInSchema.safeParse({ staffMemberId, branchId, source: "manual", deviceInfo: {} }).success, true);
+  const manualWithoutReason = attendanceClockInSchema.safeParse({ staffMemberId, branchId, source: "manual", deviceInfo: {} });
+  assert.equal(manualWithoutReason.success, false);
+  assert.match(JSON.stringify(manualWithoutReason.error.flatten()), /Chấm công hộ cần ghi lý do/);
+  assert.equal(attendanceClockInSchema.safeParse({ staffMemberId, branchId, source: "manual", note: "Nhân viên quên điện thoại, quản lý xác nhận tại quầy", deviceInfo: {} }).success, true);
+  assert.equal(attendanceClockOutSchema.safeParse({ staffMemberId, branchId, source: "manual", note: "Quản lý kết ca hộ vì nhân viên quên thao tác cuối ca", deviceInfo: {} }).success, true);
 });
 
 test("staff attendance machine does not auto-submit stale QR unless QR is selected", () => {
@@ -315,6 +319,22 @@ test("staff operations bundle includes stale open attendance outside the recent 
   assert.match(mobileSource, /báo quản lý kết ca hộ/);
 });
 
+test("staff operations bundle fails loud on required HR schema drift", () => {
+  const serviceSource = readFileSync("features/staff/services/staff-operations-service.ts", "utf8");
+
+  assert.match(serviceSource, /import \{ AppError \} from "@\/lib\/response"/);
+  assert.match(serviceSource, /type StaffOpsSchemaMode = "required" \| "optional"/);
+  assert.match(serviceSource, /throwMissingStaffOperationsSchema/);
+  assert.match(serviceSource, /Thiếu hoặc lệch migration HR Staff/);
+  assert.match(serviceSource, /mode === "optional" && process\.env\.NODE_ENV !== "production"/);
+  assert.match(serviceSource, /if \(process\.env\.NODE_ENV === "production"\) throwMissingStaffOperationsSchema\("staff_members"/);
+  assert.match(serviceSource, /tableName: "attendance_logs"/);
+  assert.match(serviceSource, /tableName: "shift_assignments"/);
+  assert.match(serviceSource, /tableName: "staff_activity_logs"/);
+  assert.match(serviceSource, /tableName: "staff_reviews"[\s\S]*mode: "optional"/);
+  assert.doesNotMatch(serviceSource, /if \(isMissingStaffOperationsSchema\(error\)\) return \[\] as T\[\]/);
+});
+
 test("legacy full staff permissions unlock granular HR actions", () => {
   const permissions = normalizeStaffPermissions(["staff.manage"], "service");
 
@@ -384,6 +404,11 @@ test("staff HR completion wires incidents, safe quick actions and stricter atten
   assert.match(qrSource, /NODE_ENV === "production"[\s\S]*consume_staff_attendance_qr_token/);
   assert.match(actionsSource, /assertCanAssignStaffRole/);
   assert.match(actionsSource, /assertStaffActionPermission\(session, "staff\.roles"\)/);
+  assert.doesNotMatch(actionsSource, /Chấm công thủ công từ dashboard nhân sự/);
+  assert.doesNotMatch(actionsSource, /Kết ca thủ công từ dashboard nhân sự/);
+  assert.doesNotMatch(actionsSource, /Sửa công từ dashboard nhân sự/);
+  assert.match(actionsSource, /Đã ghi nhận chấm công hộ và đưa vào hàng chờ đối soát/);
+  assert.match(actionsSource, /Đã ghi nhận kết ca hộ và đưa vào hàng chờ đối soát/);
 });
 
 test("staff operations APIs use granular HR permissions without ADMIN-only gates", () => {
@@ -560,6 +585,9 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /GPS chấm công cần thiết bị tin cậy/);
   assert.match(attendanceSource, /QR chấm công cần vị trí GPS hợp lệ/);
   assert.match(attendanceSource, /Chấm công thủ công cần người có quyền khác đối soát/);
+  assert.match(attendanceSource, /qrTokenId: qrToken\?\.id \?\? null/);
+  assert.match(attendanceSource, /wifiNetworkId: wifiNetwork\?\.id \?\? null/);
+  assert.match(attendanceSource, /networkIp: input\.network\?\.ipAddress \?\? null/);
   assert.match(attendanceSource, /longWorkShiftApprovalReason/);
   assert.match(attendanceSource, /Phiên công kéo dài quá 16 giờ/);
   assert.match(attendanceSource, /createManualAdjustmentApproval/);
@@ -604,7 +632,10 @@ test("staff mobile attendance copy does not imply QR or WiFi can bypass GPS", as
   ]);
 
   assert.doesNotMatch(mobileSource, /dùng QR\/WiFi/);
+  assert.doesNotMatch(mobileSource, /chuyển sang GPS\/WiFi/);
   assert.match(mobileSource, /QR\/WiFi vẫn cần GPS chính xác/);
+  assert.match(mobileSource, /QR\/WiFi vẫn cần vị trí chính xác tại quán/);
+  assert.match(mobileSource, /WiFi chấm công cần thiết bị online bằng mạng quán đã lưu và vẫn phải có GPS chính xác/);
   assert.match(machineSource, /WiFi vẫn cần GPS/);
   assert.match(machineSource, /Bật GPS chính xác/);
 });

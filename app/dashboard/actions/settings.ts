@@ -56,9 +56,13 @@ function branchFormData(formData: FormData) {
     address: formData.get("address") ?? "",
     latitude: formData.get("latitude") ?? "",
     longitude: formData.get("longitude") ?? "",
-    isPrimary: formData.get("isPrimary") === "true",
-    isActive: formData.get("isActive") === "true"
+    isPrimary: formBoolean(formData, "isPrimary"),
+    isActive: formBoolean(formData, "isActive")
   };
+}
+
+function formBoolean(formData: FormData, name: string) {
+  return formData.getAll(name).some((value) => value === "true");
 }
 
 async function revalidateBranchSettingsSurfaces(session: Awaited<ReturnType<typeof requireOperationalAdminSession>>) {
@@ -139,12 +143,12 @@ export async function updateRestaurantSettingsAction(
     closingTime: formData.get("closingTime") ?? current.closing_time?.slice(0, 5) ?? "",
     brandPrimary: formData.get("brandPrimary") ?? current.brand_primary ?? "",
     brandAccent: formData.get("brandAccent") ?? current.brand_accent ?? "",
-    allowLegacyQr: section === "hours" ? formData.get("allowLegacyQr") === "true" : current.allow_legacy_qr,
-    notifyNewOrder: section === "notifications" ? formData.get("notifyNewOrder") === "true" : current.notify_new_order,
-    notifyPaymentWaiting: section === "notifications" ? formData.get("notifyPaymentWaiting") === "true" : current.notify_payment_waiting,
-    showPromotionsOnMenu: section === "notifications" ? formData.get("showPromotionsOnMenu") === "true" : current.show_promotions_on_menu,
+    allowLegacyQr: section === "hours" ? formBoolean(formData, "allowLegacyQr") : current.allow_legacy_qr,
+    notifyNewOrder: section === "notifications" ? formBoolean(formData, "notifyNewOrder") : current.notify_new_order,
+    notifyPaymentWaiting: section === "notifications" ? formBoolean(formData, "notifyPaymentWaiting") : current.notify_payment_waiting,
+    showPromotionsOnMenu: section === "notifications" ? formBoolean(formData, "showPromotionsOnMenu") : current.show_promotions_on_menu,
     receiptFooter: formData.get("receiptFooter") ?? current.receipt_footer ?? "",
-    receiptShowQr: section === "receipt" ? formData.get("receiptShowQr") === "true" : current.receipt_show_qr
+    receiptShowQr: section === "receipt" ? formBoolean(formData, "receiptShowQr") : current.receipt_show_qr
   });
 
   if (!parsed.success) {
@@ -155,7 +159,7 @@ export async function updateRestaurantSettingsAction(
     await updateRestaurantSettings(session.restaurantId, {
       ...parsed.data,
       logoFile: formData.get("logoFile"),
-      removeLogo: section === "profile" && formData.get("removeLogo") === "true"
+      removeLogo: section === "profile" && formBoolean(formData, "removeLogo")
     });
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Không lưu được cài đặt quán." };
@@ -183,7 +187,7 @@ export async function applyAiSetupBrandAction(
     brandSlogan: formData.get("brandSlogan"),
     brandDescription: formData.get("brandDescription"),
     logoUrl: formData.get("logoUrl"),
-    includeLogo: formData.get("includeLogo")
+    includeLogo: formBoolean(formData, "includeLogo")
   });
 
   if (!parsed.success) {
@@ -218,15 +222,15 @@ export async function updateReportScheduleAction(
 ) {
   const session = await requireOperationalAdminSession("scheduled_reports");
   const parsed = reportScheduleSchema.safeParse({
-    enabled: formData.get("enabled") === "true",
+    enabled: formBoolean(formData, "enabled"),
     frequency: formData.get("frequency"),
     recipients: formData.get("recipients"),
     sendHour: formData.get("sendHour"),
     sendDayOfWeek: formData.get("sendDayOfWeek"),
     sendDayOfMonth: formData.get("sendDayOfMonth"),
     sendMonth: formData.get("sendMonth"),
-    includeCsv: formData.get("includeCsv") === "true",
-    includeJson: formData.get("includeJson") === "true"
+    includeCsv: formBoolean(formData, "includeCsv"),
+    includeJson: formBoolean(formData, "includeJson")
   });
 
   if (!parsed.success) {
@@ -303,17 +307,17 @@ export async function updateOrderingSettingsAction(
   const session = await requireOperationalAdminSession("online_ordering");
   const parsed = orderingSettingsSchema.safeParse({
     address: formData.get("address") ?? "",
-    onlineOrderingEnabled: formData.get("onlineOrderingEnabled") === "true",
-    pickupEnabled: formData.get("pickupEnabled") === "true",
-    deliveryEnabled: formData.get("deliveryEnabled") === "true",
+    onlineOrderingEnabled: formBoolean(formData, "onlineOrderingEnabled"),
+    pickupEnabled: formBoolean(formData, "pickupEnabled"),
+    deliveryEnabled: formBoolean(formData, "deliveryEnabled"),
     onlinePaymentMode: formData.get("onlinePaymentMode") ?? "PAY_AFTER",
-    deliveryTrackingEnabled: formData.get("deliveryTrackingEnabled") === "true",
+    deliveryTrackingEnabled: formBoolean(formData, "deliveryTrackingEnabled"),
     mapGeocodingProvider: formData.get("mapGeocodingProvider") ?? "nominatim",
     mapRoutingProvider: formData.get("mapRoutingProvider") ?? "osrm",
     mapDefaultZoom: formData.get("mapDefaultZoom") ?? "14",
     mapDisplayStyle: formData.get("mapDisplayStyle") ?? "LIGHT",
-    showStoreMarkerOnOrdering: formData.get("showStoreMarkerOnOrdering") === "true",
-    showCustomerDistance: formData.get("showCustomerDistance") === "true",
+    showStoreMarkerOnOrdering: formBoolean(formData, "showStoreMarkerOnOrdering"),
+    showCustomerDistance: formBoolean(formData, "showCustomerDistance"),
     storeLat: formData.get("storeLat") ?? "",
     storeLng: formData.get("storeLng") ?? "",
     deliveryRadiusKm: formData.get("deliveryRadiusKm"),
@@ -326,20 +330,20 @@ export async function updateOrderingSettingsAction(
     deliveryAreaWardCount: formData.get("deliveryAreaWardCount") ?? "0",
     deliveryAreaPolygon: formData.get("deliveryAreaPolygon") ?? "[]",
     deliveryExclusionZones: formData.get("deliveryExclusionZones") ?? "[]",
-    deliveryFeeEnabled: formData.get("deliveryFeeEnabled") === "true",
+    deliveryFeeEnabled: formBoolean(formData, "deliveryFeeEnabled"),
     deliveryFeeTiers: formData.get("deliveryFeeTiers") ?? "[]",
     minOrderForDelivery: formData.get("minOrderForDelivery"),
     pickupEtaMinutes: formData.get("pickupEtaMinutes"),
     deliveryEtaMinutes: formData.get("deliveryEtaMinutes"),
-    serviceFeeEnabled: formData.get("serviceFeeEnabled") === "true",
+    serviceFeeEnabled: formBoolean(formData, "serviceFeeEnabled"),
     serviceFeeType: formData.get("serviceFeeType") ?? "ORDER_PERCENT",
     serviceFeePercent: formData.get("serviceFeePercent") ?? "0",
     serviceFeeMin: formData.get("serviceFeeMin") ?? "0",
     serviceFeeMax: formData.get("serviceFeeMax") ?? "",
-    allowOutsideDeliveryArea: formData.get("allowOutsideDeliveryArea") === "true",
-    showDeliveryEta: formData.get("showDeliveryEta") === "true",
-    requireOutsideAreaConfirmation: formData.get("requireOutsideAreaConfirmation") === "true",
-    autoSuggestNearestBranch: formData.get("autoSuggestNearestBranch") === "true"
+    allowOutsideDeliveryArea: formBoolean(formData, "allowOutsideDeliveryArea"),
+    showDeliveryEta: formBoolean(formData, "showDeliveryEta"),
+    requireOutsideAreaConfirmation: formBoolean(formData, "requireOutsideAreaConfirmation"),
+    autoSuggestNearestBranch: formBoolean(formData, "autoSuggestNearestBranch")
   });
 
   if (!parsed.success) {
@@ -376,9 +380,9 @@ export async function updateBranchDeliveryAvailabilityAction(
   const session = await requireOperationalAdminSession("online_ordering");
   const parsed = branchDeliveryAvailabilitySchema.safeParse({
     branchId: formData.get("branchId"),
-    acceptingDelivery: formData.get("acceptingDelivery") === "true",
-    deliveryPaused: formData.get("deliveryPaused") === "true",
-    temporarilyClosed: formData.get("temporarilyClosed") === "true",
+    acceptingDelivery: formBoolean(formData, "acceptingDelivery"),
+    deliveryPaused: formBoolean(formData, "deliveryPaused"),
+    temporarilyClosed: formBoolean(formData, "temporarilyClosed"),
     deliveryOpeningTime: formData.get("deliveryOpeningTime") ?? "",
     deliveryClosingTime: formData.get("deliveryClosingTime") ?? "",
     deliveryAvailabilityNote: formData.get("deliveryAvailabilityNote") ?? ""
@@ -410,8 +414,8 @@ export async function updateReservationSettingsAction(
 ) {
   const session = await requireOperationalAdminSession("reservations");
   const parsed = reservationSettingsSchema.safeParse({
-    reservationsEnabled: formData.get("reservationsEnabled") === "true",
-    reservationDepositEnabled: formData.get("reservationDepositEnabled") === "true",
+    reservationsEnabled: formBoolean(formData, "reservationsEnabled"),
+    reservationDepositEnabled: formBoolean(formData, "reservationDepositEnabled"),
     reservationDepositType: formData.get("reservationDepositType") ?? "FIXED",
     reservationDepositValue: formData.get("reservationDepositValue"),
     reservationHoldMinutes: formData.get("reservationHoldMinutes"),

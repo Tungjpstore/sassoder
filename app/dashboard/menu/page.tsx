@@ -40,18 +40,17 @@ export default async function AdminMenuPage() {
 }
 
 async function MenuWorkspaceContent({ restaurantId, restaurantName, ai }: { restaurantId: string; restaurantName: string; ai: MenuAiAccess }) {
-  const { categories, report, ingredients, recipeMenuItems } = await readThroughDashboardWorkspaceCache({
+  const { categories, report, ingredients, recipeMenuItems, inventoryDataError } = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "menu",
     ttlSeconds: 15,
     load: async () => {
-      const [categories, report, ingredients, recipeMenuItems] = await Promise.all([
+      const [categories, report, inventory] = await Promise.all([
         listMenuForAdmin(restaurantId),
         getAdminReport(restaurantId),
-        listInventoryIngredients(restaurantId).catch(() => []),
-        listInventoryRecipeMenuItems(restaurantId).catch(() => [])
+        loadMenuInventoryData(restaurantId)
       ]);
-      return { categories, report, ingredients, recipeMenuItems };
+      return { categories, report, ...inventory };
     }
   });
 
@@ -64,9 +63,30 @@ async function MenuWorkspaceContent({ restaurantId, restaurantName, ai }: { rest
       restaurantName={restaurantName}
       ingredients={ingredients}
       recipeMenuItems={recipeMenuItems}
+      inventoryDataError={inventoryDataError}
       ai={ai}
     />
   );
+}
+
+async function loadMenuInventoryData(restaurantId: string) {
+  const [ingredientsResult, recipeMenuItemsResult] = await Promise.allSettled([
+    listInventoryIngredients(restaurantId),
+    listInventoryRecipeMenuItems(restaurantId)
+  ]);
+  const errors = [ingredientsResult, recipeMenuItemsResult]
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => menuInventoryErrorMessage(result.reason));
+
+  return {
+    ingredients: ingredientsResult.status === "fulfilled" ? ingredientsResult.value : [],
+    recipeMenuItems: recipeMenuItemsResult.status === "fulfilled" ? recipeMenuItemsResult.value : [],
+    inventoryDataError: errors.length ? `Không tải được dữ liệu kho/công thức thật: ${errors.join("; ")}` : null
+  };
+}
+
+function menuInventoryErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Lỗi không xác định";
 }
 
 function MenuWorkspaceSkeleton() {

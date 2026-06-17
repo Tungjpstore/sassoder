@@ -1302,6 +1302,16 @@ function hasAttendanceDeviceFingerprint(value: { deviceInfo?: Record<string, unk
   return typeof fingerprint === "string" && fingerprint.trim().length >= 12;
 }
 
+function requireManualAttendanceReason(value: { source: string; note?: string }, context: z.RefinementCtx, message: string) {
+  if (value.source !== "manual") return;
+  if ((value.note ?? "").trim().length >= 8) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message,
+    path: ["note"]
+  });
+}
+
 const attendanceCaptureBaseSchema = z.object({
   staffMemberId: z.string().uuid().optional().or(z.literal("")),
   branchId: z.string().uuid().optional().or(z.literal("")),
@@ -1360,6 +1370,8 @@ export const attendanceClockInSchema = attendanceCaptureBaseSchema
         path: ["qrToken"]
       });
     }
+
+    requireManualAttendanceReason(value, context, "Chấm công hộ cần ghi lý do cụ thể để đối soát công/lương.");
   });
 
 export const attendanceClockOutSchema = attendanceCaptureBaseSchema
@@ -1407,6 +1419,8 @@ export const attendanceClockOutSchema = attendanceCaptureBaseSchema
         path: ["qrToken"]
       });
     }
+
+    requireManualAttendanceReason(value, context, "Kết ca hộ cần ghi lý do cụ thể để đối soát công/lương.");
   });
 
 export const attendanceApprovalReviewSchema = z

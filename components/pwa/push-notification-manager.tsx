@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { AlertTriangle, BellRing, CheckCircle2, Loader2, Send, X } from "lucide-react";
 import { resolvePwaPushNotificationUi, type PwaPushLoadState, type PwaPushNotice, type PwaPushPermission } from "@/lib/pwa/push-notification-ui";
 
@@ -27,11 +27,16 @@ type PushSendSummary = {
 };
 
 const DISMISS_KEY = "logivn:pwa-push-dismissed";
+const noopSubscribe = () => () => undefined;
 
 export function PushNotificationManager() {
   const pathname = usePathname();
-  const inDashboard = pathname?.startsWith("/dashboard") ?? false;
-  const isSettings = pathname === "/dashboard/settings";
+  const searchParams = useSearchParams();
+  const isDashboardRoute = pathname?.startsWith("/dashboard") ?? false;
+  const settingsSection = searchParams.get("section") ?? "profile";
+  const isSettingsNotifications = pathname === "/dashboard/settings" && settingsSection === "notifications";
+  const inDashboard = isDashboardRoute && (pathname !== "/dashboard/settings" || isSettingsNotifications);
+  const isSettings = isSettingsNotifications;
   const [supported] = useState(() => isPushSupported());
   const [loadState, setLoadState] = useState<PwaPushLoadState>(() => {
     if (process.env.NODE_ENV !== "production") return "development";
@@ -43,6 +48,7 @@ export function PushNotificationManager() {
   const [busy, setBusy] = useState<"subscribe" | "test" | "unsubscribe" | null>(null);
   const [notice, setNotice] = useState<PwaPushNotice | null>(null);
   const [dismissed, setDismissed] = useState(() => (typeof window === "undefined" ? false : window.localStorage.getItem(DISMISS_KEY) === "1"));
+  const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
 
   const ui = useMemo(
     () =>
@@ -107,7 +113,7 @@ export function PushNotificationManager() {
     };
   }, [inDashboard, supported]);
 
-  if (!ui.shouldRender) return null;
+  if (!mounted || !ui.shouldRender) return null;
 
   async function enablePush() {
     if (!config?.publicKey) return;

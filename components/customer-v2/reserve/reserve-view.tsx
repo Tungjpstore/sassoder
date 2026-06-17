@@ -23,7 +23,7 @@ import type { ReservationDto } from "@/types/domain";
 import type { ReservationStatusTimelineItem } from "@/services/reservation-service";
 import { ShopShell, TopBar } from "../shell/shop-shell";
 import { ShopButton } from "../ui/button";
-import { Card, Pill, Money, SectionLabel, EmptyState, Spinner } from "../ui/primitives";
+import { Card, Pill, SectionLabel, EmptyState, Spinner, CustomerStickyActions, CustomerStatusHero } from "../ui/primitives";
 import { ReservationFloorMap, type FloorTable } from "./floor-map";
 import {
   addDaysInputValue,
@@ -174,11 +174,7 @@ export function ReserveView(props: ReserveViewProps) {
 }
 
 function StickyBar({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="sticky bottom-0 z-[var(--z-cartbar)] grid gap-2 border-t border-[var(--line)] bg-[var(--surface)]/95 px-4 pt-3 backdrop-blur-md" style={{ paddingBottom: "calc(var(--s-3) + var(--safe-bottom))" }}>
-      {children}
-    </div>
-  );
+  return <CustomerStickyActions>{children}</CustomerStickyActions>;
 }
 function ErrorNote({ children }: { children: React.ReactNode }) {
   return <p role="alert" className="rounded-[var(--r-md)] border border-[var(--danger-fg)]/30 bg-[var(--danger-bg)] px-3 py-2.5 text-[length:var(--fs-xs)] font-semibold text-[var(--danger-fg)]">{children}</p>;
@@ -246,7 +242,7 @@ function BookingScreen(props: ReserveViewProps) {
       />
 
       {/* Stepper */}
-      <div className="border-b border-[var(--line)] bg-[var(--surface)] px-4 py-2.5">
+      <div className="border-b border-[var(--line)] bg-[var(--surface)]/92 px-4 py-2.5 backdrop-blur-md">
         <div className="grid grid-cols-4 gap-1.5">
           {bookingSteps.map((s, i) => {
             const active = s.id === step;
@@ -257,7 +253,7 @@ function BookingScreen(props: ReserveViewProps) {
                 type="button"
                 onClick={() => i < stepIndex && setStep(s.id)}
                 className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-[var(--r-pill)] px-2 py-1.5 text-[length:var(--fs-xs)] font-semibold transition",
+                  "flex min-h-9 items-center justify-center gap-1.5 rounded-[var(--r-pill)] px-2 py-1.5 text-[length:var(--fs-xs)] font-semibold transition",
                   active ? "bg-[var(--jade)] text-[var(--on-jade)]" : done ? "bg-[var(--primary-soft)] text-[var(--jade)]" : "bg-[var(--surface-2)] text-[var(--text-faint)]"
                 )}
               >
@@ -274,11 +270,11 @@ function BookingScreen(props: ReserveViewProps) {
           <EmptyState icon={<CalendarCheck2 size={22} />} title="Quán chưa bật đặt bàn" description="Bạn có thể gọi trực tiếp cho quán để giữ chỗ." />
         ) : step === "time" ? (
           <div className="grid gap-4">
-            <Card className="p-4">
+            <Card className="shop-card-row p-4">
               <SectionLabel>Ngày đến</SectionLabel>
               <div className="mt-2 grid grid-cols-3 gap-2">
                 {quickDates.map((q) => (
-                  <button key={q.label} type="button" onClick={() => setDate(q.value)} className={cn("rounded-[var(--r-md)] border px-2 py-2.5 text-center text-[length:var(--fs-xs)] font-bold transition", date === q.value ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
+                  <button key={q.label} type="button" onClick={() => setDate(q.value)} className={cn("min-h-11 rounded-[var(--r-md)] border px-2 py-2.5 text-center text-[length:var(--fs-xs)] font-bold transition active:scale-[0.98]", date === q.value ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
                     {q.label}
                   </button>
                 ))}
@@ -297,7 +293,7 @@ function BookingScreen(props: ReserveViewProps) {
             </Card>
 
             {restaurant.preferenceOptions.tableAreas.length > 0 || visibleZones.length > 1 || visibleKinds.length > 1 ? (
-              <Card className="p-4">
+            <Card className="shop-card-row p-4">
                 <SectionLabel>Ưu tiên vị trí (tuỳ chọn)</SectionLabel>
                 {restaurant.preferenceOptions.tableAreas.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -341,7 +337,7 @@ function BookingScreen(props: ReserveViewProps) {
                           const tone = slotToneLabel(slot);
                           const selected = selectedStartsAt === slot.startsAt;
                           return (
-                            <button key={slot.startsAt} type="button" disabled={!slot.available} onClick={() => setSelectedStartsAt(slot.startsAt)} className={cn("rounded-[var(--r-md)] border p-2.5 text-left transition disabled:opacity-45", selected ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
+                            <button key={slot.startsAt} type="button" disabled={!slot.available} onClick={() => setSelectedStartsAt(slot.startsAt)} className={cn("min-h-[76px] rounded-[var(--r-md)] border p-2.5 text-left shadow-[var(--sh-sm)] transition active:scale-[0.98] disabled:opacity-45", selected ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
                               <span className="block shop-num text-[length:var(--fs-body)] font-bold">{formatSlot(slot.startsAt)}</span>
                               <span className={cn("mt-1 inline-block rounded-[var(--r-pill)] px-1.5 py-0.5 text-[length:var(--fs-2xs)] font-bold", selected ? "bg-[var(--on-jade)]/20 text-[var(--on-jade)]" : tone.tone === "ok" ? "bg-[var(--ok-bg)] text-[var(--ok-fg)]" : tone.tone === "warn" ? "bg-[var(--warn-bg)] text-[var(--warn-fg)]" : "bg-[var(--danger-bg)] text-[var(--danger-fg)]")}>{tone.label}</span>
                             </button>
@@ -356,7 +352,7 @@ function BookingScreen(props: ReserveViewProps) {
           </div>
         ) : step === "table" ? (
           <div className="grid gap-4">
-            <Card className="flex items-center justify-between gap-3 bg-[var(--surface-2)] p-3.5">
+            <Card className="shop-card-row flex items-center justify-between gap-3 p-3.5">
               <span className="flex items-center gap-2 text-[length:var(--fs-sm)] font-semibold text-[var(--text)]">
                 <Clock3 size={16} className="text-[var(--jade)]" /> {selectedSlot ? formatSlot(selectedSlot.startsAt) : "—"} · {partySize} khách
               </span>
@@ -365,7 +361,7 @@ function BookingScreen(props: ReserveViewProps) {
             <ReservationFloorMap tables={floorTables} loading={floorLoading} selectedTableId={selectedTableId} onSelect={onSelectTable} autoSelected={autoAssign} onAuto={onAutoAssign} />
           </div>
         ) : step === "contact" ? (
-          <Card className="grid gap-3 p-4">
+          <Card className="shop-card-row grid gap-3 p-4">
             <SectionLabel>Thông tin để quán giữ bàn</SectionLabel>
             <label className="grid gap-1.5">
               <span className="text-[length:var(--fs-xs)] font-semibold text-[var(--text)]">Tên khách</span>
@@ -386,7 +382,7 @@ function BookingScreen(props: ReserveViewProps) {
           </Card>
         ) : (
           <div className="grid gap-3">
-            <Card className="grid gap-3 p-4">
+            <Card className="shop-card-row grid gap-3 p-4">
               <SectionLabel>Kiểm tra lại lịch đặt</SectionLabel>
               <ReviewRow icon={<Clock3 size={16} />} label="Thời gian" value={selectedSlot ? formatReservationDate(selectedSlot.startsAt) : "—"} />
               <ReviewRow icon={<Users size={16} />} label="Số khách" value={`${partySize} khách`} />
@@ -446,16 +442,20 @@ function ResultScreen(props: ReserveViewProps & { result: ReservationResult }) {
 
   return (
     <ShopShell>
-      <section className="bg-[var(--jade)] px-5 pb-10 pt-8 text-center text-[var(--on-jade)]" style={{ paddingTop: "calc(var(--s-8) + var(--safe-top))" }}>
-        <div className="flex items-center justify-between">
-          <button type="button" onClick={startNew} aria-label="Đặt lịch mới" className="grid h-10 w-10 place-items-center rounded-full bg-[var(--on-jade)]/15 text-[var(--on-jade)]"><ArrowLeft size={18} /></button>
+      <div className="px-4 pb-2 pt-5" style={{ paddingTop: "calc(var(--s-5) + var(--safe-top))" }}>
+        <div className="mb-3 flex items-center justify-between">
+          <button type="button" onClick={startNew} aria-label="Đặt lịch mới" className="grid h-10 w-10 place-items-center rounded-full bg-[var(--surface)] text-[var(--text)] shadow-[var(--sh-sm)]"><ArrowLeft size={18} /></button>
           <Pill tone={resultTone(reservation.status) === "ok" ? "ok" : resultTone(reservation.status) === "danger" ? "danger" : "warn"}>{reservationStatusLabel(reservation.status)}</Pill>
         </div>
-        <h1 className="mt-4 text-[length:var(--fs-display)] font-bold">{resultHeroTitle(reservation.status)}</h1>
-        <p className="mt-1 text-[length:var(--fs-sm)] text-[var(--on-jade)]/85">{restaurant.name} · #{reservation.id.slice(0, 8).toUpperCase()}</p>
-      </section>
+        <CustomerStatusHero
+          eyebrow={`#${reservation.id.slice(0, 8).toUpperCase()}`}
+          title={resultHeroTitle(reservation.status)}
+          description={`${restaurant.name} · ${formatReservationDate(reservation.startsAt)}`}
+          badge={<span className="grid h-12 w-12 place-items-center rounded-full bg-[var(--on-jade)]/15"><CalendarCheck2 size={25} /></span>}
+        />
+      </div>
 
-      <div className="-mt-5 flex-1 rounded-t-[var(--r-2xl)] bg-[var(--bg)] px-4 pb-6 pt-5 shop-screen-in">
+      <div className="flex-1 px-4 pb-6 pt-2 shop-screen-in">
         <Card className="grid gap-2.5 p-4">
           <InfoLine icon={<Clock3 size={16} />} text={formatReservationDate(reservation.startsAt)} />
           <InfoLine icon={<Users size={16} />} text={`${reservation.partySize} khách · ${tableSummary(reservation)}`} />

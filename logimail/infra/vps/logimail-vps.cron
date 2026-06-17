@@ -1,0 +1,9 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TZ=UTC
+
+0 1 * * * logimail /usr/local/sbin/logimail-run-cron warmup-tick /api/logimail/cron/warmup-tick >> /var/log/logimail/cron.log 2>&1
+30 2 * * * logimail /usr/local/sbin/logimail-run-cron key-rotation-step /api/logimail/cron/key-rotation-step >> /var/log/logimail/cron.log 2>&1
+*/30 * * * * logimail /usr/local/sbin/logimail-run-cron security-code-maintenance /api/logimail/cron/security-code-maintenance >> /var/log/logimail/security-code-maintenance.log 2>&1
+15 3 * * * logimail /usr/local/sbin/logimail-run-cron placement-collect /api/logimail/cron/placement-collect >> /var/log/logimail/cron.log 2>&1
+0 4 * * * logimail /usr/local/sbin/logimail-run-cron alerts-scan /api/logimail/cron/alerts-scan >> /var/log/logimail/cron.log 2>&1

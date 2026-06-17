@@ -53,18 +53,16 @@ async function StaffMobileContent({
 }) {
   const passwordGatePromise = getStaffPasswordGateForSession(session);
   const bundlePromise = getStaffOperationsBundle(restaurantId, userId, { scope: "self" });
-  const payrollPromise = getStaffPayrollSelfView({ restaurantId, userId }).catch(() => null);
-  const permissionsPromise = getStaffEffectivePermissions(session)
-    .then((result) => result.permissions as string[])
-    .catch(() => [] as string[]);
+  const payrollPromise = loadStaffPayrollSelf(restaurantId, userId);
+  const permissionsPromise = loadStaffMobilePermissions(session);
   const passwordGate = await passwordGatePromise;
   if (passwordGate.mustChangePassword) {
     redirect(`/staff/change-password?${new URLSearchParams({ next: "/dashboard/staff/mobile" }).toString()}`);
   }
 
   const bundle = await bundlePromise;
-  const payrollSelf = await payrollPromise;
-  const effectivePermissions = await permissionsPromise;
+  const payroll = await payrollPromise;
+  const permissions = await permissionsPromise;
 
   return (
     <StaffMobileRedesignWorkspace
@@ -73,11 +71,43 @@ async function StaffMobileContent({
       restaurantName={restaurantName}
       restaurantSlug={restaurantSlug}
       userId={userId}
-      payrollSelf={payrollSelf}
-      effectivePermissions={effectivePermissions}
+      payrollSelf={payroll.data}
+      payrollDataError={payroll.error}
+      effectivePermissions={permissions.data}
+      permissionDataError={permissions.error}
       enableHeartbeat={bundle.members.length > 0}
     />
   );
+}
+
+async function loadStaffMobilePermissions(session: Awaited<ReturnType<typeof requireDashboardAccess>>["session"]) {
+  try {
+    const result = await getStaffEffectivePermissions(session);
+    return { data: result.permissions as string[], error: null };
+  } catch (error) {
+    return {
+      data: [] as string[],
+      error: `Không tải được quyền thao tác. Các module nâng cao tạm ẩn: ${mobileDataErrorMessage(error)}`
+    };
+  }
+}
+
+async function loadStaffPayrollSelf(restaurantId: string, userId: string) {
+  try {
+    return {
+      data: await getStaffPayrollSelfView({ restaurantId, userId }),
+      error: null
+    };
+  } catch (error) {
+    return {
+      data: null,
+      error: `Không tải được dữ liệu lương cá nhân: ${mobileDataErrorMessage(error)}`
+    };
+  }
+}
+
+function mobileDataErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Lỗi không xác định";
 }
 
 function StaffMobileSkeleton() {

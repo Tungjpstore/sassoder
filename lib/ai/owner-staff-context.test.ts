@@ -48,6 +48,32 @@ test("owner prompt router keeps Vietnamese HR keywords mapped to staff intent", 
   }
 });
 
+test("owner staff context reports HR snapshot failures instead of zero staff", () => {
+  const line = buildOwnerStaffContextLine({
+    schemaReady: false,
+    schemaErrors: ["staff_members: permission denied"]
+  });
+
+  assert.match(line, /snapshot HR chưa sẵn sàng/);
+  assert.match(line, /không được kết luận là chưa có nhân viên/);
+  assert.match(line, /staff_members/);
+});
+
+test("owner staff context keeps real counts when only optional HR side data fails", () => {
+  const line = buildOwnerStaffContextLine({
+    schemaReady: true,
+    schemaErrors: ["staff_reviews: relation missing"],
+    memberCount: 2,
+    activeCount: 2,
+    currentlyClockedIn: 1,
+    onlineCount: 1,
+    pendingApprovalByType: {}
+  });
+
+  assert.match(line, /Nhân sự: 2\/2 active/);
+  assert.match(line, /Một phần dữ liệu HR chưa tải được/);
+});
+
 test("owner runtime staff snapshot includes branch and performance data", () => {
   const source = readFileSync("services/ai/runtime.ts", "utf8");
 
@@ -55,6 +81,9 @@ test("owner runtime staff snapshot includes branch and performance data", () => 
   assert.match(source, /staff_reviews/);
   assert.match(source, /unassignedActiveCount/);
   assert.match(source, /averageReviewScore/);
+  assert.match(source, /safeStaffAiQuery<any\[]>\(\s*"staff_members"/);
+  assert.match(source, /buildStaffAiUnavailableSnapshot/);
+  assert.match(source, /Chưa tải được snapshot nhân sự thật/);
 });
 
 test("owner staff actions route branch setup and coaching blockers", () => {

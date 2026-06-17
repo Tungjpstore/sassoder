@@ -52,7 +52,7 @@ import type { PublicMenuCategory, PublicMenuItem, PublicPromotion } from "@/type
 import { ShopShell, TopBar, StickyCartBar } from "../shell/shop-shell";
 import { BottomSheet } from "../ui/sheet";
 import { ShopButton } from "../ui/button";
-import { Card, Money, Pill, QtyStepper, MoneyRow, SectionLabel, EmptyState, Skeleton } from "../ui/primitives";
+import { Card, Money, Pill, QtyStepper, MoneyRow, SectionLabel, EmptyState, Skeleton, CustomerMenuGrid, CustomerMenuCard, CustomerDealStrip } from "../ui/primitives";
 import { ModifierSheet, type CustomizingItem } from "./modifier-sheet";
 
 type PaymentInfo =
@@ -1130,41 +1130,31 @@ function DineInView(props: DineInViewProps) {
             ) : null}
 
             {restaurant.promotions.length > 0 ? (
-              <button
-                type="button"
+              <CustomerDealStrip
+                className="mb-4"
+                title="Ưu đãi hôm nay"
+                description={promotionDescription(restaurant.promotions[0])}
+                badge={previewDiscount > 0 ? <Pill tone="ok">-{formatVnd(previewDiscount)}</Pill> : undefined}
                 onClick={() => setPromoOpen(true)}
-                className="mb-4 flex w-full items-center justify-between gap-3 rounded-[var(--r-lg)] border border-[var(--accent)]/30 bg-[var(--accent-soft)] px-4 py-3 text-left"
-              >
-                <span className="min-w-0">
-                  <span className="block text-[length:var(--fs-sm)] font-bold text-[var(--orange-600)]">Ưu đãi hôm nay</span>
-                  <span className="mt-0.5 block truncate text-[length:var(--fs-xs)] text-[var(--text-muted)]">
-                    {promotionDescription(restaurant.promotions[0])}
-                  </span>
-                </span>
-                {previewDiscount > 0 ? (
-                  <Pill tone="ok">-{formatVnd(previewDiscount)}</Pill>
-                ) : (
-                  <ChevronRight size={18} className="shrink-0 text-[var(--orange-600)]" />
-                )}
-              </button>
+              />
             ) : null}
 
             {flatMenu.length === 0 ? (
               <EmptyState icon={<Search size={22} />} title="Không tìm thấy món" description="Thử từ khóa khác hoặc chọn danh mục khác nhé." />
             ) : categoryId === "all" ? (
-              <div className="grid gap-2 shop-stagger">
+              <CustomerMenuGrid>
                 {flatMenu.map((item) => (
                   <MenuRow key={item.id} item={item} cart={cart} onAdd={addMenuItem} onDec={(id) => decrement(id)} />
                 ))}
-              </div>
+              </CustomerMenuGrid>
             ) : (
               <div className="grid gap-5">
                 {visibleCategories.map((category) => (
                   <section key={category.id}>
                     <h2 className="mb-2 text-[length:var(--fs-h2)] font-bold text-[var(--text)]">{category.name}</h2>
-                    <div className="grid gap-2 shop-stagger">
+                    <CustomerMenuGrid>
                       {category.items.length === 0 ? (
-                        <p className="rounded-[var(--r-md)] bg-[var(--surface-2)] p-3 text-[length:var(--fs-xs)] text-[var(--text-muted)]">
+                        <p className="col-span-2 rounded-[var(--r-md)] bg-[var(--surface-2)] p-3 text-[length:var(--fs-xs)] text-[var(--text-muted)]">
                           Danh mục này chưa có món khả dụng.
                         </p>
                       ) : (
@@ -1172,7 +1162,7 @@ function DineInView(props: DineInViewProps) {
                           <MenuRow key={item.id} item={item} cart={cart} onAdd={addMenuItem} onDec={(id) => decrement(id)} />
                         ))
                       )}
-                    </div>
+                    </CustomerMenuGrid>
                   </section>
                 ))}
               </div>
@@ -1794,24 +1784,17 @@ function MenuRow({
   const quantity = cart.reduce((sum, line) => sum + (line.menuItemId === item.id ? line.quantity : 0), 0);
   const hasModifiers = hasMenuModifiers(item);
   return (
-    <article className="flex items-center gap-3 rounded-[var(--r-lg)] border border-[var(--line)] bg-[var(--surface)] p-2.5 shadow-[var(--sh-sm)]">
-      <span className="h-[68px] w-[68px] shrink-0 overflow-hidden rounded-[var(--r-md)] border border-[var(--line)]">
-        <ItemThumb src={item.image} alt={item.name} size={68} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h3 className="text-[length:var(--fs-sm)] font-semibold leading-snug text-[var(--text)]">{item.name}</h3>
-        <Money value={item.price} className="mt-0.5 block text-[length:var(--fs-sm)] font-bold text-[var(--text)]" />
-      </div>
-      <div className="shrink-0">
-        {quantity > 0 && !hasModifiers ? (
-          <QtyStepper size="sm" value={quantity} min={0} onChange={(q) => (q > quantity ? onAdd(item) : onDec(item.id))} />
-        ) : (
-          <ShopButton size="sm" variant={quantity > 0 ? "secondary" : "primary"} onClick={() => onAdd(item)} aria-label={`Thêm ${item.name}`} leftIcon={<Plus size={15} />}>
-            {hasModifiers ? (quantity > 0 ? `Chọn (${quantity})` : "Chọn") : "Thêm"}
-          </ShopButton>
-        )}
-      </div>
-    </article>
+    <CustomerMenuCard
+      name={item.name}
+      price={item.price}
+      quantity={quantity}
+      hasOptions={hasModifiers}
+      onAdd={() => onAdd(item)}
+      onQuantityChange={(q) => (q > quantity ? onAdd(item) : onDec(item.id))}
+      imageSlot={
+        <ItemThumb src={item.image} alt={item.name} size={176} />
+      }
+    />
   );
 }
 

@@ -114,7 +114,8 @@ test("destructive data operations are explicitly allowlisted", () => {
       /20260507101500_auth_rate_limits_and_recovery\.sql:\d+:\s*delete from public\.auth_rate_limits/i.test(line) ||
       /20260510210000_order_lifecycle_hardening\.sql:\d+:\s*delete from public\.orders/i.test(line) ||
       /20260516165316_inventory_po_receiving_v2\.sql:\d+:\s*drop table if exists pg_temp\.po_receipt_requests/i.test(line) ||
-      /20260519190000_platform_admin_governance_hardening\.sql:\d+:\s*delete from public\.platform_admin_role_permissions/i.test(line)
+      /20260519190000_platform_admin_governance_hardening\.sql:\d+:\s*delete from public\.platform_admin_role_permissions/i.test(line) ||
+      /20260605093000_telegram_single_tenant_connection_lock\.sql:\d+:\s*delete from public\.telegram_sessions ts/i.test(line)
   );
 
   assert.deepEqual(destructiveDataLines, allowed);
