@@ -7,7 +7,7 @@ import { assessAttendanceDeviceTrust, type StaffAttendanceDeviceTrust } from "@/
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
-import { publishOperationalEvent } from "@/services/operational-event-bus";
+import { publishOperationalEvent, recordOperationalEventOutbox, type OperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
 import type { z } from "zod";
@@ -135,10 +135,14 @@ type AttendanceLogRow = {
   approval_state: "auto_approved" | "pending" | "approved" | "rejected";
   clock_in_at: string;
   clock_out_at: string | null;
+  clock_out_source?: AttendanceSource | null;
   late_minutes: number;
+  early_leave_minutes?: number;
   overtime_minutes: number;
+  work_minutes?: number | null;
   anomaly_score: number;
   anomaly_flags: string[];
+  note?: string | null;
 };
 
 type ApprovalRow = {
@@ -152,6 +156,40 @@ type ApprovalRow = {
   reason: string | null;
   requested_payload?: Record<string, unknown> | null;
   requested_by?: string | null;
+};
+
+type AtomicManualAdjustmentRpcRow = {
+  attendance: AttendanceLogRow;
+  approval_id: string;
+};
+
+type AtomicReviewRpcRow = {
+  approval: ApprovalRow;
+  attendance: AttendanceLogRow | null;
+};
+
+type AtomicClockApprovalRow = {
+  id: string;
+  attendance_log_id: string;
+  staff_member_id: string;
+  branch_id: string | null;
+  request_type: ApprovalRow["request_type"];
+  reason: string | null;
+  requested_payload: Record<string, unknown>;
+};
+
+type AtomicClockMutationRpcRow = {
+  attendance: AttendanceLogRow;
+  approvals: AtomicClockApprovalRow[];
+};
+
+type AttendanceApprovalDraft = {
+  requestType: ApprovalRow["request_type"];
+  reason: string;
+  payload: Record<string, unknown>;
+  notificationType: string;
+  notificationTitle: string;
+  notificationBody: string;
 };
 
 type OperationalApprovalSideEffectPlan =
@@ -206,6 +244,36 @@ function isMissingStaffOperationsSchema(error: { code?: string; message?: string
 
 function throwDataError(error: { message?: string } | null | undefined, fallback: string) {
   if (error) throw new AppError(error.message || fallback, 400);
+}
+
+function firstRpcRow<T>(data: unknown) {
+  return (Array.isArray(data) ? data[0] : data) as T | null;
+}
+
+function attendanceMutationRpcError(error: { code?: string; message?: string } | null, fallback: string) {
+  const message = error?.message ?? fallback;
+  if (/Actor cannot adjust own attendance/i.test(message)) {
+    return new AppError("Không thể tự sửa công của chính mình. Vui lòng để quản lý khác xử lý.", 403);
+  }
+  if (/Actor cannot review own attendance request|Actor cannot review own attendance/i.test(message)) {
+    return new AppError("Không thể tự duyệt công hoặc yêu cầu nhân sự của chính mình.", 403);
+  }
+  if (/Attendance approval already reviewed/i.test(message)) {
+    return new AppError("Yêu cầu phê duyệt này đã được xử lý.", 409);
+  }
+  if (/Attendance session already closed/i.test(message)) {
+    return new AppError("Phiên chấm công này đã được kết ca bởi thao tác khác. Vui lòng tải lại dữ liệu.", 409);
+  }
+  if (/Staff already has another open attendance session/i.test(message)) {
+    return new AppError("Nhân sự đã có phiên công đang mở khác. Hãy kết ca phiên đó trước khi mở lại bản ghi này.", 409);
+  }
+  if (/Clock-out must be after clock-in/i.test(message)) {
+    return new AppError("Thời gian kết ca phải sau thời gian vào ca.", 409);
+  }
+  if (/Attendance log not found|Attendance approval not found|Attendance approval staff not found|Attendance staff not found/i.test(message)) {
+    return new AppError("Không tìm thấy dữ liệu chấm công cần xử lý.", 404);
+  }
+  return new AppError(message, 400);
 }
 
 function dateKeyInVietnam(value: Date) {
@@ -871,6 +939,146 @@ async function insertNotification({
   }
 }
 
+function staffEventActor(session: DashboardSession): OperationalEvent["actor"] {
+  return {
+    type: session.role === "ADMIN" || session.attendanceManagementAuthorized ? "merchant" : "staff",
+    userId: session.userId,
+    role: session.role
+  };
+}
+
+async function enqueueAttendanceOperationalEvent(event: OperationalEvent, context: string, mode: "outbox" | "publish" = "outbox") {
+  try {
+    if (mode === "publish") await publishOperationalEvent(event);
+    else await recordOperationalEventOutbox(event);
+  } catch (error) {
+    console.error("[attendance-service] operational event enqueue failed", {
+      context,
+      eventId: event.eventId,
+      type: event.type,
+      error: error instanceof Error ? error.message : "unknown"
+    });
+  }
+}
+
+async function enqueueAttendanceApprovalEvent({
+  session,
+  approvalId,
+  staff,
+  branchId,
+  requestType,
+  reason,
+  requestedPayload
+}: {
+  session: DashboardSession;
+  approvalId: string;
+  staff: Pick<StaffMemberRow, "id" | "full_name">;
+  branchId?: string | null;
+  requestType: ApprovalRow["request_type"];
+  reason: string | null;
+  requestedPayload: Record<string, unknown>;
+}) {
+  await enqueueAttendanceOperationalEvent(
+    {
+      type: "staff.request_created",
+      eventId: `staff.request_created:${approvalId}`,
+      restaurantId: session.restaurantId,
+      branchId: branchId ?? null,
+      source: staffEventActor(session)?.type === "staff" ? "staff" : "dashboard",
+      actor: staffEventActor(session),
+      staffRequest: {
+        id: approvalId,
+        requestType,
+        staffMemberId: staff.id,
+        staffName: staff.full_name,
+        status: "pending",
+        reason,
+        requestedPayload
+      }
+    },
+    "attendance.approval.created",
+    "publish"
+  );
+}
+
+function appendAttendanceApprovalDraft(drafts: AttendanceApprovalDraft[], draft: AttendanceApprovalDraft) {
+  const existing = drafts.find((item) => item.requestType === draft.requestType);
+  if (!existing) {
+    drafts.push(draft);
+    return;
+  }
+
+  const reasons = [existing.reason, draft.reason].filter((value, index, rows) => value && rows.indexOf(value) === index);
+  existing.reason = reasons.join("; ");
+  existing.payload = {
+    ...existing.payload,
+    ...draft.payload,
+    approvalReasons: reasons,
+    mergedApprovalTypes: [...new Set([...(Array.isArray(existing.payload.mergedApprovalTypes) ? existing.payload.mergedApprovalTypes : [existing.requestType]), draft.requestType])]
+  };
+}
+
+function approvalDraftsForRpc(drafts: AttendanceApprovalDraft[]) {
+  return drafts.map((draft) => ({
+    requestType: draft.requestType,
+    reason: draft.reason,
+    payload: draft.payload
+  }));
+}
+
+function normalizeAtomicClockApprovals(value: unknown) {
+  return (Array.isArray(value) ? value : []) as AtomicClockApprovalRow[];
+}
+
+async function notifyClockAttendanceApprovals({
+  supabase,
+  session,
+  staff,
+  branch,
+  attendanceLogId,
+  approvals,
+  drafts
+}: {
+  supabase: any;
+  session: DashboardSession;
+  staff: StaffMemberRow;
+  branch: BranchRow;
+  attendanceLogId: string;
+  approvals: AtomicClockApprovalRow[];
+  drafts: AttendanceApprovalDraft[];
+}) {
+  const draftByType = new Map(drafts.map((draft) => [draft.requestType, draft]));
+
+  for (const approval of approvals) {
+    const draft = draftByType.get(approval.request_type);
+    if (!draft) continue;
+
+    await insertNotification({
+      supabase,
+      restaurantId: session.restaurantId,
+      type: draft.notificationType,
+      title: draft.notificationTitle,
+      body: draft.notificationBody,
+      payload: {
+        approvalId: approval.id,
+        attendanceLogId,
+        staffMemberId: staff.id,
+        branchId: branch.id
+      }
+    });
+
+    await enqueueAttendanceApprovalEvent({
+      session,
+      approvalId: approval.id,
+      staff,
+      branchId: branch.id,
+      requestType: approval.request_type,
+      reason: approval.reason ?? draft.reason,
+      requestedPayload: approval.requested_payload ?? draft.payload
+    });
+  }
+}
+
 function approvalReviewTitle(requestType: ApprovalRow["request_type"], status: "approved" | "rejected") {
   const approved = status === "approved";
   if (requestType === "leave_request") return approved ? "Yêu cầu nghỉ phép đã được duyệt" : "Yêu cầu nghỉ phép bị từ chối";
@@ -1223,6 +1431,20 @@ async function createOutsideLocationApproval({
     }
   });
 
+  await enqueueAttendanceApprovalEvent({
+    session,
+    approvalId: result.data.id,
+    staff,
+    branchId: branch.id,
+    requestType: "outside_location",
+    reason,
+    requestedPayload: {
+      ...payload,
+      distanceMeters,
+      radiusMeters
+    }
+  });
+
   return result.data as { id: string };
 }
 
@@ -1287,6 +1509,16 @@ async function createShiftOverrideApproval({
     }
   });
 
+  await enqueueAttendanceApprovalEvent({
+    session,
+    approvalId: result.data.id,
+    staff,
+    branchId: branch.id,
+    requestType: "shift_override",
+    reason,
+    requestedPayload: payload
+  });
+
   return result.data as { id: string };
 }
 
@@ -1349,6 +1581,16 @@ async function createDeviceRestrictionApproval({
       staffMemberId: staff.id,
       branchId: branch.id
     }
+  });
+
+  await enqueueAttendanceApprovalEvent({
+    session,
+    approvalId: result.data.id,
+    staff,
+    branchId: branch.id,
+    requestType: "device_restriction",
+    reason,
+    requestedPayload: payload
   });
 
   return result.data as { id: string };
@@ -1417,52 +1659,34 @@ async function createAttendanceSourceApproval({
     }
   });
 
+  await enqueueAttendanceApprovalEvent({
+    session,
+    approvalId: result.data.id,
+    staff,
+    branchId: branch.id,
+    requestType,
+    reason,
+    requestedPayload: payload
+  });
+
   return result.data as { id: string };
 }
 
-async function createManualAdjustmentApproval({
+async function notifyManualAdjustmentApproval({
   supabase,
   session,
+  approvalId,
   attendance,
   reason,
   payload
 }: {
   supabase: any;
   session: DashboardSession;
+  approvalId: string;
   attendance: AttendanceLogRow;
   reason: string;
   payload: Record<string, unknown>;
 }) {
-  const existingResult = await supabase
-    .from("attendance_approval_requests")
-    .select("id")
-    .eq("restaurant_id", session.restaurantId)
-    .eq("attendance_log_id", attendance.id)
-    .eq("request_type", "attendance_edit")
-    .eq("status", "pending")
-    .maybeSingle();
-
-  if (existingResult.error) throwDataError(existingResult.error, "Không kiểm tra được yêu cầu duyệt sửa công.");
-  if (existingResult.data?.id) return existingResult.data as { id: string };
-
-  const result = await supabase
-    .from("attendance_approval_requests")
-    .insert({
-      restaurant_id: session.restaurantId,
-      attendance_log_id: attendance.id,
-      staff_member_id: attendance.staff_member_id,
-      branch_id: attendance.branch_id,
-      request_type: "attendance_edit",
-      status: "pending",
-      reason,
-      requested_payload: payload,
-      requested_by: session.userId
-    })
-    .select("id")
-    .single();
-
-  if (result.error) throwDataError(result.error, "Không tạo được yêu cầu duyệt sửa công.");
-
   const target = await readStaffNotificationTarget(supabase, session.restaurantId, attendance.staff_member_id);
   await insertNotification({
     supabase,
@@ -1471,14 +1695,27 @@ async function createManualAdjustmentApproval({
     title: "Cần duyệt sửa công thủ công",
     body: `${target?.full_name ?? "Nhân sự"} có bản ghi công vừa được sửa và cần đối soát trước khi tính lương.`,
     payload: {
-      approvalId: result.data.id,
+      approvalId,
       attendanceLogId: attendance.id,
       staffMemberId: attendance.staff_member_id,
       branchId: attendance.branch_id
     }
   });
 
-  return result.data as { id: string };
+  await enqueueAttendanceApprovalEvent({
+    session,
+    approvalId,
+    staff: {
+      id: attendance.staff_member_id,
+      full_name: target?.full_name ?? "Nhân sự"
+    },
+    branchId: attendance.branch_id,
+    requestType: "attendance_edit",
+    reason,
+    requestedPayload: payload
+  });
+
+  return { id: approvalId };
 }
 
 function assertSourceAllowed({
@@ -1658,74 +1895,46 @@ export async function clockInStaffAttendance({
     wifiNetworkId: wifiNetwork?.id ?? null
   };
 
-  const insertResult = await supabase
-    .from("attendance_logs")
-    .insert({
-      restaurant_id: session.restaurantId,
-      staff_member_id: staff.id,
-      staff_user_id: staff.user_id,
-      branch_id: branch.id,
-      shift_id: shiftContext.shift?.id ?? null,
-      shift_assignment_id: shiftContext.assignment?.id ?? null,
-      clock_in_at: capturedAt.toISOString(),
-      clock_in_source: source,
-      clock_in_lat: input.lat ?? null,
-      clock_in_lng: input.lng ?? null,
-      clock_in_accuracy_meters: input.accuracyMeters ?? null,
-      clock_in_distance_meters: gps.distanceMeters,
-      clock_in_device: clockInDevice,
-      attendance_state: timing.state,
-      approval_state: approvalState,
-      late_minutes: timing.lateMinutes,
-      anomaly_score: anomalyScore,
-      anomaly_flags: anomalyFlags,
-      offline_queue_key: input.offlineQueueKey || null,
-      raw_payload: {
-        source,
-        staffMemberId: input.staffMemberId || null,
-        capturedAt: input.capturedAt ?? null,
-        branchId: input.branchId || null,
-        shiftAssignmentId: input.shiftAssignmentId || null,
-        qrTokenId: qrToken?.id ?? null,
-        wifiNetworkId: wifiNetwork?.id ?? null,
-        networkIp: input.network?.ipAddress ?? null,
-        deviceTrustStatus: deviceTrust.status,
-        staffDeviceId: deviceTrust.deviceId
-      },
-      note: input.note || null
-    })
-    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
-    .single();
-
-  if (insertResult.error) throwDataError(insertResult.error, "Không ghi được chấm công.");
-  const attendance = insertResult.data as AttendanceLogRow;
-
-  let approval: { id: string } | null = null;
+  const rawPayload = {
+    source,
+    staffMemberId: input.staffMemberId || null,
+    capturedAt: input.capturedAt ?? null,
+    branchId: input.branchId || null,
+    shiftAssignmentId: input.shiftAssignmentId || null,
+    qrTokenId: qrToken?.id ?? null,
+    wifiNetworkId: wifiNetwork?.id ?? null,
+    networkIp: input.network?.ipAddress ?? null,
+    distanceMeters: gps.distanceMeters,
+    radiusMeters: gps.radiusMeters,
+    shiftOverrideReason,
+    deviceApprovalReason,
+    sourceApprovalReason,
+    deviceTrustStatus: deviceTrust.status,
+    staffDeviceId: deviceTrust.deviceId,
+    anomalyScore,
+    anomalyFlags
+  };
+  const approvalDrafts: AttendanceApprovalDraft[] = [];
   if (!gps.valid) {
-    approval = await createOutsideLocationApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
-      distanceMeters: gps.distanceMeters,
-      radiusMeters: gps.radiusMeters,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "outside_location",
       reason: "Thiết bị nằm ngoài bán kính chấm công.",
       payload: {
         source,
         clock: "in",
-        accuracyMeters: input.accuracyMeters ?? null
-      }
+        accuracyMeters: input.accuracyMeters ?? null,
+        distanceMeters: gps.distanceMeters,
+        radiusMeters: gps.radiusMeters
+      },
+      notificationType: "attendance_approval_requested",
+      notificationTitle: "Cần duyệt chấm công ngoài vị trí",
+      notificationBody: `${staff.full_name} chấm công cách ${branch.name} ${gps.distanceMeters ?? "--"}m.`
     });
   }
 
   if (shiftOverrideReason) {
-    approval = await createShiftOverrideApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "shift_override",
       reason: shiftOverrideReason,
       payload: {
         source,
@@ -1733,34 +1942,31 @@ export async function clockInStaffAttendance({
         branchId: branch.id,
         scheduledDate: dateKeyInVietnam(capturedAt),
         shiftAssignmentId: input.shiftAssignmentId || null
-      }
+      },
+      notificationType: "shift_override_requested",
+      notificationTitle: "Cần duyệt ca xoay đột xuất",
+      notificationBody: `${staff.full_name} chấm công tại ${branch.name} nhưng chưa khớp phân ca.`
     });
   }
 
   if (deviceApprovalReason) {
-    approval = await createDeviceRestrictionApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "device_restriction",
       reason: deviceApprovalReason,
       payload: {
         source,
         clock: "in",
         deviceTrust,
         branchId: branch.id
-      }
+      },
+      notificationType: "attendance_device_review_requested",
+      notificationTitle: "Cần duyệt thiết bị chấm công",
+      notificationBody: `${staff.full_name} chấm công bằng thiết bị chưa được tin cậy tại ${branch.name}.`
     });
   }
 
   if (sourceApprovalReason) {
-    approval = await createAttendanceSourceApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
       requestType: source === "manual" ? "manual_clock_in" : "attendance_edit",
       reason: sourceApprovalReason,
       payload: {
@@ -1771,37 +1977,56 @@ export async function clockInStaffAttendance({
         qrTokenId: qrToken?.id ?? null,
         wifiNetworkId: wifiNetwork?.id ?? null,
         deviceTrust
-      }
+      },
+      notificationType: "attendance_source_review_requested",
+      notificationTitle: "Cần đối soát nguồn chấm công",
+      notificationBody: `${staff.full_name} chấm công bằng nguồn cần quản lý kiểm tra tại ${branch.name}.`
     });
   }
 
-  await insertActivityLog({
+  const { data, error } = await supabase.rpc("clock_in_staff_attendance_atomic", {
+    p_restaurant_id: session.restaurantId,
+    p_actor_user_id: session.userId,
+    p_staff_member_id: staff.id,
+    p_staff_user_id: staff.user_id,
+    p_branch_id: branch.id,
+    p_shift_id: shiftContext.shift?.id ?? null,
+    p_shift_assignment_id: shiftContext.assignment?.id ?? null,
+    p_clock_in_at: capturedAt.toISOString(),
+    p_clock_in_source: source,
+    p_clock_in_lat: input.lat ?? null,
+    p_clock_in_lng: input.lng ?? null,
+    p_clock_in_accuracy_meters: input.accuracyMeters ?? null,
+    p_clock_in_distance_meters: gps.distanceMeters,
+    p_clock_in_device: clockInDevice,
+    p_attendance_state: timing.state,
+    p_approval_state: approvalState,
+    p_late_minutes: timing.lateMinutes,
+    p_anomaly_score: anomalyScore,
+    p_anomaly_flags: anomalyFlags,
+    p_offline_queue_key: input.offlineQueueKey || null,
+    p_raw_payload: rawPayload,
+    p_note: input.note || null,
+    p_approval_requests: approvalDraftsForRpc(approvalDrafts)
+  });
+
+  if (error) throw attendanceMutationRpcError(error, "Không ghi được chấm công.");
+
+  const rpcResult = firstRpcRow<AtomicClockMutationRpcRow>(data);
+  if (!rpcResult?.attendance) throw new AppError("Không ghi được chấm công.", 400);
+
+  const attendance = rpcResult.attendance;
+  const approvalRecords = normalizeAtomicClockApprovals(rpcResult.approvals);
+  await notifyClockAttendanceApprovals({
     supabase,
     session,
-    staffMemberId: staff.id,
-    branchId: branch.id,
-    entityType: "attendance_log",
-    entityId: attendance.id,
-    action: "attendance.clock_in",
-    severity: approvalState === "pending" || anomalyScore >= 60 ? "warning" : "info",
-    reason: input.note || null,
-    afterState: attendance,
-    deviceInfo: clockInDevice,
-    metadata: {
-      source,
-      qrTokenId: qrToken?.id ?? null,
-      wifiNetworkId: wifiNetwork?.id ?? null,
-      networkIp: input.network?.ipAddress ?? null,
-      distanceMeters: gps.distanceMeters,
-      radiusMeters: gps.radiusMeters,
-      shiftOverrideReason,
-      deviceApprovalReason,
-      sourceApprovalReason,
-      deviceTrust,
-      anomalyScore,
-      anomalyFlags
-    }
+    staff,
+    branch,
+    attendanceLogId: attendance.id,
+    approvals: approvalRecords,
+    drafts: approvalDrafts
   });
+  const approval = approvalRecords.length ? { id: approvalRecords[approvalRecords.length - 1].id } : null;
 
   const evaluatedAnomaly = await evaluateAttendanceAnomaly({
     supabase,
@@ -1819,6 +2044,35 @@ export async function clockInStaffAttendance({
     distanceMeters: gps.distanceMeters,
     anomalyDetectionEnabled: isPremium
   });
+
+  await enqueueAttendanceOperationalEvent(
+    {
+      type: "staff.checked_in",
+      eventId: `staff.checked_in:${attendance.id}`,
+      restaurantId: session.restaurantId,
+      branchId: branch.id,
+      source: source === "manual" ? "dashboard" : "staff",
+      actor: staffEventActor(session),
+      staff: {
+        userId: staff.user_id,
+        staffId: staff.id,
+        displayName: staff.full_name,
+        attendanceLogId: attendance.id,
+        approvalId: approval?.id ?? null,
+        approvalState: attendance.approval_state,
+        attendanceState: attendance.attendance_state,
+        source,
+        branchId: branch.id,
+        branchName: branch.name,
+        capturedAt: capturedAt.toISOString(),
+        clockInAt: attendance.clock_in_at,
+        lateMinutes: attendance.late_minutes,
+        anomalyScore: evaluatedAnomaly.score,
+        anomalyFlags: evaluatedAnomaly.flags
+      }
+    },
+    "attendance.clock_in"
+  );
 
   return {
     attendance: {
@@ -1844,7 +2098,7 @@ async function readOpenAttendance({
 }) {
   let query = supabase
     .from("attendance_logs")
-    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
+    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,clock_out_source,late_minutes,early_leave_minutes,overtime_minutes,work_minutes,anomaly_score,anomaly_flags,note")
     .eq("restaurant_id", session.restaurantId)
     .eq("staff_member_id", staff.id);
 
@@ -1995,59 +2249,42 @@ export async function clockOutStaffAttendance({
     wifiNetworkId: wifiNetwork?.id ?? null
   };
 
-  const updateResult = await supabase
-    .from("attendance_logs")
-    .update({
-      clock_out_at: capturedAt.toISOString(),
-      clock_out_source: source,
-      clock_out_lat: input.lat ?? null,
-      clock_out_lng: input.lng ?? null,
-      clock_out_accuracy_meters: input.accuracyMeters ?? null,
-      clock_out_distance_meters: gps.distanceMeters,
-      clock_out_device: clockOutDevice,
-      attendance_state: timing.state,
-      approval_state: approvalState,
-      early_leave_minutes: timing.earlyLeaveMinutes,
-      overtime_minutes: timing.overtimeMinutes,
-      work_minutes: timing.workMinutes,
-      anomaly_score: anomalyScore,
-      anomaly_flags: anomalyFlags,
-      note: input.note || null
-    })
-    .eq("id", attendance.id)
-    .eq("restaurant_id", session.restaurantId)
-    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
-    .single();
-
-  if (updateResult.error) throwDataError(updateResult.error, "Không lưu được kết ca.");
-  const updatedAttendance = updateResult.data as AttendanceLogRow;
-
-  let approval: { id: string } | null = null;
+  const auditMetadata = {
+    source,
+    qrTokenId: qrToken?.id ?? null,
+    wifiNetworkId: wifiNetwork?.id ?? null,
+    networkIp: input.network?.ipAddress ?? null,
+    distanceMeters: gps.distanceMeters,
+    radiusMeters: gps.radiusMeters,
+    shiftOverrideReason,
+    deviceApprovalReason,
+    sourceApprovalReason,
+    longShiftApprovalReason,
+    deviceTrust,
+    anomalyScore,
+    anomalyFlags
+  };
+  const approvalDrafts: AttendanceApprovalDraft[] = [];
   if (!gps.valid) {
-    approval = await createOutsideLocationApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
-      distanceMeters: gps.distanceMeters,
-      radiusMeters: gps.radiusMeters,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "outside_location",
       reason: "Thiết bị kết ca nằm ngoài bán kính chấm công.",
       payload: {
         source,
         clock: "out",
-        accuracyMeters: input.accuracyMeters ?? null
-      }
+        accuracyMeters: input.accuracyMeters ?? null,
+        distanceMeters: gps.distanceMeters,
+        radiusMeters: gps.radiusMeters
+      },
+      notificationType: "attendance_approval_requested",
+      notificationTitle: "Cần duyệt chấm công ngoài vị trí",
+      notificationBody: `${staff.full_name} chấm công cách ${branch.name} ${gps.distanceMeters ?? "--"}m.`
     });
   }
 
   if (shiftOverrideReason) {
-    approval = await createShiftOverrideApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "shift_override",
       reason: shiftOverrideReason,
       payload: {
         source,
@@ -2055,17 +2292,16 @@ export async function clockOutStaffAttendance({
         branchId: branch.id,
         scheduledDate: dateKeyInVietnam(capturedAt),
         attendanceLogId: attendance.id
-      }
+      },
+      notificationType: "shift_override_requested",
+      notificationTitle: "Cần duyệt ca xoay đột xuất",
+      notificationBody: `${staff.full_name} chấm công tại ${branch.name} nhưng chưa khớp phân ca.`
     });
   }
 
   if (deviceApprovalReason) {
-    approval = await createDeviceRestrictionApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "device_restriction",
       reason: deviceApprovalReason,
       payload: {
         source,
@@ -2073,17 +2309,16 @@ export async function clockOutStaffAttendance({
         deviceTrust,
         branchId: branch.id,
         attendanceLogId: attendance.id
-      }
+      },
+      notificationType: "attendance_device_review_requested",
+      notificationTitle: "Cần duyệt thiết bị chấm công",
+      notificationBody: `${staff.full_name} chấm công bằng thiết bị chưa được tin cậy tại ${branch.name}.`
     });
   }
 
   if (sourceApprovalReason) {
-    approval = await createAttendanceSourceApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "attendance_edit",
       reason: sourceApprovalReason,
       payload: {
         source,
@@ -2094,17 +2329,16 @@ export async function clockOutStaffAttendance({
         wifiNetworkId: wifiNetwork?.id ?? null,
         attendanceLogId: attendance.id,
         deviceTrust
-      }
+      },
+      notificationType: "attendance_source_review_requested",
+      notificationTitle: "Cần đối soát nguồn chấm công",
+      notificationBody: `${staff.full_name} chấm công bằng nguồn cần quản lý kiểm tra tại ${branch.name}.`
     });
   }
 
   if (longShiftApprovalReason) {
-    approval = await createAttendanceSourceApproval({
-      supabase,
-      session,
-      staff,
-      branch,
-      attendanceLogId: attendance.id,
+    appendAttendanceApprovalDraft(approvalDrafts, {
+      requestType: "attendance_edit",
       reason: longShiftApprovalReason,
       payload: {
         source,
@@ -2114,39 +2348,55 @@ export async function clockOutStaffAttendance({
         clockInAt: attendance.clock_in_at,
         workMinutes: timing.workMinutes,
         anomalyFlags
-      }
+      },
+      notificationType: "attendance_source_review_requested",
+      notificationTitle: "Cần đối soát nguồn chấm công",
+      notificationBody: `${staff.full_name} có phiên công cần đối soát tại ${branch.name}.`
     });
   }
 
-  await insertActivityLog({
+  const { data, error } = await supabase.rpc("clock_out_staff_attendance_atomic", {
+    p_restaurant_id: session.restaurantId,
+    p_actor_user_id: session.userId,
+    p_attendance_log_id: attendance.id,
+    p_staff_member_id: staff.id,
+    p_branch_id: branch.id,
+    p_clock_out_at: capturedAt.toISOString(),
+    p_clock_out_source: source,
+    p_clock_out_lat: input.lat ?? null,
+    p_clock_out_lng: input.lng ?? null,
+    p_clock_out_accuracy_meters: input.accuracyMeters ?? null,
+    p_clock_out_distance_meters: gps.distanceMeters,
+    p_clock_out_device: clockOutDevice,
+    p_attendance_state: timing.state,
+    p_approval_state: approvalState,
+    p_early_leave_minutes: timing.earlyLeaveMinutes,
+    p_overtime_minutes: timing.overtimeMinutes,
+    p_work_minutes: timing.workMinutes,
+    p_anomaly_score: anomalyScore,
+    p_anomaly_flags: anomalyFlags,
+    p_note: input.note || null,
+    p_audit_metadata: auditMetadata,
+    p_approval_requests: approvalDraftsForRpc(approvalDrafts)
+  });
+
+  if (error) throw attendanceMutationRpcError(error, "Không lưu được kết ca.");
+
+  const rpcResult = firstRpcRow<AtomicClockMutationRpcRow>(data);
+  if (!rpcResult?.attendance) throw new AppError("Không lưu được kết ca.", 400);
+
+  const updatedAttendance = rpcResult.attendance;
+  const approvalRecords = normalizeAtomicClockApprovals(rpcResult.approvals);
+  await notifyClockAttendanceApprovals({
     supabase,
     session,
-    staffMemberId: staff.id,
-    branchId: branch.id,
-    entityType: "attendance_log",
-    entityId: attendance.id,
-    action: "attendance.clock_out",
-    severity: approvalState === "pending" || anomalyScore >= 60 ? "warning" : "info",
-    reason: input.note || null,
-    beforeState: attendance,
-    afterState: updatedAttendance,
-    deviceInfo: clockOutDevice,
-    metadata: {
-      source,
-      qrTokenId: qrToken?.id ?? null,
-      wifiNetworkId: wifiNetwork?.id ?? null,
-      networkIp: input.network?.ipAddress ?? null,
-      distanceMeters: gps.distanceMeters,
-      radiusMeters: gps.radiusMeters,
-      shiftOverrideReason,
-      deviceApprovalReason,
-      sourceApprovalReason,
-      longShiftApprovalReason,
-      deviceTrust,
-      anomalyScore,
-      anomalyFlags
-    }
+    staff,
+    branch,
+    attendanceLogId: updatedAttendance.id,
+    approvals: approvalRecords,
+    drafts: approvalDrafts
   });
+  const approval = approvalRecords.length ? { id: approvalRecords[approvalRecords.length - 1].id } : null;
 
   const evaluatedAnomaly = await evaluateAttendanceAnomaly({
     supabase,
@@ -2165,6 +2415,37 @@ export async function clockOutStaffAttendance({
     distanceMeters: gps.distanceMeters,
     anomalyDetectionEnabled: isPremium
   });
+
+  await enqueueAttendanceOperationalEvent(
+    {
+      type: "staff.checked_out",
+      eventId: `staff.checked_out:${updatedAttendance.id}`,
+      restaurantId: session.restaurantId,
+      branchId: branch.id,
+      source: source === "manual" ? "dashboard" : "staff",
+      actor: staffEventActor(session),
+      staff: {
+        userId: staff.user_id,
+        staffId: staff.id,
+        displayName: staff.full_name,
+        attendanceLogId: updatedAttendance.id,
+        approvalId: approval?.id ?? null,
+        approvalState: updatedAttendance.approval_state,
+        attendanceState: updatedAttendance.attendance_state,
+        source,
+        branchId: branch.id,
+        branchName: branch.name,
+        capturedAt: capturedAt.toISOString(),
+        clockInAt: updatedAttendance.clock_in_at,
+        clockOutAt: updatedAttendance.clock_out_at,
+        workMinutes: timing.workMinutes,
+        overtimeMinutes: updatedAttendance.overtime_minutes,
+        anomalyScore: evaluatedAnomaly.score,
+        anomalyFlags: evaluatedAnomaly.flags
+      }
+    },
+    "attendance.clock_out"
+  );
 
   return {
     attendance: {
@@ -2203,22 +2484,6 @@ export async function adjustStaffAttendanceLog({
   const nextClockOutAt = input.clockOutAt ? parseManualAdjustmentDateTime(input.clockOutAt) : null;
   if (nextClockOutAt) assertClockOutAfterClockIn(nextClockInAt.toISOString(), nextClockOutAt);
 
-  if (!nextClockOutAt) {
-    const openResult = await supabase
-      .from("attendance_logs")
-      .select("id")
-      .eq("restaurant_id", session.restaurantId)
-      .eq("staff_member_id", input.staffMemberId)
-      .is("clock_out_at", null)
-      .neq("id", existing.id)
-      .order("clock_in_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (openResult.error) throwDataError(openResult.error, "Không kiểm tra được phiên công đang mở.");
-    if (openResult.data?.id) throw new AppError("Nhân sự đã có phiên công đang mở khác. Hãy kết ca phiên đó trước khi mở lại bản ghi này.", 409);
-  }
-
   const shiftContext = await readShiftForAttendance(supabase, session.restaurantId, existing);
   const scheduledDate = shiftContext.assignment?.scheduled_date ?? dateKeyInVietnam(nextClockInAt);
   const clockInTiming = computeClockInTiming(nextClockInAt, shiftContext.shift, scheduledDate);
@@ -2238,72 +2503,65 @@ export async function adjustStaffAttendanceLog({
       };
 
   const anomalyFlags = mergeAnomalyFlags(existing.anomaly_flags ?? [], ["manual_attendance_edit"]);
-  const updateResult = await supabase
-    .from("attendance_logs")
-    .update({
-      clock_in_at: nextClockInAt.toISOString(),
-      clock_out_at: nextClockOutAt ? nextClockOutAt.toISOString() : null,
-      clock_out_source: nextClockOutAt ? "manual" : null,
-      attendance_state: clockOutTiming.state,
-      approval_state: "pending",
-      late_minutes: clockInTiming.lateMinutes,
-      early_leave_minutes: clockOutTiming.earlyLeaveMinutes,
-      overtime_minutes: clockOutTiming.overtimeMinutes,
-      work_minutes: clockOutTiming.workMinutes,
-      anomaly_score: Math.max(existing.anomaly_score ?? 0, 35),
-      anomaly_flags: anomalyFlags,
-      note: input.note
-    })
-    .eq("restaurant_id", session.restaurantId)
-    .eq("id", existing.id)
-    .eq("staff_member_id", input.staffMemberId)
-    .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
-    .single();
+  const approvalPayload = {
+    source: "manual_adjustment",
+    previousClockInAt: existing.clock_in_at,
+    previousClockOutAt: existing.clock_out_at,
+    previousAttendance: {
+      clockInAt: existing.clock_in_at,
+      clockOutAt: existing.clock_out_at,
+      clockOutSource: existing.clock_out_source ?? null,
+      attendanceState: existing.attendance_state,
+      approvalState: existing.approval_state,
+      lateMinutes: existing.late_minutes,
+      earlyLeaveMinutes: existing.early_leave_minutes ?? 0,
+      overtimeMinutes: existing.overtime_minutes,
+      workMinutes: existing.work_minutes ?? null,
+      anomalyScore: existing.anomaly_score ?? 0,
+      anomalyFlags: existing.anomaly_flags ?? [],
+      note: existing.note ?? null
+    },
+    nextClockInAt: nextClockInAt.toISOString(),
+    nextClockOutAt: nextClockOutAt ? nextClockOutAt.toISOString() : null,
+    scheduledDate,
+    anomalyFlags
+  };
 
-  if (updateResult.error) throwDataError(updateResult.error, "Không lưu được sửa công.");
-  const updatedAttendance = updateResult.data as AttendanceLogRow;
-
-  const approval = await createManualAdjustmentApproval({
-    supabase,
-    session,
-    attendance: updatedAttendance,
-    reason: input.note,
-    payload: {
-      source: "manual_adjustment",
-      previousClockInAt: existing.clock_in_at,
-      previousClockOutAt: existing.clock_out_at,
-      nextClockInAt: updatedAttendance.clock_in_at,
-      nextClockOutAt: updatedAttendance.clock_out_at,
-      scheduledDate,
-      anomalyFlags
-    }
+  const { data, error } = await supabase.rpc("adjust_staff_attendance_log_atomic", {
+    p_restaurant_id: session.restaurantId,
+    p_attendance_log_id: existing.id,
+    p_staff_member_id: input.staffMemberId,
+    p_actor_user_id: session.userId,
+    p_clock_in_at: nextClockInAt.toISOString(),
+    p_clock_out_at: nextClockOutAt ? nextClockOutAt.toISOString() : null,
+    p_attendance_state: clockOutTiming.state,
+    p_late_minutes: clockInTiming.lateMinutes,
+    p_early_leave_minutes: clockOutTiming.earlyLeaveMinutes,
+    p_overtime_minutes: clockOutTiming.overtimeMinutes,
+    p_work_minutes: clockOutTiming.workMinutes,
+    p_anomaly_score: Math.max(existing.anomaly_score ?? 0, 35),
+    p_anomaly_flags: anomalyFlags,
+    p_note: input.note,
+    p_approval_reason: input.note,
+    p_approval_payload: approvalPayload
   });
 
-  await insertActivityLog({
+  if (error) throw attendanceMutationRpcError(error, "Không lưu được sửa công.");
+
+  const rpcResult = firstRpcRow<AtomicManualAdjustmentRpcRow>(data);
+  if (!rpcResult?.attendance || !rpcResult.approval_id) {
+    throw new AppError("Không lưu được sửa công hoặc yêu cầu duyệt sửa công.", 400);
+  }
+
+  const updatedAttendance = rpcResult.attendance;
+
+  const approval = await notifyManualAdjustmentApproval({
     supabase,
     session,
-    staffMemberId: input.staffMemberId,
-    branchId: updatedAttendance.branch_id,
-    entityType: "attendance_log",
-    entityId: updatedAttendance.id,
-    action: "attendance.adjusted",
-    severity: "warning",
+    approvalId: rpcResult.approval_id,
+    attendance: updatedAttendance,
     reason: input.note,
-    beforeState: existing,
-    afterState: updatedAttendance,
-    deviceInfo: {
-      mode: "dashboard_staff_manual_adjustment",
-      actorUserId: session.userId
-    },
-    metadata: {
-      source: "manual",
-      scheduledDate,
-      previousClockInAt: existing.clock_in_at,
-      previousClockOutAt: existing.clock_out_at,
-      nextClockInAt: updatedAttendance.clock_in_at,
-      nextClockOutAt: updatedAttendance.clock_out_at,
-      anomalyFlags
-    }
+    payload: approvalPayload
   });
 
   return {
@@ -2350,37 +2608,23 @@ export async function reviewAttendanceApproval({
     approval,
     nextStatus
   });
-  const updateApprovalResult = await supabase
-    .from("attendance_approval_requests")
-    .update({
-      status: nextStatus,
-      reviewed_by: session.userId,
-      reviewed_at: new Date().toISOString(),
-      review_note: input.note || null
-    })
-    .eq("id", approval.id)
-    .eq("restaurant_id", session.restaurantId)
-    .eq("status", "pending")
-    .select("id,restaurant_id,attendance_log_id,staff_member_id,branch_id,request_type,status,reason,requested_payload,requested_by")
-    .single();
+  const { data, error } = await supabase.rpc("review_attendance_approval_atomic", {
+    p_restaurant_id: session.restaurantId,
+    p_approval_id: approval.id,
+    p_actor_user_id: session.userId,
+    p_next_status: nextStatus,
+    p_review_note: input.note || null
+  });
 
-  if (updateApprovalResult.error) throwDataError(updateApprovalResult.error, "Không cập nhật được phê duyệt.");
+  if (error) throw attendanceMutationRpcError(error, "Không cập nhật được phê duyệt.");
 
-  let attendance: AttendanceLogRow | null = null;
-  if (approval.attendance_log_id) {
-    const attendanceUpdate = await supabase
-      .from("attendance_logs")
-      .update({
-        approval_state: nextStatus === "approved" ? "approved" : "rejected"
-      })
-      .eq("restaurant_id", session.restaurantId)
-      .eq("id", approval.attendance_log_id)
-      .select("id,restaurant_id,staff_member_id,staff_user_id,branch_id,shift_id,shift_assignment_id,attendance_state,approval_state,clock_in_at,clock_out_at,late_minutes,overtime_minutes,anomaly_score,anomaly_flags")
-      .maybeSingle();
-
-    if (attendanceUpdate.error) throwDataError(attendanceUpdate.error, "Không cập nhật được log chấm công.");
-    attendance = attendanceUpdate.data as AttendanceLogRow | null;
+  const rpcResult = firstRpcRow<AtomicReviewRpcRow>(data);
+  if (!rpcResult?.approval) {
+    throw new AppError("Không cập nhật được phê duyệt.", 400);
   }
+
+  const reviewedApproval = rpcResult.approval;
+  const attendance = rpcResult.attendance;
 
   const sideEffect = await applyOperationalApprovalSideEffect({
     supabase,
@@ -2388,25 +2632,6 @@ export async function reviewAttendanceApproval({
     approval,
     plan: sideEffectPlan,
     note: input.note
-  });
-
-  await insertActivityLog({
-    supabase,
-    session,
-    branchId: approval.branch_id,
-    entityType: "attendance_approval_request",
-    entityId: approval.id,
-    action: nextStatus === "approved" ? "attendance.approval_approved" : "attendance.approval_rejected",
-    severity: nextStatus === "approved" ? "info" : "warning",
-    reason: input.note || approval.reason,
-    beforeState: approval,
-    afterState: updateApprovalResult.data,
-    metadata: {
-      attendanceLogId: approval.attendance_log_id,
-      requestType: approval.request_type,
-      requestedPayload: approval.requested_payload ?? {},
-      sideEffect
-    }
   });
 
   const notificationTarget = attendance?.staff_user_id
@@ -2422,7 +2647,7 @@ export async function reviewAttendanceApproval({
       title: approvalReviewTitle(approval.request_type, nextStatus),
       body: input.note || (nextStatus === "approved" ? "Quản lý đã duyệt yêu cầu của bạn." : "Quản lý đã từ chối yêu cầu của bạn."),
       payload: {
-        approvalId: approval.id,
+        approvalId: reviewedApproval.id,
         attendanceLogId: attendance?.id ?? null,
         status: nextStatus,
         requestType: approval.request_type
@@ -2432,20 +2657,23 @@ export async function reviewAttendanceApproval({
 
   await publishOperationalEvent({
     type: "staff.request_reviewed",
-    eventId: `staff.request_reviewed:${approval.id}:${nextStatus}`,
+    eventId: `staff.request_reviewed:${reviewedApproval.id}:${nextStatus}`,
     restaurantId: session.restaurantId,
     branchId: approval.branch_id,
     source: "dashboard",
     actor: { type: "merchant", userId: session.userId, role: session.role },
     staffRequest: {
-      id: approval.id,
+      id: reviewedApproval.id,
       requestType: approval.request_type,
       staffMemberId: approval.staff_member_id,
       staffName: notificationTarget && "full_name" in notificationTarget ? notificationTarget.full_name : null,
       status: nextStatus,
       decision: nextStatus,
       reason: input.note || approval.reason,
-      requestedPayload: approval.requested_payload ?? {}
+      requestedPayload: {
+        ...(approval.requested_payload ?? {}),
+        sideEffect
+      }
     }
   }).catch((error) => {
     console.error("[attendance-service] telegram staff review event failed", {
@@ -2456,7 +2684,7 @@ export async function reviewAttendanceApproval({
   });
 
   return {
-    approval: updateApprovalResult.data as ApprovalRow,
+    approval: reviewedApproval,
     attendance
   };
 }

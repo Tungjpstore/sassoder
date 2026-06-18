@@ -203,6 +203,27 @@ type OperationalStaffIncidentSnapshot = {
   attachmentUrl?: string | null;
 };
 
+type OperationalStaffAttendanceSnapshot = {
+  userId: string;
+  staffId?: string | null;
+  displayName?: string | null;
+  attendanceLogId?: string | null;
+  approvalId?: string | null;
+  approvalState?: "auto_approved" | "pending" | "approved" | "rejected" | string | null;
+  attendanceState?: "on_time" | "late" | "early_leave" | "overtime" | "absent" | string | null;
+  source?: "gps" | "qr" | "wifi" | "manual" | "offline_sync" | string | null;
+  branchId?: string | null;
+  branchName?: string | null;
+  capturedAt?: string | null;
+  clockInAt?: string | null;
+  clockOutAt?: string | null;
+  workMinutes?: number | null;
+  lateMinutes?: number | null;
+  overtimeMinutes?: number | null;
+  anomalyScore?: number | null;
+  anomalyFlags?: string[];
+};
+
 export type OperationalEvent =
   | (BaseOperationalEvent & {
       type: "order.created";
@@ -294,11 +315,11 @@ export type OperationalEvent =
     })
   | (BaseOperationalEvent & {
       type: "staff.checked_in";
-      staff: {
-        userId: string;
-        staffId?: string | null;
-        displayName?: string | null;
-      };
+      staff: OperationalStaffAttendanceSnapshot;
+    })
+  | (BaseOperationalEvent & {
+      type: "staff.checked_out";
+      staff: OperationalStaffAttendanceSnapshot;
     })
   | (BaseOperationalEvent & {
       type: "staff.request_created";
@@ -393,11 +414,7 @@ type PublishOperationalEventResult =
     };
 
 export async function publishOperationalEvent(event: OperationalEvent): Promise<PublishOperationalEventResult> {
-  const eventRecord = {
-    ...event,
-    tenantId: event.tenantId ?? event.restaurantId ?? platformTenantId(event),
-    occurredAt: event.occurredAt ?? new Date().toISOString()
-  };
+  const eventRecord = normalizeOperationalEvent(event);
   const outbox = await recordOperationalOutbox(eventRecord);
   await sendOperationalEventPush(eventRecord).catch((error) => {
     console.error("[operational-event-bus] pwa push failed", {
@@ -449,6 +466,19 @@ export async function publishOperationalEvent(event: OperationalEvent): Promise<
   const body = (await response.json().catch(() => ({}))) as { jobs?: Array<{ queueName: string; jobId: string; name: string }> };
   await markOperationalOutboxPublished(outbox, body.jobs ?? []);
   return { queued: true, jobs: body.jobs };
+}
+
+export async function recordOperationalEventOutbox(event: OperationalEvent) {
+  const outbox = await recordOperationalOutbox(normalizeOperationalEvent(event));
+  return { recorded: Boolean(outbox), outbox };
+}
+
+function normalizeOperationalEvent(event: OperationalEvent): OperationalEvent {
+  return {
+    ...event,
+    tenantId: event.tenantId ?? event.restaurantId ?? platformTenantId(event),
+    occurredAt: event.occurredAt ?? new Date().toISOString()
+  };
 }
 
 function internalGatewayUrl() {
@@ -570,6 +600,7 @@ function eventPriority(type: OperationalEvent["type"]) {
     type === "reservation.deposit_submitted" ||
     type === "sla.warning" ||
     type === "service_request.created" ||
+    type === "staff.checked_out" ||
     type === "staff.request_created" ||
     type === "staff.incident_reported" ||
     type === "platform.alert" ||

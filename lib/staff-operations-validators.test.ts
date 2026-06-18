@@ -590,15 +590,15 @@ test("staff attendance service hardens timestamp, GPS, QR and PIN abuse paths", 
   assert.match(attendanceSource, /networkIp: input\.network\?\.ipAddress \?\? null/);
   assert.match(attendanceSource, /longWorkShiftApprovalReason/);
   assert.match(attendanceSource, /Phiên công kéo dài quá 16 giờ/);
-  assert.match(attendanceSource, /createManualAdjustmentApproval/);
-  assert.match(attendanceSource, /approval_state: "pending"/);
+  assert.match(attendanceSource, /notifyManualAdjustmentApproval/);
+  assert.match(attendanceSource, /adjust_staff_attendance_log_atomic/);
   assert.match(attendanceSource, /assertNotSelfManualAttendance/);
   assert.match(attendanceSource, /Không thể tự duyệt công hoặc yêu cầu nhân sự của chính mình/);
   assert.doesNotMatch(attendanceSource, /source === "manual" && session\.role !== "ADMIN"/);
   assert.doesNotMatch(attendanceSource, /source !== "gps" \|\| session\.role === "ADMIN"/);
   assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để sửa công/);
   assert.doesNotMatch(attendanceSource, /session\.role !== "ADMIN"\) throw new AppError\("Cần quyền quản trị để duyệt chấm công/);
-  assert.match(attendanceSource, /attendance\.adjusted/);
+  assert.match(attendanceSource, /review_attendance_approval_atomic/);
   assert.match(attendanceSource, /manual_attendance_edit/);
   assert.match(attendanceSource, /GPS chưa đủ dữ liệu chi nhánh hoặc thiết bị/);
   assert.match(attendanceSource, /formatAttendanceOpenConflict/);
@@ -638,6 +638,16 @@ test("staff mobile attendance copy does not imply QR or WiFi can bypass GPS", as
   assert.match(mobileSource, /WiFi chấm công cần thiết bị online bằng mạng quán đã lưu và vẫn phải có GPS chính xác/);
   assert.match(machineSource, /WiFi vẫn cần GPS/);
   assert.match(machineSource, /Bật GPS chính xác/);
+});
+
+test("staff mobile clock-out uses the open attendance branch instead of a stale selector branch", async () => {
+  const mobileSource = await import("node:fs").then((fs) => fs.readFileSync("features/staff/components/staff-mobile-redesign-workspace.tsx", "utf8"));
+
+  assert.match(mobileSource, /const attendanceActionBranchId = activeAttendance\?\.branchId \?\? selectedBranchId/);
+  assert.match(mobileSource, /const actionBranchId = activeAttendance\?\.branchId \?\? selectedBranchId/);
+  assert.match(mobileSource, /clockOutAttendance\([\s\S]*branchId: actionBranchId/);
+  assert.match(mobileSource, /branchLocked=\{attendanceActionBranchLocked\}/);
+  assert.match(mobileSource, /disabled=\{!branches\.length \|\| branchLocked\}/);
 });
 
 test("offline attendance queue never converts QR or WiFi scans into offline sync", async () => {

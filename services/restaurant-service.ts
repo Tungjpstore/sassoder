@@ -19,6 +19,7 @@ import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { searchAddress } from "@/services/maps/geocoding/geocoder-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
 import { notifyPlatformTenantCreated } from "@/services/platform-telegram-events";
+import { writeOperationalEvent } from "@/services/operational-observability-service";
 import { isPublicTenantActive } from "@/services/tenant-status-guard";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
@@ -141,10 +142,8 @@ function isMissingStaffOperationsTable(error: { code?: string; message?: string 
   return error.code === "PGRST204" || error.code === "42P01" || /staff_members|staff_branch_assignments|staff_roles/i.test(error.message ?? "");
 }
 
-function nullIfBlank(value: string | null | undefined) {
-  if (!value) return null;
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : null;
+function compactRecord<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => typeof item !== "undefined")) as Partial<T>;
 }
 
 type StaffOperationsRoleConfig = {
@@ -166,6 +165,22 @@ type StaffRoleConfigRow = {
 
 type StaffRolePermissionConfigRow = {
   permission_key: StaffPermissionKey;
+};
+
+type StaffCreateProfileRpcRow = {
+  user_id: string;
+  staff_member_id: string;
+  employee_code: string | null;
+  employee_number: number | null;
+  must_change_app_password: boolean | null;
+  branch_id: string | null;
+};
+
+type StaffMutationRpcRow = {
+  user_id: string;
+  staff_member_id: string;
+  branch_id?: string | null;
+  next_state?: string | null;
 };
 
 function isTemplateRoleCode(roleCode: string): roleCode is StaffRoleTemplateCode {
@@ -227,179 +242,100 @@ async function resolveStaffOperationsRole(supabase: any, restaurantId: string, r
   };
 }
 
-function profileNameFromEmail(email: string) {
-  return email
-    .split("@")[0]
-    .split(/[._-]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-async function upsertStaffOperationsProfile(
-  supabase: any,
-  input: {
-    restaurantId: string;
-    userId: string;
-    email: string;
-    roleCode: string;
-    roleConfig?: StaffOperationsRoleConfig;
-    fullName?: string | null;
-    phone?: string | null;
-    username?: string | null;
-    pin?: string | null;
-    dateOfBirth?: string | null;
-    hometown?: string | null;
-    mustChangeAppPassword?: boolean;
-    employmentStatus?: "active" | "suspended" | "resigned";
-    emergencyContactName?: string | null;
-    emergencyContactPhone?: string | null;
-    notes?: string | null;
-  }
-) {
-  const role = input.roleConfig ?? await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
-  const pinPayload = input.pin
-    ? (() => {
-        const { pinHash, normalizedPin } = hashStaffPin(input.pin);
-        return {
-          pin_hash: pinHash,
-          pin_lookup_hash: staffPinLookupHash(input.restaurantId, normalizedPin),
-          pin_attempts: 0,
-          pin_locked_until: null,
-          pin_updated_at: new Date().toISOString()
-        };
-      })()
-    : {};
-  const passwordStatePayload = typeof input.mustChangeAppPassword === "boolean"
-    ? { must_change_app_password: input.mustChangeAppPassword }
-    : {};
-
-  const profileResult = await supabase.from("staff_members").upsert(
-    {
-      restaurant_id: input.restaurantId,
-      user_id: input.userId,
-      role_id: role.id,
-      role_code: role.code,
-      full_name: nullIfBlank(input.fullName) ?? profileNameFromEmail(input.email),
-      phone: nullIfBlank(input.phone),
-      username: nullIfBlank(input.username),
-      date_of_birth: nullIfBlank(input.dateOfBirth),
-      hometown: nullIfBlank(input.hometown),
-      employment_status: input.employmentStatus ?? "active",
-      emergency_contact_name: nullIfBlank(input.emergencyContactName),
-      emergency_contact_phone: nullIfBlank(input.emergencyContactPhone),
-      notes: nullIfBlank(input.notes),
-      archived_at: input.employmentStatus === "resigned" ? new Date().toISOString() : null,
-      ...passwordStatePayload,
-      ...pinPayload
-    },
-    { onConflict: "user_id" }
-  ).select("id,employee_code,employee_number,date_of_birth,hometown,must_change_app_password").single();
-
-  if (profileResult.error && !isMissingStaffOperationsTable(profileResult.error)) {
-    if (profileResult.error.code === "23505" && /pin/i.test(profileResult.error.message ?? "")) {
-      throw new AppError("PIN này đã được dùng bởi nhân sự khác trong quán.", 409);
-    }
-    throw new AppError(profileResult.error.message, 400);
-  }
-
+function buildStaffPinPayload(restaurantId: string, pin?: string | null) {
+  if (!pin) return {};
+  const { pinHash, normalizedPin } = hashStaffPin(pin);
   return {
-    role,
-    profile: profileResult.data as {
-      id: string;
-      employee_code: string | null;
-      employee_number: number | null;
-      date_of_birth: string | null;
-      hometown: string | null;
-      must_change_app_password: boolean | null;
-    } | null
+    pin_hash: pinHash,
+    pin_lookup_hash: staffPinLookupHash(restaurantId, normalizedPin),
+    pin_attempts: 0,
+    pin_locked_until: null,
+    pin_updated_at: new Date().toISOString()
   };
 }
 
-async function syncStaffPrimaryBranch(
+async function rollbackCreatedAuthUser(supabase: any, userId: string) {
+  const { error } = await supabase.auth.admin.deleteUser(userId);
+  if (error) {
+    console.error("[staff-create] failed to rollback auth user", { userId, error: error.message });
+  }
+}
+
+function staffCreateProfileRpcError(error: { code?: string; message?: string } | null) {
+  const message = error?.message ?? "Không tạo được hồ sơ nhân viên.";
+  if (error?.code === "23505" && /pin/i.test(message)) {
+    return new AppError("PIN này đã được dùng bởi nhân sự khác trong quán.", 409);
+  }
+  if (error?.code === "23505" && /users.*email|email/i.test(message)) {
+    return new AppError("Email này đã có tài khoản trong hệ thống.", 409);
+  }
+  if (/Invalid staff branch assignment/i.test(message)) {
+    return new AppError("Chi nhánh gán cho nhân viên không hợp lệ hoặc đã tắt.", 400);
+  }
+  if (/Invalid staff role assignment/i.test(message)) {
+    return new AppError("Vai trò gán cho nhân viên không hợp lệ hoặc không thuộc quán này.", 400);
+  }
+  return new AppError(message, 400);
+}
+
+function staffMutationRpcError(error: { code?: string; message?: string } | null) {
+  const message = error?.message ?? "Không cập nhật được nhân sự.";
+  if (error?.code === "23505" && /pin/i.test(message)) {
+    return new AppError("PIN này đã được dùng bởi nhân sự khác trong quán.", 409);
+  }
+  if (/Last active admin cannot be changed/i.test(message)) {
+    return new AppError("Cần giữ lại ít nhất một tài khoản quản trị đang hoạt động cho quán.", 400);
+  }
+  if (/Actor cannot demote own admin account/i.test(message)) {
+    return new AppError("Bạn không thể tự hạ quyền quản trị của tài khoản đang đăng nhập.", 400);
+  }
+  if (/Actor cannot lock own account/i.test(message)) {
+    return new AppError("Bạn không thể tự khoá hoặc lưu trữ chính tài khoản đang đăng nhập.", 400);
+  }
+  if (/Invalid staff branch assignment/i.test(message)) {
+    return new AppError("Chi nhánh gán cho nhân viên không hợp lệ hoặc đã tắt.", 400);
+  }
+  if (/Invalid staff role assignment|Invalid staff role code/i.test(message)) {
+    return new AppError("Vai trò gán cho nhân viên không hợp lệ hoặc không thuộc quán này.", 400);
+  }
+  if (/Staff user not found|Staff member profile not found/i.test(message)) {
+    return new AppError("Không tìm thấy nhân viên", 404);
+  }
+  return new AppError(message, 400);
+}
+
+async function syncStaffAuthAppMetadata(
   supabase: any,
   input: {
     restaurantId: string;
     userId: string;
-    branchId?: string | null;
+    role: "ADMIN" | "STAFF";
+    staffTitle: string;
+    permissionProfile: StaffPermissionProfile;
+    permissions: StaffPermissionKey[];
   }
 ) {
-  const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
-  if (!branchId) return;
-
-  const memberResult = await supabase
-    .from("staff_members")
-    .select("id")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("user_id", input.userId)
-    .maybeSingle();
-
-  if (memberResult.error) {
-    if (isMissingStaffOperationsTable(memberResult.error)) return;
-    throw new AppError(memberResult.error.message, 400);
-  }
-
-  const memberId = memberResult.data?.id;
-  if (!memberId) return;
-
-  const pauseExistingResult = await supabase
-    .from("staff_branch_assignments")
-    .update({
-      is_primary: false,
-      assignment_status: "paused",
-      ended_at: new Date().toISOString()
-    })
-    .eq("restaurant_id", input.restaurantId)
-    .eq("staff_member_id", memberId)
-    .eq("is_primary", true)
-    .neq("branch_id", branchId)
-    .is("ended_at", null);
-
-  if (pauseExistingResult.error && !isMissingStaffOperationsTable(pauseExistingResult.error)) {
-    throw new AppError(pauseExistingResult.error.message, 400);
-  }
-
-  const existingAssignment = await supabase
-    .from("staff_branch_assignments")
-    .select("id")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("staff_member_id", memberId)
-    .eq("branch_id", branchId)
-    .maybeSingle();
-
-  if (existingAssignment.error) {
-    if (isMissingStaffOperationsTable(existingAssignment.error)) return;
-    throw new AppError(existingAssignment.error.message, 400);
-  }
-
-  if (existingAssignment.data?.id) {
-    const activateResult = await supabase
-      .from("staff_branch_assignments")
-      .update({
-        is_primary: true,
-        assignment_status: "active",
-        ended_at: null,
-        starts_at: new Date().toISOString()
-      })
-      .eq("id", existingAssignment.data.id);
-
-    if (activateResult.error && !isMissingStaffOperationsTable(activateResult.error)) {
-      throw new AppError(activateResult.error.message, 400);
+  const { error } = await supabase.auth.admin.updateUserById(input.userId, {
+    app_metadata: {
+      restaurant_id: input.restaurantId,
+      role: input.role,
+      staff_title: input.staffTitle,
+      permission_profile: input.permissionProfile,
+      permissions: normalizeStaffPermissions(input.permissions, input.permissionProfile)
     }
-
-    return;
-  }
-
-  const insertResult = await supabase.from("staff_branch_assignments").insert({
-    restaurant_id: input.restaurantId,
-    staff_member_id: memberId,
-    branch_id: branchId,
-    is_primary: true,
-    assignment_status: "active"
   });
 
-  if (insertResult.error && !isMissingStaffOperationsTable(insertResult.error)) {
-    throw new AppError(insertResult.error.message, 400);
+  if (error) {
+    writeOperationalEvent({
+      area: "audit",
+      event: "staff_auth_app_metadata_sync_failed",
+      restaurantId: input.restaurantId,
+      status: "warn",
+      metadata: {
+        userId: input.userId,
+        error: error.message
+      }
+    });
   }
 }
 
@@ -684,6 +620,7 @@ export async function listRestaurantUsers(restaurantId: string) {
 
 export async function createRestaurantUser(input: {
   restaurantId: string;
+  actorUserId?: string | null;
   email: string;
   password: string;
   roleCode: string;
@@ -699,6 +636,8 @@ export async function createRestaurantUser(input: {
   const supabase = createAdminSupabaseClient() as any;
   const normalizedEmail = input.email.toLowerCase();
   const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
+  const pinPayload = buildStaffPinPayload(input.restaurantId, input.pin);
 
   const { data: existingUser, error: existingUserError } = await supabase
     .from("users")
@@ -714,7 +653,7 @@ export async function createRestaurantUser(input: {
     email: normalizedEmail,
     password: input.password,
     email_confirm: true,
-    user_metadata: {
+    app_metadata: {
       restaurant_id: input.restaurantId,
       role: roleConfig.scope,
       staff_title: roleConfig.title,
@@ -727,79 +666,51 @@ export async function createRestaurantUser(input: {
     throw new AppError(authError?.message ?? "Không tạo được tài khoản nhân viên", 400);
   }
 
-  let { data, error } = await supabase
-    .from("users")
-    .insert({
-      id: authUser.user.id,
-      email: normalizedEmail,
-      role: roleConfig.scope,
-      restaurant_id: input.restaurantId,
-      staff_title: roleConfig.title,
-      permission_profile: roleConfig.profile,
-      permissions: roleConfig.permissions
-    })
-    .select()
-    .single();
-
-  if (isMissingStaffProfileColumn(error)) {
-    const fallback = await supabase
-      .from("users")
-      .insert({
-        id: authUser.user.id,
-        email: normalizedEmail,
-        role: roleConfig.scope,
-        restaurant_id: input.restaurantId
-      })
-      .select()
-      .single();
-    data = fallback.data;
-    error = fallback.error;
-  }
-
-  if (error) {
-    await supabase.auth.admin.deleteUser(authUser.user.id);
-    throw new AppError(error.message, 400);
-  }
-
-  const staffProfile = await upsertStaffOperationsProfile(supabase, {
-    restaurantId: input.restaurantId,
-    userId: authUser.user.id,
-    email: normalizedEmail,
-    roleCode: roleConfig.code,
-    roleConfig,
-    fullName: input.fullName,
-    pin: input.pin ?? null,
-    phone: input.phone ?? null,
-    dateOfBirth: input.dateOfBirth ?? null,
-    hometown: input.hometown ?? null,
-    mustChangeAppPassword: input.mustChangeAppPassword ?? true,
-    notes: input.notes ?? null
-  }).catch(async (profileError) => {
-    // Rollback the half-created account so we never leave an orphan user
-    // (e.g. duplicate PIN) without a staff profile.
-    await supabase.from("users").delete().eq("id", authUser.user.id);
-    await supabase.auth.admin.deleteUser(authUser.user.id);
-    throw profileError;
+  const { data, error } = await supabase.rpc("create_staff_user_profile", {
+    p_user_id: authUser.user.id,
+    p_restaurant_id: input.restaurantId,
+    p_actor_user_id: input.actorUserId ?? null,
+    p_email: normalizedEmail,
+    p_role_scope: roleConfig.scope,
+    p_staff_title: roleConfig.title,
+    p_permission_profile: roleConfig.profile,
+    p_permissions: roleConfig.permissions,
+    p_role_id: roleConfig.id,
+    p_role_code: roleConfig.code,
+    p_full_name: input.fullName,
+    p_phone: input.phone ?? null,
+    p_username: null,
+    p_pin_hash: "pin_hash" in pinPayload ? pinPayload.pin_hash : null,
+    p_pin_lookup_hash: "pin_lookup_hash" in pinPayload ? pinPayload.pin_lookup_hash : null,
+    p_date_of_birth: input.dateOfBirth ?? null,
+    p_hometown: input.hometown ?? null,
+    p_must_change_app_password: input.mustChangeAppPassword ?? true,
+    p_branch_id: branchId,
+    p_notes: input.notes ?? null
   });
 
-  try {
-    await syncStaffPrimaryBranch(supabase, {
-      restaurantId: input.restaurantId,
-      userId: authUser.user.id,
-      branchId: input.branchId ?? null
-    });
-  } catch (branchError) {
-    await supabase.from("staff_members").delete().eq("restaurant_id", input.restaurantId).eq("user_id", authUser.user.id);
-    await supabase.from("users").delete().eq("id", authUser.user.id);
-    await supabase.auth.admin.deleteUser(authUser.user.id);
-    throw branchError;
+  if (error) {
+    await rollbackCreatedAuthUser(supabase, authUser.user.id);
+    throw staffCreateProfileRpcError(error);
+  }
+
+  const staffProfile = (Array.isArray(data) ? data[0] : data) as StaffCreateProfileRpcRow | null;
+  if (!staffProfile) {
+    await rollbackCreatedAuthUser(supabase, authUser.user.id);
+    throw new AppError("Không tạo được hồ sơ nhân viên sau khi tạo tài khoản Auth.", 400);
   }
 
   return {
-    ...data,
-    employeeCode: staffProfile.profile?.employee_code ?? null,
-    staffMemberId: staffProfile.profile?.id ?? null,
-    mustChangeAppPassword: staffProfile.profile?.must_change_app_password ?? true
+    id: authUser.user.id,
+    email: normalizedEmail,
+    role: roleConfig.scope,
+    restaurant_id: input.restaurantId,
+    staff_title: roleConfig.title,
+    permission_profile: roleConfig.profile,
+    permissions: roleConfig.permissions,
+    employeeCode: staffProfile.employee_code ?? null,
+    staffMemberId: staffProfile.staff_member_id ?? null,
+    mustChangeAppPassword: staffProfile.must_change_app_password ?? true
   };
 }
 
@@ -813,77 +724,35 @@ export async function updateRestaurantUserRole(input: {
     throw new AppError("Bạn không thể đổi vai trò của chính tài khoản đang đăng nhập.", 400);
   }
 
-  const preset = getStaffPermissionPreset(input.permissionProfile);
   const supabase = createAdminSupabaseClient() as any;
-  let userResult = await supabase
-    .from("users")
-    .select("id,email,role,restaurant_id,permission_profile,permissions")
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .single();
-
-  if (isMissingStaffProfileColumn(userResult.error)) {
-    userResult = await supabase
-      .from("users")
-      .select("id,email,role,restaurant_id")
-      .eq("id", input.userId)
-      .eq("restaurant_id", input.restaurantId)
-      .single();
-  }
-
-  const user = userResult.data as StaffProfileRow | null;
-  throwIfSupabaseError(userResult.error);
-  if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
-
-  if (user.role === "ADMIN" && preset.role === "STAFF") {
-    const { count, error } = await supabase
-      .from("users")
-      .select("id", { count: "exact", head: true })
-      .eq("restaurant_id", input.restaurantId)
-      .eq("role", "ADMIN");
-    throwIfSupabaseError(error);
-    if ((count ?? 0) <= 1) {
-      throw new AppError("Cần giữ lại ít nhất một tài khoản quản lý cho quán.", 400);
-    }
-  }
-
-  let updateResult = await supabase
-    .from("users")
-    .update({
-      role: preset.role,
-      staff_title: preset.title,
-      permission_profile: preset.key,
-      permissions: preset.permissions
-    })
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .select()
-    .single();
-
-  if (isMissingStaffProfileColumn(updateResult.error)) {
-    updateResult = await supabase
-      .from("users")
-      .update({ role: preset.role })
-      .eq("id", input.userId)
-      .eq("restaurant_id", input.restaurantId)
-      .select()
-      .single();
-  }
-
-  throwIfSupabaseError(updateResult.error);
-
-  const { error: metadataError } = await supabase.auth.admin.updateUserById(input.userId, {
-    user_metadata: {
-      restaurant_id: input.restaurantId,
-      role: preset.role,
-      staff_title: preset.title,
-      permission_profile: preset.key,
-      permissions: normalizeStaffPermissions(preset.permissions, preset.key)
-    }
+  const roleCode = mapPermissionProfileToRoleTemplateCode(input.permissionProfile);
+  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, roleCode);
+  const { data, error } = await supabase.rpc("update_staff_user_profile", {
+    p_restaurant_id: input.restaurantId,
+    p_user_id: input.userId,
+    p_actor_user_id: input.actorUserId,
+    p_role_scope: roleConfig.scope,
+    p_staff_title: roleConfig.title,
+    p_permission_profile: roleConfig.profile,
+    p_permissions: roleConfig.permissions,
+    p_role_id: roleConfig.id,
+    p_role_code: roleConfig.code,
+    p_profile: {},
+    p_branch_id: null
   });
-  if (metadataError) throw new AppError(metadataError.message, 400);
 
-  return updateResult.data;
+  if (error) throw staffMutationRpcError(error);
+
+  await syncStaffAuthAppMetadata(supabase, {
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    role: roleConfig.scope,
+    staffTitle: roleConfig.title,
+    permissionProfile: roleConfig.profile,
+    permissions: roleConfig.permissions
+  });
+
+  return (Array.isArray(data) ? data[0] : data) as StaffMutationRpcRow | null;
 }
 
 export async function updateRestaurantUserOperationsProfile(input: {
@@ -905,123 +774,48 @@ export async function updateRestaurantUserOperationsProfile(input: {
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
-
-  if (input.userId === input.actorUserId && roleConfig.scope !== "ADMIN") {
-    throw new AppError("Bạn không thể tự hạ quyền quản trị của tài khoản đang đăng nhập.", 400);
-  }
-
-  const currentMemberResult = await supabase
-    .from("staff_members")
-    .select("full_name,phone,username,date_of_birth,hometown,notes,employment_status,emergency_contact_name,emergency_contact_phone")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("user_id", input.userId)
-    .maybeSingle();
-
-  if (currentMemberResult.error && !isMissingStaffOperationsTable(currentMemberResult.error)) {
-    throw new AppError(currentMemberResult.error.message, 400);
-  }
-
-  const userResult = await supabase
-    .from("users")
-    .select("id,email,role,restaurant_id")
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .single();
-
-  throwIfSupabaseError(userResult.error);
-  const user = userResult.data as StaffProfileRow | null;
-  if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
-  const currentMember = currentMemberResult.data as
-    | {
-        full_name: string;
-        phone: string | null;
-        username: string | null;
-        date_of_birth: string | null;
-        hometown: string | null;
-        notes: string | null;
-        employment_status: "active" | "suspended" | "resigned";
-        emergency_contact_name: string | null;
-        emergency_contact_phone: string | null;
-      }
-    | null;
-
-  if (user.role === "ADMIN" && roleConfig.scope === "STAFF") {
-    const { count, error } = await supabase
-      .from("users")
-      .select("id", { count: "exact", head: true })
-      .eq("restaurant_id", input.restaurantId)
-      .eq("role", "ADMIN")
-      .eq("account_status", "active");
-    throwIfSupabaseError(error);
-    if ((count ?? 0) <= 1) {
-      throw new AppError("Cần giữ lại ít nhất một tài khoản quản trị đang hoạt động cho quán.", 400);
-    }
-  }
-
-  let updateResult = await supabase
-    .from("users")
-    .update({
-      role: roleConfig.scope,
-      staff_title: roleConfig.title,
-      permission_profile: roleConfig.profile,
-      permissions: roleConfig.permissions,
-      account_status: input.employmentStatus === "suspended" ? "blocked" : "active",
-      blocked_at: input.employmentStatus === "suspended" ? new Date().toISOString() : null,
-      blocked_reason: input.employmentStatus === "suspended" ? "Suspended from staff operations console" : null
-    })
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .select()
-    .single();
-
-  if (isMissingStaffProfileColumn(updateResult.error)) {
-    updateResult = await supabase
-      .from("users")
-      .update({ role: roleConfig.scope })
-      .eq("id", input.userId)
-      .eq("restaurant_id", input.restaurantId)
-      .select()
-      .single();
-  }
-
-  throwIfSupabaseError(updateResult.error);
-
-  const { error: metadataError } = await supabase.auth.admin.updateUserById(input.userId, {
-    user_metadata: {
-      restaurant_id: input.restaurantId,
-      role: roleConfig.scope,
-      staff_title: roleConfig.title,
-      permission_profile: roleConfig.profile,
-      permissions: normalizeStaffPermissions(roleConfig.permissions, roleConfig.profile)
-    }
-  });
-  if (metadataError) throw new AppError(metadataError.message, 400);
-
-  await upsertStaffOperationsProfile(supabase, {
-    restaurantId: input.restaurantId,
-    userId: input.userId,
-    email: user.email,
-    roleCode: roleConfig.code,
-    roleConfig,
+  const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
+  const pinPayload = buildStaffPinPayload(input.restaurantId, input.pin);
+  const profilePayload = compactRecord({
     fullName: input.fullName,
-    pin: input.pin ?? null,
-    phone: input.phone ?? currentMember?.phone ?? null,
-    dateOfBirth: input.dateOfBirth ?? currentMember?.date_of_birth ?? null,
-    hometown: input.hometown ?? currentMember?.hometown ?? null,
-    username: input.username ?? currentMember?.username ?? null,
+    phone: input.phone,
+    username: input.username,
+    dateOfBirth: input.dateOfBirth,
+    hometown: input.hometown,
     employmentStatus: input.employmentStatus,
-    emergencyContactName: input.emergencyContactName ?? currentMember?.emergency_contact_name ?? null,
-    emergencyContactPhone: input.emergencyContactPhone ?? currentMember?.emergency_contact_phone ?? null,
-    notes: input.notes ?? currentMember?.notes ?? null
+    emergencyContactName: input.emergencyContactName,
+    emergencyContactPhone: input.emergencyContactPhone,
+    notes: input.notes,
+    pinHash: "pin_hash" in pinPayload ? pinPayload.pin_hash : undefined,
+    pinLookupHash: "pin_lookup_hash" in pinPayload ? pinPayload.pin_lookup_hash : undefined
   });
 
-  await syncStaffPrimaryBranch(supabase, {
+  const { data, error } = await supabase.rpc("update_staff_user_profile", {
+    p_restaurant_id: input.restaurantId,
+    p_user_id: input.userId,
+    p_actor_user_id: input.actorUserId,
+    p_role_scope: roleConfig.scope,
+    p_staff_title: roleConfig.title,
+    p_permission_profile: roleConfig.profile,
+    p_permissions: roleConfig.permissions,
+    p_role_id: roleConfig.id,
+    p_role_code: roleConfig.code,
+    p_profile: profilePayload,
+    p_branch_id: branchId
+  });
+
+  if (error) throw staffMutationRpcError(error);
+
+  await syncStaffAuthAppMetadata(supabase, {
     restaurantId: input.restaurantId,
     userId: input.userId,
-    branchId: input.branchId ?? null
+    role: roleConfig.scope,
+    staffTitle: roleConfig.title,
+    permissionProfile: roleConfig.profile,
+    permissions: roleConfig.permissions
   });
 
-  return updateResult.data;
+  return (Array.isArray(data) ? data[0] : data) as StaffMutationRpcRow | null;
 }
 
 export async function setRestaurantUserAccountState(input: {
@@ -1036,102 +830,17 @@ export async function setRestaurantUserAccountState(input: {
   }
 
   const supabase = createAdminSupabaseClient() as any;
-  const currentMemberResult = await supabase
-    .from("staff_members")
-    .select("full_name")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("user_id", input.userId)
-    .maybeSingle();
-
-  if (currentMemberResult.error && !isMissingStaffOperationsTable(currentMemberResult.error)) {
-    throw new AppError(currentMemberResult.error.message, 400);
-  }
-
-  const userResult = await supabase
-    .from("users")
-    .select("id,email,role,restaurant_id,permission_profile")
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .single();
-
-  throwIfSupabaseError(userResult.error);
-  const user = userResult.data as StaffProfileRow | null;
-  if (!user) throw new AppError("Không tìm thấy nhân viên", 404);
-  const currentMember = currentMemberResult.data as { full_name: string } | null;
-
-  if (user.role === "ADMIN" && input.nextState !== "active") {
-    const { count, error } = await supabase
-      .from("users")
-      .select("id", { count: "exact", head: true })
-      .eq("restaurant_id", input.restaurantId)
-      .eq("role", "ADMIN")
-      .eq("account_status", "active");
-    throwIfSupabaseError(error);
-    if ((count ?? 0) <= 1) {
-      throw new AppError("Cần giữ lại ít nhất một tài khoản quản trị đang hoạt động cho quán.", 400);
-    }
-  }
-
-  const updates =
-    input.nextState === "active"
-      ? {
-          account_status: "active",
-          blocked_at: null,
-          blocked_reason: null
-        }
-      : {
-          account_status: "blocked",
-          blocked_at: new Date().toISOString(),
-          blocked_reason: nullIfBlank(input.reason) ?? (input.nextState === "archived" ? "Archived from staff operations console" : "Suspended from staff operations console")
-        };
-
-  const updateResult = await supabase
-    .from("users")
-    .update(updates)
-    .eq("id", input.userId)
-    .eq("restaurant_id", input.restaurantId)
-    .select()
-    .single();
-
-  throwIfSupabaseError(updateResult.error);
-
-  const employmentStatus = input.nextState === "archived" ? "resigned" : input.nextState === "suspended" ? "suspended" : "active";
-  await upsertStaffOperationsProfile(supabase, {
-    restaurantId: input.restaurantId,
-    userId: input.userId,
-    email: user.email,
-    roleCode: user.role === "ADMIN" ? "owner" : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service"),
-    fullName: currentMember?.full_name ?? profileNameFromEmail(user.email),
-    employmentStatus,
-    notes: nullIfBlank(input.reason)
+  const { data, error } = await supabase.rpc("set_staff_account_state", {
+    p_restaurant_id: input.restaurantId,
+    p_user_id: input.userId,
+    p_actor_user_id: input.actorUserId,
+    p_next_state: input.nextState,
+    p_reason: input.reason ?? null
   });
 
-  const profileUpdate = await supabase
-    .from("staff_members")
-    .update({
-      suspended_at: input.nextState === "suspended" ? new Date().toISOString() : null,
-      archived_at: input.nextState === "archived" ? new Date().toISOString() : null
-    })
-    .eq("restaurant_id", input.restaurantId)
-    .eq("user_id", input.userId);
+  if (error) throw staffMutationRpcError(error);
 
-  if (profileUpdate.error && !isMissingStaffOperationsTable(profileUpdate.error)) {
-    throw new AppError(profileUpdate.error.message, 400);
-  }
-
-  const sessionUpdate = await supabase
-    .from("staff_sessions")
-    .update({
-      forced_logout_at: input.nextState === "active" ? null : new Date().toISOString()
-    })
-    .eq("restaurant_id", input.restaurantId)
-    .eq("staff_user_id", input.userId);
-
-  if (sessionUpdate.error && !isMissingStaffOperationsTable(sessionUpdate.error)) {
-    throw new AppError(sessionUpdate.error.message, 400);
-  }
-
-  return updateResult.data;
+  return (Array.isArray(data) ? data[0] : data) as StaffMutationRpcRow | null;
 }
 
 export async function deleteRestaurantUser(input: {

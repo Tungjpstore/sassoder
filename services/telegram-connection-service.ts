@@ -41,6 +41,7 @@ const TELEGRAM_DEFAULT_POLICIES = [
   { eventType: "inventory.low", label: "Tồn kho thấp", requiredPermission: "inventory.view", priority: 2, escalationAfterSeconds: 3600 },
   { eventType: "menu.item_availability_suggested", label: "Gợi ý ẩn/mở món", requiredPermission: "menu.edit", priority: 2, escalationAfterSeconds: 1800 },
   { eventType: "staff.checked_in", label: "Nhân sự check-in", requiredPermission: "attendance.view", priority: 5, escalationAfterSeconds: 3600 },
+  { eventType: "staff.checked_out", label: "Nhân sự kết ca", requiredPermission: "attendance.view", priority: 4, escalationAfterSeconds: 3600 },
   { eventType: "staff.request_created", label: "Duyệt nhân sự", requiredPermission: "approvals.review", priority: 2, escalationAfterSeconds: 1800 },
   { eventType: "staff.incident_reported", label: "Sự cố nhân sự", requiredPermission: "staff.view", priority: 1, escalationAfterSeconds: 300 },
   { eventType: "staff.request_reviewed", label: "Kết quả duyệt nhân sự", requiredPermission: "approvals.review", priority: 5, escalationAfterSeconds: 3600 }

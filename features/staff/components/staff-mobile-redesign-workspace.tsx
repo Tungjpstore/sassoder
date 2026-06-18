@@ -437,6 +437,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const latestAttendance = staff ? bundle.attendanceFeed.find((item) => item.staffMemberId === staff.id) ?? null : null;
   const selectedBranch = bundle.branches.find((branch) => branch.id === selectedBranchId) ?? null;
   const selectedBranchName = selectedBranch?.name ?? staff?.primaryBranchName ?? "Chi nhánh";
+  const attendanceActionBranchId = activeAttendance?.branchId ?? selectedBranchId;
+  const attendanceActionBranch = bundle.branches.find((branch) => branch.id === attendanceActionBranchId) ?? null;
+  const attendanceActionBranchName = attendanceActionBranch?.name ?? activeAttendance?.branchName ?? selectedBranchName;
+  const attendanceActionBranchLocked = Boolean(activeAttendance?.branchId);
 
   const refreshBundle = useCallback(async () => {
     try {
@@ -466,8 +470,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const attendanceMachine = useMemo(
     () => buildStaffAttendanceMachine({
       activeAttendance,
-      selectedBranchId,
-      selectedBranchName,
+      selectedBranchId: attendanceActionBranchId,
+      selectedBranchName: attendanceActionBranchName,
       canUseGps: bundle.premium.gpsAttendance,
       selectedSource: selectedClockSource,
       qrReady,
@@ -478,7 +482,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       syncing: offlineQueue.syncing,
       processing: processingAttendance
     }),
-    [activeAttendance, bundle.premium.gpsAttendance, deviceFingerprint, deviceTrust, offlineQueue.isOnline, offlineQueue.queue.length, offlineQueue.syncing, processingAttendance, qrReady, selectedBranchId, selectedBranchName, selectedClockSource]
+    [activeAttendance, attendanceActionBranchId, attendanceActionBranchName, bundle.premium.gpsAttendance, deviceFingerprint, deviceTrust, offlineQueue.isOnline, offlineQueue.queue.length, offlineQueue.syncing, processingAttendance, qrReady, selectedClockSource]
   );
 
   const todayAssignments = useMemo(
@@ -581,7 +585,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       setMessage({ tone: "warning", text: "Phiên đã bị quản lý đăng xuất. Vui lòng đăng nhập lại." });
       return;
     }
-    if (!selectedBranchId) {
+    const actionBranchId = activeAttendance?.branchId ?? selectedBranchId;
+    const actionBranch = bundle.branches.find((branch) => branch.id === actionBranchId) ?? null;
+
+    if (!actionBranchId) {
       setMessage({ tone: "warning", text: "Bạn cần chọn chi nhánh trước khi chấm công." });
       return;
     }
@@ -593,7 +600,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       setMessage({ tone: "warning", text: "Gói hiện tại chưa bật GPS độc lập. QR/WiFi vẫn cần vị trí chính xác tại quán để chống chấm công từ xa." });
       return;
     }
-    if (!selectedBranch?.attendanceLocationConfigured) {
+    if (!actionBranch?.attendanceLocationConfigured) {
       setMessage({ tone: "warning", text: "Chi nhánh chưa có toạ độ GPS nên chưa thể xác minh chấm công chống gian lận. Vui lòng báo quản lý cập nhật vị trí chi nhánh." });
       return;
     }
@@ -623,8 +630,8 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
       deviceInfo = { mode: "staff_mobile_redesign", deviceFingerprint: fingerprint, attendanceSessionToken: sessionToken, deviceTrustStatus: deviceTrust?.status ?? null, userAgent: navigator.userAgent };
       gps = await readGpsPosition();
       const result = action === "clock_in"
-        ? await clockInAttendance({ staffMemberId: staff.id, branchId: selectedBranchId, source, capturedAt, lat: gps?.lat, lng: gps?.lng, accuracyMeters: gps?.accuracyMeters, qrToken: source === "qr" ? qrToken.trim() : undefined, deviceInfo })
-        : await clockOutAttendance({ attendanceLogId: activeAttendance?.id, staffMemberId: staff.id, branchId: selectedBranchId, source, capturedAt, lat: gps?.lat, lng: gps?.lng, accuracyMeters: gps?.accuracyMeters, qrToken: source === "qr" ? qrToken.trim() : undefined, deviceInfo });
+        ? await clockInAttendance({ staffMemberId: staff.id, branchId: actionBranchId, source, capturedAt, lat: gps?.lat, lng: gps?.lng, accuracyMeters: gps?.accuracyMeters, qrToken: source === "qr" ? qrToken.trim() : undefined, deviceInfo })
+        : await clockOutAttendance({ attendanceLogId: activeAttendance?.id, staffMemberId: staff.id, branchId: actionBranchId, source, capturedAt, lat: gps?.lat, lng: gps?.lng, accuracyMeters: gps?.accuracyMeters, qrToken: source === "qr" ? qrToken.trim() : undefined, deviceInfo });
       setMessage({
         tone: isPendingAttendanceResult(result) ? "warning" : "success",
         text: isPendingAttendanceResult(result)
@@ -635,7 +642,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
     } catch (error) {
       const canQueue = shouldQueueAttendanceOffline({ error, isPremium: bundle.premium.gpsAttendance, isOnline: offlineQueue.isOnline, source });
       if (canQueue && source === "gps" && gps) {
-        const queued = offlineQueue.enqueue({ action, branchId: selectedBranchId, attendanceLogId: activeAttendance?.id, source: "gps", lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, capturedAt, deviceInfo });
+        const queued = offlineQueue.enqueue({ action, branchId: actionBranchId, attendanceLogId: activeAttendance?.id, source: "gps", lat: gps.lat, lng: gps.lng, accuracyMeters: gps.accuracyMeters, capturedAt, deviceInfo });
         setMessage({ tone: "warning", text: queued.error ?? "Mạng yếu. Thao tác đã được lưu vào hàng đợi offline." });
       } else {
         if (source === "qr" && isQrAttendanceError(error)) {
@@ -862,8 +869,9 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   nowMs={nowMs}
                   latestAttendance={latestAttendance}
                   activeDuration={activeDuration}
-                  selectedBranchId={selectedBranchId}
-                  selectedBranchName={selectedBranchName}
+                  selectedBranchId={attendanceActionBranchId}
+                  selectedBranchName={attendanceActionBranchName}
+                  branchLocked={attendanceActionBranchLocked}
                   branches={bundle.branches}
                   onBranchChange={setSelectedBranchId}
                   selectedSource={selectedClockSource}
@@ -876,7 +884,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   processing={processingAttendance || forcedLogout || attendanceBlockedByOffline}
                   gpsEnabled={bundle.premium.gpsAttendance}
                   qrReady={qrReady}
-                  branchLocationConfigured={Boolean(selectedBranch?.attendanceLocationConfigured)}
+                  branchLocationConfigured={Boolean(attendanceActionBranch?.attendanceLocationConfigured)}
                   online={offlineQueue.isOnline}
                   queueLength={offlineQueue.queue.length}
                   syncing={offlineQueue.syncing}
@@ -1003,6 +1011,7 @@ function ClockControlCard({
   activeDuration,
   selectedBranchId,
   selectedBranchName,
+  branchLocked,
   branches,
   onBranchChange,
   selectedSource,
@@ -1026,6 +1035,7 @@ function ClockControlCard({
   activeDuration: string;
   selectedBranchId: string;
   selectedBranchName: string;
+  branchLocked: boolean;
   branches: StaffOperationsBundle["branches"];
   onBranchChange: (value: string) => void;
   selectedSource: ClockSource;
@@ -1074,7 +1084,7 @@ function ClockControlCard({
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
           <label className="min-w-0">
             <span className="sr-only">Chi nhánh chấm công</span>
-            <select value={selectedBranchId} onChange={(event) => onBranchChange(event.target.value)} disabled={!branches.length} className="staff-redesign-input w-full">
+            <select value={selectedBranchId} onChange={(event) => onBranchChange(event.target.value)} disabled={!branches.length || branchLocked} className="staff-redesign-input w-full">
               <option value="">Chưa có chi nhánh</option>
               {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
             </select>

@@ -202,7 +202,9 @@ export async function uploadStaffMemberAvatarByAdmin({
   });
 
   return { avatarUrl };
-}export async function createStaffIncidentReport({
+}
+
+export async function createStaffIncidentReport({
   session,
   input
 }: {
@@ -276,7 +278,7 @@ export async function uploadStaffMemberAvatarByAdmin({
     })
   ]);
 
-  void publishOperationalEvent({
+  await publishOperationalEvent({
     type: "staff.incident_reported",
     eventId: `staff.incident_reported:${result.data.id}`,
     restaurantId: session.restaurantId,
