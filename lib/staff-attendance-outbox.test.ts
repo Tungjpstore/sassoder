@@ -5,6 +5,7 @@ import test from "node:test";
 const attendanceServiceSource = readFileSync("features/attendance/services/attendance-service.ts", "utf8");
 const eventBusSource = readFileSync("services/operational-event-bus.ts", "utf8");
 const selfServiceSource = readFileSync("features/staff/services/staff-self-service.ts", "utf8");
+const requestServiceSource = readFileSync("features/staff/services/staff-request-service.ts", "utf8");
 const telegramConnectionSource = readFileSync("services/telegram-connection-service.ts", "utf8");
 const migrationSql = readFileSync("supabase/migrations/20260618095338_staff_hr_attendance_event_outbox.sql", "utf8");
 
@@ -75,7 +76,16 @@ test("attendance approval creation publishes staff request events for Telegram/r
 
 test("staff incident reports await the operational event path instead of fire-and-forget", () => {
   const body = functionBody(selfServiceSource, "createStaffIncidentReport");
+  assert.match(body, /await recordOperationalEventOutbox\(incidentEvent\)/);
   assert.match(body, /await publishOperationalEvent\(/);
+  assert.doesNotMatch(body, /void publishOperationalEvent\(/);
+});
+
+test("staff self-service requests record durable outbox events before Telegram publish", () => {
+  const body = functionBody(requestServiceSource, "createStaffOperationalRequest");
+  assert.match(body, /const requestEvent =/);
+  assert.match(body, /await recordOperationalEventOutbox\(requestEvent\)/);
+  assert.match(body, /await publishOperationalEvent\(requestEvent\)/);
   assert.doesNotMatch(body, /void publishOperationalEvent\(/);
 });
 

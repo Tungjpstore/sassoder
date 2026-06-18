@@ -43,6 +43,7 @@ import {
   resetStaffAppPasswordAction,
   reviewAttendanceApprovalAction,
   setStaffAccountStateAction,
+  updateOwnerDashboardProfileAction,
   updateStaffProfileAction,
   updateStaffRoleAction,
   type StaffActionState
@@ -54,8 +55,8 @@ import { staffPermissionLabel } from "@/lib/staff-permissions";
 import { isStaffRecentlyActive, describeTodayAttendance, describeRole, MetricStrip, StatusPill, StaffIdentityCard } from "@/features/staff/ui";
 import { cn } from "@/lib/utils";
 import type { StaffOperationsBundle, StaffOpsMember } from "@/features/staff/types";
-import type { StaffPayrollDeductions, StaffPayrollProfile } from "@/features/staff/services/staff-payroll-compute";
-import { summarizePayroll } from "@/features/staff/services/staff-payroll-compute";
+import type { StaffPayrollDeductions, StaffPayrollPeriod, StaffPayrollProfile, StaffPayslip } from "@/features/staff/services/staff-payroll-compute";
+import { DEFAULT_PAYROLL_HOURLY_RATE, DEFAULT_PAYROLL_OT_MULTIPLIER, summarizePayroll } from "@/features/staff/services/staff-payroll-compute";
 
 type Props = {
   bundle: StaffOperationsBundle;
@@ -64,10 +65,12 @@ type Props = {
   restaurantStaffCode: string | null;
   payrollDeductions: StaffPayrollDeductions;
   payrollProfiles: StaffPayrollProfile[];
+  payrollPeriods: StaffPayrollPeriod[];
+  payrollPayslips: StaffPayslip[];
   payrollDataError?: string | null;
 };
 
-type Tab = "all" | "online" | "manager" | "staff" | "blocked";
+type Tab = "all" | "online" | "owner" | "manager" | "staff" | "blocked";
 type View = "team" | "shifts" | "attendance" | "payroll" | "compliance";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -107,6 +110,14 @@ function isOnlineMember(m: StaffOpsMember) {
   return isStaffRecentlyActive(m.lastSeenAt);
 }
 
+function isOwnerMember(member: StaffOpsMember) {
+  return member.roleCode === "owner";
+}
+
+function isOperationalMember(member: StaffOpsMember) {
+  return !isOwnerMember(member) && !member.isArchived && member.employmentStatus !== "resigned";
+}
+
 function shiftLabel(m: StaffOpsMember) {
   return describeTodayAttendance(m).label;
 }
@@ -126,20 +137,23 @@ export function RealStaffWorkspaceV2(props: Props) {
 
   const rtState = useStaffMobileRealtime({ restaurantId, onRefresh: () => router.refresh() });
 
-  const totalMembers = bundle.members.length;
-  const onlineCount = useMemo(() => bundle.members.filter(isOnlineMember).length, [bundle.members]);
+  const operationalMembers = useMemo(() => bundle.members.filter(isOperationalMember), [bundle.members]);
+  const accountCount = bundle.members.length;
+  const ownerCount = useMemo(() => bundle.members.filter(isOwnerMember).length, [bundle.members]);
+  const totalMembers = operationalMembers.length;
+  const onlineCount = useMemo(() => operationalMembers.filter(isOnlineMember).length, [operationalMembers]);
   const managerCount = useMemo(
-    () => bundle.members.filter((m) => m.roleCode === "manager" || m.roleCode === "owner").length,
-    [bundle.members]
+    () => operationalMembers.filter((m) => m.roleCode === "manager").length,
+    [operationalMembers]
   );
   const staffCount = useMemo(
-    () => bundle.members.filter((m) => m.roleCode !== "manager" && m.roleCode !== "owner").length,
-    [bundle.members]
+    () => operationalMembers.filter((m) => m.roleCode !== "manager").length,
+    [operationalMembers]
   );
   const blockedCount = useMemo(() => bundle.members.filter((m) => m.accountStatus === "blocked").length, [bundle.members]);
   const attentionToday = useMemo(
-    () => bundle.members.filter((m) => m.todayAttendanceState === "late" || m.todayAttendanceState === "absent" || m.todayAttendanceState === "early_leave").length,
-    [bundle.members]
+    () => operationalMembers.filter((m) => m.todayAttendanceState === "late" || m.todayAttendanceState === "absent" || m.todayAttendanceState === "early_leave").length,
+    [operationalMembers]
   );
   const pendingApprovals = useMemo(
     () => bundle.approvals.filter((a) => a.status === "pending").length,
@@ -148,11 +162,12 @@ export function RealStaffWorkspaceV2(props: Props) {
 
   const visible = useMemo(() => {
     if (tab === "all") return bundle.members;
-    if (tab === "online") return bundle.members.filter(isOnlineMember);
-    if (tab === "manager") return bundle.members.filter((m) => m.roleCode === "manager" || m.roleCode === "owner");
+    if (tab === "online") return operationalMembers.filter(isOnlineMember);
+    if (tab === "owner") return bundle.members.filter(isOwnerMember);
+    if (tab === "manager") return operationalMembers.filter((m) => m.roleCode === "manager");
     if (tab === "blocked") return bundle.members.filter((m) => m.accountStatus === "blocked");
-    return bundle.members.filter((m) => m.roleCode !== "manager" && m.roleCode !== "owner");
-  }, [bundle.members, tab]);
+    return operationalMembers.filter((m) => m.roleCode !== "manager");
+  }, [bundle.members, operationalMembers, tab]);
 
   const selected = bundle.members.find((m) => m.id === selectedId) ?? null;
 
@@ -271,8 +286,10 @@ export function RealStaffWorkspaceV2(props: Props) {
         <TeamView
           tab={tab}
           setTab={setTab}
+          accountCount={accountCount}
           totalMembers={totalMembers}
           onlineCount={onlineCount}
+          ownerCount={ownerCount}
           managerCount={managerCount}
           staffCount={staffCount}
           blockedCount={blockedCount}
@@ -295,6 +312,8 @@ export function RealStaffWorkspaceV2(props: Props) {
           bundle={bundle}
           payrollDeductions={props.payrollDeductions}
           payrollProfiles={props.payrollProfiles}
+          payrollPeriods={props.payrollPeriods}
+          payrollPayslips={props.payrollPayslips}
           payrollDataError={props.payrollDataError ?? null}
           onChanged={() => router.refresh()}
         />
@@ -433,6 +452,7 @@ function StaffMemberDrawer({
   const [resetState, resetAction, resetPending] = useActionState(resetStaffAppPasswordAction, undefined);
   const [stateActionState, stateActionFn, statePending] = useActionState(setStaffAccountStateAction, undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const isOwnerProfile = member.roleCode === "owner";
 
   useEffect(() => {
     if (resetState?.success || stateActionState?.success) onChanged();
@@ -447,6 +467,19 @@ function StaffMemberDrawer({
   const blocked = member.accountStatus === "blocked";
   const lockExpiry = member.appPasswordLockedUntil ? new Date(member.appPasswordLockedUntil) : null;
   const isAppLocked = Boolean(lockExpiry && lockExpiry.getTime() > nowMs);
+  const profileTabs = isOwnerProfile
+    ? [
+        { key: "profile", label: "Hồ sơ chủ quán" },
+        { key: "credentials", label: "Tài khoản" },
+        { key: "permissions", label: "Quyền quản trị" }
+      ]
+    : [
+        { key: "profile", label: "Hồ sơ" },
+        { key: "credentials", label: "Mã NV & mật khẩu" },
+        { key: "permissions", label: "Phân quyền" },
+        { key: "attendance", label: "Chấm công" }
+      ];
+  const activeProfileTab = isOwnerProfile && tab === "attendance" ? "profile" : tab;
 
   function copyCode() {
     if (!member.employeeCode) return;
@@ -467,6 +500,17 @@ function StaffMemberDrawer({
     });
   }
 
+  function saveOwnerProfile(fd: FormData) {
+    startTransition(async () => {
+      const res = await updateOwnerDashboardProfileAction(undefined, fd);
+      if (res.error) toast.error(res.error);
+      else {
+        toast.success("Đã lưu hồ sơ chủ quán");
+        onChanged();
+      }
+    });
+  }
+
   function changeRole(roleCode: string) {
     if (roleCode === member.roleCode) return;
     const fd = new FormData();
@@ -482,11 +526,18 @@ function StaffMemberDrawer({
     });
   }
 
+  const memberOpenAttendance = useMemo(
+    () => bundle.attendanceFeed.find((attendance) => attendance.staffMemberId === member.id && !attendance.clockOutAt) ?? null,
+    [bundle.attendanceFeed, member.id]
+  );
+
   function manualClock(action: "in" | "out") {
     const fd = new FormData();
     fd.set("staffMemberId", member.id);
-    if (member.primaryBranchId) fd.set("branchId", member.primaryBranchId);
-    fd.set("note", action === "in" ? "Chấm công hộ vào" : "Chấm công hộ ra");
+    const branchId = action === "out" ? memberOpenAttendance?.branchId ?? member.primaryBranchId : member.primaryBranchId;
+    if (branchId) fd.set("branchId", branchId);
+    if (action === "out" && memberOpenAttendance?.id) fd.set("attendanceLogId", memberOpenAttendance.id);
+    fd.set("note", action === "in" ? "Quản lý chấm công hộ vào ca từ hồ sơ nhân viên" : "Quản lý kết ca hộ từ hồ sơ nhân viên");
     startTransition(async () => {
       const res = action === "in"
         ? await manualClockInStaffAction(undefined, fd)
@@ -507,13 +558,13 @@ function StaffMemberDrawer({
       onClose={onClose}
       width="lg"
       title={member.fullName}
-      subtitle={`${ROLE_LABEL[member.roleCode] ?? member.roleTitle}${member.employeeCode ? ` · Mã ${member.employeeCode}` : ""}`}
+      subtitle={isOwnerProfile ? "Hồ sơ chủ quán" : `${ROLE_LABEL[member.roleCode] ?? member.roleTitle}${member.employeeCode ? ` · Mã ${member.employeeCode}` : ""}`}
       headerMeta={
         <>
-          <Badge tone={online ? "ok" : "neutral"}>{online ? "Đang làm" : "Nghỉ"}</Badge>
+          {isOwnerProfile ? <Badge tone="jade"><ShieldCheck size={10} className="mr-1 inline" />Quản trị hệ thống</Badge> : <Badge tone={online ? "ok" : "neutral"}>{online ? "Đang làm" : "Nghỉ"}</Badge>}
           {blocked ? <Badge tone="danger">Đã khoá</Badge> : null}
-          {isAppLocked ? <Badge tone="orange">App tạm khoá</Badge> : null}
-          {member.suspiciousScore > 60 ? <Badge tone="orange"><Star size={10} className="mr-1 inline" />{member.suspiciousScore}</Badge> : null}
+          {!isOwnerProfile && isAppLocked ? <Badge tone="orange">App tạm khoá</Badge> : null}
+          {!isOwnerProfile && member.suspiciousScore > 60 ? <Badge tone="orange"><Star size={10} className="mr-1 inline" />{member.suspiciousScore}</Badge> : null}
         </>
       }
       footer={
@@ -526,12 +577,19 @@ function StaffMemberDrawer({
               <Phone size={15} /> Gọi
             </a>
           ) : null}
-          <Button type="button" variant="secondary" size="lg" onClick={() => manualClock("in")} disabled={pending}>
-            <LogIn size={14} /> Chấm vào hộ
-          </Button>
-          <Button type="button" variant="secondary" size="lg" onClick={() => manualClock("out")} disabled={pending}>
-            <LogOut size={14} /> Chấm ra hộ
-          </Button>
+          {!isOwnerProfile ? (
+            <>
+              {memberOpenAttendance ? (
+                <Button type="button" variant="secondary" size="lg" onClick={() => manualClock("out")} disabled={pending}>
+                  <LogOut size={14} /> Kết ca hộ
+                </Button>
+              ) : (
+                <Button type="button" variant="secondary" size="lg" onClick={() => manualClock("in")} disabled={pending}>
+                  <LogIn size={14} /> Chấm vào hộ
+                </Button>
+              )}
+            </>
+          ) : null}
           <Button type="submit" form={profileFormId} variant="primary" size="lg" className="flex-1" disabled={pending}>
             {pending ? "Đang lưu…" : "Lưu hồ sơ"}
           </Button>
@@ -541,49 +599,60 @@ function StaffMemberDrawer({
       <div className="flex flex-col gap-[var(--d-s-4)]">
         <StaffIdentityCard
           fullName={member.fullName}
-          employeeCode={member.employeeCode}
+          employeeCode={isOwnerProfile ? member.email : member.employeeCode}
           role={describeRole(member.roleCode, member.roleTitle)}
-          shift={describeTodayAttendance(member)}
+          shift={isOwnerProfile ? { label: "Tài khoản dashboard", tone: "jade", icon: ShieldCheck } : describeTodayAttendance(member)}
           avatarUrl={member.avatarUrl}
         />
+        {isOwnerProfile ? <OwnerProfileNotice member={member} /> : null}
         {/* Tabs */}
         <FilterTabs
-          active={tab}
+          active={activeProfileTab}
           onChange={(k) => setTab(k as typeof tab)}
-          tabs={[
-            { key: "profile", label: "Hồ sơ" },
-            { key: "credentials", label: "Mã NV & mật khẩu" },
-            { key: "permissions", label: "Phân quyền" },
-            { key: "attendance", label: "Chấm công" }
-          ]}
+          tabs={profileTabs}
         />
 
-        {tab === "profile" ? (
-          <ProfilePanel member={member} bundle={bundle} formId={profileFormId} onSave={saveProfile} />
+        {activeProfileTab === "profile" ? (
+          isOwnerProfile ? (
+            <OwnerProfilePanel member={member} formId={profileFormId} onSave={saveOwnerProfile} />
+          ) : (
+            <ProfilePanel member={member} bundle={bundle} formId={profileFormId} onSave={saveProfile} />
+          )
         ) : null}
 
-        {tab === "credentials" ? (
-          <CredentialsPanel
+        {activeProfileTab === "credentials" ? (
+          isOwnerProfile ? (
+            <OwnerAccountPanel member={member} blocked={blocked} />
+          ) : (
+            <CredentialsPanel
+              member={member}
+              restaurantStaffCode={restaurantStaffCode}
+              blocked={blocked}
+              isAppLocked={isAppLocked}
+              lockExpiry={lockExpiry}
+              resetState={resetState}
+              resetAction={resetAction}
+              resetPending={resetPending}
+              stateActionFn={stateActionFn}
+              statePending={statePending}
+              onCopyCode={copyCode}
+              onChanged={onChanged}
+            />
+          )
+        ) : null}
+
+        {activeProfileTab === "permissions" ? (
+          <PermissionsPanel
             member={member}
-            restaurantStaffCode={restaurantStaffCode}
-            blocked={blocked}
-            isAppLocked={isAppLocked}
-            lockExpiry={lockExpiry}
-            resetState={resetState}
-            resetAction={resetAction}
-            resetPending={resetPending}
-            stateActionFn={stateActionFn}
-            statePending={statePending}
-            onCopyCode={copyCode}
-            onChanged={onChanged}
+            bundle={bundle}
+            onChangeRole={changeRole}
+            pending={pending}
+            readOnly={isOwnerProfile}
+            readOnlyReason="Vai trò chủ quán là quyền gốc của quán. Không đổi role owner trong hồ sơ nhân viên."
           />
         ) : null}
 
-        {tab === "permissions" ? (
-          <PermissionsPanel member={member} bundle={bundle} onChangeRole={changeRole} pending={pending} />
-        ) : null}
-
-        {tab === "attendance" ? (
+        {!isOwnerProfile && activeProfileTab === "attendance" ? (
           <AttendancePanel member={member} bundle={bundle} />
         ) : null}
       </div>
@@ -591,7 +660,7 @@ function StaffMemberDrawer({
   );
 }
 
-function StaffAvatarUploader({ member }: { member: StaffOpsMember }) {
+function StaffAvatarUploader({ member, audience = "staff" }: { member: StaffOpsMember; audience?: "staff" | "owner" }) {
   const router = useRouter();
   const toast = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -602,7 +671,7 @@ function StaffAvatarUploader({ member }: { member: StaffOpsMember }) {
     setUploading(true);
     try {
       await uploadStaffMemberAvatar(member.id, file);
-      toast.success("Đã cập nhật ảnh đại diện nhân viên");
+      toast.success(audience === "owner" ? "Đã cập nhật ảnh đại diện chủ quán" : "Đã cập nhật ảnh đại diện nhân viên");
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Không thể tải ảnh đại diện.");
@@ -622,7 +691,9 @@ function StaffAvatarUploader({ member }: { member: StaffOpsMember }) {
       )}
       <div className="min-w-0 flex-1">
         <p className="text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)]">Ảnh đại diện</p>
-        <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">JPG, PNG hoặc WebP, tối đa 3MB. Đồng bộ ngay với app nhân viên.</p>
+        <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+          {audience === "owner" ? "JPG, PNG hoặc WebP, tối đa 3MB. Dùng cho hồ sơ quản trị dashboard." : "JPG, PNG hoặc WebP, tối đa 3MB. Đồng bộ ngay với app nhân viên."}
+        </p>
       </div>
       <input
         ref={inputRef}
@@ -636,6 +707,94 @@ function StaffAvatarUploader({ member }: { member: StaffOpsMember }) {
         {uploading ? "Đang tải…" : member.avatarUrl ? "Đổi ảnh" : "Tải ảnh"}
       </Button>
     </section>
+  );
+}
+
+function OwnerProfilePanel({
+  member,
+  formId,
+  onSave
+}: {
+  member: StaffOpsMember;
+  formId: string;
+  onSave: (fd: FormData) => void;
+}) {
+  return (
+    <form id={formId} action={(fd) => onSave(fd)} className="flex flex-col gap-[var(--d-s-4)]">
+      <input type="hidden" name="userId" value={member.userId} />
+
+      <StaffAvatarUploader member={member} audience="owner" />
+
+      <section className="grid gap-3 rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <p className="d-eyebrow">Thông tin quản trị</p>
+          <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            Hồ sơ chủ quán chỉ dùng cho dashboard. Không áp dụng PIN tạo đơn, chi nhánh làm việc, trạng thái ca hay bảng công.
+          </p>
+        </div>
+        <FormField label="Họ tên chủ quán" name="fullName" defaultValue={member.fullName} required full />
+        <FormField label="SĐT liên hệ" name="phone" defaultValue={member.phone ?? ""} placeholder="0901234567" />
+        <FormField label="Username dashboard" name="username" defaultValue={member.username ?? ""} placeholder="chuquan" />
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Email đăng nhập</span>
+          <div className="flex h-10 items-center rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text-muted)]">
+            {member.email || "Chưa có email"}
+          </div>
+        </div>
+      </section>
+    </form>
+  );
+}
+
+function OwnerProfileNotice({ member }: { member: StaffOpsMember }) {
+  return (
+    <section className="rounded-[var(--d-r-lg)] border border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] p-[var(--d-s-4)]">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--d-r-md)] bg-[var(--d-surface)] text-[var(--d-primary)]">
+          <ShieldCheck size={18} />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">Đây là hồ sơ chủ quán</p>
+          <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            Tài khoản này dùng để quản trị dashboard, phân quyền và vận hành quán. Các thao tác theo ca như chấm công hộ, kết ca hộ, điểm danh GPS/QR/WiFi không áp dụng cho chủ quán.
+          </p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <Tile label="Email đăng nhập" value={member.email || "Chưa có"} />
+            <Tile label="Quyền" value={`${member.permissions.length} quyền`} />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OwnerAccountPanel({ member, blocked }: { member: StaffOpsMember; blocked: boolean }) {
+  return (
+    <div className="flex flex-col gap-[var(--d-s-4)]">
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-[var(--d-s-4)]">
+        <p className="d-eyebrow">Tài khoản dashboard</p>
+        <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+          Chủ quán đăng nhập dashboard bằng tài khoản quản trị. Mật khẩu app staff, mã NV và trạng thái chấm công không dùng cho hồ sơ này.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <Tile label="Email" value={member.email || "Chưa có"} />
+          <Tile label="Username" value={member.username || "Chưa đặt"} />
+          <Tile label="Trạng thái" value={blocked ? "Đã khoá" : "Đang hoạt động"} />
+        </div>
+      </section>
+
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
+        <p className="d-eyebrow">Bảo mật & phạm vi</p>
+        <div className="mt-3 grid gap-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+          <div className="flex justify-between gap-2"><span>Vai trò hệ thống</span><span className="font-bold text-[var(--d-text)]">Chủ quán</span></div>
+          <div className="flex justify-between gap-2"><span>Phiên thiết bị</span><span className="d-num font-bold text-[var(--d-text)]">{member.activeSessionCount}</span></div>
+          <div className="flex justify-between gap-2"><span>Lần online gần nhất</span><span className="font-bold text-[var(--d-text)]">{member.lastSeenAt ? new Date(member.lastSeenAt).toLocaleString("vi-VN") : "—"}</span></div>
+        </div>
+        <p className="mt-3 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+          Các hành động nhạy cảm của chủ quán như đổi mật khẩu đăng nhập dashboard hoặc thu hồi owner nên đi qua luồng tài khoản/bảo mật riêng, không đặt chung với thao tác nhân viên theo ca.
+        </p>
+      </section>
+    </div>
   );
 }
 
@@ -862,19 +1021,23 @@ function PermissionsPanel({
   member,
   bundle,
   onChangeRole,
-  pending
+  pending,
+  readOnly = false,
+  readOnlyReason
 }: {
   member: StaffOpsMember;
   bundle: StaffOperationsBundle;
   onChangeRole: (roleCode: string) => void;
   pending: boolean;
+  readOnly?: boolean;
+  readOnlyReason?: string;
 }) {
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">
       <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
         <p className="d-eyebrow">Vai trò</p>
         <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-          Đổi vai trò sẽ cập nhật quyền theo template chuẩn. Tinh chỉnh chi tiết quyền per-role tại "Quản lý chi tiết".
+          {readOnly ? readOnlyReason : "Đổi vai trò sẽ cập nhật quyền theo template chuẩn. Tinh chỉnh chi tiết quyền per-role tại \"Quản lý chi tiết\"."}
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {bundle.roles?.map((r) => {
@@ -884,7 +1047,7 @@ function PermissionsPanel({
                 key={r.id}
                 type="button"
                 onClick={() => onChangeRole(String(r.code))}
-                disabled={pending || active}
+                disabled={pending || active || readOnly}
                 className={cn(
                   "flex flex-col items-start gap-1 rounded-[var(--d-r-md)] border p-3 text-left transition",
                   active
@@ -931,12 +1094,30 @@ function AttendancePanel({
   bundle: StaffOperationsBundle;
 }) {
   const memberAttendance = bundle.attendanceFeed.filter((a) => a.staffMemberId === member.id).slice(0, 10);
+  const openAttendance = memberAttendance.find((attendance) => !attendance.clockOutAt) ?? null;
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">
       <section className="grid grid-cols-3 gap-2">
         <Tile label="Trễ ca hôm nay" value={`${member.lateMinutesToday}p`} />
         <Tile label="Tăng ca hôm nay" value={`${member.overtimeMinutesToday}p`} />
         <Tile label="Phiên thiết bị" value={String(member.activeSessionCount)} />
+      </section>
+
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="d-eyebrow">Trạng thái ca hiện tại</p>
+            <p className="mt-1 text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">
+              {openAttendance ? `Đang trong ca tại ${openAttendance.branchName ?? "chi nhánh chưa rõ"}` : "Không có ca đang mở"}
+            </p>
+            <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+              {openAttendance
+                ? `Vào ca lúc ${new Date(openAttendance.clockInAt).toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}. Nút chính trong hồ sơ sẽ kết ca hộ đúng phiên này.`
+                : "Nút chính trong hồ sơ sẽ chấm vào hộ. Nếu nhân viên báo đã vào ca nhưng hệ thống không thấy, kiểm tra lịch sử và yêu cầu đối soát trước khi sửa công."}
+            </p>
+          </div>
+          <Badge tone={openAttendance ? "ok" : "neutral"}>{openAttendance ? "Ca mở" : "Sẵn sàng vào ca"}</Badge>
+        </div>
       </section>
 
       <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)]">
@@ -995,6 +1176,8 @@ function CreateStaffModal({
   const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<StaffActionState | null>(null);
+  const [requiredDraft, setRequiredDraft] = useState({ fullName: "", roleCode: "waiter" });
+  const canCreateStaff = requiredDraft.fullName.trim().length >= 2 && requiredDraft.roleCode.trim().length > 0;
   if (!open) return null;
 
   function copy(value: string | null | undefined, label: string) {
@@ -1055,6 +1238,10 @@ function CreateStaffModal({
       <form
         action={async (fd) => {
           if (submitting) return;
+          if (!canCreateStaff) {
+            toast.error("Vui lòng nhập đầy đủ thông tin bắt buộc trước khi tạo nhân viên.");
+            return;
+          }
           setSubmitting(true);
           try {
             const res = await createStaffAction(undefined, fd);
@@ -1072,21 +1259,39 @@ function CreateStaffModal({
         }}
         className="grid gap-3"
       >
-        <p className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-          Hệ thống sẽ tạo email + mật khẩu PWA, đồng thời sinh mã NV tự động cho nhân viên đăng nhập app staff.
-        </p>
+        <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2">
+          <p className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text)]">Tạo nhanh tài khoản nhân viên</p>
+          <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            Chỉ cần nhập các trường bắt buộc. Email nội bộ, mật khẩu lần đầu và mã NV sẽ được tự sinh nếu để trống.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[length:var(--d-fs-2xs)] font-bold">
+            <span className="rounded-full border border-[var(--d-danger-fg)]/20 bg-[var(--d-danger-bg)] px-2 py-1 text-[var(--d-danger-fg)]">Bắt buộc</span>
+            <span className="rounded-full border border-[var(--d-line)] bg-[var(--d-surface)] px-2 py-1 text-[var(--d-text-muted)]">Tùy chọn</span>
+            <span className="rounded-full border border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] px-2 py-1 text-[var(--d-primary)]">Tự tạo nếu trống</span>
+          </div>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Họ tên" name="fullName" required full placeholder="VD: Nguyễn Văn A" />
-          <FormField label="Email login dashboard" name="email" type="email" placeholder="Để trống = tạo email nội bộ" />
-          <FormField label="Mật khẩu lần đầu" name="password" type="text" placeholder="Để trống = tự tạo mật khẩu mạnh (≥ 8 ký tự)" />
-          <FormField label="PIN tạo đơn (4 số)" name="pin" maxLength={4} placeholder="VD: 1234" />
-          <FormField label="SĐT" name="phone" placeholder="0901234567" />
-          <FormField label="Ngày sinh" name="dateOfBirth" type="date" />
-          <FormField label="Quê quán" name="hometown" placeholder="Không bắt buộc" />
+          <FormField
+            label="Họ tên"
+            name="fullName"
+            required
+            requirement="required"
+            full
+            placeholder="VD: Nguyễn Văn A"
+            onValueChange={(value) => setRequiredDraft((current) => ({ ...current, fullName: value }))}
+          />
+          <FormField label="Email login dashboard" name="email" type="email" requirement="generated" placeholder="Để trống = tạo email nội bộ" />
+          <FormField label="Mật khẩu lần đầu" name="password" type="text" requirement="generated" placeholder="Để trống = tự tạo mật khẩu mạnh" />
+          <FormField label="PIN tạo đơn (4 số)" name="pin" maxLength={4} requirement="optional" placeholder="VD: 1234" />
+          <FormField label="SĐT" name="phone" requirement="optional" placeholder="0901234567" />
+          <FormField label="Ngày sinh" name="dateOfBirth" type="date" requirement="optional" />
+          <FormField label="Quê quán" name="hometown" requirement="optional" placeholder="VD: Cần Thơ" />
           <FormSelect
             label="Vai trò"
             name="roleCode"
             defaultValue="waiter"
+            requirement="required"
+            onValueChange={(value) => setRequiredDraft((current) => ({ ...current, roleCode: value }))}
             options={[
               { value: "manager", label: "Quản lý" },
               { value: "cashier", label: "Thu ngân" },
@@ -1101,24 +1306,60 @@ function CreateStaffModal({
             label="Chi nhánh"
             name="branchId"
             defaultValue=""
+            requirement="optional"
             options={[
               { value: "", label: "Chưa gán" },
               ...bundle.branches.filter((b) => b.isActive).map((b) => ({ value: b.id, label: b.name }))
             ]}
           />
           <label className="flex flex-col gap-1.5 sm:col-span-2">
-            <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Ghi chú nội bộ</span>
+            <FieldLabel label="Ghi chú nội bộ" requirement="optional" />
             <textarea name="notes" maxLength={500} placeholder="VD: Hợp đồng thử việc 2 tháng" className="min-h-16 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 py-2 text-[length:var(--d-fs-sm)] outline-none focus:border-[var(--d-jade)]" />
           </label>
         </div>
-        <div className="mt-1 flex justify-end gap-2 border-t border-[var(--d-line)] pt-3">
+        <div className="mt-1 flex flex-col gap-2 border-t border-[var(--d-line)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className={cn("text-[length:var(--d-fs-xs)] font-semibold", canCreateStaff ? "text-[var(--d-text-faint)]" : "text-[var(--d-danger-fg)]")}>
+            {canCreateStaff ? "Đã đủ thông tin bắt buộc để tạo nhân viên." : "Cần nhập Họ tên và chọn Vai trò trước khi tạo."}
+          </p>
+          <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" size="md" onClick={onClose}>Huỷ</Button>
-          <Button type="submit" variant="primary" size="md" disabled={submitting}>
+          <Button type="submit" variant="primary" size="md" disabled={submitting || !canCreateStaff}>
             <Plus size={15} /> {submitting ? "Đang tạo…" : "Mời nhân viên"}
           </Button>
+          </div>
         </div>
       </form>
     </Modal>
+  );
+}
+
+type FieldRequirement = "required" | "optional" | "generated";
+
+function FieldLabel({ label, requirement }: { label: string; requirement?: FieldRequirement }) {
+  const badge = requirement
+    ? {
+        required: "Bắt buộc",
+        optional: "Tùy chọn",
+        generated: "Tự tạo nếu trống"
+      }[requirement]
+    : null;
+
+  return (
+    <span className="flex items-center justify-between gap-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">
+      <span>{label}</span>
+      {badge ? (
+        <span
+          className={cn(
+            "shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-black leading-none",
+            requirement === "required" && "border-[var(--d-danger-fg)]/20 bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
+            requirement === "optional" && "border-[var(--d-line)] bg-[var(--d-surface-2)] text-[var(--d-text-faint)]",
+            requirement === "generated" && "border-[var(--d-primary)]/20 bg-[var(--d-primary-soft)] text-[var(--d-primary)]"
+          )}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -1129,8 +1370,10 @@ function FormField({
   defaultValue,
   placeholder,
   required,
+  requirement,
   full,
-  maxLength
+  maxLength,
+  onValueChange
 }: {
   label: string;
   name: string;
@@ -1138,12 +1381,14 @@ function FormField({
   defaultValue?: string;
   placeholder?: string;
   required?: boolean;
+  requirement?: FieldRequirement;
   full?: boolean;
   maxLength?: number;
+  onValueChange?: (value: string) => void;
 }) {
   return (
     <label className={cn("flex flex-col gap-1.5", full && "sm:col-span-2")}>
-      <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{label}</span>
+      <FieldLabel label={label} requirement={requirement} />
       <input
         name={name}
         type={type}
@@ -1151,6 +1396,7 @@ function FormField({
         placeholder={placeholder}
         required={required}
         maxLength={maxLength}
+        onChange={(event) => onValueChange?.(event.currentTarget.value)}
         className="h-10 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] outline-none focus:border-[var(--d-jade)]"
       />
     </label>
@@ -1161,19 +1407,24 @@ function FormSelect({
   label,
   name,
   defaultValue,
-  options
+  requirement,
+  options,
+  onValueChange
 }: {
   label: string;
   name: string;
   defaultValue?: string;
+  requirement?: FieldRequirement;
   options: { value: string; label: string }[];
+  onValueChange?: (value: string) => void;
 }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{label}</span>
+      <FieldLabel label={label} requirement={requirement} />
       <select
         name={name}
         defaultValue={defaultValue}
+        onChange={(event) => onValueChange?.(event.currentTarget.value)}
         className="h-10 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] font-semibold outline-none focus:border-[var(--d-jade)]"
       >
         {options.map((o) => (
@@ -1193,11 +1444,33 @@ function Tile({ label, value }: { label: string; value: string }) {
   );
 }
 
+function payrollPeriodStatusLabel(status: StaffPayrollPeriod["status"]) {
+  const labels: Record<StaffPayrollPeriod["status"], string> = {
+    draft: "Nháp",
+    reviewing: "Đối soát",
+    closed: "Đã chốt",
+    void: "Đã huỷ"
+  };
+  return labels[status];
+}
+
+function payslipStatusLabel(status: StaffPayslip["status"]) {
+  const labels: Record<StaffPayslip["status"], string> = {
+    draft: "Nháp",
+    approved: "Đã duyệt",
+    paid: "Đã trả",
+    void: "Đã huỷ"
+  };
+  return labels[status];
+}
+
 function TeamView({
   tab,
   setTab,
+  accountCount,
   totalMembers,
   onlineCount,
+  ownerCount,
   managerCount,
   staffCount,
   blockedCount,
@@ -1211,8 +1484,10 @@ function TeamView({
 }: {
   tab: Tab;
   setTab: (t: Tab) => void;
+  accountCount: number;
   totalMembers: number;
   onlineCount: number;
+  ownerCount: number;
   managerCount: number;
   staffCount: number;
   blockedCount: number;
@@ -1238,8 +1513,9 @@ function TeamView({
         active={tab}
         onChange={(k) => setTab(k as Tab)}
         tabs={[
-          { key: "all", label: "Tất cả", count: totalMembers },
+          { key: "all", label: "Tất cả", count: accountCount },
           { key: "online", label: "Đang làm", count: onlineCount },
+          { key: "owner", label: "Chủ quán", count: ownerCount },
           { key: "manager", label: "Quản lý", count: managerCount },
           { key: "staff", label: "Nhân viên", count: staffCount },
           { key: "blocked", label: "Đã khoá", count: blockedCount }
@@ -1515,23 +1791,47 @@ function ShiftTemplateModal({
  * Lương ước tính = workMinutes/60 × hourlyRate + approvedOvertimeMinutes/60 × otRate.
  * Chủ quán có thể export hoặc dùng làm cơ sở chốt lương qua HĐLĐ riêng.
  */
+function currentMonthPayrollDraft() {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const toDateInput = (value: Date) => {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  return {
+    label: `Lương ${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`,
+    start: toDateInput(start),
+    end: toDateInput(end)
+  };
+}
+
 function PayrollView({
   bundle,
   payrollDeductions,
   payrollProfiles,
+  payrollPeriods,
+  payrollPayslips,
   payrollDataError,
   onChanged
 }: {
   bundle: StaffOperationsBundle;
   payrollDeductions: StaffPayrollDeductions;
   payrollProfiles: StaffPayrollProfile[];
+  payrollPeriods: StaffPayrollPeriod[];
+  payrollPayslips: StaffPayslip[];
   payrollDataError: string | null;
   onChanged: () => void;
 }) {
   const toast = useToast();
   const [editingDeductions, setEditingDeductions] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
-  const [defaultHourly, setDefaultHourly] = useState(30000);
+  const [generatingPeriod, setGeneratingPeriod] = useState(false);
+  const [periodAction, setPeriodAction] = useState<StaffPayrollPeriod["status"] | null>(null);
+  const [payslipActionId, setPayslipActionId] = useState<string | null>(null);
+  const [defaultHourly, setDefaultHourly] = useState(DEFAULT_PAYROLL_HOURLY_RATE);
   const [otMultiplier, setOtMultiplier] = useState<"1.5" | "2.0" | "3.0">("1.5");
   const [perStaffRate, setPerStaffRate] = useState<Record<string, number>>({});
 
@@ -1570,6 +1870,11 @@ function PayrollView({
   const grandTax = summaries.reduce((s, x) => s + x.deductionSummary.personalIncomeTax, 0);
   const totalWorkHours = summaries.reduce((s, x) => s + x.baseHours, 0);
   const totalOtHours = summaries.reduce((s, x) => s + x.otHours, 0);
+  const latestPeriod = payrollPeriods[0] ?? null;
+  const latestPayslips = latestPeriod ? payrollPayslips.filter((payslip) => payslip.payrollPeriodId === latestPeriod.id) : [];
+  const activeLatestPayslips = latestPayslips.filter((payslip) => payslip.status !== "void");
+  const latestPeriodReadyToClose = latestPeriod?.status === "reviewing" && activeLatestPayslips.length > 0 && activeLatestPayslips.every((payslip) => payslip.status === "approved" || payslip.status === "paid");
+  const defaultPeriod = currentMonthPayrollDraft();
 
   if (payrollDataError) {
     return (
@@ -1587,36 +1892,228 @@ function PayrollView({
   }
 
   function copyAllToCsv() {
-    const headers = ["Họ tên", "Chi nhánh", "Giờ làm", "OT", "Mức lương/giờ", "Lương cơ bản", "Lương OT", "Gross", "BH NV đóng", "BH NSDLĐ", "Thuế TNCN", "Net thực lĩnh", "Trễ ca", "Phép có lương", "Phép không lương"];
-    const rows = summaries.map((s) => [
-      s.ts.fullName,
-      s.ts.branchName ?? "",
-      s.baseHours.toFixed(2),
-      s.otHours.toFixed(2),
-      s.rate.toString(),
-      s.baseSalary.toString(),
-      s.otSalary.toString(),
-      s.gross.toString(),
-      s.deductionSummary.totalEmployeeInsurance.toString(),
-      s.deductionSummary.totalEmployerInsurance.toString(),
-      s.deductionSummary.personalIncomeTax.toString(),
-      s.deductionSummary.netIncome.toString(),
-      String(s.ts.lateMinutes),
-      String(s.ts.paidLeaveDays),
-      String(s.ts.unpaidLeaveDays)
-    ]);
+    const hasRealPayslips = latestPayslips.length > 0;
+    const headers = hasRealPayslips
+      ? ["Kỳ lương", "Trạng thái kỳ", "Mã NV", "Họ tên", "Ngày bắt đầu", "Ngày kết thúc", "Số công", "Giờ làm", "OT", "Trễ phút", "Gross", "BH NV đóng", "BH NSDLĐ", "Thuế TNCN", "Net thực lĩnh", "Trạng thái phiếu"]
+      : ["Họ tên", "Chi nhánh", "Giờ làm", "OT", "Mức lương/giờ", "Lương cơ bản", "Lương OT", "Gross", "BH NV đóng", "BH NSDLĐ", "Thuế TNCN", "Net thực lĩnh", "Trễ ca", "Phép có lương", "Phép không lương"];
+    const rows = hasRealPayslips
+      ? latestPayslips.map((payslip) => [
+        latestPeriod?.periodLabel ?? "",
+        latestPeriod?.status ?? "",
+        payslip.employeeCode ?? "",
+        payslip.staffName,
+        payslip.periodStart,
+        payslip.periodEnd,
+        String(payslip.attendanceCount),
+        (payslip.workMinutes / 60).toFixed(2),
+        (payslip.overtimeMinutes / 60).toFixed(2),
+        String(payslip.lateMinutes),
+        payslip.grossPay.toString(),
+        payslip.employeeInsuranceTotal.toString(),
+        payslip.employerInsuranceTotal.toString(),
+        payslip.personalIncomeTax.toString(),
+        payslip.netPay.toString(),
+        payslip.status
+      ])
+      : summaries.map((s) => [
+        s.ts.fullName,
+        s.ts.branchName ?? "",
+        s.baseHours.toFixed(2),
+        s.otHours.toFixed(2),
+        s.rate.toString(),
+        s.baseSalary.toString(),
+        s.otSalary.toString(),
+        s.gross.toString(),
+        s.deductionSummary.totalEmployeeInsurance.toString(),
+        s.deductionSummary.totalEmployerInsurance.toString(),
+        s.deductionSummary.personalIncomeTax.toString(),
+        s.deductionSummary.netIncome.toString(),
+        String(s.ts.lateMinutes),
+        String(s.ts.paidLeaveDays),
+        String(s.ts.unpaidLeaveDays)
+      ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replaceAll('"', '""')}"`).join(",")).join("\n");
     const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `bang-luong-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${hasRealPayslips ? "phieu-luong" : "bang-luong-tam"}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
+  async function updatePeriodStatus(status: StaffPayrollPeriod["status"]) {
+    if (!latestPeriod || periodAction) return;
+    setPeriodAction(status);
+    const fd = new FormData();
+    fd.set("payrollPeriodId", latestPeriod.id);
+    fd.set("status", status);
+    try {
+      const { updateStaffPayrollPeriodStatusAction } = await import("@/app/dashboard/actions/staff");
+      const res = await updateStaffPayrollPeriodStatusAction(undefined, fd);
+      if (res.error) throw new Error(res.error);
+      toast.success(res.success ?? "Đã cập nhật kỳ lương");
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không cập nhật được kỳ lương");
+    } finally {
+      setPeriodAction(null);
+    }
+  }
+
+  async function updatePayslipStatus(payslipId: string, status: StaffPayslip["status"]) {
+    if (payslipActionId) return;
+    setPayslipActionId(payslipId);
+    const fd = new FormData();
+    fd.set("payslipId", payslipId);
+    fd.set("status", status);
+    try {
+      const { updateStaffPayslipStatusAction } = await import("@/app/dashboard/actions/staff");
+      const res = await updateStaffPayslipStatusAction(undefined, fd);
+      if (res.error) throw new Error(res.error);
+      toast.success(res.success ?? "Đã cập nhật phiếu lương");
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không cập nhật được phiếu lương");
+    } finally {
+      setPayslipActionId(null);
+    }
+  }
+
+  async function generatePayrollPeriod(fd: FormData) {
+    if (generatingPeriod) return;
+    setGeneratingPeriod(true);
+    try {
+      fd.set("defaultHourlyRate", String(defaultHourly));
+      fd.set("overtimeMultiplier", otMultiplier);
+      const { generateStaffPayrollPeriodAction } = await import("@/app/dashboard/actions/staff");
+      const res = await generateStaffPayrollPeriodAction(undefined, fd);
+      if (res.error) throw new Error(res.error);
+      toast.success(res.success ?? "Đã tạo kỳ lương nháp");
+      onChanged();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không tạo được kỳ lương");
+    } finally {
+      setGeneratingPeriod(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">
+      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
+        <header className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="d-eyebrow">Kỳ lương</p>
+            <h3 className="mt-1 text-[length:var(--d-fs-h3)] font-semibold text-[var(--d-text)]">Snapshot bảng công để chốt lương</h3>
+            <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+              Backend đọc công đã duyệt, hồ sơ lương và rule BHXH/TNCN để tạo phiếu lương nháp. Không lấy tổng tiền từ UI.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {latestPeriod ? <Badge tone={latestPeriod.status === "closed" ? "ok" : latestPeriod.status === "reviewing" ? "orange" : latestPeriod.status === "void" ? "danger" : "info"}>{payrollPeriodStatusLabel(latestPeriod.status)}</Badge> : null}
+            {latestPeriod?.status === "draft" ? (
+              <Button type="button" variant="secondary" size="sm" onClick={() => void updatePeriodStatus("reviewing")} disabled={Boolean(periodAction) || activeLatestPayslips.length === 0}>
+                <Clock3 size={13} /> Đối soát
+              </Button>
+            ) : null}
+            {latestPeriod?.status === "reviewing" ? (
+              <>
+                <Button type="button" variant="secondary" size="sm" onClick={() => void updatePeriodStatus("draft")} disabled={Boolean(periodAction)}>
+                  <XCircle size={13} /> Trả về nháp
+                </Button>
+                <Button type="button" variant="primary" size="sm" onClick={() => void updatePeriodStatus("closed")} disabled={Boolean(periodAction) || !latestPeriodReadyToClose}>
+                  <ShieldCheck size={13} /> Chốt kỳ
+                </Button>
+              </>
+            ) : null}
+            {latestPeriod && latestPeriod.status !== "closed" && latestPeriod.status !== "void" ? (
+              <Button type="button" variant="danger" size="sm" onClick={() => void updatePeriodStatus("void")} disabled={Boolean(periodAction)}>
+                <XCircle size={13} /> Huỷ kỳ
+              </Button>
+            ) : null}
+          </div>
+        </header>
+
+        <form action={generatePayrollPeriod} className="mt-4 grid gap-3 lg:grid-cols-[1.3fr_0.9fr_0.9fr_auto]">
+          <FormField label="Tên kỳ" name="periodLabel" defaultValue={defaultPeriod.label} required />
+          <FormField label="Từ ngày" name="periodStart" type="date" defaultValue={defaultPeriod.start} required />
+          <FormField label="Đến ngày" name="periodEnd" type="date" defaultValue={defaultPeriod.end} required />
+          <div className="flex items-end">
+            <Button type="submit" variant="primary" size="md" disabled={generatingPeriod || latestPeriod?.status === "closed"}>
+              <CheckCircle2 size={14} /> {generatingPeriod ? "Đang tạo…" : latestPeriod ? latestPeriod.status === "closed" ? "Kỳ đã chốt" : "Refresh kỳ nháp" : "Tạo kỳ nháp"}
+            </Button>
+          </div>
+        </form>
+
+        {latestPeriod?.status === "reviewing" && !latestPeriodReadyToClose ? (
+          <p className="mt-3 rounded-[var(--d-r-md)] border border-[var(--d-orange)]/30 bg-[var(--d-accent-soft)] px-3 py-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-orange-600)]">
+            Cần duyệt tất cả phiếu lương còn hiệu lực trước khi chốt kỳ. Phiếu huỷ sẽ không tính vào tổng kỳ.
+          </p>
+        ) : null}
+
+        {latestPeriod ? (
+          <div className="mt-4 grid gap-3 lg:grid-cols-4">
+            <Tile label="Kỳ gần nhất" value={`${latestPeriod.periodLabel}`} />
+            <Tile label="Nhân viên" value={`${latestPeriod.staffCount} phiếu`} />
+            <Tile label="Gross" value={`${latestPeriod.grossTotal.toLocaleString("vi-VN")}₫`} />
+            <Tile label="Net" value={`${latestPeriod.netTotal.toLocaleString("vi-VN")}₫`} />
+          </div>
+        ) : (
+          <p className="mt-4 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface-2)] px-3 py-2 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            Chưa có kỳ lương nào. Tạo kỳ nháp sau khi đã duyệt công trong tháng.
+          </p>
+        )}
+
+        {latestPayslips.length ? (
+          <div className="mt-4 overflow-x-auto rounded-[var(--d-r-md)] border border-[var(--d-line)]">
+            <table className="w-full min-w-[720px] text-left text-[length:var(--d-fs-xs)]">
+              <thead className="bg-[var(--d-surface-2)] text-[var(--d-text-faint)]">
+                <tr>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">Nhân viên</th>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">Trạng thái</th>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">Công</th>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">Gross</th>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">BH/Thuế</th>
+                  <th className="px-3 py-2 font-bold uppercase tracking-[var(--d-track-wide)]">Net</th>
+                  <th className="px-3 py-2 text-right font-bold uppercase tracking-[var(--d-track-wide)]">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody>
+                {latestPayslips.slice(0, 8).map((payslip) => (
+                  <tr key={payslip.id} className={cn("border-t border-[var(--d-line)]", payslip.status === "void" ? "opacity-60" : "")}>
+                    <td className="px-3 py-2 font-bold text-[var(--d-text)]">{payslip.staffName}</td>
+                    <td className="px-3 py-2"><Badge tone={payslip.status === "paid" ? "ok" : payslip.status === "approved" ? "info" : payslip.status === "void" ? "danger" : "neutral"}>{payslipStatusLabel(payslip.status)}</Badge></td>
+                    <td className="px-3 py-2 d-num text-[var(--d-text-muted)]">{(payslip.workMinutes / 60).toFixed(1)}h · OT {(payslip.overtimeMinutes / 60).toFixed(1)}h</td>
+                    <td className="px-3 py-2 d-num font-semibold text-[var(--d-text)]">{payslip.grossPay.toLocaleString("vi-VN")}₫</td>
+                    <td className="px-3 py-2 d-num text-[var(--d-text-muted)]">{(payslip.employeeInsuranceTotal + payslip.personalIncomeTax).toLocaleString("vi-VN")}₫</td>
+                    <td className="px-3 py-2 d-num font-bold text-[var(--d-primary)]">{payslip.netPay.toLocaleString("vi-VN")}₫</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {payslip.status === "draft" ? (
+                          <Button type="button" variant="secondary" size="sm" onClick={() => void updatePayslipStatus(payslip.id, "approved")} disabled={payslipActionId === payslip.id || latestPeriod?.status === "closed"}>
+                            <CheckCircle2 size={12} /> Duyệt
+                          </Button>
+                        ) : null}
+                        {payslip.status === "approved" ? (
+                          <Button type="button" variant="primary" size="sm" onClick={() => void updatePayslipStatus(payslip.id, "paid")} disabled={payslipActionId === payslip.id}>
+                            <ShieldCheck size={12} /> Đã trả
+                          </Button>
+                        ) : null}
+                        {payslip.status !== "paid" && payslip.status !== "void" && latestPeriod?.status !== "closed" ? (
+                          <Button type="button" variant="danger" size="sm" onClick={() => void updatePayslipStatus(payslip.id, "void")} disabled={payslipActionId === payslip.id}>
+                            <XCircle size={12} /> Huỷ
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </section>
+
       <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
         <header className="flex flex-wrap items-start justify-between gap-2">
           <div>
@@ -2219,7 +2716,7 @@ function WeekScheduleGrid({
   }, [weekAssignments]);
 
   // Chỉ hiển thị active members
-  const activeMembers = bundle.members.filter((m) => m.accountStatus === "active" && !m.isArchived);
+  const activeMembers = bundle.members.filter((m) => m.accountStatus === "active" && isOperationalMember(m));
 
   return (
     <div className="mt-3 flex flex-col gap-3">
@@ -2813,7 +3310,7 @@ function SecurityPanel({ bundle, onChanged }: { bundle: StaffOperationsBundle; o
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [credentials, setCredentials] = useState<NonNullable<StaffActionState["temporaryCredentials"]>>([]);
 
-  const resettableMembers = bundle.members.filter((m) => m.accountStatus !== "blocked" && !m.isArchived);
+  const resettableMembers = bundle.members.filter((m) => m.accountStatus !== "blocked" && isOperationalMember(m));
 
   function toggle(userId: string) {
     setSelected((prev) => {

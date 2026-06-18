@@ -5,7 +5,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
-import { publishOperationalEvent } from "@/services/operational-event-bus";
+import { publishOperationalEvent, recordOperationalEventOutbox, type OperationalEvent } from "@/services/operational-event-bus";
 import type { z } from "zod";
 import type { staffOperationalRequestSchema } from "@/lib/validators";
 
@@ -499,7 +499,7 @@ export async function createStaffOperationalRequest({
     })
   ]);
 
-  await publishOperationalEvent({
+  const requestEvent = {
     type: "staff.request_created",
     eventId: `staff.request_created:${result.data.id}`,
     restaurantId: session.restaurantId,
@@ -515,7 +515,10 @@ export async function createStaffOperationalRequest({
       reason: draft.reason,
       requestedPayload: draft.requestedPayload
     }
-  }).catch((error) => {
+  } satisfies OperationalEvent;
+
+  await recordOperationalEventOutbox(requestEvent);
+  await publishOperationalEvent(requestEvent).catch((error) => {
     console.error("[staff-request-service] telegram staff request event failed", {
       restaurantId: session.restaurantId,
       requestId: result.data.id,

@@ -5,6 +5,8 @@ import { RealStaffWorkspaceV2 } from "@/components/dashboard-v2/real/staff-works
 import { getStaffOperationsBundle } from "@/features/staff/services/staff-operations-service";
 import {
   getStaffPayrollDeductions,
+  listStaffPayrollPeriods,
+  listStaffPayslips,
   listStaffPayrollProfiles,
   DEFAULT_PAYROLL_DEDUCTIONS
 } from "@/features/staff/services/staff-payroll-service";
@@ -59,23 +61,29 @@ async function StaffWorkspaceContent({
       restaurantStaffCode={restaurantStaffCode}
       payrollDeductions={payroll.deductions}
       payrollProfiles={payroll.profiles}
+      payrollPeriods={payroll.periods}
+      payrollPayslips={payroll.payslips}
       payrollDataError={payroll.error}
     />
   );
 }
 
 async function loadStaffPayroll(restaurantId: string) {
-  const [deductionsResult, profilesResult] = await Promise.allSettled([
+  const [deductionsResult, profilesResult, periodsResult, payslipsResult] = await Promise.allSettled([
     getStaffPayrollDeductions(restaurantId),
-    listStaffPayrollProfiles(restaurantId)
+    listStaffPayrollProfiles(restaurantId),
+    listStaffPayrollPeriods(restaurantId),
+    listStaffPayslips(restaurantId)
   ]);
-  const errors = [deductionsResult, profilesResult]
+  const errors = [deductionsResult, profilesResult, periodsResult, payslipsResult]
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
     .map((result) => payrollErrorMessage(result.reason));
 
   return {
     deductions: deductionsResult.status === "fulfilled" ? deductionsResult.value : DEFAULT_PAYROLL_DEDUCTIONS,
     profiles: profilesResult.status === "fulfilled" ? profilesResult.value : [],
+    periods: periodsResult.status === "fulfilled" ? periodsResult.value : [],
+    payslips: payslipsResult.status === "fulfilled" ? payslipsResult.value : [],
     error: errors.length ? `Không tải được dữ liệu lương thật: ${errors.join("; ")}` : null
   };
 }

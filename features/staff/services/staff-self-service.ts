@@ -2,7 +2,7 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
-import { publishOperationalEvent } from "@/services/operational-event-bus";
+import { publishOperationalEvent, recordOperationalEventOutbox, type OperationalEvent } from "@/services/operational-event-bus";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { uploadStaffAvatarFile } from "@/features/staff/services/staff-avatar-service";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
@@ -278,7 +278,7 @@ export async function createStaffIncidentReport({
     })
   ]);
 
-  await publishOperationalEvent({
+  const incidentEvent = {
     type: "staff.incident_reported",
     eventId: `staff.incident_reported:${result.data.id}`,
     restaurantId: session.restaurantId,
@@ -296,7 +296,10 @@ export async function createStaffIncidentReport({
       status: result.data.status,
       attachmentUrl: null
     }
-  }).catch((error) => {
+  } satisfies OperationalEvent;
+
+  await recordOperationalEventOutbox(incidentEvent);
+  await publishOperationalEvent(incidentEvent).catch((error) => {
     console.error("[staff-self-service] telegram staff incident event failed", {
       restaurantId: session.restaurantId,
       incidentReportId: result.data.id,

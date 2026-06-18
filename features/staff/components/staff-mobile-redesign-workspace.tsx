@@ -51,11 +51,12 @@ import { resolveStaffModules, type StaffModule, type StaffModuleId } from "@/fea
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import type { StaffOperationsBundle, StaffOpsApprovalItem, StaffOpsAttendanceFeedItem, StaffOpsMobileOps, StaffOpsMobileWorkItem, StaffOpsShiftAssignment } from "@/features/staff/types";
 import { cn } from "@/lib/utils";
-import { summarizePayroll, DEFAULT_PAYROLL_DEDUCTIONS, type StaffPayrollDeductions, type StaffPayrollProfile } from "@/features/staff/services/staff-payroll-compute";
+import { summarizePayroll, DEFAULT_PAYROLL_DEDUCTIONS, type StaffPayrollDeductions, type StaffPayrollProfile, type StaffPayslip } from "@/features/staff/services/staff-payroll-compute";
 
 type StaffPayrollSelfView = {
   deductions: StaffPayrollDeductions;
   profile: StaffPayrollProfile | null;
+  payslips: StaffPayslip[];
 };
 
 type StaffMobileRedesignWorkspaceProps = {
@@ -266,6 +267,11 @@ function isQrAttendanceError(error: unknown) {
   return message.includes("qr") || message.includes("ma qr") || message.includes("sai chi nhanh") || message.includes("het han") || message.includes("da duoc su dung");
 }
 
+function isOpenAttendanceConflict(error: unknown) {
+  const message = normalizePlainText(error instanceof Error ? error.message : String(error ?? ""));
+  return message.includes("dang co phien") || message.includes("phien cham cong hien tai") || message.includes("open attendance") || message.includes("another open attendance");
+}
+
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "NV";
@@ -285,6 +291,16 @@ function formatDate(value: string | null | undefined) {
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "--";
   return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function staffPayslipStatusLabel(status: StaffPayslip["status"]) {
+  const labels: Record<StaffPayslip["status"], string> = {
+    draft: "Nháp",
+    approved: "Đã duyệt",
+    paid: "Đã trả",
+    void: "Đã huỷ"
+  };
+  return labels[status];
 }
 
 function durationBetween(start: string | null | undefined, end: string | null | undefined, nowMs: number) {
@@ -649,6 +665,9 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
           clearQrTokenAfterFailure();
           setQrScannerOpen(true);
           setMessage({ tone: "warning", text: "QR này không còn hợp lệ cho chi nhánh/ca hiện tại. Hãy quét lại mã mới hoặc dùng GPS/WiFi tại quán với vị trí chính xác." });
+        } else if (isOpenAttendanceConflict(error)) {
+          await refreshBundle();
+          setMessage({ tone: "warning", text: "Hệ thống phát hiện một phiên công chưa kết. LogiVN đã làm mới dữ liệu, hãy kiểm tra thẻ Chấm công để kết ca hoặc báo quản lý kết ca hộ." });
         } else {
           setMessage({ tone: "warning", text: error instanceof Error ? error.message : "Không thể xử lý chấm công lúc này." });
         }
@@ -889,6 +908,11 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
                   queueLength={offlineQueue.queue.length}
                   syncing={offlineQueue.syncing}
                   onSync={() => void offlineQueue.syncQueue({ force: true })}
+                  onReportIssue={() => {
+                    setActiveTab("profile");
+                    writeTabToUrl("profile");
+                    setMessage({ tone: "warning", text: "Mở mục Báo cáo sự cố. Ghi rõ ca chưa kết để quản lý kết ca hộ hoặc đối soát công." });
+                  }}
                 />
               }
             />
@@ -1025,7 +1049,8 @@ function ClockControlCard({
   online,
   queueLength,
   syncing,
-  onSync
+  onSync,
+  onReportIssue
 }: {
   machine: StaffAttendanceMachine;
   activeAttendance: StaffOpsAttendanceFeedItem | null;
@@ -1050,6 +1075,7 @@ function ClockControlCard({
   queueLength: number;
   syncing: boolean;
   onSync: () => void;
+  onReportIssue: () => void;
 }) {
   const PrimaryIcon = machine.source === "qr" ? Fingerprint : machine.source === "wifi" ? Wifi : MapPin;
   const stateTone = machine.state === "blocked" ? "danger" : machine.state.includes("needs") || machine.state === "queued_offline" ? "warning" : activeAttendance ? "success" : "neutral";
@@ -1098,8 +1124,11 @@ function ClockControlCard({
         </div>
 
         {staleOpenAttendance && activeAttendance ? (
-          <div className="rounded-xl border border-[#F2D2B2] bg-[#FFF8EB] px-3 py-2 text-xs font-bold leading-5 text-[#93540A]">
-            Phiên này đã mở hơn {openAttendanceAgeHours(activeAttendance, nowMs)} giờ. Nếu không phải ca hiện tại, hãy bấm kết ca hoặc báo quản lý kết ca hộ để tránh lệch công/lương.
+          <div className="grid gap-2 rounded-xl border border-[#F2D2B2] bg-[#FFF8EB] px-3 py-2 text-xs font-bold leading-5 text-[#93540A]">
+            <p>Phiên này đã mở hơn {openAttendanceAgeHours(activeAttendance, nowMs)} giờ. Nếu không phải ca hiện tại, hãy kết ca hoặc báo quản lý kết ca hộ để tránh lệch công/lương.</p>
+            <ShellButton variant="secondary" className="min-h-10 justify-center text-xs" onClick={onReportIssue}>
+              <AlertTriangle size={15} /> Báo quản lý xử lý ca mở
+            </ShellButton>
           </div>
         ) : null}
 
@@ -1549,6 +1578,8 @@ function ProfileTab({ staff, bundle, payrollSelf, payrollDataError, profileDraft
   const incidents = bundle.incidents.filter((item) => item.staffMemberId === staff.id).slice(0, 4);
   const maxMinutes = Math.max(...attendanceRows.map(attendanceWorkMinutes), 1);
   const payProfile = payrollSelf?.profile ?? null;
+  const payslips = payrollSelf?.payslips ?? [];
+  const latestPayslip = payslips[0] ?? null;
   const paySummary = payProfile
     ? summarizePayroll({
         grossMonthlySalary: payProfile.baseSalary,
@@ -1583,13 +1614,44 @@ function ProfileTab({ staff, bundle, payrollSelf, payrollDataError, profileDraft
               <p className="mt-1 text-xs font-semibold text-[#5E5A54]">{payrollDataError}</p>
             </div>
           </div>
-        ) : paySummary && payProfile ? (
+        ) : latestPayslip || (paySummary && payProfile) ? (
           <div className="mt-3 grid gap-2">
-            <div className="flex items-center justify-between rounded-xl bg-[#F5F8F1] px-4 py-3"><span className="text-sm font-bold text-[#5E5A54]">Lương cơ bản</span><span className="text-base font-black text-[#2B2B2B]">{vnd(payProfile.baseSalary)}</span></div>
-            <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Bảo hiểm (NV đóng)</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.totalEmployeeInsurance)}</span></div>
-            <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Thuế TNCN</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.personalIncomeTax)}</span></div>
-            <div className="flex items-center justify-between rounded-xl bg-[#DDF8E9] px-4 py-3"><span className="text-sm font-black text-[#0F4D3A]">Thực nhận (ước tính)</span><span className="text-lg font-black text-[#0F4D3A]">{vnd(paySummary.netIncome)}</span></div>
-            <p className="px-1 text-[11px] font-semibold text-[#8A867E]">Số liệu chỉ để tham khảo theo cấu hình hiện tại, chưa gồm thưởng/phụ cấp/tăng ca thực tế.</p>
+            {latestPayslip ? (
+              <div className="rounded-2xl border border-[#D8D1C7] bg-white p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.08em] text-[#8A867E]">Phiếu lương gần nhất</p>
+                    <p className="mt-1 text-sm font-black text-[#2B2B2B]">{formatDate(latestPayslip.periodStart)} - {formatDate(latestPayslip.periodEnd)}</p>
+                  </div>
+                  <StatusPill tone={latestPayslip.status === "paid" ? "success" : latestPayslip.status === "approved" ? "warning" : "neutral"}>{staffPayslipStatusLabel(latestPayslip.status)}</StatusPill>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <MiniStat label="Công" value={latestPayslip.attendanceCount} />
+                  <MiniStat label="Giờ" value={`${(latestPayslip.workMinutes / 60).toFixed(1)}h`} />
+                  <MiniStat label="OT" value={`${(latestPayslip.overtimeMinutes / 60).toFixed(1)}h`} />
+                </div>
+                <div className="mt-3 flex items-center justify-between rounded-xl bg-[#DDF8E9] px-4 py-3"><span className="text-sm font-black text-[#0F4D3A]">Thực nhận</span><span className="text-lg font-black text-[#0F4D3A]">{vnd(latestPayslip.netPay)}</span></div>
+              </div>
+            ) : null}
+            {paySummary && payProfile ? (
+              <>
+                <div className="flex items-center justify-between rounded-xl bg-[#F5F8F1] px-4 py-3"><span className="text-sm font-bold text-[#5E5A54]">Lương cơ bản theo hồ sơ</span><span className="text-base font-black text-[#2B2B2B]">{vnd(payProfile.baseSalary)}</span></div>
+                <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Bảo hiểm (NV đóng)</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.totalEmployeeInsurance)}</span></div>
+                <div className="flex items-center justify-between px-4 py-1.5 text-sm"><span className="font-semibold text-[#5E5A54]">Thuế TNCN</span><span className="font-bold text-[#A33D10]">−{vnd(paySummary.personalIncomeTax)}</span></div>
+                <div className="flex items-center justify-between rounded-xl bg-[#DDF8E9] px-4 py-3"><span className="text-sm font-black text-[#0F4D3A]">Thực nhận (ước tính)</span><span className="text-lg font-black text-[#0F4D3A]">{vnd(paySummary.netIncome)}</span></div>
+              </>
+            ) : null}
+            {payslips.length > 1 ? (
+              <div className="space-y-2 border-t border-[#E5DDD2] pt-3">
+                {payslips.slice(1, 4).map((payslip) => (
+                  <div key={payslip.id} className="flex items-center justify-between gap-3 rounded-xl bg-[#FFFDF8] px-3 py-2 text-xs">
+                    <span className="font-bold text-[#5E5A54]">{formatDate(payslip.periodStart)} - {formatDate(payslip.periodEnd)}</span>
+                    <span className="font-black text-[#0F4D3A]">{vnd(payslip.netPay)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {paySummary ? <p className="px-1 text-[11px] font-semibold text-[#8A867E]">Số liệu ước tính chỉ để tham khảo theo cấu hình hiện tại. Phiếu lương là snapshot do quản lý tạo từ bảng công đã duyệt.</p> : null}
           </div>
         ) : (
           <p className="mt-3 text-sm font-semibold text-[#5E5A54]">Chưa có hồ sơ lương. Liên hệ quản lý để được thiết lập.</p>

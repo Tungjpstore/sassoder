@@ -56,6 +56,10 @@ type StaffUserRow = {
   account_status?: "active" | "blocked";
 };
 
+function isOperationalStaffMember(member: Pick<StaffOpsMember, "roleCode" | "isArchived" | "employmentStatus">) {
+  return member.roleCode !== "owner" && !member.isArchived && member.employmentStatus !== "resigned";
+}
+
 type BranchRow = {
   id: string;
   name: string;
@@ -1085,6 +1089,10 @@ export async function getStaffOperationsBundle(
 
   const memberByUserIdForName = new Map(members.map((member) => [member.userId, member]));
   const memberNameById = new Map(members.map((member) => [member.id, member.fullName]));
+  const operationalMembers = members.filter(isOperationalStaffMember);
+  const operationalMemberIds = new Set(operationalMembers.map((member) => member.id));
+  const operationalTodayAttendanceRows = todayAttendanceRows.filter((attendance) => operationalMemberIds.has(attendance.staff_member_id));
+  const operationalTodayAttendanceMemberIds = new Set(operationalTodayAttendanceRows.map((attendance) => attendance.staff_member_id));
 
   const rolesSummary: StaffOpsRoleSummary[] = roleRows.map((role) => {
     const template = STAFF_ROLE_TEMPLATES.find((item) => item.code === role.code);
@@ -1167,7 +1175,7 @@ export async function getStaffOperationsBundle(
     createdAt: item.created_at
   }));
 
-  const activeShiftAssignments = shiftAssignments.filter((assignment) => assignment.status !== "cancelled");
+  const activeShiftAssignments = shiftAssignments.filter((assignment) => assignment.status !== "cancelled" && operationalMemberIds.has(assignment.staff_member_id));
 
   const weeklyCoverage: StaffOpsCoverageDay[] = weekRange.map((isoDate) => {
     const dayAssignments = activeShiftAssignments.filter((assignment) => assignment.scheduled_date === isoDate);
@@ -1184,7 +1192,7 @@ export async function getStaffOperationsBundle(
 
   const heatmap: StaffOpsHeatmapCell[][] = weekRange.map((isoDate) => {
     const dayAssignments = activeShiftAssignments.filter((assignment) => assignment.scheduled_date === isoDate);
-    const dayAttendance = attendanceRows.filter((attendance) => dayKey(attendance.clock_in_at) === isoDate);
+    const dayAttendance = attendanceRows.filter((attendance) => operationalMemberIds.has(attendance.staff_member_id) && dayKey(attendance.clock_in_at) === isoDate);
 
     return [
       {
@@ -1259,7 +1267,7 @@ export async function getStaffOperationsBundle(
   });
 
   const timesheets: StaffOpsTimesheetSummary[] = members
-    .filter((member) => !member.isArchived)
+    .filter(isOperationalStaffMember)
     .map((member) => {
       const rows = attendanceRows.filter((attendance) => attendance.staff_member_id === member.id);
       const payableRows = rows.filter((attendance) => attendance.approval_state === "auto_approved" || attendance.approval_state === "approved");
@@ -1385,14 +1393,14 @@ export async function getStaffOperationsBundle(
 
   const branchSummaries: StaffOpsBranchSummary[] = branches.map((branch) => {
     const memberIds = branchAssignments
-      .filter((assignment) => assignment.branch_id === branch.id && assignment.assignment_status === "active" && !assignment.ended_at)
+      .filter((assignment) => assignment.branch_id === branch.id && assignment.assignment_status === "active" && !assignment.ended_at && operationalMemberIds.has(assignment.staff_member_id))
       .map((assignment) => assignment.staff_member_id);
     const activeStaff = memberIds.filter((memberId) => (activeSessionsByMemberId.get(memberId) ?? []).length > 0).length;
-    const lateCount = attendanceRows.filter(
-      (attendance) => attendance.branch_id === branch.id && dayKey(attendance.clock_in_at) === today && attendance.late_minutes > 0
+    const lateCount = operationalTodayAttendanceRows.filter(
+      (attendance) => attendance.branch_id === branch.id && attendance.late_minutes > 0
     ).length;
     const pendingApprovals = approvalRows.filter((approval) => approval.branch_id === branch.id && approval.status === "pending").length;
-    const suspiciousCount = members.filter((member) => member.primaryBranchId === branch.id && member.suspiciousScore >= 40).length;
+    const suspiciousCount = operationalMembers.filter((member) => member.primaryBranchId === branch.id && member.suspiciousScore >= 40).length;
     const coverageScore = Math.max(0, Math.min(100, memberIds.length * 15 + activeStaff * 10 - lateCount * 8 - pendingApprovals * 6));
 
     return {
@@ -1428,7 +1436,7 @@ export async function getStaffOperationsBundle(
       })()
     : null;
   const shiftSwapCandidates = currentStaffMember
-    ? members
+    ? operationalMembers
         .filter((member) => {
           if (member.id === currentStaffMember.id || member.isArchived || member.employmentStatus !== "active") return false;
           if (!currentStaffMember.primaryBranchId) return true;
@@ -1469,17 +1477,17 @@ export async function getStaffOperationsBundle(
     generatedAt: new Date().toISOString(),
     opsConfig: resolveStaffOpsConfigReadiness(),
     overview: {
-      activeStaff: members.filter((member) => member.activeSessionCount > 0 && !member.isArchived).length,
-      lateAttendance: todayAttendanceRows.filter((attendance) => attendance.late_minutes > 0).length,
+      activeStaff: operationalMembers.filter((member) => member.activeSessionCount > 0).length,
+      lateAttendance: operationalTodayAttendanceRows.filter((attendance) => attendance.late_minutes > 0).length,
       absentStaff: todayCoverage?.assigned
-        ? Math.max(0, todayCoverage.assigned - todayAttendanceMemberIds.size)
+        ? Math.max(0, todayCoverage.assigned - operationalTodayAttendanceMemberIds.size)
         : 0,
       approvalRequests: approvals.filter((approval) => approval.status === "pending").length,
-      overtimeAlerts: todayAttendanceRows.filter((attendance) => attendance.overtime_minutes >= 30).length,
-      suspiciousActivities: members.filter((member) => member.suspiciousScore >= 40).length,
+      overtimeAlerts: operationalTodayAttendanceRows.filter((attendance) => attendance.overtime_minutes >= 30).length,
+      suspiciousActivities: operationalMembers.filter((member) => member.suspiciousScore >= 40).length,
       realtimeBranchActivity: branchSummaries.filter((branch) => branch.activeStaff > 0).length,
-      activeCashiers: members.filter((member) => member.roleCode === "cashier" && member.activeSessionCount > 0).length,
-      activeKitchenStaff: members.filter((member) => member.roleCode === "kitchen" && member.activeSessionCount > 0).length,
+      activeCashiers: operationalMembers.filter((member) => member.roleCode === "cashier" && member.activeSessionCount > 0).length,
+      activeKitchenStaff: operationalMembers.filter((member) => member.roleCode === "kitchen" && member.activeSessionCount > 0).length,
       operationsPending: operations.pending + operations.ordering,
       paidToday: operations.paid
     },

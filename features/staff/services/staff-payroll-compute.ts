@@ -38,6 +38,44 @@ export type StaffPayrollProfile = {
   note: string | null;
 };
 
+export type StaffPayrollPeriod = {
+  id: string;
+  periodLabel: string;
+  periodStart: string;
+  periodEnd: string;
+  status: "draft" | "reviewing" | "closed" | "void";
+  staffCount: number;
+  grossTotal: number;
+  netTotal: number;
+  employeeInsuranceTotal: number;
+  employerInsuranceTotal: number;
+  personalIncomeTaxTotal: number;
+  createdAt: string;
+  closedAt: string | null;
+};
+
+export type StaffPayslip = {
+  id: string;
+  payrollPeriodId: string;
+  staffMemberId: string;
+  staffName: string;
+  employeeCode: string | null;
+  branchId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  attendanceCount: number;
+  workMinutes: number;
+  overtimeMinutes: number;
+  lateMinutes: number;
+  grossPay: number;
+  netPay: number;
+  employeeInsuranceTotal: number;
+  employerInsuranceTotal: number;
+  personalIncomeTax: number;
+  status: "draft" | "approved" | "paid" | "void";
+  createdAt: string;
+};
+
 export const DEFAULT_PAYROLL_DEDUCTIONS: StaffPayrollDeductions = {
   bhxhEmployeePercent: 8.0,
   bhytEmployeePercent: 1.5,
@@ -51,6 +89,9 @@ export const DEFAULT_PAYROLL_DEDUCTIONS: StaffPayrollDeductions = {
   insuranceBaseMin: 4_960_000,
   insuranceBaseMax: 99_200_000
 };
+
+export const DEFAULT_PAYROLL_HOURLY_RATE = 30_000;
+export const DEFAULT_PAYROLL_OT_MULTIPLIER = 1.5;
 
 /* Biểu thuế TNCN luỹ tiến từng phần (Điều 22 Luật Thuế TNCN VN) — đơn vị: ₫ / tháng */
 const PIT_BRACKETS: Array<{ upTo: number; rate: number; deduction: number }> = [

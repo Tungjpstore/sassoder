@@ -7,6 +7,7 @@ const atomicCreateSql = readFileSync("supabase/migrations/20260618092245_staff_h
 const atomicMutationSql = readFileSync("supabase/migrations/20260618093351_staff_hr_atomic_account_mutations.sql", "utf8");
 const helperSource = readFileSync("services/staff-operation-integrity-service.ts", "utf8");
 const staffActionsSource = readFileSync("app/dashboard/actions/staff.ts", "utf8");
+const staffWorkspaceSource = readFileSync("components/dashboard-v2/real/staff-workspace-v2.tsx", "utf8");
 const restaurantServiceSource = readFileSync("services/restaurant-service.ts", "utf8");
 
 function exportedActionBodies(source: string) {
@@ -124,6 +125,14 @@ test("manual attendance idempotency ignores dynamic server timestamps", () => {
     assert.ok(action, `${actionName} should exist`);
     assert.match(action.body, /requestPayload: \{ \.\.\.parsed, capturedAt: "server_now" \}/, `${actionName} should not fingerprint per-click timestamps`);
   }
+});
+
+test("staff profile manual attendance uses the current open log before clocking out", () => {
+  assert.match(staffWorkspaceSource, /memberOpenAttendance/);
+  assert.match(staffWorkspaceSource, /!attendance\.clockOutAt/);
+  assert.match(staffWorkspaceSource, /fd\.set\("attendanceLogId", memberOpenAttendance\.id\)/);
+  assert.match(staffWorkspaceSource, /memberOpenAttendance \? \([\s\S]*Kết ca hộ[\s\S]*\) : \([\s\S]*Chấm vào hộ/);
+  assert.match(staffWorkspaceSource, /Trạng thái ca hiện tại/);
 });
 
 test("staff create profile RPC wraps users, staff member, branch and audit in one DB transaction", () => {

@@ -20,6 +20,7 @@ import { searchAddress } from "@/services/maps/geocoding/geocoder-service";
 import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-image-service";
 import { notifyPlatformTenantCreated } from "@/services/platform-telegram-events";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
+import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 import { isPublicTenantActive } from "@/services/tenant-status-guard";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
@@ -816,6 +817,127 @@ export async function updateRestaurantUserOperationsProfile(input: {
   });
 
   return (Array.isArray(data) ? data[0] : data) as StaffMutationRpcRow | null;
+}
+
+async function assertOwnerProfileMutationAllowed({
+  supabase,
+  restaurantId,
+  userId,
+  actorUserId
+}: {
+  supabase: any;
+  restaurantId: string;
+  userId: string;
+  actorUserId: string;
+}) {
+  const [targetResult, targetMemberResult, actorResult] = await Promise.all([
+    supabase
+      .from("users")
+      .select("id,email,role,full_name,phone,username,account_status")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", userId)
+      .maybeSingle(),
+    supabase
+      .from("staff_members")
+      .select("id,role_code,full_name,phone,username")
+      .eq("restaurant_id", restaurantId)
+      .eq("user_id", userId)
+      .maybeSingle(),
+    supabase
+      .from("staff_members")
+      .select("id,role_code")
+      .eq("restaurant_id", restaurantId)
+      .eq("user_id", actorUserId)
+      .maybeSingle()
+  ]);
+
+  throwIfSupabaseError(targetResult.error, "Không tải được hồ sơ chủ quán");
+  throwIfSupabaseError(targetMemberResult.error, "Không tải được hồ sơ nhân sự chủ quán");
+  throwIfSupabaseError(actorResult.error, "Không xác thực được quyền chủ quán");
+
+  const target = targetResult.data as any | null;
+  const targetMember = targetMemberResult.data as { id: string; role_code: string | null; full_name: string | null; phone: string | null; username: string | null } | null;
+  const actor = actorResult.data as { id: string; role_code: string | null } | null;
+  const isTargetOwner = target?.role === "ADMIN" && targetMember?.role_code === "owner";
+  const isActorOwner = actor?.role_code === "owner";
+
+  if (!target || !isTargetOwner) throw new AppError("Hồ sơ này không phải tài khoản chủ quán.", 400);
+  if (actorUserId !== userId && !isActorOwner) {
+    throw new AppError("Chỉ chủ quán mới được cập nhật hồ sơ chủ quán.", 403);
+  }
+
+  return { target, targetMember };
+}
+
+export async function updateRestaurantOwnerDashboardProfile(input: {
+  restaurantId: string;
+  userId: string;
+  actorUserId: string;
+  fullName: string;
+  phone?: string | null;
+  username?: string | null;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const { target, targetMember } = await assertOwnerProfileMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    userId: input.userId,
+    actorUserId: input.actorUserId
+  });
+  const beforeState = {
+    user: {
+      fullName: target.full_name ?? null,
+      phone: target.phone ?? null,
+      username: target.username ?? null
+    },
+    staffMember: {
+      fullName: targetMember?.full_name ?? null,
+      phone: targetMember?.phone ?? null,
+      username: targetMember?.username ?? null
+    }
+  };
+  const profile = {
+    full_name: input.fullName.trim(),
+    phone: input.phone?.trim() || null,
+    username: input.username?.trim().toLowerCase() || null
+  };
+
+  const userResult = await supabase
+    .from("users")
+    .update(profile)
+    .eq("restaurant_id", input.restaurantId)
+    .eq("id", input.userId)
+    .select("id,full_name,phone,username")
+    .single();
+  throwIfSupabaseError(userResult.error, "Không cập nhật được tài khoản chủ quán");
+
+  let staffMember = targetMember;
+  if (targetMember?.id) {
+    const staffResult = await supabase
+      .from("staff_members")
+      .update(profile)
+      .eq("restaurant_id", input.restaurantId)
+      .eq("id", targetMember.id)
+      .select("id,full_name,phone,username")
+      .single();
+    throwIfSupabaseError(staffResult.error, "Không đồng bộ được hồ sơ chủ quán");
+    staffMember = staffResult.data;
+  }
+
+  await writeStaffActivityLog({
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    entityType: "owner_dashboard_profile",
+    entityId: input.userId,
+    action: "owner.profile_updated",
+    severity: "info",
+    beforeState,
+    afterState: {
+      user: userResult.data,
+      staffMember
+    },
+    metadata: { source: "staff_owner_profile_panel" }
+  });
 }
 
 export async function setRestaurantUserAccountState(input: {

@@ -60,6 +60,7 @@ import { assertStaffActionPermission, assertCanAssignStaffRole } from "@/service
 import {
   createRestaurantUser,
   setRestaurantUserAccountState,
+  updateRestaurantOwnerDashboardProfile,
   updateRestaurantUserOperationsProfile,
   updateRestaurantUserRole
 } from "@/services/restaurant-service";
@@ -161,6 +162,19 @@ function scrubStaffPasswordResult(result: StaffActionState) {
     temporaryCredentials: undefined
   };
 }
+
+const ownerDashboardProfileSchema = z.object({
+  userId: z.string().uuid("Tài khoản chủ quán không hợp lệ."),
+  fullName: z.string().trim().min(2, "Tên chủ quán cần ít nhất 2 ký tự.").max(120, "Tên chủ quán quá dài."),
+  phone: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().trim().regex(/^[0-9+() .-]{6,24}$/, "SĐT chủ quán chưa hợp lệ.").optional()
+  ),
+  username: z.preprocess(
+    (value) => typeof value === "string" && value.trim() === "" ? undefined : value,
+    z.string().trim().toLowerCase().regex(/^[a-z0-9._-]{3,40}$/, "Username chỉ dùng chữ thường, số, dấu . _ - và dài 3-40 ký tự.").optional()
+  )
+});
 
 export async function createStaffAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
   try {
@@ -278,6 +292,46 @@ export async function updateStaffProfileAction(_prevState: StaffActionState | un
         });
 
         return { success: "Đã cập nhật hồ sơ và quyền nhân sự." };
+      }
+    );
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return result;
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateOwnerDashboardProfileAction(_prevState: StaffActionState | undefined, formData: FormData): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = ownerDashboardProfileSchema.parse({
+      userId: formData.get("userId"),
+      fullName: formData.get("fullName"),
+      phone: formData.get("phone"),
+      username: formData.get("username")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const result = await runStaffOperation<StaffActionState>(
+      staffOperationInput({
+        formData,
+        session,
+        operationType: "owner.dashboard_profile.update",
+        requestPayload: parsed,
+        targetUserId: parsed.userId
+      }),
+      async () => {
+        await updateRestaurantOwnerDashboardProfile({
+          restaurantId: session.restaurantId,
+          userId: parsed.userId,
+          actorUserId: session.userId,
+          fullName: parsed.fullName,
+          phone: parsed.phone ?? null,
+          username: parsed.username ?? null
+        });
+
+        return { success: "Đã cập nhật hồ sơ chủ quán." };
       }
     );
 
@@ -1194,6 +1248,9 @@ export async function forceStaffSessionsLogoutAction(_prevState: StaffActionStat
 
 
 import {
+  createStaffPayrollPeriodDraft,
+  updateStaffPayrollPeriodStatus,
+  updateStaffPayslipStatus,
   upsertStaffPayrollDeductions,
   upsertStaffPayrollProfile,
   type StaffPayrollDeductions
@@ -1202,6 +1259,159 @@ import {
   staffPayrollDeductionsSchema,
   staffPayrollProfileSchema
 } from "@/lib/validators";
+
+const staffPayrollPeriodDraftSchema = z.object({
+  periodLabel: z.string().trim().min(2, "Tên kỳ lương cần ít nhất 2 ký tự.").max(80, "Tên kỳ lương quá dài."),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày bắt đầu kỳ lương chưa hợp lệ."),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày kết thúc kỳ lương chưa hợp lệ."),
+  defaultHourlyRate: z.coerce.number().int().min(0).max(5_000_000),
+  overtimeMultiplier: z.coerce.number().min(1).max(5)
+}).refine((value) => value.periodEnd >= value.periodStart, {
+  path: ["periodEnd"],
+  message: "Ngày kết thúc kỳ lương phải sau ngày bắt đầu."
+});
+
+const staffPayrollPeriodStatusSchema = z.object({
+  payrollPeriodId: z.string().uuid("Kỳ lương không hợp lệ."),
+  status: z.enum(["draft", "reviewing", "closed", "void"])
+});
+
+const staffPayslipStatusSchema = z.object({
+  payslipId: z.string().uuid("Phiếu lương không hợp lệ."),
+  status: z.enum(["draft", "approved", "paid", "void"])
+});
+
+export async function generateStaffPayrollPeriodAction(
+  _prevState: StaffActionState | undefined,
+  formData: FormData
+): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffPayrollPeriodDraftSchema.parse({
+      periodLabel: formData.get("periodLabel"),
+      periodStart: formData.get("periodStart"),
+      periodEnd: formData.get("periodEnd"),
+      defaultHourlyRate: formData.get("defaultHourlyRate"),
+      overtimeMultiplier: formData.get("overtimeMultiplier")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const result = await runStaffOperation<StaffActionState>(
+      staffOperationInput({
+        formData,
+        session,
+        operationType: "staff.payroll_period.generate",
+        requestPayload: parsed
+      }),
+      async () => {
+        const generated = await createStaffPayrollPeriodDraft({
+          restaurantId: session.restaurantId,
+          actorUserId: session.userId,
+          periodLabel: parsed.periodLabel,
+          periodStart: parsed.periodStart,
+          periodEnd: parsed.periodEnd,
+          defaultHourlyRate: parsed.defaultHourlyRate,
+          overtimeMultiplier: parsed.overtimeMultiplier
+        });
+
+        return { success: `Đã tạo kỳ lương ${generated.period.periodLabel} với ${generated.payslipCount} phiếu lương nháp.` };
+      }
+    );
+
+    revalidatePath("/dashboard/staff");
+    return result;
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateStaffPayrollPeriodStatusAction(
+  _prevState: StaffActionState | undefined,
+  formData: FormData
+): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffPayrollPeriodStatusSchema.parse({
+      payrollPeriodId: formData.get("payrollPeriodId"),
+      status: formData.get("status")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const result = await runStaffOperation<StaffActionState>(
+      staffOperationInput({
+        formData,
+        session,
+        operationType: `staff.payroll_period.${parsed.status}`,
+        requestPayload: parsed
+      }),
+      async () => {
+        const period = await updateStaffPayrollPeriodStatus({
+          restaurantId: session.restaurantId,
+          actorUserId: session.userId,
+          payrollPeriodId: parsed.payrollPeriodId,
+          status: parsed.status
+        });
+
+        const labels: Record<typeof parsed.status, string> = {
+          draft: "Đã trả kỳ lương về nháp.",
+          reviewing: "Đã đưa kỳ lương vào đối soát.",
+          closed: `Đã chốt kỳ lương ${period.periodLabel}.`,
+          void: `Đã huỷ kỳ lương ${period.periodLabel}.`
+        };
+        return { success: labels[parsed.status] };
+      }
+    );
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return result;
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
+
+export async function updateStaffPayslipStatusAction(
+  _prevState: StaffActionState | undefined,
+  formData: FormData
+): Promise<StaffActionState> {
+  try {
+    const session = await requireOperationalStaffSession("staff_management");
+    const parsed = staffPayslipStatusSchema.parse({
+      payslipId: formData.get("payslipId"),
+      status: formData.get("status")
+    });
+    await assertStaffActionPermission(session, "staff.edit");
+
+    const result = await runStaffOperation<StaffActionState>(
+      staffOperationInput({
+        formData,
+        session,
+        operationType: `staff.payslip.${parsed.status}`,
+        requestPayload: parsed
+      }),
+      async () => {
+        const payslip = await updateStaffPayslipStatus({
+          restaurantId: session.restaurantId,
+          actorUserId: session.userId,
+          payslipId: parsed.payslipId,
+          status: parsed.status
+        });
+
+        const labels: Record<typeof parsed.status, string> = {
+          draft: `Đã trả phiếu lương của ${payslip.staffName} về nháp.`,
+          approved: `Đã duyệt phiếu lương của ${payslip.staffName}.`,
+          paid: `Đã đánh dấu đã trả lương cho ${payslip.staffName}.`,
+          void: `Đã huỷ phiếu lương của ${payslip.staffName}.`
+        };
+        return { success: labels[parsed.status] };
+      }
+    );
+
+    await revalidateStaffDashboards(session.restaurantId);
+    return result;
+  } catch (error) {
+    return { error: staffActionError(error) };
+  }
+}
 
 export async function updateStaffPayrollDeductionsAction(
   _prevState: StaffActionState | undefined,
