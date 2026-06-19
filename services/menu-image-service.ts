@@ -1,5 +1,6 @@
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { buildAwsS3AssetKey, isAwsS3AssetStorageConfigured, isAwsS3AssetUrl, uploadAwsS3Asset } from "@/services/aws-s3-storage";
 
 const menuImageBucket = "menu-images";
 const maxImageSize = 5 * 1024 * 1024;
@@ -34,7 +35,7 @@ function fileNameFromUrl(imageUrl: string) {
 function isPersistedMenuImageUrl(imageUrl: string) {
   try {
     const url = new URL(imageUrl);
-    return url.hostname.endsWith(".supabase.co") && url.pathname.includes(`/storage/v1/object/public/${menuImageBucket}/`);
+    return (url.hostname.endsWith(".supabase.co") && url.pathname.includes(`/storage/v1/object/public/${menuImageBucket}/`)) || isAwsS3AssetUrl(imageUrl);
   } catch {
     return false;
   }
@@ -81,6 +82,49 @@ function assertMenuImage({
   return imageType;
 }
 
+async function uploadMenuImageBytes({
+  restaurantId,
+  bytes,
+  contentType,
+  extension,
+  errorMessage
+}: {
+  restaurantId: string;
+  bytes: Buffer;
+  contentType: string;
+  extension: string;
+  errorMessage: string;
+}) {
+  const path = `${restaurantId}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${extension}`;
+
+  if (isAwsS3AssetStorageConfigured()) {
+    try {
+      const result = await uploadAwsS3Asset({
+        key: buildAwsS3AssetKey([menuImageBucket, path]),
+        bytes,
+        contentType
+      });
+      return result.publicUrl;
+    } catch (error) {
+      throw new AppError(error instanceof Error ? error.message : errorMessage, 400);
+    }
+  }
+
+  const supabase = createAdminSupabaseClient();
+  const { error } = await supabase.storage.from(menuImageBucket).upload(path, bytes, {
+    contentType,
+    cacheControl: "31536000",
+    upsert: false
+  });
+
+  if (error) {
+    throw new AppError(error.message || errorMessage, 400);
+  }
+
+  const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);
+  return data.publicUrl;
+}
+
 export async function createMenuImageSignedUpload({
   restaurantId,
   fileName,
@@ -124,8 +168,6 @@ export async function uploadMenuImageFile({
 
   const imageType = assertMenuImage({ fileName: file.name, contentType: file.type, size: file.size, label });
 
-  const supabase = createAdminSupabaseClient();
-  const path = `${restaurantId}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${imageType.extension}`;
   let bytes: Buffer;
   try {
     bytes = Buffer.from(await file.arrayBuffer());
@@ -133,18 +175,13 @@ export async function uploadMenuImageFile({
     throw new AppError(`Không đọc được ${label ?? "ảnh món"}. Vui lòng chọn ảnh khác và thử lại.`, 400);
   }
 
-  const { error } = await supabase.storage.from(menuImageBucket).upload(path, bytes, {
+  return uploadMenuImageBytes({
+    restaurantId,
+    bytes,
     contentType: imageType.contentType,
-    cacheControl: "31536000",
-    upsert: false
+    extension: imageType.extension,
+    errorMessage: `Không tải được ${label ?? "ảnh món"}.`
   });
-
-  if (error) {
-    throw new AppError(error.message || `Không tải được ${label ?? "ảnh món"}.`, 400);
-  }
-
-  const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);
-  return data.publicUrl;
 }
 
 export async function uploadRemoteMenuImageUrl({
@@ -175,20 +212,13 @@ export async function uploadRemoteMenuImageUrl({
     size: bytes.byteLength
   });
 
-  const supabase = createAdminSupabaseClient();
-  const path = `${restaurantId}/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${imageType.extension}`;
-  const { error } = await supabase.storage.from(menuImageBucket).upload(path, bytes, {
+  return uploadMenuImageBytes({
+    restaurantId,
+    bytes,
     contentType: imageType.contentType,
-    cacheControl: "31536000",
-    upsert: false
+    extension: imageType.extension,
+    errorMessage: "Không lưu được ảnh AI vào storage."
   });
-
-  if (error) {
-    throw new AppError(error.message || "Không lưu được ảnh AI vào Supabase Storage.", 400);
-  }
-
-  const { data } = supabase.storage.from(menuImageBucket).getPublicUrl(path);
-  return data.publicUrl;
 }
 
 export async function persistMenuImageUrl({

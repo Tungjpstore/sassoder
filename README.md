@@ -51,6 +51,8 @@ AUTH_EMAIL_FROM
 REPORT_EMAIL_FROM
 AWS_SES_REGION
 AWS_SES_ACCESS_KEY_ID
+AWS_SES_SECRET_ACCESS_KEY
+AWS_SES_IDENTITY
 MAPBOX_ACCESS_TOKEN
 ```
 
@@ -59,6 +61,65 @@ MAPBOX_ACCESS_TOKEN
 Transactional email mặc định dùng Resend qua `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`; khi AWS SES đã verified có thể đổi sang `EMAIL_PROVIDER=ses` + `AWS_SES_*`. `AUTH_EMAIL_FROM` là sender riêng cho OTP đăng ký/xác thực. `CRON_SECRET` bảo vệ các endpoint cron như `/api/cron/reports`, `/api/cron/ai-ops`, `/api/cron/reservations/expire` (expire giữ bàn + auto no-show) và `/api/cron/subscriptions`.
 `MAPBOX_ACCESS_TOKEN` dùng ở server để định vị địa chỉ giao hàng và đo quãng đường lái xe bằng Mapbox. Không cần đặt `NEXT_PUBLIC_` cho token này.
 Danh sách biến đầy đủ, scope theo môi trường và checklist rollout/rollback nằm ở `docs/infrastructure-runbook.md`.
+
+Kiểm tra trạng thái AWS SES trước khi chuyển production:
+
+```bash
+npm run aws:ses:check -- --region=us-east-1 --identity=no-reply@logivn.com
+```
+
+Lệnh này chỉ đọc trạng thái `GetAccount`, quota gửi và identity verification; không gửi email và không tạo tài nguyên AWS. Chỉ đổi `EMAIL_PROVIDER=ses` khi SES đã bật sending, identity sender/domain đã verified, và nếu cần gửi ra khách thật thì tài khoản SES đã ra khỏi sandbox.
+
+Ảnh món/logo/ảnh AI mặc định vẫn lưu ở Supabase Storage. Khi đã tạo S3 bucket và CloudFront distribution/OAC, có thể bật upload server-side sang AWS bằng:
+
+```txt
+MENU_IMAGE_STORAGE_PROVIDER=s3
+AWS_S3_REGION=us-east-1
+AWS_S3_BUCKET=<bucket-assets>
+AWS_S3_ACCESS_KEY_ID=<scoped-access-key>
+AWS_S3_SECRET_ACCESS_KEY=<scoped-secret>
+AWS_S3_PUBLIC_BASE_URL=https://<cloudfront-domain>
+AWS_S3_KEY_PREFIX=logivn-assets
+```
+
+Luồng upload trực tiếp từ browser hiện vẫn dùng Supabase signed upload; adapter S3 trước mắt phục vụ các upload server-side như logo onboarding, ảnh AI được persist và các form server action.
+
+Event nền hiện mặc định publish qua internal gateway/VPS. Khi muốn tận dụng AWS cho worker async, tạo SQS queue rồi bật:
+
+```txt
+# VPS worker first
+OPERATIONAL_EVENT_SQS_CONSUMER_ENABLED=true
+OPERATIONAL_EVENT_SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account>/<queue-name>
+AWS_SQS_REGION=<region>
+AWS_SQS_ACCESS_KEY_ID=<scoped-access-key>
+AWS_SQS_SECRET_ACCESS_KEY=<scoped-secret>
+
+# Vercel app after the VPS worker reports configured=true
+OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs
+OPERATIONAL_EVENT_SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account>/<queue-name>
+AWS_SQS_REGION=<region>
+AWS_SQS_ACCESS_KEY_ID=<scoped-access-key>
+AWS_SQS_SECRET_ACCESS_KEY=<scoped-secret>
+```
+
+Với FIFO queue, app tự gửi `MessageDeduplicationId` theo `eventId` và `MessageGroupId` theo restaurant/tenant. VPS worker đọc SQS bằng long polling, route event vào BullMQ bằng cùng `publishOperationalEvent` của gateway, và chỉ `DeleteMessage` sau khi enqueue thành công. Nếu chưa bật consumer, không bật `OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs` trên Vercel vì outbox sẽ coi event là đã publish sau khi SQS nhận message.
+
+OCR menu/hóa đơn với ảnh dùng AWS Textract để đọc chữ trước, sau đó AI hiện tại chỉ chuẩn hóa text thành JSON:
+
+```txt
+OCR_PROVIDER=textract
+AWS_TEXTRACT_REGION=us-east-1
+AWS_TEXTRACT_ACCESS_KEY_ID=<scoped-access-key>
+AWS_TEXTRACT_SECRET_ACCESS_KEY=<scoped-secret>
+```
+
+Nếu request chỉ có `rawText`, app vẫn dùng AI text bình thường. Nếu request có ảnh mà Textract chưa cấu hình hoặc không đọc được chữ, app báo lỗi rõ để người dùng chụp lại/dán text; không fallback sang MiMo vision vì MiMo 2.5 hiện không hỗ trợ OCR ảnh ổn định cho luồng này.
+
+Smoke test Textract bằng ảnh cục bộ:
+
+```bash
+npm run aws:textract:check -- --image=./path/to/menu-or-invoice.jpg
+```
 
 Trên Vercel production, đặt:
 

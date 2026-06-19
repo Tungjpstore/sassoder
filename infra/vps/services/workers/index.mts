@@ -14,6 +14,7 @@ import { createReservationWorkers } from "./reservation-worker.mjs";
 import { createStaffWorkers } from "./staff-worker.mjs";
 import { startOperationalOutboxRelay } from "./outbox-relay-worker.mjs";
 import { startSlaScanner } from "./sla-scanner.mjs";
+import { startSqsOperationalEventConsumer } from "./sqs-operational-event-worker.mjs";
 
 const logger = createLogger("worker");
 const connection = createRedisConnection("worker");
@@ -32,6 +33,7 @@ const workers = [
 const stopQueueMetrics = startQueueMetricsCollector({ logger });
 const stopOperationalOutboxRelay = startOperationalOutboxRelay({ logger });
 const stopSlaScanner = startSlaScanner({ logger });
+const sqsOperationalEventConsumer = startSqsOperationalEventConsumer({ logger });
 
 const app = createHttpApp({ logger, serviceName: "worker" });
 
@@ -39,7 +41,8 @@ app.get("/ready", async (_req, res) => {
   res.json({
     ok: true,
     workers: workers.length,
-    queues: workers.map((worker) => worker.name)
+    queues: workers.map((worker) => worker.name),
+    sqsOperationalEventConsumer: sqsOperationalEventConsumer.state
   });
 });
 
@@ -71,6 +74,7 @@ app.get("/queues/failed", requireInternalApiKey, async (req, res, next) => {
 
 const shutdown = async () => {
   logger.info("closing workers");
+  sqsOperationalEventConsumer.stop();
   stopOperationalOutboxRelay();
   stopSlaScanner();
   stopQueueMetrics();

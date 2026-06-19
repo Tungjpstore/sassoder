@@ -213,6 +213,14 @@ such as `order.created`, `order.completed`, `payment.waiting_confirm`,
 `inventory.low`, `staff.checked_in`, and `sla.warning` into the correct BullMQ
 queues with tenant-aware payloads.
 
+The worker can also consume AWS SQS FIFO ingress for the same operational events.
+Set `OPERATIONAL_EVENT_SQS_CONSUMER_ENABLED=true`, `OPERATIONAL_EVENT_SQS_QUEUE_URL`,
+`AWS_SQS_REGION`, `AWS_SQS_ACCESS_KEY_ID`, and `AWS_SQS_SECRET_ACCESS_KEY` in
+`/opt/logivn/.env`, then deploy/restart the VPS worker. Only after
+`GET /ready` on the worker reports `sqsOperationalEventConsumer.configured=true`
+should Vercel set `OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs`. The consumer deletes an
+SQS message only after the event is recorded and enqueued into BullMQ.
+
 ## Telegram Operations
 
 Tenant Telegram is isolated in the `telegram-bot` service. Next.js never sends

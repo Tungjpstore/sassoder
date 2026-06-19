@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { isAwsSqsQueueConfigured, sendAwsSqsMessage } from "@/services/aws-sqs-queue";
 import { sendOperationalEventPush } from "@/services/push-notification-service";
 
 type BaseOperationalEvent = {
@@ -423,6 +424,24 @@ export async function publishOperationalEvent(event: OperationalEvent): Promise<
       error
     });
   });
+
+  if (isAwsSqsQueueConfigured()) {
+    try {
+      const sqs = await sendAwsSqsMessage({
+        body: eventRecord,
+        deduplicationId: eventRecord.eventId,
+        groupId: eventRecord.restaurantId ?? eventRecord.tenantId ?? eventRecord.type
+      });
+      const jobs = [{ queueName: sqs.queueName, jobId: sqs.messageId ?? eventRecord.eventId, name: eventRecord.type }];
+      await markOperationalOutboxPublished(outbox, jobs);
+      return { queued: true, jobs };
+    } catch (error) {
+      console.error("[operational-event-bus] sqs publish failed", { eventId: eventRecord.eventId, type: eventRecord.type, error });
+      await markOperationalOutboxFailed(outbox, error instanceof Error ? error.message : "sqs_publish_failed");
+      return { queued: false, reason: "request_failed" };
+    }
+  }
+
   const gatewayUrl = internalGatewayUrl();
   const internalKey = process.env.LOGIVN_INTERNAL_API_KEY;
   if (!gatewayUrl || !internalKey) {

@@ -33,6 +33,7 @@ import {
   type StoreSetupDraftKind
 } from "@/services/ai-prompt-router";
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
+import { detectDocumentTextWithAwsTextract, isAwsTextractConfigured } from "@/services/aws-textract-ocr";
 import { buildAgentMission } from "@/lib/ai/agent-mission";
 import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildOperationalPassport } from "@/lib/ai/operational-passport";
@@ -3804,26 +3805,42 @@ function hasInventoryOcrRows(draft: InventoryOcrDraft) {
   return draft.rows.length > 0;
 }
 
+async function enrichOcrInputWithTextract(input: { imageUrl?: string; imageBase64?: string; rawText?: string }, label: "menu" | "inventory") {
+  if (!input.imageUrl && !input.imageBase64) return input;
+  if (!isAwsTextractConfigured()) {
+    if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
+    throw new AppError(`OCR ảnh ${label === "menu" ? "menu" : "hóa đơn"} cần AWS Textract. Vui lòng cấu hình OCR_PROVIDER=textract và AWS_TEXTRACT_* trước khi gửi ảnh.`, 503);
+  }
+
+  try {
+    const textract = await detectDocumentTextWithAwsTextract({ imageUrl: input.imageUrl, imageBase64: input.imageBase64 });
+    if (!textract.text.trim()) {
+      if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
+      throw new AppError(`AWS Textract chưa đọc được chữ từ ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Vui lòng chụp rõ hơn hoặc dán nội dung thô.`, 422);
+    }
+    const rawText = [input.rawText, textract.text].filter(Boolean).join("\n").trim();
+    return { rawText };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    console.warn(`[ai-ocr] textract ${label} failed`, { error: error instanceof Error ? error.message : error });
+    if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
+    throw new AppError(`AWS Textract chưa xử lý được ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Vui lòng thử ảnh rõ hơn hoặc dán nội dung thô.`, 502);
+  }
+}
+
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
-  const prompt = buildMenuOcrPrompt(input);
+  const ocrInput = await enrichOcrInputWithTextract(input, "menu");
+  const prompt = buildMenuOcrPrompt(ocrInput);
   const mimoConfig = await getRequiredMimoProviderConfig("AI OCR menu");
-  const result =
-    input.imageUrl || input.imageBase64
-      ? await mimoMultimodalOcr({
-          config: mimoConfig,
-          prompt,
-          imageUrl: input.imageUrl,
-          imageBase64: input.imageBase64
-        })
-      : await mimoChat(
-          mimoConfig,
-          mimoConfig.chatModel,
-          [
-            { role: "system", content: "Bạn chuyên OCR và chuẩn hóa menu F&B Việt Nam. Trả JSON thuần." },
-            { role: "user", content: prompt }
-          ],
-          { jsonMode: true }
-        );
+  const result = await mimoChat(
+    mimoConfig,
+    mimoConfig.chatModel,
+    [
+      { role: "system", content: "Bạn chuyên chuẩn hóa text OCR menu F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
+      { role: "user", content: prompt }
+    ],
+    { jsonMode: true }
+  );
 
   let data = normalizeMenuOcrDraft(extractJsonObject(result.text));
 
@@ -3858,25 +3875,18 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
 }
 
 async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
-  const prompt = buildInventoryOcrPrompt(input);
+  const ocrInput = await enrichOcrInputWithTextract(input, "inventory");
+  const prompt = buildInventoryOcrPrompt(ocrInput);
   const mimoConfig = await getRequiredMimoProviderConfig("AI OCR nhập kho");
-  const result =
-    input.imageUrl || input.imageBase64
-      ? await mimoMultimodalOcr({
-          config: mimoConfig,
-          prompt,
-          imageUrl: input.imageUrl,
-          imageBase64: input.imageBase64
-        })
-      : await mimoChat(
-          mimoConfig,
-          mimoConfig.chatModel,
-          [
-            { role: "system", content: "Bạn chuyên OCR hóa đơn và chuẩn hóa nhập kho F&B Việt Nam. Trả JSON thuần." },
-            { role: "user", content: prompt }
-          ],
-          { jsonMode: true }
-        );
+  const result = await mimoChat(
+    mimoConfig,
+    mimoConfig.chatModel,
+    [
+      { role: "system", content: "Bạn chuyên chuẩn hóa text OCR hóa đơn/phiếu nhập kho F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
+      { role: "user", content: prompt }
+    ],
+    { jsonMode: true }
+  );
 
   let data = normalizeInventoryOcrDraft(extractJsonObject(result.text));
 

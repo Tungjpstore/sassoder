@@ -1091,6 +1091,15 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
       xaiConfig
     ),
     buildIntegrationHealth({
+      key: "aws-textract-ocr",
+      name: "AWS Textract OCR",
+      category: "ai",
+      envNames: ["OCR_PROVIDER", "AWS_TEXTRACT_REGION", "AWS_TEXTRACT_ACCESS_KEY_ID", "AWS_TEXTRACT_SECRET_ACCESS_KEY"],
+      required: false,
+      secretHandling: "AWS key chỉ server-side; nên scope IAM vào textract:DetectDocumentText cho vùng dùng OCR.",
+      note: "Ảnh menu/hóa đơn đi qua Textract để trích chữ; MiMo 2.5 chỉ chuẩn hóa text thành JSON, không đọc ảnh trực tiếp."
+    }),
+    buildIntegrationHealth({
       key: "maps",
       name: "Maps providers",
       category: "maps",
@@ -2837,6 +2846,8 @@ async function readPlatformAdminSnapshot() {
       configured: Boolean(process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured),
       status: process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured ? "OK" : "Tuỳ chọn"
     },
+    envStatus("AWS_TEXTRACT_ACCESS_KEY_ID", "AWS Textract OCR", false),
+    envStatus("AWS_TEXTRACT_SECRET_ACCESS_KEY", "AWS Textract secret", false),
     {
       ...envStatus("XAI_API_KEY", "xAI Grok/Voice/Image", false),
       configured: Boolean(process.env.XAI_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "xai")?.configured),
