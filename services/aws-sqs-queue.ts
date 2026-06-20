@@ -16,6 +16,7 @@ type SendSqsMessageOptions = {
   env?: AwsSqsEnv;
   fetchImpl?: typeof fetch;
   now?: Date;
+  timeoutMs?: number;
 };
 
 type SqsRequestOptions = SendSqsMessageOptions & {
@@ -27,6 +28,8 @@ export type AwsSqsReceivedMessage = {
   receiptHandle: string;
   body: string;
 };
+
+const defaultSqsRequestTimeoutMs = 5_000;
 
 function clean(value: string | undefined) {
   return value?.trim() || "";
@@ -152,7 +155,7 @@ async function sqsQuery(params: Record<string, string>, options: SqsRequestOptio
     method: "POST",
     headers: signedHeaders(config, url, payloadText, options.now ?? new Date()),
     body: payloadText,
-    signal: AbortSignal.timeout(options.timeoutMs ?? 1500)
+    signal: AbortSignal.timeout(options.timeoutMs ?? defaultSqsRequestTimeoutMs)
   });
   const text = await response.text();
   if (!response.ok) throw new Error(text.slice(0, 500) || `SQS ${params.Action ?? "request"} failed with status ${response.status}.`);
@@ -189,7 +192,7 @@ export async function sendAwsSqsMessage({
     method: "POST",
     headers: signedHeaders(config, url, payloadText, options.now ?? new Date()),
     body: payloadText,
-    signal: AbortSignal.timeout(1500)
+    signal: AbortSignal.timeout(options.timeoutMs ?? defaultSqsRequestTimeoutMs)
   });
   const text = await response.text();
   if (!response.ok) throw new Error(text.slice(0, 500) || `SQS SendMessage failed with status ${response.status}.`);

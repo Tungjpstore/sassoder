@@ -9,8 +9,10 @@ const textractEnv = {
   AWS_TEXTRACT_SECRET_ACCESS_KEY: "secret"
 };
 
-test("resolveAwsTextractConfig requires explicit textract provider", () => {
-  assert.equal(resolveAwsTextractConfig({ AWS_TEXTRACT_ACCESS_KEY_ID: "key", AWS_TEXTRACT_SECRET_ACCESS_KEY: "secret" }), null);
+test("resolveAwsTextractConfig follows OCR provider order with Textract as default", () => {
+  assert.ok(resolveAwsTextractConfig({ AWS_TEXTRACT_ACCESS_KEY_ID: "key", AWS_TEXTRACT_SECRET_ACCESS_KEY: "secret" }));
+  assert.equal(resolveAwsTextractConfig({ OCR_PROVIDER_ORDER: "google_vision", AWS_TEXTRACT_ACCESS_KEY_ID: "key", AWS_TEXTRACT_SECRET_ACCESS_KEY: "secret" }), null);
+  assert.ok(resolveAwsTextractConfig({ OCR_PROVIDER_ORDER: "textract,google_vision", AWS_TEXTRACT_ACCESS_KEY_ID: "key", AWS_TEXTRACT_SECRET_ACCESS_KEY: "secret" }));
 });
 
 test("detectDocumentTextWithAwsTextract signs request and extracts line text", async () => {
@@ -45,6 +47,7 @@ test("detectDocumentTextWithAwsTextract signs request and extracts line text", a
   assert.equal(headers["x-amz-target"], "Textract.DetectDocumentText");
   assert.match(headers.Authorization, /^AWS4-HMAC-SHA256 /);
   assert.equal(headers.Authorization.includes("secret"), false);
+  assert.ok(request.init?.signal instanceof AbortSignal);
 });
 
 test("detectDocumentTextWithAwsTextract blocks private image URLs before fetch", async () => {

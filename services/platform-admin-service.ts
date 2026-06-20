@@ -1092,12 +1092,12 @@ function buildIntegrationHealthList(platformAuthConfigured: boolean, aiProviderC
     ),
     buildIntegrationHealth({
       key: "aws-textract-ocr",
-      name: "AWS Textract OCR",
+      name: "Image OCR providers",
       category: "ai",
-      envNames: ["OCR_PROVIDER", "AWS_TEXTRACT_REGION", "AWS_TEXTRACT_ACCESS_KEY_ID", "AWS_TEXTRACT_SECRET_ACCESS_KEY"],
+      envNames: ["OCR_PROVIDER_ORDER", "OCR_PROVIDER", "AWS_TEXTRACT_REGION", "AWS_TEXTRACT_ACCESS_KEY_ID", "AWS_TEXTRACT_SECRET_ACCESS_KEY", "GOOGLE_VISION_API_KEY", "OCR_SPACE_API_KEY"],
       required: false,
-      secretHandling: "AWS key chỉ server-side; nên scope IAM vào textract:DetectDocumentText cho vùng dùng OCR.",
-      note: "Ảnh menu/hóa đơn đi qua Textract để trích chữ; MiMo 2.5 chỉ chuẩn hóa text thành JSON, không đọc ảnh trực tiếp."
+      secretHandling: "OCR keys chỉ server-side; AWS key nên scope vào textract:DetectDocumentText cho vùng dùng OCR.",
+      note: "Ảnh menu/hóa đơn đi qua OCR_PROVIDER_ORDER để trích chữ; MiMo/Gemini/OpenAI chỉ chuẩn hóa text thành JSON, không đọc ảnh trực tiếp."
     }),
     buildIntegrationHealth({
       key: "maps",
@@ -2846,8 +2846,11 @@ async function readPlatformAdminSnapshot() {
       configured: Boolean(process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured),
       status: process.env.MIMO_API_KEY || process.env.XIAOMI_MIMO_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "mimo")?.configured ? "OK" : "Tuỳ chọn"
     },
+    envStatus("OCR_PROVIDER_ORDER", "Image OCR provider order", false),
     envStatus("AWS_TEXTRACT_ACCESS_KEY_ID", "AWS Textract OCR", false),
     envStatus("AWS_TEXTRACT_SECRET_ACCESS_KEY", "AWS Textract secret", false),
+    envStatus("GOOGLE_VISION_API_KEY", "Google Vision OCR", false),
+    envStatus("OCR_SPACE_API_KEY", "OCR.space fallback", false),
     {
       ...envStatus("XAI_API_KEY", "xAI Grok/Voice/Image", false),
       configured: Boolean(process.env.XAI_API_KEY || aiProviderConfigs.find((provider) => provider.provider === "xai")?.configured),

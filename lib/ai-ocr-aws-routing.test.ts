@@ -9,16 +9,16 @@ function functionBlock(source: string, name: string) {
   return source.slice(start, next === -1 ? undefined : next);
 }
 
-test("image OCR routes through AWS Textract before provider-routed text normalization", () => {
+test("image OCR routes through configured image providers before provider-routed text normalization", () => {
   const source = readFileSync("services/ai/runtime.ts", "utf8");
-  const enrichBlock = functionBlock(source, "enrichOcrInputWithTextract");
+  const enrichBlock = functionBlock(source, "enrichOcrInputWithProviders");
   const providerBlock = source.slice(source.indexOf("function resolveOcrTextProvider"), source.indexOf("async function runOcrTextNormalization"));
   const normalizeBlock = functionBlock(source, "runOcrTextNormalization");
   const menuBlock = functionBlock(source, "runMenuOcrDraft");
   const inventoryBlock = functionBlock(source, "runInventoryOcrDraft");
 
-  assert.match(enrichBlock, /detectDocumentTextWithAwsTextract/);
-  assert.match(enrichBlock, /OCR_PROVIDER=textract/);
+  assert.match(enrichBlock, /extractOcrTextWithProviders/);
+  assert.match(enrichBlock, /OCR_PROVIDER_ORDER=textract,google_vision,ocrspace/);
   assert.match(providerBlock, /AI_OCR_TEXT_PROVIDER/);
   assert.match(providerBlock, /AI_OCR_PROVIDER/);
   assert.match(normalizeBlock, /runChat/);

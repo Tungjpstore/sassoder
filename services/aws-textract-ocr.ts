@@ -29,14 +29,16 @@ function clean(value: string | undefined) {
 }
 
 const maxTextractImageBytes = 5 * 1024 * 1024;
-const defaultTextractFetchTimeoutMs = 5_000;
-
-function provider(env: AwsTextractEnv) {
-  return clean(env.OCR_PROVIDER || env.AI_OCR_PROVIDER).toLowerCase();
-}
+const defaultTextractFetchTimeoutMs = 15_000;
 
 function usesTextractProvider(env: AwsTextractEnv) {
-  return ["textract", "aws", "aws-textract", "aws_textract"].includes(provider(env));
+  const rawProvider = clean(env.OCR_PROVIDER_ORDER || env.OCR_IMAGE_PROVIDER_ORDER || env.OCR_PROVIDER || env.AI_OCR_PROVIDER);
+  if (!rawProvider) return true;
+
+  return rawProvider
+    .split(/[,|]/)
+    .map((provider) => provider.trim().toLowerCase())
+    .some((provider) => ["textract", "aws", "aws-textract", "aws_textract"].includes(provider));
 }
 
 export function resolveAwsTextractConfig(env: AwsTextractEnv = process.env): AwsTextractConfig | null {
@@ -186,7 +188,8 @@ export async function detectDocumentTextWithAwsTextract(input: { imageBase64?: s
   const response = await fetchImpl(config.endpoint, {
     method: "POST",
     headers: signedHeaders(config, payload, options.now ?? new Date()),
-    body: payload
+    body: payload,
+    signal: AbortSignal.timeout(options.timeoutMs ?? defaultTextractFetchTimeoutMs)
   });
   const json = await readJsonResponse(response);
   if (!response.ok) {

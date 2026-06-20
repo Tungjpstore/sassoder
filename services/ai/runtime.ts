@@ -33,7 +33,8 @@ import {
   type StoreSetupDraftKind
 } from "@/services/ai-prompt-router";
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
-import { detectDocumentTextWithAwsTextract, isAwsTextractConfigured } from "@/services/aws-textract-ocr";
+import { parseMenuOcrText } from "@/services/menu-ocr-text-parser";
+import { extractOcrTextWithProviders, hasConfiguredOcrImageProvider } from "@/services/ocr-text-extraction";
 import { buildAgentMission } from "@/lib/ai/agent-mission";
 import { buildCommandDeck } from "@/lib/ai/command-deck";
 import { buildOperationalPassport } from "@/lib/ai/operational-passport";
@@ -3796,6 +3797,7 @@ export async function generateOnboardingBranding(input: {
 
 type MenuOcrDraft = ReturnType<typeof normalizeMenuOcrDraft>;
 type InventoryOcrDraft = ReturnType<typeof normalizeInventoryOcrDraft>;
+type EnrichedOcrInput = { rawText?: string; ocrWarnings?: string[] };
 
 function hasMenuOcrItems(draft: MenuOcrDraft) {
   return draft.categories.some((category) => category.items.length > 0);
@@ -3819,41 +3821,103 @@ async function runOcrTextNormalization(messages: AiMessage[], maxTokens: number)
   );
 }
 
-async function enrichOcrInputWithTextract(input: { imageUrl?: string; imageBase64?: string; rawText?: string }, label: "menu" | "inventory") {
+function fallbackOcrNormalizationResult(label: "menu" | "inventory", reason: string): LegacyAiCompletionResult {
+  return {
+    text: "",
+    provider: resolveOcrTextProvider() ?? "gemini",
+    model: `local-${label}-ocr-parser`,
+    inputTokens: 0,
+    outputTokens: 0,
+    raw: { fallback: true, reason }
+  };
+}
+
+function mergeMenuOcrDrafts(primary: MenuOcrDraft, fallback: MenuOcrDraft): MenuOcrDraft {
+  if (!hasMenuOcrItems(fallback)) return primary;
+  if (!hasMenuOcrItems(primary)) return fallback;
+
+  const categories = primary.categories.map((category) => ({ ...category, items: [...category.items] }));
+  const categoryByName = new Map(categories.map((category) => [category.name.toLowerCase(), category]));
+  const seen = new Set<string>();
+
+  for (const category of categories) {
+    for (const item of category.items) seen.add(`${item.name.toLowerCase()}:${item.price}`);
+  }
+
+  for (const category of fallback.categories) {
+    let target = categoryByName.get(category.name.toLowerCase());
+    if (!target) {
+      target = { ...category, items: [] };
+      categoryByName.set(category.name.toLowerCase(), target);
+      categories.push(target);
+    }
+    for (const item of category.items) {
+      const key = `${item.name.toLowerCase()}:${item.price}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      target.items.push(item);
+    }
+  }
+
+  return {
+    categories: categories.filter((category) => category.items.length > 0).slice(0, 20),
+    warnings: [...primary.warnings, ...fallback.warnings].slice(0, 8),
+    confidence: Math.max(primary.confidence, Math.min(0.8, fallback.confidence))
+  };
+}
+
+function appendOcrWarnings<T extends { warnings: string[] }>(draft: T, warnings: string[] | undefined): T {
+  if (!warnings?.length) return draft;
+  return { ...draft, warnings: [...warnings, ...draft.warnings].slice(0, 8) };
+}
+
+async function enrichOcrInputWithProviders(input: { imageUrl?: string; imageBase64?: string; rawText?: string }, label: "menu" | "inventory"): Promise<EnrichedOcrInput> {
   if (!input.imageUrl && !input.imageBase64) return input;
-  if (!isAwsTextractConfigured()) {
+  if (!hasConfiguredOcrImageProvider()) {
     if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
-    throw new AppError(`OCR ảnh ${label === "menu" ? "menu" : "hóa đơn"} cần AWS Textract. Vui lòng cấu hình OCR_PROVIDER=textract và AWS_TEXTRACT_* trước khi gửi ảnh.`, 503);
+    throw new AppError(`OCR ảnh ${label === "menu" ? "menu" : "hóa đơn"} cần provider đọc ảnh. Vui lòng cấu hình OCR_PROVIDER_ORDER=textract,google_vision,ocrspace và key server-side tương ứng.`, 503);
   }
 
   try {
-    const textract = await detectDocumentTextWithAwsTextract({ imageUrl: input.imageUrl, imageBase64: input.imageBase64 });
-    if (!textract.text.trim()) {
+    const ocr = await extractOcrTextWithProviders({ imageUrl: input.imageUrl, imageBase64: input.imageBase64 });
+    if (!ocr.text.trim()) {
       if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
-      throw new AppError(`AWS Textract chưa đọc được chữ từ ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Vui lòng chụp rõ hơn hoặc dán nội dung thô.`, 422);
+      throw new AppError(`OCR chưa đọc được chữ từ ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Vui lòng chụp rõ hơn hoặc dán nội dung thô.`, 422);
     }
-    const rawText = [input.rawText, textract.text].filter(Boolean).join("\n").trim();
-    return { rawText };
+    const rawText = [input.rawText, ocr.text].filter(Boolean).join("\n").trim();
+    return { rawText, ocrWarnings: ocr.warnings };
   } catch (error) {
     if (error instanceof AppError) throw error;
-    console.warn(`[ai-ocr] textract ${label} failed`, { error: error instanceof Error ? error.message : error });
+    console.warn(`[ai-ocr] image provider ${label} failed`, { error: error instanceof Error ? error.message : error });
     if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
-    throw new AppError(`AWS Textract chưa xử lý được ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Vui lòng thử ảnh rõ hơn hoặc dán nội dung thô.`, 502);
+    throw new AppError(`OCR ảnh ${label === "menu" ? "menu" : "hóa đơn"} chưa xử lý được. Vui lòng thử ảnh rõ hơn hoặc dán nội dung thô.`, 502);
   }
 }
 
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
-  const ocrInput = await enrichOcrInputWithTextract(input, "menu");
+  const ocrInput = await enrichOcrInputWithProviders(input, "menu");
+  const localDraft = parseMenuOcrText(ocrInput.rawText ?? "");
   const prompt = buildMenuOcrPrompt(ocrInput);
-  const result = await runOcrTextNormalization(
-    [
-      { role: "system", content: "Bạn chuyên chuẩn hóa text OCR menu F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
-      { role: "user", content: prompt }
-    ],
-    3200
-  );
+  let result: LegacyAiCompletionResult;
+  try {
+    result = await runOcrTextNormalization(
+      [
+        { role: "system", content: "Bạn chuyên chuẩn hóa text OCR menu F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
+        { role: "user", content: prompt }
+      ],
+      3200
+    );
+  } catch (error) {
+    if (hasMenuOcrItems(localDraft)) {
+      return {
+        result: fallbackOcrNormalizationResult("menu", error instanceof Error ? error.message : "normalization_failed"),
+        data: appendOcrWarnings(localDraft, ocrInput.ocrWarnings)
+      };
+    }
+    throw error;
+  }
 
-  let data = normalizeMenuOcrDraft(extractJsonObject(result.text));
+  let data = appendOcrWarnings(mergeMenuOcrDrafts(normalizeMenuOcrDraft(extractJsonObject(result.text)), localDraft), ocrInput.ocrWarnings);
 
   if (!hasMenuOcrItems(data) && result.text.trim()) {
     const repairResult = await runOcrTextNormalization(
@@ -3871,9 +3935,9 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
     );
     const repairedData = normalizeMenuOcrDraft(extractJsonObject(repairResult.text));
     if (hasMenuOcrItems(repairedData)) {
-      return { result: repairResult, data: repairedData };
+      return { result: repairResult, data: appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings) };
     }
-    data = repairedData;
+    data = appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings);
   }
 
   if (!hasMenuOcrItems(data)) {
@@ -3884,7 +3948,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
 }
 
 async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
-  const ocrInput = await enrichOcrInputWithTextract(input, "inventory");
+  const ocrInput = await enrichOcrInputWithProviders(input, "inventory");
   const prompt = buildInventoryOcrPrompt(ocrInput);
   const result = await runOcrTextNormalization(
     [
@@ -3894,7 +3958,7 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
     2600
   );
 
-  let data = normalizeInventoryOcrDraft(extractJsonObject(result.text));
+  let data = appendOcrWarnings(normalizeInventoryOcrDraft(extractJsonObject(result.text)), ocrInput.ocrWarnings);
 
   if (!hasInventoryOcrRows(data) && result.text.trim()) {
     const repairResult = await runOcrTextNormalization(
@@ -3912,9 +3976,9 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
     );
     const repairedData = normalizeInventoryOcrDraft(extractJsonObject(repairResult.text));
     if (hasInventoryOcrRows(repairedData)) {
-      return { result: repairResult, data: repairedData };
+      return { result: repairResult, data: appendOcrWarnings(repairedData, ocrInput.ocrWarnings) };
     }
-    data = repairedData;
+    data = appendOcrWarnings(repairedData, ocrInput.ocrWarnings);
   }
 
   if (!hasInventoryOcrRows(data)) {
