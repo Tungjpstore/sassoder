@@ -108,12 +108,13 @@ OCR menu/hóa đơn với ảnh dùng AWS Textract để đọc chữ trước, 
 
 ```txt
 OCR_PROVIDER=textract
+AI_OCR_TEXT_PROVIDER=gemini
 AWS_TEXTRACT_REGION=us-east-1
 AWS_TEXTRACT_ACCESS_KEY_ID=<scoped-access-key>
 AWS_TEXTRACT_SECRET_ACCESS_KEY=<scoped-secret>
 ```
 
-Nếu request chỉ có `rawText`, app vẫn dùng AI text bình thường. Nếu request có ảnh mà Textract chưa cấu hình hoặc không đọc được chữ, app báo lỗi rõ để người dùng chụp lại/dán text; không fallback sang MiMo vision vì MiMo 2.5 hiện không hỗ trợ OCR ảnh ổn định cho luồng này.
+Nếu request chỉ có `rawText`, app vẫn dùng AI text bình thường. Nếu request có ảnh mà Textract chưa cấu hình hoặc không đọc được chữ, app báo lỗi rõ để người dùng chụp lại/dán text; không fallback sang MiMo vision vì MiMo 2.5 hiện không hỗ trợ OCR ảnh ổn định cho luồng này. Biến `AI_OCR_TEXT_PROVIDER` chỉ điều khiển bước chuẩn hóa text OCR thành JSON; production nên ưu tiên `gemini`, sau đó router tự fallback sang provider text khác.
 
 Smoke test Textract bằng ảnh cục bộ:
 

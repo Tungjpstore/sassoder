@@ -37,8 +37,11 @@ export function buildAiProviderOrder(input: {
 
   if (batchTasks.has(input.taskType)) {
     const preferred = input.preferredProvider && capable.includes(input.preferredProvider) ? input.preferredProvider : null;
-    const ordered: AiProvider[] = preferred ? [preferred] : capable.includes("mimo") ? ["mimo"] : [];
-    const fallbackPreference: AiProvider[] = ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "vercel_gateway", "claude"];
+    const ordered: AiProvider[] = preferred ? [preferred] : input.taskType === "batch_ocr" ? [] : capable.includes("mimo") ? ["mimo"] : [];
+    const fallbackPreference: AiProvider[] =
+      input.taskType === "batch_ocr"
+        ? ["gemini", "deepseek", "openai", "bedrock", "nvidia", "xai", "vercel_gateway", "claude", "mimo"]
+        : ["mimo", "deepseek", "gemini", "openai", "bedrock", "nvidia", "xai", "vercel_gateway", "claude"];
     for (const provider of fallbackPreference) {
       if (capable.includes(provider) && !ordered.includes(provider)) ordered.push(provider);
     }

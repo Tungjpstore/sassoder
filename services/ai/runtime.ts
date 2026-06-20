@@ -3805,6 +3805,20 @@ function hasInventoryOcrRows(draft: InventoryOcrDraft) {
   return draft.rows.length > 0;
 }
 
+function resolveOcrTextProvider() {
+  return normalizeAiProvider(process.env.AI_OCR_TEXT_PROVIDER) ?? normalizeAiProvider(process.env.AI_OCR_PROVIDER) ?? normalizeAiProvider("gemini");
+}
+
+async function runOcrTextNormalization(messages: AiMessage[], maxTokens: number) {
+  return runChat(
+    messages,
+    resolveOcrTextProvider(),
+    undefined,
+    { jsonMode: true, maxTokens },
+    "batch_ocr"
+  );
+}
+
 async function enrichOcrInputWithTextract(input: { imageUrl?: string; imageBase64?: string; rawText?: string }, label: "menu" | "inventory") {
   if (!input.imageUrl && !input.imageBase64) return input;
   if (!isAwsTextractConfigured()) {
@@ -3831,23 +3845,18 @@ async function enrichOcrInputWithTextract(input: { imageUrl?: string; imageBase6
 async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const ocrInput = await enrichOcrInputWithTextract(input, "menu");
   const prompt = buildMenuOcrPrompt(ocrInput);
-  const mimoConfig = await getRequiredMimoProviderConfig("AI OCR menu");
-  const result = await mimoChat(
-    mimoConfig,
-    mimoConfig.chatModel,
+  const result = await runOcrTextNormalization(
     [
       { role: "system", content: "Bạn chuyên chuẩn hóa text OCR menu F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
       { role: "user", content: prompt }
     ],
-    { jsonMode: true }
+    3200
   );
 
   let data = normalizeMenuOcrDraft(extractJsonObject(result.text));
 
   if (!hasMenuOcrItems(data) && result.text.trim()) {
-    const repairResult = await mimoChat(
-      mimoConfig,
-      mimoConfig.chatModel,
+    const repairResult = await runOcrTextNormalization(
       [
         {
           role: "system",
@@ -3858,7 +3867,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
           content: buildMenuOcrPrompt({ rawText: result.text })
         }
       ],
-      { jsonMode: true }
+      2400
     );
     const repairedData = normalizeMenuOcrDraft(extractJsonObject(repairResult.text));
     if (hasMenuOcrItems(repairedData)) {
@@ -3877,23 +3886,18 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
 async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
   const ocrInput = await enrichOcrInputWithTextract(input, "inventory");
   const prompt = buildInventoryOcrPrompt(ocrInput);
-  const mimoConfig = await getRequiredMimoProviderConfig("AI OCR nhập kho");
-  const result = await mimoChat(
-    mimoConfig,
-    mimoConfig.chatModel,
+  const result = await runOcrTextNormalization(
     [
       { role: "system", content: "Bạn chuyên chuẩn hóa text OCR hóa đơn/phiếu nhập kho F&B Việt Nam thành JSON thuần. Không cần đọc ảnh; chỉ xử lý chữ đã được trích xuất." },
       { role: "user", content: prompt }
     ],
-    { jsonMode: true }
+    2600
   );
 
   let data = normalizeInventoryOcrDraft(extractJsonObject(result.text));
 
   if (!hasInventoryOcrRows(data) && result.text.trim()) {
-    const repairResult = await mimoChat(
-      mimoConfig,
-      mimoConfig.chatModel,
+    const repairResult = await runOcrTextNormalization(
       [
         {
           role: "system",
@@ -3904,7 +3908,7 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
           content: buildInventoryOcrPrompt({ rawText: result.text })
         }
       ],
-      { jsonMode: true }
+      2200
     );
     const repairedData = normalizeInventoryOcrDraft(extractJsonObject(repairResult.text));
     if (hasInventoryOcrRows(repairedData)) {

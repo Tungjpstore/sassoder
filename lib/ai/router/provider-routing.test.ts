@@ -83,6 +83,27 @@ test("buildAiProviderOrder honors an explicit batch provider while retaining MiM
   assert.deepEqual(order.slice(0, 4), ["openai", "mimo", "deepseek", "nvidia"]);
 });
 
+test("buildAiProviderOrder sends batch OCR text normalization away from MiMo first", () => {
+  const order = buildAiProviderOrder({
+    taskType: "batch_ocr",
+    options: { jsonMode: true },
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("gemini"), candidate("openai"), candidate("bedrock")]
+  });
+
+  assert.deepEqual(order, ["gemini", "deepseek", "openai", "mimo"]);
+});
+
+test("buildAiProviderOrder honors explicit OCR text provider before fallbacks", () => {
+  const order = buildAiProviderOrder({
+    taskType: "batch_ocr",
+    preferredProvider: "openai",
+    options: { jsonMode: true },
+    candidates: [candidate("mimo"), candidate("deepseek"), candidate("gemini"), candidate("openai")]
+  });
+
+  assert.deepEqual(order, ["openai", "gemini", "deepseek", "mimo"]);
+});
+
 test("buildAiProviderOrder uses Bedrock as text fallback but skips it for JSON mode", () => {
   const textOrder = buildAiProviderOrder({
     taskType: "dashboard_operation",

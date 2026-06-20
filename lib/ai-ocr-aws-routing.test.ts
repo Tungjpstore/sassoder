@@ -9,14 +9,22 @@ function functionBlock(source: string, name: string) {
   return source.slice(start, next === -1 ? undefined : next);
 }
 
-test("image OCR routes through AWS Textract text extraction before MiMo normalization", () => {
+test("image OCR routes through AWS Textract before provider-routed text normalization", () => {
   const source = readFileSync("services/ai/runtime.ts", "utf8");
   const enrichBlock = functionBlock(source, "enrichOcrInputWithTextract");
+  const providerBlock = source.slice(source.indexOf("function resolveOcrTextProvider"), source.indexOf("async function runOcrTextNormalization"));
+  const normalizeBlock = functionBlock(source, "runOcrTextNormalization");
   const menuBlock = functionBlock(source, "runMenuOcrDraft");
   const inventoryBlock = functionBlock(source, "runInventoryOcrDraft");
 
   assert.match(enrichBlock, /detectDocumentTextWithAwsTextract/);
   assert.match(enrichBlock, /OCR_PROVIDER=textract/);
+  assert.match(providerBlock, /AI_OCR_TEXT_PROVIDER/);
+  assert.match(providerBlock, /AI_OCR_PROVIDER/);
+  assert.match(normalizeBlock, /runChat/);
+  assert.match(normalizeBlock, /batch_ocr/);
+  assert.doesNotMatch(menuBlock, /getRequiredMimoProviderConfig|mimoChat/);
+  assert.doesNotMatch(inventoryBlock, /getRequiredMimoProviderConfig|mimoChat/);
   assert.doesNotMatch(menuBlock, /mimoMultimodalOcr/);
   assert.doesNotMatch(inventoryBlock, /mimoMultimodalOcr/);
   assert.match(menuBlock, /chỉ xử lý chữ đã được trích xuất/);
