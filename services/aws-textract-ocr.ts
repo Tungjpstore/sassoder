@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "crypto";
+import { isIP } from "net";
 
 export type AwsTextractEnv = Record<string, string | undefined>;
 
@@ -14,6 +15,7 @@ type TextractOptions = {
   env?: AwsTextractEnv;
   fetchImpl?: typeof fetch;
   now?: Date;
+  timeoutMs?: number;
 };
 
 type TextractBlock = {
@@ -25,6 +27,9 @@ type TextractBlock = {
 function clean(value: string | undefined) {
   return value?.trim() || "";
 }
+
+const maxTextractImageBytes = 5 * 1024 * 1024;
+const defaultTextractFetchTimeoutMs = 5_000;
 
 function provider(env: AwsTextractEnv) {
   return clean(env.OCR_PROVIDER || env.AI_OCR_PROVIDER).toLowerCase();
@@ -114,13 +119,49 @@ async function readJsonResponse(response: Response) {
 function base64Payload(input: { imageBase64?: string; bytes?: Buffer }) {
   if (input.bytes) return input.bytes.toString("base64");
   const raw = clean(input.imageBase64);
-  return raw.includes(",") ? raw.split(",").pop() || "" : raw;
+  return (raw.includes(",") ? raw.split(",").pop() || "" : raw).replace(/\s+/g, "");
 }
 
-async function imageUrlToBytes(imageUrl: string, fetchImpl: typeof fetch) {
-  const response = await fetchImpl(imageUrl, { cache: "no-store" });
+function assertPublicImageUrl(imageUrl: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(imageUrl);
+  } catch {
+    throw new Error("Invalid image URL for Textract OCR.");
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("Textract OCR image URL must use HTTP or HTTPS.");
+
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "metadata.google.internal") throw new Error("Textract OCR image URL must be public.");
+  if (isPrivateIp(host)) throw new Error("Textract OCR image URL must not target private network addresses.");
+}
+
+function isPrivateIp(host: string) {
+  const family = isIP(host);
+  if (family === 4) {
+    const parts = host.split(".").map(Number);
+    const [a, b] = parts;
+    return a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0;
+  }
+  if (family === 6) {
+    return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:");
+  }
+  return false;
+}
+
+function assertImageSize(size: number, label: string) {
+  if (size > maxTextractImageBytes) throw new Error(`${label} exceeds the 5MB OCR limit.`);
+}
+
+async function imageUrlToBytes(imageUrl: string, fetchImpl: typeof fetch, timeoutMs: number) {
+  assertPublicImageUrl(imageUrl);
+  const response = await fetchImpl(imageUrl, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) throw new Error(`Image fetch failed with status ${response.status}.`);
-  return Buffer.from(await response.arrayBuffer());
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > 0) assertImageSize(contentLength, "Textract OCR image");
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assertImageSize(bytes.byteLength, "Textract OCR image");
+  return bytes;
 }
 
 function extractLines(body: Record<string, unknown>) {
@@ -135,9 +176,11 @@ export async function detectDocumentTextWithAwsTextract(input: { imageBase64?: s
   if (!config) throw new Error("AWS Textract OCR is not configured.");
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const bytes = input.bytes ?? (input.imageUrl ? await imageUrlToBytes(input.imageUrl, fetchImpl) : undefined);
+  const bytes = input.bytes ?? (input.imageUrl ? await imageUrlToBytes(input.imageUrl, fetchImpl, options.timeoutMs ?? defaultTextractFetchTimeoutMs) : undefined);
+  if (bytes) assertImageSize(bytes.byteLength, "Textract OCR image");
   const documentBytes = base64Payload({ imageBase64: input.imageBase64, bytes });
   if (!documentBytes) throw new Error("Missing image bytes for Textract OCR.");
+  assertImageSize(Buffer.byteLength(documentBytes, "base64"), "Textract OCR image");
 
   const payload = JSON.stringify({ Document: { Bytes: documentBytes } });
   const response = await fetchImpl(config.endpoint, {

@@ -4,6 +4,7 @@ import { buildAwsS3AssetKey, isAwsS3AssetStorageConfigured, isAwsS3AssetUrl, upl
 
 const menuImageBucket = "menu-images";
 const maxImageSize = 5 * 1024 * 1024;
+const remoteImageFetchTimeoutMs = 5_000;
 const allowedImageTypes = new Map([
   ["image/jpeg", { contentType: "image/jpeg", extension: "jpg" }],
   ["image/jpg", { contentType: "image/jpeg", extension: "jpg" }],
@@ -195,7 +196,7 @@ export async function uploadRemoteMenuImageUrl({
 
   let response: Response;
   try {
-    response = await fetch(imageUrl, { cache: "no-store" });
+    response = await fetch(imageUrl, { cache: "no-store", signal: AbortSignal.timeout(remoteImageFetchTimeoutMs) });
   } catch {
     throw new AppError("Không tải được ảnh AI để lưu vào thư viện LogiVN.", 400);
   }
@@ -205,6 +206,10 @@ export async function uploadRemoteMenuImageUrl({
   }
 
   const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() || "";
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (Number.isFinite(contentLength) && contentLength > maxImageSize) {
+    throw new AppError("Ảnh AI không được vượt quá 5MB.", 400);
+  }
   const bytes = Buffer.from(await response.arrayBuffer());
   const imageType = assertMenuImage({
     fileName: fileNameFromUrl(imageUrl),

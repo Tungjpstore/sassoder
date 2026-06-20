@@ -18,6 +18,7 @@ type UploadAwsS3AssetOptions = {
   env?: AwsS3StorageEnv;
   fetchImpl?: typeof fetch;
   now?: Date;
+  timeoutMs?: number;
 };
 
 function clean(value: string | undefined) {
@@ -173,7 +174,8 @@ export async function uploadAwsS3Asset({
   const response = await (options.fetchImpl ?? fetch)(url, {
     method: "PUT",
     headers: signedPutHeaders(config, url, bytes, contentType, cacheControl, options.now ?? new Date()),
-    body: uploadBody
+    body: uploadBody,
+    signal: AbortSignal.timeout(options.timeoutMs ?? 8_000)
   });
 
   if (!response.ok) {

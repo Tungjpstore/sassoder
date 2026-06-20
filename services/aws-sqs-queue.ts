@@ -36,8 +36,18 @@ function provider(env: AwsSqsEnv) {
   return clean(env.OPERATIONAL_EVENT_QUEUE_PROVIDER || env.BACKGROUND_QUEUE_PROVIDER).toLowerCase();
 }
 
+function truthy(value: string | undefined) {
+  return ["1", "true", "yes"].includes(clean(value).toLowerCase());
+}
+
+function productionSqsConsumerConfirmed(env: AwsSqsEnv) {
+  if (clean(env.NODE_ENV) !== "production") return true;
+  return truthy(env.OPERATIONAL_EVENT_SQS_CONSUMER_CONFIRMED);
+}
+
 export function resolveAwsSqsConfig(env: AwsSqsEnv = process.env): AwsSqsConfig | null {
   if (provider(env) !== "sqs") return null;
+  if (!productionSqsConsumerConfirmed(env)) return null;
   const queueUrl = clean(env.OPERATIONAL_EVENT_SQS_QUEUE_URL || env.AWS_SQS_QUEUE_URL || env.SQS_QUEUE_URL);
   const accessKeyId = clean(env.AWS_SQS_ACCESS_KEY_ID || env.AWS_ACCESS_KEY_ID);
   const secretAccessKey = clean(env.AWS_SQS_SECRET_ACCESS_KEY || env.AWS_SECRET_ACCESS_KEY);

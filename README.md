@@ -96,13 +96,14 @@ AWS_SQS_SECRET_ACCESS_KEY=<scoped-secret>
 
 # Vercel app after the VPS worker reports configured=true
 OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs
+OPERATIONAL_EVENT_SQS_CONSUMER_CONFIRMED=true
 OPERATIONAL_EVENT_SQS_QUEUE_URL=https://sqs.<region>.amazonaws.com/<account>/<queue-name>
 AWS_SQS_REGION=<region>
 AWS_SQS_ACCESS_KEY_ID=<scoped-access-key>
 AWS_SQS_SECRET_ACCESS_KEY=<scoped-secret>
 ```
 
-Với FIFO queue, app tự gửi `MessageDeduplicationId` theo `eventId` và `MessageGroupId` theo restaurant/tenant. VPS worker đọc SQS bằng long polling, route event vào BullMQ bằng cùng `publishOperationalEvent` của gateway, và chỉ `DeleteMessage` sau khi enqueue thành công. Nếu chưa bật consumer, không bật `OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs` trên Vercel vì outbox sẽ coi event là đã publish sau khi SQS nhận message.
+Với FIFO queue, app tự gửi `MessageDeduplicationId` theo `eventId` và `MessageGroupId` theo restaurant/tenant. VPS worker đọc SQS bằng long polling, route event vào BullMQ bằng cùng `publishOperationalEvent` của gateway, và chỉ `DeleteMessage` sau khi enqueue thành công. Nếu chưa bật consumer, không bật `OPERATIONAL_EVENT_QUEUE_PROVIDER=sqs` trên Vercel vì outbox sẽ coi event là đã publish sau khi SQS nhận message. Trên production, `OPERATIONAL_EVENT_SQS_CONSUMER_CONFIRMED=true` là guard bắt buộc để app publish trực tiếp vào SQS; chỉ đặt sau khi `/ready` của worker báo consumer enabled/configured/running và `lastError=null`.
 
 OCR menu/hóa đơn với ảnh dùng AWS Textract để đọc chữ trước, sau đó AI hiện tại chỉ chuẩn hóa text thành JSON:
 
@@ -115,6 +116,8 @@ AWS_TEXTRACT_SECRET_ACCESS_KEY=<scoped-secret>
 ```
 
 Nếu request chỉ có `rawText`, app vẫn dùng AI text bình thường. Nếu request có ảnh mà Textract chưa cấu hình hoặc không đọc được chữ, app báo lỗi rõ để người dùng chụp lại/dán text; không fallback sang MiMo vision vì MiMo 2.5 hiện không hỗ trợ OCR ảnh ổn định cho luồng này. Biến `AI_OCR_TEXT_PROVIDER` chỉ điều khiển bước chuẩn hóa text OCR thành JSON; production nên ưu tiên `gemini`, sau đó router tự fallback sang provider text khác.
+
+Production OCR chỉ nhận ảnh tối đa 5MB cho Textract, fetch ảnh URL có timeout ngắn và chặn URL nội bộ/private network. Nên ưu tiên upload ảnh trực tiếp từ dashboard (`imageBase64`) hoặc URL public từ storage/CDN của hệ thống.
 
 Smoke test Textract bằng ảnh cục bộ:
 

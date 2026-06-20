@@ -46,3 +46,30 @@ test("detectDocumentTextWithAwsTextract signs request and extracts line text", a
   assert.match(headers.Authorization, /^AWS4-HMAC-SHA256 /);
   assert.equal(headers.Authorization.includes("secret"), false);
 });
+
+test("detectDocumentTextWithAwsTextract blocks private image URLs before fetch", async () => {
+  let called = false;
+  const fetchImpl: typeof fetch = async () => {
+    called = true;
+    return new Response("", { status: 200 });
+  };
+
+  await assert.rejects(
+    () => detectDocumentTextWithAwsTextract({ imageUrl: "http://127.0.0.1/menu.png" }, { env: textractEnv, fetchImpl }),
+    /private network|public/
+  );
+  assert.equal(called, false);
+});
+
+test("detectDocumentTextWithAwsTextract caps remote image size", async () => {
+  const fetchImpl: typeof fetch = async () =>
+    new Response(Buffer.alloc(1), {
+      status: 200,
+      headers: { "content-length": String(6 * 1024 * 1024) }
+    });
+
+  await assert.rejects(
+    () => detectDocumentTextWithAwsTextract({ imageUrl: "https://cdn.logivn.com/menu.png" }, { env: textractEnv, fetchImpl }),
+    /5MB OCR limit/
+  );
+});

@@ -14,6 +14,11 @@ test("resolveAwsSqsConfig requires explicit sqs provider", () => {
   assert.equal(resolveAwsSqsConfig({ AWS_SQS_QUEUE_URL: "https://sqs.us-east-1.amazonaws.com/123/q" }), null);
 });
 
+test("resolveAwsSqsConfig requires confirmed consumer before production SQS producer cutover", () => {
+  assert.equal(resolveAwsSqsConfig({ ...sqsEnv, NODE_ENV: "production" }), null);
+  assert.equal(resolveAwsSqsConfig({ ...sqsEnv, NODE_ENV: "production", OPERATIONAL_EVENT_SQS_CONSUMER_CONFIRMED: "true" })?.queueName, "logivn-operational-events.fifo");
+});
+
 test("sendAwsSqsMessage signs FIFO SendMessage", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const fetchImpl: typeof fetch = async (url, init) => {
