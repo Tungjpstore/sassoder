@@ -41,6 +41,14 @@ function paymentTone(tx: AdminPaymentTransaction) {
   return { label: "Chưa thu", tone: "neutral" as const };
 }
 
+async function readPaymentApiResponse<T = unknown>(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; data?: T; error?: string; message?: string } | null;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error ?? payload?.message ?? fallback);
+  }
+  return payload?.data as T | undefined;
+}
+
 export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, bankCode, bankAccount, bankAccountName, restaurantName, totalPaid, waitingAmount, cashRevenue, qrRevenue }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState("all");
@@ -57,15 +65,17 @@ export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, ban
     ]
   });
 
-  async function confirmPayment(orderId: string) {
+  async function confirmPayment(tx: AdminPaymentTransaction) {
     if (confirming) return;
     setConfirming(true);
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}/confirm-payment`, { method: "POST", cache: "no-store" });
-      if (!res.ok) {
-        const text = await res.text().catch(() => `${res.status}`);
-        throw new Error(text || "Không xác nhận được thanh toán");
-      }
+      const res = await fetch(`/api/admin/orders/${tx.id}/confirm-payment`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentMethod: tx.method ?? "QR" })
+      });
+      await readPaymentApiResponse(res, "Không xác nhận được thanh toán");
       toast.success("Đã xác nhận thanh toán");
       setSelected(null);
       router.refresh();
@@ -159,7 +169,7 @@ export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, ban
       <PaymentDrawer
         tx={selected}
         onClose={() => setSelected(null)}
-        onConfirm={() => selected && void confirmPayment(selected.id)}
+        onConfirm={() => selected && void confirmPayment(selected)}
         confirming={confirming}
       />
 

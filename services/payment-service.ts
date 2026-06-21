@@ -1,6 +1,6 @@
 import { AppError } from "@/lib/response";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
-import { shouldReturnOnlineOrderToKitchenAfterPayment } from "@/lib/orders/order-state-machine";
+import { resolveMerchantPaymentConfirmationTransition } from "@/lib/orders/order-state-machine";
 import { resolveManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
 import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitlement";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
@@ -1096,12 +1096,14 @@ export async function confirmPayment(
   if (typedOrder.status === "cancelled") {
     throw new AppError("Không thể xác nhận đơn đã huỷ", 400);
   }
-  const canConfirmPayment =
-    ["waiting_confirm", "waiting_payment", "completed"].includes(typedOrder.status) ||
-    typedOrder.payment_status === "waiting_confirm" ||
-    typedOrder.payment_status === "waiting_payment";
-  if (!canConfirmPayment) {
-    throw new AppError("Đơn hàng chưa ở trạng thái chờ xác nhận thanh toán", 400);
+  const confirmationTransition = resolveMerchantPaymentConfirmationTransition({
+    status: typedOrder.status,
+    paymentStatus: typedOrder.payment_status ?? null,
+    fulfillmentType: typedOrder.fulfillment_type,
+    billId: typedOrder.bill_id ?? null
+  });
+  if (!confirmationTransition.allowed || !confirmationTransition.next) {
+    throw new AppError(confirmationTransition.reason ?? "Đơn hàng chưa ở trạng thái chờ xác nhận thanh toán", 400);
   }
   const paymentMethod = resolveManualConfirmationMethod({
     currentMethod: typedOrder.payment_method,
@@ -1114,19 +1116,13 @@ export async function confirmPayment(
   await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(paymentMethod));
 
   const now = new Date().toISOString();
-  const shouldReturnToKitchen = shouldReturnOnlineOrderToKitchenAfterPayment({
-    status: typedOrder.status,
-    paymentStatus: typedOrder.payment_status ?? null,
-    fulfillmentType: typedOrder.fulfillment_type,
-    billId: typedOrder.bill_id ?? null
-  });
 
   const { data: updated, error: updateError } = await supabase
     .from("orders")
     .update({
-      status: shouldReturnToKitchen ? "pending" : "paid",
+      status: confirmationTransition.next.status,
       payment_method: paymentMethod,
-      payment_status: "paid",
+      payment_status: confirmationTransition.next.paymentStatus,
       paid_at: now
     })
     .eq("id", orderId)

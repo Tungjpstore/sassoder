@@ -45,6 +45,13 @@ type OrderRow = {
   paymentMethod?: string | null;
 };
 
+async function readApiResponse(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; message?: string } | null;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error ?? payload?.message ?? fallback);
+  }
+}
+
 type HourlyRow = { label: string; revenue: number; orderCount: number };
 
 type Operations = {
@@ -147,10 +154,7 @@ export function RealOverviewWorkspaceV2({
     setMutatingId(orderId);
     try {
       const res = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: "POST", cache: "no-store" });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `${res.status} ${res.statusText}`);
-      }
+      await readApiResponse(res, "Thao tác thất bại.");
       toast.success(action === "accept" ? "Đã nhận đơn." : action === "complete" ? "Đã báo ra món." : "Đã thu tiền.");
       setDetailId(null);
       router.refresh();

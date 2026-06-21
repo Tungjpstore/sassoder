@@ -5,6 +5,7 @@ import {
   getRestaurantOrderActionCopy,
   orderNeedsPaymentAttention,
   resolveDeliveryStatusTransition,
+  resolveMerchantPaymentConfirmationTransition,
   resolveMerchantAcceptTransition,
   resolveOrderPaymentStatus,
   resolveOrderProgressState,
@@ -141,4 +142,40 @@ test("payment confirmation returns only bill-less online orders to kitchen queue
     }),
     false
   );
+});
+
+test("merchant payment confirmation handles pending online prepaid orders waiting for money approval", () => {
+  const transition = resolveMerchantPaymentConfirmationTransition({
+    status: "pending",
+    paymentStatus: "waiting_confirm",
+    fulfillmentType: "DELIVERY",
+    billId: null
+  });
+
+  assert.equal(transition.allowed, true);
+  assert.deepEqual(transition.next, { status: "pending", paymentStatus: "paid" });
+});
+
+test("merchant payment confirmation closes served dine-in orders", () => {
+  const transition = resolveMerchantPaymentConfirmationTransition({
+    status: "completed",
+    paymentStatus: "unpaid",
+    fulfillmentType: "DINE_IN",
+    billId: null
+  });
+
+  assert.equal(transition.allowed, true);
+  assert.deepEqual(transition.next, { status: "paid", paymentStatus: "paid" });
+});
+
+test("merchant payment confirmation blocks orders that are not waiting for payment", () => {
+  const transition = resolveMerchantPaymentConfirmationTransition({
+    status: "pending",
+    paymentStatus: "unpaid",
+    fulfillmentType: "PICKUP",
+    billId: null
+  });
+
+  assert.equal(transition.allowed, false);
+  assert.match(transition.reason ?? "", /chưa ở trạng thái chờ xác nhận thanh toán/);
 });

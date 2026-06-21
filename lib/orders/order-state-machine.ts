@@ -183,3 +183,34 @@ export function shouldReturnOnlineOrderToKitchenAfterPayment(
     order.paymentStatus === "waiting_payment"
   );
 }
+
+export function resolveMerchantPaymentConfirmationTransition(
+  order: Pick<OrderStateInput, "billId" | "fulfillmentType" | "paymentStatus" | "status">
+): StateDecision<{ status: OrderStatus; paymentStatus: PaymentStatus }> {
+  if (order.status === "cancelled") {
+    return { allowed: false, reason: "Không thể xác nhận thanh toán cho đơn đã huỷ" };
+  }
+
+  if (order.status === "paid" || order.paymentStatus === "paid") {
+    return { allowed: true, next: { status: order.status, paymentStatus: "paid" } };
+  }
+
+  const canConfirmPayment =
+    order.status === "waiting_confirm" ||
+    order.status === "waiting_payment" ||
+    order.status === "completed" ||
+    order.paymentStatus === "waiting_confirm" ||
+    order.paymentStatus === "waiting_payment";
+
+  if (!canConfirmPayment) {
+    return { allowed: false, reason: "Đơn hàng chưa ở trạng thái chờ xác nhận thanh toán" };
+  }
+
+  return {
+    allowed: true,
+    next: {
+      status: shouldReturnOnlineOrderToKitchenAfterPayment(order) ? "pending" : "paid",
+      paymentStatus: "paid"
+    }
+  };
+}

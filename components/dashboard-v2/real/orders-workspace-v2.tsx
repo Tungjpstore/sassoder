@@ -40,6 +40,10 @@ import { useToast } from "@/components/dashboard/toast-provider";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { deliveryStatusLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
+import {
+  orderNeedsPaymentAttention,
+  resolveMerchantPaymentConfirmationTransition
+} from "@/lib/orders/order-state-machine";
 import { cn } from "@/lib/utils";
 import type { OrderDto } from "@/types/domain";
 
@@ -55,18 +59,26 @@ type Props = {
   canManageTestOrders: boolean;
 };
 
-function statusToTab(status: string): Tab {
-  if (status === "pending") return "new";
-  if (status === "ordering") return "cooking";
-  if (status === "completed") return "ready";
-  if (status === "waiting_payment" || status === "waiting_confirm") return "payment";
+async function readApiResponse<T = unknown>(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; data?: T; error?: string; message?: string } | null;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error ?? payload?.message ?? fallback);
+  }
+  return payload?.data as T | undefined;
+}
+
+function statusToTab(order: OrderDto): Tab {
+  if (paymentNeedsAttention(order)) return "payment";
+  if (order.status === "pending") return "new";
+  if (order.status === "ordering") return "cooking";
+  if (order.status === "completed") return "ready";
   return "all";
 }
 
-function nextActionFor(status: string): OrderMutationAction | null {
-  if (status === "pending") return "accept";
-  if (status === "ordering") return "complete";
-  if (status === "completed" || status === "waiting_confirm" || status === "waiting_payment") return "confirm-payment";
+function nextActionFor(order: OrderDto): OrderMutationAction | null {
+  if (resolveMerchantPaymentConfirmationTransition(order).allowed && (paymentNeedsAttention(order) || order.status === "completed")) return "confirm-payment";
+  if (order.status === "pending") return "accept";
+  if (order.status === "ordering") return "complete";
   return null;
 }
 
@@ -94,7 +106,11 @@ function applyOptimistic(orders: OrderDto[], orderId: string, action: OrderMutat
       if (o.id !== orderId) return o;
       if (action === "accept") return { ...o, status: "ordering" as const, acceptedAt: o.acceptedAt ?? new Date().toISOString() };
       if (action === "complete") return { ...o, status: "completed" as const };
-      if (action === "confirm-payment") return { ...o, status: "paid" as const, paymentStatus: "paid" as const };
+      if (action === "confirm-payment") {
+        const transition = resolveMerchantPaymentConfirmationTransition(o);
+        const next = transition.next ?? { status: "paid" as const, paymentStatus: "paid" as const };
+        return { ...o, status: next.status, paymentStatus: next.paymentStatus, paidAt: new Date().toISOString() };
+      }
       return o;
     })
     .filter((o) => !(o.id === orderId && action === "complete" && false));
@@ -161,7 +177,7 @@ function primaryIdentity(order: OrderDto) {
 }
 
 function paymentNeedsAttention(order: OrderDto) {
-  return order.status === "waiting_payment" || order.status === "waiting_confirm" || order.paymentStatus === "waiting_confirm";
+  return orderNeedsPaymentAttention(order);
 }
 
 function deliveryNeedsAttention(order: OrderDto) {
@@ -183,6 +199,7 @@ function laneStatusMatches(order: OrderDto, filter: LaneStatusFilter) {
 }
 
 function actionLabelFor(order: OrderDto) {
+  if (paymentNeedsAttention(order)) return "Xác nhận thanh toán";
   if (order.status === "pending") return order.fulfillmentType === "DINE_IN" ? "Nhận đơn" : "Xác nhận đơn";
   if (order.status === "ordering") {
     if (order.fulfillmentType === "PICKUP") return "Sẵn sàng lấy";
@@ -194,7 +211,6 @@ function actionLabelFor(order: OrderDto) {
     if (order.fulfillmentType === "DELIVERY") return "Xác nhận thu";
     return "Thu tiền";
   }
-  if (order.status === "waiting_payment" || order.status === "waiting_confirm") return "Thu tiền";
   return "Đóng đơn";
 }
 
@@ -317,13 +333,13 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
         headers: body ? { "content-type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined
       });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `${res.status} ${res.statusText}`);
-      }
+      await readApiResponse(res, "Thao tác thất bại");
+      if (action === "confirm-payment") toast.success("Đã xác nhận thanh toán");
     } catch (err) {
       setOrders(previous);
-      setError(err instanceof Error ? err.message : "Thao tác thất bại");
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      setError(message);
+      toast.error(message);
     } finally {
       setMutatingId(null);
       mutatingRef.current = null;
@@ -380,7 +396,7 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
     for (const o of orders) {
       if (isOrderClosed(o)) continue;
       c.all += 1;
-      const k = statusToTab(o.status);
+      const k = statusToTab(o);
       if (k !== "all") c[k] += 1;
     }
     return c;
@@ -485,7 +501,7 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
             onActiveLaneChange={setActiveLane}
             onLaneFilterChange={(lane, filter) => setLaneFilters((current) => ({ ...current, [lane]: filter }))}
             onAdvance={(order) => {
-              const action = nextActionFor(order.status);
+              const action = nextActionFor(order);
               if (action) void mutateOrder(order.id, action);
             }}
             onDetail={(order) => setDetailId(order.id)}
@@ -527,7 +543,7 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
         busy={detail ? mutatingId === detail.id : false}
         onClose={() => setDetailId(null)}
         onAdvance={detail ? () => {
-          const action = nextActionFor(detail.status);
+          const action = nextActionFor(detail);
           if (action) void mutateOrder(detail.id, action);
         } : undefined}
         onCancel={detail ? () => {
@@ -747,7 +763,7 @@ function CardShell({ order, nowMs, mutating, onAdvance, onDetail, children, acce
   children: ReactNode;
   accent: string;
 }) {
-  const action = nextActionFor(order.status);
+  const action = nextActionFor(order);
   const min = elapsedMin(order.createdAt, nowMs);
   const overdue = min >= 15;
 
@@ -880,7 +896,7 @@ function OrderFlowDetail({
   onTimer?: () => void;
 }) {
   if (!order) return null;
-  const action = nextActionFor(order.status);
+  const action = nextActionFor(order);
   const canCancel = Boolean(onCancel) && order.paymentStatus !== "paid";
   const canTimer = Boolean(onTimer) && (order.status === "pending" || order.status === "ordering");
 

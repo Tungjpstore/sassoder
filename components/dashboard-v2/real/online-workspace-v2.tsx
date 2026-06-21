@@ -82,6 +82,17 @@ type OnlineWorkspaceProps = {
 type DrawerMode = "closed" | "qr" | "orders";
 type Tab = "all" | "pickup" | "delivery";
 
+async function readApiResponse(response: Response, fallback: string) {
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; message?: string } | null;
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error ?? payload?.message ?? fallback);
+  }
+}
+
+function paymentNeedsAttention(order: Pick<OnlineOrder, "paymentStatus" | "status">) {
+  return order.status === "waiting_payment" || order.status === "waiting_confirm" || order.paymentStatus === "waiting_payment" || order.paymentStatus === "waiting_confirm";
+}
+
 function readDrawerMode(value: string | null): DrawerMode {
   return value === "qr" || value === "orders" ? value : "closed";
 }
@@ -124,7 +135,7 @@ export function RealOnlineWorkspaceV2({
     startTransition(async () => {
       try {
         const res = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: "POST", cache: "no-store" });
-        if (!res.ok) throw new Error(await res.text().catch(() => `${res.status}`));
+        await readApiResponse(res, "Thao tác thất bại");
         toast.success(
           action === "accept" ? "Đã nhận đơn" :
           action === "complete" ? "Đã báo ra món" :
@@ -448,9 +459,10 @@ function OnlineOrderCard({
 }
 
 function nextActionFor(o: OnlineOrder): { action: "accept" | "complete" | "confirm-payment"; label: string } | null {
+  if (paymentNeedsAttention(o)) return { action: "confirm-payment", label: "Xác nhận thanh toán" };
   if (o.status === "pending") return { action: "accept", label: "Nhận đơn" };
   if (o.status === "ordering") return { action: "complete", label: "Báo đã ra món" };
-  if (o.status === "completed" || o.status === "waiting_confirm" || o.status === "waiting_payment") {
+  if (o.status === "completed") {
     return { action: "confirm-payment", label: "Xác nhận thu" };
   }
   return null;
