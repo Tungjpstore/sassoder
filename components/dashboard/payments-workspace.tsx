@@ -8,9 +8,13 @@ import { ArrowRight, Banknote, CheckCircle2, ClipboardCopy, Clock3, CreditCard, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
+import { useToast } from "@/components/dashboard/toast-provider";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { getDashboardActionErrorToast, resolveDashboardActionToast } from "@/lib/dashboard/order-actions";
 import { paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
+import { inferManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
 import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { AdminPaymentTransaction } from "@/services/dashboard-report-service";
@@ -176,6 +180,7 @@ export function PaymentsWorkspace({
   qrRevenue
 }: PaymentWorkspaceProps) {
   const router = useRouter();
+  const toast = useToast();
   const [transactionOverrides, setTransactionOverrides] = useState<Record<string, Partial<AdminPaymentTransaction>>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
@@ -329,12 +334,17 @@ export function PaymentsWorkspace({
     setNotice(null);
     const previousOverride = transactionOverrides[orderId];
     const target = localTransactions.find((transaction) => transaction.id === orderId);
+    const paymentMethod = inferManualConfirmationMethod({
+      currentMethod: target?.method,
+      status: target?.status,
+      paymentStatus: target?.paymentStatus as PaymentStatus | null
+    });
     setTransactionOverrides((current) => ({
       ...current,
       [orderId]: {
         ...current[orderId],
         paymentStatus: "paid",
-        method: target?.method ?? "QR"
+        method: paymentMethod ?? target?.method ?? null
       }
     }));
 
@@ -343,22 +353,22 @@ export function PaymentsWorkspace({
         method: "POST",
         cache: "no-store",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentMethod: target?.method ?? "QR" })
+        headers: paymentMethod ? { "Content-Type": "application/json" } : undefined,
+        body: paymentMethod ? JSON.stringify({ paymentMethod }) : undefined
       });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không xác nhận được thanh toán");
-      const confirmedPayload = readConfirmedPaymentPayload(json.data);
+      const data = await readDashboardApiResponse(response, "Không xác nhận được thanh toán");
+      const confirmedPayload = readConfirmedPaymentPayload(data);
       setTransactionOverrides((current) => ({
         ...current,
         [orderId]: {
           ...current[orderId],
           ...confirmedPayload,
           paymentStatus: "paid",
-          method: confirmedPayload.method ?? current[orderId]?.method ?? target?.method ?? "QR"
+          method: confirmedPayload.method ?? current[orderId]?.method ?? paymentMethod ?? target?.method ?? null
         }
       }));
       setNotice("Đã xác nhận đã nhận tiền. Nếu khách mất phiên hoặc thoát màn hình thanh toán, hệ thống vẫn chốt bill và đồng bộ về bếp.");
+      toast.success(resolveDashboardActionToast("confirm-payment"));
       setLastSyncedAt(new Date());
       router.refresh();
       window.setTimeout(() => router.refresh(), 900);
@@ -372,11 +382,13 @@ export function PaymentsWorkspace({
         }
         return next;
       });
-      setError(err instanceof Error ? err.message : "Không xác nhận được thanh toán");
+      const message = err instanceof Error ? err.message : "Không xác nhận được thanh toán";
+      setError(message);
+      toast.error(getDashboardActionErrorToast(err, "Không xác nhận được thanh toán"));
     } finally {
       setMutatingId(null);
     }
-  }, [localTransactions, router, transactionOverrides]);
+  }, [localTransactions, router, toast, transactionOverrides]);
 
   async function copyTransferContent(order: AdminPaymentTransaction) {
     const content = `ORDER-${order.id}`;

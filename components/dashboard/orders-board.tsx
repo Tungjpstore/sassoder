@@ -6,8 +6,10 @@ import { AlertTriangle, Check, CheckCircle2, ChefHat, Clock3, Filter, Flame, Loc
 import { buildDirectionsUrl, RouteMiniMap } from "@/components/customer/route-mini-map";
 import { useConfirmDialog } from "@/components/dashboard/confirm-dialog";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { deliveryStatusLabel, orderStatusLabel, paymentMethodLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { resolveDeliveryQuoteSnapshotInsight } from "@/lib/delivery/quote-snapshot-insight";
@@ -47,6 +49,10 @@ type OrderFilter = "all" | "pending" | "ordering" | "completed" | "waiting_payme
 type ChannelFilter = "all" | "DINE_IN" | "PICKUP" | "DELIVERY";
 type ConcreteChannelFilter = Exclude<ChannelFilter, "all">;
 type OrderMutationAction = "accept" | "confirm-payment" | "complete" | "cancel" | "delete-test" | "timer" | "delivery-status";
+
+function actionMinutes(body?: unknown) {
+  return typeof body === "object" && body !== null && "minutes" in body && typeof body.minutes === "number" ? body.minutes : undefined;
+}
 type CourierLiveLocation = {
   lat: number;
   lng: number;
@@ -645,6 +651,7 @@ export function OrdersBoard({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const toast = useToast();
   const [orders, setOrders] = useState(initialOrders);
   const [loading, setLoading] = useState(false);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
@@ -907,20 +914,22 @@ export function OrdersBoard({
     }
 
     const previousOrders = orders;
+    const targetOrder = previousOrders.find((order) => order.id === orderId) ?? null;
+    const requestBody = action === "confirm-payment" ? body ?? resolveDashboardPaymentConfirmationBody(targetOrder) : body;
     setMutatingOrderId(orderId);
     setError(null);
     setNotice(null);
-    setOrders((current) => applyOptimisticOrderAction(current, orderId, action, body));
+    setOrders((current) => applyOptimisticOrderAction(current, orderId, action, requestBody));
 
     try {
       const response = await fetch(`/api/admin/orders/${orderId}/${action}`, {
         method: "POST",
         cache: "no-store",
         credentials: "same-origin",
-        ...(body
+        ...(requestBody
           ? {
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body)
+              body: JSON.stringify(requestBody)
             }
           : {})
       });
@@ -929,13 +938,16 @@ export function OrdersBoard({
       if (action === "confirm-payment") {
         setNotice("Đã xác nhận thanh toán. Nếu là đơn online trả trước, đơn sẽ quay về bước quán xác nhận để bếp xử lý.");
       }
+      toast.success(resolveDashboardActionToast(action, { minutes: actionMinutes(requestBody) }));
       if (action === "confirm-payment") {
         void loadOrdersRef.current({ silent: true });
       }
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previousOrders);
-      setError(err instanceof Error ? err.message : "Thao tác thất bại");
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      setError(message);
+      toast.error(getDashboardActionErrorToast(err));
     } finally {
       setMutatingOrderId(null);
     }

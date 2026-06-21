@@ -1,6 +1,6 @@
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
-import type { OrderStatus, PaymentMethod } from "@/types/domain";
+import type { FulfillmentType, OrderStatus, PaymentMethod, PaymentStatus } from "@/types/domain";
 
 type RawReportOrder = {
   id: string;
@@ -125,6 +125,8 @@ export type AdminRecentOrder = {
   status: OrderStatus;
   total: number;
   paymentMethod: PaymentMethod | null;
+  paymentStatus?: PaymentStatus | null;
+  fulfillmentType?: FulfillmentType | null;
   createdAt: string;
   tableName: string;
   itemSummary: string;

@@ -15,6 +15,9 @@ import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { RealtimeStatusBadge } from "../realtime";
 import { fetchKitchenOrders, readCachedKitchenOrders, writeCachedKitchenOrders } from "@/components/dashboard/kitchen-orders-cache";
+import { useToast } from "@/components/dashboard/toast-provider";
+import { getDashboardActionErrorToast, resolveDashboardActionToast } from "@/lib/dashboard/order-actions";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { formatVnd } from "@/lib/money";
 import { OPERATIONAL_REALTIME_EVENTS, useVpsRealtime } from "@/lib/realtime/vps-socket-client";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -95,6 +98,10 @@ function applyOptimistic(orders: OrderDto[], orderId: string, action: KitchenAct
     .filter((order) => !(order.id === orderId && (action === "complete" || action === "cancel")));
 }
 
+function actionMinutes(body?: unknown) {
+  return typeof body === "object" && body !== null && "minutes" in body && typeof body.minutes === "number" ? body.minutes : undefined;
+}
+
 export function RealKitchenWorkspaceV2({
   initialOrders,
   restaurantId,
@@ -104,6 +111,7 @@ export function RealKitchenWorkspaceV2({
   restaurantId: string;
   deferInitialLoad?: boolean;
 }) {
+  const toast = useToast();
   const cachedInitial = readCachedKitchenOrders();
   const [orders, setOrders] = useState<OrderDto[]>(cachedInitial ?? initialOrders);
   const [loading, setLoading] = useState(deferInitialLoad && !cachedInitial);
@@ -176,15 +184,15 @@ export function RealKitchenWorkspaceV2({
         headers: body ? { "content-type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined
       });
-      if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(text || `${response.status} ${response.statusText}`);
-      }
+      await readDashboardApiResponse(response, "Thao tác thất bại");
+      toast.success(resolveDashboardActionToast(action, { minutes: actionMinutes(body) }));
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previous);
       writeCachedKitchenOrders(previous);
-      setError(err instanceof Error ? err.message : "Thao tác thất bại");
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      setError(message);
+      toast.error(getDashboardActionErrorToast(err));
     } finally {
       setMutatingOrderId(null);
     }

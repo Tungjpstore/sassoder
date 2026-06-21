@@ -1,15 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveManualConfirmationMethod } from "./manual-confirmation";
+import { inferManualConfirmationMethod, resolveManualConfirmationMethod } from "./manual-confirmation";
 
-test("manual confirmation keeps the stored payment method first", () => {
+test("manual confirmation keeps explicit payment method precedence", () => {
   assert.equal(resolveManualConfirmationMethod({ currentMethod: "CASH", requestedMethod: "QR" }), "CASH");
+  assert.equal(inferManualConfirmationMethod({ currentMethod: "QR", requestedMethod: "CASH", status: "waiting_confirm" }), "QR");
+  assert.equal(inferManualConfirmationMethod({ currentMethod: null, requestedMethod: "CASH", status: "waiting_payment" }), "CASH");
 });
 
-test("manual confirmation can recover a lost-session payment method", () => {
-  assert.equal(resolveManualConfirmationMethod({ currentMethod: null, requestedMethod: "QR" }), "QR");
+test("manual confirmation recovers missing method from payment state", () => {
+  assert.equal(inferManualConfirmationMethod({ paymentStatus: "waiting_payment" }), "QR");
+  assert.equal(inferManualConfirmationMethod({ paymentStatus: "waiting_confirm" }), "CASH");
+  assert.equal(inferManualConfirmationMethod({ billStatus: "waiting_payment" }), "QR");
+  assert.equal(inferManualConfirmationMethod({ billStatus: "waiting_confirm" }), "CASH");
+  assert.equal(inferManualConfirmationMethod({ status: "completed", paymentStatus: "unpaid" }), "CASH");
 });
 
-test("manual confirmation still requires a method when none can be inferred", () => {
-  assert.equal(resolveManualConfirmationMethod({ currentMethod: null, requestedMethod: null }), null);
+test("manual confirmation does not invent a method for unrelated states", () => {
+  assert.equal(inferManualConfirmationMethod({ status: "pending", paymentStatus: "unpaid" }), null);
+  assert.equal(inferManualConfirmationMethod({ status: "ordering", paymentStatus: "unpaid" }), null);
 });

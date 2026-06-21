@@ -32,10 +32,12 @@ import {
 } from "lucide-react";
 import { updateReservationSettingsAction } from "@/app/dashboard/actions";
 import { DashboardDrawer } from "@/components/dashboard/shared-drawer";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { RestaurantVisitMapCard } from "@/components/location/restaurant-visit-map-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { formatVnd } from "@/lib/money";
 import { reservationDepositStatusLabel, reservationStatusLabel } from "@/lib/labels";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
@@ -380,6 +382,19 @@ function actionEndpoint(action: ReservationAction, reservationId: string) {
   return `/api/admin/reservations/${reservationId}/${action}`;
 }
 
+function reservationActionToast(action: ReservationAction) {
+  if (action === "confirm-deposit") return { title: "Đã xác nhận cọc", message: "Lịch đặt bàn đã được giữ chắc cho khách." };
+  if (action === "refund-deposit") return { title: "Đã ghi nhận hoàn cọc", message: "Trạng thái cọc đã được cập nhật." };
+  if (action === "check-in") return { title: "Đã check-in khách", message: "Khách đã đến quán và sẵn sàng xếp bàn." };
+  if (action === "seat") return { title: "Đã nhận khách vào bàn", message: "Bàn đã chuyển sang trạng thái đang phục vụ." };
+  if (action === "cancel") return { title: "Đã huỷ đặt bàn", message: "Lịch đặt bàn đã được đóng trong hệ thống." };
+  if (action === "reject") return { title: "Đã từ chối đặt bàn", message: "Yêu cầu đặt bàn đã được đóng." };
+  if (action === "no-show") return { title: "Đã đánh dấu no-show", message: "Hệ thống đã ghi nhận khách không đến." };
+  if (action === "reschedule") return { title: "Đã đổi lịch đặt bàn", message: "Thời gian mới đã được lưu." };
+  if (action === "tables") return { title: "Đã cập nhật bàn", message: "Bàn giữ chỗ đã được đồng bộ." };
+  return { title: "Đã cập nhật đặt bàn", message: "Thay đổi đã được lưu." };
+}
+
 function tableOptionLabel(table: ReservationTableOption) {
   const floor = table.floorLabel || "Tầng trệt";
   const area = table.area || "Khu chính";
@@ -672,6 +687,7 @@ export function ReservationsWorkspace({
   analytics: ReservationAnalytics;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [date, setDate] = useState(todayInputValue());
   const [reservations, setReservations] = useState(initialReservations);
   const [analyticsSnapshot, setAnalyticsSnapshot] = useState(analytics);
@@ -1182,17 +1198,19 @@ export function ReservationsWorkspace({
             }
           : {})
       });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại.");
-      const updated = json.data as ReservationDto;
+      const updated = await readDashboardApiResponse<ReservationDto>(response, "Thao tác thất bại.");
+      if (!updated) throw new Error("Thao tác thất bại.");
       setReservations((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setSelectedId(updated.id);
+      toast.success(reservationActionToast(action));
 
       primeReservationControls(updated);
       void loadAnalytics(true);
       return updated;
     } catch (actionError) {
-      setError(actionError instanceof Error ? actionError.message : "Thao tác thất bại.");
+      const message = actionError instanceof Error ? actionError.message : "Thao tác thất bại.";
+      setError(message);
+      toast.error({ title: "Không xử lý được đặt bàn", message });
       return null;
     } finally {
       setMutatingId(null);

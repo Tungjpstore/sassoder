@@ -37,12 +37,13 @@ import { RealtimeStatusBadge, playOrderChime, type RealtimeState } from "../real
 import { AdminLiveActionCenter } from "@/components/dashboard/live-action-center";
 import { RouteMiniMap } from "@/components/customer/route-mini-map";
 import { useToast } from "@/components/dashboard/toast-provider";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { applyDashboardOrderOptimistic, getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { deliveryStatusLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import {
-  orderNeedsPaymentAttention,
-  resolveMerchantPaymentConfirmationTransition
+  orderNeedsPaymentAttention
 } from "@/lib/orders/order-state-machine";
 import { cn } from "@/lib/utils";
 import type { OrderDto } from "@/types/domain";
@@ -59,14 +60,6 @@ type Props = {
   canManageTestOrders: boolean;
 };
 
-async function readApiResponse<T = unknown>(response: Response, fallback: string) {
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; data?: T; error?: string; message?: string } | null;
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error ?? payload?.message ?? fallback);
-  }
-  return payload?.data as T | undefined;
-}
-
 function statusToTab(order: OrderDto): Tab {
   if (paymentNeedsAttention(order)) return "payment";
   if (order.status === "pending") return "new";
@@ -76,10 +69,7 @@ function statusToTab(order: OrderDto): Tab {
 }
 
 function nextActionFor(order: OrderDto): OrderMutationAction | null {
-  if (resolveMerchantPaymentConfirmationTransition(order).allowed && (paymentNeedsAttention(order) || order.status === "completed")) return "confirm-payment";
-  if (order.status === "pending") return "accept";
-  if (order.status === "ordering") return "complete";
-  return null;
+  return resolveDashboardOrderAction(order)?.action ?? null;
 }
 
 /* Đơn đã kết thúc → loại khỏi "cần xử lý", ngừng đếm giờ.
@@ -97,23 +87,26 @@ function elapsedMin(createdAt: string, nowMs: number) {
   return Math.max(0, Math.floor((nowMs - new Date(createdAt).getTime()) / 60_000));
 }
 
-function applyOptimistic(orders: OrderDto[], orderId: string, action: OrderMutationAction): OrderDto[] {
-  if (action === "cancel") {
-    return orders.map((o) => (o.id === orderId ? { ...o, status: "cancelled" as const } : o));
-  }
+function applyOptimistic(orders: OrderDto[], orderId: string, action: OrderMutationAction, body?: unknown): OrderDto[] {
+  const now = new Date();
+  const targetOrder = orders.find((order) => order.id === orderId);
+  const targetBillId = targetOrder?.bill?.id ?? null;
+  const minutes = typeof body === "object" && body !== null && "minutes" in body && typeof body.minutes === "number" ? body.minutes : 10;
+  const serviceDueAt = new Date(now.getTime() + minutes * 60_000).toISOString();
+
   return orders
     .map((o) => {
-      if (o.id !== orderId) return o;
-      if (action === "accept") return { ...o, status: "ordering" as const, acceptedAt: o.acceptedAt ?? new Date().toISOString() };
-      if (action === "complete") return { ...o, status: "completed" as const };
-      if (action === "confirm-payment") {
-        const transition = resolveMerchantPaymentConfirmationTransition(o);
-        const next = transition.next ?? { status: "paid" as const, paymentStatus: "paid" as const };
-        return { ...o, status: next.status, paymentStatus: next.paymentStatus, paidAt: new Date().toISOString() };
-      }
+      const sameOrder = o.id === orderId;
+      const sameBill = Boolean(targetBillId && o.bill?.id === targetBillId);
+      if (action === "confirm-payment" && (sameOrder || sameBill)) return applyDashboardOrderOptimistic(o, action, { now });
+      if (sameOrder) return applyDashboardOrderOptimistic(o, action, { now, serviceDueAt });
       return o;
     })
     .filter((o) => !(o.id === orderId && action === "complete" && false));
+}
+
+function actionMinutes(body?: unknown) {
+  return typeof body === "object" && body !== null && "minutes" in body && typeof body.minutes === "number" ? body.minutes : undefined;
 }
 
 function summarizeItems(o: OrderDto): string {
@@ -199,19 +192,7 @@ function laneStatusMatches(order: OrderDto, filter: LaneStatusFilter) {
 }
 
 function actionLabelFor(order: OrderDto) {
-  if (paymentNeedsAttention(order)) return "Xác nhận thanh toán";
-  if (order.status === "pending") return order.fulfillmentType === "DINE_IN" ? "Nhận đơn" : "Xác nhận đơn";
-  if (order.status === "ordering") {
-    if (order.fulfillmentType === "PICKUP") return "Sẵn sàng lấy";
-    if (order.fulfillmentType === "DELIVERY") return "Sẵn sàng giao";
-    return "Báo ra món";
-  }
-  if (order.status === "completed") {
-    if (order.fulfillmentType === "PICKUP") return "Hoàn tất pickup";
-    if (order.fulfillmentType === "DELIVERY") return "Xác nhận thu";
-    return "Thu tiền";
-  }
-  return "Đóng đơn";
+  return resolveDashboardOrderAction(order)?.label ?? "Đã xử lý";
 }
 
 function hasDeliveryMap(order: OrderDto) {
@@ -322,7 +303,9 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
   async function mutateOrder(orderId: string, action: OrderMutationAction, body?: unknown) {
     if (mutatingId) return;
     const previous = orders;
-    setOrders(applyOptimistic(previous, orderId, action));
+    const targetOrder = previous.find((order) => order.id === orderId) ?? null;
+    const requestBody = action === "confirm-payment" ? body ?? resolveDashboardPaymentConfirmationBody(targetOrder) : body;
+    setOrders(applyOptimistic(previous, orderId, action, requestBody));
     setMutatingId(orderId);
     mutatingRef.current = orderId;
     setError(null);
@@ -330,16 +313,16 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
       const res = await fetch(`/api/admin/orders/${orderId}/${action}`, {
         method: "POST",
         cache: "no-store",
-        headers: body ? { "content-type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined
+        headers: requestBody ? { "content-type": "application/json" } : undefined,
+        body: requestBody ? JSON.stringify(requestBody) : undefined
       });
-      await readApiResponse(res, "Thao tác thất bại");
-      if (action === "confirm-payment") toast.success("Đã xác nhận thanh toán");
+      await readDashboardApiResponse(res, "Thao tác thất bại");
+      toast.success(resolveDashboardActionToast(action, { minutes: actionMinutes(requestBody) }));
     } catch (err) {
       setOrders(previous);
       const message = err instanceof Error ? err.message : "Thao tác thất bại";
       setError(message);
-      toast.error(message);
+      toast.error(getDashboardActionErrorToast(err));
     } finally {
       setMutatingId(null);
       mutatingRef.current = null;

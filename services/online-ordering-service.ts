@@ -97,10 +97,10 @@ export type OnlineOrderingDashboard = {
     deliveryAddress: string | null;
     deliveryDistanceKm: number | null;
     deliveryFee: number;
-    deliveryStatus: string | null;
+    deliveryStatus: DeliveryStatus | null;
     deliveryRouteDurationMinutes: number | null;
     deliveryQuoteSnapshot: Json | null;
-    paymentStatus: string | null;
+    paymentStatus: PaymentStatus;
     createdAt: string;
     acceptedAt: string | null;
     serviceDueAt: string | null;
@@ -235,7 +235,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
       deliveryStatus: order.delivery_status,
       deliveryRouteDurationMinutes: order.delivery_route_duration_minutes ?? null,
       deliveryQuoteSnapshot: order.delivery_quote_snapshot ?? null,
-      paymentStatus: order.payment_status,
+      paymentStatus: orderPayment(order),
       createdAt: order.created_at,
       acceptedAt: order.accepted_at,
       serviceDueAt: order.service_due_at,

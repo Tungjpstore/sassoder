@@ -11,10 +11,11 @@ import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { createTableAction, deleteTableAction, rotateTableQrAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions/tables";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { buildPosterSvgForTable, downloadQrPosterPng, printSvgPosters, qrImageUrl, tableQrUrl } from "@/lib/qr-poster";
 import { formatVnd } from "@/lib/money";
 import { cn } from "@/lib/utils";
-import { orderNeedsPaymentAttention } from "@/lib/orders/order-state-machine";
 import type { OrderDto } from "@/types/domain";
 import type { RestaurantTableWithStatus, TableBranchOption } from "@/services/table-service";
 
@@ -42,13 +43,6 @@ function zoneLabel(table: RestaurantTableWithStatus) {
   if (table.seating_zone === "outdoor") return "Ngoài trời";
   if (table.seating_zone === "mixed") return "Khu hỗn hợp";
   return "Trong nhà";
-}
-
-async function readApiResponse(response: Response, fallback: string) {
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; message?: string } | null;
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error ?? payload?.message ?? fallback);
-  }
 }
 
 function floorLabel(table: RestaurantTableWithStatus) {
@@ -719,12 +713,12 @@ function TableOrderOps({
         headers: body ? { "content-type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined
       });
-      await readApiResponse(res, "Thao tác thất bại");
-      toast.success(successMsg ?? "Đã cập nhật đơn");
+      await readDashboardApiResponse(res, "Thao tác thất bại");
+      toast.success(successMsg ? { title: successMsg } : resolveDashboardActionToast(action));
       await load();
       onChanged();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Thao tác thất bại");
+      toast.error(getDashboardActionErrorToast(e));
     } finally {
       setMutatingId(null);
     }
@@ -784,7 +778,9 @@ function TableOrderOps({
         const allPrepared = o.items.length > 0 && preparedCount === o.items.length;
         const busy = mutatingId === o.id;
         const cooking = o.status === "pending" || o.status === "ordering";
-        const waitingPay = o.status === "completed" || orderNeedsPaymentAttention(o);
+        const actionDecision = resolveDashboardOrderAction(o);
+        const paymentAction = actionDecision?.action === "confirm-payment" ? actionDecision : null;
+        const waitingPay = Boolean(paymentAction);
         return (
           <article key={o.id} className="overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
             <header className="flex items-center justify-between gap-2 border-b border-[var(--d-line)] px-[var(--d-s-4)] py-[var(--d-s-3)]">
@@ -866,9 +862,9 @@ function TableOrderOps({
                   </Button>
                 </div>
               ) : null}
-              {waitingPay ? (
-                <Button variant="primary" size="lg" className="w-full" disabled={busy} onClick={() => void act(o.id, "confirm-payment", undefined, "Đã thu tiền")}>
-                  <CreditCard size={16} /> Thu tiền
+              {paymentAction ? (
+                <Button variant="primary" size="lg" className="w-full" disabled={busy} onClick={() => void act(o.id, "confirm-payment", resolveDashboardPaymentConfirmationBody(o), paymentAction.successMessage)}>
+                  <CreditCard size={16} /> {paymentAction.label}
                 </Button>
               ) : null}
             </div>

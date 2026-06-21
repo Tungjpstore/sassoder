@@ -31,26 +31,24 @@ import { Button } from "../button";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { formatVnd } from "@/lib/money";
 import { orderStatusLabel, paymentStatusLabel } from "@/lib/labels";
 import { cn } from "@/lib/utils";
+import type { FulfillmentType, OrderStatus, PaymentMethod, PaymentStatus } from "@/types/domain";
 
 type OrderRow = {
   id: string;
-  status: string;
+  status: OrderStatus;
   total: number;
   itemSummary?: string | null;
   createdAt: string;
   tableName?: string | null;
-  paymentMethod?: string | null;
+  paymentMethod?: PaymentMethod | null;
+  paymentStatus?: PaymentStatus | null;
+  fulfillmentType?: FulfillmentType | null;
 };
-
-async function readApiResponse(response: Response, fallback: string) {
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; message?: string } | null;
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error ?? payload?.message ?? fallback);
-  }
-}
 
 type HourlyRow = { label: string; revenue: number; orderCount: number };
 
@@ -151,15 +149,22 @@ export function RealOverviewWorkspaceV2({
 
   async function quickAction(orderId: string, action: "accept" | "complete" | "confirm-payment") {
     if (mutatingId) return;
+    const targetOrder = recentOrders.find((order) => order.id === orderId) ?? null;
+    const body = action === "confirm-payment" ? resolveDashboardPaymentConfirmationBody(targetOrder) : undefined;
     setMutatingId(orderId);
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: "POST", cache: "no-store" });
-      await readApiResponse(res, "Thao tác thất bại.");
-      toast.success(action === "accept" ? "Đã nhận đơn." : action === "complete" ? "Đã báo ra món." : "Đã thu tiền.");
+      const res = await fetch(`/api/admin/orders/${orderId}/${action}`, {
+        method: "POST",
+        cache: "no-store",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined
+      });
+      await readDashboardApiResponse(res, "Thao tác thất bại.");
+      toast.success(resolveDashboardActionToast(action));
       setDetailId(null);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Thao tác thất bại.");
+      toast.error(getDashboardActionErrorToast(err));
     } finally {
       setMutatingId(null);
     }

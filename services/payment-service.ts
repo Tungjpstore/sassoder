@@ -1,7 +1,7 @@
 import { AppError } from "@/lib/response";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
 import { resolveMerchantPaymentConfirmationTransition } from "@/lib/orders/order-state-machine";
-import { resolveManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
+import { inferManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
 import { paymentMethodToEntitlementFeature } from "@/lib/payments/payment-entitlement";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
@@ -259,6 +259,54 @@ async function syncOrdersToBillState(
   throwIfSupabaseError(error);
 }
 
+async function persistBillPaymentMethodIfMissing(
+  supabase: ServiceSupabaseClient,
+  input: {
+    restaurantId: string;
+    billId: string;
+    currentMethod?: PaymentMethod | null;
+    paymentMethod: PaymentMethod;
+  }
+) {
+  if (input.currentMethod) return input.currentMethod;
+
+  const { data, error } = await supabase
+    .from("table_bills")
+    .update({ payment_method: input.paymentMethod })
+    .eq("id", input.billId)
+    .eq("restaurant_id", input.restaurantId)
+    .is("payment_method", null)
+    .select("payment_method")
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  return (data?.payment_method as PaymentMethod | null) ?? input.paymentMethod;
+}
+
+async function persistOrderPaymentMethodIfMissing(
+  supabase: ServiceSupabaseClient,
+  input: {
+    restaurantId: string;
+    orderId: string;
+    currentMethod?: PaymentMethod | null;
+    paymentMethod: PaymentMethod;
+  }
+) {
+  if (input.currentMethod) return input.currentMethod;
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ payment_method: input.paymentMethod })
+    .eq("id", input.orderId)
+    .eq("restaurant_id", input.restaurantId)
+    .is("payment_method", null)
+    .select("payment_method")
+    .maybeSingle();
+
+  throwIfSupabaseError(error);
+  return (data?.payment_method as PaymentMethod | null) ?? input.paymentMethod;
+}
+
 async function ensureStartPaymentLog(
   supabase: ServiceSupabaseClient,
   input: {
@@ -362,21 +410,37 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
       return getCustomerPaymentOrder(orderId, access);
     }
     if (bill.status === "waiting_payment" || bill.status === "waiting_confirm") {
+      const effectivePaymentMethod = await persistBillPaymentMethodIfMissing(supabase, {
+        restaurantId: typedOrder.restaurant_id,
+        billId: bill.id,
+        currentMethod: bill.payment_method,
+        paymentMethod
+      });
       await syncOrdersToBillState(supabase, {
         restaurantId: typedOrder.restaurant_id,
         billId: bill.id,
         billStatus: bill.status,
-        paymentMethod: bill.payment_method ?? paymentMethod
+        paymentMethod: effectivePaymentMethod
       });
-      if (bill.payment_method === paymentMethod) {
-        await ensureStartPaymentLog(supabase, {
+      await ensureStartPaymentLog(supabase, {
+        orderId,
+        billId: bill.id,
+        method: effectivePaymentMethod,
+        amount: bill.total,
+        source: "customer_bill_checkout"
+      });
+      if (!bill.payment_method && effectivePaymentMethod === "CASH") {
+        await enqueuePaymentWaitingConfirmNotification({
+          restaurantId: typedOrder.restaurant_id,
+          branchId: typedOrder.branch_id ?? null,
           orderId,
           billId: bill.id,
-          method: paymentMethod,
           amount: bill.total,
-          source: "customer_bill_checkout"
+          method: "CASH",
+          customerName: typedOrder.customer_name ?? null
         });
       }
+      invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
       return getCustomerPaymentOrder(orderId, access);
     }
 
@@ -396,31 +460,47 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
       const currentOrder = await getCustomerPaymentOrder(orderId, access);
       const currentBill = firstOrNull(currentOrder.bill);
       if (currentBill && (currentBill.status === "waiting_payment" || currentBill.status === "waiting_confirm" || currentBill.status === "paid")) {
+        const effectivePaymentMethod = await persistBillPaymentMethodIfMissing(supabase, {
+          restaurantId: currentOrder.restaurant_id,
+          billId: currentBill.id,
+          currentMethod: currentBill.payment_method,
+          paymentMethod
+        });
         if (currentBill.status !== "paid") {
           await syncOrdersToBillState(supabase, {
             restaurantId: currentOrder.restaurant_id,
             billId: currentBill.id,
             billStatus: currentBill.status,
-            paymentMethod: currentBill.payment_method ?? paymentMethod
+            paymentMethod: effectivePaymentMethod
           });
         } else {
           await syncOrdersToBillState(supabase, {
             restaurantId: currentOrder.restaurant_id,
             billId: currentBill.id,
             billStatus: "paid",
-            paymentMethod: currentBill.payment_method ?? paymentMethod,
+            paymentMethod: effectivePaymentMethod,
             paidAt: currentBill.paid_at ?? null
           });
         }
-        if (currentBill.payment_method === paymentMethod) {
-          await ensureStartPaymentLog(supabase, {
+        await ensureStartPaymentLog(supabase, {
+          orderId,
+          billId: currentBill.id,
+          method: effectivePaymentMethod,
+          amount: currentBill.total,
+          source: "customer_bill_checkout"
+        });
+        if (!currentBill.payment_method && currentBill.status !== "paid" && effectivePaymentMethod === "CASH") {
+          await enqueuePaymentWaitingConfirmNotification({
+            restaurantId: currentOrder.restaurant_id,
+            branchId: currentOrder.branch_id ?? null,
             orderId,
             billId: currentBill.id,
-            method: paymentMethod,
             amount: currentBill.total,
-            source: "customer_bill_checkout"
+            method: "CASH",
+            customerName: currentOrder.customer_name ?? null
           });
         }
+        invalidatePaymentDerivedCaches(currentOrder.restaurant_id);
         return currentOrder;
       }
       throw new AppError("Không thể bắt đầu thanh toán cho hóa đơn này", 409);
@@ -457,14 +537,30 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
 
   if (typedOrder.status === "cancelled") throw new AppError("Đơn hàng đã bị huỷ", 400);
   if (isPaidOrder(typedOrder) || typedOrder.status === "waiting_payment" || typedOrder.status === "waiting_confirm") {
-    if ((typedOrder.payment_method ?? paymentMethod) === paymentMethod) {
-      await ensureStartPaymentLog(supabase, {
+    const effectivePaymentMethod = await persistOrderPaymentMethodIfMissing(supabase, {
+      restaurantId: typedOrder.restaurant_id,
+      orderId,
+      currentMethod: typedOrder.payment_method,
+      paymentMethod
+    });
+    await ensureStartPaymentLog(supabase, {
+      orderId,
+      method: effectivePaymentMethod,
+      amount: typedOrder.total,
+      source: "customer_checkout"
+    });
+    if (!typedOrder.payment_method && !isPaidOrder(typedOrder) && effectivePaymentMethod === "CASH") {
+      await enqueuePaymentWaitingConfirmNotification({
+        restaurantId: typedOrder.restaurant_id,
+        branchId: typedOrder.branch_id ?? null,
         orderId,
-        method: paymentMethod,
+        billId: typedOrder.bill_id ?? null,
         amount: typedOrder.total,
-        source: "customer_checkout"
+        method: "CASH",
+        customerName: typedOrder.customer_name ?? null
       });
     }
+    invalidatePaymentDerivedCaches(typedOrder.restaurant_id);
     return getCustomerPaymentOrder(orderId, access);
   }
   if (!["completed", "ordering"].includes(typedOrder.status)) {
@@ -484,14 +580,30 @@ export async function startCustomerPayment(orderId: string, paymentMethod: Payme
   if (!updated) {
     const currentOrder = await getCustomerPaymentOrder(orderId, access);
     if (isPaidOrder(currentOrder) || currentOrder.status === "waiting_payment" || currentOrder.status === "waiting_confirm") {
-      if ((currentOrder.payment_method ?? paymentMethod) === paymentMethod) {
-        await ensureStartPaymentLog(supabase, {
+      const effectivePaymentMethod = await persistOrderPaymentMethodIfMissing(supabase, {
+        restaurantId: currentOrder.restaurant_id,
+        orderId,
+        currentMethod: currentOrder.payment_method,
+        paymentMethod
+      });
+      await ensureStartPaymentLog(supabase, {
+        orderId,
+        method: effectivePaymentMethod,
+        amount: currentOrder.total,
+        source: "customer_checkout"
+      });
+      if (!currentOrder.payment_method && !isPaidOrder(currentOrder) && effectivePaymentMethod === "CASH") {
+        await enqueuePaymentWaitingConfirmNotification({
+          restaurantId: currentOrder.restaurant_id,
+          branchId: currentOrder.branch_id ?? null,
           orderId,
-          method: paymentMethod,
+          billId: currentOrder.bill_id ?? null,
           amount: currentOrder.total,
-          source: "customer_checkout"
+          method: "CASH",
+          customerName: currentOrder.customer_name ?? null
         });
       }
+      invalidatePaymentDerivedCaches(currentOrder.restaurant_id);
       return currentOrder;
     }
     throw new AppError("Không thể bắt đầu thanh toán cho đơn hàng này", 409);
@@ -943,9 +1055,12 @@ export async function confirmPayment(
   const bill = firstOrNull(typedOrder.bill);
 
   if (bill) {
-    const billPaymentMethod = resolveManualConfirmationMethod({
+    const billPaymentMethod = inferManualConfirmationMethod({
       currentMethod: bill.payment_method ?? typedOrder.payment_method,
-      requestedMethod: requestedPaymentMethod
+      requestedMethod: requestedPaymentMethod,
+      status: typedOrder.status,
+      paymentStatus: typedOrder.payment_status ?? null,
+      billStatus: bill.status
     });
     if (bill.status === "paid") {
       if (billPaymentMethod) {
@@ -1067,9 +1182,11 @@ export async function confirmPayment(
   }
 
   if (isPaidOrder(typedOrder)) {
-    const paidPaymentMethod = resolveManualConfirmationMethod({
+    const paidPaymentMethod = inferManualConfirmationMethod({
       currentMethod: typedOrder.payment_method,
-      requestedMethod: requestedPaymentMethod
+      requestedMethod: requestedPaymentMethod,
+      status: typedOrder.status,
+      paymentStatus: typedOrder.payment_status ?? null
     });
     if (paidPaymentMethod) {
       await assertFeatureEntitlement(restaurantId, paymentMethodToEntitlementFeature(paidPaymentMethod));
@@ -1105,9 +1222,11 @@ export async function confirmPayment(
   if (!confirmationTransition.allowed || !confirmationTransition.next) {
     throw new AppError(confirmationTransition.reason ?? "Đơn hàng chưa ở trạng thái chờ xác nhận thanh toán", 400);
   }
-  const paymentMethod = resolveManualConfirmationMethod({
+  const paymentMethod = inferManualConfirmationMethod({
     currentMethod: typedOrder.payment_method,
-    requestedMethod: requestedPaymentMethod
+    requestedMethod: requestedPaymentMethod,
+    status: typedOrder.status,
+    paymentStatus: typedOrder.payment_status ?? null
   });
 
   if (!paymentMethod) {

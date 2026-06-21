@@ -11,7 +11,11 @@ import { Drawer } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { useToast } from "@/components/dashboard/toast-provider";
+import { getDashboardActionErrorToast, resolveDashboardActionToast } from "@/lib/dashboard/order-actions";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { inferManualConfirmationMethod } from "@/lib/payments/manual-confirmation";
 import type { AdminPaymentTransaction } from "@/services/dashboard-report-service";
+import type { PaymentStatus } from "@/types/domain";
 
 type Stat = { label: string; value: string | number; meta: string; icon: "credit" | "cash" | "qr" | "clock" };
 
@@ -41,14 +45,6 @@ function paymentTone(tx: AdminPaymentTransaction) {
   return { label: "Chưa thu", tone: "neutral" as const };
 }
 
-async function readPaymentApiResponse<T = unknown>(response: Response, fallback: string) {
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; data?: T; error?: string; message?: string } | null;
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error ?? payload?.message ?? fallback);
-  }
-  return payload?.data as T | undefined;
-}
-
 export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, bankCode, bankAccount, bankAccountName, restaurantName, totalPaid, waitingAmount, cashRevenue, qrRevenue }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState("all");
@@ -67,20 +63,25 @@ export function RealPaymentsWorkspaceV2({ stats, transactions, restaurantId, ban
 
   async function confirmPayment(tx: AdminPaymentTransaction) {
     if (confirming) return;
+    const paymentMethod = inferManualConfirmationMethod({
+      currentMethod: tx.method,
+      status: tx.status,
+      paymentStatus: tx.paymentStatus as PaymentStatus | null
+    });
     setConfirming(true);
     try {
       const res = await fetch(`/api/admin/orders/${tx.id}/confirm-payment`, {
         method: "POST",
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentMethod: tx.method ?? "QR" })
+        headers: paymentMethod ? { "Content-Type": "application/json" } : undefined,
+        body: paymentMethod ? JSON.stringify({ paymentMethod }) : undefined
       });
-      await readPaymentApiResponse(res, "Không xác nhận được thanh toán");
-      toast.success("Đã xác nhận thanh toán");
+      await readDashboardApiResponse(res, "Không xác nhận được thanh toán");
+      toast.success(resolveDashboardActionToast("confirm-payment"));
       setSelected(null);
       router.refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Không xác nhận được thanh toán");
+      toast.error(getDashboardActionErrorToast(e, "Không xác nhận được thanh toán"));
     } finally {
       setConfirming(false);
     }

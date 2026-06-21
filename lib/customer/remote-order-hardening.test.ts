@@ -9,6 +9,7 @@ const validRemoteOrder = {
   fulfillmentType: "DELIVERY",
   customerName: "Nguyen Van A",
   customerPhone: "0901234567",
+  paymentMethod: "CASH",
   deliveryAddress: "12 Nguyen Trai, Quan 1",
   deliveryLat: 10.771,
   deliveryLng: 106.7,
@@ -31,6 +32,7 @@ test("remote order API keeps Vietnamese phone/address payload bounded", () => {
   assert.equal(remoteOrderSchema.safeParse({ ...validRemoteOrder, customerPhone: "abc" }).success, false);
   assert.equal(remoteOrderSchema.safeParse({ ...validRemoteOrder, deliveryAddress: "x".repeat(241) }).success, false);
   assert.equal(remoteOrderSchema.safeParse({ ...validRemoteOrder, items: [] }).success, false);
+  assert.equal(remoteOrderSchema.safeParse({ ...validRemoteOrder, paymentMethod: "CARD" }).success, false);
 });
 
 test("delivery coordinate validators do not coerce blank or null into zero", () => {

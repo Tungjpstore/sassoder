@@ -71,6 +71,7 @@ export type CreateRemoteOrderInput = {
   customerPhone: string;
   customerNote?: string;
   promotionCode?: string;
+  paymentMethod?: PaymentMethod;
   deliveryAddress?: string;
   deliveryLat?: number;
   deliveryLng?: number;
@@ -1403,6 +1404,13 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
   }
 
   const requiresPrepaidQr = settings.online_payment_mode === "QR_PREPAID";
+  const requestedPaymentMethod = input.paymentMethod ?? (requiresPrepaidQr ? "QR" : "CASH");
+  if (requiresPrepaidQr && requestedPaymentMethod !== "QR") {
+    throw new AppError("Quán đang yêu cầu thanh toán VietQR trước cho đơn online.", 400);
+  }
+  if (!requiresPrepaidQr && requestedPaymentMethod !== "CASH") {
+    throw new AppError("Quán hiện chỉ nhận thanh toán tiền mặt khi nhận món.", 400);
+  }
   if (requiresPrepaidQr && (!settings.bank_code || !settings.bank_account)) {
     throw new AppError("Quán đang yêu cầu chuyển khoản trước nhưng chưa cấu hình ngân hàng VietQR.", 400);
   }
@@ -1494,7 +1502,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
   });
   const total = subtotal - discountAmount;
   const initialStatus: OrderDto["status"] = requiresPrepaidQr ? "waiting_payment" : "pending";
-  const initialPaymentMethod: PaymentMethod | null = requiresPrepaidQr ? "QR" : null;
+  const initialPaymentMethod: PaymentMethod = requestedPaymentMethod;
   const initialPaymentStatus: PaymentStatus = requiresPrepaidQr ? "waiting_payment" : "unpaid";
   const destination = deliveryQuote?.destination ?? null;
   const shouldStoreRoute = input.fulfillmentType === "DELIVERY" && settings.delivery_tracking_enabled;

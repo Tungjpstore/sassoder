@@ -1451,9 +1451,11 @@ export function RemoteOrderClient({
       return;
     }
 
+    const selectedPaymentMethod = paymentChoice === "vietqr" ? "QR" : "CASH";
     const orderFingerprint = JSON.stringify({
       mode,
       branchId: mode === "PICKUP" ? selectedPickupBranch?.id ?? selectedPickupBranchId : "",
+      paymentMethod: selectedPaymentMethod,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
       deliveryAddress: mode === "DELIVERY" ? deliveryAddress.trim() : "",
@@ -1500,6 +1502,7 @@ export function RemoteOrderClient({
           customerPhone: customerPhone.trim(),
           customerNote: customerNote.trim(),
           promotionCode: effectivePromotionCode,
+          paymentMethod: selectedPaymentMethod,
           deliveryAddress: deliveryAddress.trim(),
           deliveryLat,
           deliveryLng,

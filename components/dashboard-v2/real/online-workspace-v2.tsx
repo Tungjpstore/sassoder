@@ -31,15 +31,18 @@ import { Drawer } from "../overlay";
 import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
 import { StoreDeliveryMapPreview } from "@/components/maps/store-delivery-map-preview";
 import { useToast } from "@/components/dashboard/toast-provider";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { deliveryStatusLabel, orderStatusLabel, paymentStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import type { OrderingSettings } from "@/services/delivery-service";
+import type { OrderStatus, PaymentStatus } from "@/types/domain";
 import type { Json } from "@/types/supabase";
 
 type OnlineOrder = {
   id: string;
-  status: string;
+  status: OrderStatus;
   total: number;
   fulfillmentType: "PICKUP" | "DELIVERY";
   customerName: string | null;
@@ -50,7 +53,7 @@ type OnlineOrder = {
   deliveryStatus: string | null;
   deliveryRouteDurationMinutes: number | null;
   deliveryQuoteSnapshot: Json | null;
-  paymentStatus: string | null;
+  paymentStatus: PaymentStatus | null;
   createdAt: string;
   acceptedAt: string | null;
   serviceDueAt: string | null;
@@ -81,17 +84,6 @@ type OnlineWorkspaceProps = {
 
 type DrawerMode = "closed" | "qr" | "orders";
 type Tab = "all" | "pickup" | "delivery";
-
-async function readApiResponse(response: Response, fallback: string) {
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string; message?: string } | null;
-  if (!response.ok || payload?.ok === false) {
-    throw new Error(payload?.error ?? payload?.message ?? fallback);
-  }
-}
-
-function paymentNeedsAttention(order: Pick<OnlineOrder, "paymentStatus" | "status">) {
-  return order.status === "waiting_payment" || order.status === "waiting_confirm" || order.paymentStatus === "waiting_payment" || order.paymentStatus === "waiting_confirm";
-}
 
 function readDrawerMode(value: string | null): DrawerMode {
   return value === "qr" || value === "orders" ? value : "closed";
@@ -131,20 +123,22 @@ export function RealOnlineWorkspaceV2({
 
   function actOnOrder(orderId: string, action: "accept" | "complete" | "cancel" | "confirm-payment") {
     if (mutatingId) return;
+    const targetOrder = recentOrders.find((order) => order.id === orderId) ?? null;
+    const body = action === "confirm-payment" ? resolveDashboardPaymentConfirmationBody(targetOrder) : undefined;
     setMutatingId(orderId);
     startTransition(async () => {
       try {
-        const res = await fetch(`/api/admin/orders/${orderId}/${action}`, { method: "POST", cache: "no-store" });
-        await readApiResponse(res, "Thao tác thất bại");
-        toast.success(
-          action === "accept" ? "Đã nhận đơn" :
-          action === "complete" ? "Đã báo ra món" :
-          action === "cancel" ? "Đã huỷ đơn" :
-          "Đã xác nhận thanh toán"
-        );
+        const res = await fetch(`/api/admin/orders/${orderId}/${action}`, {
+          method: "POST",
+          cache: "no-store",
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined
+        });
+        await readDashboardApiResponse(res, "Thao tác thất bại");
+        toast.success(resolveDashboardActionToast(action));
         router.refresh();
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Không thực hiện được thao tác");
+        toast.error(getDashboardActionErrorToast(e, "Không thực hiện được thao tác"));
       } finally {
         setMutatingId(null);
       }
@@ -459,11 +453,7 @@ function OnlineOrderCard({
 }
 
 function nextActionFor(o: OnlineOrder): { action: "accept" | "complete" | "confirm-payment"; label: string } | null {
-  if (paymentNeedsAttention(o)) return { action: "confirm-payment", label: "Xác nhận thanh toán" };
-  if (o.status === "pending") return { action: "accept", label: "Nhận đơn" };
-  if (o.status === "ordering") return { action: "complete", label: "Báo đã ra món" };
-  if (o.status === "completed") {
-    return { action: "confirm-payment", label: "Xác nhận thu" };
-  }
-  return null;
+  const decision = resolveDashboardOrderAction(o);
+  if (!decision) return null;
+  return { action: decision.action, label: decision.label };
 }

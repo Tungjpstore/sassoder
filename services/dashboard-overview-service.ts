@@ -3,14 +3,15 @@ import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { getRestaurantAdminDashboard } from "@/services/restaurant-service";
 import { listTablesWithStatus } from "@/services/table-service";
 import type { AdminRecentOrder, AdminTopItem } from "@/services/dashboard-report-service";
-import type { OrderStatus, PaymentMethod } from "@/types/domain";
+import type { FulfillmentType, OrderStatus, PaymentMethod, PaymentStatus } from "@/types/domain";
 
 type RecentOrderRow = {
   id: string;
   status: OrderStatus;
+  payment_status?: PaymentStatus | null;
   total: number;
   payment_method: PaymentMethod | null;
-  fulfillment_type?: "DINE_IN" | "PICKUP" | "DELIVERY";
+  fulfillment_type?: FulfillmentType;
   created_at: string;
   table: { name: string } | { name: string }[] | null;
   items:
@@ -137,7 +138,7 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
   const tablesPromise = listTablesWithStatus(restaurantId);
   const recentOrdersPromise = supabase
     .from("orders")
-    .select("id,status,total,payment_method,fulfillment_type,created_at,table:tables(name),items:order_items(quantity,menuItem:menu_items(name))")
+    .select("id,status,payment_status,total,payment_method,fulfillment_type,created_at,table:tables(name),items:order_items(quantity,menuItem:menu_items(name))")
     .eq("restaurant_id", restaurantId)
     .not("status", "in", "(paid,cancelled)")
     .order("created_at", { ascending: false })
@@ -175,6 +176,8 @@ export async function getAdminDashboardOverview(restaurantId: string): Promise<A
     status: order.status,
     total: order.total,
     paymentMethod: order.payment_method,
+    paymentStatus: order.payment_status ?? null,
+    fulfillmentType: order.fulfillment_type ?? null,
     createdAt: order.created_at,
     tableName: orderLocationLabel(order),
     itemSummary: summarizeItems(order.items)

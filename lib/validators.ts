@@ -141,6 +141,7 @@ export const remoteOrderSchema = z.object({
   customerNote: z.string().max(300).optional(),
   idempotencyKey: z.string().uuid(),
   promotionCode: promotionCodeSchema,
+  paymentMethod: paymentMethodSchema.optional(),
   fulfillmentType: z.enum(["PICKUP", "DELIVERY"]),
   customerName: z.string().trim().min(2).max(120),
   customerPhone: z.string().trim().regex(/^[0-9+() .-]{6,24}$/),

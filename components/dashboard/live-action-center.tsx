@@ -18,12 +18,15 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/dashboard/toast-provider";
 import {
   fetchActionCenter,
   readCachedActionCenter,
   writeCachedActionCenter,
   type ActionCenterSnapshot
 } from "@/components/dashboard/action-center-cache";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
+import { applyDashboardOrderOptimistic, getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody, type DashboardOrderOptimisticAction } from "@/lib/dashboard/order-actions";
 import { orderStatusLabel } from "@/lib/labels";
 import { formatVnd } from "@/lib/money";
 import { orderNeedsPaymentAttention, resolveOrderPaymentStatus } from "@/lib/orders/order-state-machine";
@@ -132,6 +135,7 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
     const dueIn = minutesUntil(order.serviceDueAt);
     const paymentStatus = resolveOrderPaymentStatus(order);
     const paymentKey = order.bill?.id ?? order.id;
+    const orderAction = resolveDashboardOrderAction(order);
 
     if (
       !paymentKeys.has(paymentKey) &&
@@ -147,9 +151,10 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
         title: paymentStatus === "waiting_confirm" ? `Cần xác nhận thanh toán ${location}` : `Kiểm tra thanh toán ${location}`,
         subtitle: `${order.paymentMethod ?? order.bill?.paymentMethod ?? "Chưa chọn"} · ${orderStatusLabel(order.status)}`,
         amount: order.bill?.total ?? order.total,
-        label: "Xác nhận thanh toán",
+        label: orderAction?.action === "confirm-payment" ? orderAction.label : "Xác nhận thanh toán",
         icon: CreditCard,
         tone: paymentStatus === "waiting_confirm" ? "yellow" : "blue",
+        body: resolveDashboardPaymentConfirmationBody(order),
         href: "/dashboard/payments"
       });
       continue;
@@ -164,7 +169,7 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
         title: `Đơn mới từ ${location}`,
         subtitle: `${order.items.length} món · ${minutesSince(order.createdAt)} phút trước`,
         amount: order.total,
-        label: "Nhận đơn",
+        label: orderAction?.action === "accept" ? orderAction.label : "Nhận đơn",
         icon: Utensils,
         tone: "green",
         body: { minutes: 15 },
@@ -185,7 +190,7 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
           ? `Trễ ${Math.abs(dueIn ?? 0)} phút · ${order.items.length} món`
           : `${order.items.length} món · ${dueIn === null ? "chưa hẹn giờ" : `còn ${Math.max(dueIn, 0)} phút`}`,
         amount: order.total,
-        label: "Đã phục vụ",
+        label: orderAction?.action === "complete" ? orderAction.label : "Đã phục vụ",
         icon: isLate ? AlertTriangle : ChefHat,
         tone: isLate ? "red" : "green",
         href: "/dashboard/kitchen"
@@ -211,17 +216,21 @@ function buildQuickActions(orders: OrderDto[], requests: ServiceRequestDto[]): Q
 }
 
 function applyOptimisticOrderAction(orders: OrderDto[], action: QuickAction, now: Date, nextDue: string) {
+  const optimisticAction: DashboardOrderOptimisticAction | null = action.kind === "resolve-request" ? null : action.kind;
+
   return orders
     .map((order) => {
       const sameOrder = order.id === action.orderId;
       const sameBill = action.billId && order.bill?.id === action.billId;
-      if (action.kind === "confirm-payment" && (sameOrder || sameBill)) return { ...order, status: "paid" as const };
-      if (action.kind === "accept" && sameOrder) return { ...order, status: "ordering" as const, acceptedAt: now.toISOString(), serviceDueAt: new Date(now.getTime() + 15 * 60_000).toISOString() };
-      if (action.kind === "complete" && sameOrder) return { ...order, status: "completed" as const, servedAt: now.toISOString() };
-      if (action.kind === "timer" && sameOrder) return { ...order, serviceDueAt: nextDue };
+      if (optimisticAction === "confirm-payment" && (sameOrder || sameBill)) return applyDashboardOrderOptimistic(order, optimisticAction, { now });
+      if (optimisticAction && sameOrder) return applyDashboardOrderOptimistic(order, optimisticAction, { now, serviceDueAt: nextDue });
       return order;
     })
     .filter((order) => order.status !== "paid");
+}
+
+function quickActionMinutes(action: QuickAction) {
+  return typeof action.body === "object" && action.body !== null && "minutes" in action.body && typeof action.body.minutes === "number" ? action.body.minutes : undefined;
 }
 
 function realtimeLabel(state: RealtimeState) {
@@ -264,6 +273,7 @@ export function AdminLiveActionCenter({
   restaurantId,
   variant = "popover"
 }: AdminLiveActionCenterProps) {
+  const toast = useToast();
   const hasInitialOrders = initialOrders !== undefined;
   const hasInitialRequests = initialRequests !== undefined;
   const [initialCache] = useState<ActionCenterSnapshot | null>(() => readCachedActionCenter(restaurantId));
@@ -438,6 +448,7 @@ export function AdminLiveActionCenter({
         });
         const json = await response.json();
         if (!json.ok) throw new Error(json.error ?? "Không xử lý được yêu cầu hỗ trợ");
+        toast.success(resolveDashboardActionToast("resolve-request"));
         scheduleRefresh(80);
       } catch (err) {
         setRequests(previousRequests);
@@ -446,7 +457,9 @@ export function AdminLiveActionCenter({
           requests: previousRequests,
           fetchedAt: now.getTime()
         });
-        setError(err instanceof Error ? err.message : "Không xử lý được yêu cầu hỗ trợ");
+        const message = err instanceof Error ? err.message : "Không xử lý được yêu cầu hỗ trợ";
+        setError(message);
+        toast.error(getDashboardActionErrorToast(err, "Không xử lý được yêu cầu"));
       } finally {
         setMutatingKey(null);
       }
@@ -476,8 +489,8 @@ export function AdminLiveActionCenter({
             }
           : {})
       });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Thao tác thất bại");
+      await readDashboardApiResponse(response, "Thao tác thất bại");
+      toast.success(resolveDashboardActionToast(action.kind, { minutes: quickActionMinutes(action) }));
       scheduleRefresh(80);
     } catch (err) {
       setOrders(previousOrders);
@@ -486,7 +499,9 @@ export function AdminLiveActionCenter({
         requests,
         fetchedAt: now.getTime()
       });
-      setError(err instanceof Error ? err.message : "Thao tác thất bại");
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      setError(message);
+      toast.error(getDashboardActionErrorToast(err));
     } finally {
       setMutatingKey(null);
     }

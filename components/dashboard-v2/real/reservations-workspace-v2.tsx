@@ -17,6 +17,8 @@ import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
 import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
+import { useToast } from "@/components/dashboard/toast-provider";
+import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { formatVnd } from "@/lib/money";
 import { reservationStatusLabel } from "@/lib/labels";
@@ -76,9 +78,19 @@ function nextAction(r: ReservationDto): { action: ReservationAction; label: stri
   return null;
 }
 
+function reservationActionToast(action: ReservationAction) {
+  if (action === "confirm-deposit") return { title: "Đã xác nhận cọc", message: "Lịch đặt bàn đã được giữ chắc cho khách." };
+  if (action === "check-in") return { title: "Đã check-in khách", message: "Khách đã đến quán và sẵn sàng xếp bàn." };
+  if (action === "seat") return { title: "Đã nhận khách vào bàn", message: "Bàn đã chuyển sang trạng thái đang phục vụ." };
+  if (action === "cancel") return { title: "Đã huỷ đặt bàn", message: "Lịch đặt bàn đã được đóng trong hệ thống." };
+  if (action === "no-show") return { title: "Đã đánh dấu no-show", message: "Hệ thống đã ghi nhận khách không đến." };
+  return { title: "Đã từ chối đặt bàn", message: "Yêu cầu đặt bàn đã được đóng." };
+}
+
 export function RealReservationsWorkspaceV2(props: Props) {
   const { restaurantId, initialReservations, analytics } = props;
   const router = useRouter();
+  const toast = useToast();
   const [reservations, setReservations] = useState<ReservationDto[]>(initialReservations);
   const [tab, setTab] = useState<Tab>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -87,7 +99,13 @@ export function RealReservationsWorkspaceV2(props: Props) {
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rtState, setRtState] = useState<RealtimeState>("connecting");
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const refreshRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   /* Realtime channel */
   useEffect(() => {
@@ -115,10 +133,13 @@ export function RealReservationsWorkspaceV2(props: Props) {
     setError(null);
     try {
       const res = await fetch(`/api/admin/reservations/${id}/${action}`, { method: "POST", cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text().catch(() => `${res.status}`));
+      await readDashboardApiResponse(res, "Thao tác đặt bàn thất bại");
+      toast.success(reservationActionToast(action));
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Thao tác thất bại");
+      const message = err instanceof Error ? err.message : "Thao tác thất bại";
+      setError(message);
+      toast.error({ title: "Không xử lý được đặt bàn", message });
     } finally {
       setMutatingId(null);
     }
@@ -134,13 +155,12 @@ export function RealReservationsWorkspaceV2(props: Props) {
   }, [reservations]);
 
   const upcomingSoon = useMemo(() => {
-    const nowMs = Date.now();
     return reservations
       .filter((r) => !isHistory(r.status) && r.status !== "cancelled" && r.status !== "rejected")
       .map((r) => ({ r, mins: Math.floor((new Date(r.startsAt).getTime() - nowMs) / 60_000) }))
       .filter((x) => x.mins >= 0 && x.mins <= 30)
       .sort((a, b) => a.mins - b.mins);
-  }, [reservations]);
+  }, [nowMs, reservations]);
 
   const visible = useMemo(() => {
     if (tab === "all") return reservations.filter((r) => !isHistory(r.status));
@@ -259,6 +279,7 @@ export function RealReservationsWorkspaceV2(props: Props) {
         restaurantSlug={props.settings.slug}
         onCreated={() => {
           setCreateOpen(false);
+          toast.success({ title: "Đã tạo đặt bàn", message: "Lịch mới đã được thêm vào danh sách." });
           router.refresh();
         }}
       />
