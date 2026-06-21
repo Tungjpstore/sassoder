@@ -11,14 +11,27 @@ export type CustomerModifierSelection = {
   quantity?: number;
 };
 
+export type ModifierPricingContext = {
+  basePrice?: number;
+};
+
 export type ResolvedModifierSelection = {
   groupId: string;
   groupName: string;
+  kind?: PublicModifierGroup["kind"];
   optionId: string;
   optionName: string;
+  pricingMode: NonNullable<PublicModifierOption["pricingMode"]>;
+  priceValue: number | null;
   priceDelta: number;
   quantity: number;
   lineTotal: number;
+};
+
+export type ResolvedModifierOptionPricing = {
+  pricingMode: NonNullable<PublicModifierOption["pricingMode"]>;
+  priceValue: number | null;
+  priceDelta: number;
 };
 
 export type ModifierResolution =
@@ -53,6 +66,7 @@ function groupMinimum(group: PublicModifierGroup) {
 }
 
 function groupMaximum(group: PublicModifierGroup) {
+  if (group.selectionType === "SINGLE") return 1;
   return normalizeGroupLimit(group.maxSelect, Number.POSITIVE_INFINITY);
 }
 
@@ -80,9 +94,61 @@ export function normalizeModifierSelections(selections: readonly CustomerModifie
   return [...byKey.values()].sort((left, right) => selectionKey(left).localeCompare(selectionKey(right)));
 }
 
+function effectiveOptionDelta(option: PublicModifierOption, context: ModifierPricingContext) {
+  const pricingMode = option.pricingMode ?? "DELTA";
+  if (pricingMode !== "ABSOLUTE") return Math.round(option.priceDelta);
+
+  const absolutePrice = Number(option.priceValue ?? Number.NaN);
+  const basePrice = Number(context.basePrice ?? Number.NaN);
+  if (!Number.isFinite(absolutePrice) || absolutePrice <= 0 || !Number.isFinite(basePrice) || basePrice <= 0) {
+    return Math.round(option.priceDelta);
+  }
+
+  return Math.round(absolutePrice) - Math.round(basePrice);
+}
+
+export function resolveModifierOptionPricing(
+  option: PublicModifierOption,
+  context: ModifierPricingContext = {}
+): ResolvedModifierOptionPricing {
+  const pricingMode = option.pricingMode ?? "DELTA";
+  const priceDelta = effectiveOptionDelta(option, context);
+  if (pricingMode !== "ABSOLUTE") {
+    return {
+      pricingMode,
+      priceValue: null,
+      priceDelta
+    };
+  }
+
+  const absolutePrice = Number(option.priceValue ?? Number.NaN);
+  const basePrice = Number(context.basePrice ?? Number.NaN);
+  const fallbackPrice = Number.isFinite(basePrice) && basePrice > 0 ? Math.round(basePrice) + priceDelta : null;
+
+  return {
+    pricingMode,
+    priceValue: Number.isFinite(absolutePrice) && absolutePrice > 0 ? Math.round(absolutePrice) : fallbackPrice,
+    priceDelta
+  };
+}
+
+export function defaultModifierSelectionsForGroups(groups: readonly PublicModifierGroup[] = []): CustomerModifierSelection[] {
+  return groups.flatMap((group) => {
+    const minSelect = groupMinimum(group);
+    if (minSelect <= 0) return [];
+
+    const availableOptions = group.options.filter((option) => option.isAvailable !== false);
+    const defaultOptions = availableOptions.filter((option) => option.isDefault);
+    const pickedOptions = (defaultOptions.length > 0 ? defaultOptions : availableOptions).slice(0, minSelect);
+
+    return pickedOptions.map((option) => ({ groupId: group.id, optionId: option.id, quantity: 1 }));
+  });
+}
+
 export function resolveModifierSelections(
   groups: readonly PublicModifierGroup[] = [],
-  selections: readonly CustomerModifierSelection[] = []
+  selections: readonly CustomerModifierSelection[] = [],
+  context: ModifierPricingContext = {}
 ): ModifierResolution {
   const errors: string[] = [];
   const normalizedSelections = normalizeModifierSelections(selections);
@@ -104,15 +170,19 @@ export function resolveModifierSelections(
     }
 
     const quantity = normalizeQuantity(selection.quantity);
+    const optionPricing = resolveModifierOptionPricing(option, context);
     selectedCountByGroup.set(group.id, (selectedCountByGroup.get(group.id) ?? 0) + quantity);
     resolved.push({
       groupId: group.id,
       groupName: group.name,
+      kind: group.kind,
       optionId: option.id,
       optionName: option.name,
-      priceDelta: Math.round(option.priceDelta),
+      pricingMode: optionPricing.pricingMode,
+      priceValue: optionPricing.priceValue,
+      priceDelta: optionPricing.priceDelta,
       quantity,
-      lineTotal: Math.round(option.priceDelta) * quantity
+      lineTotal: optionPricing.priceDelta * quantity
     });
   }
 

@@ -42,6 +42,8 @@ import {
   type DineInCheckoutScreen
 } from "@/lib/customer/checkout-flow";
 import {
+  defaultModifierSelectionsForGroups,
+  resolveModifierOptionPricing,
   resolveModifierSelections,
   type CustomerModifierSelection,
   type PublicModifierGroup
@@ -210,18 +212,20 @@ function modifierMinSelect(group: PublicModifierGroup) {
 }
 
 function modifierMaxSelect(group: PublicModifierGroup) {
+  if (group.selectionType === "SINGLE") return 1;
   return group.maxSelect ?? Number.POSITIVE_INFINITY;
 }
 
-function defaultModifierSelections(groups: readonly PublicModifierGroup[] = []): CustomerModifierSelection[] {
-  return groups.flatMap((group) => {
-    const minSelect = modifierMinSelect(group);
-    if (minSelect <= 0) return [];
-    return group.options
-      .filter((option) => option.isAvailable !== false)
-      .slice(0, minSelect)
-      .map((option) => ({ groupId: group.id, optionId: option.id, quantity: 1 }));
-  });
+function shouldUseOptionQuantity(group: PublicModifierGroup) {
+  return group.selectionType === "QUANTITY" || group.allowQuantity === true;
+}
+
+function modifierOptionPriceText(itemPrice: number, option: PublicModifierGroup["options"][number]) {
+  const pricing = resolveModifierOptionPricing(option, { basePrice: itemPrice });
+  if (pricing.pricingMode === "ABSOLUTE") {
+    return pricing.priceValue ? `Giá ${formatVnd(pricing.priceValue)}` : "Theo giá món";
+  }
+  return pricing.priceDelta > 0 ? `+${formatVnd(pricing.priceDelta)}` : "Không thêm phí";
 }
 
 function modifierSummary(selections: ReturnType<typeof resolveModifierSelections>) {
@@ -917,7 +921,7 @@ export function CustomerOrderClient({
     if (hasMenuModifiers(item)) {
       setCustomizingItem({
         item,
-        selections: defaultModifierSelections(item.modifierGroups ?? []),
+        selections: defaultModifierSelectionsForGroups(item.modifierGroups ?? []),
         quantity: 1,
         note: ""
       });
@@ -967,9 +971,28 @@ export function CustomerOrderClient({
     });
   }
 
+  function changeModifierOptionQuantity(group: PublicModifierGroup, optionId: string, nextQuantity: number) {
+    setCustomizingItem((current) => {
+      if (!current) return current;
+      const option = group.options.find((candidate) => candidate.id === optionId);
+      if (!option || option.isAvailable === false) return current;
+
+      const quantity = Math.max(0, Math.min(50, Math.floor(nextQuantity)));
+      const outside = current.selections.filter((selection) => !(selection.groupId === group.id && selection.optionId === optionId));
+      const otherGroupQuantity = current.selections
+        .filter((selection) => selection.groupId === group.id && selection.optionId !== optionId)
+        .reduce((sum, selection) => sum + (selection.quantity ?? 1), 0);
+      const maxSelect = modifierMaxSelect(group);
+      const cappedQuantity = Number.isFinite(maxSelect) ? Math.min(quantity, Math.max(0, maxSelect - otherGroupQuantity)) : quantity;
+
+      if (cappedQuantity <= 0) return { ...current, selections: outside };
+      return { ...current, selections: [...outside, { groupId: group.id, optionId, quantity: cappedQuantity }] };
+    });
+  }
+
   function confirmCustomItem() {
     if (!customizingItem) return;
-    const resolution = resolveModifierSelections(customizingItem.item.modifierGroups ?? [], customizingItem.selections);
+    const resolution = resolveModifierSelections(customizingItem.item.modifierGroups ?? [], customizingItem.selections, { basePrice: customizingItem.item.price });
     if (!resolution.ok) {
       setError(resolution.errors[0] ?? "Vui lòng chọn đủ tùy chọn cho món.");
       return;
@@ -1352,12 +1375,12 @@ export function CustomerOrderClient({
       if (!menuItem) return;
 
       const selections = body.modifiers ?? [];
-      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections);
+      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections, { basePrice: menuItem.price });
       if (!resolution.ok) {
         // Fallback: required option is missing, open the customizer modal
         setCustomizingItem({
           item: menuItem,
-          selections: defaultModifierSelections(menuItem.modifierGroups ?? []),
+          selections: defaultModifierSelectionsForGroups(menuItem.modifierGroups ?? []),
           quantity: body.quantity ?? 1,
           note: body.note ?? ""
         });
@@ -1555,7 +1578,7 @@ export function CustomerOrderClient({
 
     const item = customizingItem.item;
     const groups = item.modifierGroups ?? [];
-    const resolution = resolveModifierSelections(groups, customizingItem.selections);
+    const resolution = resolveModifierSelections(groups, customizingItem.selections, { basePrice: customizingItem.item.price });
     const unitPrice = item.price + (resolution.ok ? resolution.totalDelta : 0);
     const totalPrice = unitPrice * customizingItem.quantity;
 
@@ -1578,6 +1601,7 @@ export function CustomerOrderClient({
               const groupSelections = customizingItem.selections.filter((selection) => selection.groupId === group.id);
               const minSelect = modifierMinSelect(group);
               const maxSelect = modifierMaxSelect(group);
+              const usesQuantity = shouldUseOptionQuantity(group);
 
               return (
                 <section key={group.id} className="space-y-2">
@@ -1593,9 +1617,43 @@ export function CustomerOrderClient({
                   </div>
 
                   <div className="grid gap-2">
-                    {group.options.map((option) => {
-                      const selected = groupSelections.some((selection) => selection.optionId === option.id);
-                      const disabled = option.isAvailable === false;
+                  {group.options.map((option) => {
+                    const selectedSelection = groupSelections.find((selection) => selection.optionId === option.id);
+                    const selected = Boolean(selectedSelection);
+                    const optionQuantity = selectedSelection?.quantity ?? 0;
+                    const disabled = option.isAvailable === false;
+                    const priceText = modifierOptionPriceText(item.price, option);
+                    if (usesQuantity) {
+                      return (
+                          <div
+                            key={option.id}
+                            className={cx(
+                              "flex min-h-12 items-center justify-between gap-3 rounded-2xl border px-3 py-2 text-left transition",
+                              selected && "border-[#0f7b4b] bg-[#edf7ef]",
+                              disabled && "border-[#ecefe6] bg-[#f5f2ea] opacity-60",
+                              !selected && !disabled && "border-[#ecefe6] bg-white"
+                            )}
+                          >
+                            <button
+                              type="button"
+                              disabled={disabled}
+                              onClick={() => changeModifierOptionQuantity(group, option.id, optionQuantity > 0 ? 0 : 1)}
+                              className="min-w-0 flex-1 text-left disabled:pointer-events-none"
+                            >
+                              <span className="block truncate text-[13px] font-black text-[#111713]">{option.name}</span>
+                              <span className="mt-0.5 block text-[11px] font-bold text-[#748076]">
+                                {disabled ? "Tạm hết" : priceText}
+                              </span>
+                            </button>
+                            <QuantityControl
+                              quantity={optionQuantity}
+                              onMinus={() => changeModifierOptionQuantity(group, option.id, optionQuantity - 1)}
+                              onPlus={() => changeModifierOptionQuantity(group, option.id, optionQuantity + 1)}
+                              compact
+                            />
+                          </div>
+                        );
+                      }
 
                       return (
                         <button
@@ -1613,7 +1671,7 @@ export function CustomerOrderClient({
                           <span className="min-w-0">
                             <span className="block truncate text-[13px] font-black text-[#111713]">{option.name}</span>
                             <span className="mt-0.5 block text-[11px] font-bold text-[#748076]">
-                              {disabled ? "Tạm hết" : option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "Không thêm phí"}
+                              {disabled ? "Tạm hết" : priceText}
                             </span>
                           </span>
                           <span className={cx("grid h-6 w-6 shrink-0 place-items-center rounded-full border", selected ? "border-[#0f7b4b] bg-[#0f7b4b] text-white" : "border-[#dce2d8] bg-white text-transparent")}>

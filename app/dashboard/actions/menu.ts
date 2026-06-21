@@ -17,6 +17,8 @@ import {
 import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { persistMenuImageUrl, uploadMenuImageFile } from "@/services/menu-image-service";
 import {
+  applyMenuModifierSetupToCategory,
+  copyMenuModifierSetup,
   createMenuModifierGroup,
   createMenuModifierOption,
   createCategory,
@@ -41,6 +43,95 @@ const menuOcrImportItemSchema = z.object({
   name: z.string().trim().min(2).max(120),
   price: z.coerce.number().int().min(1000).max(100000000)
 });
+
+const menuModifierPresetSchema = z.object({
+  itemId: z.string().uuid(),
+  preset: z.enum(["SIZE", "TOPPING", "ICE", "SUGAR", "ADDON"])
+});
+
+const copyMenuModifierSetupSchema = z.object({
+  sourceItemId: z.string().uuid(),
+  targetItemId: z.string().uuid()
+});
+
+const applyMenuModifierSetupToCategorySchema = z.object({
+  sourceItemId: z.string().uuid(),
+  categoryId: z.string().uuid()
+});
+
+const menuModifierPresets = {
+  SIZE: {
+    name: "Size",
+    kind: "SIZE" as const,
+    selectionType: "SINGLE" as const,
+    allowQuantity: false,
+    isRequired: true,
+    minSelect: 1,
+    maxSelect: 1,
+    options: [
+      { name: "M", priceDelta: 0, isDefault: true },
+      { name: "L", priceDelta: 7000 },
+      { name: "XL", priceDelta: 12000 }
+    ]
+  },
+  TOPPING: {
+    name: "Topping",
+    kind: "TOPPING" as const,
+    selectionType: "QUANTITY" as const,
+    allowQuantity: true,
+    isRequired: false,
+    minSelect: 0,
+    maxSelect: 5,
+    options: [
+      { name: "Trân châu đen", priceDelta: 10000 },
+      { name: "Thạch phô mai", priceDelta: 10000 },
+      { name: "Kem cheese", priceDelta: 15000 }
+    ]
+  },
+  ICE: {
+    name: "Đá",
+    kind: "ICE" as const,
+    selectionType: "SINGLE" as const,
+    allowQuantity: false,
+    isRequired: true,
+    minSelect: 1,
+    maxSelect: 1,
+    options: [
+      { name: "Bình thường", priceDelta: 0, isDefault: true },
+      { name: "Ít đá", priceDelta: 0 },
+      { name: "Không đá", priceDelta: 0 }
+    ]
+  },
+  SUGAR: {
+    name: "Đường",
+    kind: "SUGAR" as const,
+    selectionType: "SINGLE" as const,
+    allowQuantity: false,
+    isRequired: true,
+    minSelect: 1,
+    maxSelect: 1,
+    options: [
+      { name: "70%", priceDelta: 0, isDefault: true },
+      { name: "50%", priceDelta: 0 },
+      { name: "0%", priceDelta: 0 },
+      { name: "100%", priceDelta: 0 }
+    ]
+  },
+  ADDON: {
+    name: "Món ăn kèm",
+    kind: "ADDON" as const,
+    selectionType: "QUANTITY" as const,
+    allowQuantity: true,
+    isRequired: false,
+    minSelect: 0,
+    maxSelect: 5,
+    options: [
+      { name: "Thêm trứng", priceDelta: 10000 },
+      { name: "Thêm quẩy", priceDelta: 5000 },
+      { name: "Thêm thịt", priceDelta: 20000 }
+    ]
+  }
+};
 
 async function revalidateMenuWorkspace(restaurantId: string, slug: string) {
   await invalidateDashboardWorkspaceCaches(restaurantId, ["menu", "online", "inventory", "overview"]);
@@ -198,6 +289,9 @@ export async function createMenuModifierGroupAction(formData: FormData) {
   const parsed = menuModifierGroupSchema.parse({
     itemId: formData.get("itemId"),
     name: formData.get("name"),
+    kind: formData.get("kind") || undefined,
+    selectionType: formData.get("selectionType") || undefined,
+    allowQuantity: formData.get("allowQuantity") || undefined,
     isRequired: formData.get("isRequired") === "true",
     minSelect: formData.get("minSelect"),
     maxSelect: formData.get("maxSelect")
@@ -211,12 +305,83 @@ export async function createMenuModifierGroupAction(formData: FormData) {
   await revalidateMenuWorkspace(session.restaurantId, session.restaurant.slug);
 }
 
+export async function createMenuModifierPresetAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = menuModifierPresetSchema.parse({
+    itemId: formData.get("itemId"),
+    preset: formData.get("preset")
+  });
+  const preset = menuModifierPresets[parsed.preset];
+
+  const group = await createMenuModifierGroup({
+    restaurantId: session.restaurantId,
+    itemId: parsed.itemId,
+    name: preset.name,
+    kind: preset.kind,
+    selectionType: preset.selectionType,
+    allowQuantity: preset.allowQuantity,
+    isRequired: preset.isRequired,
+    minSelect: preset.minSelect,
+    maxSelect: preset.maxSelect
+  });
+  if (!group?.id) throw new Error("Không tạo được nhóm cách bán");
+
+  for (const option of preset.options) {
+    await createMenuModifierOption({
+      restaurantId: session.restaurantId,
+      groupId: group.id,
+      name: option.name,
+      priceDelta: option.priceDelta,
+      isDefault: "isDefault" in option ? Boolean(option.isDefault) : false,
+      isAvailable: true
+    });
+  }
+
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  await revalidateMenuWorkspace(session.restaurantId, session.restaurant.slug);
+}
+
+export async function copyMenuModifierSetupAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = copyMenuModifierSetupSchema.parse({
+    sourceItemId: formData.get("sourceItemId"),
+    targetItemId: formData.get("targetItemId")
+  });
+
+  await copyMenuModifierSetup({
+    restaurantId: session.restaurantId,
+    sourceItemId: parsed.sourceItemId,
+    targetItemId: parsed.targetItemId
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  await revalidateMenuWorkspace(session.restaurantId, session.restaurant.slug);
+}
+
+export async function applyMenuModifierSetupToCategoryAction(formData: FormData) {
+  const session = await requireOperationalAdminSession("menu_management");
+  const parsed = applyMenuModifierSetupToCategorySchema.parse({
+    sourceItemId: formData.get("sourceItemId"),
+    categoryId: formData.get("categoryId")
+  });
+
+  await applyMenuModifierSetupToCategory({
+    restaurantId: session.restaurantId,
+    sourceItemId: parsed.sourceItemId,
+    categoryId: parsed.categoryId
+  });
+  invalidateRestaurantDashboardCache(session.restaurantId);
+  await revalidateMenuWorkspace(session.restaurantId, session.restaurant.slug);
+}
+
 export async function updateMenuModifierGroupAction(formData: FormData) {
   const session = await requireOperationalAdminSession("menu_management");
   const parsed = updateMenuModifierGroupSchema.parse({
     itemId: formData.get("itemId"),
     groupId: formData.get("groupId"),
     name: formData.get("name"),
+    kind: formData.get("kind") || undefined,
+    selectionType: formData.get("selectionType") || undefined,
+    allowQuantity: formData.get("allowQuantity") || undefined,
     isRequired: formData.get("isRequired") === "true",
     minSelect: formData.get("minSelect"),
     maxSelect: formData.get("maxSelect")
@@ -244,6 +409,9 @@ export async function createMenuModifierOptionAction(formData: FormData) {
     groupId: formData.get("groupId"),
     name: formData.get("name"),
     priceDelta: formData.get("priceDelta"),
+    pricingMode: formData.get("pricingMode") || undefined,
+    priceValue: formData.get("priceValue"),
+    isDefault: formData.get("isDefault") || undefined,
     isAvailable: formData.get("isAvailable") !== "false"
   });
 
@@ -262,6 +430,9 @@ export async function updateMenuModifierOptionAction(formData: FormData) {
     optionId: formData.get("optionId"),
     name: formData.get("name"),
     priceDelta: formData.get("priceDelta"),
+    pricingMode: formData.get("pricingMode") || undefined,
+    priceValue: formData.get("priceValue"),
+    isDefault: formData.get("isDefault") || undefined,
     isAvailable: formData.get("isAvailable") === "true"
   });
 

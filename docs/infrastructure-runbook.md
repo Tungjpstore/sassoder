@@ -63,6 +63,13 @@
   - `BILLING_EMAIL_FROM`
   - `AI_OPS_MORNING_BRIEF_EMAIL_ENABLED`
   - `AI_OPS_MORNING_BRIEF_FROM`
+
+### AWS production readiness
+
+- Chạy `npm run aws:production:check -- --env-file=/tmp/logivn-production.env` sau khi pull Vercel production env để kiểm tra Textract, S3, SQS, SES và Lambda candidate mà không in secret ra terminal.
+- Tại thời điểm cập nhật này, AWS Support case `178190906800099` đã từ chối SES production access lần đầu. Không đổi `EMAIL_PROVIDER=ses` cho production cho đến khi AWS duyệt lại; giữ Resend hoặc hạ tầng mail hiện tại cho email xác thực/báo cáo.
+- SES domain/DKIM `logivn.com` verified không đồng nghĩa với account đã rời sandbox hoặc có sending limit production.
+- SQS/S3/Textract chỉ được coi là production-ready khi env có giá trị thật và smoke tương ứng pass. Việc Vercel hiển thị biến `Encrypted` chưa đủ để kết luận runtime đọc được giá trị.
 - Setup/tooling only:
   - `SUPABASE_PROJECT_REF`
   - `SUPABASE_ACCESS_TOKEN`
@@ -204,6 +211,14 @@ Chỉ nên chạy manual trên production khi chấp nhận side effect thật n
   - public CDN hay signed URL
   - đường dẫn upload và backfill từ Supabase Storage
   - lifecycle rules và ownership của asset metadata
+
+## Quyết định cho AWS Lambda
+
+- Không chuyển main Next.js/Vercel app sang Lambda. Vercel vẫn phù hợp cho UI, route handlers và cron nhẹ đang có.
+- Lambda phù hợp nhất cho lớp async consumer: nhận SQS operational events rồi gọi gateway `/events` để tận dụng BullMQ/Redis/Telegram workers hiện hữu.
+- Scaffold hiện có tại `infra/aws/lambda/operational-event-consumer`. Lambda này không dùng AWS SDK; AWS runtime đưa SQS records vào handler, handler forward từng record sang gateway và trả `batchItemFailures` cho partial retry.
+- Chỉ bật Lambda sau khi queue có DLQ, event source mapping bật `ReportBatchItemFailures`, gateway public/internal URL reachable từ Lambda, và `LOGIVN_INTERNAL_API_KEY` đã set trong Lambda env.
+- Không chạy đồng thời VPS SQS consumer và Lambda consumer trên cùng queue khi chưa xác nhận idempotency downstream theo `eventId`. Mặc định nên chọn một consumer chính.
 
 ## Rủi ro còn lại
 

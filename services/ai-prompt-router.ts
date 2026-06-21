@@ -1307,16 +1307,20 @@ export function buildStoreSetupDraftMessages(input: {
   ] satisfies AiPromptMessage[];
 }
 
-export function buildMenuOcrPrompt(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
+export function buildMenuOcrPrompt(input: { imageUrl?: string; imageBase64?: string; rawText?: string; existingCategoryNames?: string[] }) {
   const contentSource = input.rawText
     ? `Nội dung OCR thô hoặc menu cũ:\n${input.rawText}`
     : `Ảnh menu: ${input.imageUrl || input.imageBase64?.slice(0, 120) || "không có"}`;
+  const existingCategories = (input.existingCategoryNames ?? []).map((category) => category.trim()).filter(Boolean).slice(0, 30);
 
   return [
     "Bạn là AI nhập liệu menu quán F&B Việt Nam. Trích xuất danh mục, món, giá từ menu.",
     "Chỉ trả JSON hợp lệ, không markdown.",
     "Schema: {\"categories\":[{\"name\":string,\"items\":[{\"name\":string,\"price\":number,\"description\":string|null,\"tags\":[string]}]}],\"warnings\":[string],\"confidence\":number}",
+    existingCategories.length ? `Danh mục menu hiện có của quán: ${existingCategories.join(", ")}. Nếu OCR khớp nghĩa hoặc gần giống, hãy dùng đúng tên danh mục hiện có thay vì tạo biến thể mới.` : "",
     "Giá phải là VND dạng số nguyên. Nếu không chắc, đưa vào warnings và confidence thấp.",
+    "Nếu dòng bắt đầu bằng số thứ tự như \"50 Trà chanh 25.000\", bỏ số thứ tự khỏi name; name chỉ là \"Trà chanh\", price là 25000.",
+    "Nếu OCR có cả bản có dấu và không dấu của cùng một món, chỉ giữ một món với tên tiếng Việt có dấu tốt nhất.",
     "Nếu tên món và giá nằm cùng một dòng, hãy tách số cuối dòng thành price và loại phần giá khỏi name. Ví dụ \"Cà phê sữa đá 28.000\" => name \"Cà phê sữa đá\", price 28000.",
     "Không đưa tiêu đề quán, chữ MENU, số điện thoại, địa chỉ hoặc ghi chú không có giá vào danh sách items.",
     "Không tự thêm món không có trong ảnh/nội dung. Chuẩn hóa lỗi OCR phổ biến nhưng giữ tên món dễ nhận biết.",

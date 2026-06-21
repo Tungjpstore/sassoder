@@ -27,16 +27,26 @@ export type PublicStoreBranch = {
   deliveryEtaMinutes: number;
 };
 
+export type PublicMenuOptionKind = "SIZE" | "TOPPING" | "ICE" | "SUGAR" | "ADDON" | "COMBO" | "CHOICE" | "NOTE_PRESET" | "CUSTOM";
+export type PublicMenuOptionSelectionType = "SINGLE" | "MULTIPLE" | "QUANTITY";
+export type PublicMenuOptionPricingMode = "DELTA" | "ABSOLUTE";
+
 export type PublicMenuModifierOption = {
   id: string;
   name: string;
   priceDelta: number;
+  pricingMode?: PublicMenuOptionPricingMode;
+  priceValue?: number | null;
+  isDefault?: boolean;
   isAvailable?: boolean;
 };
 
 export type PublicMenuModifierGroup = {
   id: string;
   name: string;
+  kind?: PublicMenuOptionKind;
+  selectionType?: PublicMenuOptionSelectionType;
+  allowQuantity?: boolean;
   required: boolean;
   minSelect: number;
   maxSelect: number | null;

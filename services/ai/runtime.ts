@@ -33,7 +33,7 @@ import {
   type StoreSetupDraftKind
 } from "@/services/ai-prompt-router";
 import { buildStoreSetupReadiness } from "@/services/ai-setup-readiness";
-import { parseMenuOcrText } from "@/services/menu-ocr-text-parser";
+import { normalizeMenuOcrItemName, parseMenuOcrText, refineMenuOcrDraft } from "@/services/menu-ocr-text-parser";
 import { extractOcrTextWithProviders, hasConfiguredOcrImageProvider } from "@/services/ocr-text-extraction";
 import { buildAgentMission } from "@/lib/ai/agent-mission";
 import { buildCommandDeck } from "@/lib/ai/command-deck";
@@ -386,6 +386,22 @@ function readOcrStringList(value: unknown, maxItems: number, maxLength: number) 
   return sanitizeOcrTextList(value, maxItems, maxLength);
 }
 
+const operationalOcrWarningPatterns = [
+  /OCR_PROVIDER_ORDER|OCR_IMAGE_PROVIDER_ORDER|AI_OCR_PROVIDER|AI_OCR_TEXT_PROVIDER/i,
+  /\b(ocr|image)\s+(provider|model|parser)\b/i,
+  /\b(provider|model|parser)\s+(ocr|ảnh|image)\b/i,
+  /\b(textract|google\s+vision|ocr[.\s-]?space|mimo|gemini|qwen|deepseek|grok)\b/i,
+  /\b(local-)?(menu|inventory)-ocr-parser\b/i
+];
+
+function isOperationalOcrWarning(value: string) {
+  return operationalOcrWarningPatterns.some((pattern) => pattern.test(value));
+}
+
+function readOcrWarningList(value: unknown, maxItems: number, maxLength: number) {
+  return readOcrStringList(value, maxItems, maxLength).filter((warning) => !isOperationalOcrWarning(warning));
+}
+
 function parseMenuPriceToken(value: string) {
   const normalized = value.toLowerCase().replace(/\s+/g, "");
   const isThousandsSuffix = /k$/.test(normalized);
@@ -400,7 +416,7 @@ function parseMenuPriceToken(value: string) {
 }
 
 function normalizeMenuOcrItemNameAndPrice(rawName: string, rawPrice: unknown) {
-  let name = rawName.trim();
+  let name = normalizeMenuOcrItemName(rawName);
   let price = Math.round(Number(rawPrice ?? 0));
 
   if (!Number.isFinite(price) || price <= 0) {
@@ -408,7 +424,7 @@ function normalizeMenuOcrItemNameAndPrice(rawName: string, rawPrice: unknown) {
     if (trailingPrice) {
       const parsedPrice = parseMenuPriceToken(trailingPrice[2] || "");
       if (parsedPrice > 0) {
-        name = trailingPrice[1]?.trim() || name;
+        name = normalizeMenuOcrItemName(trailingPrice[1] || name);
         price = parsedPrice;
       }
     }
@@ -417,13 +433,13 @@ function normalizeMenuOcrItemNameAndPrice(rawName: string, rawPrice: unknown) {
   return { name, price };
 }
 
-function normalizeMenuOcrDraft(value: unknown) {
+function normalizeMenuOcrDraft(value: unknown, options: { existingCategoryNames?: string[] } = {}) {
   const record = asToolRecord(value);
-  const warnings = readOcrStringList(record?.warnings, 8, 180);
+  const warnings = readOcrWarningList(record?.warnings, 8, 180);
   const confidence = Math.min(1, Math.max(0, Number(record?.confidence ?? 0.72)));
   const categories = Array.isArray(record?.categories) ? record.categories : [];
 
-  return {
+  return refineMenuOcrDraft({
     categories: categories
       .map((category) => {
         const categoryRecord = asToolRecord(category);
@@ -455,7 +471,7 @@ function normalizeMenuOcrDraft(value: unknown) {
       .slice(0, 20),
     warnings,
     confidence
-  };
+  }, options);
 }
 
 function parseInventoryNumber(value: unknown) {
@@ -492,7 +508,7 @@ function normalizeInventoryUnit(value: unknown) {
 
 function normalizeInventoryOcrDraft(value: unknown) {
   const record = asToolRecord(value);
-  const warnings = readOcrStringList(record?.warnings, 8, 180);
+  const warnings = readOcrWarningList(record?.warnings, 8, 180);
   const confidence = Math.min(1, Math.max(0, Number(record?.confidence ?? 0.7)));
   const rows = Array.isArray(record?.rows) ? record.rows : [];
 
@@ -3797,7 +3813,7 @@ export async function generateOnboardingBranding(input: {
 
 type MenuOcrDraft = ReturnType<typeof normalizeMenuOcrDraft>;
 type InventoryOcrDraft = ReturnType<typeof normalizeInventoryOcrDraft>;
-type EnrichedOcrInput = { rawText?: string; ocrWarnings?: string[] };
+type EnrichedOcrInput = { rawText?: string; ocrWarnings?: string[]; existingCategoryNames?: string[] };
 
 function hasMenuOcrItems(draft: MenuOcrDraft) {
   return draft.categories.some((category) => category.items.length > 0);
@@ -3871,11 +3887,11 @@ function appendOcrWarnings<T extends { warnings: string[] }>(draft: T, warnings:
   return { ...draft, warnings: [...warnings, ...draft.warnings].slice(0, 8) };
 }
 
-async function enrichOcrInputWithProviders(input: { imageUrl?: string; imageBase64?: string; rawText?: string }, label: "menu" | "inventory"): Promise<EnrichedOcrInput> {
+async function enrichOcrInputWithProviders(input: { imageUrl?: string; imageBase64?: string; rawText?: string; existingCategoryNames?: string[] }, label: "menu" | "inventory"): Promise<EnrichedOcrInput> {
   if (!input.imageUrl && !input.imageBase64) return input;
   if (!hasConfiguredOcrImageProvider()) {
     if (input.rawText?.trim()) return { rawText: input.rawText.trim() };
-    throw new AppError(`OCR ảnh ${label === "menu" ? "menu" : "hóa đơn"} cần provider đọc ảnh. Vui lòng cấu hình OCR_PROVIDER_ORDER=textract,google_vision,ocrspace và key server-side tương ứng.`, 503);
+    throw new AppError(`Chưa bật đọc ảnh ${label === "menu" ? "menu" : "hóa đơn"}. Bạn vẫn có thể dán nội dung text để AI tách món/giá.`, 503);
   }
 
   try {
@@ -3894,9 +3910,10 @@ async function enrichOcrInputWithProviders(input: { imageUrl?: string; imageBase
   }
 }
 
-async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string }) {
+async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string; rawText?: string; existingCategoryNames?: string[] }) {
   const ocrInput = await enrichOcrInputWithProviders(input, "menu");
-  const localDraft = parseMenuOcrText(ocrInput.rawText ?? "");
+  const categoryOptions = { existingCategoryNames: ocrInput.existingCategoryNames };
+  const localDraft = parseMenuOcrText(ocrInput.rawText ?? "", categoryOptions);
   const prompt = buildMenuOcrPrompt(ocrInput);
   let result: LegacyAiCompletionResult;
   try {
@@ -3917,7 +3934,7 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
     throw error;
   }
 
-  let data = appendOcrWarnings(mergeMenuOcrDrafts(normalizeMenuOcrDraft(extractJsonObject(result.text)), localDraft), ocrInput.ocrWarnings);
+  let data = refineMenuOcrDraft(appendOcrWarnings(mergeMenuOcrDrafts(normalizeMenuOcrDraft(extractJsonObject(result.text), categoryOptions), localDraft), ocrInput.ocrWarnings), categoryOptions);
 
   if (!hasMenuOcrItems(data) && result.text.trim()) {
     const repairResult = await runOcrTextNormalization(
@@ -3928,16 +3945,16 @@ async function runMenuOcrDraft(input: { imageUrl?: string; imageBase64?: string;
         },
         {
           role: "user",
-          content: buildMenuOcrPrompt({ rawText: result.text })
+          content: buildMenuOcrPrompt({ rawText: result.text, existingCategoryNames: ocrInput.existingCategoryNames })
         }
       ],
       2400
     );
-    const repairedData = normalizeMenuOcrDraft(extractJsonObject(repairResult.text));
+    const repairedData = normalizeMenuOcrDraft(extractJsonObject(repairResult.text), categoryOptions);
     if (hasMenuOcrItems(repairedData)) {
-      return { result: repairResult, data: appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings) };
+      return { result: repairResult, data: refineMenuOcrDraft(appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings), categoryOptions) };
     }
-    data = appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings);
+    data = refineMenuOcrDraft(appendOcrWarnings(mergeMenuOcrDrafts(repairedData, localDraft), ocrInput.ocrWarnings), categoryOptions);
   }
 
   if (!hasMenuOcrItems(data)) {
@@ -3988,6 +4005,22 @@ async function runInventoryOcrDraft(input: { imageUrl?: string; imageBase64?: st
   return { result, data };
 }
 
+async function listMenuOcrCategoryHints(restaurantId: string) {
+  const supabase = createAdminSupabaseClient();
+  const { data, error } = await supabase
+    .from("menu_categories")
+    .select("name")
+    .eq("restaurant_id", restaurantId)
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.warn("[ai-ocr] failed to read existing menu categories", { restaurantId, error: error.message });
+    return [];
+  }
+
+  return (data ?? []).map((category) => category.name?.trim()).filter((name): name is string => Boolean(name)).slice(0, 80);
+}
+
 export async function generateMenuOcrDraft(input: {
   restaurantId: string;
   userId: string;
@@ -3996,7 +4029,8 @@ export async function generateMenuOcrDraft(input: {
   rawText?: string;
 }) {
   await assertAiEntitlement({ restaurantId: input.restaurantId, featureKey: "ai_menu_ocr", userId: input.userId });
-  const { result, data } = await runMenuOcrDraft(input);
+  const existingCategoryNames = await listMenuOcrCategoryHints(input.restaurantId);
+  const { result, data } = await runMenuOcrDraft({ ...input, existingCategoryNames });
   await logAiUsage({
     restaurantId: input.restaurantId,
     userId: input.userId,

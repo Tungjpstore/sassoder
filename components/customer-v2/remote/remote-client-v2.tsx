@@ -39,8 +39,8 @@ import {
   type RemoteCartLine
 } from "@/lib/customer/cart-state";
 import {
+  defaultModifierSelectionsForGroups,
   resolveModifierSelections,
-  type CustomerModifierSelection
 } from "@/lib/customer/modifier-pricing";
 import {
   buildDeliveryQuoteFingerprint,
@@ -182,13 +182,6 @@ function flattenItems(categories: PublicMenuCategory[]): MenuItemWithCategory[] 
 function hasMenuModifiers(item: Pick<PublicMenuItem, "modifierGroups">) {
   return item.modifierGroups?.some((group) => group.options.length > 0) ?? false;
 }
-function defaultModifierSelections(groups: readonly NonNullable<PublicMenuItem["modifierGroups"]>[number][] = []): CustomerModifierSelection[] {
-  return groups.flatMap((group) => {
-    const min = typeof group.minSelect === "number" ? group.minSelect : group.required ? 1 : 0;
-    if (min <= 0) return [];
-    return group.options.filter((o) => o.isAvailable !== false).slice(0, min).map((o) => ({ groupId: group.id, optionId: o.id, quantity: 1 }));
-  });
-}
 function isRemoteOrderClosed(order: OrderDto) {
   return getCustomerOrderLifecycle(order).isClosed;
 }
@@ -259,7 +252,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const { customerName, customerPhone, deliveryAddress, deliveryLat, deliveryLng } = customerProfile;
 
   function resolveCartLineModifiers(line: RemoteCartLine & { item: MenuItemWithCategory }) {
-    return resolveModifierSelections(line.item.modifierGroups ?? [], line.modifiers ?? []);
+    return resolveModifierSelections(line.item.modifierGroups ?? [], line.modifiers ?? [], { basePrice: line.item.price });
   }
   function cartLineUnitPrice(line: RemoteCartLine & { item: MenuItemWithCategory }) {
     const resolved = resolveCartLineModifiers(line);
@@ -681,7 +674,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   }
   function addMenuItem(item: MenuItemWithCategory) {
     if (hasMenuModifiers(item)) {
-      setCustomizing({ item, selections: defaultModifierSelections(item.modifierGroups ?? []), quantity: 1, note: "" });
+      setCustomizing({ item, selections: defaultModifierSelectionsForGroups(item.modifierGroups ?? []), quantity: 1, note: "" });
       setError(null);
       return;
     }
@@ -690,7 +683,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   }
   function confirmCustomItem() {
     if (!customizing) return;
-    const resolution = resolveModifierSelections(customizing.item.modifierGroups ?? [], customizing.selections);
+    const resolution = resolveModifierSelections(customizing.item.modifierGroups ?? [], customizing.selections, { basePrice: customizing.item.price });
     if (!resolution.ok) {
       setError(resolution.errors[0] ?? "Vui lòng chọn đủ tùy chọn cho món.");
       return;
@@ -881,9 +874,9 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
       const menuItem = allItems.find((item) => item.id === body.menuItemId);
       if (!menuItem) return;
       const selections = body.modifiers ?? [];
-      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections);
+      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections, { basePrice: menuItem.price });
       if (!resolution.ok) {
-        setCustomizing({ item: menuItem, selections: defaultModifierSelections(menuItem.modifierGroups ?? []), quantity: body.quantity ?? 1, note: body.note ?? "" });
+        setCustomizing({ item: menuItem, selections: defaultModifierSelectionsForGroups(menuItem.modifierGroups ?? []), quantity: body.quantity ?? 1, note: body.note ?? "" });
         setError(null);
         return;
       }

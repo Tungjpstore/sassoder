@@ -27,8 +27,8 @@ import {
   type DineInCheckoutScreen
 } from "@/lib/customer/checkout-flow";
 import {
+  defaultModifierSelectionsForGroups,
   resolveModifierSelections,
-  type CustomerModifierSelection,
   type PublicModifierGroup
 } from "@/lib/customer/modifier-pricing";
 import {
@@ -162,16 +162,6 @@ function hasMenuModifiers(item: Pick<PublicMenuItem, "modifierGroups">) {
 }
 function modifierMinSelect(group: PublicModifierGroup) {
   return typeof group.minSelect === "number" ? group.minSelect : group.required ? 1 : 0;
-}
-function defaultModifierSelections(groups: readonly PublicModifierGroup[] = []): CustomerModifierSelection[] {
-  return groups.flatMap((group) => {
-    const min = modifierMinSelect(group);
-    if (min <= 0) return [];
-    return group.options
-      .filter((o) => o.isAvailable !== false)
-      .slice(0, min)
-      .map((o) => ({ groupId: group.id, optionId: o.id, quantity: 1 }));
-  });
 }
 function modifierSummaryText(resolution: ReturnType<typeof resolveModifierSelections>) {
   if (!resolution.ok || resolution.selections.length === 0) return "";
@@ -321,7 +311,7 @@ export function DineInClientV2({
 
   function addMenuItem(item: PublicMenuItem) {
     if (hasMenuModifiers(item)) {
-      setCustomizing({ item, selections: defaultModifierSelections(item.modifierGroups ?? []), quantity: 1, note: "" });
+      setCustomizing({ item, selections: defaultModifierSelectionsForGroups(item.modifierGroups ?? []), quantity: 1, note: "" });
       setError(null);
       return;
     }
@@ -331,7 +321,7 @@ export function DineInClientV2({
 
   function confirmCustomItem() {
     if (!customizing) return;
-    const resolution = resolveModifierSelections(customizing.item.modifierGroups ?? [], customizing.selections);
+    const resolution = resolveModifierSelections(customizing.item.modifierGroups ?? [], customizing.selections, { basePrice: customizing.item.price });
     if (!resolution.ok) {
       setError(resolution.errors[0] ?? "Vui lòng chọn đủ tùy chọn cho món.");
       return;
@@ -607,11 +597,11 @@ export function DineInClientV2({
         return;
       }
       const selections = body.modifiers ?? [];
-      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections);
+      const resolution = resolveModifierSelections(menuItem.modifierGroups ?? [], selections, { basePrice: menuItem.price });
       if (!resolution.ok) {
         setCustomizing({
           item: menuItem,
-          selections: defaultModifierSelections(menuItem.modifierGroups ?? []),
+          selections: defaultModifierSelectionsForGroups(menuItem.modifierGroups ?? []),
           quantity: body.quantity ?? 1,
           note: body.note ?? ""
         });

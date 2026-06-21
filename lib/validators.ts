@@ -609,6 +609,9 @@ const optionalModifierMaxSelectSchema = z.preprocess(
 const menuModifierGroupBaseSchema = z.object({
   itemId: z.string().uuid(),
   name: z.string().trim().min(1).max(80),
+  kind: z.enum(["SIZE", "TOPPING", "ICE", "SUGAR", "ADDON", "COMBO", "CHOICE", "NOTE_PRESET", "CUSTOM"]).optional(),
+  selectionType: z.enum(["SINGLE", "MULTIPLE", "QUANTITY"]).optional(),
+  allowQuantity: z.coerce.boolean().optional(),
   isRequired: z.coerce.boolean().optional(),
   minSelect: z.coerce.number().int().min(0).max(20),
   maxSelect: optionalModifierMaxSelectSchema
@@ -644,6 +647,12 @@ export const menuModifierOptionSchema = z.object({
   groupId: z.string().uuid(),
   name: z.string().trim().min(1).max(80),
   priceDelta: z.coerce.number().int().min(0).max(10000000),
+  pricingMode: z.enum(["DELTA", "ABSOLUTE"]).optional(),
+  priceValue: z.preprocess(
+    (value) => (value === "" || value === null ? null : value),
+    z.coerce.number().int().min(0).max(100000000).nullable().optional()
+  ),
+  isDefault: z.coerce.boolean().optional(),
   isAvailable: z.coerce.boolean().optional()
 });
 

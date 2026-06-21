@@ -29,9 +29,12 @@ import {
   X
 } from "lucide-react";
 import {
+  applyMenuModifierSetupToCategoryAction,
+  copyMenuModifierSetupAction,
   createCategoryAction,
   createMenuModifierGroupAction,
   createMenuModifierOptionAction,
+  createMenuModifierPresetAction,
   createMenuItemAction,
   deleteMenuModifierGroupAction,
   deleteMenuModifierOptionAction,
@@ -98,6 +101,40 @@ type MenuImageSelection = {
   file: File;
   previewUrl: string;
 };
+type MenuModifierGroup = NonNullable<MenuItemWithCategory["modifierGroups"]>[number];
+type MenuModifierOption = MenuModifierGroup["options"][number];
+type MenuModifierKind = NonNullable<MenuModifierGroup["kind"]>;
+type MenuModifierSelectionType = NonNullable<MenuModifierGroup["selectionType"]>;
+
+const menuModifierKindOptions: Array<{ value: MenuModifierKind; label: string }> = [
+  { value: "SIZE", label: "Size" },
+  { value: "TOPPING", label: "Topping" },
+  { value: "ICE", label: "Đá" },
+  { value: "SUGAR", label: "Đường" },
+  { value: "ADDON", label: "Món kèm" },
+  { value: "CHOICE", label: "Lựa chọn" },
+  { value: "COMBO", label: "Combo" },
+  { value: "CUSTOM", label: "Khác" }
+];
+
+const menuModifierSelectionOptions: Array<{ value: MenuModifierSelectionType; label: string }> = [
+  { value: "SINGLE", label: "Chọn 1" },
+  { value: "MULTIPLE", label: "Chọn nhiều" },
+  { value: "QUANTITY", label: "Chọn kèm số lượng" }
+];
+
+const menuModifierPresets: Array<{
+  kind: Extract<MenuModifierKind, "SIZE" | "TOPPING" | "ICE" | "SUGAR" | "ADDON">;
+  title: string;
+  helper: string;
+  sample: string;
+}> = [
+  { kind: "SIZE", title: "Size", helper: "M/L/XL, bắt buộc chọn 1", sample: "M mặc định" },
+  { kind: "TOPPING", title: "Topping", helper: "Trân châu, thạch, kem cheese", sample: "+10k" },
+  { kind: "SUGAR", title: "Đường", helper: "0/50/70/100%", sample: "70% mặc định" },
+  { kind: "ICE", title: "Đá", helper: "Bình thường, ít đá, không đá", sample: "Bắt buộc" },
+  { kind: "ADDON", title: "Món kèm", helper: "Trứng, quẩy, thêm thịt", sample: "Chọn số lượng" }
+];
 
 const maxImageUploadSize = 5 * 1024 * 1024;
 const menuImageBucket = "menu-images";
@@ -802,48 +839,258 @@ export function MenuWorkspace({
     );
   }
 
-  function modifierRuleText(group: NonNullable<MenuItemWithCategory["modifierGroups"]>[number]) {
-    const minText = group.minSelect > 0 ? `chọn ${group.minSelect}` : "không bắt buộc";
+  function modifierKindLabel(kind: MenuModifierGroup["kind"]) {
+    return menuModifierKindOptions.find((option) => option.value === (kind ?? "CUSTOM"))?.label ?? "Khác";
+  }
+
+  function modifierSelectionLabel(selectionType: MenuModifierGroup["selectionType"]) {
+    return menuModifierSelectionOptions.find((option) => option.value === (selectionType ?? "MULTIPLE"))?.label ?? "Chọn nhiều";
+  }
+
+  function modifierRuleText(group: MenuModifierGroup) {
+    const rule = modifierSelectionLabel(group.selectionType);
+    const required = group.required ? "bắt buộc" : "không bắt buộc";
     const maxText = group.maxSelect === null ? "không giới hạn" : `tối đa ${group.maxSelect}`;
-    return `${minText} · ${maxText}`;
+    return group.selectionType === "QUANTITY" ? `${rule} · ${maxText}` : `${rule} · ${required}`;
+  }
+
+  function modifierOptionPriceLabel(item: MenuItemWithCategory, option: MenuModifierOption) {
+    if (option.pricingMode === "ABSOLUTE") {
+      return `Giá ${formatVnd(option.priceValue ?? item.price + option.priceDelta)}`;
+    }
+    return option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "Không phụ phí";
+  }
+
+  function modifierKindTone(kind: MenuModifierGroup["kind"]): "neutral" | "green" | "yellow" | "blue" | "red" {
+    if (kind === "SIZE") return "blue";
+    if (kind === "TOPPING" || kind === "ADDON") return "green";
+    if (kind === "ICE" || kind === "SUGAR") return "yellow";
+    return "neutral";
+  }
+
+  function renderCustomerModifierPreview(item: MenuItemWithCategory, groups: MenuModifierGroup[]) {
+    if (groups.length === 0) {
+      return (
+        <div className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-xs font-semibold text-[var(--muted-foreground)]">
+          Chưa có cách bán để xem trước. Bấm preset Size, Topping, Đường hoặc Đá để tạo nhanh.
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:grid-cols-[190px_minmax(0,1fr)]">
+        <div className="flex gap-3 lg:grid lg:content-start lg:gap-2">
+          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-[var(--soft-surface)] lg:h-24 lg:w-full">
+            {item.image_url ? (
+              <Image src={item.image_url} alt={item.name} fill sizes="190px" className="object-cover" />
+            ) : (
+              <div className="grid h-full place-items-center text-[var(--muted-foreground)]">
+                <Utensils size={20} />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[var(--muted-foreground)]">Khách sẽ thấy</p>
+            <h4 className="mt-1 truncate text-sm font-black text-[var(--foreground)]">{item.name}</h4>
+            <p className="mt-0.5 text-xs font-bold text-[var(--primary-strong)]">Từ {formatVnd(item.price)}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          {groups.slice(0, 4).map((group) => {
+            const visibleOptions = group.options.slice(0, 4);
+            const hiddenCount = Math.max(0, group.options.length - visibleOptions.length);
+            return (
+              <div key={`preview-${group.id}`} className="grid gap-2 border-b border-[var(--border)] pb-2 last:border-b-0 last:pb-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-xs font-black text-[var(--foreground)]">{group.name}</span>
+                    {group.required ? <Badge tone="yellow">Bắt buộc</Badge> : null}
+                  </div>
+                  <span className="text-[11px] font-bold text-[var(--muted-foreground)]">{modifierSelectionLabel(group.selectionType)}</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {visibleOptions.map((option) => (
+                    <span
+                      key={`preview-${group.id}-${option.id}`}
+                      className={cn(
+                        "inline-flex min-h-8 max-w-full items-center gap-1 rounded-full border px-2.5 text-[11px] font-bold",
+                        option.isDefault
+                          ? "border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-strong)]"
+                          : "border-[var(--border)] bg-[var(--soft-surface)] text-[var(--foreground)]",
+                        option.isAvailable === false && "opacity-55"
+                      )}
+                    >
+                      <span className="truncate">{option.name}</span>
+                      <span className="shrink-0 text-[var(--muted-foreground)]">{option.isAvailable === false ? "Tạm hết" : modifierOptionPriceLabel(item, option)}</span>
+                      {option.isDefault ? <CheckCircle2 size={12} className="shrink-0" /> : null}
+                    </span>
+                  ))}
+                  {hiddenCount > 0 ? <span className="inline-flex min-h-8 items-center rounded-full bg-[var(--soft-surface)] px-2.5 text-[11px] font-bold text-[var(--muted-foreground)]">+{hiddenCount}</span> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   function renderModifierManager(item: MenuItemWithCategory) {
     const groups = item.modifierGroups ?? [];
+    const reusableSourceItems = items.filter((candidate) => candidate.id !== item.id && (candidate.modifierGroups?.length ?? 0) > 0);
+    const categoryName = categories.find((category) => category.id === item.category_id)?.name ?? item.categoryName;
+    const categoryTargetCount = Math.max(0, items.filter((candidate) => candidate.category_id === item.category_id && candidate.id !== item.id).length);
 
     return (
-      <section className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
+      <section className="grid gap-4 rounded-xl border border-[var(--border)] bg-[var(--soft-surface)] p-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="flex items-center gap-2 text-sm font-semibold text-[var(--foreground)]">
               <SlidersHorizontal size={15} className="text-[var(--primary)]" />
-              Topping & tùy chọn
+              Cách bán của món
             </p>
             <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
-              {groups.length ? `${groups.length} nhóm · ${groups.reduce((sum, group) => sum + group.options.length, 0)} lựa chọn` : "Chưa có tùy chọn cho món này"}
+              {groups.length ? `${groups.length} nhóm · ${groups.reduce((sum, group) => sum + group.options.length, 0)} lựa chọn` : "Chọn preset để tạo nhanh size, topping, đường đá."}
             </p>
           </div>
           <Badge tone={groups.length ? "green" : "yellow"}>{groups.length ? "Đã cấu hình" : "Chưa có"}</Badge>
         </div>
 
-        <form action={createMenuModifierGroupAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-3">
-          <input type="hidden" name="itemId" value={item.id} />
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_86px_86px]">
-            <Input name="name" placeholder="Size, Đá, Đường, Topping..." required />
-            <Input name="minSelect" type="number" min={0} max={20} defaultValue={0} aria-label="Tối thiểu" />
-            <Input name="maxSelect" type="number" min={0} max={20} placeholder="Tối đa" aria-label="Tối đa" />
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
-              <input type="checkbox" name="isRequired" value="true" className="h-4 w-4 accent-[var(--primary)]" />
-              Bắt buộc chọn
+        <div className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <form action={copyMenuModifierSetupAction} className="grid gap-2">
+            <input type="hidden" name="targetItemId" value={item.id} />
+            <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+              Sao chép từ món khác
+              <select
+                name="sourceItemId"
+                disabled={reusableSourceItems.length === 0}
+                className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)] disabled:opacity-60"
+              >
+                {reusableSourceItems.length === 0 ? (
+                  <option>Chưa có món nào có cách bán</option>
+                ) : (
+                  reusableSourceItems.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.name} · {candidate.modifierGroups?.length ?? 0} nhóm
+                    </option>
+                  ))
+                )}
+              </select>
             </label>
-            <Button size="sm" className="shadow-none hover:shadow-none">
-              <Plus size={14} />
-              Thêm nhóm
-            </Button>
-          </div>
-        </form>
+            <ConfirmActionButton
+              size="sm"
+              variant="secondary"
+              disabled={reusableSourceItems.length === 0}
+              className="w-full shadow-none hover:shadow-none"
+              confirmTitle="Sao chép cách bán"
+              confirmDescription={`Cấu hình size, topping, đường đá hiện tại của ${item.name} sẽ được thay bằng món đã chọn.`}
+              confirmLabel="Sao chép"
+            >
+              <Layers3 size={14} />
+              Dùng cấu hình món đã chọn
+            </ConfirmActionButton>
+          </form>
+
+          <form action={applyMenuModifierSetupToCategoryAction} className="grid gap-2">
+            <input type="hidden" name="sourceItemId" value={item.id} />
+            <input type="hidden" name="categoryId" value={item.category_id} />
+            <div className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+              Áp dụng cho danh mục
+              <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] px-3 text-sm font-semibold text-[var(--foreground)]">
+                <span className="truncate">{categoryName}</span>
+                <Badge tone={categoryTargetCount > 0 ? "blue" : "neutral"}>{categoryTargetCount} món khác</Badge>
+              </div>
+            </div>
+            <ConfirmActionButton
+              size="sm"
+              variant="secondary"
+              disabled={groups.length === 0 || categoryTargetCount === 0}
+              className="w-full shadow-none hover:shadow-none"
+              confirmTitle="Áp dụng cho cả danh mục"
+              confirmDescription={`Toàn bộ món khác trong danh mục ${categoryName} sẽ dùng cách bán của ${item.name}. Cấu hình cũ ở các món đó sẽ được thay thế.`}
+              confirmLabel="Áp dụng"
+            >
+              <SlidersHorizontal size={14} />
+              Áp dụng cách bán này
+            </ConfirmActionButton>
+          </form>
+        </div>
+
+        {renderCustomerModifierPreview(item, groups)}
+
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {menuModifierPresets.map((preset) => {
+            const isCreated = groups.some((group) => group.kind === preset.kind);
+            return (
+              <form key={preset.kind} action={createMenuModifierPresetAction}>
+                <input type="hidden" name="itemId" value={item.id} />
+                <input type="hidden" name="preset" value={preset.kind} />
+                <Button
+                  type="submit"
+                  variant={isCreated ? "secondary" : "primary"}
+                  disabled={isCreated}
+                  className="h-auto min-h-[92px] w-full flex-col items-start justify-between rounded-lg px-3 py-3 text-left shadow-none hover:shadow-none"
+                >
+                  <span className="flex w-full items-center justify-between gap-2">
+                    <span className="text-sm font-bold">{preset.title}</span>
+                    <Badge tone={isCreated ? "green" : modifierKindTone(preset.kind)}>{isCreated ? "Có rồi" : preset.sample}</Badge>
+                  </span>
+                  <span className="text-xs font-semibold leading-5 opacity-80">{preset.helper}</span>
+                </Button>
+              </form>
+            );
+          })}
+        </div>
+
+        <details className="rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] p-3">
+          <summary className="cursor-pointer text-sm font-bold text-[var(--foreground)]">Tạo nhóm riêng</summary>
+          <form action={createMenuModifierGroupAction} className="mt-3 grid gap-3">
+            <input type="hidden" name="itemId" value={item.id} />
+            <div className="grid gap-2 md:grid-cols-[minmax(0,1.3fr)_150px_170px_82px_82px]">
+              <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                Tên nhóm
+                <Input name="name" placeholder="Ví dụ: Nước sốt, độ cay..." required />
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                Loại
+                <select name="kind" defaultValue="CUSTOM" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)]">
+                  {menuModifierKindOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                Cách chọn
+                <select name="selectionType" defaultValue="MULTIPLE" className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)]">
+                  {menuModifierSelectionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                Tối thiểu
+                <Input name="minSelect" type="number" min={0} max={20} defaultValue={0} />
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                Tối đa
+                <Input name="maxSelect" type="number" min={0} max={20} placeholder="-" />
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-3">
+                <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                  <input type="checkbox" name="isRequired" value="true" className="h-4 w-4 accent-[var(--primary)]" />
+                  Khách phải chọn
+                </label>
+                <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                  <input type="checkbox" name="allowQuantity" value="true" className="h-4 w-4 accent-[var(--primary)]" />
+                  Cho chọn số lượng
+                </label>
+              </div>
+              <Button size="sm" className="shadow-none hover:shadow-none">
+                <Plus size={14} />
+                Thêm nhóm riêng
+              </Button>
+            </div>
+          </form>
+        </details>
 
         <div className="grid gap-3">
           {groups.map((group) => (
@@ -853,25 +1100,41 @@ export function MenuWorkspace({
                 <input type="hidden" name="groupId" value={group.id} />
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-[var(--foreground)]">{group.name}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge tone={modifierKindTone(group.kind)}>{modifierKindLabel(group.kind)}</Badge>
+                      {group.required ? <Badge tone="yellow">Bắt buộc</Badge> : <Badge>Tuỳ chọn</Badge>}
+                      {group.allowQuantity ? <Badge tone="green">Có số lượng</Badge> : null}
+                    </div>
+                    <p className="mt-2 truncate text-sm font-bold text-[var(--foreground)]">{group.name}</p>
                     <p className="mt-0.5 text-xs font-semibold text-[var(--muted-foreground)]">{modifierRuleText(group)}</p>
                   </div>
-                  {group.required ? <Badge tone="yellow">Bắt buộc</Badge> : <Badge>Tuỳ chọn</Badge>}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_76px_76px]">
-                  <Input name="name" defaultValue={group.name} required />
+                <div className="grid gap-2 md:grid-cols-[minmax(0,1.2fr)_140px_160px_78px_78px]">
+                  <Input name="name" defaultValue={group.name} required aria-label="Tên nhóm" />
+                  <select name="kind" defaultValue={group.kind ?? "CUSTOM"} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)]">
+                    {menuModifierKindOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                  <select name="selectionType" defaultValue={group.selectionType ?? "MULTIPLE"} className="h-11 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-semibold text-[var(--foreground)] outline-none focus:border-[var(--primary)]">
+                    {menuModifierSelectionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
                   <Input name="minSelect" type="number" min={0} max={20} defaultValue={group.minSelect} aria-label="Tối thiểu" />
                   <Input name="maxSelect" type="number" min={0} max={20} defaultValue={group.maxSelect ?? ""} aria-label="Tối đa" />
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
-                    <input type="checkbox" name="isRequired" value="true" defaultChecked={group.required} className="h-4 w-4 accent-[var(--primary)]" />
-                    Bắt buộc
-                  </label>
+                  <div className="flex flex-wrap gap-3">
+                    <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                      <input type="checkbox" name="isRequired" value="true" defaultChecked={group.required} className="h-4 w-4 accent-[var(--primary)]" />
+                      Khách phải chọn
+                    </label>
+                    <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                      <input type="checkbox" name="allowQuantity" value="true" defaultChecked={Boolean(group.allowQuantity)} className="h-4 w-4 accent-[var(--primary)]" />
+                      Chọn kèm số lượng
+                    </label>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
                       <Save size={14} />
-                      Lưu nhóm
+                      Lưu cách bán
                     </Button>
                   </div>
                 </div>
@@ -885,16 +1148,34 @@ export function MenuWorkspace({
                 ) : (
                   group.options.map((option) => (
                     <div key={option.id} className="grid gap-2 rounded-lg border border-[var(--border)] bg-[var(--soft-surface)] p-2">
-                      <form action={updateMenuModifierOptionAction} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+                      <form action={updateMenuModifierOptionAction} className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px]">
                         <input type="hidden" name="groupId" value={group.id} />
                         <input type="hidden" name="optionId" value={option.id} />
-                        <Input name="name" defaultValue={option.name} required />
-                        <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={option.priceDelta} aria-label="Giá cộng thêm" />
+                        <Input name="name" defaultValue={option.name} required aria-label="Tên lựa chọn" />
+                        {group.kind === "SIZE" ? (
+                          <>
+                            <input type="hidden" name="pricingMode" value="ABSOLUTE" />
+                            <input type="hidden" name="priceDelta" value={option.priceDelta} />
+                            <Input name="priceValue" type="number" min={0} step={1000} defaultValue={option.priceValue ?? item.price + option.priceDelta} aria-label="Giá bán" />
+                          </>
+                        ) : (
+                          <>
+                            <input type="hidden" name="pricingMode" value="DELTA" />
+                            <input type="hidden" name="priceValue" value="" />
+                            <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={option.priceDelta} aria-label="Phụ thu" />
+                          </>
+                        )}
                         <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
-                          <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
-                            <input type="checkbox" name="isAvailable" value="true" defaultChecked={option.isAvailable !== false} className="h-4 w-4 accent-[var(--primary)]" />
-                            Đang bán · {option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "không phụ phí"}
-                          </label>
+                          <div className="flex flex-wrap gap-3">
+                            <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                              <input type="checkbox" name="isAvailable" value="true" defaultChecked={option.isAvailable !== false} className="h-4 w-4 accent-[var(--primary)]" />
+                              Đang bán · {modifierOptionPriceLabel(item, option)}
+                            </label>
+                            <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)]">
+                              <input type="checkbox" name="isDefault" value="true" defaultChecked={Boolean(option.isDefault)} className="h-4 w-4 accent-[var(--primary)]" />
+                              Mặc định
+                            </label>
+                          </div>
                           <div className="flex flex-wrap gap-2">
                             <Button size="sm" variant="secondary" className="shadow-none hover:shadow-none">
                               <Save size={14} />
@@ -932,11 +1213,27 @@ export function MenuWorkspace({
                 )}
               </div>
 
-              <form action={createMenuModifierOptionAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-2 sm:grid-cols-[minmax(0,1fr)_112px]">
+              <form action={createMenuModifierOptionAction} className="grid gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--soft-surface)] p-2 md:grid-cols-[minmax(0,1fr)_140px]">
                 <input type="hidden" name="groupId" value={group.id} />
-                <Input name="name" placeholder="Trân châu, size L, ít đá..." required />
-                <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={0} aria-label="Giá cộng thêm" />
+                <Input name="name" placeholder={group.kind === "SIZE" ? "Size mới, ví dụ: L" : "Lựa chọn mới"} required />
+                {group.kind === "SIZE" ? (
+                  <>
+                    <input type="hidden" name="pricingMode" value="ABSOLUTE" />
+                    <input type="hidden" name="priceDelta" value={0} />
+                    <Input name="priceValue" type="number" min={0} step={1000} defaultValue={item.price} aria-label="Giá bán" />
+                  </>
+                ) : (
+                  <>
+                    <input type="hidden" name="pricingMode" value="DELTA" />
+                    <input type="hidden" name="priceValue" value="" />
+                    <Input name="priceDelta" type="number" min={0} step={1000} defaultValue={0} aria-label="Phụ thu" />
+                  </>
+                )}
                 <input type="hidden" name="isAvailable" value="true" />
+                <label className="flex min-h-11 items-center gap-2 text-xs font-semibold text-[var(--muted-foreground)] md:col-span-2">
+                  <input type="checkbox" name="isDefault" value="true" className="h-4 w-4 accent-[var(--primary)]" />
+                  Đặt làm lựa chọn mặc định
+                </label>
                 <Button size="sm" className="shadow-none hover:shadow-none sm:col-span-2">
                   <Plus size={14} />
                   Thêm lựa chọn

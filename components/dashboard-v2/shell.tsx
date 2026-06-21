@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { DashboardCopilotLayer } from "@/components/ai/dashboard-copilot-layer";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { CommandPaletteTrigger } from "@/components/dashboard/command-palette";
 import { ToastProvider } from "@/components/dashboard/toast-provider";
@@ -25,32 +26,47 @@ export function DashboardShellV2({
   children,
   title,
   restaurantName,
+  restaurantId,
   entitlement,
   topbarSlot,
   actionStream = [],
   showRail = true,
+  showDashboardCopilot = true,
   basePath = ""
 }: {
   children: React.ReactNode;
   title: string;
   restaurantName: string;
+  restaurantId?: string;
   entitlement?: Entitlement;
   topbarSlot?: React.ReactNode;
   actionStream?: ActionStreamItem[];
   showRail?: boolean;
+  showDashboardCopilot?: boolean;
   basePath?: string;
 }) {
   const [railOpen, setRailOpen] = React.useState(true);
+  const canUseOwnerAi = Boolean(
+    restaurantId &&
+      entitlement?.allowed &&
+      "features" in entitlement &&
+      entitlement.features.ai_owner_assistant?.enabled
+  );
 
   React.useEffect(() => {
     if (!showRail) return;
+    let frame = 0;
     try {
       const raw = window.localStorage.getItem(RAIL_STORAGE_KEY);
-      if (raw === "0") setRailOpen(false);
-      else if (raw === "1") setRailOpen(true);
+      if (raw === "0" || raw === "1") {
+        frame = window.requestAnimationFrame(() => setRailOpen(raw === "1"));
+      }
     } catch {
       /* ignore */
     }
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [showRail]);
 
   function toggleRail() {
@@ -142,6 +158,7 @@ export function DashboardShellV2({
             ) : null}
           </div>
         </div>
+        {showDashboardCopilot && canUseOwnerAi && restaurantId ? <DashboardCopilotLayer restaurantId={restaurantId} restaurantName={restaurantName} /> : null}
       </div>
     </ToastProvider>
   );

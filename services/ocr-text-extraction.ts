@@ -98,7 +98,7 @@ export async function extractOcrTextWithProviders(input: OcrExtractionInput, opt
         text,
         lines: result.lines,
         raw: result.raw,
-        warnings: [`OCR ảnh được đọc bằng ${publicProviderName(provider)}.`]
+        warnings: []
       };
     } catch (error) {
       failures.push(`${publicProviderName(provider)}: ${safeErrorMessage(error)}`);

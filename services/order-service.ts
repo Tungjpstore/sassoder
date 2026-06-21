@@ -442,6 +442,9 @@ type MenuModifierGroupRow = {
   id: string;
   menu_item_id: string;
   name: string;
+  kind?: PublicModifierGroup["kind"];
+  selection_type?: PublicModifierGroup["selectionType"];
+  allow_quantity?: boolean;
   is_required: boolean;
   min_select: number;
   max_select: number | null;
@@ -453,9 +456,15 @@ type MenuModifierOptionRow = {
   group_id: string;
   name: string;
   price_delta: number;
+  pricing_mode?: PublicModifierGroup["options"][number]["pricingMode"];
+  price_value?: number | null;
+  is_default?: boolean;
   is_available: boolean;
   sort_order: number;
 };
+
+const menuModifierGroupSelect = "id,menu_item_id,name,kind,selection_type,allow_quantity,is_required,min_select,max_select,sort_order";
+const menuModifierOptionSelect = "id,group_id,name,price_delta,pricing_mode,price_value,is_default,is_available,sort_order";
 
 async function listOrderModifierGroups(
   supabase: OrderSupabaseClient,
@@ -468,7 +477,7 @@ async function listOrderModifierGroups(
   const [groupsResult, optionsResult] = await Promise.all([
     supabase
       .from("menu_modifier_groups")
-      .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+      .select(menuModifierGroupSelect)
       .eq("restaurant_id", restaurantId)
       .eq("is_active", true)
       .in("menu_item_id", menuItemIds)
@@ -476,7 +485,7 @@ async function listOrderModifierGroups(
       .order("name", { ascending: true }),
     supabase
       .from("menu_modifier_options")
-      .select("id,group_id,name,price_delta,is_available,sort_order")
+      .select(menuModifierOptionSelect)
       .eq("restaurant_id", restaurantId)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true })
@@ -499,6 +508,9 @@ async function listOrderModifierGroups(
       id: option.id,
       name: option.name,
       priceDelta: option.price_delta,
+      pricingMode: option.pricing_mode ?? "DELTA",
+      priceValue: option.price_value ?? null,
+      isDefault: option.is_default ?? false,
       isAvailable: option.is_available
     });
     optionsByGroupId.set(option.group_id, groupOptions);
@@ -510,6 +522,9 @@ async function listOrderModifierGroups(
     itemGroups.push({
       id: group.id,
       name: group.name,
+      kind: group.kind ?? "CUSTOM",
+      selectionType: group.selection_type ?? (group.max_select === 1 ? "SINGLE" : "MULTIPLE"),
+      allowQuantity: group.allow_quantity ?? false,
       required: group.is_required,
       minSelect: group.min_select,
       maxSelect: group.max_select,
@@ -558,7 +573,8 @@ async function priceOrderItems(input: {
     const shouldValidateConfiguredGroups = input.enforceRequiredModifiers === true || (item.modifiers?.length ?? 0) > 0;
     const modifierResolution = resolveModifierSelections(
       shouldValidateConfiguredGroups ? groupsByItemId.get(item.menuItemId) ?? [] : [],
-      item.modifiers ?? []
+      item.modifiers ?? [],
+      { basePrice: menuItem.price }
     );
     if (!modifierResolution.ok) {
       throw new AppError(modifierResolution.errors[0] ?? "Tùy chọn món không hợp lệ", 400);
@@ -618,12 +634,17 @@ function parseOrderItemModifierSnapshot(value: Json | null | undefined): Resolve
 
     const quantity = positiveQuantity(record.quantity);
     const priceDelta = numberOrZero(record.priceDelta);
+    const pricingMode = record.pricingMode === "ABSOLUTE" ? "ABSOLUTE" : "DELTA";
+    const priceValue = record.priceValue === null || record.priceValue === undefined ? null : numberOrZero(record.priceValue);
     const lineTotal = numberOrZero(record.lineTotal) || priceDelta * quantity;
     selections.push({
       groupId,
       groupName,
+      kind: typeof record.kind === "string" ? record.kind as PublicModifierGroup["kind"] : undefined,
       optionId,
       optionName,
+      pricingMode,
+      priceValue,
       priceDelta,
       quantity,
       lineTotal

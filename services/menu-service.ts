@@ -3,6 +3,7 @@ import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { buildModifierGroupCloneRow, buildModifierOptionCloneRows } from "@/lib/menu-modifier-clone";
 import { listActiveStoreBranches } from "@/services/branch-service";
 import { listPublicPromotions } from "@/services/promotion-service";
 import { isPublicTenantActive, type TenantPlatformStatus } from "@/services/tenant-status-guard";
@@ -113,6 +114,9 @@ type MenuModifierGroupRow = {
   id: string;
   menu_item_id: string;
   name: string;
+  kind?: PublicMenuModifierGroup["kind"];
+  selection_type?: PublicMenuModifierGroup["selectionType"];
+  allow_quantity?: boolean;
   is_required: boolean;
   min_select: number;
   max_select: number | null;
@@ -124,9 +128,15 @@ type MenuModifierOptionRow = {
   group_id: string;
   name: string;
   price_delta: number;
+  pricing_mode?: PublicMenuModifierGroup["options"][number]["pricingMode"];
+  price_value?: number | null;
+  is_default?: boolean;
   is_available: boolean;
   sort_order: number;
 };
+
+const menuModifierGroupSelect = "id,menu_item_id,name,kind,selection_type,allow_quantity,is_required,min_select,max_select,sort_order";
+const menuModifierOptionSelect = "id,group_id,name,price_delta,pricing_mode,price_value,is_default,is_available,sort_order";
 
 type ServerSupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>> | ReturnType<typeof createAdminSupabaseClient>;
 
@@ -148,14 +158,14 @@ async function listPublicMenuModifierGroups(
   const [groupsResult, optionsResult] = await Promise.all([
     supabase
       .from("menu_modifier_groups")
-      .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+      .select(menuModifierGroupSelect)
       .eq("restaurant_id", restaurantId)
       .eq("is_active", true)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true }),
     supabase
       .from("menu_modifier_options")
-      .select("id,group_id,name,price_delta,is_available,sort_order")
+      .select(menuModifierOptionSelect)
       .eq("restaurant_id", restaurantId)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true })
@@ -175,6 +185,9 @@ async function listPublicMenuModifierGroups(
       id: option.id,
       name: option.name,
       priceDelta: option.price_delta,
+      pricingMode: option.pricing_mode ?? "DELTA",
+      priceValue: option.price_value ?? null,
+      isDefault: option.is_default ?? false,
       isAvailable: option.is_available
     });
     optionsByGroupId.set(option.group_id, groupOptions);
@@ -186,6 +199,9 @@ async function listPublicMenuModifierGroups(
     itemGroups.push({
       id: group.id,
       name: group.name,
+      kind: group.kind ?? "CUSTOM",
+      selectionType: group.selection_type ?? (group.max_select === 1 ? "SINGLE" : "MULTIPLE"),
+      allowQuantity: group.allow_quantity ?? false,
       required: group.is_required,
       minSelect: group.min_select,
       maxSelect: group.max_select,
@@ -206,7 +222,7 @@ async function listAdminMenuModifierGroups(
 
   const { data: groupsData, error: groupsError } = await supabase
     .from("menu_modifier_groups")
-    .select("id,menu_item_id,name,is_required,min_select,max_select,sort_order")
+    .select(menuModifierGroupSelect)
     .eq("restaurant_id", restaurantId)
     .eq("is_active", true)
     .in("menu_item_id", menuItemIds)
@@ -222,7 +238,7 @@ async function listAdminMenuModifierGroups(
 
   const { data: optionsData, error: optionsError } = await supabase
     .from("menu_modifier_options")
-    .select("id,group_id,name,price_delta,is_available,sort_order")
+    .select(menuModifierOptionSelect)
     .eq("restaurant_id", restaurantId)
     .in("group_id", groupIds)
     .order("sort_order", { ascending: true })
@@ -238,6 +254,9 @@ async function listAdminMenuModifierGroups(
       id: option.id,
       name: option.name,
       priceDelta: option.price_delta,
+      pricingMode: option.pricing_mode ?? "DELTA",
+      priceValue: option.price_value ?? null,
+      isDefault: option.is_default ?? false,
       isAvailable: option.is_available
     });
     optionsByGroupId.set(option.group_id, groupOptions);
@@ -249,6 +268,9 @@ async function listAdminMenuModifierGroups(
     itemGroups.push({
       id: group.id,
       name: group.name,
+      kind: group.kind ?? "CUSTOM",
+      selectionType: group.selection_type ?? (group.max_select === 1 ? "SINGLE" : "MULTIPLE"),
+      allowQuantity: group.allow_quantity ?? false,
       required: group.is_required,
       minSelect: group.min_select,
       maxSelect: group.max_select,
@@ -450,6 +472,37 @@ function throwMenuModifierError(error: Parameters<typeof throwIfSupabaseError>[0
   throwIfSupabaseError(error, fallback);
 }
 
+function normalizeModifierName(value: string) {
+  return value
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "d")
+    .toLowerCase();
+}
+
+function inferMenuOptionKind(name: string): NonNullable<PublicMenuModifierGroup["kind"]> {
+  const normalized = normalizeModifierName(name);
+  if (normalized.includes("size") || normalized.includes("kich co")) return "SIZE";
+  if (normalized.includes("topping") || normalized.includes("tran chau")) return "TOPPING";
+  if (normalized.includes("duong")) return "SUGAR";
+  if (normalized.includes("da")) return "ICE";
+  if (normalized.includes("mon kem") || normalized.includes("an kem") || normalized.includes("them")) return "ADDON";
+  if (normalized.includes("combo") || normalized.includes("set")) return "COMBO";
+  return "CUSTOM";
+}
+
+function inferMenuSelectionType(input: {
+  kind: NonNullable<PublicMenuModifierGroup["kind"]>;
+  maxSelect: number | null;
+}): NonNullable<PublicMenuModifierGroup["selectionType"]> {
+  if (input.maxSelect === 1) return "SINGLE";
+  if (["SIZE", "ICE", "SUGAR", "CHOICE"].includes(input.kind)) return "SINGLE";
+  if (["TOPPING", "ADDON"].includes(input.kind)) return "QUANTITY";
+  return "MULTIPLE";
+}
+
 async function assertMenuItemForRestaurant(supabase: ServerSupabaseClient, restaurantId: string, itemId: string) {
   const { data, error } = await supabase
     .from("menu_items")
@@ -504,10 +557,29 @@ async function nextModifierOptionSortOrder(supabase: ServerSupabaseClient, resta
   return Number(data?.sort_order ?? 0) + 10;
 }
 
+async function clearSiblingDefaultModifierOptions(
+  supabase: ServerSupabaseClient,
+  restaurantId: string,
+  groupId: string,
+  optionId: string
+) {
+  const { error } = await supabase
+    .from("menu_modifier_options")
+    .update({ is_default: false, updated_at: new Date().toISOString() })
+    .eq("restaurant_id", restaurantId)
+    .eq("group_id", groupId)
+    .neq("id", optionId);
+
+  throwMenuModifierError(error, "Không cập nhật được lựa chọn mặc định");
+}
+
 export async function createMenuModifierGroup(input: {
   restaurantId: string;
   itemId: string;
   name: string;
+  kind?: PublicMenuModifierGroup["kind"];
+  selectionType?: PublicMenuModifierGroup["selectionType"];
+  allowQuantity?: boolean;
   isRequired?: boolean;
   minSelect: number;
   maxSelect: number | null;
@@ -515,12 +587,17 @@ export async function createMenuModifierGroup(input: {
   const supabase = await createServerSupabaseClient();
   await assertMenuItemForRestaurant(supabase, input.restaurantId, input.itemId);
   const sortOrder = await nextModifierGroupSortOrder(supabase, input.restaurantId, input.itemId);
+  const kind = input.kind ?? inferMenuOptionKind(input.name);
+  const selectionType = input.selectionType ?? inferMenuSelectionType({ kind, maxSelect: input.maxSelect });
   const { data, error } = await supabase
     .from("menu_modifier_groups")
     .insert({
       restaurant_id: input.restaurantId,
       menu_item_id: input.itemId,
       name: input.name,
+      kind,
+      selection_type: selectionType,
+      allow_quantity: input.allowQuantity ?? selectionType === "QUANTITY",
       is_required: Boolean(input.isRequired),
       min_select: input.minSelect,
       max_select: input.maxSelect,
@@ -540,17 +617,25 @@ export async function updateMenuModifierGroup(input: {
   itemId: string;
   groupId: string;
   name: string;
+  kind?: PublicMenuModifierGroup["kind"];
+  selectionType?: PublicMenuModifierGroup["selectionType"];
+  allowQuantity?: boolean;
   isRequired?: boolean;
   minSelect: number;
   maxSelect: number | null;
 }) {
   const supabase = await createServerSupabaseClient();
   await assertMenuItemForRestaurant(supabase, input.restaurantId, input.itemId);
+  const kind = input.kind ?? inferMenuOptionKind(input.name);
+  const selectionType = input.selectionType ?? inferMenuSelectionType({ kind, maxSelect: input.maxSelect });
   const { data, error } = await supabase
     .from("menu_modifier_groups")
     .update({
       menu_item_id: input.itemId,
       name: input.name,
+      kind,
+      selection_type: selectionType,
+      allow_quantity: input.allowQuantity ?? selectionType === "QUANTITY",
       is_required: Boolean(input.isRequired),
       min_select: input.minSelect,
       max_select: input.maxSelect,
@@ -587,6 +672,9 @@ export async function createMenuModifierOption(input: {
   groupId: string;
   name: string;
   priceDelta: number;
+  pricingMode?: PublicMenuModifierGroup["options"][number]["pricingMode"];
+  priceValue?: number | null;
+  isDefault?: boolean;
   isAvailable?: boolean;
 }) {
   const supabase = await createServerSupabaseClient();
@@ -599,6 +687,9 @@ export async function createMenuModifierOption(input: {
       group_id: input.groupId,
       name: input.name,
       price_delta: input.priceDelta,
+      pricing_mode: input.pricingMode ?? "DELTA",
+      price_value: input.priceValue ?? null,
+      is_default: Boolean(input.isDefault),
       is_available: input.isAvailable ?? true,
       sort_order: sortOrder
     })
@@ -606,6 +697,9 @@ export async function createMenuModifierOption(input: {
     .single();
 
   throwMenuModifierError(error, "Không tạo được tùy chọn");
+  if (input.isDefault && data?.id) {
+    await clearSiblingDefaultModifierOptions(supabase, input.restaurantId, input.groupId, data.id);
+  }
   invalidateMenuCache();
   return data;
 }
@@ -616,6 +710,9 @@ export async function updateMenuModifierOption(input: {
   optionId: string;
   name: string;
   priceDelta: number;
+  pricingMode?: PublicMenuModifierGroup["options"][number]["pricingMode"];
+  priceValue?: number | null;
+  isDefault?: boolean;
   isAvailable?: boolean;
 }) {
   const supabase = await createServerSupabaseClient();
@@ -626,6 +723,9 @@ export async function updateMenuModifierOption(input: {
       group_id: input.groupId,
       name: input.name,
       price_delta: input.priceDelta,
+      pricing_mode: input.pricingMode ?? "DELTA",
+      price_value: input.priceValue ?? null,
+      is_default: Boolean(input.isDefault),
       is_available: input.isAvailable ?? false,
       updated_at: new Date().toISOString()
     })
@@ -635,6 +735,9 @@ export async function updateMenuModifierOption(input: {
     .single();
 
   throwMenuModifierError(error, "Không cập nhật được tùy chọn");
+  if (input.isDefault && data?.id) {
+    await clearSiblingDefaultModifierOptions(supabase, input.restaurantId, input.groupId, data.id);
+  }
   invalidateMenuCache();
   return data;
 }
@@ -667,6 +770,125 @@ export async function deleteMenuModifierOption(restaurantId: string, optionId: s
   throwMenuModifierError(error, "Không xóa được tùy chọn");
   invalidateMenuCache();
   return data;
+}
+
+async function replaceModifierGroupsForItem(
+  supabase: ServerSupabaseClient,
+  restaurantId: string,
+  targetItemId: string,
+  sourceGroups: PublicMenuModifierGroup[]
+) {
+  const { error: deactivateError } = await supabase
+    .from("menu_modifier_groups")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("restaurant_id", restaurantId)
+    .eq("menu_item_id", targetItemId)
+    .eq("is_active", true);
+
+  throwMenuModifierError(deactivateError, "Không thể thay cách bán hiện tại");
+
+  for (const [groupIndex, group] of sourceGroups.entries()) {
+    const { data: insertedGroup, error: groupError } = await supabase
+      .from("menu_modifier_groups")
+      .insert(buildModifierGroupCloneRow({ restaurantId, targetItemId, group, groupIndex }))
+      .select("id")
+      .single();
+
+    throwMenuModifierError(groupError, "Không thể sao chép nhóm cách bán");
+    if (!insertedGroup?.id) throw new AppError("Không thể sao chép nhóm cách bán", 500);
+
+    if (group.options.length === 0) continue;
+    const optionRows = buildModifierOptionCloneRows({ restaurantId, targetGroupId: insertedGroup.id, options: group.options });
+    const { error: optionError } = await supabase.from("menu_modifier_options").insert(optionRows);
+    throwMenuModifierError(optionError, "Không thể sao chép lựa chọn cách bán");
+  }
+}
+
+function isMissingMenuModifierSetupRpc(error: { code?: string; message?: string; details?: string; hint?: string } | null | undefined) {
+  if (!error) return false;
+  const message = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return error.code === "42883" || error.code === "PGRST202" || /replace_menu_modifier_setup|Could not find the function/i.test(message);
+}
+
+async function replaceModifierGroupsForItemsRpc(
+  supabase: ServerSupabaseClient,
+  restaurantId: string,
+  sourceItemId: string,
+  targetItemIds: string[]
+) {
+  const { error } = await supabase.rpc("replace_menu_modifier_setup", {
+    p_restaurant_id: restaurantId,
+    p_source_item_id: sourceItemId,
+    p_target_item_ids: targetItemIds
+  });
+
+  if (isMissingMenuModifierSetupRpc(error)) return false;
+  if (error?.message?.includes("Source menu item has no modifier setup")) {
+    throw new AppError("Món nguồn chưa có cách bán để sao chép", 400);
+  }
+  if (error?.message?.includes("Source menu item not found") || error?.message?.includes("Target menu item not found")) {
+    throw new AppError("Không tìm thấy món trong quán hiện tại", 404);
+  }
+  if (error?.message?.includes("Source item cannot be a target item")) {
+    throw new AppError("Hãy chọn một món khác để sao chép", 400);
+  }
+  throwMenuModifierError(error, "Không thể áp dụng cách bán tự động");
+  return true;
+}
+
+async function readModifierGroupsForSourceItem(
+  supabase: ServerSupabaseClient,
+  restaurantId: string,
+  sourceItemId: string
+) {
+  await assertMenuItemForRestaurant(supabase, restaurantId, sourceItemId);
+  const groups = (await listAdminMenuModifierGroups(supabase, restaurantId, [sourceItemId])).get(sourceItemId) ?? [];
+  if (groups.length === 0) throw new AppError("Món nguồn chưa có cách bán để sao chép", 400);
+  return groups;
+}
+
+export async function copyMenuModifierSetup(input: {
+  restaurantId: string;
+  sourceItemId: string;
+  targetItemId: string;
+}) {
+  if (input.sourceItemId === input.targetItemId) throw new AppError("Hãy chọn một món khác để sao chép", 400);
+  const supabase = await createServerSupabaseClient();
+  const sourceGroups = await readModifierGroupsForSourceItem(supabase, input.restaurantId, input.sourceItemId);
+  await assertMenuItemForRestaurant(supabase, input.restaurantId, input.targetItemId);
+  const usedRpc = await replaceModifierGroupsForItemsRpc(supabase, input.restaurantId, input.sourceItemId, [input.targetItemId]);
+  if (!usedRpc) {
+    await replaceModifierGroupsForItem(supabase, input.restaurantId, input.targetItemId, sourceGroups);
+  }
+  invalidateMenuCache();
+}
+
+export async function applyMenuModifierSetupToCategory(input: {
+  restaurantId: string;
+  sourceItemId: string;
+  categoryId: string;
+}) {
+  const supabase = await createServerSupabaseClient();
+  const sourceGroups = await readModifierGroupsForSourceItem(supabase, input.restaurantId, input.sourceItemId);
+  const { data: targetItems, error } = await supabase
+    .from("menu_items")
+    .select("id")
+    .eq("restaurant_id", input.restaurantId)
+    .eq("category_id", input.categoryId)
+    .neq("id", input.sourceItemId)
+    .limit(120);
+
+  throwIfSupabaseError(error);
+  if (!targetItems?.length) throw new AppError("Không có món khác trong danh mục để áp dụng", 400);
+
+  const targetItemIds = targetItems.map((target) => target.id);
+  const usedRpc = await replaceModifierGroupsForItemsRpc(supabase, input.restaurantId, input.sourceItemId, targetItemIds);
+  if (!usedRpc) {
+    for (const targetItemId of targetItemIds) {
+      await replaceModifierGroupsForItem(supabase, input.restaurantId, targetItemId, sourceGroups);
+    }
+  }
+  invalidateMenuCache();
 }
 
 function normalizeMenuImportName(value: string) {
@@ -744,13 +966,12 @@ export async function importMenuItemsFromDraft({
   const { data: existingCategories, error: categoryReadError } = await supabase
     .from("menu_categories")
     .select("id,name")
-    .eq("restaurant_id", restaurantId)
-    .in("name", categoryNames);
+    .eq("restaurant_id", restaurantId);
 
   throwIfSupabaseError(categoryReadError);
 
-  const categoryByName = new Map((existingCategories ?? []).map((category) => [category.name, category.id]));
-  const missingCategoryNames = categoryNames.filter((name) => !categoryByName.has(name));
+  const categoryByName = new Map((existingCategories ?? []).map((category) => [menuImportDuplicateKey(category.name), category.id]));
+  const missingCategoryNames = categoryNames.filter((name) => !categoryByName.has(menuImportDuplicateKey(name)));
 
   if (missingCategoryNames.length > 0) {
     const { data: insertedCategories, error: categoryInsertError } = await supabase
@@ -759,13 +980,13 @@ export async function importMenuItemsFromDraft({
       .select("id,name");
 
     throwIfSupabaseError(categoryInsertError);
-    (insertedCategories ?? []).forEach((category) => categoryByName.set(category.name, category.id));
+    (insertedCategories ?? []).forEach((category) => categoryByName.set(menuImportDuplicateKey(category.name), category.id));
   }
 
   const rows = newItems
     .map((item) => ({
       restaurant_id: restaurantId,
-      category_id: categoryByName.get(item.categoryName)!,
+      category_id: categoryByName.get(menuImportDuplicateKey(item.categoryName))!,
       name: item.name,
       price: item.price,
       is_available: true

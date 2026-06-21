@@ -18,7 +18,7 @@ test("image OCR routes through configured image providers before provider-routed
   const inventoryBlock = functionBlock(source, "runInventoryOcrDraft");
 
   assert.match(enrichBlock, /extractOcrTextWithProviders/);
-  assert.match(enrichBlock, /OCR_PROVIDER_ORDER=textract,google_vision,ocrspace/);
+  assert.doesNotMatch(enrichBlock, /OCR_PROVIDER_ORDER=textract,google_vision,ocrspace/);
   assert.match(providerBlock, /AI_OCR_TEXT_PROVIDER/);
   assert.match(providerBlock, /AI_OCR_PROVIDER/);
   assert.match(normalizeBlock, /runChat/);

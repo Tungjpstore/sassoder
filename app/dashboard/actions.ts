@@ -44,9 +44,12 @@ import {
   upsertInventoryRecipeLineAction as runUpsertInventoryRecipeLineAction
 } from "./actions/inventory";
 import {
+  applyMenuModifierSetupToCategoryAction as runApplyMenuModifierSetupToCategoryAction,
+  copyMenuModifierSetupAction as runCopyMenuModifierSetupAction,
   createCategoryAction as runCreateCategoryAction,
   createMenuModifierGroupAction as runCreateMenuModifierGroupAction,
   createMenuModifierOptionAction as runCreateMenuModifierOptionAction,
+  createMenuModifierPresetAction as runCreateMenuModifierPresetAction,
   createMenuItemAction as runCreateMenuItemAction,
   deleteMenuModifierGroupAction as runDeleteMenuModifierGroupAction,
   deleteMenuModifierOptionAction as runDeleteMenuModifierOptionAction,
@@ -348,6 +351,18 @@ export async function updateMenuItemAction(formData: FormData) {
 
 export async function createMenuModifierGroupAction(formData: FormData) {
   return runCreateMenuModifierGroupAction(formData);
+}
+
+export async function createMenuModifierPresetAction(formData: FormData) {
+  return runCreateMenuModifierPresetAction(formData);
+}
+
+export async function copyMenuModifierSetupAction(formData: FormData) {
+  return runCopyMenuModifierSetupAction(formData);
+}
+
+export async function applyMenuModifierSetupToCategoryAction(formData: FormData) {
+  return runApplyMenuModifierSetupToCategoryAction(formData);
 }
 
 export async function updateMenuModifierGroupAction(formData: FormData) {

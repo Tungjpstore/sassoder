@@ -14,7 +14,6 @@ import {
   AlertTriangle,
   Bell,
   Check,
-  ChefHat,
   Clock3,
   CreditCard,
   Eye,
@@ -23,7 +22,6 @@ import {
   MapPin,
   Phone,
   QrCode,
-  Receipt,
   Search,
   ShoppingBag,
   Trash2,
@@ -430,17 +428,6 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
     return totals;
   }, [activeOrders]);
 
-  const operationalSummary = useMemo(() => {
-    const live = orders.filter((o) => !isOrderClosed(o));
-    return {
-      open: live.length,
-      needsConfirm: live.filter((o) => o.status === "pending").length,
-      overdue: live.filter((o) => elapsedMin(o.createdAt, nowMs) >= 15).length,
-      payment: live.filter(paymentNeedsAttention).length,
-      deliveryIssues: live.filter(deliveryNeedsAttention).length
-    };
-  }, [nowMs, orders]);
-
   const detail = orders.find((o) => o.id === detailId) ?? null;
   const openRequestsCount = initialRequests?.length ?? 0;
 
@@ -488,8 +475,6 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
 
       <div className={liveOpen ? "grid gap-[var(--d-s-4)] xl:grid-cols-[minmax(0,1fr)_360px]" : "flex flex-col gap-[var(--d-s-4)]"}>
         <div className="flex min-w-0 flex-col gap-[var(--d-s-4)]">
-          <OrderOperationalSummary summary={operationalSummary} />
-
           <OrderFlowBoard
             activeLane={activeLane}
             laneFilters={laneFilters}
@@ -586,42 +571,6 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
   );
 }
 
-
-function OrderOperationalSummary({ summary }: { summary: { open: number; needsConfirm: number; overdue: number; payment: number; deliveryIssues: number } }) {
-  const items = [
-    { label: "Đơn đang mở", value: summary.open, helper: "Tất cả luồng", icon: <Receipt size={16} />, tone: "jade" as const },
-    { label: "Cần xác nhận", value: summary.needsConfirm, helper: "Ưu tiên nhận", icon: <ChefHat size={16} />, tone: "orange" as const },
-    { label: "Quá 15 phút", value: summary.overdue, helper: "Cần kiểm tra", icon: <Clock3 size={16} />, tone: "danger" as const },
-    { label: "Chờ thu", value: summary.payment, helper: "VietQR / tiền mặt", icon: <CreditCard size={16} />, tone: "info" as const },
-    { label: "Delivery cần xem", value: summary.deliveryIssues, helper: "Địa chỉ / tracking", icon: <Truck size={16} />, tone: "neutral" as const }
-  ];
-
-  return (
-    <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-      {items.map((item) => (
-        <div key={item.label} className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] px-[var(--d-s-4)] py-3 shadow-[var(--d-sh-sm)]">
-          <div className="flex items-center justify-between gap-3">
-            <span
-              className={cn(
-                "grid h-9 w-9 place-items-center rounded-[var(--d-r-md)]",
-                item.tone === "jade" && "bg-[var(--d-primary-soft)] text-[var(--d-primary)]",
-                item.tone === "orange" && "bg-[var(--d-accent-soft)] text-[var(--d-orange-600)]",
-                item.tone === "danger" && "bg-[var(--d-danger-bg)] text-[var(--d-danger-fg)]",
-                item.tone === "info" && "bg-[var(--d-info-bg)] text-[var(--d-info-fg)]",
-                item.tone === "neutral" && "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
-              )}
-            >
-              {item.icon}
-            </span>
-            <span className="d-num text-[length:var(--d-fs-h2)] font-bold text-[var(--d-text)]">{item.value}</span>
-          </div>
-          <p className="mt-2 truncate text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{item.label}</p>
-          <p className="mt-0.5 truncate text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{item.helper}</p>
-        </div>
-      ))}
-    </section>
-  );
-}
 
 function OrderFlowBoard({
   activeLane,

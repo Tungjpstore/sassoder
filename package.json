@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "tsx --test services/**/*.test.ts lib/**/*.test.ts",
     "aws:ses:check": "node scripts/aws/check-ses.mjs",
+    "aws:production:check": "node scripts/aws/check-production-integrations.mjs",
     "aws:textract:check": "tsx scripts/aws/check-textract.ts",
     "ai:bedrock:check": "node scripts/ai/check-bedrock.mjs",
     "ai:image2:order-flow": "node scripts/ai/generate-order-flow-images.mjs --provider=openai",

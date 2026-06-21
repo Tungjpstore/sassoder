@@ -5,6 +5,7 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatVnd } from "@/lib/money";
 import {
+  resolveModifierOptionPricing,
   resolveModifierSelections,
   type CustomerModifierSelection,
   type PublicModifierGroup
@@ -25,7 +26,20 @@ function minSelect(group: PublicModifierGroup) {
   return typeof group.minSelect === "number" ? group.minSelect : group.required ? 1 : 0;
 }
 function maxSelect(group: PublicModifierGroup) {
+  if (group.selectionType === "SINGLE") return 1;
   return group.maxSelect ?? Number.POSITIVE_INFINITY;
+}
+
+function shouldUseOptionQuantity(group: PublicModifierGroup) {
+  return group.selectionType === "QUANTITY" || group.allowQuantity === true;
+}
+
+function optionPriceText(itemPrice: number, option: PublicModifierGroup["options"][number]) {
+  const pricing = resolveModifierOptionPricing(option, { basePrice: itemPrice });
+  if (pricing.pricingMode === "ABSOLUTE") {
+    return pricing.priceValue ? `Giá ${formatVnd(pricing.priceValue)}` : "Theo giá món";
+  }
+  return pricing.priceDelta > 0 ? `+${formatVnd(pricing.priceDelta)}` : "Không thêm phí";
 }
 
 /* ModifierSheet — tùy chọn món (size, topping, ghi chú) trước khi thêm vào giỏ. */
@@ -44,7 +58,7 @@ export function ModifierSheet({
   const item = state?.item;
   const groups = React.useMemo(() => item?.modifierGroups ?? [], [item]);
   const resolution = React.useMemo(
-    () => (state ? resolveModifierSelections(groups, state.selections) : null),
+    () => (state ? resolveModifierSelections(groups, state.selections, { basePrice: state.item.price }) : null),
     [groups, state]
   );
   const unitPrice = (item?.price ?? 0) + (resolution?.ok ? resolution.totalDelta : 0);
@@ -70,6 +84,26 @@ export function ModifierSheet({
     }
     if (groupSelections.length >= limit) return;
     onChange({ ...state, selections: [...state.selections, { groupId: group.id, optionId, quantity: 1 }] });
+  }
+
+  function changeOptionQuantity(group: PublicModifierGroup, optionId: string, nextQuantity: number) {
+    if (!state) return;
+    const option = group.options.find((candidate) => candidate.id === optionId);
+    if (!option || option.isAvailable === false) return;
+
+    const quantity = Math.max(0, Math.min(50, Math.floor(nextQuantity)));
+    const outside = state.selections.filter((s) => !(s.groupId === group.id && s.optionId === optionId));
+    const groupQuantity = state.selections
+      .filter((s) => s.groupId === group.id && s.optionId !== optionId)
+      .reduce((sum, selection) => sum + (selection.quantity ?? 1), 0);
+    const limit = maxSelect(group);
+    const cappedQuantity = Number.isFinite(limit) ? Math.min(quantity, Math.max(0, limit - groupQuantity)) : quantity;
+
+    if (cappedQuantity <= 0) {
+      onChange({ ...state, selections: outside });
+      return;
+    }
+    onChange({ ...state, selections: [...outside, { groupId: group.id, optionId, quantity: cappedQuantity }] });
   }
 
   return (
@@ -105,6 +139,7 @@ export function ModifierSheet({
             const groupSelections = state.selections.filter((s) => s.groupId === group.id);
             const min = minSelect(group);
             const max = maxSelect(group);
+            const usesQuantity = shouldUseOptionQuantity(group);
             return (
               <section key={group.id} className="grid gap-2">
                 <div className="flex items-center justify-between gap-3">
@@ -124,8 +159,43 @@ export function ModifierSheet({
 
                 <div className="grid gap-2">
                   {group.options.map((option) => {
-                    const selected = groupSelections.some((s) => s.optionId === option.id);
+                    const selectedSelection = groupSelections.find((s) => s.optionId === option.id);
+                    const selected = Boolean(selectedSelection);
+                    const optionQuantity = selectedSelection?.quantity ?? 0;
                     const disabled = option.isAvailable === false;
+                    const priceText = optionPriceText(state.item.price, option);
+                    if (usesQuantity) {
+                      return (
+                        <div
+                          key={option.id}
+                          className={cn(
+                            "flex min-h-[var(--tap-min)] items-center justify-between gap-3 rounded-[var(--r-md)] border px-3 py-2.5 text-left transition",
+                            selected ? "border-[var(--jade)] bg-[var(--primary-soft)]" : "border-[var(--line)] bg-[var(--surface)]",
+                            disabled && "opacity-55"
+                          )}
+                        >
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => changeOptionQuantity(group, option.id, optionQuantity > 0 ? 0 : 1)}
+                            className="min-w-0 flex-1 text-left disabled:pointer-events-none"
+                          >
+                            <span className="block truncate text-[length:var(--fs-sm)] font-semibold text-[var(--text)]">{option.name}</span>
+                            <span className="mt-0.5 block text-[length:var(--fs-xs)] text-[var(--text-muted)]">
+                              {disabled ? "Tạm hết" : priceText}
+                            </span>
+                          </button>
+                          <QtyStepper
+                            size="sm"
+                            value={optionQuantity}
+                            min={0}
+                            max={Number.isFinite(max) ? max : 50}
+                            onChange={(next) => changeOptionQuantity(group, option.id, next)}
+                            ariaLabel={`Số lượng ${option.name}`}
+                          />
+                        </div>
+                      );
+                    }
                     return (
                       <button
                         key={option.id}
@@ -143,7 +213,7 @@ export function ModifierSheet({
                         <span className="min-w-0">
                           <span className="block truncate text-[length:var(--fs-sm)] font-semibold text-[var(--text)]">{option.name}</span>
                           <span className="mt-0.5 block text-[length:var(--fs-xs)] text-[var(--text-muted)]">
-                            {disabled ? "Tạm hết" : option.priceDelta > 0 ? `+${formatVnd(option.priceDelta)}` : "Không thêm phí"}
+                            {disabled ? "Tạm hết" : priceText}
                           </span>
                         </span>
                         <span

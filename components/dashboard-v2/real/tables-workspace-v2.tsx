@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChefHat, Clock3, Copy, CreditCard, Download, Eye, Grip, MapPin, Move, Plus, Printer, QrCode, RotateCcw, Settings2, TimerReset, Trash2, Users, Utensils, X } from "lucide-react";
+import { Check, Clock3, Copy, CreditCard, Download, Eye, Plus, Printer, QrCode, RotateCcw, Settings2, TimerReset, Trash2, Users, Utensils, X } from "lucide-react";
 import { Button } from "../button";
 import { Badge, EmptyState, MetricCard, SwitchControl } from "../primitives";
 import { Drawer, Modal } from "../overlay";
@@ -43,6 +43,177 @@ function zoneLabel(table: RestaurantTableWithStatus) {
   return "Trong nhà";
 }
 
+function floorLabel(table: RestaurantTableWithStatus) {
+  const raw = table.floor_label?.trim();
+  return raw || "Tầng chính";
+}
+
+function groupByFloor(tables: RestaurantTableWithStatus[]) {
+  const floors = new Map<string, RestaurantTableWithStatus[]>();
+  for (const table of tables) {
+    const key = floorLabel(table);
+    floors.set(key, [...(floors.get(key) ?? []), table]);
+  }
+  return Array.from(floors.entries()).map(([floor, floorTables]) => {
+    const areaMap = new Map<string, RestaurantTableWithStatus[]>();
+    for (const table of floorTables) {
+      const area = zoneLabel(table);
+      areaMap.set(area, [...(areaMap.get(area) ?? []), table]);
+    }
+    return {
+      floor,
+      tables: floorTables,
+      areas: Array.from(areaMap.entries()).map(([area, areaTables]) => ({ area, tables: areaTables }))
+    };
+  });
+}
+
+function FloorTab({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-10 shrink-0 items-center gap-2 rounded-[var(--d-r-pill)] border px-3 text-[length:var(--d-fs-xs)] font-bold transition",
+        active
+          ? "border-[var(--d-jade)] bg-[var(--d-jade)] text-[var(--d-on-jade)] shadow-[var(--d-sh-sm)]"
+          : "border-[var(--d-line)] bg-[var(--d-surface)] text-[var(--d-text-muted)] hover:border-[var(--d-line-strong)] hover:text-[var(--d-text)]"
+      )}
+    >
+      {label}
+      <span className={cn("d-num grid h-5 min-w-5 place-items-center rounded-full px-1 text-[length:var(--d-fs-2xs)]", active ? "bg-white/20 text-white" : "bg-[var(--d-surface-2)] text-[var(--d-text-faint)]")}>{count}</span>
+    </button>
+  );
+}
+
+function TableStatusLegend() {
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)] sm:flex sm:flex-wrap sm:items-center">
+      {(["available", "needs_confirm", "serving", "overdue", "awaiting_payment"] as const).map((key) => (
+        <span key={key} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS[key].color }} />
+          {STATUS[key].label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function FloorPlanSections({
+  plans,
+  selectedId,
+  editMode,
+  onSelect,
+  onEdit
+}: {
+  plans: ReturnType<typeof groupByFloor>;
+  selectedId: string | null;
+  editMode: boolean;
+  onSelect: (table: RestaurantTableWithStatus) => void;
+  onEdit: (table: RestaurantTableWithStatus) => void;
+}) {
+  if (plans.length === 0) {
+    return (
+      <div className="p-[var(--d-s-4)]">
+        <EmptyState icon={<Users size={20} />} title="Không có bàn trong sơ đồ này" description="Đổi tầng/khu hoặc thêm bàn mới để bắt đầu vận hành." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-[var(--d-s-4)] bg-[var(--d-surface-2)]/45 p-[var(--d-s-3)] sm:p-[var(--d-s-4)]">
+      {plans.map((plan) => (
+        <section key={plan.floor} className="overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
+          <header className="flex items-center justify-between gap-3 border-b border-[var(--d-line)] px-[var(--d-s-4)] py-3">
+            <div className="min-w-0">
+              <h2 className="truncate text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">{plan.floor}</h2>
+              <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{plan.tables.length} bàn · {plan.areas.length} khu</p>
+            </div>
+            <span className="d-num rounded-[var(--d-r-pill)] bg-[var(--d-primary-soft)] px-2.5 py-1 text-[length:var(--d-fs-xs)] font-bold text-[var(--d-primary)]">
+              {plan.tables.filter((table) => table.status !== "available").length} đang dùng
+            </span>
+          </header>
+
+          <div className="grid gap-3 p-3 sm:p-4">
+            {plan.areas.map((area) => (
+              <div key={`${plan.floor}-${area.area}`} className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[linear-gradient(180deg,var(--d-surface),var(--d-surface-2))] p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{area.area}</p>
+                  <span className="d-num text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-text-muted)]">{area.tables.length} bàn</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(132px,1fr))]">
+                  {area.tables.map((table) => (
+                    <TableTile
+                      key={table.id}
+                      table={table}
+                      selected={selectedId === table.id}
+                      editMode={editMode}
+                      onSelect={() => onSelect(table)}
+                      onEdit={() => onEdit(table)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function TableTile({
+  table,
+  selected,
+  editMode,
+  onSelect,
+  onEdit
+}: {
+  table: RestaurantTableWithStatus;
+  selected: boolean;
+  editMode: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+}) {
+  const meta = STATUS[table.status];
+  const activeCount = table.activeOrderCount + table.activeReservationCount;
+  return (
+    <button
+      type="button"
+      onClick={editMode ? onEdit : onSelect}
+      className={cn(
+        "relative flex min-h-[104px] min-w-0 flex-col justify-between rounded-[var(--d-r-md)] border-2 p-2.5 text-left shadow-[var(--d-sh-sm)] transition active:scale-[0.99]",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--d-jade)]",
+        selected && "ring-2 ring-[var(--d-jade)] ring-offset-2 ring-offset-[var(--d-surface)]"
+      )}
+      style={{ borderColor: meta.color, background: meta.bg }}
+      aria-label={`${editMode ? "Sửa" : "Mở"} bàn ${table.name}, ${meta.label}`}
+    >
+      <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--d-surface)]" style={{ background: meta.color }} />
+      {editMode ? (
+        <span className="absolute left-2 top-2 rounded-[var(--d-r-pill)] bg-[var(--d-surface)]/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--d-primary)] shadow-[var(--d-sh-sm)]">Sửa</span>
+      ) : null}
+      <span className="min-w-0 pt-4">
+        <span className="block truncate text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Bàn</span>
+        <span className="d-num mt-0.5 block truncate text-[length:var(--d-fs-h2)] font-bold leading-none text-[var(--d-text)]">{table.name}</span>
+      </span>
+      <span className="mt-3 grid gap-1">
+        <span className="flex items-center justify-between gap-2 text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">
+          <span>{table.capacity} khách</span>
+          <span>{table.qr_enabled ? "QR bật" : "QR tắt"}</span>
+        </span>
+        {table.unpaidTotal > 0 ? (
+          <span className="d-num truncate text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text)]">{table.unpaidTotal.toLocaleString("vi-VN")}₫ chưa thu</span>
+        ) : activeCount > 0 ? (
+          <span className="d-num text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text)]">{activeCount} hoạt động</span>
+        ) : (
+          <span className="truncate text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{meta.label}</span>
+        )}
+      </span>
+    </button>
+  );
+}
+
 export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurantName, dashboardTableCount, branches, tables }: Props) {
   const toast = useToast();
   const router = useRouter();
@@ -61,15 +232,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
   const [edit, setEdit] = useState<RestaurantTableWithStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const initialPositions = useMemo(() => {
-    return Object.fromEntries(tables.map((table, i) => {
-      const col = i % 4;
-      const row = Math.floor(i / 4);
-      return [table.id, { x: 16 + col * 22, y: 22 + row * 24 }];
-    }));
-  }, [tables]);
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(initialPositions);
+  const [activeFloor, setActiveFloor] = useState("all");
 
   function saveTable(fd: FormData) {
     startTransition(async () => {
@@ -160,7 +323,11 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
   }
 
   const zones = useMemo(() => Array.from(new Set(tables.map(zoneLabel))), [tables]);
-  const visible = zone === "all" ? tables : tables.filter((t) => zoneLabel(t) === zone);
+  const zoneFiltered = useMemo(() => (zone === "all" ? tables : tables.filter((t) => zoneLabel(t) === zone)), [tables, zone]);
+  const floorTabs = useMemo(() => Array.from(new Set(zoneFiltered.map(floorLabel))).map((floor) => ({ floor, count: zoneFiltered.filter((t) => floorLabel(t) === floor).length })), [zoneFiltered]);
+  const resolvedActiveFloor = activeFloor !== "all" && floorTabs.some((tab) => tab.floor === activeFloor) ? activeFloor : "all";
+  const visible = resolvedActiveFloor === "all" ? zoneFiltered : zoneFiltered.filter((t) => floorLabel(t) === resolvedActiveFloor);
+  const floorPlans = useMemo(() => groupByFloor(visible), [visible]);
   const counts = {
     total: tables.length,
     active: tables.filter((t) => t.status !== "available").length,
@@ -168,19 +335,11 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
     payment: tables.filter((t) => t.status === "awaiting_payment").length
   };
 
-  function moveTable(e: React.PointerEvent<HTMLDivElement>) {
-    if (!dragId || !editMode) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = Math.max(6, Math.min(94, ((e.clientX - rect.left) / rect.width) * 100));
-    const y = Math.max(10, Math.min(90, ((e.clientY - rect.top) / rect.height) * 100));
-    setPositions((p) => ({ ...p, [dragId]: { x, y } }));
-  }
-
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">
       <Toolbar eyebrow="Vận hành" title="Bàn &amp; QR">
         <RealtimeStatusBadge state={rtState} />
-        <Button variant={editMode ? "primary" : "secondary"} size="md" onClick={() => setEditMode((v) => !v)}><Move size={15} /> {editMode ? "Lưu sơ đồ" : "Sửa sơ đồ"}</Button>
+        <Button variant={editMode ? "primary" : "secondary"} size="md" onClick={() => setEditMode((v) => !v)}><Settings2 size={15} /> {editMode ? "Đang quản lý" : "Quản lý sơ đồ"}</Button>
         <Button variant="secondary" size="md" onClick={() => void printAllTables()}><Printer size={15} /> In QR tất cả</Button>
         <Button variant="primary" size="md" onClick={() => setCreateOpen(true)}><Plus size={15} /> Thêm bàn</Button>
       </Toolbar>
@@ -200,77 +359,38 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
         />
       </section>
 
-      <section className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-4)] shadow-[var(--d-sh-sm)]">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="d-eyebrow">Sơ đồ bàn</p>
-            <p className="text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{editMode ? "Kéo thả để di chuyển bàn" : "Bấm vào bàn để xem chi tiết"}</p>
+      <section className="overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)]">
+        <div className="border-b border-[var(--d-line)] px-[var(--d-s-4)] py-[var(--d-s-4)]">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="d-eyebrow">Sơ đồ bàn theo tầng</p>
+              <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+                {editMode ? "Chọn bàn để mở cấu hình. Mỗi tầng/khu là một sơ đồ riêng để dễ vận hành trên mobile." : "Bấm vào bàn để xem đơn, QR và cấu hình."}
+              </p>
+            </div>
+            <TableStatusLegend />
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
-            {(["available", "needs_confirm", "serving", "overdue", "awaiting_payment"] as const).map((k) => (
-              <span key={k} className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ background: STATUS[k].color }} />
-                {STATUS[k].label}
-              </span>
-            ))}
-          </div>
+
+          {floorTabs.length > 1 ? (
+            <div className="-mx-[var(--d-s-4)] mt-3 flex gap-2 overflow-x-auto px-[var(--d-s-4)] pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <FloorTab active={resolvedActiveFloor === "all"} label="Tất cả tầng" count={zoneFiltered.length} onClick={() => setActiveFloor("all")} />
+              {floorTabs.map((floor) => (
+                <FloorTab key={floor.floor} active={resolvedActiveFloor === floor.floor} label={floor.floor} count={floor.count} onClick={() => setActiveFloor(floor.floor)} />
+              ))}
+            </div>
+          ) : null}
         </div>
 
-        <div
-          onPointerMove={moveTable}
-          onPointerUp={() => setDragId(null)}
-          onPointerLeave={() => setDragId(null)}
-          className={cn("relative aspect-[16/8] w-full select-none overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)]", "bg-[radial-gradient(circle_at_center,_var(--d-surface)_0%,_var(--d-surface-2)_100%)]")}
-        >
-          <svg className="absolute inset-0 h-full w-full opacity-40" aria-hidden="true">
-            <defs>
-              <pattern id="floor-grid-real" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path d="M 40 0 L 0 0 0 40" fill="none" stroke="var(--d-line)" strokeWidth="0.5" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#floor-grid-real)" />
-          </svg>
-
-          {visible.map((t) => {
-            const pos = positions[t.id] ?? { x: 50, y: 50 };
-            const meta = STATUS[t.status];
-            const isSelected = selected?.id === t.id;
-            const isDragging = dragId === t.id;
-            return (
-              <div
-                key={t.id}
-                onPointerDown={(e) => { if (editMode) { e.preventDefault(); setDragId(t.id); } }}
-                onClick={() => { if (!editMode && !isDragging) setSelectedId(t.id); }}
-                className={cn("absolute -translate-x-1/2 -translate-y-1/2 select-none", editMode ? "cursor-grab active:cursor-grabbing" : "cursor-pointer", isDragging && "z-10 scale-110")}
-                style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-              >
-                <div
-                  className={cn("relative flex flex-col gap-0.5 rounded-[var(--d-r-md)] border-2 bg-[var(--d-surface)] px-2.5 py-1.5 shadow-[var(--d-sh-sm)] transition-all", !editMode && "hover:-translate-y-0.5 hover:shadow-[var(--d-sh-md)]", isSelected && "ring-2 ring-offset-2 ring-offset-[var(--d-surface)]")}
-                  style={{ minWidth: `${64 + t.capacity * 3}px`, borderColor: meta.color, background: meta.bg, boxShadow: isSelected ? `0 0 0 3px ${meta.color}40, var(--d-sh-md)` : undefined }}
-                >
-                  <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full ring-2 ring-[var(--d-surface)]" style={{ background: meta.color }} />
-                  {editMode ? <span className="absolute -left-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-[var(--d-surface)] text-[var(--d-text-muted)] shadow"><Grip size={10} /></span> : null}
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="d-num text-[length:var(--d-fs-h3)] font-bold leading-none text-[var(--d-text)]">{t.name}</span>
-                    <span className="d-num text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">{t.capacity}c</span>
-                  </div>
-                  {t.unpaidTotal > 0 ? (
-                    <p className="d-num text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-text)]">{t.unpaidTotal.toLocaleString("vi-VN")}₫</p>
-                  ) : (
-                    <p className="text-[length:var(--d-fs-2xs)] text-[var(--d-text-muted)]">{meta.label}</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {editMode ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-[var(--d-r-md)] border border-[var(--d-jade)]/30 bg-[var(--d-primary-soft)]/40 px-3 py-2">
-            <p className="inline-flex items-center gap-2 text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-primary)]"><MapPin size={13} /> Đang sửa sơ đồ. Vị trí lưu cục bộ trong phiên xem.</p>
-            <Button variant="primary" size="sm" onClick={() => { setEditMode(false); toast.success("Đã lưu sơ đồ tạm"); }}>Xong</Button>
-          </div>
-        ) : null}
+        <FloorPlanSections
+          plans={floorPlans}
+          selectedId={selectedId}
+          editMode={editMode}
+          onSelect={(table) => setSelectedId(table.id)}
+          onEdit={(table) => {
+            setEdit(table);
+            setSelectedId(null);
+          }}
+        />
       </section>
 
       {visible.length === 0 ? (
@@ -337,19 +457,16 @@ function TableDrawer({
   const toast = useToast();
   const [printing, setPrinting] = useState(false);
   const [downloading, setDownloading] = useState(false);
-  const [view, setView] = useState<"orders" | "config">("config");
+  const [viewState, setViewState] = useState<{ tableId: string | null; view: "orders" | "config" }>({ tableId: null, view: "config" });
   const hasActiveOrders = (table?.activeOrderCount ?? 0) > 0 || (table?.unpaidTotal ?? 0) > 0;
-
-  useEffect(() => {
-    setView(hasActiveOrders ? "orders" : "config");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [table?.id]);
 
   if (!table) return null;
   const tableData = table;
   const meta = STATUS[tableData.status];
   const publicUrl = tableQrUrl(slug, tableData);
   const previewSrc = qrImageUrl(publicUrl, 360);
+  const view = viewState.tableId === table.id ? viewState.view : hasActiveOrders ? "orders" : "config";
+  const setView = (next: "orders" | "config") => setViewState({ tableId: table.id, view: next });
 
   async function copyLink() {
     try {
@@ -576,7 +693,8 @@ function TableOrderOps({
   }, [restaurantId, tableId, tableName]);
 
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
   useEffect(() => {
     const t = window.setInterval(() => setNowMs(Date.now()), 30_000);

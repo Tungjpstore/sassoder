@@ -687,6 +687,9 @@ export type Database = {
           restaurant_id: string;
           menu_item_id: string;
           name: string;
+          kind: "SIZE" | "TOPPING" | "ICE" | "SUGAR" | "ADDON" | "COMBO" | "CHOICE" | "NOTE_PRESET" | "CUSTOM";
+          selection_type: "SINGLE" | "MULTIPLE" | "QUANTITY";
+          allow_quantity: boolean;
           is_required: boolean;
           min_select: number;
           max_select: number | null;
@@ -700,6 +703,9 @@ export type Database = {
           restaurant_id: string;
           menu_item_id: string;
           name: string;
+          kind?: "SIZE" | "TOPPING" | "ICE" | "SUGAR" | "ADDON" | "COMBO" | "CHOICE" | "NOTE_PRESET" | "CUSTOM";
+          selection_type?: "SINGLE" | "MULTIPLE" | "QUANTITY";
+          allow_quantity?: boolean;
           is_required?: boolean;
           min_select?: number;
           max_select?: number | null;
@@ -712,6 +718,9 @@ export type Database = {
           restaurant_id?: string;
           menu_item_id?: string;
           name?: string;
+          kind?: "SIZE" | "TOPPING" | "ICE" | "SUGAR" | "ADDON" | "COMBO" | "CHOICE" | "NOTE_PRESET" | "CUSTOM";
+          selection_type?: "SINGLE" | "MULTIPLE" | "QUANTITY";
+          allow_quantity?: boolean;
           is_required?: boolean;
           min_select?: number;
           max_select?: number | null;
@@ -728,6 +737,9 @@ export type Database = {
           group_id: string;
           name: string;
           price_delta: number;
+          pricing_mode: "DELTA" | "ABSOLUTE";
+          price_value: number | null;
+          is_default: boolean;
           is_available: boolean;
           sort_order: number;
           created_at: string;
@@ -739,6 +751,9 @@ export type Database = {
           group_id: string;
           name: string;
           price_delta?: number;
+          pricing_mode?: "DELTA" | "ABSOLUTE";
+          price_value?: number | null;
+          is_default?: boolean;
           is_available?: boolean;
           sort_order?: number;
           created_at?: string;
@@ -749,6 +764,9 @@ export type Database = {
           group_id?: string;
           name?: string;
           price_delta?: number;
+          pricing_mode?: "DELTA" | "ABSOLUTE";
+          price_value?: number | null;
+          is_default?: boolean;
           is_available?: boolean;
           sort_order?: number;
           updated_at?: string | null;
@@ -1856,6 +1874,14 @@ export type Database = {
           metadata: Json;
           approx_distance_km: number;
         }>;
+      };
+      replace_menu_modifier_setup: {
+        Args: {
+          p_restaurant_id: string;
+          p_source_item_id: string;
+          p_target_item_ids: string[];
+        };
+        Returns: number;
       };
     };
     Enums: {
