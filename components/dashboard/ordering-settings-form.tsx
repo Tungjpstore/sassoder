@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import {
   Bell,
@@ -32,6 +32,7 @@ import {
 } from "@/components/maps/delivery-area-editor";
 import { DeliveryZoneMapEditor } from "@/components/maps/delivery-zone-map-editor";
 import { StoreLocationPicker } from "@/components/maps/store-location-picker";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatVnd } from "@/lib/money";
@@ -215,7 +216,10 @@ export function OrderingSettingsForm({
   onlineUrl: string;
   compact?: boolean;
 }) {
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(updateOrderingSettingsAction, undefined);
+  const reportedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
   const initialLat = Number(settings.store_lat ?? 10.7769);
   const initialLng = Number(settings.store_lng ?? 106.7009);
   const [storeLat, setStoreLat] = useState(settings.store_lat?.toString() ?? "");
@@ -309,6 +313,24 @@ export function OrderingSettingsForm({
     }
   }
 
+  useEffect(() => {
+    if (!state?.success || reportedSuccessRef.current === state.success) return;
+    reportedSuccessRef.current = state.success;
+    toast.success({
+      title: "Đã lưu cấu hình online",
+      message: "Các thay đổi đã được ghi vào hệ thống đặt món và giao hàng."
+    });
+  }, [state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({
+      title: "Không lưu được cấu hình online",
+      message: state.error
+    });
+  }, [state?.error, toast]);
+
   return (
     <form
       id="online-ordering"
@@ -321,8 +343,6 @@ export function OrderingSettingsForm({
       <input type="hidden" name="address" value={resolvedAddress ?? settings.address ?? ""} readOnly />
       <input type="hidden" name="storeLat" value={storeLat} readOnly />
       <input type="hidden" name="storeLng" value={storeLng} readOnly />
-      <input type="hidden" name="deliveryBaseFee" value={settings.delivery_base_fee} readOnly />
-      <input type="hidden" name="deliveryFeePerKm" value={settings.delivery_fee_per_km} readOnly />
       <input type="hidden" name="deliveryFeeTiers" value={serializedFeeTiers} readOnly />
       <input type="hidden" name="deliveryAreaPolygon" value={JSON.stringify(deliveryPolygon)} readOnly />
       <input type="hidden" name="deliveryExclusionZones" value={serializedExclusions} readOnly />
@@ -820,6 +840,14 @@ export function OrderingSettingsForm({
                 <Input name="minOrderForDelivery" type="number" min={0} step={1000} defaultValue={settings.min_order_for_delivery} className="h-10 rounded-lg border-[var(--d-line)] bg-[var(--d-surface)] text-sm" />
               </label>
               <label className="grid gap-1 text-xs font-bold text-[var(--d-text-muted)]">
+                Phí gốc
+                <Input name="deliveryBaseFee" type="number" min={0} step={1000} defaultValue={settings.delivery_base_fee ?? 0} className="h-10 rounded-lg border-[var(--d-line)] bg-[var(--d-surface)] text-sm" />
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--d-text-muted)]">
+                Phí mỗi km
+                <Input name="deliveryFeePerKm" type="number" min={0} step={1000} defaultValue={settings.delivery_fee_per_km ?? 0} className="h-10 rounded-lg border-[var(--d-line)] bg-[var(--d-surface)] text-sm" />
+              </label>
+              <label className="grid gap-1 text-xs font-bold text-[var(--d-text-muted)]">
                 ETA đến lấy
                 <Input name="pickupEtaMinutes" type="number" min={1} max={240} defaultValue={settings.pickup_eta_minutes} className="h-10 rounded-lg border-[var(--d-line)] bg-[var(--d-surface)] text-sm" />
               </label>
@@ -849,7 +877,7 @@ export function OrderingSettingsForm({
           <RotateCcw size={16} aria-hidden="true" />
           Khôi phục mặc định
         </button>
-        <Button disabled={pending} className="h-11 w-full min-w-0 rounded-lg bg-[var(--d-jade)] text-[var(--d-on-jade)] hover:bg-[var(--d-jade-700)] sm:w-auto sm:min-w-[170px]">
+        <Button type="submit" disabled={pending} className="h-11 w-full min-w-0 rounded-lg bg-[var(--d-jade)] text-[var(--d-on-jade)] hover:bg-[var(--d-jade-700)] sm:w-auto sm:min-w-[170px]">
           <Save size={16} aria-hidden="true" />
           {pending ? "Đang lưu..." : "Lưu thay đổi"}
         </Button>

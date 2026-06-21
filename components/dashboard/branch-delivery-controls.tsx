@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, MapPin, PauseCircle, Save, Store, Truck } from "lucide-react";
 import { updateBranchDeliveryAvailabilityAction } from "@/app/dashboard/actions";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Button } from "@/components/ui/button";
 import { formatVnd } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -222,8 +223,23 @@ function MultiBranchDeliveryStatus({
 }
 
 export function BranchDeliveryControls({ branches }: { branches: BranchDeliverySettings[] }) {
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(updateBranchDeliveryAvailabilityAction, undefined);
+  const reportedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
   const summary = summarizeBranches(branches);
+
+  useEffect(() => {
+    if (!state?.success || reportedSuccessRef.current === state.success) return;
+    reportedSuccessRef.current = state.success;
+    toast.success({ title: "Đã lưu trạng thái chi nhánh", message: state.success });
+  }, [state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({ title: "Không lưu được chi nhánh", message: state.error });
+  }, [state?.error, toast]);
 
   return (
     <section className="dashboard-branch-delivery-controls rounded-[14px] border border-[#dcebdc] bg-white p-4 shadow-[0_1px_2px_rgba(29,39,32,0.04)]">
@@ -310,7 +326,7 @@ export function BranchDeliveryControls({ branches }: { branches: BranchDeliveryS
                     Ghi chú hiển thị nội bộ
                     <input name="deliveryAvailabilityNote" defaultValue={branch.delivery_availability_note ?? ""} maxLength={160} placeholder="Ví dụ: bếp quá tải, sửa đường trước quán..." className="h-10 rounded-lg border border-[#e1ddd4] bg-white px-3 text-sm font-semibold text-[#101813] outline-none" />
                   </label>
-                  <Button disabled={pending} className="mt-5 h-10 rounded-lg bg-[#0f6944] text-white hover:bg-[#0b5738] md:w-auto">
+                  <Button type="submit" disabled={pending} className="mt-5 h-10 rounded-lg bg-[#0f6944] text-white hover:bg-[#0b5738] md:w-auto">
                     <Save size={15} />
                     Lưu
                   </Button>

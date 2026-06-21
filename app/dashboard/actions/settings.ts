@@ -304,7 +304,6 @@ export async function updateOrderingSettingsAction(
   _prevState: { error?: string; success?: string } | undefined,
   formData: FormData
 ) {
-  const session = await requireOperationalAdminSession("online_ordering");
   const parsed = orderingSettingsSchema.safeParse({
     address: formData.get("address") ?? "",
     onlineOrderingEnabled: formBoolean(formData, "onlineOrderingEnabled"),
@@ -351,6 +350,10 @@ export async function updateOrderingSettingsAction(
   }
 
   try {
+    const session = await requireOperationalAdminSession();
+    if (parsed.data.onlineOrderingEnabled) {
+      await assertFeatureEntitlement(session.restaurantId, "online_ordering");
+    }
     if (parsed.data.deliveryEnabled) {
       await assertFeatureEntitlement(session.restaurantId, "delivery_basic");
     }
@@ -358,26 +361,25 @@ export async function updateOrderingSettingsAction(
       await assertFeatureEntitlement(session.restaurantId, "delivery_realtime_tracking");
     }
     await updateRestaurantOrderingSettings(session.restaurantId, parsed.data);
+
+    invalidateRestaurantDashboardCache(session.restaurantId);
+    invalidateMenuCache();
+    invalidateOnlineOrderingDashboardCache(session.restaurantId);
+    await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview"]);
+    revalidatePath("/dashboard/settings");
+    revalidatePath("/dashboard/online");
+    revalidatePath("/dashboard/orders");
+    revalidatePath(`/r/${session.restaurant.slug}`);
+    return { success: "Đã lưu cấu hình đặt món online." };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Không lưu được cấu hình đặt món online." };
   }
-
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  invalidateMenuCache();
-  invalidateOnlineOrderingDashboardCache(session.restaurantId);
-  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["menu", "online", "overview"]);
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard/online");
-  revalidatePath("/dashboard/orders");
-  revalidatePath(`/r/${session.restaurant.slug}`);
-  return { success: "Đã lưu cấu hình đặt món online." };
 }
 
 export async function updateBranchDeliveryAvailabilityAction(
   _prevState: { error?: string; success?: string } | undefined,
   formData: FormData
 ) {
-  const session = await requireOperationalAdminSession("online_ordering");
   const parsed = branchDeliveryAvailabilitySchema.safeParse({
     branchId: formData.get("branchId"),
     acceptingDelivery: formBoolean(formData, "acceptingDelivery"),
@@ -393,26 +395,26 @@ export async function updateBranchDeliveryAvailabilityAction(
   }
 
   try {
+    const session = await requireOperationalAdminSession("online_ordering");
     await updateDeliveryBranchAvailability(session.restaurantId, parsed.data);
+
+    invalidateRestaurantDashboardCache(session.restaurantId);
+    invalidateOnlineOrderingDashboardCache(session.restaurantId);
+    await invalidateDashboardWorkspaceCaches(session.restaurantId, ["online", "overview"]);
+    revalidatePath("/dashboard/settings");
+    revalidatePath("/dashboard/online");
+    revalidatePath("/dashboard/orders");
+    revalidatePath(`/r/${session.restaurant.slug}`);
+    return { success: "Đã cập nhật trạng thái giao hàng của chi nhánh." };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Không cập nhật được trạng thái giao hàng của chi nhánh." };
   }
-
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  invalidateOnlineOrderingDashboardCache(session.restaurantId);
-  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["online", "overview"]);
-  revalidatePath("/dashboard/settings");
-  revalidatePath("/dashboard/online");
-  revalidatePath("/dashboard/orders");
-  revalidatePath(`/r/${session.restaurant.slug}`);
-  return { success: "Đã cập nhật trạng thái giao hàng của chi nhánh." };
 }
 
 export async function updateReservationSettingsAction(
   _prevState: { error?: string; success?: string } | undefined,
   formData: FormData
 ) {
-  const session = await requireOperationalAdminSession("reservations");
   const parsed = reservationSettingsSchema.safeParse({
     reservationsEnabled: formBoolean(formData, "reservationsEnabled"),
     reservationDepositEnabled: formBoolean(formData, "reservationDepositEnabled"),
@@ -431,18 +433,22 @@ export async function updateReservationSettingsAction(
   }
 
   try {
+    const session = await requireOperationalAdminSession();
+    if (parsed.data.reservationsEnabled) {
+      await assertFeatureEntitlement(session.restaurantId, "reservations");
+    }
     if (parsed.data.reservationDepositEnabled) {
       await assertFeatureEntitlement(session.restaurantId, "reservation_deposits");
     }
     await updateReservationSettings(session.restaurantId, parsed.data);
+
+    invalidateRestaurantDashboardCache(session.restaurantId);
+    await invalidateDashboardWorkspaceCaches(session.restaurantId, ["reservations", "tables", "overview"]);
+    revalidatePath("/dashboard/reservations");
+    revalidatePath("/dashboard/tables");
+    revalidatePath(`/r/${session.restaurant.slug}/reserve`);
+    return { success: "Đã lưu cấu hình đặt bàn trước." };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Không lưu được cấu hình đặt bàn." };
   }
-
-  invalidateRestaurantDashboardCache(session.restaurantId);
-  await invalidateDashboardWorkspaceCaches(session.restaurantId, ["reservations", "tables", "overview"]);
-  revalidatePath("/dashboard/reservations");
-  revalidatePath("/dashboard/tables");
-  revalidatePath(`/r/${session.restaurant.slug}/reserve`);
-  return { success: "Đã lưu cấu hình đặt bàn trước." };
 }

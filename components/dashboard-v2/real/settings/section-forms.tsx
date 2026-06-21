@@ -50,6 +50,7 @@ import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-c
 import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
 import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
 import { TelegramConnectPanel } from "@/components/dashboard/telegram-connect-panel";
+import { useToast } from "@/components/dashboard/toast-provider";
 import type { ReportScheduleSettings, listRecentReportLogs } from "@/services/report-schedule-service";
 import type { listStoreBranchesForManagement } from "@/services/branch-service";
 import type { BranchDeliverySettings } from "@/services/delivery/branch-delivery-settings-service";
@@ -157,14 +158,23 @@ function SettingsForm({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(action, undefined);
   const refreshedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!state?.success || refreshedSuccessRef.current === state.success) return;
     refreshedSuccessRef.current = state.success;
+    toast.success({ title: state.success, message: "Dữ liệu đã được lưu và đồng bộ lại từ hệ thống." });
     router.refresh();
-  }, [router, state?.success]);
+  }, [router, state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({ title: "Không lưu được thay đổi", message: state.error });
+  }, [state?.error, toast]);
 
   return (
     <form action={formAction} encType={encType} className="flex flex-col gap-[var(--d-s-4)]">

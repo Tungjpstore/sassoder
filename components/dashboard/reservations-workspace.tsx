@@ -587,7 +587,22 @@ function PreflightStatusCard({
 }
 
 function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(updateReservationSettingsAction, undefined);
+  const reportedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!state?.success || reportedSuccessRef.current === state.success) return;
+    reportedSuccessRef.current = state.success;
+    toast.success({ title: "Đã lưu cấu hình đặt bàn", message: state.success });
+  }, [state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({ title: "Không lưu được cấu hình đặt bàn", message: state.error });
+  }, [state?.error, toast]);
 
   return (
     <form action={formAction} className="grid gap-4">
@@ -661,7 +676,7 @@ function SettingsDrawer({ settings }: { settings: ReservationSettings }) {
       {state?.error ? <p className="text-sm font-semibold text-[var(--accent-strong)]">{state.error}</p> : null}
       {state?.success ? <p className="text-sm font-semibold text-[var(--primary-strong)]">{state.success}</p> : null}
 
-      <Button disabled={pending}>
+      <Button type="submit" disabled={pending}>
         {pending ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
         {pending ? "Đang lưu..." : "Lưu cấu hình đặt bàn"}
       </Button>

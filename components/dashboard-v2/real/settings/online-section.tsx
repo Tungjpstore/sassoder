@@ -37,6 +37,7 @@ import {
 import { StoreLocationPicker } from "@/components/maps/store-location-picker";
 import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-controls";
 import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Badge, Panel, SwitchControl } from "@/components/dashboard-v2/primitives";
 import { Button } from "@/components/dashboard-v2/button";
 import { formatVnd } from "@/lib/money";
@@ -123,8 +124,10 @@ type Props = {
 
 export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, mapOperationalMetrics }: Props) {
   const router = useRouter();
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(updateOrderingSettingsAction, undefined);
   const refreshedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
 
   const initialLat = Number(settings.store_lat ?? 10.7769);
   const initialLng = Number(settings.store_lng ?? 106.7009);
@@ -211,8 +214,21 @@ export function OnlineSectionV2({ settings, onlineUrl, branchDeliverySettings, m
   useEffect(() => {
     if (!state?.success || refreshedSuccessRef.current === state.success) return;
     refreshedSuccessRef.current = state.success;
+    toast.success({
+      title: "Đã lưu cấu hình online",
+      message: "Trang đặt món, phí giao hàng và trạng thái nhận đơn đã được đồng bộ."
+    });
     router.refresh();
-  }, [router, state?.success]);
+  }, [router, state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({
+      title: "Không lưu được cấu hình online",
+      message: state.error
+    });
+  }, [state?.error, toast]);
 
   return (
     <div className="flex flex-col gap-[var(--d-s-4)]">

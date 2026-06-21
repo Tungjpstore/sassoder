@@ -1,8 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { Banknote, Save } from "lucide-react";
 import { updatePaymentSettingsAction } from "@/app/dashboard/actions";
+import { useToast } from "@/components/dashboard/toast-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -17,8 +18,23 @@ export function PaymentSettingsForm({
   bankAccount?: string | null;
   bankAccountName?: string | null;
 }) {
+  const toast = useToast();
   const [state, formAction, pending] = useActionState(updatePaymentSettingsAction, undefined);
+  const reportedSuccessRef = useRef<string | null>(null);
+  const reportedErrorRef = useRef<string | null>(null);
   const isConfigured = Boolean(bankCode && bankAccount && bankAccountName);
+
+  useEffect(() => {
+    if (!state?.success || reportedSuccessRef.current === state.success) return;
+    reportedSuccessRef.current = state.success;
+    toast.success({ title: "Đã lưu VietQR", message: state.success });
+  }, [state?.success, toast]);
+
+  useEffect(() => {
+    if (!state?.error || reportedErrorRef.current === state.error) return;
+    reportedErrorRef.current = state.error;
+    toast.error({ title: "Không lưu được VietQR", message: state.error });
+  }, [state?.error, toast]);
 
   return (
     <form action={formAction} className="dashboard-panel p-5 md:p-6">
@@ -92,7 +108,7 @@ export function PaymentSettingsForm({
         <p className="text-sm text-[var(--muted-foreground)]">
           LogiVN sẽ dùng cấu hình này cho QR thanh toán tại bàn, đơn online và các khoản gia hạn cần chuyển khoản.
         </p>
-        <Button disabled={pending}>
+        <Button type="submit" disabled={pending}>
           <Save size={16} aria-hidden="true" />
           {pending ? "Đang lưu…" : "Lưu thông tin VietQR"}
         </Button>
