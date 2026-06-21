@@ -38,6 +38,7 @@ export async function ProductionDashboardShell({
   actionStream,
   restaurantId,
   showRail = true,
+  showQuickActionsFab = true,
   showDashboardCopilot = true
 }: ProductionDashboardShellProps) {
   const stream = actionStream ?? (restaurantId ? await loadDashboardActionStream(restaurantId).catch(() => []) : []);
@@ -50,6 +51,7 @@ export async function ProductionDashboardShell({
       topbarSlot={topbarSlot}
       actionStream={stream}
       showRail={showRail}
+      showQuickActionsFab={showQuickActionsFab}
       restaurantId={restaurantId}
       showDashboardCopilot={showDashboardCopilot}
     >

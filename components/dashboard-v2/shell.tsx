@@ -6,6 +6,7 @@ import { PanelRightClose, PanelRightOpen } from "lucide-react";
 import { DashboardCopilotLayer } from "@/components/ai/dashboard-copilot-layer";
 import { LogiVNLogo } from "@/components/brand/logivn-logo";
 import { CommandPaletteTrigger } from "@/components/dashboard/command-palette";
+import { DashboardQuickActionsFab } from "@/components/dashboard/dashboard-quick-actions-fab";
 import { ToastProvider } from "@/components/dashboard/toast-provider";
 import { fontVars } from "@/components/landing-v2/fonts";
 import type { getRestaurantEntitlement } from "@/services/subscription-service";
@@ -31,6 +32,7 @@ export function DashboardShellV2({
   topbarSlot,
   actionStream = [],
   showRail = true,
+  showQuickActionsFab = true,
   showDashboardCopilot = true,
   basePath = ""
 }: {
@@ -42,6 +44,7 @@ export function DashboardShellV2({
   topbarSlot?: React.ReactNode;
   actionStream?: ActionStreamItem[];
   showRail?: boolean;
+  showQuickActionsFab?: boolean;
   showDashboardCopilot?: boolean;
   basePath?: string;
 }) {
@@ -158,6 +161,7 @@ export function DashboardShellV2({
             ) : null}
           </div>
         </div>
+        {showQuickActionsFab ? <DashboardQuickActionsFab /> : null}
         {showDashboardCopilot && canUseOwnerAi && restaurantId ? <DashboardCopilotLayer restaurantId={restaurantId} restaurantName={restaurantName} /> : null}
       </div>
     </ToastProvider>

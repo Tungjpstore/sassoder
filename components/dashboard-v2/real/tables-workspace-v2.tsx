@@ -143,7 +143,7 @@ function FloorPlanSections({
                   <p className="text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">{area.area}</p>
                   <span className="d-num text-[length:var(--d-fs-2xs)] font-bold text-[var(--d-text-muted)]">{area.tables.length} bàn</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(132px,1fr))]">
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(118px,1fr))]">
                   {area.tables.map((table) => (
                     <TableTile
                       key={table.id}
@@ -184,7 +184,7 @@ function TableTile({
       type="button"
       onClick={editMode ? onEdit : onSelect}
       className={cn(
-        "relative flex min-h-[104px] min-w-0 flex-col justify-between rounded-[var(--d-r-md)] border-2 p-2.5 text-left shadow-[var(--d-sh-sm)] transition active:scale-[0.99]",
+        "relative flex min-h-[88px] min-w-0 flex-col justify-between rounded-[var(--d-r-md)] border-2 p-2 text-left shadow-[var(--d-sh-sm)] transition active:scale-[0.99] sm:min-h-[104px] sm:p-2.5",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--d-jade)]",
         selected && "ring-2 ring-[var(--d-jade)] ring-offset-2 ring-offset-[var(--d-surface)]"
       )}
@@ -195,21 +195,21 @@ function TableTile({
       {editMode ? (
         <span className="absolute left-2 top-2 rounded-[var(--d-r-pill)] bg-[var(--d-surface)]/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--d-primary)] shadow-[var(--d-sh-sm)]">Sửa</span>
       ) : null}
-      <span className="min-w-0 pt-4">
-        <span className="block truncate text-[length:var(--d-fs-2xs)] font-bold uppercase tracking-[var(--d-track-wide)] text-[var(--d-text-faint)]">Bàn</span>
-        <span className="d-num mt-0.5 block truncate text-[length:var(--d-fs-h2)] font-bold leading-none text-[var(--d-text)]">{table.name}</span>
+      <span className="min-w-0 pt-3 sm:pt-4">
+        <span className="block truncate text-[10px] font-bold uppercase tracking-[0.04em] text-[var(--d-text-faint)] sm:text-[length:var(--d-fs-2xs)]">Bàn</span>
+        <span className="d-num mt-0.5 block truncate text-[18px] font-bold leading-none text-[var(--d-text)] sm:text-[length:var(--d-fs-h2)]">{table.name}</span>
       </span>
-      <span className="mt-3 grid gap-1">
-        <span className="flex items-center justify-between gap-2 text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-muted)]">
+      <span className="mt-2 grid gap-1 sm:mt-3">
+        <span className="flex items-center justify-between gap-1 text-[10px] font-semibold text-[var(--d-text-muted)] sm:text-[length:var(--d-fs-2xs)]">
           <span>{table.capacity} khách</span>
-          <span>{table.qr_enabled ? "QR bật" : "QR tắt"}</span>
+          <span className="hidden min-[390px]:inline">{table.qr_enabled ? "QR bật" : "QR tắt"}</span>
         </span>
         {table.unpaidTotal > 0 ? (
-          <span className="d-num truncate text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text)]">{table.unpaidTotal.toLocaleString("vi-VN")}₫ chưa thu</span>
+          <span className="d-num truncate text-[10px] font-bold text-[var(--d-text)] sm:text-[length:var(--d-fs-xs)]">{table.unpaidTotal.toLocaleString("vi-VN")}₫</span>
         ) : activeCount > 0 ? (
-          <span className="d-num text-[length:var(--d-fs-xs)] font-bold text-[var(--d-text)]">{activeCount} hoạt động</span>
+          <span className="d-num text-[10px] font-bold text-[var(--d-text)] sm:text-[length:var(--d-fs-xs)]">{activeCount} hoạt động</span>
         ) : (
-          <span className="truncate text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">{meta.label}</span>
+          <span className="truncate text-[10px] font-semibold text-[var(--d-text-muted)] sm:text-[length:var(--d-fs-xs)]">{meta.label}</span>
         )}
       </span>
     </button>
@@ -233,6 +233,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
   const selected = useMemo(() => tables.find((t) => t.id === selectedId) ?? null, [tables, selectedId]);
   const [edit, setEdit] = useState<RestaurantTableWithStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createAreaOpen, setCreateAreaOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [activeFloor, setActiveFloor] = useState("all");
 
@@ -255,6 +256,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
         await createTableAction(fd);
         toast.success("Đã thêm bàn mới");
         setCreateOpen(false);
+        setCreateAreaOpen(false);
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Không thêm được bàn");
@@ -325,6 +327,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
   }
 
   const zones = useMemo(() => Array.from(new Set(tables.map(zoneLabel))), [tables]);
+  const allFloorLabels = useMemo(() => Array.from(new Set(tables.map(floorLabel))), [tables]);
   const zoneFiltered = useMemo(() => (zone === "all" ? tables : tables.filter((t) => zoneLabel(t) === zone)), [tables, zone]);
   const floorTabs = useMemo(() => Array.from(new Set(zoneFiltered.map(floorLabel))).map((floor) => ({ floor, count: zoneFiltered.filter((t) => floorLabel(t) === floor).length })), [zoneFiltered]);
   const resolvedActiveFloor = activeFloor !== "all" && floorTabs.some((tab) => tab.floor === activeFloor) ? activeFloor : "all";
@@ -342,6 +345,7 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
       <Toolbar eyebrow="Vận hành" title="Bàn &amp; QR">
         <RealtimeStatusBadge state={rtState} />
         <Button variant={editMode ? "primary" : "secondary"} size="md" onClick={() => setEditMode((v) => !v)}><Settings2 size={15} /> {editMode ? "Đang quản lý" : "Quản lý sơ đồ"}</Button>
+        <Button variant="secondary" size="md" onClick={() => setCreateAreaOpen(true)}><Plus size={15} /> Thêm khu/tầng</Button>
         <Button variant="secondary" size="md" onClick={() => void printAllTables()}><Printer size={15} /> In QR tất cả</Button>
         <Button variant="primary" size="md" onClick={() => setCreateOpen(true)}><Plus size={15} /> Thêm bàn</Button>
       </Toolbar>
@@ -423,6 +427,15 @@ export function RealTablesWorkspaceV2({ restaurantId, restaurantSlug, restaurant
         open={createOpen}
         branches={branches}
         onClose={() => setCreateOpen(false)}
+        onCreate={createTable}
+        pending={pending}
+      />
+      <CreateAreaModal
+        open={createAreaOpen}
+        branches={branches}
+        existingFloors={allFloorLabels}
+        existingAreas={zones}
+        onClose={() => setCreateAreaOpen(false)}
         onCreate={createTable}
         pending={pending}
       />
@@ -1008,6 +1021,117 @@ function CreateTableModal({
           <Button type="button" variant="secondary" size="md" onClick={onClose}>Huỷ</Button>
           <Button type="submit" variant="primary" size="md" disabled={pending}>
             <Plus size={15} /> {pending ? "Đang thêm…" : "Thêm bàn"}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateAreaModal({
+  open,
+  branches,
+  existingFloors,
+  existingAreas,
+  onClose,
+  onCreate,
+  pending
+}: {
+  open: boolean;
+  branches: TableBranchOption[];
+  existingFloors: string[];
+  existingAreas: string[];
+  onClose: () => void;
+  onCreate: (fd: FormData) => void;
+  pending: boolean;
+}) {
+  if (!open) return null;
+  const nextFloorNumber = Math.max(1, existingFloors.length + 1);
+  const nextTableNumber = String(Math.max(1, existingAreas.length + 1)).padStart(2, "0");
+  return (
+    <Modal open onClose={onClose} size="md" title="Thêm khu / tầng" subtitle="Sơ đồ bàn">
+      <form action={(fd) => onCreate(fd)} className="grid gap-3">
+        <div className="rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-3">
+          <p className="text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">Tạo khu vận hành mới kèm bàn đầu tiên</p>
+          <p className="mt-1 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">
+            LogiVN nhóm sơ đồ theo tầng và khu. Sau khi tạo, bạn có thể thêm tiếp các bàn khác vào cùng tầng/khu này.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Tầng / sơ đồ</span>
+            <input
+              name="floorLabel"
+              required
+              minLength={1}
+              maxLength={80}
+              defaultValue={`Tầng ${nextFloorNumber}`}
+              list="table-floor-suggestions"
+              placeholder="VD: Tầng 1"
+              className="h-10 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] font-semibold outline-none focus:border-[var(--d-jade)]"
+            />
+            <datalist id="table-floor-suggestions">
+              {existingFloors.map((floor) => <option key={floor} value={floor} />)}
+            </datalist>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[length:var(--d-fs-xs)] font-semibold text-[var(--d-text-muted)]">Tên khu trong tầng</span>
+            <input
+              name="area"
+              required
+              minLength={1}
+              maxLength={80}
+              defaultValue="Khu chính"
+              list="table-area-suggestions"
+              placeholder="VD: Khu cửa sổ"
+              className="h-10 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] px-3 text-[length:var(--d-fs-sm)] font-semibold outline-none focus:border-[var(--d-jade)]"
+            />
+            <datalist id="table-area-suggestions">
+              {existingAreas.map((area) => <option key={area} value={area} />)}
+            </datalist>
+          </label>
+          <Field label="Bàn đầu tiên" name="name" required defaultValue={`Bàn ${nextTableNumber}`} placeholder="VD: Bàn 01" />
+          <Field label="Sức chứa" name="capacity" type="number" defaultValue="4" min={1} max={50} />
+          <SelectField
+            label="Loại không gian"
+            name="seatingZone"
+            defaultValue="indoor"
+            options={[
+              { v: "indoor", l: "Trong nhà" },
+              { v: "outdoor", l: "Ngoài trời" },
+              { v: "mixed", l: "Hỗn hợp" }
+            ]}
+          />
+          <SelectField
+            label="Loại bàn đầu tiên"
+            name="tableKind"
+            defaultValue="standard"
+            options={[
+              { v: "standard", l: "Thường" },
+              { v: "vip", l: "VIP" },
+              { v: "bar", l: "Quầy bar" },
+              { v: "community", l: "Bàn chung" }
+            ]}
+          />
+          {branches.length > 0 ? (
+            <SelectField
+              label="Chi nhánh"
+              name="branchId"
+              defaultValue={branches[0]?.id ?? ""}
+              options={branches.map((b) => ({ v: b.id, l: b.name }))}
+            />
+          ) : null}
+        </div>
+
+        <input type="hidden" name="isBookable" value="true" />
+        <input type="hidden" name="isHidden" value="false" />
+        <input type="hidden" name="isUnderMaintenance" value="false" />
+
+        <div className="mt-2 flex justify-end gap-2 border-t border-[var(--d-line)] pt-3">
+          <Button type="button" variant="secondary" size="md" onClick={onClose}>Huỷ</Button>
+          <Button type="submit" variant="primary" size="md" disabled={pending}>
+            <Plus size={15} /> {pending ? "Đang tạo…" : "Tạo khu/tầng"}
           </Button>
         </div>
       </form>

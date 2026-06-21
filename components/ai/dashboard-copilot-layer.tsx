@@ -1317,10 +1317,11 @@ function LogibotOperatingDrawer({
 type LogibotSidebarToggleProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   open?: boolean;
   hasActions?: boolean;
+  placement?: "left" | "right";
 };
 
 const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleProps>(
-  function LogibotSidebarToggle({ onClick, disabled, className: _className, open = false, hasActions = false, ...buttonProps }, ref) {
+  function LogibotSidebarToggle({ onClick, disabled, className: _className, open = false, hasActions = false, placement = "right", ...buttonProps }, ref) {
     function handleClick(event: MouseEvent<HTMLButtonElement>) {
       if (disabled) return;
       onClick?.(event);
@@ -1333,7 +1334,10 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleP
         onClick={handleClick}
         disabled={disabled}
         className={cn(
-          "fixed bottom-[var(--dashboard-mobile-floating-bottom)] right-4 z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-3 pr-5 font-bold transition-all duration-300 hover:-translate-y-1 active:scale-95 md:bottom-5 md:right-5",
+          "fixed bottom-[calc(var(--dashboard-mobile-floating-bottom,5.75rem)+0.25rem)] z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-2 pr-4 font-bold transition-all duration-300 hover:-translate-y-1 active:scale-95 md:bottom-5",
+          placement === "left"
+            ? "left-4 md:left-[calc(var(--d-sidebar-w,232px)+1rem)] lg:left-[calc(var(--d-sidebar-w,232px)+1.25rem)]"
+            : "right-4 md:right-5",
           open
             ? "border-[#0F5132]/20 bg-white/80 backdrop-blur-md text-[#0F5132] shadow-[0_8px_32px_rgba(15,81,50,0.08)]"
             : "border-[#0F5132]/25 bg-gradient-to-br from-[#0F5132] to-[#0A3822] text-[#FFF7EB] shadow-[0_12px_36px_rgba(15,81,50,0.3)] hover:shadow-[0_16px_44px_rgba(15,81,50,0.4)]"
@@ -1359,11 +1363,13 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleP
 function DashboardCopilotExperience({
   restaurantId,
   restaurantName,
-  threadId
+  threadId,
+  togglePlacement = "right"
 }: {
   restaurantId: string;
   restaurantName: string;
   threadId: string;
+  togglePlacement?: "left" | "right";
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -2253,6 +2259,7 @@ function DashboardCopilotExperience({
         <LogibotSidebarToggle
           onClick={() => setHasEverOpened(true)}
           hasActions={queuedActions.length > 0}
+          placement={togglePlacement}
         />
       )}
     </>
@@ -2261,7 +2268,7 @@ function DashboardCopilotExperience({
 
 /* ─── Layer (wraps CopilotKit provider) ─── */
 
-export function DashboardCopilotLayer(props: { restaurantId: string; restaurantName: string }) {
+export function DashboardCopilotLayer(props: { restaurantId: string; restaurantName: string; togglePlacement?: "left" | "right" }) {
   const threadId = buildCopilotThreadId("logivn", "dashboard", props.restaurantId);
 
   return (

@@ -59,6 +59,8 @@ type Props = {
   ai: MenuAiAccess;
 };
 
+type MenuGridDensity = "two" | "three";
+
 export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topItemNames, restaurantName, ingredients, recipeMenuItems, inventoryDataError = null, ai }: Props) {
   const router = useRouter();
   const toast = useToast();
@@ -68,6 +70,7 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
   const [createOpen, setCreateOpen] = useState(false);
   const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
   const [aiImportOpen, setAiImportOpen] = useState(false);
+  const [gridDensity, setGridDensity] = useState<MenuGridDensity>("two");
   const [pending, startTransition] = useTransition();
 
   const rtState = useDashboardRealtime({
@@ -174,14 +177,37 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
             ...categories.map((c) => ({ key: c.id, label: c.name, count: c.items.length }))
           ]}
         />
-        <div className="relative">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <div className="grid grid-cols-2 rounded-[var(--d-r-pill)] border border-[var(--d-line)] bg-[var(--d-surface-2)] p-1 sm:w-[188px]">
+            {([
+              ["two", "2 / hàng"],
+              ["three", "3 / hàng"]
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setGridDensity(key)}
+                aria-pressed={gridDensity === key}
+                className={cn(
+                  "h-9 rounded-[var(--d-r-pill)] px-2 text-[length:var(--d-fs-xs)] font-bold transition",
+                  gridDensity === key
+                    ? "bg-[var(--d-jade)] text-[var(--d-on-jade)] shadow-[var(--d-sh-sm)]"
+                    : "text-[var(--d-text-muted)] hover:text-[var(--d-text)]"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="relative w-full sm:w-auto">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--d-text-faint)]" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Tìm món..."
-            className="h-10 w-56 rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] pl-9 pr-3 text-[length:var(--d-fs-sm)] outline-none transition focus:border-[var(--d-jade)]"
+            className="h-10 w-full rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] pl-9 pr-3 text-[length:var(--d-fs-sm)] outline-none transition focus:border-[var(--d-jade)] sm:w-56"
           />
+          </div>
         </div>
       </section>
 
@@ -193,12 +219,18 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
           action={!q.trim() ? <Button variant="primary" size="md" onClick={() => setCreateOpen(true)}><Plus size={15} /> Thêm món đầu tiên</Button> : null}
         />
       ) : (
-        <section className="grid gap-[var(--d-s-3)] sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <section
+          className={cn(
+            "grid gap-2 sm:gap-[var(--d-s-3)] lg:grid-cols-3 xl:grid-cols-4",
+            gridDensity === "three" ? "grid-cols-3 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-2"
+          )}
+        >
           {visible.map((item) => (
             <MenuCard
               key={item.id}
               item={item}
               isTop={topItemIds.includes(item.id)}
+              density={gridDensity}
               pending={pending}
               onOpen={() => setSelectedId(item.id)}
               onToggle={(v) => toggleItem(item.id, v)}
@@ -266,30 +298,40 @@ export function RealMenuWorkspaceV2({ restaurantId, categories, topItemIds, topI
 function MenuCard({
   item,
   isTop,
+  density,
   pending,
   onOpen,
   onToggle
 }: {
   item: AdminMenuItem & { categoryName: string };
   isTop: boolean;
+  density: MenuGridDensity;
   pending: boolean;
   onOpen: () => void;
   onToggle: (checked: boolean) => void;
 }) {
   const available = item.is_available;
+  const compact = density === "three";
   return (
-    <article className="flex flex-col overflow-hidden rounded-[var(--d-r-lg)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)] transition hover:-translate-y-0.5 hover:shadow-[var(--d-sh-md)]">
-      <button type="button" onClick={onOpen} className="relative grid aspect-[4/3] place-items-center overflow-hidden bg-[var(--d-surface-2)]">
+    <article className="flex min-w-0 flex-col overflow-hidden rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] shadow-[var(--d-sh-sm)] transition hover:-translate-y-0.5 hover:shadow-[var(--d-sh-md)] sm:rounded-[var(--d-r-lg)]">
+      <button
+        type="button"
+        onClick={onOpen}
+        className={cn(
+          "relative grid place-items-center overflow-hidden bg-[var(--d-surface-2)]",
+          compact ? "aspect-square" : "aspect-[4/3]"
+        )}
+      >
         {item.image_url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={item.image_url} alt={item.name} className="h-full w-full object-cover" loading="lazy" />
         ) : (
           <div className="flex flex-col items-center gap-1 text-[var(--d-text-faint)]">
-            <ImageIcon size={32} />
-            <span className="text-[length:var(--d-fs-2xs)] font-semibold">Chưa có ảnh</span>
+            <ImageIcon size={compact ? 22 : 32} />
+            <span className="text-center text-[10px] font-semibold sm:text-[length:var(--d-fs-2xs)]">Chưa có ảnh</span>
           </div>
         )}
-        {isTop ? (
+        {isTop && !compact ? (
           <span className="absolute left-2 top-2">
             <Badge tone="orange">
               <Sparkles size={10} className="mr-1 inline" /> Hot
@@ -302,24 +344,47 @@ function MenuCard({
           </span>
         ) : null}
       </button>
-      <div className="flex flex-1 flex-col gap-2 p-[var(--d-s-3)]">
+      <div className={cn("flex flex-1 flex-col", compact ? "gap-1.5 p-2" : "gap-2 p-[var(--d-s-3)]")}>
         <button
           type="button"
           onClick={onOpen}
-          className="line-clamp-1 text-left text-[length:var(--d-fs-sm)] font-semibold text-[var(--d-text)] hover:text-[var(--d-primary)]"
+          className={cn(
+            "min-h-[34px] text-left font-semibold leading-tight text-[var(--d-text)] hover:text-[var(--d-primary)]",
+            compact ? "line-clamp-2 text-[12px] sm:text-[length:var(--d-fs-xs)]" : "line-clamp-2 text-[length:var(--d-fs-sm)]"
+          )}
         >
           {item.name}
         </button>
-        <p className="d-num text-[length:var(--d-fs-h3)] font-bold text-[var(--d-text)]">{formatVnd(item.price)}</p>
-        <div className="mt-auto flex items-center justify-between gap-2 border-t border-[var(--d-line)] pt-2">
-          <span className="truncate text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-faint)]">{item.categoryName}</span>
-          <SwitchControl
-            checked={available}
-            onChange={onToggle}
-            label={available ? "Bán" : "Tắt"}
-            disabled={pending}
-            className="h-7 min-w-[70px]"
-          />
+        <p className={cn("d-num truncate font-bold text-[var(--d-text)]", compact ? "text-[12px] sm:text-[length:var(--d-fs-sm)]" : "text-[length:var(--d-fs-h3)]")}>{formatVnd(item.price)}</p>
+        <div className={cn("mt-auto border-t border-[var(--d-line)]", compact ? "pt-1.5" : "pt-2")}>
+          {compact ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={available}
+              onClick={() => onToggle(!available)}
+              disabled={pending}
+              className={cn(
+                "flex min-h-10 w-full items-center justify-center rounded-[var(--d-r-md)] px-2 text-[11px] font-bold uppercase tracking-[0.02em] transition disabled:opacity-60",
+                available
+                  ? "bg-[var(--d-primary-soft)] text-[var(--d-primary)]"
+                  : "bg-[var(--d-surface-2)] text-[var(--d-text-muted)]"
+              )}
+            >
+              {available ? "Đang bán" : "Tạm tắt"}
+            </button>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[length:var(--d-fs-2xs)] font-semibold text-[var(--d-text-faint)]">{item.categoryName}</span>
+              <SwitchControl
+                checked={available}
+                onChange={onToggle}
+                label={available ? "Bán" : "Tắt"}
+                disabled={pending}
+                className="h-7 min-w-[70px]"
+              />
+            </div>
+          )}
         </div>
       </div>
     </article>
