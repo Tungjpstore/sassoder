@@ -24,7 +24,7 @@ import {
 import { Drawer } from "../../overlay";
 import { Badge } from "../../primitives";
 import { Button } from "../../button";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { importInventoryIntakeAction } from "@/app/dashboard/actions";
 import { formatVnd } from "@/lib/money";
 import {

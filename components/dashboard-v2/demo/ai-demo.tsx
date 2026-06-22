@@ -6,7 +6,7 @@ import { Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Badge, MetricCard, EmptyState } from "../primitives";
 import { Modal } from "../overlay";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { fmtVnd } from "./data";
 import { cn } from "@/lib/utils";
 

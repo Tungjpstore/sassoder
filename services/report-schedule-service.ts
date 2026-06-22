@@ -274,7 +274,15 @@ async function sendEmail({
   attachments: Array<{ filename: string; content: string }>;
 }) {
   const from = process.env.REPORT_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <reports@logivn.com>";
-  return sendTransactionalEmail({ from, to, subject, html, attachments });
+  return sendTransactionalEmail({
+    from,
+    to,
+    subject,
+    html,
+    attachments,
+    category: "operational_report",
+    preferenceUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "https://logivn.com"}/dashboard/settings#email-reports`
+  });
 }
 
 export async function getReportScheduleForRestaurant(restaurantId: string, fallbackEmail: string) {

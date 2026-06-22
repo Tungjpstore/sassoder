@@ -3,8 +3,7 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { useDialogFocusTrap } from "@/components/dashboard/dialog-focus";
-import { useDashboardOverlay } from "@/components/dashboard/use-dashboard-overlay";
+import { useDashboardOverlay, useDialogFocusTrap } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { fontVars } from "@/components/landing-v2/fonts";
 import { cn } from "@/lib/utils";
 

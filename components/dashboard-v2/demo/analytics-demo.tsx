@@ -6,7 +6,7 @@ import { Toolbar, FilterTabs } from "../workspace-ui";
 import { MetricCard, Badge } from "../primitives";
 import { Button } from "../button";
 import { AreaChart, BarChart, DonutChart, type Point } from "../charts";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { fmtVnd } from "./data";
 import { cn } from "@/lib/utils";
 

@@ -50,7 +50,7 @@ import {
 } from "@/app/dashboard/actions/staff";
 import { useStaffMobileRealtime } from "@/features/staff/components/mobile/use-staff-mobile-realtime";
 import { uploadStaffMemberAvatar } from "@/features/staff/api/client";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { staffPermissionLabel } from "@/lib/staff-permissions";
 import { isStaffRecentlyActive, describeTodayAttendance, describeRole, MetricStrip, StatusPill, StaffIdentityCard } from "@/features/staff/ui";
 import { cn } from "@/lib/utils";

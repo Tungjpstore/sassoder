@@ -1334,7 +1334,7 @@ const LogibotSidebarToggle = forwardRef<HTMLButtonElement, LogibotSidebarToggleP
         onClick={handleClick}
         disabled={disabled}
         className={cn(
-          "fixed bottom-[calc(var(--dashboard-mobile-floating-bottom,5.75rem)+0.25rem)] z-[var(--z-dashboard-panel)] inline-flex h-14 items-center gap-3 rounded-full border px-2 pr-4 font-bold transition-all duration-300 hover:-translate-y-1 active:scale-95 md:bottom-5",
+          "fixed bottom-[var(--dashboard-mobile-floating-bottom,5.85rem)] z-[var(--z-dashboard-panel,60)] inline-flex h-14 w-14 items-center justify-center gap-3 rounded-full border p-0 font-bold transition-all duration-300 hover:-translate-y-1 active:scale-95 sm:w-auto sm:justify-start sm:px-2 sm:pr-4 md:bottom-5",
           placement === "left"
             ? "left-4 md:left-[calc(var(--d-sidebar-w,232px)+1rem)] lg:left-[calc(var(--d-sidebar-w,232px)+1.25rem)]"
             : "right-4 md:right-5",

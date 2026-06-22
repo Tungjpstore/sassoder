@@ -7,7 +7,7 @@ import { MetricCard, EmptyState, Badge } from "../primitives";
 import { OrderDetailDrawer, type OrderDetail } from "../order-detail-drawer";
 import { Button } from "../button";
 import { Modal } from "../overlay";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import type { FloorTable } from "../maps";
 import { fmtVnd } from "./data";
 import { cn } from "@/lib/utils";

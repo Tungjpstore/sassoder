@@ -1,5 +1,5 @@
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
-import { AnalyticsExportActions } from "@/components/dashboard/analytics-export-actions";
+import { AnalyticsExportActionsV2 } from "@/components/dashboard-v2/real/analytics/export-actions-v2";
 import { RealAnalyticsWorkspaceV2 } from "@/components/dashboard-v2/real/analytics-workspace-v2";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { getAdminReport } from "@/services/dashboard-report-service";
@@ -35,7 +35,7 @@ export default async function AdminAnalyticsPage({
       entitlement={entitlement}
       subtitle="Theo dõi hiệu quả kinh doanh, món bán chạy và xu hướng hoạt động"
     >
-      <AnalyticsExportActions />
+      <AnalyticsExportActionsV2 />
       <RealAnalyticsWorkspaceV2 report={report} restaurantId={session.restaurantId} period={period} />
     </AdminShell>
   );

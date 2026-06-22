@@ -28,9 +28,9 @@ import { Badge, EmptyState, MetricCard } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Drawer } from "../overlay";
-import { OnlineOrderingActions } from "@/components/dashboard/online-ordering-actions";
+import { OnlineOrderingActionsV2 } from "@/components/dashboard-v2/real/online/online-ordering-actions-v2";
 import { StoreDeliveryMapPreview } from "@/components/maps/store-delivery-map-preview";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";
 import { deliveryStatusLabel, orderStatusLabel, paymentStatusLabel } from "@/lib/labels";
@@ -305,7 +305,7 @@ export function RealOnlineWorkspaceV2({
                 {onlineUrl}
               </code>
             </div>
-            <OnlineOrderingActions onlineUrl={onlineUrl} restaurantName={restaurant.name} qrSrc={qrSrc} />
+            <OnlineOrderingActionsV2 onlineUrl={onlineUrl} restaurantName={restaurant.name} qrSrc={qrSrc} />
             <StoreDeliveryMapPreview
               latitude={restaurant.store_lat}
               longitude={restaurant.store_lng}

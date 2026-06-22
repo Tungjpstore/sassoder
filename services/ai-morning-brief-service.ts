@@ -278,7 +278,9 @@ async function sendMorningBriefEmail(input: {
     from,
     to: input.recipients,
     subject: `LogiVN AI Morning Brief - ${input.restaurantName}`,
-    html: buildMorningBriefEmailHtml(input)
+    html: buildMorningBriefEmailHtml(input),
+    category: "operational_report",
+    preferenceUrl: `${process.env.NEXT_PUBLIC_APP_URL ?? "https://logivn.com"}/dashboard/ai-ops#morning-brief`
   });
 }
 

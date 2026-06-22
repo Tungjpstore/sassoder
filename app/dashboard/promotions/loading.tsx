@@ -1,5 +1,5 @@
-import { DashboardRouteLoading } from "@/components/dashboard/dashboard-route-loading";
+import { DashboardRouteLoadingV2 } from "@/components/dashboard-v2/route-loading";
 
 export default function PromotionsLoading() {
-  return <DashboardRouteLoading />;
+  return <DashboardRouteLoadingV2 />;
 }

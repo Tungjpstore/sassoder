@@ -117,6 +117,9 @@
   --d-safe-left: env(safe-area-inset-left, 0px);
   --d-bottomnav-h: 72px;
   --d-heroclock-h: 168px;
+  --dashboard-mobile-nav-height: calc(var(--d-bottomnav-h) + env(safe-area-inset-bottom));
+  --dashboard-mobile-floating-bottom: calc(var(--dashboard-mobile-nav-height) + 0.85rem);
+  --dashboard-mobile-content-bottom: calc(var(--dashboard-mobile-nav-height) + 1rem);
 
   /* ---- Z-index (tái dùng thang cũ) ---- */
   --d-z-shell: 40;
@@ -125,6 +128,7 @@
   --d-z-modal: 100;
   --d-z-toast: 200;
   --d-z-confirm: 220;
+  --z-dashboard-panel: var(--d-z-popover);
 }
 
 /* ---- Base ---- */
@@ -146,6 +150,7 @@
   --surface: var(--d-surface);
   --surface-2: var(--d-surface-2);
   --surface-3: var(--d-surface-3);
+  --soft-surface: var(--d-surface-2);
   --dashboard-shell: var(--d-shell);
   --dashboard-panel: var(--d-surface);
   --border: var(--d-line);
@@ -160,7 +165,6 @@
   --z-dashboard-toast: var(--d-z-toast);
   --z-dashboard-shell: var(--d-z-shell);
   --admin-content-max: 1180px;
-  --dashboard-mobile-content-bottom: calc(var(--d-s-10) + env(safe-area-inset-bottom));
 }
 [data-dash="v2"] *,
 [data-dash="v2"] *::before,

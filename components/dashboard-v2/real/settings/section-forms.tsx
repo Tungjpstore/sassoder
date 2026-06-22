@@ -46,11 +46,13 @@ import {
   updateReportScheduleAction,
   updateRestaurantSettingsAction
 } from "@/app/dashboard/actions";
-import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-controls";
-import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
-import { OrderingSettingsForm } from "@/components/dashboard/ordering-settings-form";
-import { TelegramConnectPanel } from "@/components/dashboard/telegram-connect-panel";
-import { useToast } from "@/components/dashboard/toast-provider";
+import {
+  BranchDeliveryControls,
+  MapOperationalMetricsPanel,
+  OrderingSettingsForm,
+  TelegramConnectPanel
+} from "@/components/dashboard-v2/real/settings/adapters/settings-legacy-adapters";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import type { ReportScheduleSettings, listRecentReportLogs } from "@/services/report-schedule-service";
 import type { listStoreBranchesForManagement } from "@/services/branch-service";
 import type { BranchDeliverySettings } from "@/services/delivery/branch-delivery-settings-service";

@@ -6,6 +6,7 @@ const onboardingActionSource = readFileSync("app/dashboard/actions/onboarding.ts
 const authActionSource = readFileSync("app/dashboard/actions/auth.ts", "utf8");
 const legacyOnboardingFormSource = readFileSync("components/dashboard/onboarding-form.tsx", "utf8");
 const onboardingFlowSource = readFileSync("components/dashboard/restaurant-onboarding-flow.tsx", "utf8");
+const onboardingFlowV2Source = readFileSync("components/dashboard-v2/onboarding/restaurant-onboarding-flow-v2.tsx", "utf8");
 const restaurantServiceSource = readFileSync("services/restaurant-service.ts", "utf8");
 const planFeaturesSource = readFileSync("services/billing/plan-features.ts", "utf8");
 const hardeningMigration = readFileSync("supabase/migrations/20260602094500_harden_onboarding_plan_limits.sql", "utf8");
@@ -66,8 +67,9 @@ test("database v2 cardinality entitlements are upserted for cutover safety", () 
 });
 
 test("onboarding UIs clamp table count to the selected plan limit", () => {
-  assert.match(onboardingFlowSource, /getOnboardingTableLimit/);
-  assert.match(onboardingFlowSource, /Math\.min\(nextTableLimit/);
+  assert.match(onboardingFlowSource, /RestaurantOnboardingFlowV2 as RestaurantOnboardingFlow/);
+  assert.match(onboardingFlowV2Source, /getOnboardingTableLimit/);
+  assert.match(onboardingFlowV2Source, /Math\.min\(nextTableLimit/);
   assert.match(legacyOnboardingFormSource, /getOnboardingTableLimit/);
   assert.match(legacyOnboardingFormSource, /tableCount: 20/);
   assert.match(legacyOnboardingFormSource, /selectedTableLimit/);

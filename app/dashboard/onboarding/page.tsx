@@ -1,4 +1,4 @@
-import { RestaurantOnboardingFlow } from "@/components/dashboard/restaurant-onboarding-flow";
+import { RestaurantOnboardingFlowV2 } from "@/components/dashboard-v2/onboarding/restaurant-onboarding-flow-v2";
 import { requireOnboardingUserForPath } from "@/lib/session";
 import { getPublicActivePlans } from "@/services/subscription-service";
 
@@ -18,5 +18,5 @@ export default async function AdminOnboardingPage({
   const onboardingPath = `/dashboard/onboarding?plan=${encodeURIComponent(normalizePlan(params?.plan))}`;
   const [user, plans] = await Promise.all([requireOnboardingUserForPath(onboardingPath), getPublicActivePlans()]);
 
-  return <RestaurantOnboardingFlow email={user.email ?? ""} initialPlanCode={normalizePlan(params?.plan)} plans={plans} />;
+  return <RestaurantOnboardingFlowV2 email={user.email ?? ""} initialPlanCode={normalizePlan(params?.plan)} plans={plans} />;
 }

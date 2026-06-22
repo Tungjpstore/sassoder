@@ -18,9 +18,20 @@ test("auth email delivery reports configured when Resend is present", () => {
   assert.equal(assertAuthEmailDeliveryConfigured({ RESEND_API_KEY: " re_test_key " }), "resend");
 });
 
-test("auth email delivery reports configured when SES is present", () => {
+test("auth email delivery blocks SES until production access is confirmed", () => {
   const env = {
     EMAIL_PROVIDER: "ses",
+    AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
+    AWS_SES_SECRET_ACCESS_KEY: "secret"
+  };
+  assert.equal(isAuthEmailDeliveryConfigured(env), false);
+  assert.equal(getAuthEmailDeliveryStatus(env), "delivery_unavailable");
+});
+
+test("auth email delivery reports configured when confirmed SES is present", () => {
+  const env = {
+    EMAIL_PROVIDER: "ses",
+    SES_PRODUCTION_ACCESS_CONFIRMED: "true",
     AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
     AWS_SES_SECRET_ACCESS_KEY: "secret"
   };

@@ -1,5 +1,5 @@
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
-import { LogibotAiWorkspace, type LogibotWorkspaceData } from "@/components/dashboard/logibot-ai-workspace";
+import { LogibotAiWorkspaceV2, type LogibotWorkspaceData } from "@/components/dashboard-v2/real/logibot/logibot-ai-workspace-v2";
 import { buildCopilotThreadId } from "@/lib/ai/copilot-thread";
 import { requireDashboardAdminAccess } from "@/lib/dashboard-access";
 import { listActiveStoreBranches } from "@/services/branch-service";
@@ -39,7 +39,7 @@ export default async function LogibotAiPage() {
       showQuickActionsFab={false}
       showDashboardCopilot={false}
     >
-      <LogibotAiWorkspace workspace={workspace} />
+      <LogibotAiWorkspaceV2 workspace={workspace} />
     </AdminShell>
   );
 }

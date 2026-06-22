@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { DashboardAssetIcon } from "@/components/dashboard/dashboard-icon-assets";
+import { DashboardAssetIcon } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { cn } from "@/lib/utils";
 import type { getRestaurantEntitlement } from "@/services/subscription-service";
 import { navGroups, isNavActive, resolveHref, type NavLink } from "./nav-config";

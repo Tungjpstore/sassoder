@@ -10,7 +10,7 @@ import { Button } from "../button";
 import { Drawer } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { getDashboardActionErrorToast, resolveDashboardActionToast } from "@/lib/dashboard/order-actions";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { inferManualConfirmationMethod } from "@/lib/payments/manual-confirmation";

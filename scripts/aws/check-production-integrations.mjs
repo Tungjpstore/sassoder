@@ -120,12 +120,15 @@ function checkSqs(env) {
 function checkSes(env) {
   const provider = clean(env, "EMAIL_PROVIDER") || "resend/default";
   const sesGaps = missing(env, ["AWS_SES_REGION", "AWS_SES_ACCESS_KEY_ID", "AWS_SES_SECRET_ACCESS_KEY", "AWS_SES_IDENTITY"]);
+  const productionConfirmed = ["1", "true", "yes"].includes((clean(env, "SES_PRODUCTION_ACCESS_CONFIRMED") || clean(env, "AWS_SES_PRODUCTION_ACCESS_CONFIRMED")).toLowerCase());
+  const ready = provider === "ses" && productionConfirmed && sesGaps.length === 0;
   return {
     name: "SES email",
-    status: provider === "ses" && sesGaps.length === 0 ? "ready" : provider === "ses" ? "blocked" : "warn",
-    summary: provider === "ses" && sesGaps.length === 0 ? "SES config is present; still verify account production access before cutover." : "SES is not the safe production email path right now.",
+    status: ready ? "ready" : provider === "ses" ? "blocked" : "warn",
+    summary: ready ? "SES config and production-access confirmation are present." : "SES is not the safe production email path right now.",
     details: [
       `EMAIL_PROVIDER: ${provider}`,
+      `production access confirmed flag: ${productionConfirmed}`,
       sesGaps.length ? `missing/empty: ${sesGaps.join(", ")}` : "SES env present (values redacted)",
       "current AWS Support response denied SES production access; keep Resend/BillionMail until appeal is approved"
     ]

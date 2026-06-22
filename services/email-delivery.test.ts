@@ -15,6 +15,7 @@ test("resolveEmailDeliveryConfig prefers Resend when both providers are implicit
 test("resolveEmailDeliveryConfig supports explicit SES", () => {
   const config = resolveEmailDeliveryConfig({
     EMAIL_PROVIDER: "ses",
+    SES_PRODUCTION_ACCESS_CONFIRMED: "true",
     AWS_SES_REGION: "ap-southeast-1",
     AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
     AWS_SES_SECRET_ACCESS_KEY: "secret"
@@ -27,7 +28,19 @@ test("resolveEmailDeliveryConfig supports explicit SES", () => {
 });
 
 test("resolveEmailDeliveryConfig returns null when explicit SES lacks credentials", () => {
-  assert.equal(resolveEmailDeliveryConfig({ EMAIL_PROVIDER: "ses", AWS_SES_REGION: "us-east-1" }), null);
+  assert.equal(resolveEmailDeliveryConfig({ EMAIL_PROVIDER: "ses", SES_PRODUCTION_ACCESS_CONFIRMED: "true", AWS_SES_REGION: "us-east-1" }), null);
+});
+
+test("resolveEmailDeliveryConfig blocks SES until production access is confirmed", () => {
+  assert.equal(
+    resolveEmailDeliveryConfig({
+      EMAIL_PROVIDER: "ses",
+      AWS_SES_REGION: "us-east-1",
+      AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
+      AWS_SES_SECRET_ACCESS_KEY: "secret"
+    }),
+    null
+  );
 });
 
 test("sendTransactionalEmail posts to Resend", async () => {
@@ -42,7 +55,8 @@ test("sendTransactionalEmail posts to Resend", async () => {
       from: "LogiVN <no-reply@example.com>",
       to: ["owner@example.com"],
       subject: "OTP",
-      text: "123456"
+      text: "123456",
+      category: "auth_security"
     },
     { env: { RESEND_API_KEY: "re_test", RESEND_BASE_URL: "https://resend.test" }, fetchImpl }
   );
@@ -55,6 +69,66 @@ test("sendTransactionalEmail posts to Resend", async () => {
   const body = JSON.parse(String(request.init?.body));
   assert.deepEqual(body.to, ["owner@example.com"]);
   assert.equal(body.text, "123456");
+  assert.equal(body.headers["X-LogiVN-Email-Category"], "auth_security");
+  assert.deepEqual(body.tags, [{ name: "category", value: "auth_security" }]);
+});
+
+test("sendTransactionalEmail blocks fully suppressed recipients", async () => {
+  await assert.rejects(
+    () =>
+      sendTransactionalEmail(
+        {
+          from: "LogiVN <reports@example.com>",
+          to: ["blocked@example.com"],
+          subject: "Report",
+          text: "Daily report",
+          category: "operational_report"
+        },
+        { env: { RESEND_API_KEY: "re_test", EMAIL_SUPPRESSION_LIST: "blocked@example.com" }, fetchImpl: async () => new Response("{}", { status: 200 }) }
+      ),
+    /suppression list/
+  );
+});
+
+test("sendTransactionalEmail requires unsubscribe for marketing", async () => {
+  await assert.rejects(
+    () =>
+      sendTransactionalEmail(
+        {
+          from: "LogiVN <hello@example.com>",
+          to: ["lead@example.com"],
+          subject: "Update",
+          text: "Hello",
+          category: "marketing"
+        },
+        { env: { RESEND_API_KEY: "re_test" }, fetchImpl: async () => new Response("{}", { status: 200 }) }
+      ),
+    /unsubscribe URL/
+  );
+});
+
+test("sendTransactionalEmail adds preference footer for optional email", async () => {
+  const requests: Array<{ url: string; init?: RequestInit }> = [];
+  const fetchImpl: typeof fetch = async (url, init) => {
+    requests.push({ url: String(url), init });
+    return new Response(JSON.stringify({ id: "email_456" }), { status: 200 });
+  };
+
+  await sendTransactionalEmail(
+    {
+      from: "LogiVN <reports@example.com>",
+      to: ["owner@example.com"],
+      subject: "Daily report",
+      html: "<p>Report</p>",
+      category: "operational_report",
+      preferenceUrl: "https://logivn.com/dashboard/settings#email"
+    },
+    { env: { RESEND_API_KEY: "re_test", RESEND_BASE_URL: "https://resend.test" }, fetchImpl }
+  );
+
+  const body = JSON.parse(String(requests[0]?.init?.body));
+  assert.match(body.html, /quản lý tuỳ chọn email/);
+  assert.equal(body.headers["X-LogiVN-Preference-URL"], "https://logivn.com/dashboard/settings#email");
 });
 
 test("sendTransactionalEmail signs and posts SES raw email payload", async () => {
@@ -75,6 +149,7 @@ test("sendTransactionalEmail signs and posts SES raw email payload", async () =>
     {
       env: {
         EMAIL_PROVIDER: "ses",
+        SES_PRODUCTION_ACCESS_CONFIRMED: "true",
         AWS_SES_REGION: "us-east-1",
         AWS_SES_ACCESS_KEY_ID: "AKIA_TEST",
         AWS_SES_SECRET_ACCESS_KEY: "secret"

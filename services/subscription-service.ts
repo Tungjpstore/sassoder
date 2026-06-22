@@ -6,14 +6,17 @@ import { isSubscriptionUsable } from "@/lib/billing/subscription-transitions";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import type { BillingFeatureKey, QuotaDimension, QuotaWindow } from "@/lib/billing/types";
+import type { BillingPlanCode } from "@/lib/billing/types";
 import {
   daysUntil,
   firstOrNull,
   getQuotaPeriod,
-  isMissingSchemaError
+  isMissingSchemaError,
+  normalizeBillingPlanCode
 } from "./billing/billing-utils";
+import { readBillingV2Bridge } from "./billing/billing-v2-bridge";
 import { getRestaurantBillingPortal as runGetRestaurantBillingPortal } from "./billing/billing-portal";
-import type { PlanRow, SubscriptionRow } from "./billing/billing-types";
+import type { BillingV2SubscriptionRow, PlanRow, SubscriptionRow } from "./billing/billing-types";
 import { createSubscriptionPaymentRequest as runCreateSubscriptionPaymentRequest } from "./billing/payment-request";
 import {
   confirmSubscriptionPayment as runConfirmSubscriptionPayment,
@@ -35,6 +38,7 @@ import {
   featureLabels,
   getFallbackCapabilityMap,
   normalizeFeatureKey,
+  planFeatureKeys,
   planFeatureLabels,
   type PlanFeatureKey,
   type PlanFeatureState
@@ -54,8 +58,38 @@ type RestaurantFeatureOverrideRow = PlanCapabilityRow & {
   expires_at: string | null;
 };
 
+type PlanEntitlementRow = {
+  feature_key: string;
+  access_mode: "active" | "locked_plan" | "quota" | "trial";
+  limit_value: number | null;
+};
+
 const entitlementCache = new Map<string, { expiresAt: number; value: Awaited<ReturnType<typeof readRestaurantEntitlement>> }>();
 const entitlementCacheTtlMs = 15_000;
+
+function applyPremiumFallbackGuarantees(
+  capabilities: Record<PlanFeatureKey, PlanFeatureState>,
+  planCode?: string | null
+) {
+  if (planCode !== "premium") return capabilities;
+  const premiumFallback = getFallbackCapabilityMap("premium");
+
+  for (const featureKey of planFeatureKeys) {
+    const guaranteed = premiumFallback[featureKey];
+    if (!guaranteed.enabled || capabilities[featureKey]?.enabled) continue;
+    capabilities[featureKey] = {
+      enabled: true,
+      limitValue: capabilities[featureKey]?.limitValue ?? guaranteed.limitValue,
+      source: "fallback"
+    };
+  }
+
+  return capabilities;
+}
+
+function accessModeToEnabled(accessMode: PlanEntitlementRow["access_mode"]) {
+  return accessMode !== "locked_plan";
+}
 
 async function getEffectiveCapabilities({
   planId,
@@ -95,6 +129,8 @@ async function getEffectiveCapabilities({
       };
     }
 
+    applyPremiumFallbackGuarantees(capabilities, planCode);
+
     if (overrideResult.error) {
       if (!isMissingSchemaError(overrideResult.error)) throw overrideResult.error;
       return capabilities;
@@ -114,6 +150,92 @@ async function getEffectiveCapabilities({
   }
 
   return capabilities;
+}
+
+async function getEffectiveBillingV2Capabilities({
+  planId,
+  restaurantId,
+  planCode
+}: {
+  planId: string;
+  restaurantId: string;
+  planCode: BillingPlanCode;
+}) {
+  const supabase = createAdminSupabaseClient() as any;
+  const capabilities = getFallbackCapabilityMap(planCode);
+
+  try {
+    const now = new Date().toISOString();
+    const [entitlementResult, overrideResult] = await Promise.all([
+      supabase
+        .from("plan_entitlements")
+        .select("feature_key,access_mode,limit_value")
+        .eq("plan_id", planId)
+        .is("deleted_at", null),
+      supabase
+        .from("restaurant_feature_overrides")
+        .select("feature_key,enabled,limit_value,expires_at")
+        .eq("restaurant_id", restaurantId)
+        .or(`expires_at.is.null,expires_at.gt.${now}`)
+    ]);
+
+    if (entitlementResult.error) {
+      if (!isMissingSchemaError(entitlementResult.error)) throw entitlementResult.error;
+      return applyPremiumFallbackGuarantees(capabilities, planCode);
+    }
+
+    for (const row of (entitlementResult.data ?? []) as PlanEntitlementRow[]) {
+      const featureKey = normalizeFeatureKey(row.feature_key);
+      if (!featureKey) continue;
+      capabilities[featureKey] = {
+        enabled: accessModeToEnabled(row.access_mode),
+        limitValue: row.limit_value ?? capabilities[featureKey].limitValue,
+        source: "plan"
+      };
+    }
+
+    applyPremiumFallbackGuarantees(capabilities, planCode);
+
+    if (overrideResult.error) {
+      if (!isMissingSchemaError(overrideResult.error)) throw overrideResult.error;
+      return capabilities;
+    }
+
+    for (const row of (overrideResult.data ?? []) as RestaurantFeatureOverrideRow[]) {
+      const featureKey = normalizeFeatureKey(row.feature_key);
+      if (!featureKey) continue;
+      capabilities[featureKey] = {
+        enabled: row.enabled,
+        limitValue: row.limit_value ?? capabilities[featureKey].limitValue,
+        source: "override"
+      };
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV === "production") throw error;
+  }
+
+  return capabilities;
+}
+
+function getBillingV2AccessEnd(subscription: BillingV2SubscriptionRow) {
+  return subscription.current_period_end || subscription.trial_ends_at || subscription.grace_ends_at || null;
+}
+
+function isBillingV2SubscriptionUsable(subscription: BillingV2SubscriptionRow, now = new Date()) {
+  const accessEnd = getBillingV2AccessEnd(subscription);
+  const hasCurrentWindow = accessEnd ? new Date(accessEnd).getTime() >= now.getTime() : true;
+
+  if (subscription.status === "active" || subscription.status === "trialing") return hasCurrentWindow;
+  if (subscription.status === "pending_payment") return Boolean(accessEnd) && hasCurrentWindow;
+  if (subscription.status === "grace") {
+    const graceEndsAt = subscription.grace_ends_at ?? null;
+    return Boolean(graceEndsAt) && new Date(graceEndsAt as string).getTime() >= now.getTime();
+  }
+  return false;
+}
+
+function billingV2StatusCode(subscription: BillingV2SubscriptionRow) {
+  return subscription.status === "suspended" ? 403 : 402;
 }
 
 export async function getResolvedBillingEntitlementSnapshotForRestaurant({
@@ -269,7 +391,7 @@ export async function recordBillingUsageEvent({
 
 async function readRestaurantEntitlement(restaurantId: string) {
   const supabase = createAdminSupabaseClient() as any;
-  const [restaurantResult, subscriptionResult] = await Promise.all([
+  const [restaurantResult, subscriptionResult, billingV2] = await Promise.all([
     supabase
       .from("restaurants")
       .select("id,platform_status,suspended_at,deleted_at")
@@ -282,7 +404,8 @@ async function readRestaurantEntitlement(restaurantId: string) {
       .in("status", ["trialing", "pending_payment", "active", "past_due", "suspended", "cancelled", "expired"])
       .order("created_at", { ascending: false })
       .limit(1)
-      .maybeSingle()
+      .maybeSingle(),
+    readBillingV2Bridge(restaurantId)
   ]);
 
   const { data: restaurant, error: restaurantError } = restaurantResult;
@@ -325,6 +448,50 @@ async function readRestaurantEntitlement(restaurantId: string) {
   const { data: subscription, error: subscriptionError } = subscriptionResult;
 
   if (subscriptionError) throw subscriptionError;
+  if (billingV2?.subscription?.id && billingV2.plan?.id) {
+    const v2Subscription = billingV2.subscription;
+    const v2Allowed = isBillingV2SubscriptionUsable(v2Subscription);
+    const shouldPreferBillingV2 = v2Allowed || !subscription || v2Subscription.status === "suspended";
+    if (shouldPreferBillingV2) {
+      const v2PlanCode = normalizeBillingPlanCode(billingV2.plan.code);
+      const periodEnd = getBillingV2AccessEnd(v2Subscription);
+      const daysLeft = v2Allowed ? daysUntil(periodEnd) : 0;
+      const features = await getEffectiveBillingV2Capabilities({
+        planId: billingV2.plan.id,
+        restaurantId,
+        planCode: v2PlanCode
+      });
+
+      return {
+        allowed: v2Allowed,
+        statusCode: v2Allowed ? 200 : billingV2StatusCode(v2Subscription),
+        reason: v2Allowed
+          ? null
+          : v2Subscription.status === "pending_payment"
+            ? "Gói LogiVN đang chờ xác minh thanh toán và không còn kỳ sử dụng hợp lệ. Vui lòng hoàn tất gia hạn để tiếp tục vận hành."
+            : v2Subscription.status === "suspended"
+              ? "Gói LogiVN đang bị tạm dừng. Vui lòng liên hệ LogiVN để mở lại."
+              : "Gói LogiVN đã hết hạn hoặc không còn khả dụng. Vui lòng gia hạn để tiếp tục dùng tính năng vận hành.",
+        restaurantStatus,
+        subscriptionStatus: v2Subscription.status === "grace" ? "past_due" as const : v2Subscription.status,
+        subscriptionId: v2Subscription.id,
+        planId: billingV2.plan.id,
+        planCode: v2PlanCode,
+        planName: billingV2.plan.name,
+        currentPeriodEnd: v2Subscription.current_period_end,
+        trialEndsAt: v2Subscription.trial_ends_at,
+        periodEnd,
+        daysLeft,
+        features,
+        warning: buildSubscriptionExpiryWarning({
+          allowed: v2Allowed,
+          pendingButStillUsable: v2Subscription.status === "pending_payment" && v2Allowed,
+          daysLeft
+        })
+      };
+    }
+  }
+
   if (!subscription) {
     return {
       allowed: false,

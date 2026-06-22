@@ -33,7 +33,7 @@ import {
   togglePromotionDisplayAction,
   updatePromotionAction
 } from "@/app/dashboard/actions";
-import { ConfirmActionButton } from "@/components/dashboard/confirm-action-button";
+import { ConfirmActionButton } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { Badge, EmptyState, MetricCard } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";

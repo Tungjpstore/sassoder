@@ -69,6 +69,7 @@
 - Chạy `npm run aws:production:check -- --env-file=/tmp/logivn-production.env` sau khi pull Vercel production env để kiểm tra Textract, S3, SQS, SES và Lambda candidate mà không in secret ra terminal.
 - Tại thời điểm cập nhật này, AWS Support case `178190906800099` đã từ chối SES production access lần đầu. Không đổi `EMAIL_PROVIDER=ses` cho production cho đến khi AWS duyệt lại; giữ Resend hoặc hạ tầng mail hiện tại cho email xác thực/báo cáo.
 - SES domain/DKIM `logivn.com` verified không đồng nghĩa với account đã rời sandbox hoặc có sending limit production.
+- Sau phản hồi deny tiếp theo từ AWS, không nên appeal SES lặp lại ngay. Theo kế hoạch `docs/ses-production-readiness-plan.md`: xây public policy, preference/unsubscribe, suppression/bounce handling, warm-up 14-30 ngày và evidence package trước khi xin lại.
 - SQS/S3/Textract chỉ được coi là production-ready khi env có giá trị thật và smoke tương ứng pass. Việc Vercel hiển thị biến `Encrypted` chưa đủ để kết luận runtime đọc được giá trị.
 - Setup/tooling only:
   - `SUPABASE_PROJECT_REF`

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { DashboardAssetIcon } from "@/components/dashboard/dashboard-icon-assets";
+import { DashboardAssetIcon } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { cn } from "@/lib/utils";
 import type { getRestaurantEntitlement } from "@/services/subscription-service";
 import { Sheet } from "./overlay";
@@ -39,7 +39,8 @@ export function DashboardMobileNav({ entitlement: _entitlement, basePath = "" }:
   }, []);
 
   useEffect(() => {
-    setOpen(false);
+    const timer = window.setTimeout(() => setOpen(false), 0);
+    return () => window.clearTimeout(timer);
   }, [pathname]);
 
   return (

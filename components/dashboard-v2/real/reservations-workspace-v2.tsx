@@ -16,8 +16,8 @@ import { MetricCard, EmptyState, Badge } from "../primitives";
 import { Button } from "../button";
 import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
-import { ReservationsWorkspace } from "@/components/dashboard/reservations-workspace";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { ReservationsWorkbenchV2 } from "@/components/dashboard-v2/real/reservations/adapters/legacy-reservations-workbench";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { formatVnd } from "@/lib/money";
@@ -26,8 +26,8 @@ import { cn } from "@/lib/utils";
 import type { ReservationAnalytics } from "@/services/reservation-analytics";
 import type { ReservationDto } from "@/types/domain";
 
-type ReservationSettings = Parameters<typeof ReservationsWorkspace>[0]["settings"];
-type ReservationTableOption = Parameters<typeof ReservationsWorkspace>[0]["tableOptions"][number];
+type ReservationSettings = Parameters<typeof ReservationsWorkbenchV2>[0]["settings"];
+type ReservationTableOption = Parameters<typeof ReservationsWorkbenchV2>[0]["tableOptions"][number];
 
 type Props = {
   restaurantId: string;
@@ -269,7 +269,7 @@ export function RealReservationsWorkspaceV2(props: Props) {
         contentClassName="px-2 sm:px-3"
       >
         <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-3)]">
-          <ReservationsWorkspace {...props} />
+          <ReservationsWorkbenchV2 {...props} />
         </div>
       </Drawer>
 

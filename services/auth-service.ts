@@ -84,7 +84,9 @@ async function sendAuthOtpEmail({
         to: [to],
         subject: email.subject,
         html: email.html,
-        text: email.text
+        text: email.text,
+        category: "auth_security",
+        metadata: { purpose }
       },
       { signal: AbortSignal.timeout(12_000) }
     );

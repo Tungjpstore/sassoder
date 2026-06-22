@@ -35,9 +35,8 @@ import {
   type DeliveryAreaPoint
 } from "@/components/maps/delivery-area-editor";
 import { StoreLocationPicker } from "@/components/maps/store-location-picker";
-import { BranchDeliveryControls } from "@/components/dashboard/branch-delivery-controls";
-import { MapOperationalMetricsPanel } from "@/components/dashboard/map-operational-metrics-panel";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { BranchDeliveryControls, MapOperationalMetricsPanel } from "@/components/dashboard-v2/real/settings/adapters/settings-legacy-adapters";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { Badge, Panel, SwitchControl } from "@/components/dashboard-v2/primitives";
 import { Button } from "@/components/dashboard-v2/button";
 import { formatVnd } from "@/lib/money";

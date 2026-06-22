@@ -4,7 +4,7 @@
  * ============================================================ */
 
 import type { PlanFeatureKey } from "@/services/subscription-service";
-import type { DashboardIconId } from "@/components/dashboard/dashboard-icon-assets";
+import type { DashboardIconId } from "@/components/dashboard-v2/adapters/dashboard-shared";
 
 export type NavLink = {
   href: string;

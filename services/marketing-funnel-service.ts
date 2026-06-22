@@ -85,7 +85,9 @@ async function maybeSendWaitlistNotification({
       from,
       to: [to],
       subject,
-      text
+      text,
+      category: "platform_admin",
+      metadata: { source, variant }
     },
     { signal: AbortSignal.timeout(8_000) }
   ).catch((error) => {

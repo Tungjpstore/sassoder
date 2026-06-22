@@ -13,7 +13,7 @@ import { Check, ImageIcon, Loader2, Mic, RefreshCw, ScanText, Sparkles, Upload, 
 import { Button } from "../../button";
 import { Modal } from "../../overlay";
 import { Badge } from "../../primitives";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { importMenuOcrItemsAction } from "@/app/dashboard/actions/menu";
 import type { AdminMenuCategory } from "@/services/menu-service";
 import { cn } from "@/lib/utils";

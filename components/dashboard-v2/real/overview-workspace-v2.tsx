@@ -29,7 +29,7 @@ import { Drawer } from "../overlay";
 import { Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { RealtimeStatusBadge, type RealtimeState } from "../realtime";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";

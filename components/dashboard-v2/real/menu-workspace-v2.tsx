@@ -27,7 +27,7 @@ import { Drawer, Modal } from "../overlay";
 import { RealtimeStatusBadge } from "../realtime";
 import { AiImageStudio, MenuAiImportModal, type MenuAiAccess } from "./menu/menu-ai";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import {
   createCategoryAction,
   createMenuItemAction,

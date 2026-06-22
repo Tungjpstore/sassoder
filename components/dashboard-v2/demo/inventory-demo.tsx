@@ -6,7 +6,7 @@ import { FilterTabs, Toolbar, DataTable, type Column } from "../workspace-ui";
 import { MetricCard, Badge, EmptyState } from "../primitives";
 import { Button } from "../button";
 import { Drawer } from "../overlay";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { fmtVnd } from "./data";
 
 /* InventoryDemo — kho gắn với vận hành:

@@ -5,6 +5,14 @@ export type EmailDeliveryEnv = Record<string, string | undefined>;
 
 export type EmailDeliveryProvider = "resend" | "ses";
 
+export type EmailCategory =
+  | "auth_security"
+  | "billing_transactional"
+  | "operational_notification"
+  | "operational_report"
+  | "platform_admin"
+  | "marketing";
+
 export type EmailAttachment = {
   filename: string;
   content: string;
@@ -18,6 +26,10 @@ export type SendTransactionalEmailInput = {
   html?: string;
   text?: string;
   attachments?: EmailAttachment[];
+  category?: EmailCategory;
+  preferenceUrl?: string;
+  unsubscribeUrl?: string;
+  metadata?: Record<string, string | number | boolean | null | undefined>;
 };
 
 type SendEmailOptions = {
@@ -53,6 +65,14 @@ function requestedProvider(env: EmailDeliveryEnv) {
   return provider === "ses" || provider === "resend" ? provider : null;
 }
 
+function truthy(value: string | undefined) {
+  return ["1", "true", "yes"].includes(clean(value).toLowerCase());
+}
+
+function sesProductionAccessConfirmed(env: EmailDeliveryEnv) {
+  return truthy(env.SES_PRODUCTION_ACCESS_CONFIRMED || env.AWS_SES_PRODUCTION_ACCESS_CONFIRMED);
+}
+
 function hasSesConfig(env: EmailDeliveryEnv) {
   return Boolean(clean(env.AWS_SES_ACCESS_KEY_ID || env.SES_ACCESS_KEY_ID) && clean(env.AWS_SES_SECRET_ACCESS_KEY || env.SES_SECRET_ACCESS_KEY));
 }
@@ -60,6 +80,7 @@ function hasSesConfig(env: EmailDeliveryEnv) {
 export function resolveEmailDeliveryConfig(env: EmailDeliveryEnv = process.env): EmailDeliveryConfig | null {
   const provider = requestedProvider(env);
   if (provider === "ses" || (!provider && !clean(env.RESEND_API_KEY) && hasSesConfig(env))) {
+    if (!sesProductionAccessConfirmed(env)) return null;
     const accessKeyId = clean(env.AWS_SES_ACCESS_KEY_ID || env.SES_ACCESS_KEY_ID);
     const secretAccessKey = clean(env.AWS_SES_SECRET_ACCESS_KEY || env.SES_SECRET_ACCESS_KEY);
     if (!accessKeyId || !secretAccessKey) return null;
@@ -100,6 +121,75 @@ function jsonErrorMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
+function normalizeEmailAddress(value: string) {
+  return envelopeEmailAddress(value).toLowerCase();
+}
+
+function suppressedRecipients(env: EmailDeliveryEnv, recipients: string[]) {
+  if (clean(env.EMAIL_SUPPRESSION_ENABLED).toLowerCase() === "false") return [];
+  const list = clean(env.EMAIL_SUPPRESSION_LIST || env.TRANSACTIONAL_EMAIL_SUPPRESSION_LIST);
+  if (!list) return [];
+  const suppressed = new Set(list.split(/[\s,;]+/).map((email) => email.trim().toLowerCase()).filter(Boolean));
+  return recipients.filter((recipient) => suppressed.has(normalizeEmailAddress(recipient)));
+}
+
+function category(input: SendTransactionalEmailInput) {
+  return input.category ?? "operational_notification";
+}
+
+function categoryRequiresUnsubscribe(input: SendTransactionalEmailInput) {
+  return category(input) === "marketing";
+}
+
+function isOptionalEmail(input: SendTransactionalEmailInput) {
+  return ["marketing", "operational_report", "operational_notification"].includes(category(input));
+}
+
+function complianceFooter(input: SendTransactionalEmailInput) {
+  if (!isOptionalEmail(input)) return { html: input.html, text: input.text };
+  const preferenceUrl = clean(input.preferenceUrl);
+  const unsubscribeUrl = clean(input.unsubscribeUrl);
+  if (!preferenceUrl && !unsubscribeUrl) return { html: input.html, text: input.text };
+
+  const links = [
+    preferenceUrl ? `<a href="${preferenceUrl}" style="color:#0f4d3a;">quản lý tuỳ chọn email</a>` : "",
+    unsubscribeUrl ? `<a href="${unsubscribeUrl}" style="color:#0f4d3a;">ngừng nhận email này</a>` : ""
+  ].filter(Boolean);
+  const htmlFooter = `<p style="margin-top:24px;color:#64748b;font-size:12px;line-height:1.6;">Bạn nhận email này vì tài khoản hoặc quán của bạn đang bật thông báo trong LogiVN. Bạn có thể ${links.join(" hoặc ")}.</p>`;
+  const textFooter = [
+    "",
+    "Bạn nhận email này vì tài khoản hoặc quán của bạn đang bật thông báo trong LogiVN.",
+    preferenceUrl ? `Quản lý tuỳ chọn email: ${preferenceUrl}` : "",
+    unsubscribeUrl ? `Ngừng nhận email này: ${unsubscribeUrl}` : ""
+  ].filter(Boolean).join("\n");
+
+  return {
+    html: input.html ? `${input.html}${htmlFooter}` : input.html,
+    text: input.text ? `${input.text}${textFooter}` : input.text
+  };
+}
+
+function emailHeaders(input: SendTransactionalEmailInput) {
+  const headers: Record<string, string> = {
+    "X-LogiVN-Email-Category": category(input)
+  };
+  if (input.preferenceUrl) headers["X-LogiVN-Preference-URL"] = input.preferenceUrl;
+  if (input.unsubscribeUrl) headers["List-Unsubscribe"] = `<${input.unsubscribeUrl}>`;
+  if (input.unsubscribeUrl) headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  return headers;
+}
+
+function resendTags(input: SendTransactionalEmailInput) {
+  const metadata = input.metadata ?? {};
+  return [
+    { name: "category", value: category(input) },
+    ...Object.entries(metadata)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .slice(0, 8)
+      .map(([name, value]) => ({ name: name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40), value: String(value).slice(0, 256) }))
+  ];
+}
+
 async function readJson(response: Response) {
   const text = await response.text();
   try {
@@ -110,6 +200,7 @@ async function readJson(response: Response) {
 }
 
 async function sendWithResend(config: ResendConfig, input: SendTransactionalEmailInput, fetchImpl: typeof fetch, signal?: AbortSignal) {
+  const body = complianceFooter(input);
   const response = await fetchImpl(`${config.baseUrl.replace(/\/$/, "")}/emails`, {
     method: "POST",
     headers: {
@@ -120,8 +211,10 @@ async function sendWithResend(config: ResendConfig, input: SendTransactionalEmai
       from: input.from,
       to: input.to,
       subject: input.subject,
-      ...(input.html ? { html: input.html } : {}),
-      ...(input.text ? { text: input.text } : {}),
+      headers: emailHeaders(input),
+      tags: resendTags(input),
+      ...(body.html ? { html: body.html } : {}),
+      ...(body.text ? { text: body.text } : {}),
       ...(input.attachments?.length ? { attachments: input.attachments } : {})
     }),
     signal
@@ -180,9 +273,10 @@ function mimePart(contentType: string, content: string, extraHeaders: string[] =
 
 function buildRawEmail(input: SendTransactionalEmailInput, now: Date) {
   const mixedBoundary = `logivn-mixed-${randomUUID()}`;
-  const body = input.html
-    ? mimePart("text/html; charset=UTF-8", input.html)
-    : mimePart("text/plain; charset=UTF-8", input.text || "");
+  const content = complianceFooter(input);
+  const body = content.html
+    ? mimePart("text/html; charset=UTF-8", content.html)
+    : mimePart("text/plain; charset=UTF-8", content.text || "");
   const attachments = (input.attachments ?? []).map((attachment) => {
     const filename = cleanHeader(attachment.filename || "attachment.bin");
     return [
@@ -200,6 +294,7 @@ function buildRawEmail(input: SendTransactionalEmailInput, now: Date) {
     `To: ${input.to.map(cleanHeader).join(", ")}`,
     `Subject: ${encodeHeader(input.subject)}`,
     `Date: ${now.toUTCString()}`,
+    ...Object.entries(emailHeaders(input)).map(([name, value]) => `${name}: ${cleanHeader(value)}`),
     "MIME-Version: 1.0",
     `Content-Type: multipart/mixed; boundary="${mixedBoundary}"`,
     "",
@@ -258,11 +353,20 @@ async function sendWithSes(config: SesConfig, input: SendTransactionalEmailInput
 }
 
 export async function sendTransactionalEmail(input: SendTransactionalEmailInput, options: SendEmailOptions = {}) {
-  const config = resolveEmailDeliveryConfig(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const config = resolveEmailDeliveryConfig(env);
   if (!config) throw new AppError("Thiếu cấu hình provider gửi email transactional.", 500);
   if (!input.from?.trim()) throw new AppError("Thiếu địa chỉ gửi email.", 500);
   if (input.to.length === 0) throw new AppError("Thiếu người nhận email.", 400);
   if (!input.html && !input.text) throw new AppError("Thiếu nội dung email.", 400);
+  if (categoryRequiresUnsubscribe(input) && !clean(input.unsubscribeUrl)) throw new AppError("Email marketing phải có unsubscribe URL.", 500);
+
+  const suppressed = suppressedRecipients(env, input.to);
+  if (suppressed.length) {
+    const remaining = input.to.filter((recipient) => !suppressed.includes(recipient));
+    if (remaining.length === 0) throw new AppError("Tất cả người nhận email đang nằm trong suppression list.", 409);
+    input = { ...input, to: remaining };
+  }
 
   const fetchImpl = options.fetchImpl ?? fetch;
   if (config.provider === "resend") return sendWithResend(config, input, fetchImpl, options.signal);

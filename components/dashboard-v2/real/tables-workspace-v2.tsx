@@ -9,7 +9,7 @@ import { Drawer, Modal } from "../overlay";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { RealtimeStatusBadge } from "../realtime";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { createTableAction, deleteTableAction, rotateTableQrAction, toggleTableQrAction, updateTableAction } from "@/app/dashboard/actions/tables";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { getDashboardActionErrorToast, resolveDashboardActionToast, resolveDashboardOrderAction, resolveDashboardPaymentConfirmationBody } from "@/lib/dashboard/order-actions";

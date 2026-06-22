@@ -21,7 +21,7 @@ import { Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { Badge, SwitchControl } from "../primitives";
 import { Modal } from "../overlay";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { cn } from "@/lib/utils";
 
 /* SettingsDemo — layout rail + panel.
@@ -678,15 +678,17 @@ function Permissions({ onAction }: { onAction: (m: string) => void }) {
 function BillingPaymentModal({ kind, targetPlan, onClose, onConfirm }: { kind: "upgrade" | "renew" | null; targetPlan: "pro" | "premium" | null; onClose: () => void; onConfirm: (m: string) => void }) {
   const [months, setMonths] = useState(1);
   const [plan, setPlan] = useState<"pro" | "premium">("pro");
-  if (!kind) return null;
-
+  const [transferSeed] = useState(() => String(Date.now()).slice(-6));
   const isUpgrade = kind === "upgrade";
   const chosen = isUpgrade ? (targetPlan ?? "premium") : plan;
+  const transferCode = `LOGIVN-${chosen.toUpperCase()}-${transferSeed}`;
+
+  if (!kind) return null;
+
   const price = chosen === "premium" ? 199_000 : 99_000;
   const subtotal = price * months;
   const credit = isUpgrade ? 47_000 : 0; // quy đổi ngày còn lại của gói cũ
   const total = Math.max(0, subtotal - credit);
-  const transferCode = `LOGIVN-${chosen.toUpperCase()}-${String(Date.now()).slice(-6)}`;
 
   return (
     <Modal open onClose={onClose} size="md" title={isUpgrade ? "Nâng cấp lên Premium" : "Gia hạn / đổi gói"} subtitle="Thanh toán VietQR" footer={

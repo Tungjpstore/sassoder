@@ -56,7 +56,7 @@ async function sendSubscriptionReminderEmail({
   html: string;
 }) {
   const from = process.env.BILLING_EMAIL_FROM ?? process.env.RESEND_FROM ?? "LogiVN <billing@logivn.com>";
-  return sendTransactionalEmail({ from, to: [to], subject, html });
+  return sendTransactionalEmail({ from, to: [to], subject, html, category: "billing_transactional" });
 }
 
 async function insertReminderLog({

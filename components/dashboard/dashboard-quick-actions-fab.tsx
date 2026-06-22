@@ -94,7 +94,7 @@ export function DashboardQuickActionsFab() {
   }, [open]);
 
   return (
-    <div className="dashboard-quick-fab fixed bottom-[var(--dashboard-mobile-floating-bottom)] left-4 z-[var(--z-dashboard-panel)] md:bottom-5 md:left-[236px]">
+    <div className="dashboard-quick-fab fixed bottom-[var(--dashboard-mobile-floating-bottom,5.85rem)] left-[max(0.85rem,env(safe-area-inset-left))] z-[var(--z-dashboard-panel,60)] md:bottom-5 md:left-[calc(var(--d-sidebar-w,232px)+1rem)]">
       {open ? (
         <>
           <button
@@ -157,7 +157,7 @@ export function DashboardQuickActionsFab() {
         onClick={() => setOpen((value) => !value)}
         className={cn(
           "relative z-10",
-          "inline-flex h-14 items-center gap-2 rounded-full border px-3 pr-4 text-sm font-black shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 active:scale-95",
+          "inline-flex h-14 w-14 items-center justify-center gap-2 rounded-full border p-0 text-sm font-black shadow-[0_14px_34px_rgba(15,77,58,0.18)] transition hover:-translate-y-0.5 active:scale-95 sm:w-auto sm:justify-start sm:px-3 sm:pr-4",
           open
             ? "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)]"
             : "border-[var(--primary)]/25 bg-[var(--surface)] text-[var(--primary)]"

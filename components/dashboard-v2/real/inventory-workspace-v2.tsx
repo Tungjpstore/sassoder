@@ -49,9 +49,9 @@ import {
   recordInventoryMovementAction,
   updateInventoryIngredientAction
 } from "@/app/dashboard/actions";
-import { InventoryWorkspaceV2 as LegacyInventoryWorkbench } from "@/components/dashboard/inventory-workspace-v2";
+import { InventoryWorkbenchV2 } from "@/components/dashboard-v2/real/inventory/adapters/legacy-inventory-workbench";
 import { SmartIntakePanel } from "./inventory/smart-intake";
-import { useToast } from "@/components/dashboard/toast-provider";
+import { useToast } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { useDashboardRealtime } from "@/hooks/use-dashboard-realtime";
 import { formatVnd } from "@/lib/money";
 import { cn } from "@/lib/utils";
@@ -422,7 +422,7 @@ export function RealInventoryWorkspaceV2(props: Props) {
         contentClassName="px-2 sm:px-3"
       >
         <div className="rounded-[var(--d-r-md)] border border-[var(--d-line)] bg-[var(--d-surface)] p-[var(--d-s-3)]">
-          <LegacyInventoryWorkbench {...props} />
+          <InventoryWorkbenchV2 {...props} />
         </div>
       </Drawer>
 
