@@ -60,6 +60,12 @@ import {
 } from "@/lib/customer/order-lifecycle";
 import { canMarkCustomerPaid } from "@/lib/customer/payment-gates";
 import { resolveOrCreateRemoteCustomerSessionId } from "@/lib/customer/customer-session-storage";
+import {
+  createRemoteOrderRequest,
+  fetchRemoteOrder,
+  fetchRemoteOrderHistory,
+  markRemoteOrderPaid
+} from "@/lib/customer/remote-api";
 import { getCustomerOrderPollingInterval, hasCustomerOrderSnapshotChanged } from "@/lib/customer/order-sync";
 import {
   clearPendingOrderIdempotency,
@@ -367,11 +373,11 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const fetchTrackedOrderSnapshot = useCallback(
     async (orderId: string) => {
       if (!sessionId || !networkOnline) return;
-      const params = new URLSearchParams({ restaurantSlug: restaurant.slug, customerSessionId: sessionId });
-      const response = await fetch(`/api/remote-orders/${orderId}?${params.toString()}`, { cache: "no-store" });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không tải được trạng thái đơn");
-      mergeRemoteOrderEntry(json.data as CreatedRemoteOrder, { notify: true });
+      const data = await fetchRemoteOrder<CreatedRemoteOrder>(orderId, {
+        restaurantSlug: restaurant.slug,
+        customerSessionId: sessionId
+      });
+      mergeRemoteOrderEntry(data, { notify: true });
     },
     [mergeRemoteOrderEntry, networkOnline, restaurant.slug, sessionId]
   );
@@ -462,11 +468,10 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const loadHistory = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const params = new URLSearchParams({ restaurantSlug: restaurant.slug, customerSessionId: sessionId });
-      const response = await fetch(`/api/remote-orders/history?${params.toString()}`, { cache: "no-store" });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không tải được lịch sử đơn online");
-      const orders = json.data.orders as CreatedRemoteOrder[];
+      const orders = await fetchRemoteOrderHistory<CreatedRemoteOrder>({
+        restaurantSlug: restaurant.slug,
+        customerSessionId: sessionId
+      });
       setHistory(orders);
       setLastOrderSyncAt(Date.now());
       setTrackingPollError(false);
@@ -771,14 +776,11 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     actionInFlightRef.current = "submit";
     setSubmitting(true);
     try {
-      const response = await fetch("/api/remote-orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          restaurantSlug: restaurant.slug,
+      const next = await createRemoteOrderRequest<CreatedRemoteOrder>(
+        { restaurantSlug: restaurant.slug, customerSessionId: sessionId },
+        {
           branchId: mode === "PICKUP" ? selectedPickupBranch?.id ?? selectedPickupBranchId : undefined,
           fulfillmentType: mode,
-          customerSessionId: sessionId,
           customerName: customerName.trim(),
           customerPhone: customerPhone.trim(),
           customerNote: customerNote.trim(),
@@ -789,11 +791,8 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
           deliveryLng,
           idempotencyKey,
           items: cartLines.map((line) => ({ menuItemId: line.itemId, quantity: line.quantity, note: line.note, modifiers: line.modifiers }))
-        })
-      });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không gửi được đơn");
-      const next = json.data as CreatedRemoteOrder;
+        }
+      );
       setCreated(next);
       setHistory((current) => [next, ...current.filter((entry) => entry.order.id !== next.order.id)].slice(0, 20));
       pendingCreateRequestRef.current = null;
@@ -825,14 +824,10 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     setSubmitting(true);
     setError(null);
     try {
-      const response = await fetch(`/api/remote-orders/${orderId}/paid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ restaurantSlug: restaurant.slug, customerSessionId: sessionId })
+      const next = await markRemoteOrderPaid<CreatedRemoteOrder>(orderId, {
+        restaurantSlug: restaurant.slug,
+        customerSessionId: sessionId
       });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không cập nhật được thanh toán");
-      const next = json.data as CreatedRemoteOrder;
       setCreated(next);
       setHistory((current) => [next, ...current.filter((entry) => entry.order.id !== orderId)].slice(0, 20));
       setScreen("success");

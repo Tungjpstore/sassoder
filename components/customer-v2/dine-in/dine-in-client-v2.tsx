@@ -42,11 +42,12 @@ import { getCustomerOrderPollingInterval } from "@/lib/customer/order-sync";
 import { getCustomerOrderTimeline, getCustomerOrderLifecycle } from "@/lib/customer/order-lifecycle";
 import { canMarkCustomerPaid, canStartDineInPayment } from "@/lib/customer/payment-gates";
 import {
-  createCustomerSessionId,
-  dineInCustomerSessionStorageKey,
-  resolveOrCreateCustomerSessionId,
-  writeCustomerSessionId
-} from "@/lib/customer/customer-session-storage";
+  callDineInStaff,
+  checkoutDineInOrder,
+  createDineInOrder,
+  fetchDineInOrderHistory,
+  markDineInOrderPaid
+} from "@/lib/customer/dine-in-api";
 import {
   dineInPayableMethod,
   dineInPayableTotal,
@@ -59,6 +60,7 @@ import {
   pendingOrderIdempotencyStorageKey,
   resolvePendingOrderIdempotency
 } from "@/lib/customer/pending-order-idempotency";
+import { useDineInCustomerSession } from "@/hooks/customer/use-dine-in-customer-session";
 import { CustomerAiAssistant } from "@/components/customer/customer-ai-assistant";
 import type { AiAgentAction } from "@/types/ai-agent";
 import type { OrderDto, OrderStatus, PaymentMethod, TableBillStatus } from "@/types/domain";
@@ -175,7 +177,7 @@ export function DineInClientV2({
   const [screen, setScreen] = useState<DineInCheckoutScreen>("menu");
   const { categoryId, searchQuery, setCategoryId, setSearchQuery, visibleCategories } = useDineInMenuBrowser(categories);
 
-  const [customerSessionId, setCustomerSessionId] = useState<string | null>(null);
+  const { customerSessionId, ensureSessionId } = useDineInCustomerSession(restaurant.id, table.id);
   const [history, setHistory] = useState<CreatedOrder[]>([]);
   const [customerNote, setCustomerNote] = useState("");
   const [created, setCreated] = useState<CreatedOrder | null>(null);
@@ -200,10 +202,18 @@ export function DineInClientV2({
   const paymentInFlightRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
 
-  const sessionKey = useMemo(() => dineInCustomerSessionStorageKey(restaurant.id, table.id), [restaurant.id, table.id]);
   const pendingOrderKey = useMemo(
     () => pendingOrderIdempotencyStorageKey("dine-in", restaurant.id, table.id),
     [restaurant.id, table.id]
+  );
+  const accessFor = useCallback(
+    (sessionId: string) => ({
+      restaurantSlug: restaurant.slug,
+      tableId: table.id,
+      tableAccessToken: tableAccessToken ?? undefined,
+      customerSessionId: sessionId
+    }),
+    [restaurant.slug, table.id, tableAccessToken]
   );
 
   const total = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
@@ -252,13 +262,6 @@ export function DineInClientV2({
   const canStartPayment = canStartDineInPayment(created?.order);
   const currentPayableTotal = created ? dineInPayableTotal(created) : 0;
 
-  function ensureSessionId() {
-    if (customerSessionId) return customerSessionId;
-    const id = createCustomerSessionId();
-    writeCustomerSessionId(sessionKey, id);
-    setCustomerSessionId(id);
-    return id;
-  }
   function mergeHistoryOrder(next: CreatedOrder) {
     setHistory((current) => [next, ...current.filter((entry) => entry.order.id !== next.order.id)]);
   }
@@ -349,19 +352,7 @@ export function DineInClientV2({
     setStaffCallSent(false);
     setError(null);
     try {
-      const response = await fetch("/api/service-requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          restaurantSlug: restaurant.slug,
-          tableId: table.id,
-          tableAccessToken: tableAccessToken ?? undefined,
-          customerSessionId: sessionId,
-          message: "Khách cần nhân viên hỗ trợ tại bàn."
-        })
-      });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không gọi được nhân viên");
+      await callDineInStaff(accessFor(sessionId));
       setStaffCallSent(true);
       notify("Đã gọi nhân viên đến bàn.");
       window.setTimeout(() => setStaffCallSent(false), 2600);
@@ -380,12 +371,7 @@ export function DineInClientV2({
         setError(null);
       }
       try {
-        const params = new URLSearchParams({ restaurantSlug: restaurant.slug, tableId: table.id, customerSessionId });
-        if (tableAccessToken) params.set("tableAccessToken", tableAccessToken);
-        const response = await fetch(`/api/orders/history?${params.toString()}`, { cache: "no-store" });
-        const json = await response.json();
-        if (!json.ok) throw new Error(json.error ?? "Không tải được lịch sử gọi món");
-        const orders = (json.data.orders ?? []) as CreatedOrder[];
+        const orders = await fetchDineInOrderHistory<CreatedOrder>(accessFor(customerSessionId));
         setHistory(orders);
         setCreated((current) => (current ? orders.find((entry) => entry.order.id === current.order.id) ?? current : current));
         if (openLatest && orders[0]) openEntry(orders[0]);
@@ -397,7 +383,7 @@ export function DineInClientV2({
         if (!silent) setHistoryLoading(false);
       }
     },
-    [customerSessionId, openEntry, restaurant.slug, table.id, tableAccessToken]
+    [accessFor, customerSessionId, openEntry]
   );
 
   async function submitOrder() {
@@ -433,30 +419,20 @@ export function DineInClientV2({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          restaurantSlug: restaurant.slug,
-          tableId: table.id,
-          tableAccessToken: tableAccessToken ?? undefined,
-          customerSessionId: sessionId,
-          customerNote: customerNote.trim(),
-          promotionCode: effectivePromotionCode || undefined,
-          idempotencyKey,
-          items: cart.map((item) => ({
-            menuItemId: item.menuItemId,
-            quantity: item.quantity,
-            note: item.note,
-            modifiers: item.modifiers
-          }))
-        })
+      const data = await createDineInOrder<CreatedOrder>(accessFor(sessionId), {
+        customerNote: customerNote.trim(),
+        promotionCode: effectivePromotionCode || undefined,
+        idempotencyKey,
+        items: cart.map((item) => ({
+          menuItemId: item.menuItemId,
+          quantity: item.quantity,
+          note: item.note,
+          modifiers: item.modifiers
+        }))
       });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không gửi được đơn hàng");
       setRealtimeState("connecting");
-      setCreated(json.data);
-      mergeHistoryOrder(json.data);
+      setCreated(data);
+      mergeHistoryOrder(data);
       pendingCreateRef.current = null;
       try {
         clearPendingOrderIdempotency(window.localStorage, pendingOrderKey);
@@ -482,21 +458,10 @@ export function DineInClientV2({
     setPaymentLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/orders/${created.order.id}/paid`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          restaurantSlug: restaurant.slug,
-          tableId: table.id,
-          tableAccessToken: tableAccessToken ?? undefined,
-          customerSessionId: sessionId
-        })
-      });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không cập nhật được thanh toán");
-      setCreated(json.data);
-      mergeHistoryOrder(json.data);
-      applyCheckoutTransition({ type: "PAYMENT_MARKED", isPaid: isDineInOrderPaid(json.data) });
+      const data = await markDineInOrderPaid<CreatedOrder>(created.order.id, accessFor(sessionId));
+      setCreated(data);
+      mergeHistoryOrder(data);
+      applyCheckoutTransition({ type: "PAYMENT_MARKED", isPaid: isDineInOrderPaid(data) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không cập nhật được thanh toán");
     } finally {
@@ -512,21 +477,9 @@ export function DineInClientV2({
     setPaymentLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/orders/${created.order.id}/checkout`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          restaurantSlug: restaurant.slug,
-          tableId: table.id,
-          tableAccessToken: tableAccessToken ?? undefined,
-          customerSessionId: sessionId,
-          paymentMethod: method
-        })
-      });
-      const json = await response.json();
-      if (!json.ok) throw new Error(json.error ?? "Không tạo được yêu cầu thanh toán");
-      setCreated(json.data);
-      mergeHistoryOrder(json.data);
+      const data = await checkoutDineInOrder<CreatedOrder>(created.order.id, accessFor(sessionId), method);
+      setCreated(data);
+      mergeHistoryOrder(data);
       if (method === "QR") setQrSeconds(5 * 60);
       applyCheckoutTransition({ type: "START_PAYMENT", method });
     } catch (err) {
@@ -650,14 +603,6 @@ export function DineInClientV2({
     }
     if (action.uiTarget === "staff_call") void showHelp();
   }
-
-  // --- session bootstrap ---
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setCustomerSessionId(resolveOrCreateCustomerSessionId(sessionKey));
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [sessionKey]);
 
   useEffect(() => {
     if (!customerSessionId) return;
