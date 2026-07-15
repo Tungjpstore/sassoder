@@ -34,6 +34,7 @@ import { assertPublicTenantActive } from "@/services/tenant-status-guard";
 import { buildTelegramOrderSnapshot, enqueueTelegramNotification } from "@/services/telegram-event-queue";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import { canAccessDineInOrder } from "@/lib/customer/dine-in-order-access";
+import { sanitizeSharedTableHistoryOrder } from "@/lib/customer/public-order-privacy";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import type {
   DeliveryStatus,
@@ -1780,18 +1781,7 @@ export async function listPublicOrderHistory(input: {
   for (const row of [...(sessionOrders.data ?? []), ...(tableOpenOrders.data ?? [])]) {
     const raw = row as unknown as RawOrder;
     const order = mapOrder(raw);
-    // Shared-table bill: other diners can see open lines, but not private guest fields.
-    const ownerSession = raw.customer_session_id ?? null;
-    if (customerSessionId && ownerSession && ownerSession !== customerSessionId) {
-      byId.set(order.id, {
-        ...order,
-        customerName: null,
-        customerPhone: null,
-        customerNote: null
-      });
-    } else {
-      byId.set(order.id, order);
-    }
+    byId.set(order.id, sanitizeSharedTableHistoryOrder(order, raw.customer_session_id ?? null, customerSessionId));
   }
 
   const orders = (await attachLatestDeliveryLocations(restaurant.id, [...byId.values()], supabase))

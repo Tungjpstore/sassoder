@@ -59,6 +59,7 @@ import {
   getOrderProgressLabels
 } from "@/lib/customer/order-lifecycle";
 import { canMarkCustomerPaid } from "@/lib/customer/payment-gates";
+import { resolveOrCreateRemoteCustomerSessionId } from "@/lib/customer/customer-session-storage";
 import { getCustomerOrderPollingInterval, hasCustomerOrderSnapshotChanged } from "@/lib/customer/order-sync";
 import {
   clearPendingOrderIdempotency,
@@ -149,14 +150,6 @@ type CourierLiveLocation = {
   capturedAt?: string | null;
 };
 
-function makeSessionId(restaurantId: string) {
-  const key = `logivn-remote-session:${restaurantId}`;
-  const existing = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
-  if (existing) return existing;
-  const next = globalThis.crypto.randomUUID();
-  window.localStorage.setItem(key, next);
-  return next;
-}
 function remoteCustomerProfileStorageKey(restaurantId: string) {
   return `logivn-remote-customer:${restaurantId}`;
 }
@@ -215,7 +208,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const [customerProfile, setCustomerProfile] = useState<RemoteCustomerProfile>(() => readStoredCustomerProfile(restaurant.id));
   const [customerNote, setCustomerNote] = useState("");
   const [promotionCode, setPromotionCode] = useState("");
-  const [sessionId] = useState(() => (typeof window === "undefined" ? "" : makeSessionId(restaurant.id)));
+  const [sessionId] = useState(() => (typeof window === "undefined" ? "" : resolveOrCreateRemoteCustomerSessionId(restaurant.id)));
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
   const [quoteFingerprint, setQuoteFingerprint] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);

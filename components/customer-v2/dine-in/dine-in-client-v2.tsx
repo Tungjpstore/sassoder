@@ -42,6 +42,12 @@ import { getCustomerOrderPollingInterval } from "@/lib/customer/order-sync";
 import { getCustomerOrderTimeline, getCustomerOrderLifecycle } from "@/lib/customer/order-lifecycle";
 import { canMarkCustomerPaid, canStartDineInPayment } from "@/lib/customer/payment-gates";
 import {
+  createCustomerSessionId,
+  dineInCustomerSessionStorageKey,
+  resolveOrCreateCustomerSessionId,
+  writeCustomerSessionId
+} from "@/lib/customer/customer-session-storage";
+import {
   clearPendingOrderIdempotency,
   pendingOrderIdempotencyStorageKey,
   resolvePendingOrderIdempotency
@@ -108,25 +114,6 @@ type RestaurantProps = {
   receiptShowQr: boolean;
   promotions: PublicPromotion[];
 };
-
-const CUSTOMER_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-function sessionStorageKey(restaurantId: string, tableId: string) {
-  return `logivn:customer-session:${restaurantId}:${tableId}`;
-}
-function persistSession(key: string, id: string) {
-  window.localStorage.setItem(key, JSON.stringify({ id, createdAt: Date.now() }));
-}
-function createSessionId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
 
 function isOpenOrder(status: string) {
   return ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"].includes(status);
@@ -226,7 +213,7 @@ export function DineInClientV2({
   const paymentInFlightRef = useRef(false);
   const toastTimerRef = useRef<number | null>(null);
 
-  const sessionKey = useMemo(() => sessionStorageKey(restaurant.id, table.id), [restaurant.id, table.id]);
+  const sessionKey = useMemo(() => dineInCustomerSessionStorageKey(restaurant.id, table.id), [restaurant.id, table.id]);
   const pendingOrderKey = useMemo(
     () => pendingOrderIdempotencyStorageKey("dine-in", restaurant.id, table.id),
     [restaurant.id, table.id]
@@ -280,8 +267,8 @@ export function DineInClientV2({
 
   function ensureSessionId() {
     if (customerSessionId) return customerSessionId;
-    const id = createSessionId();
-    persistSession(sessionKey, id);
+    const id = createCustomerSessionId();
+    writeCustomerSessionId(sessionKey, id);
     setCustomerSessionId(id);
     return id;
   }
@@ -680,20 +667,7 @@ export function DineInClientV2({
   // --- session bootstrap ---
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      try {
-        const saved = window.localStorage.getItem(sessionKey);
-        const parsed = saved ? (JSON.parse(saved) as { id?: string; createdAt?: number }) : null;
-        const valid = parsed?.id && UUID_RE.test(parsed.id) && parsed.createdAt && Date.now() - parsed.createdAt < CUSTOMER_SESSION_TTL_MS;
-        if (valid) {
-          setCustomerSessionId(parsed.id!);
-          return;
-        }
-      } catch {
-        // ignore broken storage
-      }
-      const id = createSessionId();
-      persistSession(sessionKey, id);
-      setCustomerSessionId(id);
+      setCustomerSessionId(resolveOrCreateCustomerSessionId(sessionKey));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [sessionKey]);
