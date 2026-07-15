@@ -55,9 +55,9 @@ Các entrypoint đã đọc cấu hình đã resolve:
 
 Runtime production hiện ưu tiên `mimo` với model `mimo-v2.5-pro`, fallback mặc định `deepseek -> gemini`. Các id provider cũ như `qwen` hoặc `dashscope` chỉ còn tác dụng tương thích ngược và được alias sang `mimo`; router không auto-route sang Qwen nữa.
 
-`bedrock` dùng Amazon Bedrock Converse API cho text/chat tasks và mặc định thử `us.amazon.nova-2-lite-v1:0` qua US inference profile. PoC nên dùng `AWS_BEARER_TOKEN_BEDROCK` hoặc key đã nhập trong `admin.logivn.com/ai`; không dùng Bedrock cho OCR/image/tool-calling cho tới khi có adapter riêng và số đo chi phí/latency.
+`bedrock` dùng Amazon Bedrock Converse API cho text/chat tasks và mặc định thử `us.amazon.nova-2-lite-v1:0` qua US inference profile. PoC nên dùng `AWS_BEARER_TOKEN_BEDROCK` hoặc key đã nhập trong `admin.logivn.com/ai`. Bedrock không đọc ảnh OCR trực tiếp; ảnh vẫn đi qua Textract/Google Vision/OCR.Space. Bedrock có thể tham gia bước chuẩn hóa text OCR thành JSON qua `AI_OCR_TEXT_PROVIDER=bedrock`, sau đó router tự fallback sang provider khác nếu Bedrock bị quota/runtime lỗi.
 
-Không đưa `bedrock` vào `AI_PROVIDER_FALLBACK_ORDER` production cho tới khi `npm run ai:bedrock:check` qua được bước Converse; nếu cần thử sớm, chọn provider Bedrock rõ ràng từ admin để lỗi được cô lập.
+Không đưa `bedrock` làm provider chính cho assistant production cho tới khi `npm run ai:bedrock:check` qua được bước Converse. Khi checker trả `status: quota-blocked`, nghĩa là key/model/list-model đã đúng nhưng runtime invocation đang hết quota/ngày; router sẽ tạm block provider trong process và thử fallback thay vì để luồng AI/OCR treo.
 
 Nếu Bedrock trả `Operation not allowed` trên tài khoản AWS mới trong khi `ListFoundationModels` vẫn chạy được, kiểm tra trạng thái account verification của AWS. CloudShell/Bedrock runtime có thể bị chặn cho tới khi AWS hoàn tất xác minh tài khoản.
 
@@ -67,7 +67,7 @@ Smoke-test Bedrock sau khi AWS verification hoàn tất:
 npm run ai:bedrock:check
 ```
 
-Script này đọc `AWS_BEARER_TOKEN_BEDROCK` hoặc `BEDROCK_API_KEY` từ `.env.local`, không in key ra terminal, gọi `ListFoundationModels`, rồi thử Converse với model đang cấu hình.
+Script này đọc `AWS_BEARER_TOKEN_BEDROCK` hoặc `BEDROCK_API_KEY` từ `.env.local`, không in key ra terminal, gọi `ListFoundationModels`, rồi thử Converse với model đang cấu hình. Dùng `BEDROCK_ALLOW_QUOTA_BLOCKED=1 npm run ai:bedrock:check` khi cần coi trạng thái quota-blocked là check không fatal trong quá trình triển khai fallback.
 
 Provider bị tắt trong DB sẽ không được chọn dù biến môi trường vẫn tồn tại. Nếu xoá key DB, runtime trở lại dùng ENV fallback nếu ENV còn cấu hình.
 

@@ -6,7 +6,7 @@ import type { AiProvider, AiProviderConfig } from "./types";
 function candidate(provider: AiProvider, overrides: Partial<AiProviderConfig> = {}) {
   return {
     provider,
-    supportsJsonMode: provider !== "bedrock",
+    supportsJsonMode: true,
     supportsToolCalling: provider !== "bedrock",
     supportsImageGeneration: provider === "openai" || provider === "xai" || provider === "vercel_gateway",
     supportsOcr: provider === "mimo" || provider === "openai" || provider === "gemini" || provider === "vercel_gateway",
@@ -90,7 +90,7 @@ test("buildAiProviderOrder sends batch OCR text normalization away from MiMo fir
     candidates: [candidate("mimo"), candidate("deepseek"), candidate("gemini"), candidate("openai"), candidate("bedrock")]
   });
 
-  assert.deepEqual(order, ["gemini", "deepseek", "openai", "mimo"]);
+  assert.deepEqual(order, ["gemini", "deepseek", "openai", "bedrock", "mimo"]);
 });
 
 test("buildAiProviderOrder honors explicit OCR text provider before fallbacks", () => {
@@ -104,7 +104,7 @@ test("buildAiProviderOrder honors explicit OCR text provider before fallbacks", 
   assert.deepEqual(order, ["openai", "gemini", "deepseek", "mimo"]);
 });
 
-test("buildAiProviderOrder uses Bedrock as text fallback but skips it for JSON mode", () => {
+test("buildAiProviderOrder uses Bedrock as text and JSON fallback but still skips it for tools", () => {
   const textOrder = buildAiProviderOrder({
     taskType: "dashboard_operation",
     candidates: [candidate("mimo"), candidate("bedrock"), candidate("openai")]
@@ -118,5 +118,24 @@ test("buildAiProviderOrder uses Bedrock as text fallback but skips it for JSON m
     candidates: [candidate("mimo"), candidate("bedrock"), candidate("openai")]
   });
 
-  assert.deepEqual(jsonOrder.slice(0, 2), ["mimo", "openai"]);
+  assert.deepEqual(jsonOrder.slice(0, 3), ["mimo", "openai", "bedrock"]);
+
+  const toolOrder = buildAiProviderOrder({
+    taskType: "tool",
+    options: {
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "lookup",
+            description: "Lookup data",
+            parameters: { type: "object" }
+          }
+        }
+      ]
+    },
+    candidates: [candidate("mimo"), candidate("bedrock"), candidate("openai")]
+  });
+
+  assert.deepEqual(toolOrder, ["mimo", "openai"]);
 });

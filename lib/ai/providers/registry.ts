@@ -2,6 +2,7 @@ import "server-only";
 
 import { AppError } from "@/lib/response";
 import { getManagedAiProviderRuntimeOverride, type ManagedAiProviderRuntimeOverride } from "@/services/platform-ai-provider-config-service";
+import { getAiProviderRuntimeBlock } from "@/lib/ai/router/provider-runtime-health";
 import type { AiProvider, AiProviderConfig, AiProviderProtocol, AiProviderReadiness } from "@/lib/ai/router/types";
 
 const mimoTokenPlanBaseUrl = "https://token-plan-sgp.xiaomimimo.com/v1";
@@ -186,7 +187,7 @@ function providerDefinitions(): ProviderDefinition[] {
       imageModel: "unsupported",
       ocrModel: "unsupported",
       reasoningModel: "unsupported",
-      supportsJsonMode: false,
+      supportsJsonMode: true,
       supportsToolCalling: false,
       supportsImageGeneration: false,
       supportsOcr: false,
@@ -377,6 +378,7 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
   return providerDefinitions().filter((definition) => isOperationalProviderVisible(definition.provider)).map((definition) => {
     const config = buildProviderConfig(definition);
     const configured = Boolean(config.apiKey);
+    const runtimeBlock = getAiProviderRuntimeBlock(definition.provider);
     return {
       provider: definition.provider,
       configured,
@@ -394,7 +396,11 @@ export function getAiProviderReadiness(): AiProviderReadiness[] {
       supportsToolCalling: config.supportsToolCalling,
       supportsImageGeneration: config.supportsImageGeneration,
       supportsOcr: config.supportsOcr,
-      priority: config.priority
+      priority: config.priority,
+      runtimeStatus: runtimeBlock ? "temporarily_blocked" : "ready",
+      runtimeBlockReason: runtimeBlock?.reason,
+      runtimeBlockedUntil: runtimeBlock ? new Date(runtimeBlock.blockedUntil).toISOString() : undefined,
+      runtimeMessage: runtimeBlock?.message
     };
   });
 }
@@ -405,6 +411,7 @@ export async function getResolvedAiProviderReadiness(): Promise<AiProviderReadin
       const { config, override } = await buildResolvedProviderConfig(definition);
       const configured = Boolean(config.apiKey);
       const envConfigured = Boolean(readEnv(definition.keyEnvNames));
+      const runtimeBlock = getAiProviderRuntimeBlock(definition.provider);
       return {
         provider: definition.provider,
         configured,
@@ -422,7 +429,11 @@ export async function getResolvedAiProviderReadiness(): Promise<AiProviderReadin
         supportsToolCalling: config.supportsToolCalling,
         supportsImageGeneration: config.supportsImageGeneration,
         supportsOcr: config.supportsOcr,
-        priority: config.priority
+        priority: config.priority,
+        runtimeStatus: runtimeBlock ? "temporarily_blocked" : "ready",
+        runtimeBlockReason: runtimeBlock?.reason,
+        runtimeBlockedUntil: runtimeBlock ? new Date(runtimeBlock.blockedUntil).toISOString() : undefined,
+        runtimeMessage: runtimeBlock?.message
       };
     })
   );

@@ -125,4 +125,8 @@ export type AiProviderReadiness = {
   supportsImageGeneration: boolean;
   supportsOcr: boolean;
   priority: number;
+  runtimeStatus?: "ready" | "temporarily_blocked";
+  runtimeBlockReason?: "quota" | "rate_limit";
+  runtimeBlockedUntil?: string;
+  runtimeMessage?: string;
 };

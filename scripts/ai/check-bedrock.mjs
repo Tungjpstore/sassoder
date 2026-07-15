@@ -57,6 +57,11 @@ function summarizeError(body) {
   return message;
 }
 
+function isQuotaBlocked(response, body) {
+  const message = summarizeError(body);
+  return response.status === 429 && /too many tokens per day|daily token|quota/i.test(message);
+}
+
 async function bedrockGet(region, pathName, token) {
   const response = await fetch(`https://bedrock.${region}.amazonaws.com${pathName}`, {
     headers: {
@@ -121,6 +126,11 @@ const converseStarted = Date.now();
 const result = await converse(region, model, token);
 console.log(`- Converse: ${result.response.status} (${Date.now() - converseStarted}ms)`);
 if (!result.response.ok) {
+  if (isQuotaBlocked(result.response, result.body)) {
+    console.error(`  ${summarizeError(result.body)}`);
+    console.error("  status: quota-blocked (Bedrock auth/model visibility is OK, but runtime invocation quota is exhausted)");
+    process.exit(process.env.BEDROCK_ALLOW_QUOTA_BLOCKED === "1" ? 0 : 4);
+  }
   console.error(`  ${summarizeError(result.body)}`);
   process.exit(3);
 }

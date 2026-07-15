@@ -7,6 +7,7 @@ import { runAnthropicMessagesChat } from "@/lib/ai/providers/anthropic-messages"
 import { runBedrockConverseChat } from "@/lib/ai/providers/bedrock-converse";
 import { runOpenAiCompatibleChat } from "@/lib/ai/providers/openai-compatible";
 import { assertMimoDailyTaskTokenBudget, recordMimoDailyTaskTokenUsage } from "@/lib/ai/providers/mimo-quota";
+import { getAiProviderRuntimeBlock, recordAiProviderRuntimeFailure } from "@/lib/ai/router/provider-runtime-health";
 import { buildAiProviderOrder } from "@/lib/ai/router/provider-routing";
 import { resolveProviderTimeoutMs } from "@/lib/ai/router/provider-timeouts";
 import type { AiCompletionRequest, AiCompletionResult, AiProvider, AiTaskType } from "@/lib/ai/router/types";
@@ -61,6 +62,20 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
   let lastError: unknown = null;
 
   for (const provider of await chooseAiProviderOrder(request)) {
+    const runtimeBlock = getAiProviderRuntimeBlock(provider);
+    if (runtimeBlock) {
+      lastError = new AppError(`Provider AI ${provider} đang tạm bị bỏ qua vì ${runtimeBlock.reason}: ${runtimeBlock.message}`, 503);
+      attempts.push({
+        provider,
+        model: "runtime-blocked",
+        status: "failed",
+        latencyMs: 0,
+        estimatedCostVnd: null,
+        errorMessage: `Tạm bỏ qua tới ${new Date(runtimeBlock.blockedUntil).toISOString()}: ${runtimeBlock.message}`
+      });
+      continue;
+    }
+
     const config = await getResolvedAiProviderConfig(provider);
     const model = await pickModel(provider, request.taskType, request.modelOverride);
     const startedAt = Date.now();
@@ -96,13 +111,18 @@ export async function runAiCompletion(request: AiCompletionRequest): Promise<AiC
       return completed;
     } catch (error) {
       lastError = error;
+      const runtimeFailure = recordAiProviderRuntimeFailure(provider, error);
       attempts.push({
         provider,
         model,
         status: "failed",
         latencyMs: Date.now() - startedAt,
         estimatedCostVnd: null,
-        errorMessage: error instanceof Error ? error.message : "AI provider failed"
+        errorMessage: runtimeFailure
+          ? `${error instanceof Error ? error.message : "AI provider failed"} (provider temporarily blocked until ${new Date(runtimeFailure.blockedUntil).toISOString()})`
+          : error instanceof Error
+            ? error.message
+            : "AI provider failed"
       });
     }
   }

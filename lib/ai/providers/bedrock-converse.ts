@@ -23,12 +23,21 @@ function readMessageText(content: unknown) {
     .trim();
 }
 
-function toBedrockMessages(messages: AiPromptMessage[]) {
-  const system = messages
-    .filter((message) => message.role === "system")
-    .map((message) => readMessageText(message.content))
-    .filter(Boolean)
-    .map((text) => ({ text }));
+function toBedrockMessages(messages: AiPromptMessage[], options?: AiCompletionOptions) {
+  const system = [
+    ...(options?.jsonMode
+      ? [
+          {
+            text: "Chi tra ve JSON hop le, khong markdown, khong giai thich ngoai JSON."
+          }
+        ]
+      : []),
+    ...messages
+      .filter((message) => message.role === "system")
+      .map((message) => readMessageText(message.content))
+      .filter(Boolean)
+      .map((text) => ({ text }))
+  ];
 
   const conversation = messages
     .filter((message) => message.role !== "system")
@@ -61,6 +70,13 @@ function extractText(json: any) {
     .trim();
 }
 
+function classifyBedrockError(status: number, message: string) {
+  if (status === 429 && /too many tokens per day|daily token|quota/i.test(message)) return "bedrock_quota_exhausted";
+  if (status === 429) return "bedrock_rate_limited";
+  if (/operation not allowed/i.test(message)) return "bedrock_invocation_not_allowed";
+  return "bedrock_request_failed";
+}
+
 export async function runBedrockConverseChat({
   config,
   model,
@@ -75,7 +91,7 @@ export async function runBedrockConverseChat({
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 18_000);
   const startedAt = Date.now();
-  const payload = toBedrockMessages(messages);
+  const payload = toBedrockMessages(messages, options);
 
   try {
     const response = await fetch(joinUrl(config.baseUrl, `/model/${encodeURIComponent(model)}/converse`), {
@@ -97,7 +113,9 @@ export async function runBedrockConverseChat({
     const json = (await response.json().catch(() => null)) as any;
     if (!response.ok) {
       const message = json?.message || json?.error?.message || json?.Error?.Message || "Bedrock tu choi xu ly yeu cau AI.";
-      throw new AppError(message, 502);
+      const error = new AppError(message, response.status === 429 ? 429 : 502) as AppError & { code?: string };
+      error.code = classifyBedrockError(response.status, message);
+      throw error;
     }
 
     return {
