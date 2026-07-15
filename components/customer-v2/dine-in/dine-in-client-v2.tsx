@@ -48,6 +48,13 @@ import {
   writeCustomerSessionId
 } from "@/lib/customer/customer-session-storage";
 import {
+  dineInPayableMethod,
+  dineInPayableTotal,
+  isDineInOrderPaid,
+  isOpenDineInOrderStatus,
+  shortDineInOrderCode
+} from "@/lib/customer/dine-in-order-view";
+import {
   clearPendingOrderIdempotency,
   pendingOrderIdempotencyStorageKey,
   resolvePendingOrderIdempotency
@@ -115,26 +122,6 @@ type RestaurantProps = {
   promotions: PublicPromotion[];
 };
 
-function isOpenOrder(status: string) {
-  return ["pending", "ordering", "completed", "waiting_payment", "waiting_confirm"].includes(status);
-}
-function payableTotal(entry: CreatedOrder) {
-  return entry.order.bill?.total ?? entry.order.total;
-}
-function payableMethod(entry: CreatedOrder) {
-  return entry.order.bill?.paymentMethod ?? entry.order.paymentMethod;
-}
-function isOrderPaid(entry: CreatedOrder | null) {
-  return Boolean(entry && (entry.order.status === "paid" || entry.order.bill?.status === "paid"));
-}
-function shortOrderCode(entry: CreatedOrder | null) {
-  if (!entry) return "#OD";
-  const created = entry.order.createdAt ? new Date(entry.order.createdAt) : new Date();
-  const yy = String(created.getFullYear()).slice(-2);
-  const mm = String(created.getMonth() + 1).padStart(2, "0");
-  const dd = String(created.getDate()).padStart(2, "0");
-  return `#OD${yy}${mm}${dd}-${entry.order.id.slice(0, 3).toUpperCase()}`;
-}
 function invoiceCode(id: string) {
   return `#${id.slice(0, 12).toUpperCase()}`;
 }
@@ -252,8 +239,8 @@ export function DineInClientV2({
     [cart]
   );
   const createdOrderId = created?.order.id;
-  const openHistory = useMemo(() => history.filter((entry) => isOpenOrder(entry.order.status)), [history]);
-  const openHistoryTotal = useMemo(() => openHistory.reduce((sum, entry) => sum + payableTotal(entry), 0), [openHistory]);
+  const openHistory = useMemo(() => history.filter((entry) => isOpenDineInOrderStatus(entry.order.status)), [history]);
+  const openHistoryTotal = useMemo(() => openHistory.reduce((sum, entry) => sum + dineInPayableTotal(entry), 0), [openHistory]);
   const pollingOrder = useMemo(
     () => toLifecycleOrder(created?.order ?? openHistory[0]?.order ?? null),
     [created?.order, openHistory]
@@ -263,7 +250,7 @@ export function DineInClientV2({
     [networkOnline, pageVisible, pollingOrder]
   );
   const canStartPayment = canStartDineInPayment(created?.order);
-  const currentPayableTotal = created ? payableTotal(created) : 0;
+  const currentPayableTotal = created ? dineInPayableTotal(created) : 0;
 
   function ensureSessionId() {
     if (customerSessionId) return customerSessionId;
@@ -346,7 +333,7 @@ export function DineInClientV2({
       setRealtimeState("connecting");
       const next = applyCheckoutTransition({
         type: "OPEN_EXISTING_ORDER",
-        isPaid: isOrderPaid(entry),
+        isPaid: isDineInOrderPaid(entry),
         orderStatus: entry.order.status,
         paymentMethod: entry.payment?.method ?? entry.order.paymentMethod ?? entry.order.bill?.paymentMethod
       });
@@ -509,7 +496,7 @@ export function DineInClientV2({
       if (!json.ok) throw new Error(json.error ?? "Không cập nhật được thanh toán");
       setCreated(json.data);
       mergeHistoryOrder(json.data);
-      applyCheckoutTransition({ type: "PAYMENT_MARKED", isPaid: isOrderPaid(json.data) });
+      applyCheckoutTransition({ type: "PAYMENT_MARKED", isPaid: isDineInOrderPaid(json.data) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không cập nhật được thanh toán");
     } finally {
@@ -1158,7 +1145,7 @@ function DineInView(props: DineInViewProps) {
       <>
         <TopBar
           title="Theo dõi đơn"
-          subtitle={`${shortOrderCode(created)} · ${table.name}`}
+          subtitle={`${shortDineInOrderCode(created)} · ${table.name}`}
           onBack={() => setScreen("menu")}
           right={
             <button type="button" onClick={() => void showHelp()} aria-label="Gọi nhân viên" className="grid h-10 w-10 place-items-center rounded-full text-[var(--text)] hover:bg-[var(--surface-2)] active:scale-90">
@@ -1237,7 +1224,7 @@ function DineInView(props: DineInViewProps) {
         <div className="-mt-5 flex-1 rounded-t-[var(--r-2xl)] bg-[var(--bg)] px-4 pb-6 pt-5 shop-screen-in">
           <Card className="p-4">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-[length:var(--fs-h3)] font-bold text-[var(--text)]">Đơn {shortOrderCode(order)}</h2>
+              <h2 className="text-[length:var(--fs-h3)] font-bold text-[var(--text)]">Đơn {shortDineInOrderCode(order)}</h2>
               <span className="text-[length:var(--fs-xs)] text-[var(--text-muted)]">{formatTime(order.order.createdAt)}</span>
             </div>
             <div className="mt-4">
@@ -1289,7 +1276,7 @@ function DineInView(props: DineInViewProps) {
     if (!created) return renderMenu();
     return (
       <>
-        <TopBar title={`Đơn ${shortOrderCode(created)}`} subtitle={table.name} onBack={() => setScreen("tracking")} loading={paymentLoading} />
+        <TopBar title={`Đơn ${shortDineInOrderCode(created)}`} subtitle={table.name} onBack={() => setScreen("tracking")} loading={paymentLoading} />
         <div className="flex-1 px-4 py-5 shop-screen-in">
           <div className="text-center">
             <h1 className="text-[length:var(--fs-h1)] font-bold text-[var(--text)]">Bạn đã dùng xong?</h1>
@@ -1494,14 +1481,14 @@ function DineInView(props: DineInViewProps) {
                 <Card interactive className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[length:var(--fs-sm)] font-bold text-[var(--text)]">{shortOrderCode(entry)}</p>
+                      <p className="text-[length:var(--fs-sm)] font-bold text-[var(--text)]">{shortDineInOrderCode(entry)}</p>
                       <p className="mt-0.5 text-[length:var(--fs-xs)] text-[var(--text-muted)]">{formatTime(entry.order.createdAt)}</p>
                     </div>
                     <Pill tone="jade">{orderStatusLabel(entry.order.status as OrderStatus)}</Pill>
                   </div>
                   <div className="mt-3 flex items-center justify-between border-t border-[var(--line)] pt-3">
-                    <span className="text-[length:var(--fs-xs)] text-[var(--text-muted)]">{paymentMethodLabel(payableMethod(entry))}</span>
-                    <Money value={payableTotal(entry)} className="text-[length:var(--fs-body)] font-bold text-[var(--text)]" />
+                    <span className="text-[length:var(--fs-xs)] text-[var(--text-muted)]">{paymentMethodLabel(dineInPayableMethod(entry))}</span>
+                    <Money value={dineInPayableTotal(entry)} className="text-[length:var(--fs-body)] font-bold text-[var(--text)]" />
                   </div>
                 </Card>
               </button>
