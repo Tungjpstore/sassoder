@@ -13,7 +13,8 @@ test("manual confirmation recovers missing method from payment state", () => {
   assert.equal(inferManualConfirmationMethod({ paymentStatus: "waiting_confirm" }), "CASH");
   assert.equal(inferManualConfirmationMethod({ billStatus: "waiting_payment" }), "QR");
   assert.equal(inferManualConfirmationMethod({ billStatus: "waiting_confirm" }), "CASH");
-  assert.equal(inferManualConfirmationMethod({ status: "completed", paymentStatus: "unpaid" }), "CASH");
+  // Kitchen-ready unpaid must not invent CASH — UI sends explicit paymentMethod on "Thu tiền mặt".
+  assert.equal(inferManualConfirmationMethod({ status: "completed", paymentStatus: "unpaid" }), null);
 });
 
 test("manual confirmation does not invent a method for unrelated states", () => {

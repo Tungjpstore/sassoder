@@ -333,7 +333,10 @@ export async function createTable(
     reservation_priority: input.reservationPriority ?? 100,
     is_bookable: input.isBookable ?? true,
     is_hidden: input.isHidden ?? false,
-    is_under_maintenance: input.isUnderMaintenance ?? false
+    is_under_maintenance: input.isUnderMaintenance ?? false,
+    // New tables enforce signed QR tokens by default (legacy open access must be opt-in).
+    qr_token_enforced: true,
+    qr_token_version: 1
   };
   const { data, error } = await supabase
     .from("tables")

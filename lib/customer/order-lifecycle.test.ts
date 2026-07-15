@@ -38,15 +38,16 @@ test("customer lifecycle maps preparation, delivery, and completion", () => {
   assert.equal(getCustomerOrderLifecycle(order({ status: "completed", paymentStatus: "paid" })).isClosed, true);
 });
 
-test("customer lifecycle keeps completed dine-in orders open until payment settles", () => {
+test("customer lifecycle keeps kitchen-ready dine-in orders open until payment settles", () => {
   const unpaid = getCustomerOrderLifecycle(order({ status: "completed", fulfillmentType: "DINE_IN", paymentStatus: "unpaid" }));
   const failed = getCustomerOrderLifecycle(order({ status: "completed", fulfillmentType: "DINE_IN", paymentStatus: "failed" }));
   const paid = getCustomerOrderLifecycle(order({ status: "completed", fulfillmentType: "DINE_IN", paymentStatus: "paid" }));
 
-  assert.equal(unpaid.state, "completed");
+  assert.equal(unpaid.state, "ready");
   assert.equal(unpaid.isClosed, false);
   assert.equal(failed.state, "awaiting_payment");
   assert.equal(failed.isClosed, false);
+  assert.equal(paid.state, "completed");
   assert.equal(paid.isClosed, true);
 });
 

@@ -43,7 +43,11 @@ export function resolveDashboardOrderAction(order: DashboardOrderActionInput): D
   if (paymentTransition.allowed && (orderNeedsPaymentAttention(order) || order.status === "completed")) {
     return {
       action: "confirm-payment",
-      label: orderNeedsPaymentAttention(order) ? "Xác nhận thanh toán" : confirmPaymentLabel(order.fulfillmentType),
+      label: orderNeedsPaymentAttention(order)
+        ? "Xác nhận thanh toán"
+        : order.status === "completed"
+          ? "Thu tiền mặt"
+          : confirmPaymentLabel(order.fulfillmentType),
       successMessage: "Đã xác nhận thanh toán"
     };
   }
@@ -76,7 +80,14 @@ export function resolveDashboardPaymentConfirmationBody(order?: DashboardOrderAc
     billStatus: order.bill?.status ?? null
   });
 
-  return paymentMethod ? { paymentMethod } : undefined;
+  if (paymentMethod) return { paymentMethod };
+
+  // Explicit counter-collect CTA for kitchen-ready unpaid orders (not silent infer in the payment service).
+  if (order.status === "completed" && !orderNeedsPaymentAttention(order)) {
+    return { paymentMethod: "CASH" as const };
+  }
+
+  return undefined;
 }
 
 export function applyDashboardOrderOptimistic<T extends DashboardOrderOptimisticInput>(

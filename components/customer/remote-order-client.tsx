@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * @deprecated Production online ordering uses `components/customer-v2/remote/remote-client-v2.tsx`.
+ * Keep only as reference until fully removed.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {

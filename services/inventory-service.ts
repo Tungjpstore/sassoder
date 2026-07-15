@@ -10,7 +10,8 @@ import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient, createScopedAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
-import type { InventoryMovementType } from "@/types/domain";
+import { writeOperationalEvent } from "@/services/operational-observability-service";
+import type { DeliveryStatus, InventoryMovementType } from "@/types/domain";
 
 type UntypedSupabase = {
   from: (table: string) => any;
@@ -20,7 +21,7 @@ type UntypedSupabase = {
 const inventoryActorHeader = "x-logivn-inventory-actor-id";
 
 function createInventoryMutationSupabaseClient(actorUserId?: string | null) {
-  if (!actorUserId) throw new AppError("Can co nguoi thuc hien de ghi nhan nghiep vu kho.", 400);
+  if (!actorUserId) throw new AppError("Cần có người thực hiện để ghi nhận nghiệp vụ kho.", 400);
   return createScopedAdminSupabaseClient({ [inventoryActorHeader]: actorUserId });
 }
 
@@ -644,7 +645,7 @@ type InventoryAcceptOrderInput = {
   orderId: string;
   actorUserId?: string | null;
   serviceDueAt?: string | null;
-  deliveryStatus?: string | null;
+  deliveryStatus?: DeliveryStatus | null;
 };
 
 type InventoryCancelOrderInput = {
@@ -858,7 +859,7 @@ const emptyWarehouseCommandCenter: InventoryWarehouseCommandCenter = {
   alerts: []
 };
 
-const inventoryMutationError = "Khong the cap nhat kho hang luc nay.";
+const inventoryMutationError = "Không thể cập nhật kho hàng lúc này.";
 
 function isMissingInventorySchemaError(error: { code?: string; message?: string } | null | undefined) {
   if (!error) return false;
@@ -1092,7 +1093,7 @@ async function applyOrderInventoryMovement(
 
   if (isDuplicateInventoryMovementError(error)) return null;
   if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Ton kho khong du de xac nhan don. Hay nhap them hang hoac dieu chinh cong thuc.", 400);
+    throw new AppError("Tồn kho không đủ để xác nhận đơn. Hãy nhập thêm hàng hoặc điều chỉnh công thức.", 400);
   }
   throwIfSupabaseError(error);
   return data;
@@ -1190,7 +1191,7 @@ function formatInventoryShortageMessage(shortages: Array<{ ingredientId: string;
     .slice(0, 3)
     .map((shortage) => `${shortage.ingredientId}: thiếu ${shortage.shortageQuantity}`)
     .join("; ");
-  return `Ton kho khong du de xac nhan don theo FEFO.${preview ? ` ${preview}.` : ""}`;
+  return `Tồn kho không đủ để xác nhận đơn theo FEFO.${preview ? ` ${preview}.` : ""}`;
 }
 
 export async function getInventorySnapshot(restaurantId: string): Promise<InventorySnapshot> {
@@ -2066,7 +2067,7 @@ export async function createInventoryCategory(restaurantId: string, input: { nam
     .select("id,restaurant_id,name")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi tao nhom nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi tạo nhóm nguyên liệu.", 400);
   throwIfSupabaseError(error);
   return data as { id: string; restaurant_id: string; name: string };
 }
@@ -2087,13 +2088,13 @@ export async function createInventorySupplier(restaurantId: string, input: Inven
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration warehouse truoc khi tao nha cung cap.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration warehouse trước khi tạo nhà cung cấp.", 400);
   throwIfSupabaseError(error);
   return data as { id: string };
 }
 
 export async function createInventoryPurchaseOrder(restaurantId: string, input: InventoryPurchaseOrderInput) {
-  if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong hang de tao PO.", 400);
+  if (input.lines.length === 0) throw new AppError("Cần có ít nhất một dòng hàng để tạo PO.", 400);
 
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
@@ -2115,7 +2116,7 @@ export async function createInventoryPurchaseOrder(restaurantId: string, input: 
     }))
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration warehouse truoc khi tao purchase order.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration warehouse trước khi tạo purchase order.", 400);
   throwIfSupabaseError(error);
   if (!data) throw new AppError(inventoryMutationError, 500);
 
@@ -2146,7 +2147,7 @@ export async function receiveInventoryPurchaseOrder(
     })) ?? undefined
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration warehouse truoc khi nhan hang PO.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration warehouse trước khi nhận hàng PO.", 400);
   if (error?.message?.includes("Missing unit conversion")) {
     throw new AppError("PO co don vi mua hang chua co quy doi sang don vi ton kho.", 400);
   }
@@ -2168,7 +2169,7 @@ export async function receiveInventoryPurchaseOrder(
 }
 
 export async function applyInventoryCount(restaurantId: string, input: InventoryCountInput): Promise<InventoryCountApplyResult> {
-  if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong de kiem ke kho.", 400);
+  if (input.lines.length === 0) throw new AppError("Cần có ít nhất một dòng để kiểm kê kho.", 400);
 
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
@@ -2186,7 +2187,7 @@ export async function applyInventoryCount(restaurantId: string, input: Inventory
     }))
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration workflow kho truoc khi kiem ke.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow kho trước khi kiểm kê.", 400);
   if (error?.message?.includes("stock negative")) {
     throw new AppError("Ket qua kiem ke lam ton kho am. Hay kiem tra lai so luong thuc te.", 400);
   }
@@ -2205,7 +2206,7 @@ export async function applyInventoryCount(restaurantId: string, input: Inventory
 }
 
 export async function createInventoryTransfer(restaurantId: string, input: InventoryTransferInput): Promise<InventoryTransferResult> {
-  if (input.lines.length === 0) throw new AppError("Can co it nhat mot dong de dieu chuyen kho.", 400);
+  if (input.lines.length === 0) throw new AppError("Cần có ít nhất một dòng để điều chuyển kho.", 400);
   if (input.fromLocationId === input.toLocationId) throw new AppError("Kho xuat va kho nhan phai khac nhau.", 400);
 
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
@@ -2225,7 +2226,7 @@ export async function createInventoryTransfer(restaurantId: string, input: Inven
     }))
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration workflow kho truoc khi dieu chuyen.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow kho trước khi điều chuyển.", 400);
   if (error?.message?.includes("stock negative") || error?.message?.includes("balance is missing")) {
     throw new AppError("Kho xuat khong du hang de dieu chuyen.", 400);
   }
@@ -2271,7 +2272,7 @@ export async function processInventoryTransfer(
     })) ?? null
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration workflow dieu chuyen kho truoc.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow điều chuyển kho trước.", 400);
   if (error?.message?.includes("Only approved transfers can be dispatched")) {
     throw new AppError("Chi phieu da duyet moi duoc xuat kho.", 400);
   }
@@ -2319,7 +2320,7 @@ export async function updateInventoryAlertStatus(
     .select("id,status")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration warehouse truoc khi xu ly canh bao.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration warehouse trước khi xử lý cảnh báo.", 400);
   throwIfSupabaseError(error);
   return data as { id: string; status: string };
 }
@@ -2405,7 +2406,7 @@ export async function refreshInventoryAlerts(restaurantId: string): Promise<Inve
   ];
 
   if (results.some((result) => isMissingInventorySchemaError(result.error))) {
-    throw new AppError("Can chay migration warehouse truoc khi quet canh bao kho.", 400);
+    throw new AppError("Cần chạy migration warehouse trước khi quét cảnh báo kho.", 400);
   }
 
   for (const result of results) {
@@ -2608,7 +2609,7 @@ async function resolveInventoryImportCategory(db: UntypedSupabase, restaurantId:
     .maybeSingle();
 
   if (isMissingInventorySchemaError(existingCategoryError)) {
-    throw new AppError("Can chay migration inventory truoc khi nhap kho bang AI.", 400);
+    throw new AppError("Cần chạy migration inventory trước khi nhập kho bằng AI.", 400);
   }
   throwIfSupabaseError(existingCategoryError);
   if (existingCategory?.id) return existingCategory.id as string;
@@ -2623,7 +2624,7 @@ async function resolveInventoryImportCategory(db: UntypedSupabase, restaurantId:
     .single();
 
   if (isMissingInventorySchemaError(createdCategoryError)) {
-    throw new AppError("Can chay migration inventory truoc khi nhap kho bang AI.", 400);
+    throw new AppError("Cần chạy migration inventory trước khi nhập kho bằng AI.", 400);
   }
   throwIfSupabaseError(createdCategoryError);
   return createdCategory.id as string;
@@ -2654,7 +2655,7 @@ export async function importInventoryIntakeRows(
       .maybeSingle();
 
     if (isMissingInventorySchemaError(existingIngredientError)) {
-      throw new AppError("Can chay migration inventory truoc khi nhap kho bang AI.", 400);
+      throw new AppError("Cần chạy migration inventory trước khi nhập kho bằng AI.", 400);
     }
     throwIfSupabaseError(existingIngredientError);
 
@@ -2673,7 +2674,7 @@ export async function importInventoryIntakeRows(
         .eq("id", ingredientId);
 
       if (isMissingInventorySchemaError(updateError)) {
-        throw new AppError("Can chay migration inventory truoc khi nhap kho bang AI.", 400);
+        throw new AppError("Cần chạy migration inventory trước khi nhập kho bằng AI.", 400);
       }
       throwIfSupabaseError(updateError);
       result.updated += 1;
@@ -2693,7 +2694,7 @@ export async function importInventoryIntakeRows(
         .single();
 
       if (isMissingInventorySchemaError(createError)) {
-        throw new AppError("Can chay migration inventory truoc khi nhap kho bang AI.", 400);
+        throw new AppError("Cần chạy migration inventory trước khi nhập kho bằng AI.", 400);
       }
       throwIfSupabaseError(createError);
       ingredientId = createdIngredient.id as string;
@@ -2749,7 +2750,7 @@ export async function createInventoryIngredient(
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi tao nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi tạo nguyên liệu.", 400);
   throwIfSupabaseError(error);
 
   if (input.onHandQuantity > 0) {
@@ -2792,7 +2793,7 @@ export async function updateInventoryIngredient(
     .eq("id", input.ingredientId)
     .maybeSingle();
 
-  if (isMissingInventorySchemaError(currentResult.error)) throw new AppError("Can chay migration inventory truoc khi sua nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(currentResult.error)) throw new AppError("Cần chạy migration inventory trước khi sửa nguyên liệu.", 400);
   throwIfSupabaseError(currentResult.error);
 
   const currentMetadata = metadataObject(currentResult.data?.metadata);
@@ -2815,7 +2816,7 @@ export async function updateInventoryIngredient(
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi sua nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi sửa nguyên liệu.", 400);
   throwIfSupabaseError(error);
 
   // On-hand is ledger-managed: when the editor sets an absolute target quantity,
@@ -2851,7 +2852,7 @@ export async function deactivateInventoryIngredient(restaurantId: string, ingred
     .eq("id", ingredientId)
     .maybeSingle();
 
-  if (isMissingInventorySchemaError(currentResult.error)) throw new AppError("Can chay migration inventory truoc khi xoa nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(currentResult.error)) throw new AppError("Cần chạy migration inventory trước khi xóa nguyên liệu.", 400);
   throwIfSupabaseError(currentResult.error);
 
   const { data, error } = await db
@@ -2868,7 +2869,7 @@ export async function deactivateInventoryIngredient(restaurantId: string, ingred
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi xoa nguyen lieu.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi xóa nguyên liệu.", 400);
   throwIfSupabaseError(error);
   return data as { id: string };
 }
@@ -2899,7 +2900,7 @@ export async function upsertInventoryRecipeLine(
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi gan recipe.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi gán recipe.", 400);
   throwIfSupabaseError(error);
   return data as { id: string };
 }
@@ -2915,9 +2916,64 @@ export async function deleteInventoryRecipeLine(restaurantId: string, recipeLine
     .select("id")
     .single();
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Can chay migration inventory truoc khi xoa recipe.", 400);
+  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration inventory trước khi xóa recipe.", 400);
   throwIfSupabaseError(error);
   return data as { id: string };
+}
+
+async function acceptOrderWithoutInventory(
+  restaurantId: string,
+  input: InventoryAcceptOrderInput,
+  reason: "schema_missing" | "rpc_missing"
+) {
+  const supabase = createAdminSupabaseClient();
+  const nowIso = new Date().toISOString();
+
+  const { data: current, error: readError } = await supabase
+    .from("orders")
+    .select("id,status,accepted_at")
+    .eq("id", input.orderId)
+    .eq("restaurant_id", restaurantId)
+    .maybeSingle();
+  throwIfSupabaseError(readError);
+  if (!current) throw new AppError("Không tìm thấy đơn hàng", 404);
+  if (current.status !== "pending" && current.status !== "ordering") {
+    throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
+  }
+
+  const updatePayload = {
+    status: "ordering" as const,
+    updated_at: nowIso,
+    accepted_at: current.accepted_at ?? nowIso,
+    ...(input.serviceDueAt ? { service_due_at: input.serviceDueAt } : {}),
+    ...(input.deliveryStatus
+      ? {
+          delivery_status: input.deliveryStatus,
+          delivery_tracking_updated_at: nowIso
+        }
+      : {})
+  };
+
+  const { data, error } = await supabase
+    .from("orders")
+    .update(updatePayload)
+    .eq("id", input.orderId)
+    .eq("restaurant_id", restaurantId)
+    .in("status", ["pending", "ordering"])
+    .select("*")
+    .maybeSingle();
+  throwIfSupabaseError(error);
+  if (!data) throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
+
+  writeOperationalEvent({
+    area: "ops",
+    event: "order_accept_without_inventory",
+    status: "warn",
+    restaurantId,
+    metadata: { orderId: input.orderId, reason }
+  });
+
+  return data;
 }
 
 export async function acceptOrderWithInventoryDeduction(restaurantId: string, input: InventoryAcceptOrderInput) {
@@ -2925,8 +2981,9 @@ export async function acceptOrderWithInventoryDeduction(restaurantId: string, in
   const db = supabase as unknown as UntypedSupabase;
   const allocationPlan = await buildOrderInventoryAllocationPlan(db, restaurantId, input.orderId);
 
+  // Quán chưa bật/migration inventory: vẫn cho nhận đơn (không trừ kho).
   if (!allocationPlan.schemaReady) {
-    throw new AppError("Can chay migration inventory truoc khi xac nhan don an toan.", 400);
+    return acceptOrderWithoutInventory(restaurantId, input, "schema_missing");
   }
 
   const { data, error } = await db.rpc("accept_order_with_inventory_deduction", {
@@ -2939,13 +2996,16 @@ export async function acceptOrderWithInventoryDeduction(restaurantId: string, in
   });
 
   if (isMissingInventorySchemaError(error)) {
-    throw new AppError("Can chay migration atomic inventory truoc khi xac nhan don.", 400);
+    return acceptOrderWithoutInventory(restaurantId, input, "rpc_missing");
   }
   if (error?.message?.includes("partial order inventory sync")) {
-    throw new AppError("Don hang co ledger kho chua dong bo tron ven. Hay kiem tra va rollback thu cong truoc khi xac nhan lai.", 409);
+    throw new AppError(
+      "Đơn hàng có ledger kho chưa đồng bộ trọn vẹn. Hãy kiểm tra và rollback thủ công trước khi xác nhận lại.",
+      409
+    );
   }
   if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Ton kho khong du de xac nhan don. Hay nhap them hang hoac dieu chinh cong thuc.", 400);
+    throw new AppError("Tồn kho không đủ để xác nhận đơn. Hãy nhập thêm hàng hoặc điều chỉnh công thức.", 400);
   }
   if (error?.message?.includes("changed before inventory acceptance")) {
     throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
@@ -2964,10 +3024,10 @@ export async function cancelOrderWithInventoryRollback(restaurantId: string, inp
   });
 
   if (isMissingInventorySchemaError(error)) {
-    throw new AppError("Can chay migration atomic inventory truoc khi huy don.", 400);
+    throw new AppError("Cần chạy migration atomic inventory trước khi hủy đơn.", 400);
   }
   if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Khong the hoan kho an toan cho don nay. Vui long kiem tra ledger kho truoc khi huy.", 409);
+    throw new AppError("Không thể hoàn kho an toàn cho đơn này. Vui lòng kiểm tra ledger kho trước khi hủy.", 409);
   }
   if (error?.message?.includes("changed before inventory cancellation")) {
     throw new AppError("Trạng thái đơn đã thay đổi. Không thể huỷ an toàn, vui lòng tải lại.", 409);

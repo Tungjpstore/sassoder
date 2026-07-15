@@ -214,7 +214,7 @@ export async function getOnlineOrderingDashboard(restaurantId: string): Promise<
       todayOrders: todayOrdersResult.count ?? todayRows.length,
       todayRevenue,
       pending: openRows.filter((order) => orderProgress(order) === "awaiting_confirmation").length,
-      preparing: openRows.filter((order) => ["preparing", "delivering"].includes(orderProgress(order))).length,
+      preparing: openRows.filter((order) => ["preparing", "ready", "delivering"].includes(orderProgress(order))).length,
       waitingPayment: waitingPaymentRows.length,
       prepaidWaitingConfirm: openRows.filter((order) => orderPayment(order) === "waiting_confirm").length,
       pickupOpen: openRows.filter((order) => order.fulfillment_type === "PICKUP").length,

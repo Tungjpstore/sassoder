@@ -43,3 +43,42 @@ test("dine-in order access allows valid table QR for active table work only", ()
     false
   );
 });
+
+test("dine-in payment-sensitive access requires session match when identity is bound", () => {
+  assert.equal(
+    canAccessDineInOrder(
+      {
+        customerSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        orderCustomerSessionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        orderStatus: "waiting_payment",
+        hasValidTableQr: true
+      },
+      { requireSessionMatchForBoundIdentity: true }
+    ),
+    false
+  );
+  assert.equal(
+    canAccessDineInOrder(
+      {
+        customerSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        orderCustomerSessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        orderStatus: "waiting_payment",
+        hasValidTableQr: false
+      },
+      { requireSessionMatchForBoundIdentity: true }
+    ),
+    true
+  );
+  // Pending shared-table browse still allowed with QR alone.
+  assert.equal(
+    canAccessDineInOrder(
+      {
+        orderCustomerSessionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        orderStatus: "pending",
+        hasValidTableQr: true
+      },
+      { requireSessionMatchForBoundIdentity: true }
+    ),
+    true
+  );
+});

@@ -125,6 +125,8 @@ async function getCustomerPaymentOrder(orderId: string, access: CustomerOrderAcc
     allowLegacyQr: restaurant.allow_legacy_qr
   });
 
+  // Shared-table bills intentionally allow any diner with a valid table QR to pay.
+  // Session match is required only when there is a bound identity and no table QR (see canAccessDineInOrder options for stricter modes).
   if (
     !canAccessDineInOrder({
       customerSessionId: access.customerSessionId,
@@ -656,14 +658,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
         amount: bill.total,
         source: "customer_bill_button"
       });
-      await enqueuePaymentWaitingConfirmNotification({
-        restaurantId: typedOrder.restaurant_id,
-        branchId: typedOrder.branch_id ?? null,
-        orderId,
-        billId: bill.id,
-        amount: bill.total,
-        customerName: typedOrder.customer_name ?? null
-      });
+      // Already paid — do not re-notify merchant (prevents Telegram spam on retry).
       return getCustomerPaymentOrder(orderId, access);
     }
     if (bill.status === "waiting_confirm") {
@@ -679,6 +674,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
         amount: bill.total,
         source: "customer_bill_button"
       });
+      // Already waiting confirm — idempotent; skip duplicate notify.
       return getCustomerPaymentOrder(orderId, access);
     }
     if (bill.status !== "waiting_payment") {
@@ -762,14 +758,7 @@ export async function markCustomerPaid(orderId: string, access: CustomerOrderAcc
       amount: typedOrder.total,
       source: "customer_button"
     });
-    await enqueuePaymentWaitingConfirmNotification({
-      restaurantId: typedOrder.restaurant_id,
-      branchId: typedOrder.branch_id ?? null,
-      orderId,
-      billId: typedOrder.bill_id ?? null,
-      amount: typedOrder.total,
-      customerName: typedOrder.customer_name ?? null
-    });
+    // Idempotent path: already submitted or paid — do not re-notify.
     return getCustomerPaymentOrder(orderId, access);
   }
   if (typedOrder.status !== "waiting_payment" && typedOrder.payment_status !== "waiting_payment") {
@@ -831,15 +820,7 @@ export async function markRemoteCustomerPaid(orderId: string, access: RemoteOrde
       amount: typedOrder.total,
       source: "remote_order_customer_paid_button"
     });
-    await enqueuePaymentWaitingConfirmNotification({
-      restaurantId: typedOrder.restaurant_id,
-      branchId: typedOrder.branch_id ?? null,
-      orderId,
-      billId: typedOrder.bill_id ?? null,
-      amount: typedOrder.total,
-      source: "online_ordering",
-      customerName: typedOrder.customer_name ?? null
-    });
+    // Idempotent path: skip duplicate Telegram/ops notifications.
     return getRemotePaymentOrder(orderId, access);
   }
   if (typedOrder.payment_status !== "waiting_payment" && typedOrder.status !== "waiting_payment") {

@@ -181,7 +181,8 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
 
   const restaurant = Array.isArray(profileRow.restaurant) ? profileRow.restaurant[0] : profileRow.restaurant;
   if (!restaurant) return null;
-  if (restaurant.platform_status === "deleted") return null;
+  // Platform-suspended tenants must not keep a normal owner session.
+  if (restaurant.platform_status === "deleted" || restaurant.platform_status === "suspended") return null;
 
   const profile = {
     userId: profileRow.id,

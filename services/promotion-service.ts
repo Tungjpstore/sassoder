@@ -457,6 +457,61 @@ export async function resolvePromotionForOrder({
   return { promotion, discountAmount: evaluation.discountAmount };
 }
 
+/**
+ * Serialize promo apply per restaurant+code when VPS lock gateway is available.
+ * Combined with assertPromotionUsageAfterInsert for double protection.
+ */
+export async function withPromotionUsageLock<T>(restaurantId: string, code: string | undefined | null, fn: () => Promise<T>): Promise<T> {
+  const normalized = code?.trim().toUpperCase();
+  if (!normalized) return fn();
+
+  const { withVpsDistributedLock } = await import("@/lib/vps/backbone");
+  return withVpsDistributedLock(
+    {
+      tenantId: restaurantId,
+      scope: "promotion",
+      resourceId: normalized,
+      ttlMs: 20_000
+    },
+    fn
+  );
+}
+
+/**
+ * Post-insert race guard: re-count usage including the new order.
+ * Overage is strict greater-than limit (this order is allowed to fill the last slot).
+ * If concurrent creates exceeded the limit, caller should roll back the order.
+ */
+export async function assertPromotionUsageAfterInsert(input: {
+  restaurantId: string;
+  promotionId: string;
+  promotionCode: string;
+  customerKeyHash?: string | null;
+  totalUsageLimit?: number | null;
+  perCustomerUsageLimit?: number | null;
+}) {
+  const totalLimit = input.totalUsageLimit ?? null;
+  const customerLimit = input.customerKeyHash ? input.perCustomerUsageLimit ?? null : null;
+  if ((!totalLimit || totalLimit <= 0) && (!customerLimit || customerLimit <= 0)) return;
+
+  const supabase = createAdminSupabaseClient();
+  const usageResult = await readPromotionUsageCounts(supabase, {
+    restaurantId: input.restaurantId,
+    promotionIds: [input.promotionId],
+    customerKeyHash: input.customerKeyHash
+  });
+  const usage = usageResult.counts.get(input.promotionId);
+  const totalUsed = usage?.totalUsed ?? 0;
+  const customerUsed = usage?.customerUsed ?? 0;
+
+  if (customerLimit && customerLimit > 0 && customerUsed > customerLimit) {
+    throw new AppError(`Bạn đã dùng hết lượt cho mã ${input.promotionCode}.`, 409);
+  }
+  if (totalLimit && totalLimit > 0 && totalUsed > totalLimit) {
+    throw new AppError(`Mã ${input.promotionCode} đã hết lượt sử dụng.`, 409);
+  }
+}
+
 export async function createPromotion(
   restaurantId: string,
   input: {

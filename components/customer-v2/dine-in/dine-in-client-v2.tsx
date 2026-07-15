@@ -40,6 +40,7 @@ import {
 } from "@/lib/customer/promotion-preview";
 import { getCustomerOrderPollingInterval } from "@/lib/customer/order-sync";
 import { getCustomerOrderTimeline, getCustomerOrderLifecycle } from "@/lib/customer/order-lifecycle";
+import { canMarkCustomerPaid, canStartDineInPayment } from "@/lib/customer/payment-gates";
 import {
   clearPendingOrderIdempotency,
   pendingOrderIdempotencyStorageKey,
@@ -274,7 +275,7 @@ export function DineInClientV2({
     () => getCustomerOrderPollingInterval(pollingOrder, { networkOnline, pageVisible }),
     [networkOnline, pageVisible, pollingOrder]
   );
-  const canStartPayment = Boolean(created && (["ordering", "completed"].includes(created.order.status) || created.order.bill));
+  const canStartPayment = canStartDineInPayment(created?.order);
   const currentPayableTotal = created ? payableTotal(created) : 0;
 
   function ensureSessionId() {
@@ -666,7 +667,8 @@ export function DineInClientV2({
     if (action.uiTarget === "payment") {
       const body = action.body as { action?: string } | undefined;
       if (body?.action === "mark_paid") {
-        void markPaid();
+        if (canMarkCustomerPaid(created?.order)) void markPaid();
+        else if (created) applyCheckoutTransition({ type: "OPEN_PAYMENT_ENTRY", canStartPayment, hasCreatedOrder: true });
         return;
       }
       if (created) applyCheckoutTransition({ type: "OPEN_PAYMENT_ENTRY", canStartPayment, hasCreatedOrder: true });

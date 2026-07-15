@@ -9,6 +9,7 @@ import {
   resolveMerchantAcceptTransition,
   resolveOrderPaymentStatus,
   resolveOrderProgressState,
+  isClosedOrderProgress,
   shouldReturnOnlineOrderToKitchenAfterPayment
 } from "./order-state-machine";
 
@@ -97,6 +98,11 @@ test("canonical progress state separates payment, confirmation, kitchen, deliver
   assert.equal(resolveOrderProgressState({ status: "ordering", fulfillmentType: "PICKUP" }), "preparing");
   assert.equal(resolveOrderProgressState({ status: "ordering", fulfillmentType: "DELIVERY", deliveryStatus: "out_for_delivery" }), "delivering");
   assert.equal(resolveOrderProgressState({ status: "ordering", deliveryStatus: "rejected" }), "cancelled");
+  // Kitchen-ready unpaid stays open as "ready" (not terminal completed).
+  assert.equal(resolveOrderProgressState({ status: "completed", paymentStatus: "unpaid", fulfillmentType: "PICKUP" }), "ready");
+  assert.equal(resolveOrderProgressState({ status: "completed", paymentStatus: "paid", fulfillmentType: "PICKUP" }), "completed");
+  assert.equal(isClosedOrderProgress("ready"), false);
+  assert.equal(isClosedOrderProgress("completed"), true);
 });
 
 test("payment attention helper recognizes legacy and normalized waiting payment states", () => {

@@ -7,7 +7,8 @@ export function orderStatusLabel(status: string) {
     waiting_payment: "Chờ thanh toán",
     waiting_confirm: "Chờ xác nhận",
     paid: "Đã thanh toán",
-    completed: "Đã phục vụ",
+    // Kitchen ready/served — not necessarily paid/closed.
+    completed: "Sẵn sàng",
     cancelled: "Đã huỷ"
   };
 

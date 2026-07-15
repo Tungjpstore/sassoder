@@ -49,14 +49,21 @@ function lifecycleLabel(order: LifecycleOrder, state: CustomerOrderLifecycleStat
   }
 
   const fulfillmentType = order.fulfillmentType;
-  const pickupReadyLabel = fulfillmentType === "PICKUP" ? "Đơn đã sẵn sàng để lấy" : "Đơn đã hoàn tất";
+  const readyLabel =
+    fulfillmentType === "PICKUP"
+      ? "Đơn đã sẵn sàng để lấy"
+      : fulfillmentType === "DINE_IN"
+        ? "Món đã phục vụ, chờ thanh toán hoặc hoàn tất"
+        : "Đơn đã sẵn sàng giao";
+  const completedLabel = fulfillmentType === "PICKUP" ? "Đơn đã hoàn tất" : "Đơn đã hoàn tất";
   const labels: Record<CustomerOrderLifecycleState, string> = {
     awaiting_payment: "Vui lòng thanh toán để quán nhận đơn",
     awaiting_payment_confirmation: "Đã báo chuyển khoản, chờ quán xác nhận",
     awaiting_confirmation: "Đã gửi đơn, chờ quán xác nhận",
     preparing: "Quán đang chuẩn bị món",
+    ready: readyLabel,
     delivering: "Đơn đang được giao",
-    completed: pickupReadyLabel,
+    completed: completedLabel,
     cancelled: "Đơn đã huỷ",
     refunded: "Đơn đã hoàn tiền"
   };
@@ -65,13 +72,14 @@ function lifecycleLabel(order: LifecycleOrder, state: CustomerOrderLifecycleStat
 
 function lifecycleStepIndex(state: CustomerOrderLifecycleState) {
   if (state === "completed" || state === "refunded") return 3;
-  if (state === "delivering") return 2;
+  if (state === "delivering" || state === "ready") return 2;
   if (state === "preparing") return 1;
   return 0;
 }
 
 function isClosedLifecycle(order: LifecycleOrder, state: CustomerOrderLifecycleState) {
   if (state === "cancelled" || state === "refunded") return true;
+  if (state === "ready") return false;
   if (state !== "completed") return false;
   if (order.fulfillmentType !== "DINE_IN") return true;
 
@@ -170,6 +178,7 @@ function currentTimelineKey(state: CustomerOrderLifecycleState): CustomerOrderTi
     awaiting_payment_confirmation: "payment_confirmation",
     awaiting_confirmation: "restaurant_confirmation",
     preparing: "preparing",
+    ready: "handoff",
     delivering: "handoff",
     completed: "completed",
     cancelled: "closed",

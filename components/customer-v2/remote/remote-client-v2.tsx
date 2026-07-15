@@ -58,6 +58,7 @@ import {
   getCustomerOrderTimeline,
   getOrderProgressLabels
 } from "@/lib/customer/order-lifecycle";
+import { canMarkCustomerPaid } from "@/lib/customer/payment-gates";
 import { getCustomerOrderPollingInterval, hasCustomerOrderSnapshotChanged } from "@/lib/customer/order-sync";
 import {
   clearPendingOrderIdempotency,
@@ -943,7 +944,10 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     if (action.uiTarget === "payment") {
       const body = action.body as { action?: string } | undefined;
       if (body?.action === "mark_paid") {
-        void markRemotePaid();
+        const orderForGate = trackedOrder ?? activeEntry?.order;
+        if (canMarkCustomerPaid(orderForGate)) void markRemotePaid();
+        else if (activeEntry?.payment?.method === "QR") setScreen("vietqr");
+        else setScreen(activeEntry ? "tracking" : "payment");
         return;
       }
       if (activeEntry?.payment?.method === "QR") {

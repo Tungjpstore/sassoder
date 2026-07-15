@@ -23,7 +23,7 @@ import { recordDeliveryStatusTrackingEvent } from "@/services/delivery-tracking-
 import { ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
 import { acceptOrderWithInventoryDeduction, cancelOrderWithInventoryRollback } from "@/services/inventory-service";
 import { getPaymentInstructions } from "@/services/payment-service";
-import { resolvePromotionForOrder } from "@/services/promotion-service";
+import { assertPromotionUsageAfterInsert, resolvePromotionForOrder, withPromotionUsageLock } from "@/services/promotion-service";
 import { buildPromotionCustomerKeyHash } from "@/lib/promotion-identity";
 import { createPublicTenantAdminClient } from "@/services/public-tenant-admin-boundary";
 import { listActiveStoreBranches } from "@/services/branch-service";
@@ -1248,141 +1248,160 @@ export async function createOrder(input: CreateOrderInput) {
   const subtotal = pricedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
 
   if (subtotal <= 0) throw new AppError("Tổng tiền đơn hàng phải lớn hơn 0", 400);
-  const promotionCustomerKeyHash = buildPromotionCustomerKeyHash({
-    restaurantId: restaurant.id,
-    channel: "QR_MENU",
-    tableId: table.id,
-    customerSessionId: input.customerSessionId
-  });
-  const { promotion, discountAmount } = await resolvePromotionForOrder({
-    restaurantId: restaurant.id,
-    code: input.promotionCode,
-    subtotal,
-    channel: "QR_MENU",
-    customerKeyHash: promotionCustomerKeyHash,
-    items: pricedItems.map((item) => ({
-      menuItemId: item.menuItemId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice
-    }))
-  });
-  const total = subtotal - discountAmount;
-  const bill = await getOrCreateOpenTableBill({
-    restaurantId: restaurant.id,
-    tableId: table.id,
-    customerSessionId: input.customerSessionId,
-    supabase
-  });
-  const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
-    supabase,
-    restaurantId: restaurant.id,
-    fulfillmentType: "DINE_IN",
-    requestedBranchId: table.branch_id ?? null
-  });
 
-  const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
-    restaurant_id: restaurant.id,
-    table_id: table.id,
-    bill_id: bill.id,
-    ...orderBranchInsertFields(branchAssignment),
-    status: "pending",
-    subtotal,
-    discount_amount: discountAmount,
-    promotion_id: promotion?.id ?? null,
-    promotion_code: promotion?.code ?? null,
-    promotion_customer_key_hash: promotion ? promotionCustomerKeyHash : null,
-    total,
-    payment_method: null,
-    customer_session_id: input.customerSessionId || null,
-    customer_note: input.customerNote || null,
-    idempotency_key: input.idempotencyKey || null
-  });
+  return withPromotionUsageLock(restaurant.id, input.promotionCode, async () => {
+    const promotionCustomerKeyHash = buildPromotionCustomerKeyHash({
+      restaurantId: restaurant.id,
+      channel: "QR_MENU",
+      tableId: table.id,
+      customerSessionId: input.customerSessionId
+    });
+    const { promotion, discountAmount } = await resolvePromotionForOrder({
+      restaurantId: restaurant.id,
+      code: input.promotionCode,
+      subtotal,
+      channel: "QR_MENU",
+      customerKeyHash: promotionCustomerKeyHash,
+      items: pricedItems.map((item) => ({
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice
+      }))
+    });
+    const total = subtotal - discountAmount;
+    const bill = await getOrCreateOpenTableBill({
+      restaurantId: restaurant.id,
+      tableId: table.id,
+      customerSessionId: input.customerSessionId,
+      supabase
+    });
+    const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
+      supabase,
+      restaurantId: restaurant.id,
+      fulfillmentType: "DINE_IN",
+      requestedBranchId: table.branch_id ?? null
+    });
 
-  if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
-    const { data: existing, error: existingError } = await supabase
-      .from("orders")
-      .select("id")
-      .eq("restaurant_id", restaurant.id)
-      .eq("table_id", table.id)
-      .eq("idempotency_key", input.idempotencyKey)
-      .maybeSingle();
+    const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+      restaurant_id: restaurant.id,
+      table_id: table.id,
+      bill_id: bill.id,
+      ...orderBranchInsertFields(branchAssignment),
+      status: "pending",
+      subtotal,
+      discount_amount: discountAmount,
+      promotion_id: promotion?.id ?? null,
+      promotion_code: promotion?.code ?? null,
+      promotion_customer_key_hash: promotion ? promotionCustomerKeyHash : null,
+      total,
+      payment_method: null,
+      customer_session_id: input.customerSessionId || null,
+      customer_note: input.customerNote || null,
+      idempotency_key: input.idempotencyKey || null
+    });
 
-    throwIfSupabaseError(existingError);
-    if (existing) {
-      writeOperationalEvent({
-        area: "ops",
-        event: "customer_order_idempotency_conflict_recovered",
-        status: "warn",
-        restaurantId: restaurant.id,
-        metadata: {
-          orderId: existing.id,
-          tableId: table.id,
-          scope: "dine_in"
-        }
-      });
-      const order = await getOrderDto(existing.id, supabase);
-      return {
-        order,
-        payment: getPaymentInstructions(order)
-      };
+    if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
+      const { data: existing, error: existingError } = await supabase
+        .from("orders")
+        .select("id")
+        .eq("restaurant_id", restaurant.id)
+        .eq("table_id", table.id)
+        .eq("idempotency_key", input.idempotencyKey)
+        .maybeSingle();
+
+      throwIfSupabaseError(existingError);
+      if (existing) {
+        writeOperationalEvent({
+          area: "ops",
+          event: "customer_order_idempotency_conflict_recovered",
+          status: "warn",
+          restaurantId: restaurant.id,
+          metadata: {
+            orderId: existing.id,
+            tableId: table.id,
+            scope: "dine_in"
+          }
+        });
+        const order = await getOrderDto(existing.id, supabase);
+        return {
+          order,
+          payment: getPaymentInstructions(order)
+        };
+      }
     }
-  }
 
-  if (orderError || !insertedOrder) {
-    throw new AppError(orderError?.message ?? "Không tạo được đơn hàng", 400);
-  }
+    if (orderError || !insertedOrder) {
+      throw new AppError(orderError?.message ?? "Không tạo được đơn hàng", 400);
+    }
 
-  const orderItems = pricedItems.map((item): OrderItemInsertRow => {
+    if (promotion) {
+      try {
+        await assertPromotionUsageAfterInsert({
+          restaurantId: restaurant.id,
+          promotionId: promotion.id,
+          promotionCode: promotion.code,
+          customerKeyHash: promotionCustomerKeyHash,
+          totalUsageLimit: promotion.total_usage_limit,
+          perCustomerUsageLimit: promotion.per_customer_usage_limit
+        });
+      } catch (error) {
+        await supabase.from("orders").delete().eq("id", insertedOrder.id);
+        throw error;
+      }
+    }
+
+    const orderItems = pricedItems.map((item): OrderItemInsertRow => {
+      return {
+        order_id: insertedOrder.id,
+        menu_item_id: item.menuItemId,
+        quantity: item.quantity,
+        price: item.unitPrice,
+        base_price: item.basePrice,
+        modifier_total: item.modifierTotal,
+        modifier_snapshot: item.modifierSnapshot as Json,
+        note: mergeOrderItemNote(item.note, item.modifierNote)
+      };
+    });
+
+    const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
+
+    if (orderItemError) {
+      await supabase.from("orders").delete().eq("id", insertedOrder.id);
+      throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn", 400);
+    }
+
+    const order = await getOrderDto(insertedOrder.id, supabase);
+    await enqueueTelegramNotification({
+      type: "order.created",
+      eventId: `order.created:${order.id}`,
+      restaurantId: restaurant.id,
+      branchId: order.branchId ?? null,
+      source: "customer_qr",
+      actor: { type: "customer" },
+      order: buildTelegramOrderSnapshot(order)
+    });
+    await broadcastVpsRealtime({
+      event: "new_order",
+      restaurantId: restaurant.id,
+      tableId: table.id,
+      orderId: order.id,
+      payload: {
+        orderId: order.id,
+        branchId: order.branchId ?? null,
+        tableId: table.id,
+        tableName: order.table?.name ?? null,
+        fulfillmentType: order.fulfillmentType,
+        status: order.status,
+        total: order.total
+      }
+    });
+    invalidateRestaurantOrderCache(restaurant.id);
+    invalidateRestaurantDashboardCache(restaurant.id);
     return {
-      order_id: insertedOrder.id,
-      menu_item_id: item.menuItemId,
-      quantity: item.quantity,
-      price: item.unitPrice,
-      base_price: item.basePrice,
-      modifier_total: item.modifierTotal,
-      modifier_snapshot: item.modifierSnapshot as Json,
-      note: mergeOrderItemNote(item.note, item.modifierNote)
+      order,
+      payment: getPaymentInstructions(order)
     };
   });
-
-  const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
-
-  if (orderItemError) {
-    await supabase.from("orders").delete().eq("id", insertedOrder.id);
-    throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn", 400);
-  }
-
-  const order = await getOrderDto(insertedOrder.id, supabase);
-  await enqueueTelegramNotification({
-    type: "order.created",
-    eventId: `order.created:${order.id}`,
-    restaurantId: restaurant.id,
-    branchId: order.branchId ?? null,
-    source: "customer_qr",
-    actor: { type: "customer" },
-    order: buildTelegramOrderSnapshot(order)
-  });
-  await broadcastVpsRealtime({
-    event: "new_order",
-    restaurantId: restaurant.id,
-    tableId: table.id,
-    orderId: order.id,
-    payload: {
-      orderId: order.id,
-      branchId: order.branchId ?? null,
-      tableId: table.id,
-      tableName: order.table?.name ?? null,
-      fulfillmentType: order.fulfillmentType,
-      status: order.status,
-      total: order.total
-    }
-  });
-  invalidateRestaurantOrderCache(restaurant.id);
-  invalidateRestaurantDashboardCache(restaurant.id);
-  return {
-    order,
-    payment: getPaymentInstructions(order)
-  };
 }
 
 export async function createRemoteOrder(input: CreateRemoteOrderInput) {
@@ -1481,165 +1500,184 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
   const deliveryFee = deliveryQuote?.fee ?? 0;
   const serviceFee = deliveryQuote?.serviceFee ?? calculateServiceFee(settings, itemSubtotal);
   const subtotal = itemSubtotal + deliveryFee + serviceFee;
-  const promotionCustomerKeyHash = buildPromotionCustomerKeyHash({
-    restaurantId: settings.id,
-    channel: "WEBSITE",
-    customerPhone: input.customerPhone,
-    customerSessionId: input.customerSessionId
-  });
-  const { promotion, discountAmount } = await resolvePromotionForOrder({
-    restaurantId: settings.id,
-    code: input.promotionCode,
-    subtotal: itemSubtotal,
-    deliveryFee,
-    channel: "WEBSITE",
-    customerKeyHash: promotionCustomerKeyHash,
-    items: pricedItems.map((item) => ({
-      menuItemId: item.menuItemId,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice
-    }))
-  });
-  const total = subtotal - discountAmount;
-  const initialStatus: OrderDto["status"] = requiresPrepaidQr ? "waiting_payment" : "pending";
-  const initialPaymentMethod: PaymentMethod = requestedPaymentMethod;
-  const initialPaymentStatus: PaymentStatus = requiresPrepaidQr ? "waiting_payment" : "unpaid";
-  const destination = deliveryQuote?.destination ?? null;
-  const shouldStoreRoute = input.fulfillmentType === "DELIVERY" && settings.delivery_tracking_enabled;
-  const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
-    supabase,
-    restaurantId: settings.id,
-    fulfillmentType: input.fulfillmentType,
-    deliveryNearestStoreId: deliveryQuote?.nearestStore?.id ?? null,
-    requestedBranchId: input.fulfillmentType === "PICKUP" ? input.branchId ?? null : null,
-    requireRequestedBranch: input.fulfillmentType === "PICKUP" && Boolean(input.branchId?.trim())
-  });
-  const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
-    restaurant_id: settings.id,
-    table_id: null,
-    bill_id: null,
-    ...orderBranchInsertFields(branchAssignment),
-    fulfillment_type: input.fulfillmentType,
-    status: initialStatus,
-    subtotal,
-    discount_amount: discountAmount,
-    promotion_id: promotion?.id ?? null,
-    promotion_code: promotion?.code ?? null,
-    promotion_customer_key_hash: promotion ? promotionCustomerKeyHash : null,
-    total,
-    payment_method: initialPaymentMethod,
-    payment_status: initialPaymentStatus,
-    customer_session_id: input.customerSessionId || null,
-    customer_note: input.customerNote || null,
-    customer_name: input.customerName.trim(),
-    customer_phone: input.customerPhone.trim(),
-    delivery_address: input.fulfillmentType === "DELIVERY" ? input.deliveryAddress?.trim() || null : null,
-    delivery_lat: input.fulfillmentType === "DELIVERY" ? input.deliveryLat ?? destination?.lat ?? null : null,
-    delivery_lng: input.fulfillmentType === "DELIVERY" ? input.deliveryLng ?? destination?.lng ?? null : null,
-    delivery_distance_km: deliveryQuote?.distanceKm ?? null,
-    delivery_fee: deliveryFee,
-    service_fee: serviceFee,
-    delivery_status: input.fulfillmentType === "DELIVERY" ? "requested" : "none",
-    delivery_route_geometry: shouldStoreRoute ? (deliveryQuote?.routeGeometry ?? null) : null,
-    delivery_route_duration_minutes: shouldStoreRoute ? (deliveryQuote?.routeDurationMinutes ?? deliveryQuote?.etaMinutes ?? null) : null,
-    delivery_route_provider: deliveryQuote?.routeProvider ?? null,
-    delivery_route_confidence: deliveryQuote?.confidence ?? null,
-    delivery_quote_version: deliveryQuote?.quoteVersion ?? null,
-    delivery_quote_snapshot: deliveryQuote ? buildDeliveryQuoteSnapshot(settings, deliveryQuote) : null,
-    delivery_tracking_updated_at: shouldStoreRoute ? new Date().toISOString() : null,
-    idempotency_key: input.idempotencyKey || null
-  });
 
-  if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
-    const { data: existing, error: existingError } = await supabase
-      .from("orders")
-      .select("id")
-      .eq("restaurant_id", settings.id)
-      .is("table_id", null)
-      .eq("idempotency_key", input.idempotencyKey)
-      .maybeSingle();
+  return withPromotionUsageLock(settings.id, input.promotionCode, async () => {
+    const promotionCustomerKeyHash = buildPromotionCustomerKeyHash({
+      restaurantId: settings.id,
+      channel: "WEBSITE",
+      customerPhone: input.customerPhone,
+      customerSessionId: input.customerSessionId
+    });
+    const { promotion, discountAmount } = await resolvePromotionForOrder({
+      restaurantId: settings.id,
+      code: input.promotionCode,
+      subtotal: itemSubtotal,
+      deliveryFee,
+      channel: "WEBSITE",
+      customerKeyHash: promotionCustomerKeyHash,
+      items: pricedItems.map((item) => ({
+        menuItemId: item.menuItemId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice
+      }))
+    });
+    const total = subtotal - discountAmount;
+    const initialStatus: OrderDto["status"] = requiresPrepaidQr ? "waiting_payment" : "pending";
+    const initialPaymentMethod: PaymentMethod = requestedPaymentMethod;
+    const initialPaymentStatus: PaymentStatus = requiresPrepaidQr ? "waiting_payment" : "unpaid";
+    const destination = deliveryQuote?.destination ?? null;
+    const shouldStoreRoute = input.fulfillmentType === "DELIVERY" && settings.delivery_tracking_enabled;
+    const branchAssignment = await resolveOrderBranchAssignmentForRestaurant({
+      supabase,
+      restaurantId: settings.id,
+      fulfillmentType: input.fulfillmentType,
+      deliveryNearestStoreId: deliveryQuote?.nearestStore?.id ?? null,
+      requestedBranchId: input.fulfillmentType === "PICKUP" ? input.branchId ?? null : null,
+      requireRequestedBranch: input.fulfillmentType === "PICKUP" && Boolean(input.branchId?.trim())
+    });
+    const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+      restaurant_id: settings.id,
+      table_id: null,
+      bill_id: null,
+      ...orderBranchInsertFields(branchAssignment),
+      fulfillment_type: input.fulfillmentType,
+      status: initialStatus,
+      subtotal,
+      discount_amount: discountAmount,
+      promotion_id: promotion?.id ?? null,
+      promotion_code: promotion?.code ?? null,
+      promotion_customer_key_hash: promotion ? promotionCustomerKeyHash : null,
+      total,
+      payment_method: initialPaymentMethod,
+      payment_status: initialPaymentStatus,
+      customer_session_id: input.customerSessionId || null,
+      customer_note: input.customerNote || null,
+      customer_name: input.customerName.trim(),
+      customer_phone: input.customerPhone.trim(),
+      delivery_address: input.fulfillmentType === "DELIVERY" ? input.deliveryAddress?.trim() || null : null,
+      delivery_lat: input.fulfillmentType === "DELIVERY" ? input.deliveryLat ?? destination?.lat ?? null : null,
+      delivery_lng: input.fulfillmentType === "DELIVERY" ? input.deliveryLng ?? destination?.lng ?? null : null,
+      delivery_distance_km: deliveryQuote?.distanceKm ?? null,
+      delivery_fee: deliveryFee,
+      service_fee: serviceFee,
+      delivery_status: input.fulfillmentType === "DELIVERY" ? "requested" : "none",
+      delivery_route_geometry: shouldStoreRoute ? (deliveryQuote?.routeGeometry ?? null) : null,
+      delivery_route_duration_minutes: shouldStoreRoute ? (deliveryQuote?.routeDurationMinutes ?? deliveryQuote?.etaMinutes ?? null) : null,
+      delivery_route_provider: deliveryQuote?.routeProvider ?? null,
+      delivery_route_confidence: deliveryQuote?.confidence ?? null,
+      delivery_quote_version: deliveryQuote?.quoteVersion ?? null,
+      delivery_quote_snapshot: deliveryQuote ? buildDeliveryQuoteSnapshot(settings, deliveryQuote) : null,
+      delivery_tracking_updated_at: shouldStoreRoute ? new Date().toISOString() : null,
+      idempotency_key: input.idempotencyKey || null
+    });
 
-    throwIfSupabaseError(existingError);
-    if (existing) {
-      writeOperationalEvent({
-        area: "ops",
-        event: "customer_order_idempotency_conflict_recovered",
-        status: "warn",
-        restaurantId: settings.id,
-        metadata: {
-          orderId: existing.id,
-          scope: "remote"
-        }
-      });
-      return getIdempotentRemoteOrderResult(existing.id, supabase, deliveryQuote);
+    if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
+      const { data: existing, error: existingError } = await supabase
+        .from("orders")
+        .select("id")
+        .eq("restaurant_id", settings.id)
+        .is("table_id", null)
+        .eq("idempotency_key", input.idempotencyKey)
+        .maybeSingle();
+
+      throwIfSupabaseError(existingError);
+      if (existing) {
+        writeOperationalEvent({
+          area: "ops",
+          event: "customer_order_idempotency_conflict_recovered",
+          status: "warn",
+          restaurantId: settings.id,
+          metadata: {
+            orderId: existing.id,
+            scope: "remote"
+          }
+        });
+        return getIdempotentRemoteOrderResult(existing.id, supabase, deliveryQuote);
+      }
     }
-  }
 
-  if (orderError || !insertedOrder) {
-    throw new AppError(orderError?.message ?? "Không tạo được đơn hàng online", 400);
-  }
+    if (orderError || !insertedOrder) {
+      throw new AppError(orderError?.message ?? "Không tạo được đơn hàng online", 400);
+    }
 
-  const orderItems = pricedItems.map((item): OrderItemInsertRow => {
+    if (promotion) {
+      try {
+        await assertPromotionUsageAfterInsert({
+          restaurantId: settings.id,
+          promotionId: promotion.id,
+          promotionCode: promotion.code,
+          customerKeyHash: promotionCustomerKeyHash,
+          totalUsageLimit: promotion.total_usage_limit,
+          perCustomerUsageLimit: promotion.per_customer_usage_limit
+        });
+      } catch (error) {
+        await supabase.from("orders").delete().eq("id", insertedOrder.id);
+        throw error;
+      }
+    }
+
+    const orderItems = pricedItems.map((item): OrderItemInsertRow => {
+      return {
+        order_id: insertedOrder.id,
+        menu_item_id: item.menuItemId,
+        quantity: item.quantity,
+        price: item.unitPrice,
+        base_price: item.basePrice,
+        modifier_total: item.modifierTotal,
+        modifier_snapshot: item.modifierSnapshot as Json,
+        note: mergeOrderItemNote(item.note, item.modifierNote)
+      };
+    });
+
+    const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
+
+    if (orderItemError) {
+      await supabase.from("orders").delete().eq("id", insertedOrder.id);
+      throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn online", 400);
+    }
+
+    if (requiresPrepaidQr) {
+      await ensurePaymentLogEvent(supabase, {
+        orderId: insertedOrder.id,
+        method: "QR",
+        status: "pending",
+        amount: total,
+        source: "remote_order_prepaid_required",
+        transitionKey: paymentTransitionKey({ orderId: insertedOrder.id, stage: "start-qr-prepaid" })
+      });
+    }
+
+    const order = await getOrderDto(insertedOrder.id, supabase);
+    await enqueueTelegramNotification({
+      type: "order.created",
+      eventId: `order.created:${order.id}`,
+      restaurantId: settings.id,
+      branchId: order.branchId ?? null,
+      source: "online_ordering",
+      actor: { type: "customer" },
+      order: buildTelegramOrderSnapshot(order)
+    });
+    await broadcastVpsRealtime({
+      event: "new_order",
+      restaurantId: settings.id,
+      orderId: order.id,
+      payload: {
+        orderId: order.id,
+        branchId: order.branchId ?? null,
+        fulfillmentType: order.fulfillmentType,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        total: order.total
+      }
+    });
+    invalidateRestaurantOrderCache(settings.id);
+    invalidateRestaurantDashboardCache(settings.id);
     return {
-      order_id: insertedOrder.id,
-      menu_item_id: item.menuItemId,
-      quantity: item.quantity,
-      price: item.unitPrice,
-      base_price: item.basePrice,
-      modifier_total: item.modifierTotal,
-      modifier_snapshot: item.modifierSnapshot as Json,
-      note: mergeOrderItemNote(item.note, item.modifierNote)
+      order,
+      payment: getPaymentInstructions(order),
+      deliveryQuote
     };
   });
-
-  const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
-
-  if (orderItemError) {
-    await supabase.from("orders").delete().eq("id", insertedOrder.id);
-    throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn online", 400);
-  }
-
-  if (requiresPrepaidQr) {
-    await ensurePaymentLogEvent(supabase, {
-      orderId: insertedOrder.id,
-      method: "QR",
-      status: "pending",
-      amount: total,
-      source: "remote_order_prepaid_required",
-      transitionKey: paymentTransitionKey({ orderId: insertedOrder.id, stage: "start-qr-prepaid" })
-    });
-  }
-
-  const order = await getOrderDto(insertedOrder.id, supabase);
-  await enqueueTelegramNotification({
-    type: "order.created",
-    eventId: `order.created:${order.id}`,
-    restaurantId: settings.id,
-    branchId: order.branchId ?? null,
-    source: "online_ordering",
-    actor: { type: "customer" },
-    order: buildTelegramOrderSnapshot(order)
-  });
-  await broadcastVpsRealtime({
-    event: "new_order",
-    restaurantId: settings.id,
-    orderId: order.id,
-    payload: {
-      orderId: order.id,
-      branchId: order.branchId ?? null,
-      fulfillmentType: order.fulfillmentType,
-      status: order.status,
-      paymentStatus: order.paymentStatus,
-      total: order.total
-    }
-  });
-  invalidateRestaurantOrderCache(settings.id);
-  invalidateRestaurantDashboardCache(settings.id);
-  return {
-    order,
-    payment: getPaymentInstructions(order),
-    deliveryQuote
-  };
 }
 
 export async function getPublicOrder(orderId: string, access?: CustomerOrderAccessInput) {
@@ -1740,8 +1778,20 @@ export async function listPublicOrderHistory(input: {
 
   const byId = new Map<string, OrderDto>();
   for (const row of [...(sessionOrders.data ?? []), ...(tableOpenOrders.data ?? [])]) {
-    const order = mapOrder(row as unknown as RawOrder);
-    byId.set(order.id, order);
+    const raw = row as unknown as RawOrder;
+    const order = mapOrder(raw);
+    // Shared-table bill: other diners can see open lines, but not private guest fields.
+    const ownerSession = raw.customer_session_id ?? null;
+    if (customerSessionId && ownerSession && ownerSession !== customerSessionId) {
+      byId.set(order.id, {
+        ...order,
+        customerName: null,
+        customerPhone: null,
+        customerNote: null
+      });
+    } else {
+      byId.set(order.id, order);
+    }
   }
 
   const orders = (await attachLatestDeliveryLocations(restaurant.id, [...byId.values()], supabase))

@@ -1,5 +1,9 @@
 "use client";
 
+/**
+ * @deprecated Production dine-in uses `components/customer-v2/dine-in/dine-in-client-v2.tsx`.
+ * Keep only as reference / AI regression fixtures until fully removed.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { LucideIcon } from "lucide-react";

@@ -1,5 +1,10 @@
 "use client";
 
+/**
+ * @deprecated Production reservations use `components/customer-v2/reserve/reserve-client-v2.tsx`.
+ * Keep only as reference until fully removed.
+ */
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,

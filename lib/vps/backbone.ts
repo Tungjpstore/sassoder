@@ -4,7 +4,7 @@ import { AppError } from "@/lib/response";
 
 type LockInput = {
   tenantId: string;
-  scope: "payment" | "order" | "inventory" | "reservation";
+  scope: "payment" | "order" | "inventory" | "reservation" | "promotion";
   resourceId: string;
   ttlMs?: number;
 };

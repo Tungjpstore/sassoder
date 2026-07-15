@@ -6,6 +6,7 @@ export type OrderProgressState =
   | "awaiting_payment_confirmation"
   | "awaiting_confirmation"
   | "preparing"
+  | "ready"
   | "delivering"
   | "completed"
   | "cancelled"
@@ -75,7 +76,16 @@ export function resolveOrderProgressState(order: OrderStateInput): OrderProgress
   if (paymentStatus === "waiting_payment") return "awaiting_payment";
   if (paymentStatus === "waiting_confirm") return "awaiting_payment_confirmation";
   if (paymentStatus === "failed") return "awaiting_payment";
-  if (deliveryStatus === "delivered" || order.status === "paid" || order.status === "completed") return "completed";
+
+  // Terminal: money settled on order row, or delivery finished.
+  // Do NOT treat paymentStatus=paid alone as complete — prepaid online returns to kitchen as pending/ordering.
+  if (deliveryStatus === "delivered" || order.status === "paid") return "completed";
+
+  // Kitchen "completed" = ready/served. Only fully complete when also paid (or no further pay step needed).
+  if (order.status === "completed") {
+    return paymentStatus === "paid" ? "completed" : "ready";
+  }
+
   if (order.fulfillmentType === "DELIVERY" && deliveryStatus === "out_for_delivery") return "delivering";
   if (order.status === "ordering") return "preparing";
   return "awaiting_confirmation";

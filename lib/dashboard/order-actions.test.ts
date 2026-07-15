@@ -50,7 +50,7 @@ test("dashboard order action closes completed orders with payment copy", () => {
     }),
     {
       action: "confirm-payment",
-      label: "Thu tiền",
+      label: "Thu tiền mặt",
       successMessage: "Đã xác nhận thanh toán"
     }
   );

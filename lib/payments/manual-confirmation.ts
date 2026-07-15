@@ -34,9 +34,7 @@ export function inferManualConfirmationMethod({
     return "CASH";
   }
 
-  if (status === "completed") {
-    return "CASH";
-  }
-
+  // Kitchen-ready / served (status completed) must send an explicit paymentMethod
+  // from the merchant UI ("Thu tiền mặt") — do not invent CASH silently.
   return null;
 }
