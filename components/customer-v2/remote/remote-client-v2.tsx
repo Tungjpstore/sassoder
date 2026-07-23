@@ -59,7 +59,10 @@ import {
   getOrderProgressLabels
 } from "@/lib/customer/order-lifecycle";
 import { canMarkCustomerPaid } from "@/lib/customer/payment-gates";
-import { resolveOrCreateRemoteCustomerSessionId } from "@/lib/customer/customer-session-storage";
+import {
+  resolveOrCreateRemoteCustomerSession,
+  type RemoteCustomerSession
+} from "@/lib/customer/customer-session-storage";
 import {
   createRemoteOrderRequest,
   fetchRemoteOrder,
@@ -85,7 +88,7 @@ import {
   serializeRemoteCustomerProfile,
   type RemoteCustomerProfile
 } from "@/lib/customer/remote-customer-profile";
-import { createBrowserSupabaseClient } from "@/lib/supabase/browser";
+import { useCustomerOrderRealtime } from "@/lib/realtime/customer-order-socket-client";
 import type { AiAgentAction } from "@/types/ai-agent";
 import type { DeliveryQuote } from "@/services/delivery-service";
 import type { OrderDto } from "@/types/domain";
@@ -214,7 +217,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const [customerProfile, setCustomerProfile] = useState<RemoteCustomerProfile>(() => readStoredCustomerProfile(restaurant.id));
   const [customerNote, setCustomerNote] = useState("");
   const [promotionCode, setPromotionCode] = useState("");
-  const [sessionId] = useState(() => (typeof window === "undefined" ? "" : resolveOrCreateRemoteCustomerSessionId(restaurant.id)));
+  const [customerSession, setCustomerSession] = useState<RemoteCustomerSession | null>(null);
   const [quote, setQuote] = useState<DeliveryQuote | null>(null);
   const [quoteFingerprint, setQuoteFingerprint] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
@@ -248,6 +251,8 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
   const trackedOrderRef = useRef<OrderDto | null>(null);
   const notifyOrderUpdateRef = useRef<(order: OrderDto) => void>(() => undefined);
   const pendingOrderStorageKey = useMemo(() => pendingOrderIdempotencyStorageKey("remote", restaurant.id), [restaurant.id]);
+  const sessionId = customerSession?.id ?? "";
+  const customerSessionToken = customerSession?.token ?? "";
 
   const { customerName, customerPhone, deliveryAddress, deliveryLat, deliveryLng } = customerProfile;
 
@@ -375,11 +380,12 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
       if (!sessionId || !networkOnline) return;
       const data = await fetchRemoteOrder<CreatedRemoteOrder>(orderId, {
         restaurantSlug: restaurant.slug,
-        customerSessionId: sessionId
+        customerSessionId: sessionId,
+        customerSessionToken
       });
       mergeRemoteOrderEntry(data, { notify: true });
     },
-    [mergeRemoteOrderEntry, networkOnline, restaurant.slug, sessionId]
+    [customerSessionToken, mergeRemoteOrderEntry, networkOnline, restaurant.slug, sessionId]
   );
 
   const loadQuote = useCallback(async () => {
@@ -470,7 +476,8 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     try {
       const orders = await fetchRemoteOrderHistory<CreatedRemoteOrder>({
         restaurantSlug: restaurant.slug,
-        customerSessionId: sessionId
+        customerSessionId: sessionId,
+        customerSessionToken
       });
       setHistory(orders);
       setLastOrderSyncAt(Date.now());
@@ -479,7 +486,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     } catch {
       setTrackingPollError(Boolean(trackedOrderRef.current));
     }
-  }, [restaurant.slug, sessionId]);
+  }, [customerSessionToken, restaurant.slug, sessionId]);
 
   useEffect(() => {
     if (quoteTimerRef.current) window.clearTimeout(quoteTimerRef.current);
@@ -529,6 +536,19 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     window.localStorage.setItem(customerProfileStorageKey, JSON.stringify(snapshot));
   }, [customerProfile, customerProfileStorageKey]);
   useEffect(() => {
+    let cancelled = false;
+    void resolveOrCreateRemoteCustomerSession(restaurant.id, restaurant.slug)
+      .then((session) => {
+        if (!cancelled) setCustomerSession(session);
+      })
+      .catch((sessionError: unknown) => {
+        if (!cancelled) setError(sessionError instanceof Error ? sessionError.message : "Không khởi tạo được phiên khách hàng.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restaurant.id, restaurant.slug]);
+  useEffect(() => {
     const timer = window.setTimeout(() => void loadHistory(), 0);
     return () => window.clearTimeout(timer);
   }, [loadHistory]);
@@ -564,106 +584,17 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     return () => window.clearInterval(timer);
   }, [screen, activeEntry?.order.id]);
 
-  useEffect(() => {
-    const orderId = trackedOrder?.id;
-    if (!orderId) return;
-    const supabase = createBrowserSupabaseClient();
-    const channel = supabase
-      .channel(`customer-order:${orderId}`)
-      .on("broadcast", { event: "order_status" }, (payload) => {
-        const next = payload.payload as {
-          status?: OrderDto["status"];
-          payment_status?: OrderDto["paymentStatus"];
-          payment_method?: OrderDto["paymentMethod"];
-          total?: number;
-          paid_at?: string | null;
-          updated_at?: string | null;
-          delivery_status?: OrderDto["deliveryStatus"];
-          delivery_distance_km?: number | null;
-          delivery_fee?: number | null;
-          service_fee?: number | null;
-          delivery_route_duration_minutes?: number | null;
-          delivery_tracking_updated_at?: string | null;
-        };
-        if (!next.status) return;
-        const patch = (order: OrderDto): OrderDto => ({
-          ...order,
-          status: next.status!,
-          paymentStatus: next.payment_status ?? order.paymentStatus,
-          paymentMethod: next.payment_method ?? order.paymentMethod,
-          total: next.total ?? order.total,
-          paidAt: next.paid_at ?? order.paidAt,
-          updatedAt: next.updated_at ?? order.updatedAt,
-          deliveryStatus: next.delivery_status ?? order.deliveryStatus,
-          deliveryDistanceKm: next.delivery_distance_km ?? order.deliveryDistanceKm,
-          deliveryFee: next.delivery_fee ?? order.deliveryFee,
-          serviceFee: next.service_fee ?? order.serviceFee,
-          deliveryRouteDurationMinutes: next.delivery_route_duration_minutes ?? order.deliveryRouteDurationMinutes,
-          deliveryTrackingUpdatedAt: next.delivery_tracking_updated_at ?? order.deliveryTrackingUpdatedAt
-        });
-        const previousOrder = trackedOrderRef.current;
-        const patchedOrder = previousOrder?.id === orderId ? patch(previousOrder) : null;
-        setCreated((current) => (current && current.order.id === orderId ? { ...current, order: patch(current.order) } : current));
-        setHistory((current) => current.map((entry) => (entry.order.id === orderId ? { ...entry, order: patch(entry.order) } : entry)));
-        setLastOrderSyncAt(Date.now());
-        setTrackingPollError(false);
-        if (
-          previousOrder &&
-          patchedOrder &&
-          (previousOrder.status !== patchedOrder.status || previousOrder.paymentStatus !== patchedOrder.paymentStatus || previousOrder.deliveryStatus !== patchedOrder.deliveryStatus)
-        ) {
-          trackedOrderRef.current = patchedOrder;
-          notifyOrderUpdateRef.current(patchedOrder);
-        }
-      })
-      .on("broadcast", { event: "delivery_tracking" }, (payload) => {
-        const next = payload.payload as {
-          order_id?: string;
-          latitude?: number | null;
-          longitude?: number | null;
-          accuracy_meters?: number | null;
-          heading_degrees?: number | null;
-          speed_mps?: number | null;
-          created_at?: string | null;
-          delivery_status?: OrderDto["deliveryStatus"] | null;
-        };
-        if (next.order_id !== orderId) return;
-        if (typeof next.latitude === "number" && typeof next.longitude === "number") {
-          setCourierLocations((current) => ({
-            ...current,
-            [orderId]: {
-              lat: next.latitude!,
-              lng: next.longitude!,
-              accuracyMeters: next.accuracy_meters ?? null,
-              headingDegrees: next.heading_degrees ?? null,
-              speedMps: next.speed_mps ?? null,
-              capturedAt: next.created_at ?? null
-            }
-          }));
-        }
-        if (next.delivery_status) {
-          const patchDelivery = (order: OrderDto): OrderDto => ({
-            ...order,
-            deliveryStatus: next.delivery_status ?? order.deliveryStatus,
-            deliveryTrackingUpdatedAt: next.created_at ?? order.deliveryTrackingUpdatedAt
-          });
-          const previousOrder = trackedOrderRef.current;
-          const patchedOrder = previousOrder?.id === orderId ? patchDelivery(previousOrder) : null;
-          setCreated((current) => (current && current.order.id === orderId ? { ...current, order: patchDelivery(current.order) } : current));
-          setHistory((current) => current.map((entry) => (entry.order.id === orderId ? { ...entry, order: patchDelivery(entry.order) } : entry)));
-          setLastOrderSyncAt(Date.now());
-          setTrackingPollError(false);
-          if (previousOrder && patchedOrder && previousOrder.deliveryStatus !== patchedOrder.deliveryStatus) {
-            trackedOrderRef.current = patchedOrder;
-            notifyOrderUpdateRef.current(patchedOrder);
-          }
-        }
-      })
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [trackedOrder?.id]);
+  useCustomerOrderRealtime({
+    restaurantId: restaurant.id,
+    restaurantSlug: restaurant.slug,
+    orderId: trackedOrder?.id,
+    customerSessionId: sessionId,
+    customerSessionToken,
+    enabled: networkOnline,
+    onUpdate: async () => {
+      if (trackedOrder?.id) await fetchTrackedOrderSnapshot(trackedOrder.id);
+    }
+  });
 
   function updateQuantity(lineId: string, delta: number) {
     setCart((current) => updateRemoteCartQuantity(current, lineId, delta));
@@ -726,6 +657,10 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
       setError("Mạng đang mất kết nối. Bạn kiểm tra lại 4G/Wi-Fi rồi gửi đơn.");
       return;
     }
+    if (!sessionId || !customerSessionToken) {
+      setError("Phiên khách hàng chưa sẵn sàng. Vui lòng thử lại sau vài giây.");
+      return;
+    }
     if (!validateCartBasics()) {
       setScreen("cart");
       return;
@@ -777,7 +712,7 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     setSubmitting(true);
     try {
       const next = await createRemoteOrderRequest<CreatedRemoteOrder>(
-        { restaurantSlug: restaurant.slug, customerSessionId: sessionId },
+        { restaurantSlug: restaurant.slug, customerSessionId: sessionId, customerSessionToken },
         {
           branchId: mode === "PICKUP" ? selectedPickupBranch?.id ?? selectedPickupBranchId : undefined,
           fulfillmentType: mode,
@@ -826,7 +761,8 @@ export function RemoteClientV2({ restaurant, categories }: { restaurant: RemoteR
     try {
       const next = await markRemoteOrderPaid<CreatedRemoteOrder>(orderId, {
         restaurantSlug: restaurant.slug,
-        customerSessionId: sessionId
+        customerSessionId: sessionId,
+        customerSessionToken
       });
       setCreated(next);
       setHistory((current) => [next, ...current.filter((entry) => entry.order.id !== orderId)].slice(0, 20));

@@ -19,6 +19,7 @@ type AwsSqsConfig = {
 type AwsSqsRequestOptions = {
   now?: Date;
   timeoutMs?: number;
+  queueUrl?: string;
 };
 
 const defaultSqsRequestTimeoutMs = 5_000;
@@ -116,7 +117,7 @@ async function sqsQuery(params: Record<string, string>, options: AwsSqsRequestOp
   const config = resolveAwsSqsConfig();
   if (!config) throw new Error("AWS SQS queue is not configured.");
 
-  const url = new URL(config.queueUrl);
+  const url = new URL(options.queueUrl ?? config.queueUrl);
   const payload = new URLSearchParams({ Version: "2012-11-05", ...params });
   const payloadText = payload.toString();
   const response = await fetch(url, {
@@ -175,5 +176,32 @@ export async function deleteSqsMessage(receiptHandle: string) {
   return {
     queueName: config.queueName,
     requestId: text.match(/<RequestId>([^<]+)<\/RequestId>/)?.[1] ?? null
+  };
+}
+
+/**
+ * Quarantine a poison message before acknowledging it on the source queue.
+ * The destination must be explicitly configured; AWS redrive policies remain
+ * the fallback when no application-managed DLQ is available.
+ */
+export async function sendSqsMessage(body: string, queueUrl: string) {
+  if (!queueUrl.trim()) throw new Error("SQS dead-letter queue URL is required.");
+  const queueName = queueUrl.split("/").filter(Boolean).pop() || "";
+  const params: Record<string, string> = {
+    Action: "SendMessage",
+    MessageBody: body
+  };
+  if (queueName.endsWith(".fifo")) {
+    params.MessageGroupId = "operational-events";
+    params.MessageDeduplicationId = sha256Hex(body);
+  }
+  const { config, text } = await sqsQuery(
+    params,
+    { queueUrl }
+  );
+  return {
+    queueName: config.queueName,
+    requestId: text.match(/<RequestId>([^<]+)<\/RequestId>/)?.[1] ?? null,
+    messageId: text.match(/<MessageId>([^<]+)<\/MessageId>/)?.[1] ?? null
   };
 }

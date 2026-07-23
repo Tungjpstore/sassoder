@@ -219,7 +219,11 @@ export function resolveMerchantPaymentConfirmationTransition(
   return {
     allowed: true,
     next: {
-      status: shouldReturnOnlineOrderToKitchenAfterPayment(order) ? "pending" : "paid",
+      status: shouldReturnOnlineOrderToKitchenAfterPayment(order)
+        ? "pending"
+        : order.status === "pending" || order.status === "ordering"
+          ? order.status
+          : "paid",
       paymentStatus: "paid"
     }
   };

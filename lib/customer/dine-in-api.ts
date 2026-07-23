@@ -7,6 +7,7 @@ export type DineInAccessParams = {
   tableId: string;
   tableAccessToken?: string | null;
   customerSessionId: string;
+  customerSessionToken?: string | null;
 };
 
 export type DineInApiError = Error & { status?: number };
@@ -40,7 +41,12 @@ export async function fetchDineInOrderHistory<TOrder>(access: DineInAccessParams
   });
   if (access.tableAccessToken) params.set("tableAccessToken", access.tableAccessToken);
 
-  const response = await fetch(`/api/orders/history?${params.toString()}`, { cache: "no-store" });
+  const response = await fetch(`/api/orders/history?${params.toString()}`, {
+    cache: "no-store",
+    headers: access.customerSessionToken
+      ? { "x-logivn-customer-session-token": access.customerSessionToken }
+      : undefined
+  });
   const data = await parseJsonEnvelope<{ orders?: TOrder[] }>(response, "Không tải được lịch sử gọi món");
   return data.orders ?? [];
 }

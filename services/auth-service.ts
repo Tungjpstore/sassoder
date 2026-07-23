@@ -201,6 +201,19 @@ export async function loginWithPassword(email: string, password: string) {
     throw new AppError("Email hoặc mật khẩu không đúng", 401);
   }
 
+  // A successful credential check is the explicit way to clear a staff auth
+  // epoch set by force logout or account recovery.
+  const admin = createAdminSupabaseClient() as any;
+  const staffEpochResult = await admin
+    .from("staff_members")
+    .update({ auth_revoked_at: null })
+    .eq("user_id", data.user.id)
+    .not("auth_revoked_at", "is", null);
+  if (staffEpochResult.error) {
+    await expireSupabaseAuthSessionCookies();
+    throw new AppError("Không khôi phục được phiên nhân viên sau khi xác thực.", 503);
+  }
+
   return data.user;
 }
 

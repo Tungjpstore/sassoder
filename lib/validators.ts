@@ -939,6 +939,11 @@ const staffDateOfBirthSchema = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày sinh không hợp lệ.")
   .refine((value) => value >= "1900-01-01" && value <= new Date().toISOString().slice(0, 10), "Ngày sinh không hợp lệ.");
 
+const optionalStaffDateOfBirthSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim().length === 0) || value === null ? undefined : value,
+  staffDateOfBirthSchema.optional()
+);
+
 const nullableTextInput = (value: unknown) => (value === null || value === undefined ? "" : value);
 
 const staffPinInputSchema = z.preprocess(
@@ -970,7 +975,7 @@ export const staffInviteSchema = z.object({
   ),
   pin: staffPinInputSchema,
   fullName: z.string().trim().min(2, "Vui lòng nhập họ tên nhân viên.").max(120, "Họ tên tối đa 120 ký tự."),
-  dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
+  dateOfBirth: optionalStaffDateOfBirthSchema,
   hometown: z.string().trim().min(2, "Quê quán cần tối thiểu 2 ký tự.").max(120).optional().or(z.literal("")),
   phone: staffPhoneInputSchema,
   roleCode: z.string().trim().regex(/^[a-z0-9_-]{2,40}$/).default("waiter"),
@@ -990,7 +995,7 @@ export const staffUserSchema = z.object({
 export const staffProfileSchema = z.object({
   userId: z.string().uuid(),
   fullName: z.string().trim().min(2).max(120),
-  dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
+  dateOfBirth: optionalStaffDateOfBirthSchema,
   hometown: z.string().trim().max(120).optional().or(z.literal("")),
   phone: staffPhoneInputSchema,
   username: z.string().trim().regex(/^[a-z0-9._-]{3,40}$/).optional().or(z.literal("")),
@@ -1022,7 +1027,7 @@ export const staffAppPasswordBulkResetSchema = z.object({
 export const staffSelfProfileSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   phone: staffPhoneInputSchema,
-  dateOfBirth: staffDateOfBirthSchema.optional().or(z.literal("")),
+  dateOfBirth: optionalStaffDateOfBirthSchema,
   hometown: z.string().trim().max(120).optional().or(z.literal(""))
 });
 

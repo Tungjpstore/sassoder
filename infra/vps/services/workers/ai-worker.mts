@@ -9,8 +9,8 @@ export function createAiWorkers(connection: Redis, logger: any) {
       connection,
       logger,
       concurrency: 3,
-      processor: async (job) => {
-        const result = await chatWithFallback(job.data, logger);
+      processor: async (job, { signal }) => {
+        const result = await chatWithFallback(job.data, logger, { signal });
         return { provider: result.provider, model: result.model, content: result.content };
       }
     }),

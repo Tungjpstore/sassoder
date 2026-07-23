@@ -92,6 +92,77 @@ export const DEFAULT_PAYROLL_DEDUCTIONS: StaffPayrollDeductions = {
 
 export const DEFAULT_PAYROLL_HOURLY_RATE = 30_000;
 export const DEFAULT_PAYROLL_OT_MULTIPLIER = 1.5;
+const VIETNAM_UTC_OFFSET_MS = 7 * 60 * 60 * 1_000;
+
+/** Asia/Ho_Chi_Minh is fixed at UTC+07:00 and does not observe daylight saving time. */
+export function toVietnamCalendarDateKey(isoTimestamp: string): string {
+  const timestamp = isoTimestamp.trim();
+  if (!/(?:z|[+-]\d{2}:\d{2})$/i.test(timestamp)) {
+    throw new Error("Payroll timestamp must include an explicit UTC offset.");
+  }
+
+  const timestampMs = Date.parse(timestamp);
+  if (!Number.isFinite(timestampMs)) throw new Error("Payroll timestamp is invalid.");
+  return new Date(timestampMs + VIETNAM_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+export function calculatePayrollWorkBreakdown(input: {
+  attendanceWorkMinutes: number;
+  attendanceOvertimeMinutes: number;
+  approvedOvertimeMinutes: number;
+  attendanceDates: string[];
+  approvedPaidLeaveDates: string[];
+  approvedUnpaidLeaveDates: string[];
+}) {
+  const attendanceWorkMinutes = Math.max(0, Math.round(input.attendanceWorkMinutes));
+  const attendanceOvertimeMinutes = Math.min(
+    attendanceWorkMinutes,
+    Math.max(0, Math.round(input.attendanceOvertimeMinutes))
+  );
+  const attendanceDates = new Set(input.attendanceDates);
+  const paidLeaveDaysWithoutAttendance = [...new Set(input.approvedPaidLeaveDates)]
+    .filter((date) => !attendanceDates.has(date)).length;
+  const unpaidLeaveDaysWithoutAttendance = [...new Set(input.approvedUnpaidLeaveDates)]
+    .filter((date) => !attendanceDates.has(date)).length;
+  const paidLeaveMinutes = paidLeaveDaysWithoutAttendance * 8 * 60;
+  const regularWorkMinutes = attendanceWorkMinutes - attendanceOvertimeMinutes + paidLeaveMinutes;
+  const overtimeMinutes = attendanceOvertimeMinutes + Math.max(0, Math.round(input.approvedOvertimeMinutes));
+
+  return {
+    regularWorkMinutes,
+    overtimeMinutes,
+    paidLeaveDaysWithoutAttendance,
+    unpaidLeaveDaysWithoutAttendance,
+    paidLeaveMinutes,
+    workMinutes: attendanceWorkMinutes + paidLeaveMinutes,
+    unpaidLeaveDays: new Set(input.approvedUnpaidLeaveDates).size
+  };
+}
+
+export function calculateMonthlyBasePay(input: {
+  monthlySalary: number;
+  periodDays: number;
+  calendarDaysInMonth: number;
+  unpaidLeaveDays: number;
+}) {
+  const monthlySalary = Math.max(0, Math.round(input.monthlySalary));
+  const calendarDaysInMonth = Math.max(1, Math.round(input.calendarDaysInMonth));
+  const periodFactor = Math.min(1, Math.max(0, input.periodDays) / calendarDaysInMonth);
+  const periodBase = monthlySalary * periodFactor;
+  const unpaidDeduction = (monthlySalary / calendarDaysInMonth) * Math.max(0, Math.round(input.unpaidLeaveDays));
+  return Math.max(0, Math.round(periodBase - unpaidDeduction));
+}
+
+/** Resolve the insurance base after period proration, preserving explicit overrides. */
+export function resolvePayrollInsuranceBase(input: {
+  monthlySalary: number;
+  basePay: number;
+  grossPay: number;
+  insuranceBaseAmount?: number | null;
+}) {
+  if (input.insuranceBaseAmount != null) return Math.max(0, Math.round(input.insuranceBaseAmount));
+  return Math.max(0, Math.round(input.monthlySalary > 0 ? input.basePay : input.grossPay));
+}
 
 /* Biểu thuế TNCN luỹ tiến từng phần (Điều 22 Luật Thuế TNCN VN) — đơn vị: ₫ / tháng */
 const PIT_BRACKETS: Array<{ upTo: number; rate: number; deduction: number }> = [

@@ -92,6 +92,7 @@ type ReservationPreflightIssue = { code: string; message: string; tableId?: stri
 type ReservationPreflightSignal = { code: string; tone: "neutral" | "green" | "yellow" | "blue" | "red"; label: string };
 
 type CandidateReservationTable = ReservationAssignableTable & {
+  branch_id: string | null;
   table_area_id: string | null;
   floor_label: string | null;
   seating_zone: "indoor" | "outdoor" | "mixed";
@@ -197,9 +198,9 @@ const legacyReservationSelect =
   "id,restaurant_id,status,customer_name,customer_phone,customer_email,party_size,starts_at,ends_at,hold_expires_at,deposit_required_amount,deposit_paid_amount,deposit_status,payment_method,customer_note,internal_note,source,idempotency_key,seated_table_bill_id,created_at,updated_at,confirmed_at,checked_in_at,seated_at,completed_at,cancelled_at,rejected_at,expired_at,no_show_at,locks:reservation_table_locks(id,table_id,starts_at,ends_at,status,table:tables(id,branch_id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind))";
 
 const candidateTableSelect =
-  "id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
+  "id,branch_id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance";
 const reservationPreflightTableSelect =
-  "id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance,qr_enabled";
+  "id,branch_id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance,qr_enabled";
 
 const reservationAnalyticsSelect =
   "id,status,party_size,starts_at,created_at,deposit_required_amount,deposit_paid_amount,deposit_status,locks:reservation_table_locks(table:tables(name,area,capacity,floor_label))";
@@ -224,6 +225,12 @@ function isMissingReservationPreferenceColumns(error: unknown) {
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
+}
+
+function deterministicReservationAccessToken(restaurantId: string, idempotencyKey: string) {
+  return createHash("sha256")
+    .update(`logivn-reservation-access:${restaurantId}:${idempotencyKey}`)
+    .digest("hex");
 }
 
 function assertReservationIdempotencyKey(idempotencyKey?: string) {
@@ -1325,7 +1332,11 @@ async function getBookableTablesByIds(restaurantId: string, tableIds: string[]) 
 
   const unavailableTable = orderedTables.find((table) => table && (!table.is_bookable || table.is_hidden || table.is_under_maintenance));
   if (unavailableTable) throw new AppError(`Bàn ${unavailableTable.name} không khả dụng cho đặt trước.`, 400);
-  return orderedTables.filter((table): table is CandidateReservationTable => Boolean(table));
+  const tables = orderedTables.filter((table): table is CandidateReservationTable => Boolean(table));
+  if (new Set(tables.map((table) => table.branch_id ?? "unassigned")).size > 1) {
+    throw new AppError("Các bàn ghép phải thuộc cùng một chi nhánh.", 400);
+  }
+  return tables;
 }
 
 async function getActiveReservationLocks(restaurantId: string, reservationId: string): Promise<ReservationActiveLock[]> {
@@ -1451,6 +1462,8 @@ async function getReservationTablePreflightContext(input: {
   tableIds: string[];
   startsAt: Date;
   lockEnd: Date;
+  reservationStartsAt?: string;
+  reservationEndsAt?: string;
 }) {
   const supabase = createAdminSupabaseClient();
   const [tablesResult, locksResult, billsResult, ordersResult] = await Promise.all([
@@ -1529,6 +1542,9 @@ export async function preflightReservationTables(restaurantId: string, reservati
       code: "under_capacity",
       message: `Nhóm bàn đã chọn chỉ đủ ${totalCapacity} khách, cần tối thiểu ${reservation.partySize} khách.`
     });
+  }
+  if (new Set(context.tables.map((table) => table.branch_id ?? "unassigned")).size > 1) {
+    blockers.push({ code: "cross_branch_tables", message: "Các bàn ghép phải thuộc cùng một chi nhánh." });
   }
 
   const tableSummaries = normalizedTableIds.map((tableId) => {
@@ -1640,6 +1656,8 @@ async function assertReservationTablesAvailable(input: {
   tableIds: string[];
   startsAt: Date;
   lockEnd: Date;
+  reservationStartsAt?: string;
+  reservationEndsAt?: string;
 }) {
   const tableIds = normalizeReservationTableIds(input.tableIds);
   const [tables, locks, activeBillTableIds] = await Promise.all([
@@ -1663,42 +1681,6 @@ async function assertReservationTablesAvailable(input: {
   return tables;
 }
 
-async function safelyRollbackReservationTableLocks(
-  supabase: ReservationSupabaseClient,
-  input: {
-    restaurantId: string;
-    insertedLockIds: string[];
-    updatedLocks: ReservationActiveLock[];
-    releasedLocks: ReservationActiveLock[];
-  }
-) {
-  try {
-    if (input.insertedLockIds.length > 0) {
-      await supabase.from("reservation_table_locks").update({ status: "released" }).eq("restaurant_id", input.restaurantId).in("id", input.insertedLockIds);
-    }
-    for (const lock of input.updatedLocks) {
-      await supabase
-        .from("reservation_table_locks")
-        .update({ starts_at: lock.starts_at, ends_at: lock.ends_at, status: "active" })
-        .eq("id", lock.id)
-        .eq("restaurant_id", input.restaurantId);
-    }
-    for (const lock of input.releasedLocks) {
-      await supabase
-        .from("reservation_table_locks")
-        .update({ starts_at: lock.starts_at, ends_at: lock.ends_at, status: "active" })
-        .eq("id", lock.id)
-        .eq("restaurant_id", input.restaurantId);
-    }
-  } catch (rollbackError) {
-    console.error("reservation_table_lock_rollback_failed", {
-      restaurantId: input.restaurantId,
-      insertedLockIds: input.insertedLockIds,
-      error: rollbackError instanceof Error ? rollbackError.message : "unknown"
-    });
-  }
-}
-
 async function replaceReservationTableLocks(input: {
   supabase: ReservationSupabaseClient;
   restaurantId: string;
@@ -1707,85 +1689,33 @@ async function replaceReservationTableLocks(input: {
   tableIds: string[];
   startsAt: Date;
   lockEnd: Date;
+  reservationStartsAt?: string | null;
+  reservationEndsAt?: string | null;
 }) {
   const startsAtIso = input.startsAt.toISOString();
   const lockEndIso = input.lockEnd.toISOString();
   const tableIds = normalizeReservationTableIds(input.tableIds);
-  const targetTableIdSet = new Set(tableIds);
-  const lockByTableId = new Map<string, ReservationActiveLock>();
-  const duplicateLocks: ReservationActiveLock[] = [];
-  const insertedLockIds: string[] = [];
-  const updatedLocks: ReservationActiveLock[] = [];
-  const releasedLocks: ReservationActiveLock[] = [];
-
-  for (const lock of input.currentLocks) {
-    if (lockByTableId.has(lock.table_id)) {
-      duplicateLocks.push(lock);
-      continue;
-    }
-    lockByTableId.set(lock.table_id, lock);
+  const { error } = await (input.supabase as any).rpc("replace_reservation_table_locks_atomic", {
+    p_restaurant_id: input.restaurantId,
+    p_reservation_id: input.reservationId,
+    p_table_ids: tableIds,
+    p_starts_at: startsAtIso,
+    p_lock_ends_at: lockEndIso,
+    p_reservation_starts_at: input.reservationStartsAt ?? null,
+    p_reservation_ends_at: input.reservationEndsAt ?? null
+  });
+  if ((error as { code?: string } | null)?.code === "23P01") {
+    throw new AppError("Một số bàn vừa được giữ bởi lịch khác. Vui lòng chọn bàn khác.", 409);
   }
+  throwIfSupabaseError(error);
 
-  const rollback = () =>
-    safelyRollbackReservationTableLocks(input.supabase, {
-      restaurantId: input.restaurantId,
-      insertedLockIds,
-      updatedLocks,
-      releasedLocks
-    });
-
-  try {
-    for (const tableId of tableIds) {
-      const existingLock = lockByTableId.get(tableId);
-      if (existingLock) {
-        if (existingLock.starts_at === startsAtIso && existingLock.ends_at === lockEndIso) continue;
-        const { error } = await input.supabase
-          .from("reservation_table_locks")
-          .update({ starts_at: startsAtIso, ends_at: lockEndIso, status: "active" })
-          .eq("id", existingLock.id)
-          .eq("restaurant_id", input.restaurantId);
-        if ((error as { code?: string } | null)?.code === "23P01") throw new AppError("Một số bàn đang bận trong khung giờ này.", 409);
-        throwIfSupabaseError(error);
-        updatedLocks.push(existingLock);
-        continue;
-      }
-
-      const { data: insertedLock, error: insertError } = await input.supabase
-        .from("reservation_table_locks")
-        .insert({
-          reservation_id: input.reservationId,
-          restaurant_id: input.restaurantId,
-          table_id: tableId,
-          starts_at: startsAtIso,
-          ends_at: lockEndIso
-        })
-        .select("id")
-        .single();
-      if ((insertError as { code?: string } | null)?.code === "23P01") throw new AppError("Một số bàn vừa được giữ bởi lịch khác. Vui lòng chọn bàn khác.", 409);
-      throwIfSupabaseError(insertError);
-      if (insertedLock?.id) insertedLockIds.push(insertedLock.id);
-    }
-
-    const releaseLocks = Array.from(new Map([...input.currentLocks.filter((lock) => !targetTableIdSet.has(lock.table_id)), ...duplicateLocks].map((lock) => [lock.id, lock])).values());
-    for (const lock of releaseLocks) {
-      const { error } = await input.supabase
-        .from("reservation_table_locks")
-        .update({ status: "released" })
-        .eq("id", lock.id)
-        .eq("restaurant_id", input.restaurantId);
-      throwIfSupabaseError(error);
-      releasedLocks.push(lock);
-    }
-
-    return {
-      fromTableIds: input.currentLocks.map((lock) => lock.table_id),
-      toTableIds: tableIds,
-      rollback
-    };
-  } catch (error) {
-    await rollback();
-    throw error;
-  }
+  return {
+    fromTableIds: input.currentLocks.map((lock) => lock.table_id),
+    toTableIds: tableIds,
+    // The replacement is committed atomically; no client-side rollback can
+    // safely undo a concurrent reassignment after this point.
+    rollback: async () => undefined
+  };
 }
 
 function assertBookableTime(settings: ReservationSettings, startsAt: Date) {
@@ -1998,7 +1928,9 @@ export async function createReservation(input: {
     throw new AppError("Quán đang bật nhận cọc nhưng chưa cấu hình ngân hàng VietQR.", 400);
   }
 
-  const accessToken = randomUUID();
+  const accessToken = input.idempotencyKey
+    ? deterministicReservationAccessToken(settings.id, input.idempotencyKey)
+    : randomUUID();
   const tokenHash = hashToken(accessToken);
   const now = new Date();
   const needsDeposit = depositAmount > 0;
@@ -2026,96 +1958,28 @@ export async function createReservation(input: {
     confirmed_at: needsDeposit ? null : now.toISOString()
   };
 
-  let { data: reservation, error: reservationError } = await supabase
-    .from("reservations")
-    .insert(reservationInsert)
-    .select(reservationSelect)
-    .single();
-
-  if (isMissingReservationPreferenceColumns(reservationError)) {
-    const {
-      preferred_table_area_id: _preferredTableAreaId,
-      preferred_seating_zone: _preferredSeatingZone,
-      preferred_table_kind: _preferredTableKind,
-      ...legacyReservationInsert
-    } = reservationInsert;
-
-    const legacyResult = await supabase
-      .from("reservations")
-      .insert(legacyReservationInsert)
-      .select(legacyReservationSelect)
-      .single();
-    reservation = legacyResult.data as typeof reservation;
-    reservationError = legacyResult.error;
-  }
+  const { data: reservationId, error: reservationError } = await (supabase as any).rpc("create_reservation_with_table_lock", {
+    p_reservation: reservationInsert,
+    p_table_id: table.id,
+    p_lock_ends_at: lockEnd.toISOString()
+  });
 
   if ((reservationError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
     const existingResult = await getIdempotentReservationResult(supabase, settings, input.idempotencyKey);
     if (existingResult) return existingResult;
   }
-
-  if (reservationError || !reservation) {
+  if ((reservationError as { code?: string } | null)?.code === "23P01") {
+    throw new AppError("Bàn vừa được khách khác giữ. Vui lòng chọn khung giờ khác.", 409);
+  }
+  if (reservationError || typeof reservationId !== "string") {
     throw new AppError(reservationError?.message ?? "Không tạo được đặt bàn", 400);
   }
-
-  const { error: lockError } = await supabase.from("reservation_table_locks").insert({
-    reservation_id: reservation.id,
-    restaurant_id: settings.id,
-    table_id: table.id,
-    starts_at: startsAt.toISOString(),
-    ends_at: lockEnd.toISOString()
-  });
-
-  if (lockError) {
-    await supabase.from("reservations").delete().eq("id", reservation.id);
-    if ((lockError as { code?: string }).code === "23P01") {
-      throw new AppError("Bàn vừa được khách khác giữ. Vui lòng chọn khung giờ khác.", 409);
-    }
-    throw new AppError(lockError.message ?? "Không giữ được bàn", 400);
-  }
-
-  if (needsDeposit) {
-    await ensureReservationDepositLogEvent(supabase, {
-      reservationId: reservation.id,
-      restaurantId: settings.id,
-      method: "QR",
-      status: "pending",
-      amount: depositAmount,
-      source: "reservation_deposit_required",
-      transitionKey: reservationDepositTransitionKey(reservation.id, "deposit-required")
-    });
-  }
-
-  await recordReservationStatusChange(supabase, {
-    restaurantId: settings.id,
-    reservationId: reservation.id,
-    fromStatus: null,
-    toStatus: reservation.status,
-    actorType: "customer",
-    note: "reservation_created",
-    metadata: {
-      tableId: table.id,
-      assignmentReason: reservationAssignmentReason(table, input.partySize),
-      ...reservationPreferenceMetadata(preferences)
-    }
-  });
-  await recordOccupancyEvent(supabase, {
-    restaurantId: settings.id,
+  const reservation = await getReservationById(reservationId, settings.id);
+  await ensureReservationCreationSideEffects(supabase, settings, reservation, {
     tableId: table.id,
-    reservationId: reservation.id,
-    eventType: "reservation_created",
-    partySize: input.partySize,
-    metadata: reservationPreferenceMetadata(preferences)
+    assignmentReason: reservationAssignmentReason(table, input.partySize),
+    ...reservationPreferenceMetadata(preferences)
   });
-  if (reservation.status === "confirmed") {
-    await scheduleReservationReminderNotifications(supabase, {
-      restaurantId: settings.id,
-      reservationId: reservation.id,
-      startsAt: startsAt.toISOString(),
-      partySize: input.partySize,
-      customerName: input.customerName
-    });
-  }
 
   const nextReservation = await getReservationById(reservation.id, settings.id);
   await enqueueTelegramNotification({
@@ -2171,12 +2035,82 @@ async function getIdempotentReservationResult(
   if (!data) return null;
 
   const reservation = await getFreshReservationById(data.id, settings.id);
+  await ensureReservationCreationSideEffects(supabase, settings, reservation);
+  const deterministicToken = deterministicReservationAccessToken(settings.id, idempotencyKey);
   return {
     reservation,
-    token: data.access_token_hash === hashToken(idempotencyKey) ? idempotencyKey : undefined,
+    token: data.access_token_hash === hashToken(deterministicToken) ? deterministicToken : undefined,
     payment: reservationPayment(settings, reservation),
     timeline: await listReservationStatusTimeline(settings.id, reservation.id)
   };
+}
+
+async function ensureReservationCreationSideEffects(
+  supabase: ReservationSupabaseClient,
+  settings: ReservationSettings,
+  reservation: ReservationDto,
+  metadata: Record<string, string | number | boolean | null | undefined> = {}
+) {
+  if (reservation.depositRequiredAmount > 0) {
+    await ensureReservationDepositLogEvent(supabase, {
+      reservationId: reservation.id,
+      restaurantId: settings.id,
+      method: reservation.paymentMethod ?? "QR",
+      status: "pending",
+      amount: reservation.depositRequiredAmount,
+      source: "reservation_deposit_required",
+      transitionKey: reservationDepositTransitionKey(reservation.id, "deposit-required")
+    });
+  }
+
+  const { data: statusRows, error: statusError } = await (supabase as any)
+    .from("reservation_status_logs")
+    .select("id")
+    .eq("restaurant_id", settings.id)
+    .eq("reservation_id", reservation.id)
+    .eq("note", "reservation_created")
+    .limit(1);
+  throwIfSupabaseError(statusError);
+  if (!statusRows?.length) {
+    await recordReservationStatusChange(supabase, {
+      restaurantId: settings.id,
+      reservationId: reservation.id,
+      fromStatus: null,
+      toStatus: reservation.status,
+      actorType: "customer",
+      note: "reservation_created",
+      metadata
+    });
+  }
+
+  const { data: occupancyRows, error: occupancyError } = await (supabase as any)
+    .from("occupancy_logs")
+    .select("id")
+    .eq("restaurant_id", settings.id)
+    .eq("reservation_id", reservation.id)
+    .eq("event_type", "reservation_created")
+    .limit(1);
+  throwIfSupabaseError(occupancyError);
+  if (!occupancyRows?.length) {
+    await recordOccupancyEvent(supabase, {
+      restaurantId: settings.id,
+      tableId: reservation.tables[0]?.id ?? null,
+      reservationId: reservation.id,
+      eventType: "reservation_created",
+      partySize: reservation.partySize,
+      metadata
+    });
+  }
+
+  if (reservation.status === "confirmed") {
+    await scheduleReservationReminderNotifications(supabase, {
+      restaurantId: settings.id,
+      reservationId: reservation.id,
+      startsAt: reservation.startsAt,
+      partySize: reservation.partySize,
+      customerName: reservation.customerName
+    });
+  }
 }
 
 async function expireReservationHoldIfNeeded(reservation: ReservationDto, restaurantId: string) {
@@ -2589,22 +2523,12 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
     throw new AppError("Chỉ có thể xác nhận cọc cho đặt bàn đang chờ xác nhận.", 400);
   }
 
-  const now = new Date().toISOString();
-  const { data: updated, error } = await supabase
-    .from("reservations")
-    .update({
-      status: "confirmed",
-      deposit_status: reservation.depositRequiredAmount > 0 ? "paid" : "none",
-      deposit_paid_amount: reservation.depositRequiredAmount,
-      confirmed_at: now,
-      hold_expires_at: null
-    })
-    .eq("id", reservationId)
-    .eq("restaurant_id", restaurantId)
-    .eq("status", "waiting_deposit_confirm")
-    .eq("deposit_status", "waiting_confirm")
-    .select("id")
-    .maybeSingle();
+  const { data: updated, error } = await (supabase as any).rpc("confirm_reservation_deposit_atomic", {
+    p_restaurant_id: restaurantId,
+    p_reservation_id: reservationId,
+    p_transition_key: confirmKey,
+    p_source: "merchant_reservation_deposit_confirm"
+  });
   throwIfSupabaseError(error);
   if (!updated) {
     const currentReservation = await getFreshReservationById(reservationId, restaurantId);
@@ -2622,16 +2546,6 @@ export async function confirmReservationDeposit(restaurantId: string, reservatio
     }
     throw new AppError("Không thể xác nhận cọc cho đặt bàn này.", 409);
   }
-
-  await ensureReservationDepositLogEvent(supabase, {
-    reservationId,
-    restaurantId,
-    method: reservation.paymentMethod ?? "QR",
-    status: "confirmed",
-    amount: reservation.depositRequiredAmount,
-    source: "merchant_reservation_deposit_confirm",
-    transitionKey: confirmKey
-  });
   await recordReservationStatusChange(supabase, {
     restaurantId,
     reservationId,
@@ -2940,13 +2854,6 @@ export async function setReservationTables(restaurantId: string, reservationId: 
     startsAt,
     lockEnd
   });
-  const { error: touchError } = await supabase
-    .from("reservations")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", reservationId)
-    .eq("restaurant_id", restaurantId);
-  if (touchError) await replacement.rollback();
-  throwIfSupabaseError(touchError);
 
   await recordReservationStatusChange(supabase, {
     restaurantId,
@@ -3389,16 +3296,10 @@ export async function rescheduleReservation(
     currentLocks,
     tableIds: tables.map((table) => table.id),
     startsAt,
-    lockEnd
+    lockEnd,
+    reservationStartsAt: startsAt.toISOString(),
+    reservationEndsAt: endsAt.toISOString()
   });
-
-  const { error } = await supabase
-    .from("reservations")
-    .update({ starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString() })
-    .eq("id", reservationId)
-    .eq("restaurant_id", restaurantId);
-  if (error) await replacement.rollback();
-  throwIfSupabaseError(error);
 
   await recordReservationStatusChange(supabase, {
     restaurantId,

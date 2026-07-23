@@ -5,6 +5,7 @@ import { getAppUrl } from "@/lib/app-url";
 import { buildPaymentPolicySummary } from "@/lib/billing/subscription-transitions";
 import { BLOG_POSTS } from "@/lib/seo/blog";
 import { getPlatformAdminAuthStatus } from "@/lib/platform-admin-auth";
+import { platformUserBlockIssue, tenantActivationOwnerIssue } from "@/lib/platform-owner-lifecycle";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { getSupabaseBrowserEnv } from "@/lib/supabase/env";
 import { ROOT_DOMAIN } from "@/lib/tenant-domain";
@@ -1874,6 +1875,49 @@ export async function updateTenantPlatformStatus({
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date().toISOString();
+
+  if (status === "active") {
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from("restaurants")
+      .select("id,platform_status,owner_user_id")
+      .eq("id", restaurantId)
+      .maybeSingle();
+    if (restaurantError) throw restaurantError;
+    if (!restaurant) throw new AppError("Không tìm thấy tenant.", 404);
+
+    const ownerUserId = restaurant.owner_user_id as string | null;
+    const [ownerResult, ownerStaffResult] = ownerUserId
+      ? await Promise.all([
+        supabase
+          .from("users")
+          .select("id,restaurant_id,role,account_status")
+          .eq("id", ownerUserId)
+          .maybeSingle(),
+        supabase
+          .from("staff_members")
+          .select("user_id,role_code,employment_status,archived_at")
+          .eq("restaurant_id", restaurantId)
+          .eq("user_id", ownerUserId)
+          .maybeSingle()
+      ])
+      : [{ data: null, error: null }, { data: null, error: null }];
+    if (ownerResult.error) throw ownerResult.error;
+    if (ownerStaffResult.error) throw ownerStaffResult.error;
+
+    const ownerIssue = tenantActivationOwnerIssue({
+      tenantId: restaurantId,
+      tenantStatus: restaurant.platform_status ?? "suspended",
+      ownerUserId,
+      ownerTenantId: ownerResult.data?.restaurant_id ?? null,
+      ownerRole: ownerResult.data?.role ?? null,
+      ownerAccountStatus: ownerResult.data?.account_status ?? null,
+      ownerStaffRoleCode: ownerStaffResult.data?.role_code ?? null,
+      ownerEmploymentStatus: ownerStaffResult.data?.employment_status ?? null,
+      ownerStaffArchivedAt: ownerStaffResult.data?.archived_at ?? null
+    });
+    if (ownerIssue) throw new AppError(`Không thể kích hoạt tenant: ${ownerIssue}`, 409);
+  }
+
   const update =
     status === "active"
       ? { platform_status: "active", suspended_at: null, suspended_reason: null, deleted_at: null }
@@ -1942,6 +1986,33 @@ export async function updatePlatformUserStatus({
   updatedBy?: string;
 }) {
   const supabase = createAdminSupabaseClient() as any;
+
+  if (status === "blocked") {
+    const { data: targetUser, error: targetUserError } = await supabase
+      .from("users")
+      .select("id,restaurant_id")
+      .eq("id", userId)
+      .maybeSingle();
+    if (targetUserError) throw targetUserError;
+    if (!targetUser) throw new AppError("Không tìm thấy tài khoản.", 404);
+
+    const { data: restaurant, error: restaurantError } = await supabase
+      .from("restaurants")
+      .select("id,platform_status,owner_user_id")
+      .eq("id", targetUser.restaurant_id)
+      .maybeSingle();
+    if (restaurantError) throw restaurantError;
+
+    const blockIssue = restaurant
+      ? platformUserBlockIssue({
+        targetUserId: userId,
+        ownerUserId: restaurant.owner_user_id ?? null,
+        tenantStatus: restaurant.platform_status ?? "active"
+      })
+      : null;
+    if (blockIssue) throw new AppError(blockIssue, 409);
+  }
+
   const update =
     status === "active"
       ? { account_status: "active", blocked_at: null, blocked_reason: null }

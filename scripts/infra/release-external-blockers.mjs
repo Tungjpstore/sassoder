@@ -2,16 +2,19 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { evaluateNpmAuditReport } from "./dependency-audit-policy.mjs";
+import { evaluateReleaseQaSignoff, releasePreflightExitCode } from "./release-readiness-policy.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const args = new Set(process.argv.slice(2));
 const writeReport = args.has("--write");
 const strict = args.has("--strict");
+const reportOnly = args.has("--report-only");
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+const qaMaxAgeDays = 14;
 
 const releaseEnv = readEnvFiles([
   ".env.release.local",
-  ".env.local",
   ".vercel/.env.production.local"
 ]);
 
@@ -25,6 +28,7 @@ const checks = [];
 const evidence = {
   generatedAt: new Date().toISOString(),
   projectRef,
+  mode: reportOnly ? "report-only" : strict ? "strict" : "blocking",
   commands: {}
 };
 
@@ -141,12 +145,49 @@ function migrationStats() {
   };
 }
 
+function dependencyReadiness() {
+  const audit = run("npm", ["audit", "--audit-level=high", "--json"], { timeoutMs: 120_000 });
+  evidence.commands.npmAudit = audit;
+  const report = parseJsonFragment(`${audit.stdout}\n${audit.stderr}`);
+  if (!report) {
+    addCheck("dependency-audit", "block", "npm audit did not return parseable JSON.", {
+      error: summarizeCommandError(audit)
+    });
+    return;
+  }
+
+  const evaluation = evaluateNpmAuditReport(report);
+  addCheck("dependency-audit", evaluation.status, evaluation.summary, {
+    counts: evaluation.counts
+  });
+}
+
 function localGitStatus() {
   const status = run("git", ["status", "--short", "--branch"], { timeoutMs: 15_000 });
   evidence.commands.gitStatus = status;
   const lines = status.stdout.trim().split("\n").filter(Boolean);
   const dirtyLines = lines.filter((line) => !line.startsWith("## "));
   return { ok: status.status === 0, lines, dirtyLines };
+}
+
+function currentReleaseGitContext() {
+  const githubEnv = (suffix) => process.env[["GITHUB", ...suffix].join("_")]?.trim() || "";
+  let branch = githubEnv(["HEAD", "REF"]) || githubEnv(["REF", "NAME"]);
+  let commit = githubEnv(["SHA"]);
+
+  if (!branch) {
+    const branchResult = run("git", ["branch", "--show-current"], { timeoutMs: 15_000 });
+    evidence.commands.gitCurrentBranch = branchResult;
+    if (branchResult.status === 0) branch = branchResult.stdout.trim();
+  }
+
+  if (!commit) {
+    const commitResult = run("git", ["rev-parse", "HEAD"], { timeoutMs: 15_000 });
+    evidence.commands.gitCurrentCommit = commitResult;
+    if (commitResult.status === 0) commit = commitResult.stdout.trim();
+  }
+
+  return { branch, commit };
 }
 
 function supabaseReadiness() {
@@ -280,7 +321,7 @@ function latestSchemaDumpArtifact() {
   return candidates[0] ?? null;
 }
 
-function qaReadiness() {
+function qaReadiness({ currentBranch, currentCommit, currentMigrationCount }) {
   const qaPath = path.join(rootDir, "RELEASE_QA_SIGNOFF.md");
   if (!existsSync(qaPath)) {
     addCheck("authenticated-qa", "block", "RELEASE_QA_SIGNOFF.md is missing.");
@@ -288,13 +329,30 @@ function qaReadiness() {
   }
 
   const qaText = readFileSync(qaPath, "utf8");
-  const pendingMarkers = qaText.match(/\b(Pending|Missing|TBD|TODO)\b/gi) ?? [];
+  const evaluation = evaluateReleaseQaSignoff({
+    text: qaText,
+    currentBranch,
+    currentCommit,
+    currentMigrationCount,
+    now: new Date(evidence.generatedAt),
+    maxAgeDays: qaMaxAgeDays
+  });
+  evidence.qaSignoff = {
+    status: evaluation.status,
+    date: evaluation.date,
+    migrationCount: evaluation.migrationCount,
+    currentBranch,
+    currentCommit,
+    maxAgeDays: qaMaxAgeDays,
+    blockers: evaluation.blockers
+  };
   addCheck(
     "authenticated-qa",
-    pendingMarkers.length === 0 ? "pass" : "block",
-    pendingMarkers.length === 0
-      ? "Authenticated QA sign-off file has no pending markers."
-      : `Authenticated QA still has ${pendingMarkers.length} pending marker(s) in RELEASE_QA_SIGNOFF.md.`
+    evaluation.ok ? "pass" : "block",
+    evaluation.ok
+      ? `Authenticated QA sign-off is approved, current, and matches ${currentBranch} at ${currentCommit}.`
+      : `Authenticated QA sign-off failed ${evaluation.blockers.length} release policy check(s).`,
+    { reasons: evaluation.blockers.map((item) => item.message) }
   );
 }
 
@@ -379,6 +437,16 @@ function markdownReport() {
   const blockers = checks.filter((check) => check.status === "block");
   const warnings = checks.filter((check) => check.status === "warn");
 
+  const checksWithReasons = checks.filter((check) => Array.isArray(check.reasons) && check.reasons.length > 0);
+  if (checksWithReasons.length > 0) {
+    lines.push("", "## Check Details", "");
+    for (const check of checksWithReasons) {
+      lines.push(`### ${check.id}`, "");
+      for (const reason of check.reasons) lines.push(`- ${reason}`);
+      lines.push("");
+    }
+  }
+
   lines.push("", "## Release Decision", "");
   if (blockers.length > 0) {
     lines.push(`NO-GO: ${blockers.length} blocker(s) remain.`);
@@ -421,9 +489,17 @@ addCheck(
     : `Duplicate migration version(s): ${migrations.duplicateVersions.join("; ")}`
 );
 
+const releaseGit = currentReleaseGitContext();
+evidence.releaseGit = releaseGit;
+
+dependencyReadiness();
 supabaseReadiness();
 dockerAndDumpReadiness();
-qaReadiness();
+qaReadiness({
+  currentBranch: releaseGit.branch,
+  currentCommit: releaseGit.commit,
+  currentMigrationCount: migrations.count
+});
 monitoringReadiness();
 staffHrEnvReadiness();
 
@@ -439,4 +515,4 @@ if (writeReport) {
 console.log(report);
 
 const hasBlockers = checks.some((check) => check.status === "block");
-if (strict && hasBlockers) process.exit(1);
+process.exitCode = releasePreflightExitCode({ hasBlockers, reportOnly });

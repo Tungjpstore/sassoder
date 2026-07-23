@@ -80,6 +80,7 @@ import type {
   InventoryStockBalance,
   InventoryStockBalanceStatus,
   InventoryTransfer,
+  InventoryTransferWorkflowAction,
   InventoryWarehouseCommandCenter
 } from "@/services/inventory-service";
 import type { InventoryMovementType } from "@/types/domain";
@@ -673,6 +674,22 @@ function parseNumber(value: unknown) {
   }
   const parsed = Number(cleaned);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function inventoryMutationFingerprint(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function useInventoryIdempotencyKey(operation: string, fingerprint: string) {
+  const [nonce] = useState(
+    () => globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+  );
+  return `inventory:${operation}:${nonce}:${inventoryMutationFingerprint(fingerprint)}`;
 }
 
 function normalizeUnit(value: string) {
@@ -1880,9 +1897,20 @@ function QuickCountForm({ warehouse, ingredients, canUseWarehouseAdvanced }: { w
     ? warehouse.stockBalances.find((balance) => balance.ingredientId === selectedIngredient.id && (!locationId || balance.locationId === locationId))?.onHandQuantity ?? selectedIngredient.onHandQuantity
     : 0;
   const variance = selectedIngredient ? parseNumber(countedQuantity) - expectedQuantity : 0;
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "count",
+    JSON.stringify({
+      locationId,
+      ingredientId,
+      countedQuantity: parseNumber(countedQuantity),
+      note,
+      stateSeed: warehouse.countSessions[0]?.id ?? "none"
+    })
+  );
 
   return (
     <form action={applyInventoryCountAction} className="grid gap-3">
+      <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <input type="hidden" name="rowsJson" value="[]" />
       <input type="hidden" name="title" value="Kiểm kê nhanh" />
       {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Kiểm kê Premium" detail="Tạo adjustment kiểm kê cần quyền kho nâng cao." /> : null}
@@ -1933,9 +1961,22 @@ function QuickTransferForm({ warehouse, ingredients, canUseWarehouseAdvanced }: 
     : 0;
   const parsedQuantity = parseNumber(quantity);
   const transferReady = warehouse.locations.length >= 2;
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "transfer-create",
+    JSON.stringify({
+      fromLocationId,
+      toLocationId,
+      ingredientId,
+      quantity: parsedQuantity,
+      unit,
+      note,
+      stateSeed: warehouse.transfers[0]?.id ?? "none"
+    })
+  );
 
   return (
     <form action={createInventoryTransferAction} className="grid gap-3">
+      <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <input type="hidden" name="rowsJson" value="[]" />
       {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Điều chuyển Premium" detail="Tạo phiếu điều chuyển cần quyền kho nâng cao." /> : null}
       <div className="grid gap-2 sm:grid-cols-2">
@@ -4683,6 +4724,7 @@ function InventoryCountingDesk({
   const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
   const [countedQuantity, setCountedQuantity] = useState("");
   const [countSearch, setCountSearch] = useState("");
+  const [countTitle, setCountTitle] = useState("");
   const [sessionNote, setSessionNote] = useState("");
   const [lineNote, setLineNote] = useState("");
   const [countLines, setCountLines] = useState<CountDraftLine[]>(() => (Array.isArray(countDraftSeed?.lines) ? countDraftSeed.lines : []));
@@ -4708,6 +4750,16 @@ function InventoryCountingDesk({
         }))
       ),
     [countLines]
+  );
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "count",
+    JSON.stringify({
+      countTitle,
+      locationId,
+      sessionNote,
+      rows: countRowsJson,
+      stateSeed: warehouse.countSessions[0]?.id ?? "none"
+    })
   );
   const totalVarianceValue = countLines.reduce((sum, line) => {
     const ingredient = ingredients.find((item) => item.id === line.ingredientId);
@@ -4755,10 +4807,11 @@ function InventoryCountingDesk({
         </div>
         {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Kiểm kê Premium" detail="Bạn vẫn xem được phiên kiểm kê. Tạo và áp dụng phiếu kiểm kê cần gói Premium." /> : null}
         <form action={applyInventoryCountAction} className="grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+          <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
           <input type="hidden" name="rowsJson" value={countRowsJson} />
           <input type="hidden" name="locationId" value={locationId} />
           <div className="grid gap-2 lg:grid-cols-[1fr_0.85fr]">
-            <Input name="title" placeholder="Tên phiên: Kiểm kê cuối ca" className="h-10 rounded-xl bg-white" />
+            <Input name="title" value={countTitle} onChange={(event) => setCountTitle(event.target.value)} placeholder="Tên phiên: Kiểm kê cuối ca" className="h-10 rounded-xl bg-white" />
             <select
               value={locationId}
               onChange={(event) => setLocationId(event.target.value)}
@@ -4962,6 +5015,16 @@ function InventoryTransferDesk({
       ),
     [transferLines]
   );
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "transfer-create",
+    JSON.stringify({
+      fromLocationId,
+      toLocationId,
+      transferNote,
+      rows: transferRowsJson,
+      stateSeed: warehouse.transfers[0]?.id ?? "none"
+    })
+  );
   const availableFromSource = selectedIngredient
     ? warehouse.stockBalances.find((balance) => balance.ingredientId === selectedIngredient.id && balance.locationId === fromLocationId)?.availableQuantity ?? selectedIngredient.onHandQuantity
     : 0;
@@ -5010,6 +5073,7 @@ function InventoryTransferDesk({
         </div>
         {!canUseWarehouseAdvanced ? <FeatureLockNotice title="Điều chuyển Premium" detail="Bạn vẫn xem được luồng điều chuyển. Tạo, duyệt, xuất và nhận phiếu cần gói Premium." /> : null}
         <form action={createInventoryTransferAction} className="grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+          <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
           <input type="hidden" name="rowsJson" value={transferRowsJson} />
           <input type="hidden" name="fromLocationId" value={fromLocationId} />
           <input type="hidden" name="toLocationId" value={toLocationId} />
@@ -5179,7 +5243,12 @@ function InventoryTransferDesk({
 }
 
 function TransferWorkflowActions({ transfer, canUseWarehouseAdvanced }: { transfer: InventoryTransfer; canUseWarehouseAdvanced: boolean }) {
-  const actions =
+  const actions: Array<{
+    action: InventoryTransferWorkflowAction;
+    label: string;
+    icon: LucideIcon;
+    tone: "primary" | "secondary";
+  }> =
     transfer.status === "requested"
       ? [
           { action: "approve", label: "Duyệt", icon: CheckCircle2, tone: "primary" as const },
@@ -5205,16 +5274,47 @@ function TransferWorkflowActions({ transfer, canUseWarehouseAdvanced }: { transf
   return (
     <div className="flex flex-wrap gap-2">
       {actions.map(({ action, label, icon: Icon, tone }) => (
-        <form key={`${transfer.id}:${action}`} action={processInventoryTransferAction}>
-          <input type="hidden" name="transferId" value={transfer.id} />
-          <input type="hidden" name="action" value={action} />
-          <SubmitButton variant={tone === "primary" ? "primary" : "secondary"} size="sm" disabled={!canUseWarehouseAdvanced} pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
-            <Icon className="h-3.5 w-3.5" />
-            {label}
-          </SubmitButton>
-        </form>
+        <TransferWorkflowActionForm
+          key={`${transfer.id}:${action}`}
+          transferId={transfer.id}
+          action={action}
+          label={label}
+          icon={Icon}
+          primary={tone === "primary"}
+          disabled={!canUseWarehouseAdvanced}
+        />
       ))}
     </div>
+  );
+}
+
+function TransferWorkflowActionForm({
+  transferId,
+  action,
+  label,
+  icon: Icon,
+  primary,
+  disabled
+}: {
+  transferId: string;
+  action: InventoryTransferWorkflowAction;
+  label: string;
+  icon: LucideIcon;
+  primary: boolean;
+  disabled: boolean;
+}) {
+  const idempotencyKey = useInventoryIdempotencyKey("transfer-process", JSON.stringify({ transferId, action }));
+
+  return (
+    <form action={processInventoryTransferAction}>
+      <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
+      <input type="hidden" name="transferId" value={transferId} />
+      <input type="hidden" name="action" value={action} />
+      <SubmitButton variant={primary ? "primary" : "secondary"} size="sm" disabled={disabled} pendingLabel="..." className="h-8 rounded-xl px-3 text-xs">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </SubmitButton>
+    </form>
   );
 }
 
@@ -5233,11 +5333,30 @@ function TransferReceiveForm({ transfer, canUseWarehouseAdvanced }: { transfer: 
       ),
     [quantities, receivableLines]
   );
+  const receiveStateFingerprint = useMemo(
+    () =>
+      receivableLines.map((line) => ({
+        lineId: line.id,
+        dispatchedQuantity: line.dispatchedQuantity,
+        receivedQuantity: line.receivedQuantity
+      })),
+    [receivableLines]
+  );
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "transfer-process",
+    JSON.stringify({
+      transferId: transfer.id,
+      action: "receive",
+      lines: linesJson,
+      receiveState: receiveStateFingerprint
+    })
+  );
 
   if (receivableLines.length === 0) return <span className="text-xs font-black text-[var(--muted-foreground)]">Đã nhận đủ</span>;
 
   return (
     <form action={processInventoryTransferAction} className="grid gap-2">
+      <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <input type="hidden" name="transferId" value={transfer.id} />
       <input type="hidden" name="action" value="receive" />
       <input type="hidden" name="linesJson" value={linesJson} />
@@ -6039,6 +6158,10 @@ function PurchaseOrderReceiveForm({ order, canUseProcurement }: { order: Invento
       ),
     [receiptLines]
   );
+  const idempotencyKey = useInventoryIdempotencyKey(
+    "po-receive",
+    JSON.stringify({ purchaseOrderId: order.id, lines: receiptRowsJson })
+  );
   const receiptValue = receiptLines.reduce((sum, line) => {
     const quantity = parseNumber(line.receivedQuantity);
     const unitCost = Math.round(parseNumber(line.unitCost));
@@ -6060,6 +6183,7 @@ function PurchaseOrderReceiveForm({ order, canUseProcurement }: { order: Invento
 
   return (
     <form action={receiveInventoryPurchaseOrderAction} className="mt-3 grid gap-3 rounded-2xl bg-[var(--soft-surface)] p-3">
+      <input suppressHydrationWarning type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <input type="hidden" name="purchaseOrderId" value={order.id} />
       <input type="hidden" name="rowsJson" value={receiptRowsJson} />
       {!canUseProcurement ? <FeatureLockNotice title="Nhận hàng Premium" detail="Bạn vẫn xem được dòng còn nhận. Xác nhận nhập kho từ PO cần quyền procurement." /> : null}

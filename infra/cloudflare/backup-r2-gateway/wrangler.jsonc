@@ -5,6 +5,9 @@
   "compatibility_date": "2026-06-04",
   "workers_dev": true,
   "preview_urls": false,
+  "vars": {
+    "BACKUP_R2_ALLOWED_PREFIX": "logivn/"
+  },
   "r2_buckets": [
     {
       "binding": "BACKUP_BUCKET",

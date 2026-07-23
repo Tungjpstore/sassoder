@@ -71,7 +71,8 @@ BACKUP_RESTORE_TEST_ENABLED=${BACKUP_RESTORE_TEST_ENABLED:-true}
 BACKUP_RESTORE_TEST_MODE=${BACKUP_RESTORE_TEST_MODE:-docker}
 BACKUP_RESTORE_TEST_SCHEMA=${BACKUP_RESTORE_TEST_SCHEMA:-public}
 BACKUP_RESTORE_CRITICAL_TABLES=${BACKUP_RESTORE_CRITICAL_TABLES:-restaurants,orders,payment_logs,reservations}
-BACKUP_RESTORE_TEST_STRICT=${BACKUP_RESTORE_TEST_STRICT:-false}
+BACKUP_RESTORE_TEST_STRICT=${BACKUP_RESTORE_TEST_STRICT:-true}
+BACKUP_REMOTE_CHECKSUM_VERIFY_ENABLED=${BACKUP_REMOTE_CHECKSUM_VERIFY_ENABLED:-true}
 DEV_TELEGRAM_ALERTS_ENABLED=${DEV_TELEGRAM_ALERTS_ENABLED:-true}
 BACKUP_TELEGRAM_REPORT_REQUIRED=${BACKUP_TELEGRAM_REPORT_REQUIRED:-true}
 R2_REGION=${R2_REGION:-auto}
@@ -96,6 +97,7 @@ JOB_CHECKSUM=""
 RETENTION_APPLIED=false
 VERIFY_STATUS="pending"
 CHECKSUM_STATUS="pending"
+RESTORE_TEST_STATUS="not_run"
 FAILURE_STEP=""
 FAILURE_MESSAGE=""
 TELEGRAM_REPORT_SENT_COUNT=0
@@ -833,6 +835,31 @@ upload_artifact() {
     return 1
   fi
 
+  if [ "$BACKUP_REMOTE_CHECKSUM_VERIFY_ENABLED" = "true" ]; then
+    local remote_file remote_checksum remote_metadata remote_signature expected_signature
+    remote_file="$WORK_DIR/$(basename "$encrypted_file").remote"
+    get_object "$object_key" "$remote_file"
+    remote_checksum=$(sha256_file "$remote_file")
+    if [ "$remote_checksum" != "$checksum" ]; then
+      ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
+      record_artifact "${artifact_type}" "failed" "$object_key" "$(basename "$encrypted_file")" "$size_bytes" "$checksum" "$signature" "R2 checksum mismatch: $remote_checksum != $checksum"
+      return 1
+    fi
+    rm -f "$remote_file"
+
+    remote_metadata="$WORK_DIR/$(basename "$metadata_file").remote"
+    remote_signature="$WORK_DIR/$(basename "$metadata_file.sig").remote"
+    get_object "$metadata_key" "$remote_metadata"
+    get_object "$signature_key" "$remote_signature"
+    expected_signature=$(sign_metadata "$remote_metadata")
+    if [ "$(tr -d '\r\n' < "$remote_signature")" != "$expected_signature" ]; then
+      ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
+      record_artifact "${artifact_type}" "failed" "$object_key" "$(basename "$encrypted_file")" "$size_bytes" "$checksum" "$signature" "R2 metadata signature mismatch"
+      return 1
+    fi
+    rm -f "$remote_metadata" "$remote_signature"
+  fi
+
   TOTAL_BYTES=$((TOTAL_BYTES + size_bytes))
   ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
   JOB_CHECKSUM_SEED="${JOB_CHECKSUM_SEED}${checksum}"
@@ -1045,6 +1072,7 @@ record_restore_test() {
   local schema_verified=${4:-false}
   local row_count_verified=${5:-false}
   local critical_verified=${6:-false}
+  RESTORE_TEST_STATUS="$status"
   if ! supabase_ready; then return 0; fi
   local body
   body=$(printf '{"job_id":%s,"environment":%s,"status":%s,"triggered_by":%s,"source_storage_path":%s,"target_database":%s,"started_at":%s,"finished_at":%s,"schema_verified":%s,"row_count_verified":%s,"critical_tables_verified":%s,"verification_summary":{"message":%s,"mode":%s},"error_message":%s}' \
@@ -1407,12 +1435,16 @@ run_docker_restore_database() {
 }
 
 run_restore_test() {
-  [ "$BACKUP_RESTORE_TEST_ENABLED" = "true" ] || return 0
+  if [ "$BACKUP_RESTORE_TEST_ENABLED" != "true" ]; then
+    RESTORE_TEST_STATUS="skipped"
+    return 0
+  fi
   record_event "restore_test_started" "info" "restore_test" "Starting restore test pipeline"
   local object_key encrypted dump_file list_file
   object_key=${BACKUP_RESTORE_TEST_SOURCE:-$(latest_postgres_object_key)}
 
   if [ -z "$object_key" ] || [ "$object_key" = "None" ]; then
+    RESTORE_TEST_STATUS="skipped"
     record_restore_test "skipped" "" "No Postgres backup object found for restore test"
     return 0
   fi
@@ -1449,7 +1481,7 @@ run_restore_test() {
       fi
       ;;
     list)
-      record_restore_test "success" "$object_key" "pg_restore --list succeeded; set BACKUP_RESTORE_TEST_MODE=docker for full ephemeral restore" true false false
+      record_restore_test "skipped" "$object_key" "pg_restore --list succeeded; set BACKUP_RESTORE_TEST_MODE=docker for full ephemeral restore" true false false
       ;;
     *)
       printf 'Invalid BACKUP_RESTORE_TEST_MODE: %s\n' "$BACKUP_RESTORE_TEST_MODE" >&2
@@ -1611,7 +1643,8 @@ on_error() {
   FAILURE_STEP=${FAILURE_STEP:-line_$line_no}
   FAILURE_MESSAGE=${FAILURE_MESSAGE:-Backup failed with exit code $exit_code at line $line_no}
   ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
-  VERIFY_STATUS=${VERIFY_STATUS:-failed}
+  if [ "$VERIFY_STATUS" = "pending" ] || [ -z "$VERIFY_STATUS" ]; then VERIFY_STATUS="failed"; fi
+  if [ "$CHECKSUM_STATUS" = "pending" ] || [ -z "$CHECKSUM_STATUS" ]; then CHECKSUM_STATUS="failed"; fi
   log "$FAILURE_MESSAGE"
   record_event "backup_failed" "critical" "$FAILURE_STEP" "$FAILURE_MESSAGE"
   update_job_status "failed" "$FAILURE_STEP" "$FAILURE_MESSAGE"
@@ -1636,10 +1669,11 @@ run_backup_pipeline() {
 
   local final_status="success"
   if [ "$ARTIFACT_FAILURES" -gt 0 ]; then final_status="warn"; fi
+  if [ "$MODE" = "monthly" ] && [ "$RESTORE_TEST_STATUS" != "success" ]; then final_status="warn"; fi
   update_job_status "$final_status"
   record_event "backup_completed" "info" "finish" "Backup pipeline completed"
   resolve_recovered_backup_alerts "$final_status"
-  if ! send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng kiểm tra kích thước từ storage adapter."; then
+  if ! send_telegram_report "$final_status" "Backup hoàn tất" "Backup đã upload R2, metadata đã ký và object đã verify bằng kích thước cùng SHA-256 từ storage adapter."; then
     ARTIFACT_FAILURES=$((ARTIFACT_FAILURES + 1))
     final_status="warn"
     update_job_status "$final_status" "telegram_report" "${TELEGRAM_REPORT_FAILURE:-Chưa gửi được báo cáo backup qua Telegram}"
@@ -1668,8 +1702,13 @@ main() {
     STARTED_EPOCH=$(date +%s)
     mkdir -p "$WORK_DIR"
     run_restore_test
-    update_job_status "success"
-    if ! send_telegram_report "success" "Restore test hoàn tất" "Restore test pipeline đã hoàn tất."; then
+    local restore_status="${RESTORE_TEST_STATUS:-skipped}"
+    if [ "$restore_status" = "success" ]; then
+      update_job_status "success"
+    else
+      update_job_status "warn" "restore_test" "Restore test did not complete full critical-table verification (status: $restore_status)."
+    fi
+    if ! send_telegram_report "$([ "$restore_status" = "success" ] && printf success || printf warn)" "Restore test hoàn tất" "Restore test status: $restore_status."; then
       update_job_status "warn" "telegram_report" "${TELEGRAM_REPORT_FAILURE:-Chưa gửi được báo cáo restore test qua Telegram}"
     fi
     rm -rf "$WORK_DIR"

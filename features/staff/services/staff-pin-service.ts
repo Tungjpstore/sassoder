@@ -11,8 +11,6 @@ import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
 
 const pinHashPrefix = "scrypt:v1";
-const maxPinAttempts = 5;
-const pinLockMs = 10 * 60 * 1000;
 
 type StaffPinRestaurantRow = {
   id: string;
@@ -42,10 +40,9 @@ type StaffPinUserRow = {
 };
 
 function pinSecret() {
-  const secret =
-    process.env.STAFF_PIN_PEPPER?.trim() ||
-    process.env.AUTH_RATE_LIMIT_SECRET?.trim() ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  // Keep the PIN hash domain independent from auth throttling and Supabase
+  // credentials. Production must explicitly provision this secret.
+  const secret = process.env.STAFF_PIN_PEPPER?.trim();
 
   if (!secret && process.env.NODE_ENV === "production") {
     throw new AppError("Chưa cấu hình STAFF_PIN_PEPPER để bảo vệ đăng nhập PIN.", 500);
@@ -185,17 +182,16 @@ async function recordPinFailure({
   reason: string;
   context: Awaited<ReturnType<typeof requestContext>>;
 }) {
-  const nextAttempts = Math.min(maxPinAttempts, (member.pin_attempts ?? 0) + 1);
-  const lockedUntil = nextAttempts >= maxPinAttempts ? new Date(Date.now() + pinLockMs).toISOString() : null;
-
-  await supabase
-    .from("staff_members")
-    .update({
-      pin_attempts: nextAttempts,
-      pin_locked_until: lockedUntil
-    })
-    .eq("restaurant_id", restaurantId)
-    .eq("id", member.id);
+  const failureResult = await supabase.rpc("record_staff_auth_failure", {
+    p_restaurant_id: restaurantId,
+    p_staff_member_id: member.id,
+    p_auth_kind: "pin"
+  });
+  if (failureResult.error || !failureResult.data?.[0]) {
+    throw new AppError("Không ghi nhận được lần thử PIN thất bại. Vui lòng thử lại.", 503);
+  }
+  const nextAttempts = Number(failureResult.data[0].attempts ?? 0);
+  const lockedUntil = failureResult.data[0].locked_until as string | null;
 
   await writeStaffActivityLog({
     restaurantId,
@@ -333,16 +329,21 @@ export async function loginWithStaffPin({
   await createSupabaseSessionFromVerifiedPin(user.email.toLowerCase());
 
   const now = new Date().toISOString();
-  await supabase
+  const sessionMemberUpdate = await supabase
     .from("staff_members")
     .update({
       pin_attempts: 0,
       pin_locked_until: null,
       pin_last_success_at: now,
-      last_seen_at: now
+      last_seen_at: now,
+      auth_revoked_at: null
     })
     .eq("restaurant_id", restaurant.id)
     .eq("id", member.id);
+  if (sessionMemberUpdate.error) {
+    await expireSupabaseAuthSessionCookies();
+    throw new AppError("Không hoàn tất được phiên đăng nhập PIN.", 503);
+  }
 
   await writeStaffActivityLog({
     restaurantId: restaurant.id,

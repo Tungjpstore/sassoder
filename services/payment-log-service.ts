@@ -10,6 +10,7 @@ type PaymentLogInsertStatus = NonNullable<Database["public"]["Tables"]["payment_
 type ReservationDepositLogInsertStatus = NonNullable<Database["public"]["Tables"]["reservation_deposit_logs"]["Insert"]["status"]>;
 
 type PaymentLogEventInput = {
+  restaurantId: string;
   orderId: string;
   method: PaymentMethod;
   status: PaymentLogInsertStatus;
@@ -48,6 +49,7 @@ export function paymentTransitionKey({
   billId?: string | null;
   stage: string;
 }) {
+  if (billId && orderId) return `bill:${billId}:order:${orderId}:${stage}`;
   if (billId) return `bill:${billId}:${stage}`;
   if (orderId) return `order:${orderId}:${stage}`;
   throw new Error("paymentTransitionKey requires either orderId or billId");
@@ -66,6 +68,7 @@ export function billStatusToOrderPaymentState(status: Extract<TableBillStatus, "
 
 export async function ensurePaymentLogEvent(supabase: TypedSupabaseClient, input: PaymentLogEventInput) {
   const { error } = await supabase.from("payment_logs").insert({
+    restaurant_id: input.restaurantId,
     order_id: input.orderId,
     bill_id: input.billId ?? null,
     method: input.method,
@@ -79,6 +82,7 @@ export async function ensurePaymentLogEvent(supabase: TypedSupabaseClient, input
     writeOperationalEvent({
       area: "payment",
       event: "payment_transition_duplicate",
+      restaurantId: input.restaurantId,
       status: "warn",
       metadata: {
         orderId: input.orderId,
@@ -93,6 +97,7 @@ export async function ensurePaymentLogEvent(supabase: TypedSupabaseClient, input
   writeOperationalEvent({
     area: "payment",
     event: "payment_transition_logged",
+    restaurantId: input.restaurantId,
     metadata: {
       orderId: input.orderId,
       billId: input.billId ?? null,

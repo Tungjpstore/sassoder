@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -14,6 +15,15 @@ function migrationSql(fileName: string) {
   return readFileSync(`${migrationsDir}/${fileName}`, "utf8");
 }
 
+function gitOutput(args: string[]) {
+  try {
+    return execFileSync("git", args, { encoding: "utf8" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert.fail(`Git migration contract command failed: git ${args.join(" ")} (${message})`);
+  }
+}
+
 function lineNumber(sql: string, index: number) {
   return sql.slice(0, index).split("\n").length;
 }
@@ -27,9 +37,53 @@ test("migration files have monotonic unique timestamps", () => {
   assert.equal(new Set(timestamps).size, timestamps.length);
 });
 
-test("migration log count and latest migration stay aligned", () => {
-  assert.match(migrationLog, new RegExp(`Tracked migration files: ${migrationFiles.length}`));
-  assert.match(migrationLog, new RegExp(migrationFiles.at(-1) ?? "NO_MIGRATIONS"));
+test("migration inventory matches local and Git tracked state", () => {
+  const gitTrackedPaths = gitOutput(["ls-files", "--", "supabase/migrations/*.sql"])
+    .split("\n")
+    .filter(Boolean);
+  const untrackedMigrationPaths = gitOutput(["status", "--short", "--untracked-files=all", "--", "supabase/migrations"])
+    .split("\n")
+    .map((line) => line.trim().match(/^\?\?\s+(.+\.sql)$/)?.[1])
+    .filter((path): path is string => path !== undefined);
+  const localPaths = migrationFiles.map((fileName) => `${migrationsDir}/${fileName}`);
+  const gitTrackedPathsSorted = [...gitTrackedPaths].sort();
+  const latestMigration = migrationFiles.at(-1);
+
+  assert.deepEqual(
+    untrackedMigrationPaths,
+    [],
+    `SQL migrations must be staged before this contract can pass: ${untrackedMigrationPaths.join(", ")}`
+  );
+  assert.ok(latestMigration, "Expected at least one local SQL migration");
+  const latestMigrationPath = `${migrationsDir}/${latestMigration}`;
+  assert.ok(gitTrackedPathsSorted.includes(latestMigrationPath), `Latest migration is missing from Git inventory: ${latestMigrationPath}`);
+  assert.deepEqual(gitTrackedPathsSorted, [...localPaths].sort());
+});
+
+test("migration history is append-only", () => {
+  const removedOrRenamedPaths = gitOutput(["diff", "--name-status", "--find-renames", "HEAD", "--", migrationsDir])
+    .split("\n")
+    .filter((line) => /^(?:D|R\d*)\t/.test(line));
+
+  assert.deepEqual(removedOrRenamedPaths, [], "Existing migration files cannot be deleted or renamed");
+});
+
+test("migration history never deletes or renames files", () => {
+  const historicalRemovedOrRenamedPaths = gitOutput([
+    "log",
+    "HEAD",
+    "--format=",
+    "--name-status",
+    "--diff-filter=DR",
+    "--find-renames",
+    "--full-history",
+    "--",
+    migrationsDir
+  ])
+    .split("\n")
+    .filter((line) => /^(?:D|R\d*)\t/.test(line));
+
+  assert.deepEqual(historicalRemovedOrRenamedPaths, [], "Migration history cannot delete or rename existing files");
 });
 
 test("schema snapshot has no public tenant helper calls", () => {
@@ -115,7 +169,9 @@ test("destructive data operations are explicitly allowlisted", () => {
       /20260510210000_order_lifecycle_hardening\.sql:\d+:\s*delete from public\.orders/i.test(line) ||
       /20260516165316_inventory_po_receiving_v2\.sql:\d+:\s*drop table if exists pg_temp\.po_receipt_requests/i.test(line) ||
       /20260519190000_platform_admin_governance_hardening\.sql:\d+:\s*delete from public\.platform_admin_role_permissions/i.test(line) ||
-      /20260605093000_telegram_single_tenant_connection_lock\.sql:\d+:\s*delete from public\.telegram_sessions ts/i.test(line)
+      /20260605093000_telegram_single_tenant_connection_lock\.sql:\d+:\s*delete from public\.telegram_sessions ts/i.test(line) ||
+      /20260722100000_staff_owner_boundary_hardening\.sql:\d+:\s*delete from public\.staff_role_permissions permissions/i.test(line) ||
+      /20260723193000_staff_payroll_atomic_regeneration\.sql:\d+:\s*delete from public\.staff_payslips/i.test(line)
   );
 
   assert.deepEqual(destructiveDataLines, allowed);

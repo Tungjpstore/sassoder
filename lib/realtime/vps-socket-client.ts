@@ -81,6 +81,7 @@ export function useVpsRealtime({
     const abortController = new AbortController();
     let socket: Socket | null = null;
     let disposed = false;
+    let refreshTimer: number | null = null;
     const activeEvents = eventKey.split("|").filter(Boolean) as LogiVnRealtimeEvent[];
 
     onStateChangeRef.current?.("connecting");
@@ -89,7 +90,7 @@ export function useVpsRealtime({
       signal: abortController.signal,
       restaurantId
     })
-      .then((token) => {
+      .then(({ token, expiresAt }) => {
         if (disposed) return;
         socket = io(url, {
           auth: { token },
@@ -99,6 +100,41 @@ export function useVpsRealtime({
           transports: ["websocket", "polling"],
           withCredentials: true
         });
+
+        const scheduleTokenRefresh = (expiration: string) => {
+          if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+          const expiresAtMs = new Date(expiration).getTime();
+          const delay = Number.isFinite(expiresAtMs)
+            ? Math.max(1000, expiresAtMs - Date.now() - 30_000)
+            : 240_000;
+          refreshTimer = window.setTimeout(() => {
+            void refreshDashboardToken();
+          }, delay);
+        };
+
+        const refreshDashboardToken = async () => {
+          if (disposed || abortController.signal.aborted) return;
+          try {
+            const refreshed = await connectWithDashboardToken({
+              signal: abortController.signal,
+              restaurantId
+            });
+            if (disposed || !socket) return;
+            socket.auth = { token: refreshed.token };
+            scheduleTokenRefresh(refreshed.expiresAt);
+            if (socket.connected) {
+              socket.disconnect();
+              socket.connect();
+            }
+          } catch (error) {
+            if (!disposed && !abortController.signal.aborted) {
+              console.warn("[vps-realtime] token refresh failed", error);
+              onStateChangeRef.current?.("error");
+              scheduleTokenRefresh(new Date(Date.now() + 30_000).toISOString());
+            }
+          }
+        };
+        scheduleTokenRefresh(expiresAt);
 
         socket.on("connect", () => {
           socket?.emit(
@@ -141,6 +177,7 @@ export function useVpsRealtime({
     return () => {
       disposed = true;
       abortController.abort();
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       for (const event of activeEvents) {
         socket?.off(event);
       }
@@ -162,7 +199,7 @@ async function connectWithDashboardToken({ signal, restaurantId }: { signal: Abo
   if (!body.ok || body.data.restaurantId !== restaurantId || !body.data.token) {
     throw new Error("token_response_invalid");
   }
-  return body.data.token;
+  return { token: body.data.token, expiresAt: body.data.expiresAt };
 }
 
 function publicRealtimeUrl() {

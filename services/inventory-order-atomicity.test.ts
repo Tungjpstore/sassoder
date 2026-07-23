@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const migrationSql = readFileSync("supabase/migrations/20260519100000_inventory_order_atomicity.sql", "utf8");
+const cancellationMigrationSql = readFileSync("supabase/migrations/20260723110000_phase1_canonical_cancellation.sql", "utf8");
 const orderServiceSource = readFileSync("services/order-service.ts", "utf8");
 
 function literalPattern(text: string, flags = "i") {
@@ -27,6 +28,8 @@ test("order cancellation rolls inventory back before the order is marked cancell
   assert.match(migrationSql, /movement_type = 'deduct_sale'/i);
   assert.match(migrationSql, /movement_type = 'rollback'/i);
   assert.match(migrationSql, /partial order inventory rollback detected/i);
-  assert.match(orderServiceSource, /cancelOrderWithInventoryRollback\(restaurantId/);
+  assert.match(cancellationMigrationSql, /perform public\.cancel_order_with_inventory_rollback/i);
+  assert.match(orderServiceSource, /cancelOrderAtomic\(supabase/);
+  assert.doesNotMatch(orderServiceSource, /cancelOrderWithInventoryRollback\(restaurantId/);
   assert.doesNotMatch(orderServiceSource, /inventory_order_rollback_failed/);
 });

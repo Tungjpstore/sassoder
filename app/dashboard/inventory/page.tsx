@@ -2,14 +2,14 @@ import { Suspense } from "react";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { RealInventoryWorkspaceV2 } from "@/components/dashboard-v2/real/inventory-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { requireDashboardPermissionAccess } from "@/lib/dashboard-access";
 import { getInventoryWorkspaceData } from "@/services/inventory-service";
 import { hasFeature } from "@/services/subscription-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminInventoryPage() {
-  const { session, entitlement } = await requireDashboardAccess("inventory_basic");
+  const { session, entitlement } = await requireDashboardPermissionAccess("inventory_basic", "inventory.view", { allowAdminBypass: false });
   return (
     <AdminShell
       title="Kho hàng"

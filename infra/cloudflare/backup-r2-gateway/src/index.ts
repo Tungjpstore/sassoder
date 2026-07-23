@@ -33,9 +33,11 @@ interface R2Bucket {
 export interface Env {
   BACKUP_BUCKET: R2Bucket;
   BACKUP_R2_GATEWAY_TOKEN: string;
+  BACKUP_R2_ALLOWED_PREFIX?: string;
 }
 
 const OBJECTS_PREFIX = "/objects";
+const DEFAULT_ALLOWED_PREFIX = "logivn/";
 
 function jsonResponse(body: unknown, init: ResponseInit = {}) {
   const headers = new Headers(init.headers);
@@ -49,6 +51,10 @@ function unauthorized() {
 
 function notFound() {
   return jsonResponse({ error: "not_found" }, { status: 404 });
+}
+
+function forbidden() {
+  return jsonResponse({ error: "object_scope_forbidden" }, { status: 403 });
 }
 
 async function timingSafeEqual(a: string, b: string) {
@@ -75,11 +81,23 @@ async function isAuthorized(request: Request, env: Env) {
   return timingSafeEqual(configuredToken, suppliedToken);
 }
 
-function objectKeyFromPath(pathname: string) {
+function allowedPrefix(env: Env) {
+  const configured = String(env.BACKUP_R2_ALLOWED_PREFIX || DEFAULT_ALLOWED_PREFIX).trim();
+  const normalized = configured.replace(/^\/+/, "");
+  return normalized ? `${normalized.replace(/\/+$/, "")}/` : DEFAULT_ALLOWED_PREFIX;
+}
+
+function objectKeyFromPath(pathname: string, env: Env) {
   if (!pathname.startsWith(`${OBJECTS_PREFIX}/`)) return null;
   const rawKey = pathname.slice(OBJECTS_PREFIX.length + 1);
   if (!rawKey) return null;
-  return decodeURIComponent(rawKey);
+  let key: string;
+  try {
+    key = decodeURIComponent(rawKey);
+  } catch {
+    return null;
+  }
+  return key.startsWith(allowedPrefix(env)) ? key : null;
 }
 
 function customMetadataFromHeaders(headers: Headers) {
@@ -148,7 +166,10 @@ async function deleteObject(env: Env, key: string) {
 
 async function listObjects(request: Request, env: Env) {
   const url = new URL(request.url);
-  const prefix = url.searchParams.get("prefix") || "";
+  const scope = allowedPrefix(env);
+  const requestedPrefix = url.searchParams.get("prefix") || scope;
+  if (!requestedPrefix.startsWith(scope)) return forbidden();
+  const prefix = requestedPrefix;
   const cursor = url.searchParams.get("cursor") || undefined;
   const limit = Math.min(Number(url.searchParams.get("limit") || "1000") || 1000, 1000);
   const listed = await env.BACKUP_BUCKET.list({ prefix, cursor, limit });
@@ -178,8 +199,8 @@ const worker = {
       return listObjects(request, env);
     }
 
-    const key = objectKeyFromPath(url.pathname);
-    if (!key) return notFound();
+    const key = objectKeyFromPath(url.pathname, env);
+    if (!key) return url.pathname.startsWith(`${OBJECTS_PREFIX}/`) ? forbidden() : notFound();
 
     if (request.method === "PUT") return putObject(request, env, key);
     if (request.method === "HEAD") return headObject(env, key);

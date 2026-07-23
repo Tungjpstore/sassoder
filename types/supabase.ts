@@ -137,6 +137,7 @@ export type Database = {
           id: string;
           name: string;
           slug: string;
+          owner_user_id: string | null;
           staff_code: string;
           staff_code_generated_at: string | null;
           business_type: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
@@ -219,6 +220,7 @@ export type Database = {
           id?: string;
           name: string;
           slug: string;
+          owner_user_id?: string | null;
           staff_code?: string;
           staff_code_generated_at?: string | null;
           business_type?: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
@@ -301,6 +303,7 @@ export type Database = {
           id?: string;
           name?: string;
           slug?: string;
+          owner_user_id?: string | null;
           staff_code?: string;
           staff_code_generated_at?: string | null;
           business_type?: "CAFE" | "RESTAURANT" | "FAST_FOOD" | "BAR" | "OTHER" | null;
@@ -463,6 +466,7 @@ export type Database = {
         Row: {
           id: string;
           restaurant_id: string;
+          branch_id: string | null;
           name: string;
           area: string;
           capacity: number;
@@ -483,6 +487,7 @@ export type Database = {
         Insert: {
           id?: string;
           restaurant_id: string;
+          branch_id?: string | null;
           name: string;
           area?: string;
           capacity?: number;
@@ -502,6 +507,7 @@ export type Database = {
         };
         Update: {
           restaurant_id?: string;
+          branch_id?: string | null;
           name?: string;
           area?: string;
           capacity?: number;
@@ -617,6 +623,7 @@ export type Database = {
           updated_at: string | null;
           paid_at: string | null;
           closed_at: string | null;
+          state_version: number;
         };
         Insert: {
           id?: string;
@@ -632,6 +639,7 @@ export type Database = {
           updated_at?: string | null;
           paid_at?: string | null;
           closed_at?: string | null;
+          state_version?: number;
         };
         Update: {
           status?: "open" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled";
@@ -643,6 +651,7 @@ export type Database = {
           updated_at?: string | null;
           paid_at?: string | null;
           closed_at?: string | null;
+          state_version?: number;
         };
         Relationships: [];
       };
@@ -813,6 +822,8 @@ export type Database = {
           delivery_courier_id: string | null;
           delivery_assigned_at: string | null;
           idempotency_key: string | null;
+          request_fingerprint: string | null;
+          state_version: number;
           created_at: string;
           updated_at: string | null;
           accepted_at: string | null;
@@ -858,6 +869,8 @@ export type Database = {
           delivery_courier_id?: string | null;
           delivery_assigned_at?: string | null;
           idempotency_key?: string | null;
+          request_fingerprint?: string | null;
+          state_version?: number;
           created_at?: string;
           updated_at?: string | null;
           accepted_at?: string | null;
@@ -901,6 +914,8 @@ export type Database = {
           delivery_courier_id?: string | null;
           delivery_assigned_at?: string | null;
           idempotency_key?: string | null;
+          request_fingerprint?: string | null;
+          state_version?: number;
           updated_at?: string | null;
           accepted_at?: string | null;
           served_at?: string | null;
@@ -1202,33 +1217,72 @@ export type Database = {
       payment_logs: {
         Row: {
           id: string;
+          restaurant_id: string;
           order_id: string;
           bill_id: string | null;
           method: "QR" | "CASH";
           status: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
           amount: number;
           transition_key: string | null;
+          request_fingerprint: string | null;
           raw_data: Json | null;
           created_at: string;
         };
         Insert: {
           id?: string;
+          restaurant_id: string;
           order_id: string;
           bill_id?: string | null;
           method: "QR" | "CASH";
           status?: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
           amount: number;
           transition_key?: string | null;
+          request_fingerprint?: string | null;
           raw_data?: Json | null;
           created_at?: string;
         };
         Update: {
+          restaurant_id?: string;
+          order_id?: string;
           method?: "QR" | "CASH";
           bill_id?: string | null;
           status?: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
           amount?: number;
           transition_key?: string | null;
+          request_fingerprint?: string | null;
           raw_data?: Json | null;
+        };
+        Relationships: [];
+      };
+      financial_transaction_requests: {
+        Row: {
+          id: string;
+          restaurant_id: string;
+          operation: "create_online_order" | "checkout_bill" | "transition_payment";
+          idempotency_key: string;
+          request_fingerprint: string;
+          response_payload: Json | null;
+          created_at: string;
+          completed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          restaurant_id: string;
+          operation: "create_online_order" | "checkout_bill" | "transition_payment";
+          idempotency_key: string;
+          request_fingerprint: string;
+          response_payload?: Json | null;
+          created_at?: string;
+          completed_at?: string | null;
+        };
+        Update: {
+          restaurant_id?: string;
+          operation?: "create_online_order" | "checkout_bill" | "transition_payment";
+          idempotency_key?: string;
+          request_fingerprint?: string;
+          response_payload?: Json | null;
+          created_at?: string;
+          completed_at?: string | null;
         };
         Relationships: [];
       };
@@ -1883,13 +1937,91 @@ export type Database = {
         };
         Returns: number;
       };
+      create_online_order_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_idempotency_key: string;
+          p_request_fingerprint: string;
+          p_order: Json;
+          p_items: Json;
+          p_actor_user_id?: string | null;
+        };
+        Returns: Json;
+      };
+      checkout_bill_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_bill_id: string;
+          p_expected_state_version: number;
+          p_idempotency_key: string;
+          p_request_fingerprint: string;
+          p_payment_method: "QR" | "CASH";
+          p_actor_user_id?: string | null;
+        };
+        Returns: Json;
+      };
+      cancel_order_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_order_id: string;
+          p_actor_user_id?: string | null;
+        };
+        Returns: Json;
+      };
+      transition_payment_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_order_id: string;
+          p_bill_id: string | null;
+          p_expected_order_state_version: number;
+          p_expected_bill_state_version: number | null;
+          p_to_status: "waiting_payment" | "waiting_confirm" | "paid" | "failed" | "refunded";
+          p_next_order_status: "pending" | "ordering" | "waiting_payment" | "waiting_confirm" | "paid" | "completed" | "cancelled" | null;
+          p_payment_method: "QR" | "CASH";
+          p_amount: number;
+          p_idempotency_key: string;
+          p_request_fingerprint: string;
+          p_actor_user_id?: string | null;
+          p_raw_data?: Json | null;
+        };
+        Returns: Json;
+      };
+      create_reservation_with_table_lock: {
+        Args: {
+          p_reservation: Json;
+          p_table_id: string;
+          p_lock_ends_at: string;
+        };
+        Returns: string;
+      };
+      confirm_reservation_deposit_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_reservation_id: string;
+          p_transition_key: string;
+          p_source: string;
+        };
+        Returns: boolean;
+      };
+      replace_reservation_table_locks_atomic: {
+        Args: {
+          p_restaurant_id: string;
+          p_reservation_id: string;
+          p_table_ids: string[];
+          p_starts_at: string;
+          p_lock_ends_at: string;
+          p_reservation_starts_at?: string | null;
+          p_reservation_ends_at?: string | null;
+        };
+        Returns: Array<Database["public"]["Tables"]["reservation_table_locks"]["Row"]>;
+      };
     };
     Enums: {
       user_role: "ADMIN" | "STAFF";
       order_status: "pending" | "ordering" | "waiting_payment" | "waiting_confirm" | "paid" | "completed" | "cancelled";
       payment_method: "QR" | "CASH";
       table_bill_status: "open" | "waiting_payment" | "waiting_confirm" | "paid" | "cancelled";
-      payment_log_status: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled";
+      payment_log_status: "pending" | "waiting_confirm" | "confirmed" | "failed" | "cancelled" | "refunded";
       restaurant_platform_status: "active" | "suspended" | "deleted";
       platform_user_status: "active" | "blocked";
       saas_subscription_status: "trialing" | "pending_payment" | "active" | "past_due" | "suspended" | "cancelled" | "expired";

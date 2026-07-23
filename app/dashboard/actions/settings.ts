@@ -31,6 +31,7 @@ import {
 } from "@/services/restaurant-service";
 import { assertFeatureEntitlement } from "@/services/subscription-service";
 import { requireOperationalAdminSession } from "./shared";
+import { assertCanonicalRestaurantOwnerForTenant } from "@/services/staff-owner-boundary-service";
 
 const aiSetupBrandApplySchema = z.object({
   brandSlogan: z.string().trim().max(80).optional().or(z.literal("")),
@@ -90,6 +91,11 @@ export async function updatePaymentSettingsAction(
   formData: FormData
 ) {
   const session = await requireOperationalAdminSession("vietqr_payments");
+  await assertCanonicalRestaurantOwnerForTenant({
+    restaurantId: session.restaurantId,
+    userId: session.userId,
+    action: "thay đổi tài khoản nhận tiền VietQR"
+  });
   const parsed = paymentSettingsSchema.safeParse({
     bankCode: formData.get("bankCode"),
     bankAccount: formData.get("bankAccount"),

@@ -5,6 +5,7 @@
 export type RemoteAccessParams = {
   restaurantSlug: string;
   customerSessionId: string;
+  customerSessionToken: string;
 };
 
 type ApiEnvelope<T> = { ok: boolean; data?: T; error?: string };
@@ -17,12 +18,22 @@ async function parseJsonEnvelope<T>(response: Response, fallbackError: string): 
   return json.data;
 }
 
+function customerSessionHeaders(access: RemoteAccessParams, json = false) {
+  return {
+    ...(json ? { "Content-Type": "application/json" } : {}),
+    "x-logivn-customer-session-token": access.customerSessionToken
+  };
+}
+
 export async function fetchRemoteOrder<TResult>(orderId: string, access: RemoteAccessParams): Promise<TResult> {
   const params = new URLSearchParams({
     restaurantSlug: access.restaurantSlug,
     customerSessionId: access.customerSessionId
   });
-  const response = await fetch(`/api/remote-orders/${orderId}?${params.toString()}`, { cache: "no-store" });
+  const response = await fetch(`/api/remote-orders/${orderId}?${params.toString()}`, {
+    cache: "no-store",
+    headers: customerSessionHeaders(access)
+  });
   return parseJsonEnvelope<TResult>(response, "Không tải được trạng thái đơn");
 }
 
@@ -31,7 +42,10 @@ export async function fetchRemoteOrderHistory<TOrder>(access: RemoteAccessParams
     restaurantSlug: access.restaurantSlug,
     customerSessionId: access.customerSessionId
   });
-  const response = await fetch(`/api/remote-orders/history?${params.toString()}`, { cache: "no-store" });
+  const response = await fetch(`/api/remote-orders/history?${params.toString()}`, {
+    cache: "no-store",
+    headers: customerSessionHeaders(access)
+  });
   const data = await parseJsonEnvelope<{ orders?: TOrder[] } | TOrder[]>(response, "Không tải được lịch sử đơn online");
   if (Array.isArray(data)) return data;
   return data.orders ?? [];
@@ -40,7 +54,7 @@ export async function fetchRemoteOrderHistory<TOrder>(access: RemoteAccessParams
 export async function markRemoteOrderPaid<TResult>(orderId: string, access: RemoteAccessParams): Promise<TResult> {
   const response = await fetch(`/api/remote-orders/${orderId}/paid`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: customerSessionHeaders(access, true),
     body: JSON.stringify({
       restaurantSlug: access.restaurantSlug,
       customerSessionId: access.customerSessionId
@@ -55,7 +69,7 @@ export async function createRemoteOrderRequest<TResult>(
 ): Promise<TResult> {
   const response = await fetch("/api/remote-orders", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: customerSessionHeaders(access, true),
     body: JSON.stringify({
       restaurantSlug: access.restaurantSlug,
       customerSessionId: access.customerSessionId,

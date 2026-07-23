@@ -15,17 +15,16 @@ jobs:
     name: Release checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19.0
           cache: npm
 
       - name: Install dependencies
@@ -43,18 +42,63 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Release blockers report
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          MONITORING_WATCH_OWNER: ${{ vars.MONITORING_WATCH_OWNER }}
+          MONITORING_ALERT_EMAIL: ${{ vars.MONITORING_ALERT_EMAIL }}
+          MONITORING_LOG_DRAIN_DESTINATION: ${{ vars.MONITORING_LOG_DRAIN_DESTINATION }}
+          MONITORING_5XX_THRESHOLD: ${{ vars.MONITORING_5XX_THRESHOLD }}
+          MONITORING_FIRST_HOUR_WATCH_START: ${{ vars.MONITORING_FIRST_HOUR_WATCH_START }}
+          MONITORING_FIRST_HOUR_WATCH_OWNER: ${{ vars.MONITORING_FIRST_HOUR_WATCH_OWNER }}
+          STAFF_ATTENDANCE_QR_SECRET: ${{ secrets.STAFF_ATTENDANCE_QR_SECRET }}
+          STAFF_ATTENDANCE_SESSION_SECRET: ${{ secrets.STAFF_ATTENDANCE_SESSION_SECRET }}
+          STAFF_PIN_PEPPER: ${{ secrets.STAFF_PIN_PEPPER }}
+        run: npm run release:blockers:report
+
+      - name: Strict release blockers
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          MONITORING_WATCH_OWNER: ${{ vars.MONITORING_WATCH_OWNER }}
+          MONITORING_ALERT_EMAIL: ${{ vars.MONITORING_ALERT_EMAIL }}
+          MONITORING_LOG_DRAIN_DESTINATION: ${{ vars.MONITORING_LOG_DRAIN_DESTINATION }}
+          MONITORING_5XX_THRESHOLD: ${{ vars.MONITORING_5XX_THRESHOLD }}
+          MONITORING_FIRST_HOUR_WATCH_START: ${{ vars.MONITORING_FIRST_HOUR_WATCH_START }}
+          MONITORING_FIRST_HOUR_WATCH_OWNER: ${{ vars.MONITORING_FIRST_HOUR_WATCH_OWNER }}
+          STAFF_ATTENDANCE_QR_SECRET: ${{ secrets.STAFF_ATTENDANCE_QR_SECRET }}
+          STAFF_ATTENDANCE_SESSION_SECRET: ${{ secrets.STAFF_ATTENDANCE_SESSION_SECRET }}
+          STAFF_PIN_PEPPER: ${{ secrets.STAFF_PIN_PEPPER }}
+        run: npm run release:blockers:strict
+
       - name: Security audit threshold
         run: npm audit --audit-level=high
 
-      - name: Billing secrets preflight
-        if: ${{ github.event_name == 'workflow_dispatch' && (env.NEXT_PUBLIC_SUPABASE_URL == '' || env.SUPABASE_SERVICE_ROLE_KEY == '') }}
-        run: |
-          echo "Manual release runs require NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets for billing verification."
-          exit 1
-
       - name: Billing v2 cutover verification
-        if: ${{ env.NEXT_PUBLIC_SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE_KEY != '' }}
-        run: npm run billing:verify
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "${NEXT_PUBLIC_SUPABASE_URL:-}" ] || [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              echo "Manual release runs require NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY secrets for billing verification."
+              exit 1
+            fi
+            echo "Skipping billing verification because release secrets are not configured for this push run."
+            exit 0
+          fi
+          npm run billing:verify
 
       - name: SEO Week 5 audit
         run: npm run seo:week5

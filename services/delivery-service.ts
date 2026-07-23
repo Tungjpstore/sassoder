@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/response";
+import { validateCanonicalDeliveryDestination } from "@/lib/customer/canonical-delivery-destination";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -968,10 +969,8 @@ export async function quoteDeliveryForRestaurant(
     };
   }
 
-  let provider: DeliveryQuote["provider"] = "browser-location+haversine";
-  let destination = hasCoordinate(input.deliveryLat, input.deliveryLng)
-    ? { lat: Number(input.deliveryLat), lng: Number(input.deliveryLng) }
-    : null;
+  let provider: DeliveryQuote["provider"] = "manual";
+  let destination: Coordinate | null = null;
   let qualityAddress = input.deliveryAddress?.trim() || null;
   const mapContext: MapRequestContext = {
     restaurantId: settings.id,
@@ -979,26 +978,51 @@ export async function quoteDeliveryForRestaurant(
     source: "delivery_quote"
   };
 
-  if (!destination && input.deliveryAddress) {
-    const geocodedDestination = await geocodeAddressWithMapbox(input.deliveryAddress, settings.map_geocoding_provider as GeocodingProvider, mapContext);
-    if (geocodedDestination) {
-      destination = geocodedDestination;
-      provider = geocodedDestination.provider;
-      qualityAddress = geocodedDestination.address || qualityAddress;
-    }
+  if (!qualityAddress) {
+    return {
+      accepted: false,
+      reason: "Vui lòng nhập địa chỉ giao hàng đầy đủ để hệ thống xác minh vị trí.",
+      distanceKm: null,
+      fee: 0,
+      serviceFee: 0,
+      etaMinutes: Number(settings.delivery_eta_minutes),
+      provider: "manual"
+    };
   }
 
-  if (!destination) {
+  const geocodedDestination = await geocodeAddressWithMapbox(
+    qualityAddress,
+    settings.map_geocoding_provider as GeocodingProvider,
+    mapContext
+  );
+  if (geocodedDestination) {
+    destination = geocodedDestination;
+    provider = geocodedDestination.provider;
+    qualityAddress = geocodedDestination.address || qualityAddress;
+  }
+
+  const suppliedCoordinates = hasCoordinate(input.deliveryLat, input.deliveryLng)
+    ? { lat: Number(input.deliveryLat), lng: Number(input.deliveryLng) }
+    : null;
+  const destinationValidation = validateCanonicalDeliveryDestination({
+    canonicalAddress: qualityAddress,
+    suppliedCoordinates,
+    resolvedCoordinates: destination
+  });
+  const canonicalDestination = destinationValidation.canonicalDestination;
+  if (!destinationValidation.ok || !canonicalDestination?.coordinates) {
     const addressQualitySnapshot = analyzeVietnameseDeliveryAddress({
       address: qualityAddress,
-      coordinate: null,
+      coordinate: destination,
       provider: "manual"
     });
     return {
       accepted: false,
-      reason: isMapboxDeliveryProviderReady()
-        ? "Không định vị được địa chỉ này. Vui lòng nhập rõ số nhà, đường, phường/xã, quận/huyện."
-        : "Vui lòng cho phép lấy vị trí hoặc cấu hình provider geocoding để định vị địa chỉ tự động.",
+      reason: destinationValidation.issues.some((issue) => issue.code === "COORDINATES_MISMATCH")
+        ? "Vị trí thiết bị không khớp địa chỉ đã xác minh. Vui lòng kiểm tra lại địa chỉ giao hàng."
+        : isMapboxDeliveryProviderReady()
+          ? "Không xác minh được địa chỉ này. Vui lòng nhập rõ số nhà, đường, phường/xã, quận/huyện."
+          : "Quán chưa cấu hình geocoding để xác minh địa chỉ giao hàng an toàn.",
       distanceKm: null,
       fee: 0,
       serviceFee: 0,
@@ -1007,6 +1031,9 @@ export async function quoteDeliveryForRestaurant(
       addressQualitySnapshot
     };
   }
+
+  destination = canonicalDestination.coordinates;
+  qualityAddress = canonicalDestination.canonicalAddress;
 
   const fallbackOrigin = await resolveRestaurantOriginCandidate(settings, mapContext, destination);
 

@@ -113,7 +113,8 @@ jobs:
           write_env BACKUP_RESTORE_TEST_MODE docker
           write_env BACKUP_RESTORE_TEST_SCHEMA public
           write_env BACKUP_RESTORE_CRITICAL_TABLES restaurants,orders,payment_logs,reservations
-          write_env BACKUP_RESTORE_TEST_STRICT false
+          write_env BACKUP_RESTORE_TEST_STRICT true
+          write_env BACKUP_REMOTE_CHECKSUM_VERIFY_ENABLED true
           write_env BACKUP_STORAGE_ADAPTER worker
           write_env BACKUP_STORAGE_PAYLOAD_ENABLED auto
           write_env BACKUP_STORAGE_PAYLOAD_MODES daily,weekly,monthly,manual
@@ -198,6 +199,7 @@ jobs:
             BACKUP_RESTORE_TEST_SCHEMA \
             BACKUP_RESTORE_CRITICAL_TABLES \
             BACKUP_RESTORE_TEST_STRICT \
+            BACKUP_REMOTE_CHECKSUM_VERIFY_ENABLED \
             BACKUP_STORAGE_ADAPTER \
             BACKUP_STORAGE_PAYLOAD_ENABLED \
             BACKUP_STORAGE_PAYLOAD_MODES \

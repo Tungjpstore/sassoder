@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { AppError } from "@/lib/response";
 import { assertStaffActionPermission } from "@/services/staff-permission-service";
+import { assertCanonicalRestaurantOwnerForTenant } from "@/services/staff-owner-boundary-service";
 import { getRestaurantEntitlement, hasFeature, type PlanFeatureKey } from "@/services/subscription-service";
 import type { StaffPermissionKey } from "@/lib/staff-permissions";
 
@@ -45,9 +46,13 @@ export async function requireDashboardAdminAccess(feature?: PlanFeatureKey) {
   return access;
 }
 
-export async function requireDashboardPermissionAccess(feature: PlanFeatureKey | undefined, permission: StaffPermissionKey | StaffPermissionKey[]) {
+export async function requireDashboardPermissionAccess(
+  feature: PlanFeatureKey | undefined,
+  permission: StaffPermissionKey | StaffPermissionKey[],
+  options: { allowAdminBypass?: boolean } = {}
+) {
   const access = await requireDashboardAccess(feature);
-  if (access.session.role === "ADMIN") return access;
+  if (access.session.role === "ADMIN" && options.allowAdminBypass !== false) return access;
 
   try {
     await assertStaffActionPermission(access.session, permission, { mode: "any" });
@@ -67,9 +72,24 @@ export async function getDashboardAccessForSettings(activeSection?: string | nul
     redirect("/dashboard/staff/mobile");
   }
 
+  let canonicalOwnerEmail: string | null = null;
+  if (activeSection === "billing") {
+    try {
+      const owner = await assertCanonicalRestaurantOwnerForTenant({
+        restaurantId: session.restaurantId,
+        userId: session.userId,
+        action: "xem và quản lý gói dịch vụ"
+      });
+      canonicalOwnerEmail = owner.email;
+    } catch (error) {
+      if (error instanceof AppError && error.status === 403) redirect("/dashboard");
+      throw error;
+    }
+  }
+
   if (!entitlement.allowed && activeSection !== "billing") {
     redirect(billingRedirectUrl());
   }
 
-  return { session, entitlement };
+  return { session, entitlement, canonicalOwnerEmail };
 }

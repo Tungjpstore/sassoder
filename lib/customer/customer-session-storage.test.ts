@@ -6,6 +6,7 @@ import {
   dineInCustomerSessionStorageKey,
   readCustomerSessionId,
   remoteCustomerSessionStorageKey,
+  resolveOrCreateRemoteCustomerSession,
   resolveOrCreateCustomerSessionId,
   resolveOrCreateRemoteCustomerSessionId,
   writeCustomerSessionId
@@ -55,9 +56,83 @@ test("resolveOrCreateCustomerSessionId reuses valid stored session and expires o
   assert.notEqual(next, first);
 });
 
-test("remote session reuses bare UUID storage format", () => {
+test("remote session uses the same 24-hour envelope as dine-in sessions", () => {
   installMemoryStorage();
   const first = resolveOrCreateRemoteCustomerSessionId("rest-1");
   assert.equal(resolveOrCreateRemoteCustomerSessionId("rest-1"), first);
-  assert.equal(window.localStorage.getItem(remoteCustomerSessionStorageKey("rest-1")), first);
+
+  const raw = window.localStorage.getItem(remoteCustomerSessionStorageKey("rest-1"));
+  assert.ok(raw);
+  const stored = JSON.parse(raw) as { id?: string; createdAt?: number };
+  assert.equal(stored.id, first);
+  assert.equal(typeof stored.createdAt, "number");
+});
+
+test("remote session rotates legacy bare UUIDs and expired envelopes", () => {
+  installMemoryStorage();
+  const key = remoteCustomerSessionStorageKey("rest-1");
+  const legacy = "11111111-1111-4111-8111-111111111111";
+  window.localStorage.setItem(key, legacy);
+
+  const migrated = resolveOrCreateRemoteCustomerSessionId("rest-1");
+  assert.notEqual(migrated, legacy);
+
+  window.localStorage.setItem(
+    key,
+    JSON.stringify({ id: migrated, createdAt: Date.now() - CUSTOMER_SESSION_TTL_MS - 1 })
+  );
+  assert.notEqual(resolveOrCreateRemoteCustomerSessionId("rest-1"), migrated);
+});
+
+test("signed remote sessions are issued by the server and reused until token expiry", async () => {
+  installMemoryStorage();
+  const issued = {
+    restaurantId: "rest-1",
+    customerSessionId: "11111111-1111-4111-8111-111111111111",
+    token: "signed.customer.session",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    tokenVersion: 1
+  };
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ ok: true, data: issued }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+
+  const first = await resolveOrCreateRemoteCustomerSession("rest-1", "restaurant-one", { fetchImpl });
+  const second = await resolveOrCreateRemoteCustomerSession("rest-1", "restaurant-one", { fetchImpl });
+
+  assert.deepEqual(first, { id: issued.customerSessionId, token: issued.token, expiresAt: issued.expiresAt });
+  assert.deepEqual(second, first);
+  assert.equal(calls, 1);
+});
+
+test("signed remote sessions rotate expired and unsigned storage", async () => {
+  installMemoryStorage();
+  const key = remoteCustomerSessionStorageKey("rest-1");
+  window.localStorage.setItem(key, JSON.stringify({
+    id: "11111111-1111-4111-8111-111111111111",
+    createdAt: Date.now(),
+    token: "",
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  }));
+  let calls = 0;
+  const fetchImpl: typeof fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      ok: true,
+      data: {
+        customerSessionId: "22222222-2222-4222-8222-222222222222",
+        token: "replacement.token",
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      }
+    }), { status: 201, headers: { "Content-Type": "application/json" } });
+  };
+
+  const session = await resolveOrCreateRemoteCustomerSession("rest-1", "restaurant-one", { fetchImpl });
+  assert.equal(session.id, "22222222-2222-4222-8222-222222222222");
+  assert.equal(calls, 1);
 });

@@ -46,7 +46,10 @@ async function readAuthIdentity(supabase: Awaited<ReturnType<typeof createServer
     const { data: claimsData } = await supabase.auth.getClaims();
     const claims = claimsData?.claims;
     if (typeof claims?.sub === "string" && typeof claims.email === "string") {
-      return { id: claims.sub, email: claims.email };
+      return {
+        id: claims.sub,
+        email: claims.email
+      };
     }
   } catch {
     // Fall back to getUser below. Server code must not trust an unchecked session cookie.
@@ -95,29 +98,17 @@ async function readProfileWithAdmin(user: AuthIdentity) {
     error = legacy.error;
   }
 
-  if (!data && !error) {
-    const fallback = (await supabase
-      .from("users")
-      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
-      .eq("email", user.email.toLowerCase())
-      .maybeSingle()) as any;
-
-    data = fallback.data;
-    error = fallback.error;
-
-    if (error) {
-      const legacyFallback = (await supabase
-        .from("users")
-        .select("id,email,role,restaurant_id,restaurant:restaurants(id,name,slug,business_type)")
-        .eq("email", user.email.toLowerCase())
-        .maybeSingle()) as any;
-
-      data = legacyFallback.data;
-      error = legacyFallback.error;
-    }
-  }
-
   return error ? null : (data as ProfileRow | null);
+}
+
+async function readStaffRevocationWithAdmin(restaurantId: string, userId: string) {
+  const supabase = createAdminSupabaseClient();
+  return (await supabase
+    .from("staff_members")
+    .select("auth_revoked_at,archived_at,employment_status")
+    .eq("restaurant_id", restaurantId)
+    .eq("user_id", userId)
+    .maybeSingle()) as any;
 }
 
 export const getSessionProfile = cache(async (): Promise<SessionProfile | null> => {
@@ -148,28 +139,6 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
     error = legacy.error;
   }
 
-  if (!data && !error) {
-    const fallback = (await supabase
-      .from("users")
-      .select("id,email,role,account_status,restaurant_id,restaurant:restaurants(id,name,slug,staff_code,business_type,platform_status)")
-      .eq("email", user.email.toLowerCase())
-      .maybeSingle()) as any;
-
-    data = fallback.data;
-    error = fallback.error;
-
-    if (error) {
-      const legacyFallback = (await supabase
-        .from("users")
-        .select("id,email,role,restaurant_id,restaurant:restaurants(id,name,slug,business_type)")
-        .eq("email", user.email.toLowerCase())
-        .maybeSingle()) as any;
-
-      data = legacyFallback.data;
-      error = legacyFallback.error;
-    }
-  }
-
   let profileRow = data as ProfileRow | null;
   if (error || !profileRow || !profileRow.restaurant) {
     profileRow = await readProfileWithAdmin(user);
@@ -178,6 +147,20 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
 
   if (error || !profileRow || !profileRow.restaurant) return null;
   if (profileRow.account_status === "blocked") return null;
+
+  // A valid Supabase JWT is not enough after an HR force logout. Bind any
+  // linked staff profile (including non-owner ADMIN staff) to the auth epoch.
+  const staffRevocation = await readStaffRevocationWithAdmin(profileRow.restaurant_id, user.id);
+  if (staffRevocation.error) return null;
+  if (staffRevocation.data) {
+    // Keep the epoch closed until the staff member proves credentials again.
+    // Comparing only JWT `iat` lets a refresh token bypass force logout.
+    if (staffRevocation.data.auth_revoked_at) return null;
+    if (staffRevocation.data.archived_at || staffRevocation.data.employment_status !== "active") return null;
+  } else if (profileRow.role === "STAFF") {
+    // STAFF sessions must always have a staff record to bind the auth epoch.
+    return null;
+  }
 
   const restaurant = Array.isArray(profileRow.restaurant) ? profileRow.restaurant[0] : profileRow.restaurant;
   if (!restaurant) return null;

@@ -6,6 +6,7 @@ const access = {
   restaurantSlug: "demo",
   tableId: "table-1",
   customerSessionId: "11111111-1111-4111-8111-111111111111",
+  customerSessionToken: "signed.dine-in.session",
   tableAccessToken: "abcdef0123456789abcdef0123456789abcdef01"
 };
 
@@ -26,6 +27,7 @@ test("fetchDineInOrderHistory builds query and unwraps envelope", async () => {
     assert.match(calls[0]?.url ?? "", /\/api\/orders\/history\?/);
     assert.match(calls[0]?.url ?? "", /restaurantSlug=demo/);
     assert.match(calls[0]?.url ?? "", /tableAccessToken=/);
+    assert.equal(new Headers(calls[0]?.init?.headers).get("x-logivn-customer-session-token"), access.customerSessionToken);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -219,7 +219,7 @@ export async function createStaffAction(_prevState: StaffActionState | undefined
           fullName: parsed.fullName,
           pin: parsed.pin || undefined,
           phone: parsed.phone,
-          dateOfBirth: parsed.dateOfBirth,
+          dateOfBirth: parsed.dateOfBirth || undefined,
           hometown: parsed.hometown,
           mustChangeAppPassword: true,
           branchId: parsed.branchId || undefined,

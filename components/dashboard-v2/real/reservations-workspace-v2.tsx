@@ -36,6 +36,7 @@ type Props = {
   tableOptions: ReservationTableOption[];
   publicUrl: string;
   analytics: ReservationAnalytics;
+  initialNowMs: number;
 };
 
 type ReservationAction = "confirm-deposit" | "check-in" | "seat" | "cancel" | "no-show" | "reject";
@@ -99,7 +100,7 @@ export function RealReservationsWorkspaceV2(props: Props) {
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rtState, setRtState] = useState<RealtimeState>("connecting");
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(props.initialNowMs);
   const refreshRef = useRef<number | null>(null);
 
   useEffect(() => {

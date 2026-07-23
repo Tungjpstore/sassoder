@@ -4,9 +4,10 @@ import { randomBytes } from "crypto";
 import { headers } from "next/headers";
 import { AppError } from "@/lib/response";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServerSupabaseClient, expireSupabaseAuthSessionCookies } from "@/lib/supabase/server";
 import { loginWithPassword } from "@/services/auth-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertStaffOwnerMutationAllowed } from "@/services/staff-owner-boundary-service";
 import type { SessionProfile } from "@/types/domain";
 
 type StaffAppMemberRow = {
@@ -22,6 +23,7 @@ type StaffAppMemberRow = {
   app_password_attempts: number | null;
   app_password_locked_until: string | null;
   app_password_last_failed_at: string | null;
+  auth_revoked_at: string | null;
 };
 
 type StaffAppUserRow = {
@@ -39,7 +41,6 @@ type StaffAppRestaurantRow = {
   platform_status: "active" | "suspended" | "deleted" | null;
 };
 
-const STAFF_APP_PASSWORD_LOCK_THRESHOLD = 5;
 const STAFF_APP_PASSWORD_LOCK_MINUTES = 10;
 
 async function requestContext() {
@@ -65,7 +66,7 @@ async function findStaffByEmployeeCode(employeeCode: string) {
 
   const memberResult = await supabase
     .from("staff_members")
-    .select("id,restaurant_id,user_id,full_name,employee_code,employment_status,archived_at,must_change_app_password,first_login_at,app_password_attempts,app_password_locked_until,app_password_last_failed_at")
+    .select("id,restaurant_id,user_id,full_name,employee_code,employment_status,archived_at,must_change_app_password,first_login_at,app_password_attempts,app_password_locked_until,app_password_last_failed_at,auth_revoked_at")
     .eq("employee_code", normalizedCode)
     .maybeSingle();
 
@@ -129,21 +130,17 @@ async function recordStaffPasswordFailure({
   user: StaffAppUserRow;
   context: Awaited<ReturnType<typeof requestContext>>;
 }) {
-  const nextAttempts = Math.min((member.app_password_attempts ?? 0) + 1, STAFF_APP_PASSWORD_LOCK_THRESHOLD);
-  const lockedUntil = nextAttempts >= STAFF_APP_PASSWORD_LOCK_THRESHOLD
-    ? new Date(Date.now() + STAFF_APP_PASSWORD_LOCK_MINUTES * 60_000).toISOString()
-    : null;
+  const failureResult = await supabase.rpc("record_staff_auth_failure", {
+    p_restaurant_id: member.restaurant_id,
+    p_staff_member_id: member.id,
+    p_auth_kind: "password"
+  });
+  if (failureResult.error || !failureResult.data?.[0]) {
+    throw new AppError("Không ghi nhận được lần đăng nhập thất bại. Vui lòng thử lại.", 503);
+  }
+  const nextAttempts = Number(failureResult.data[0].attempts ?? 0);
+  const lockedUntil = failureResult.data[0].locked_until as string | null;
   const now = new Date().toISOString();
-
-  await supabase
-    .from("staff_members")
-    .update({
-      app_password_attempts: nextAttempts,
-      app_password_last_failed_at: now,
-      app_password_locked_until: lockedUntil
-    })
-    .eq("restaurant_id", member.restaurant_id)
-    .eq("id", member.id);
 
   await writeStaffActivityLog({
     restaurantId: member.restaurant_id,
@@ -220,15 +217,20 @@ export async function loginWithStaffAppPassword({
     last_seen_at: now,
     app_password_attempts: 0,
     app_password_locked_until: null,
-    app_password_last_failed_at: null
+    app_password_last_failed_at: null,
+    auth_revoked_at: null
   };
   if (!member.first_login_at) updatePayload.first_login_at = now;
 
-  await supabase
+  const sessionMemberUpdate = await supabase
     .from("staff_members")
     .update(updatePayload)
     .eq("restaurant_id", member.restaurant_id)
     .eq("id", member.id);
+  if (sessionMemberUpdate.error) {
+    await expireSupabaseAuthSessionCookies();
+    throw new AppError("Không hoàn tất được phiên đăng nhập nhân viên.", 503);
+  }
 
   await writeStaffActivityLog({
     restaurantId: member.restaurant_id,
@@ -273,11 +275,24 @@ export async function getStaffPasswordGateForSession(session: SessionProfile) {
     .eq("user_id", session.userId)
     .maybeSingle();
 
-  if (result.error || !result.data) return { mustChangePassword: false, staffMemberId: null, employeeCode: null };
+  if (result.error) {
+    throw new AppError("Không xác thực được trạng thái mật khẩu nhân viên.", 503);
+  }
+  if (!result.data) {
+    // Owner accounts may use the staff workspace without a staff-member row
+    // on legacy tenants; the temporary-password gate only applies to STAFF.
+    if (session.role !== "STAFF") {
+      return { mustChangePassword: false, staffMemberId: null, employeeCode: null };
+    }
+    throw new AppError("Hồ sơ nhân viên không còn hoạt động.", 403);
+  }
   const member = result.data as Pick<StaffAppMemberRow, "id" | "employee_code" | "must_change_app_password" | "archived_at" | "employment_status">;
+  if (member.archived_at || member.employment_status !== "active") {
+    throw new AppError("Hồ sơ nhân viên không còn hoạt động.", 403);
+  }
 
   return {
-    mustChangePassword: Boolean(member.must_change_app_password && !member.archived_at && member.employment_status === "active"),
+    mustChangePassword: Boolean(member.must_change_app_password),
     staffMemberId: member.id,
     employeeCode: member.employee_code
   };
@@ -318,7 +333,8 @@ export async function changeOwnStaffAppPassword({
       last_seen_at: now,
       app_password_attempts: 0,
       app_password_locked_until: null,
-      app_password_last_failed_at: null
+      app_password_last_failed_at: null,
+      auth_revoked_at: null
     })
     .eq("restaurant_id", session.restaurantId)
     .eq("user_id", session.userId)
@@ -356,6 +372,13 @@ export async function resetStaffAppPassword({
   reason?: string | null;
 }) {
   const supabase = createAdminSupabaseClient() as any;
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId,
+    actorUserId,
+    targetUserId: userId,
+    action: "đặt lại mật khẩu"
+  });
   const [userResult, memberResult] = await Promise.all([
     supabase
       .from("users")
@@ -365,7 +388,7 @@ export async function resetStaffAppPassword({
       .maybeSingle(),
     supabase
       .from("staff_members")
-      .select("id,employee_code,full_name,archived_at")
+      .select("id,employee_code,full_name,archived_at,employment_status,role_code")
       .eq("restaurant_id", restaurantId)
       .eq("user_id", userId)
       .maybeSingle()
@@ -373,31 +396,42 @@ export async function resetStaffAppPassword({
 
   if (userResult.error) throw new AppError("Không tải được tài khoản nhân viên.", 400);
   if (memberResult.error) throw new AppError("Không tải được hồ sơ nhân viên.", 400);
-  if (!userResult.data || !memberResult.data || memberResult.data.archived_at) {
+  if (
+    !userResult.data
+    || userResult.data.account_status === "blocked"
+    || !memberResult.data
+    || memberResult.data.archived_at
+    || memberResult.data.employment_status !== "active"
+  ) {
     throw new AppError("Không tìm thấy nhân viên đang hoạt động để đặt lại mật khẩu.", 404);
   }
 
   const temporaryPassword = createTemporaryStaffAppPassword();
-  const authResult = await supabase.auth.admin.updateUserById(userId, {
-    password: temporaryPassword
-  });
-
-  if (authResult.error) throw new AppError(authResult.error.message || "Không đặt lại được mật khẩu app.", 400);
-
   const now = new Date().toISOString();
-  await supabase
+  // Close the app auth epoch before changing the credential. If the auth
+  // provider update fails, existing sessions stay blocked and can recover via
+  // a fresh credential check instead of remaining silently active.
+  const revokeResult = await supabase
     .from("staff_members")
     .update({
       must_change_app_password: true,
       app_password_reset_at: now,
       app_password_attempts: 0,
       app_password_locked_until: null,
-      app_password_last_failed_at: null
+      app_password_last_failed_at: null,
+      auth_revoked_at: now
     })
     .eq("restaurant_id", restaurantId)
     .eq("user_id", userId);
+  if (revokeResult.error) throw new AppError("Không thể thu hồi phiên trước khi đặt lại mật khẩu.", 503);
 
-  await supabase
+  const authResult = await supabase.auth.admin.updateUserById(userId, {
+    password: temporaryPassword
+  });
+
+  if (authResult.error) throw new AppError(authResult.error.message || "Không đặt lại được mật khẩu app.", 400);
+
+  const sessionsResult = await supabase
     .from("staff_sessions")
     .update({
       forced_logout_at: now,
@@ -410,6 +444,7 @@ export async function resetStaffAppPassword({
     .eq("restaurant_id", restaurantId)
     .eq("staff_member_id", memberResult.data.id)
     .is("forced_logout_at", null);
+  if (sessionsResult.error) throw new AppError("Không thể đóng các phiên cũ của nhân viên.", 503);
 
   await writeStaffActivityLog({
     restaurantId,

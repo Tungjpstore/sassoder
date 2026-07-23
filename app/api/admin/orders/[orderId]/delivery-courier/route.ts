@@ -2,6 +2,7 @@ import { requireOperationalDashboardApiSession } from "@/lib/dashboard-api-sessi
 import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema, deliveryCourierAssignmentSchema } from "@/lib/validators";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { assignDeliveryCourierToOrder } from "@/services/delivery-tracking-service";
 import { getOrderLifecycleSnapshot } from "@/services/order-service";
@@ -11,9 +12,13 @@ export const preferredRegion = "sin1";
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
-    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking" });
+    const session = await requireOperationalDashboardApiSession({
+      feature: "delivery_realtime_tracking",
+      permission: "orders.update"
+    });
     const { orderId } = adminOrderIdSchema.parse(await params);
     const body = deliveryCourierAssignmentSchema.parse(await request.json());
+    await assertStaffCanAccessOrder(session, orderId);
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
 
     const data = await assignDeliveryCourierToOrder({

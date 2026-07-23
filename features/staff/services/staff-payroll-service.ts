@@ -17,8 +17,12 @@ import {
   DEFAULT_PAYROLL_DEDUCTIONS,
   DEFAULT_PAYROLL_HOURLY_RATE,
   DEFAULT_PAYROLL_OT_MULTIPLIER,
+  calculateMonthlyBasePay,
+  calculatePayrollWorkBreakdown,
   calculatePersonalIncomeTax,
+  resolvePayrollInsuranceBase,
   summarizePayroll,
+  toVietnamCalendarDateKey,
   type PayrollSummary,
   type PayrollSummaryInput,
   type StaffPayrollDeductions,
@@ -34,6 +38,7 @@ export {
   DEFAULT_PAYROLL_HOURLY_RATE,
   DEFAULT_PAYROLL_OT_MULTIPLIER,
   calculatePersonalIncomeTax,
+  resolvePayrollInsuranceBase,
   summarizePayroll
 };
 export type { PayrollSummary, PayrollSummaryInput, StaffPayrollDeductions, StaffPayrollPeriod, StaffPayslip, StaffPayrollProfile };
@@ -58,6 +63,15 @@ type PayrollStaffRow = {
   role_code: string;
   employment_status: string;
   archived_at: string | null;
+};
+
+type PayrollApprovalRow = {
+  id: string;
+  staff_member_id: string;
+  attendance_log_id: string | null;
+  request_type: "overtime" | "leave_request" | string;
+  status: "approved" | string;
+  requested_payload: Record<string, unknown> | null;
 };
 
 export async function getStaffPayrollDeductions(restaurantId: string): Promise<StaffPayrollDeductions> {
@@ -131,7 +145,9 @@ export async function getStaffPayrollSelfView(input: {
   throwIfSupabaseError(memberResult.error, "Không xác thực được hồ sơ nhân viên");
 
   const member = memberResult.data as { id: string; archived_at: string | null; employment_status: string } | null;
-  if (!member || member.archived_at) return { deductions: DEFAULT_PAYROLL_DEDUCTIONS, profile: null, payslips: [] };
+  if (!member || member.archived_at || member.employment_status !== "active") {
+    return { deductions: DEFAULT_PAYROLL_DEDUCTIONS, profile: null, payslips: [] };
+  }
 
   const [deductionsResult, profileResult, payslipsResult] = await Promise.all([
     db.from("staff_payroll_deductions").select("*").eq("restaurant_id", input.restaurantId).maybeSingle(),
@@ -226,7 +242,7 @@ export async function createStaffPayrollPeriodDraft(input: {
   const periodEnd = normalizeDateOnly(input.periodEnd, "Ngày kết thúc kỳ lương chưa hợp lệ.");
   if (periodEnd < periodStart) throw new Error("Ngày kết thúc kỳ lương phải sau ngày bắt đầu.");
 
-  const [deductions, profilesResult, staffResult, attendanceResult] = await Promise.all([
+  const [deductions, profilesResult, staffResult, attendanceResult, approvalsResult] = await Promise.all([
     getStaffPayrollDeductionsWithAdmin(db, input.restaurantId),
     db.from("staff_payroll_profiles").select("*").eq("restaurant_id", input.restaurantId),
     db
@@ -240,34 +256,63 @@ export async function createStaffPayrollPeriodDraft(input: {
       .gte("clock_in_at", `${periodStart}T00:00:00+07:00`)
       .lt("clock_in_at", `${addOneDay(periodEnd)}T00:00:00+07:00`)
       .not("clock_out_at", "is", null)
-      .in("approval_state", ["auto_approved", "approved"])
+      .in("approval_state", ["auto_approved", "approved"]),
+    db
+      .from("attendance_approval_requests")
+      .select("id,staff_member_id,attendance_log_id,request_type,status,requested_payload")
+      .eq("restaurant_id", input.restaurantId)
+      .eq("status", "approved")
+      .in("request_type", ["overtime", "leave_request"])
   ]);
 
   throwIfSupabaseError(profilesResult.error, "Không tải được hồ sơ lương");
   throwIfSupabaseError(staffResult.error, "Không tải được nhân viên tính lương");
   throwIfSupabaseError(attendanceResult.error, "Không tải được bảng công tính lương");
+  throwIfSupabaseError(approvalsResult.error, "Không tải được yêu cầu chấm công đã duyệt");
 
   const profiles = ((profilesResult.data ?? []) as any[]).map(mapProfileRow);
   const profileMap = new Map(profiles.map((profile) => [profile.staffMemberId, profile]));
-  const staffRows = ((staffResult.data ?? []) as PayrollStaffRow[]).filter((staff) => staff.role_code !== "owner" && !staff.archived_at && staff.employment_status !== "resigned");
+  const staffRows = ((staffResult.data ?? []) as PayrollStaffRow[]).filter((staff) => (
+    staff.role_code !== "owner"
+    && !staff.archived_at
+    && staff.employment_status === "active"
+  ));
   const staffMap = new Map(staffRows.map((staff) => [staff.id, staff]));
   const attendanceRows = ((attendanceResult.data ?? []) as PayrollAttendanceRow[]).filter((attendance) => staffMap.has(attendance.staff_member_id));
   const rowsByStaff = groupAttendanceByStaff(attendanceRows);
+  const approvedAdjustments = summarizeApprovedPayrollAdjustments(
+    ((approvalsResult.data ?? []) as PayrollApprovalRow[]),
+    periodStart,
+    periodEnd
+  );
   const defaultRate = Math.max(0, Math.round(input.defaultHourlyRate ?? DEFAULT_PAYROLL_HOURLY_RATE));
   const otMultiplier = Math.max(1, Number(input.overtimeMultiplier ?? DEFAULT_PAYROLL_OT_MULTIPLIER));
-  const payslips = Array.from(rowsByStaff.entries()).map(([staffMemberId, rows]) => {
+  const staffIds = new Set([...staffMap.keys(), ...profileMap.keys()]);
+  const payslips = Array.from(staffIds).map((staffMemberId) => {
     const staff = staffMap.get(staffMemberId);
     if (!staff) return null;
+    const adjustments = approvedAdjustments.get(staffMemberId) ?? {
+      overtimeMinutes: 0,
+      paidLeaveDays: 0,
+      unpaidLeaveDays: 0,
+      paidLeaveDates: [] as string[],
+      unpaidLeaveDates: [] as string[]
+    };
     return buildPayslipPayload({
       restaurantId: input.restaurantId,
       staff,
-      rows,
+      rows: rowsByStaff.get(staffMemberId) ?? [],
       profile: profileMap.get(staffMemberId) ?? null,
       deductions,
       periodStart,
       periodEnd,
       defaultRate,
-      otMultiplier
+      otMultiplier,
+      approvedOvertimeMinutes: adjustments.overtimeMinutes,
+      approvedPaidLeaveDays: adjustments.paidLeaveDays,
+      approvedUnpaidLeaveDays: adjustments.unpaidLeaveDays,
+      approvedPaidLeaveDates: adjustments.paidLeaveDates,
+      approvedUnpaidLeaveDates: adjustments.unpaidLeaveDates
     });
   }).filter(Boolean) as Array<Record<string, unknown>>;
 
@@ -294,41 +339,29 @@ export async function createStaffPayrollPeriodDraft(input: {
     created_by: input.actorUserId
   };
 
-  const existing = await db
-    .from("staff_payroll_periods")
-    .select("id,status")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("period_start", periodStart)
-    .eq("period_end", periodEnd)
-    .maybeSingle();
-  throwIfSupabaseError(existing.error, "Không kiểm tra được kỳ lương hiện tại");
-  if (existing.data?.status === "closed") throw new Error("Kỳ lương đã chốt, không thể tạo lại snapshot.");
-
-  const periodResult = await db
-    .from("staff_payroll_periods")
-    .upsert(periodPayload, { onConflict: "restaurant_id,period_start,period_end" })
-    .select("id,period_label,period_start,period_end,status,staff_count,gross_total,net_total,employee_insurance_total,employer_insurance_total,personal_income_tax_total,created_at,closed_at")
-    .single();
-  throwIfSupabaseError(periodResult.error, "Không tạo được kỳ lương");
-
-  await db.from("staff_payslips").delete().eq("restaurant_id", input.restaurantId).eq("payroll_period_id", periodResult.data.id);
-  if (payslips.length > 0) {
-    const insertResult = await db.from("staff_payslips").insert(payslips.map((payslip) => ({ ...payslip, payroll_period_id: periodResult.data.id })));
-    throwIfSupabaseError(insertResult.error, "Không tạo được phiếu lương");
-  }
+  const regenerationResult = await db.rpc("regenerate_staff_payroll_period_atomic", {
+    p_restaurant_id: input.restaurantId,
+    p_actor_user_id: input.actorUserId,
+    p_period_payload: periodPayload,
+    p_payslips: payslips
+  });
+  throwIfSupabaseError(regenerationResult.error, "Không tạo được kỳ lương và phiếu lương");
+  const regeneration = regenerationResult.data?.[0] as { period: Record<string, unknown>; payslip_count: number } | undefined;
+  if (!regeneration?.period) throw new Error("Không nhận được snapshot kỳ lương từ giao dịch payroll.");
+  const periodRow = regeneration.period;
 
   await writeStaffActivityLog({
     restaurantId: input.restaurantId,
     actorUserId: input.actorUserId,
     entityType: "staff_payroll_period",
-    entityId: periodResult.data.id,
+    entityId: String(periodRow.id),
     action: "staff.payroll_period_generated",
     severity: "info",
-    afterState: { period: periodResult.data, totals, payslipCount: payslips.length },
+    afterState: { period: periodRow, totals, payslipCount: payslips.length },
     metadata: { source: "staff_payroll_dashboard" }
   });
 
-  return { period: mapPeriodRow(periodResult.data), payslipCount: payslips.length };
+  return { period: mapPeriodRow(periodRow), payslipCount: Number(regeneration.payslip_count ?? payslips.length) };
 }
 
 export async function updateStaffPayrollPeriodStatus(input: {
@@ -595,6 +628,94 @@ function groupAttendanceByStaff(rows: PayrollAttendanceRow[]) {
   return map;
 }
 
+function payloadText(payload: Record<string, unknown> | null | undefined, key: string) {
+  const value = payload?.[key];
+  return typeof value === "string" ? value.slice(0, 40) : null;
+}
+
+function payloadNumber(payload: Record<string, unknown> | null | undefined, key: string) {
+  const value = Number(payload?.[key]);
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function dateOnly(value: string | null) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+function inclusiveDateRange(fromDate: string, toDate: string) {
+  const from = new Date(`${fromDate}T00:00:00.000Z`);
+  const to = new Date(`${toDate}T00:00:00.000Z`);
+  const dates: string[] = [];
+  for (const cursor = new Date(from); cursor <= to; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    dates.push(cursor.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+function summarizeApprovedPayrollAdjustments(rows: PayrollApprovalRow[], periodStart: string, periodEnd: string) {
+  const result = new Map<string, {
+    overtimeMinutes: number;
+    paidLeaveDays: number;
+    unpaidLeaveDays: number;
+    paidLeaveDates: string[];
+    unpaidLeaveDates: string[];
+  }>();
+  for (const row of rows) {
+    const payload = row.requested_payload ?? {};
+    const current = result.get(row.staff_member_id) ?? {
+      overtimeMinutes: 0,
+      paidLeaveDays: 0,
+      unpaidLeaveDays: 0,
+      paidLeaveDates: [],
+      unpaidLeaveDates: []
+    };
+
+    if (row.request_type === "overtime" && !row.attendance_log_id) {
+      const overtimeDate = dateOnly(payloadText(payload, "overtimeDate") ?? payloadText(payload, "fromDate"));
+      if (overtimeDate && overtimeDate >= periodStart && overtimeDate <= periodEnd) {
+        current.overtimeMinutes += payloadNumber(payload, "overtimeMinutes");
+      }
+    }
+
+    if (row.request_type === "leave_request") {
+      const from = dateOnly(payloadText(payload, "fromDate"));
+      const to = dateOnly(payloadText(payload, "toDate")) ?? from;
+      if (from && to && to >= periodStart && from <= periodEnd) {
+        const clippedFrom = from < periodStart ? periodStart : from;
+        const clippedTo = to > periodEnd ? periodEnd : to;
+        const leaveDates = inclusiveDateRange(clippedFrom, clippedTo);
+        if ((payloadText(payload, "leaveType") ?? "unpaid") === "paid") current.paidLeaveDates.push(...leaveDates);
+        else current.unpaidLeaveDates.push(...leaveDates);
+      }
+    }
+
+    result.set(row.staff_member_id, current);
+  }
+
+  for (const adjustment of result.values()) {
+    adjustment.paidLeaveDates = [...new Set(adjustment.paidLeaveDates)].sort();
+    adjustment.unpaidLeaveDates = [...new Set(adjustment.unpaidLeaveDates)].sort();
+    const unpaidDates = new Set(adjustment.unpaidLeaveDates);
+    if (adjustment.paidLeaveDates.some((date) => unpaidDates.has(date))) {
+      throw new Error("Mâu thuẫn nghỉ phép có lương và không lương trong cùng ngày.");
+    }
+    adjustment.paidLeaveDays = adjustment.paidLeaveDates.length;
+    adjustment.unpaidLeaveDays = adjustment.unpaidLeaveDates.length;
+  }
+  return result;
+}
+
+function daysInPayrollPeriod(periodStart: string, periodEnd: string) {
+  const from = new Date(`${periodStart}T00:00:00.000Z`);
+  const to = new Date(`${periodEnd}T00:00:00.000Z`);
+  return Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1);
+}
+
+function daysInMonth(periodStart: string) {
+  const date = new Date(`${periodStart}T00:00:00.000Z`);
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
 function buildPayslipPayload({
   restaurantId,
   staff,
@@ -604,7 +725,12 @@ function buildPayslipPayload({
   periodStart,
   periodEnd,
   defaultRate,
-  otMultiplier
+  otMultiplier,
+  approvedOvertimeMinutes,
+  approvedPaidLeaveDays,
+  approvedUnpaidLeaveDays,
+  approvedPaidLeaveDates,
+  approvedUnpaidLeaveDates
 }: {
   restaurantId: string;
   staff: PayrollStaffRow;
@@ -615,17 +741,52 @@ function buildPayslipPayload({
   periodEnd: string;
   defaultRate: number;
   otMultiplier: number;
+  approvedOvertimeMinutes: number;
+  approvedPaidLeaveDays: number;
+  approvedUnpaidLeaveDays: number;
+  approvedPaidLeaveDates: string[];
+  approvedUnpaidLeaveDates: string[];
 }) {
-  const workMinutes = rows.reduce((total, row) => total + attendanceWorkMinutes(row), 0);
-  const overtimeMinutes = rows.reduce((total, row) => total + Math.max(0, Number(row.overtime_minutes ?? 0)), 0);
+  const attendanceWork = rows.reduce((total, row) => total + attendanceWorkMinutes(row), 0);
+  const attendanceOvertime = rows.reduce((total, row) => total + Math.max(0, Number(row.overtime_minutes ?? 0)), 0);
+  const workBreakdown = calculatePayrollWorkBreakdown({
+    attendanceWorkMinutes: attendanceWork,
+    attendanceOvertimeMinutes: attendanceOvertime,
+    approvedOvertimeMinutes,
+    attendanceDates: rows.map((row) => toVietnamCalendarDateKey(row.clock_in_at)),
+    approvedPaidLeaveDates,
+    approvedUnpaidLeaveDates
+  });
+  const {
+    regularWorkMinutes,
+    overtimeMinutes,
+    paidLeaveDaysWithoutAttendance,
+    unpaidLeaveDaysWithoutAttendance,
+    paidLeaveMinutes,
+    workMinutes
+  } = workBreakdown;
+  const monthlySalary = Math.max(0, Number(profile?.baseSalary ?? 0));
+  const hourlyRate = Math.max(0, profile?.hourlyRate ?? (monthlySalary > 0 ? monthlySalary / (26 * 8) : defaultRate));
   const lateMinutes = rows.reduce((total, row) => total + Math.max(0, Number(row.late_minutes ?? 0)), 0);
-  const hourlyRate = profile?.hourlyRate ?? defaultRate;
-  const basePay = Math.round((workMinutes / 60) * hourlyRate);
+  const basePay = monthlySalary > 0
+    ? calculateMonthlyBasePay({
+      monthlySalary,
+      periodDays: daysInPayrollPeriod(periodStart, periodEnd),
+      calendarDaysInMonth: daysInMonth(periodStart),
+      unpaidLeaveDays: unpaidLeaveDaysWithoutAttendance
+    })
+    : Math.round((regularWorkMinutes / 60) * hourlyRate);
   const overtimePay = Math.round((overtimeMinutes / 60) * hourlyRate * otMultiplier);
   const grossPay = basePay + overtimePay;
+  const insuranceBaseSalary = resolvePayrollInsuranceBase({
+    monthlySalary,
+    basePay,
+    grossPay,
+    insuranceBaseAmount: profile?.insuranceBaseAmount
+  });
   const deductionSummary = summarizePayroll({
     grossMonthlySalary: grossPay,
-    baseSalary: profile?.baseSalary ?? grossPay,
+    baseSalary: insuranceBaseSalary,
     dependentCount: profile?.dependentCount ?? 0,
     enrolledInInsurance: profile?.enrolledInInsurance ?? false,
     applyPersonalIncomeTax: profile?.applyPersonalIncomeTax ?? false,
@@ -643,7 +804,7 @@ function buildPayslipPayload({
     employee_code: staff.employee_code,
     period_start: periodStart,
     period_end: periodEnd,
-    attendance_count: rows.length,
+    attendance_count: rows.length + paidLeaveDaysWithoutAttendance,
     work_minutes: workMinutes,
     overtime_minutes: overtimeMinutes,
     late_minutes: lateMinutes,
@@ -654,16 +815,27 @@ function buildPayslipPayload({
     personal_income_tax: deductionSummary.personalIncomeTax,
     payroll_profile_snapshot: profile ?? {},
     deduction_snapshot: deductions,
-    attendance_snapshot: rows.map((row) => ({
-      id: row.id,
-      branchId: row.branch_id,
-      clockInAt: row.clock_in_at,
-      clockOutAt: row.clock_out_at,
-      workMinutes: attendanceWorkMinutes(row),
-      overtimeMinutes: row.overtime_minutes ?? 0,
-      lateMinutes: row.late_minutes ?? 0,
-      approvalState: row.approval_state
-    })),
+    attendance_snapshot: [
+      ...rows.map((row) => ({
+        id: row.id,
+        branchId: row.branch_id,
+        clockInAt: row.clock_in_at,
+        clockOutAt: row.clock_out_at,
+        workMinutes: attendanceWorkMinutes(row),
+        overtimeMinutes: row.overtime_minutes ?? 0,
+        lateMinutes: row.late_minutes ?? 0,
+        approvalState: row.approval_state
+      })),
+      {
+        type: "approved_payroll_adjustments",
+        overtimeMinutes: approvedOvertimeMinutes,
+        paidLeaveDays: approvedPaidLeaveDays,
+        unpaidLeaveDays: approvedUnpaidLeaveDays,
+        unpaidLeaveDaysWithoutAttendance,
+        paidLeaveDaysWithoutAttendance,
+        paidLeaveMinutes
+      }
+    ],
     status: "draft"
   };
 }

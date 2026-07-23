@@ -21,6 +21,7 @@ import { uploadMenuImageFile, uploadRemoteMenuImageUrl } from "@/services/menu-i
 import { notifyPlatformTenantCreated } from "@/services/platform-telegram-events";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertStaffOwnerMutationAllowed } from "@/services/staff-owner-boundary-service";
 import { isPublicTenantActive } from "@/services/tenant-status-guard";
 import type { BusinessType, OrderStatus, PaymentMethod } from "@/types/domain";
 import type { Database } from "@/types/supabase";
@@ -637,6 +638,13 @@ export async function createRestaurantUser(input: {
   const supabase = createAdminSupabaseClient() as any;
   const normalizedEmail = input.email.toLowerCase();
   const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    requestedRoleCode: roleConfig.code,
+    action: "tạo tài khoản"
+  });
   const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
   const pinPayload = buildStaffPinPayload(input.restaurantId, input.pin);
 
@@ -728,6 +736,14 @@ export async function updateRestaurantUserRole(input: {
   const supabase = createAdminSupabaseClient() as any;
   const roleCode = mapPermissionProfileToRoleTemplateCode(input.permissionProfile);
   const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, roleCode);
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    targetUserId: input.userId,
+    requestedRoleCode: roleConfig.code,
+    action: "đổi vai trò"
+  });
   const { data, error } = await supabase.rpc("update_staff_user_profile", {
     p_restaurant_id: input.restaurantId,
     p_user_id: input.userId,
@@ -775,6 +791,14 @@ export async function updateRestaurantUserOperationsProfile(input: {
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    targetUserId: input.userId,
+    requestedRoleCode: roleConfig.code,
+    action: "cập nhật hồ sơ"
+  });
   const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
   const pinPayload = buildStaffPinPayload(input.restaurantId, input.pin);
   const profilePayload = compactRecord({
@@ -830,7 +854,7 @@ async function assertOwnerProfileMutationAllowed({
   userId: string;
   actorUserId: string;
 }) {
-  const [targetResult, targetMemberResult, actorResult] = await Promise.all([
+  const [targetResult, targetMemberResult, restaurantResult] = await Promise.all([
     supabase
       .from("users")
       .select("id,email,role,full_name,phone,username,account_status")
@@ -844,22 +868,21 @@ async function assertOwnerProfileMutationAllowed({
       .eq("user_id", userId)
       .maybeSingle(),
     supabase
-      .from("staff_members")
-      .select("id,role_code")
-      .eq("restaurant_id", restaurantId)
-      .eq("user_id", actorUserId)
+      .from("restaurants")
+      .select("owner_user_id")
+      .eq("id", restaurantId)
       .maybeSingle()
   ]);
 
   throwIfSupabaseError(targetResult.error, "Không tải được hồ sơ chủ quán");
   throwIfSupabaseError(targetMemberResult.error, "Không tải được hồ sơ nhân sự chủ quán");
-  throwIfSupabaseError(actorResult.error, "Không xác thực được quyền chủ quán");
+  throwIfSupabaseError(restaurantResult.error, "Không xác thực được quyền chủ quán");
 
   const target = targetResult.data as any | null;
   const targetMember = targetMemberResult.data as { id: string; role_code: string | null; full_name: string | null; phone: string | null; username: string | null } | null;
-  const actor = actorResult.data as { id: string; role_code: string | null } | null;
-  const isTargetOwner = target?.role === "ADMIN" && targetMember?.role_code === "owner";
-  const isActorOwner = actor?.role_code === "owner";
+  const canonicalOwnerUserId = (restaurantResult.data as { owner_user_id: string | null } | null)?.owner_user_id ?? null;
+  const isTargetOwner = target?.role === "ADMIN" && canonicalOwnerUserId === userId;
+  const isActorOwner = canonicalOwnerUserId === actorUserId;
 
   if (!target || !isTargetOwner) throw new AppError("Hồ sơ này không phải tài khoản chủ quán.", 400);
   if (actorUserId !== userId && !isActorOwner) {
@@ -952,6 +975,14 @@ export async function setRestaurantUserAccountState(input: {
   }
 
   const supabase = createAdminSupabaseClient() as any;
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    targetUserId: input.userId,
+    rejectCanonicalOwnerTarget: input.nextState !== "active",
+    action: "thay đổi trạng thái"
+  });
   const { data, error } = await supabase.rpc("set_staff_account_state", {
     p_restaurant_id: input.restaurantId,
     p_user_id: input.userId,
@@ -975,6 +1006,14 @@ export async function deleteRestaurantUser(input: {
   }
 
   const supabase = createAdminSupabaseClient();
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId: input.restaurantId,
+    actorUserId: input.actorUserId,
+    targetUserId: input.userId,
+    rejectCanonicalOwnerTarget: true,
+    action: "xóa tài khoản"
+  });
   const { data: user, error: userError } = await supabase
     .from("users")
     .select("id,email,role,restaurant_id")
@@ -1099,24 +1138,13 @@ function parseRegistrationIntentPayload(value: Json): RegistrationIntentPayload 
   };
 }
 
-export async function getRestaurantForUser(userId: string, email?: string | null) {
+export async function getRestaurantForUser(userId: string, _email?: string | null) {
   const supabase = createAdminSupabaseClient();
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from("users")
     .select("restaurant:restaurants(id,name,slug)")
     .eq("id", userId)
     .maybeSingle();
-
-  if (!data && !error && email) {
-    const fallback = await supabase
-      .from("users")
-      .select("restaurant:restaurants(id,name,slug)")
-      .eq("email", email.toLowerCase())
-      .maybeSingle();
-
-    data = fallback.data;
-    error = fallback.error;
-  }
 
   throwIfSupabaseError(error);
   const row = data as
@@ -1616,7 +1644,7 @@ export async function updateRestaurantSettings(
       closing_time: input.closingTime || null,
       brand_primary: input.brandPrimary || null,
       brand_accent: input.brandAccent || null,
-      allow_legacy_qr: input.allowLegacyQr ?? true,
+      allow_legacy_qr: input.allowLegacyQr ?? false,
       notify_new_order: input.notifyNewOrder ?? true,
       notify_payment_waiting: input.notifyPaymentWaiting ?? true,
       show_promotions_on_menu: input.showPromotionsOnMenu ?? true,

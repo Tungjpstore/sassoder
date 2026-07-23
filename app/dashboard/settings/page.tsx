@@ -46,14 +46,14 @@ export default async function AdminSettingsPage({ searchParams }: { searchParams
   const billingPaymentId = firstParam(params?.paymentId)?.slice(0, 80) ?? null;
   const billingError = firstParam(params?.billingError)?.slice(0, 240) ?? null;
 
-  const { session, entitlement } = await getDashboardAccessForSettings(initialSection);
+  const { session, entitlement, canonicalOwnerEmail } = await getDashboardAccessForSettings(initialSection);
 
   const dashboardPromise = getRestaurantDashboard(session.restaurantId);
   const branchesPromise = listStoreBranchesForManagement(session.restaurantId);
 
   const billingPortalPromise =
     initialSection === "billing"
-      ? getRestaurantBillingPortal({ restaurantId: session.restaurantId, ownerEmail: session.email })
+      ? getRestaurantBillingPortal({ restaurantId: session.restaurantId, ownerEmail: canonicalOwnerEmail })
       : Promise.resolve(null);
 
   const restaurantUsersPromise =

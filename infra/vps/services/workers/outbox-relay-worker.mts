@@ -9,6 +9,7 @@ type OperationalOutboxRow = {
   restaurant_id: string;
   branch_id: string | null;
   attempts: number;
+  locked_by: string;
   payload: Record<string, unknown>;
 };
 
@@ -101,12 +102,13 @@ async function claimRows(): Promise<OperationalOutboxRow[]> {
     restaurant_id: String(row.restaurant_id),
     branch_id: row.branch_id ? String(row.branch_id) : null,
     attempts: Number(row.attempts ?? 0),
+    locked_by: String(row.locked_by),
     payload: row.payload && typeof row.payload === "object" ? row.payload : {}
   }));
 }
 
 async function markPublished(row: OperationalOutboxRow, jobs: Array<{ queueName: string; jobId: string; name: string }>) {
-  const { error } = await supabaseAdmin()
+  const { data, error } = await supabaseAdmin()
     .from("operational_event_outbox")
     .update({
       status: "published",
@@ -117,13 +119,19 @@ async function markPublished(row: OperationalOutboxRow, jobs: Array<{ queueName:
       delivery_metadata: { jobs, relayedAt: new Date().toISOString() },
       updated_at: new Date().toISOString()
     })
-    .eq("id", row.id);
+    .eq("id", row.id)
+    .eq("status", "processing")
+    .eq("locked_by", row.locked_by)
+    .eq("attempts", row.attempts)
+    .select("id")
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error("OUTBOX_LEASE_LOST");
 }
 
 async function markFailed(row: OperationalOutboxRow, error: unknown, final: boolean) {
   const delayMs = final ? 0 : nextDelayMs(row.attempts);
-  const { error: updateError } = await supabaseAdmin()
+  const { data, error: updateError } = await supabaseAdmin()
     .from("operational_event_outbox")
     .update({
       status: final ? "dead_letter" : "failed",
@@ -133,8 +141,14 @@ async function markFailed(row: OperationalOutboxRow, error: unknown, final: bool
       next_attempt_at: new Date(Date.now() + delayMs).toISOString(),
       updated_at: new Date().toISOString()
     })
-    .eq("id", row.id);
+    .eq("id", row.id)
+    .eq("status", "processing")
+    .eq("locked_by", row.locked_by)
+    .eq("attempts", row.attempts)
+    .select("id")
+    .maybeSingle();
   if (updateError) throw updateError;
+  if (!data) throw new Error("OUTBOX_LEASE_LOST");
 }
 
 function nextDelayMs(attempts: number) {

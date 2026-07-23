@@ -9,18 +9,18 @@ export function createNotificationWorkers(connection: Redis, logger: any) {
       queueName: "push.notifications",
       connection,
       logger,
-      processor: async (job) => acknowledge("push", job.data)
+      processor: async (job, { signal }) => acknowledge("push", job.data, signal)
     }),
     createDomainWorker({
       queueName: "email.notifications",
       connection,
       logger,
-      processor: async (job) => acknowledge("email", job.data)
+      processor: async (job, { signal }) => acknowledge("email", job.data, signal)
     })
   ];
 }
 
-async function acknowledge(channel: string, data: TenantJobData) {
+async function acknowledge(channel: string, data: TenantJobData, signal: AbortSignal) {
   const webhookUrl = readEnv(`${channel.toUpperCase()}_NOTIFICATION_WEBHOOK_URL`);
   if (!webhookUrl) return enqueueDevTelegramFallback(channel, data);
 
@@ -31,7 +31,7 @@ async function acknowledge(channel: string, data: TenantJobData) {
       "x-logivn-internal-key": requiredEnv("LOGIVN_INTERNAL_API_KEY")
     },
     body: JSON.stringify(data),
-    signal: AbortSignal.timeout(8000)
+    signal: AbortSignal.any([signal, AbortSignal.timeout(8000)])
   });
 
   if (!response.ok) throw new Error(`${channel}_notification_delivery_failed:${response.status}`);

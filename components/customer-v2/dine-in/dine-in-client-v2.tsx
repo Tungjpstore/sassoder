@@ -177,7 +177,12 @@ export function DineInClientV2({
   const [screen, setScreen] = useState<DineInCheckoutScreen>("menu");
   const { categoryId, searchQuery, setCategoryId, setSearchQuery, visibleCategories } = useDineInMenuBrowser(categories);
 
-  const { customerSessionId, ensureSessionId } = useDineInCustomerSession(restaurant.id, table.id);
+  const { customerSessionId, customerSessionToken, ensureSessionId } = useDineInCustomerSession(
+    restaurant.id,
+    table.id,
+    restaurant.slug,
+    tableAccessToken
+  );
   const [history, setHistory] = useState<CreatedOrder[]>([]);
   const [customerNote, setCustomerNote] = useState("");
   const [created, setCreated] = useState<CreatedOrder | null>(null);
@@ -207,13 +212,14 @@ export function DineInClientV2({
     [restaurant.id, table.id]
   );
   const accessFor = useCallback(
-    (sessionId: string) => ({
+    (sessionId: string, sessionToken = customerSessionToken) => ({
       restaurantSlug: restaurant.slug,
       tableId: table.id,
       tableAccessToken: tableAccessToken ?? undefined,
-      customerSessionId: sessionId
+      customerSessionId: sessionId,
+      customerSessionToken: sessionToken
     }),
-    [restaurant.slug, table.id, tableAccessToken]
+    [customerSessionToken, restaurant.slug, table.id, tableAccessToken]
   );
 
   const total = useMemo(() => cart.reduce((sum, item) => sum + item.price * item.quantity, 0), [cart]);
@@ -365,7 +371,7 @@ export function DineInClientV2({
 
   const loadOrderHistory = useCallback(
     async ({ openLatest = false, silent = false }: { openLatest?: boolean; silent?: boolean } = {}) => {
-      if (!customerSessionId) return [];
+      if (!customerSessionId || !customerSessionToken) return [];
       if (!silent) {
         setHistoryLoading(true);
         setError(null);
@@ -383,7 +389,7 @@ export function DineInClientV2({
         if (!silent) setHistoryLoading(false);
       }
     },
-    [accessFor, customerSessionId, openEntry]
+    [accessFor, customerSessionId, customerSessionToken, openEntry]
   );
 
   async function submitOrder() {
@@ -608,7 +614,7 @@ export function DineInClientV2({
     if (!customerSessionId) return;
     const timer = window.setTimeout(() => void loadOrderHistory(), 0);
     return () => window.clearTimeout(timer);
-  }, [customerSessionId, loadOrderHistory]);
+  }, [customerSessionId, customerSessionToken, loadOrderHistory]);
 
   useEffect(() => {
     const update = () => setNetworkOnline(window.navigator.onLine);
@@ -633,7 +639,7 @@ export function DineInClientV2({
   }, []);
 
   useEffect(() => {
-    if (!customerSessionId || !orderPollingInterval) return;
+    if (!customerSessionId || !customerSessionToken || !orderPollingInterval) return;
     let cancelled = false;
     const poll = () => {
       if (!cancelled) void loadOrderHistory({ silent: true });
@@ -645,7 +651,7 @@ export function DineInClientV2({
       window.clearTimeout(warmup);
       window.clearInterval(interval);
     };
-  }, [customerSessionId, loadOrderHistory, orderPollingInterval]);
+  }, [customerSessionId, customerSessionToken, loadOrderHistory, orderPollingInterval]);
 
   useEffect(() => {
     window.scrollTo(0, 0);

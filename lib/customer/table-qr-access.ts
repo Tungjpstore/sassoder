@@ -54,7 +54,7 @@ function safeEqualToken(a: string, b: string) {
 
 export function isValidTableQrAccess(table: TableQrAccessTable, token?: string | null, options: TableQrAccessOptions = {}) {
   // Enforce token when table is marked enforced, or when restaurant disables legacy QR.
-  const requiresToken = Boolean(table.qr_token_enforced) || options.allowLegacyQr === false;
+  const requiresToken = Boolean(table.qr_token_enforced) || options.allowLegacyQr !== true;
   if (!requiresToken) return true;
   if (!token || !/^[a-f0-9]{40}$/i.test(token)) return false;
   return safeEqualToken(token.toLowerCase(), buildTableQrAccessToken(table));

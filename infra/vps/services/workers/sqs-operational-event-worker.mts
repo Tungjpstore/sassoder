@@ -1,5 +1,5 @@
 import { readEnv, numberEnv } from "../shared/env.js";
-import { deleteSqsMessage, receiveSqsMessages, resolveAwsSqsConfig, type AwsSqsMessage } from "../shared/aws-sqs.mjs";
+import { deleteSqsMessage, receiveSqsMessages, resolveAwsSqsConfig, sendSqsMessage, type AwsSqsMessage } from "../shared/aws-sqs.mjs";
 import { publishOperationalEvent } from "../shared/queues.js";
 
 type SqsConsumerState = {
@@ -105,9 +105,39 @@ async function processMessage(message: AwsSqsMessage, state: SqsConsumerState, l
     logger.info({ messageId: message.messageId, eventId: event.eventId, type: event.type, jobs: jobs.length }, "SQS operational event published");
   } catch (error) {
     if (isPermanentMessageError(error)) {
-      await deleteSqsMessage(message.receiptHandle);
-      state.discarded += 1;
-      logger.error({ messageId: message.messageId, error: safeLogError(error) }, "SQS operational event discarded");
+      const deadLetterQueueUrl = readEnv("OPERATIONAL_EVENT_SQS_DLQ_URL");
+      if (!deadLetterQueueUrl) {
+        state.failed += 1;
+        state.lastError = errorMessage(error);
+        logger.error(
+          { messageId: message.messageId, error: safeLogError(error) },
+          "SQS poison message retained for the queue redrive policy; no application DLQ is configured"
+        );
+        return;
+      }
+
+      try {
+        await sendSqsMessage(
+          JSON.stringify({
+            source: "logivn-operational-event-consumer",
+            quarantinedAt: new Date().toISOString(),
+            messageId: message.messageId,
+            body: message.body,
+            error: safeLogError(error)
+          }),
+          deadLetterQueueUrl
+        );
+        await deleteSqsMessage(message.receiptHandle);
+        state.discarded += 1;
+        logger.error({ messageId: message.messageId, error: safeLogError(error) }, "SQS operational event quarantined in DLQ");
+      } catch (deadLetterError) {
+        state.failed += 1;
+        state.lastError = errorMessage(deadLetterError);
+        logger.error(
+          { messageId: message.messageId, error: safeLogError(deadLetterError) },
+          "SQS poison message could not be written to DLQ; leaving it for retry"
+        );
+      }
       return;
     }
 

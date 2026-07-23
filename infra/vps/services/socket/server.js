@@ -77,6 +77,16 @@ io.on("connection", (socket) => {
         return;
       }
 
+      if (claims?.scope === "customer_order") {
+        if (payload.tableId || !payload.orderId || claims.orderId !== payload.orderId) {
+          callback?.({ ok: false, error: "order_forbidden" });
+          return;
+        }
+        socket.join(orderRoom(payload.orderId));
+        callback?.({ ok: true });
+        return;
+      }
+
       socket.join(restaurantRoom(payload.restaurantId));
       if (payload.tableId) socket.join(tableRoom(payload.restaurantId, payload.tableId));
       if (payload.orderId) socket.join(orderRoom(payload.orderId));
@@ -137,8 +147,16 @@ function verifyRealtimeToken(token) {
 
     const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
     const now = Math.floor(Date.now() / 1000);
-    if (payload.scope !== "dashboard" || typeof payload.restaurantId !== "string" || payload.exp < now) return null;
-    return payload;
+    if (typeof payload.restaurantId !== "string" || !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) || payload.exp <= now) return null;
+    if (payload.scope === "dashboard") return payload;
+    if (
+      payload.scope === "customer_order" &&
+      typeof payload.customerSessionId === "string" &&
+      typeof payload.orderId === "string"
+    ) {
+      return payload;
+    }
+    return null;
   } catch (error) {
     logger.warn({ error }, "invalid realtime token");
     return null;

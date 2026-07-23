@@ -540,6 +540,33 @@ async function recordOperationalOutbox(event: OperationalEvent): Promise<Operati
   }
 
   if (inserted.error?.code === "23505") {
+    const reconciled = await supabase
+      .from("operational_event_outbox")
+      .update({
+        event_type: event.type,
+        restaurant_id: event.restaurantId ?? null,
+        branch_id: event.branchId ?? null,
+        source: event.source ?? null,
+        priority: eventPriority(event.type),
+        status: "pending",
+        payload: event,
+        last_error: null,
+        next_attempt_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq("tenant_id", tenantId)
+      .eq("event_id", event.eventId)
+      .in("status", ["pending", "failed"])
+      .select("id,event_id,restaurant_id")
+      .maybeSingle();
+    if (!reconciled.error && reconciled.data) {
+      return {
+        id: String(reconciled.data.id),
+        eventId: String(reconciled.data.event_id),
+        restaurantId: reconciled.data.restaurant_id ? String(reconciled.data.restaurant_id) : null
+      };
+    }
+
     const existing = await supabase
       .from("operational_event_outbox")
       .select("id,event_id,restaurant_id")
@@ -586,7 +613,7 @@ async function markOperationalOutboxPublished(outbox: OperationalOutboxRef, jobs
       updated_at: new Date().toISOString()
     })
     .eq("id", outbox.id)
-    .neq("status", "published");
+    .in("status", ["pending", "failed"]);
   if (error && !isMissingOutboxSchema(error)) {
     console.error("[operational-event-bus] outbox published update failed", { outboxId: outbox.id, error });
   }
@@ -606,7 +633,7 @@ async function markOperationalOutboxFailed(outbox: OperationalOutboxRef, errorMe
       updated_at: new Date().toISOString()
     })
     .eq("id", outbox.id)
-    .neq("status", "published");
+    .in("status", ["pending", "failed"]);
   if (error && !isMissingOutboxSchema(error)) {
     console.error("[operational-event-bus] outbox failed update failed", { outboxId: outbox.id, error });
   }

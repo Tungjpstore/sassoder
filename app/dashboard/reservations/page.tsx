@@ -3,17 +3,12 @@ import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v
 import { RealReservationsWorkspaceV2 } from "@/components/dashboard-v2/real/reservations-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { captureServerTimeMs, vietnamDateInputValue } from "@/lib/server-time";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { getReservationAnalytics, getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
 import { listTablesWithStatus } from "@/services/table-service";
 
 export const dynamic = "force-dynamic";
-
-function todayInputValue() {
-  const now = new Date();
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-  return now.toISOString().slice(0, 10);
-}
 
 export default async function ReservationsPage() {
   const { session, entitlement } = await requireDashboardAccess("reservations");
@@ -33,7 +28,8 @@ export default async function ReservationsPage() {
 }
 
 async function ReservationsWorkspaceContent({ restaurantId }: { restaurantId: string }) {
-  const today = todayInputValue();
+  const initialNowMs = captureServerTimeMs();
+  const today = vietnamDateInputValue(initialNowMs);
   const { settings, reservations, tables, analytics } = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "reservations",
@@ -78,6 +74,7 @@ async function ReservationsWorkspaceContent({ restaurantId }: { restaurantId: st
       }))}
       publicUrl={buildTenantUrl(settings.slug, "/reserve")}
       analytics={analytics}
+      initialNowMs={initialNowMs}
     />
   );
 }

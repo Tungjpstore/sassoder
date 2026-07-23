@@ -25,6 +25,7 @@ function table(input: Partial<TestRestaurantTable> = {}): TestRestaurantTable {
 test("table QR access accepts legacy QR only when legacy mode is allowed", () => {
   const legacyTable = table({ qr_token_enforced: false });
 
+  assert.equal(isValidTableQrAccess(legacyTable, null), false);
   assert.equal(isValidTableQrAccess(legacyTable, null, { allowLegacyQr: true }), true);
   assert.equal(isValidTableQrAccess(legacyTable, null, { allowLegacyQr: false }), false);
 });

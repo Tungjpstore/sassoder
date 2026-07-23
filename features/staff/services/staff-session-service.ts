@@ -9,6 +9,7 @@ import { assessAttendanceDeviceTrust } from "@/features/staff/services/staff-dev
 import type { staffSessionForceLogoutSchema, staffSessionHeartbeatSchema } from "@/lib/validators";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertStaffOwnerMutationAllowed } from "@/services/staff-owner-boundary-service";
 import type { SessionProfile } from "@/types/domain";
 
 type StaffSessionHeartbeatInput = z.infer<typeof staffSessionHeartbeatSchema>;
@@ -74,18 +75,32 @@ function scopedStaffLoginPath(restaurantSlug: string) {
 }
 
 function attendanceSessionSecret() {
-  const secret =
-    process.env.STAFF_ATTENDANCE_SESSION_SECRET?.trim() ||
-    process.env.STAFF_ATTENDANCE_QR_SECRET?.trim() ||
-    process.env.AUTH_SECRET?.trim() ||
-    process.env.NEXTAUTH_SECRET?.trim() ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  const secret = process.env.STAFF_ATTENDANCE_SESSION_SECRET?.trim();
 
   if (!secret && process.env.NODE_ENV === "production") {
     throw new AppError("Thiếu STAFF_ATTENDANCE_SESSION_SECRET để ký phiên chấm công nhân viên.", 503);
   }
 
   return secret || "logivn-dev-staff-attendance-session-secret";
+}
+
+async function revokeStaffAuthSession({
+  supabase,
+  restaurantId,
+  staffMemberId,
+  revokedAt
+}: {
+  supabase: any;
+  restaurantId: string;
+  staffMemberId: string;
+  revokedAt: string;
+}) {
+  const result = await supabase
+    .from("staff_members")
+    .update({ auth_revoked_at: revokedAt })
+    .eq("restaurant_id", restaurantId)
+    .eq("id", staffMemberId);
+  if (result.error) throw new AppError("Không thể thu hồi phiên xác thực nhân viên.", 503);
 }
 
 function encodeTokenPayload(payload: StaffAttendanceSessionTokenPayload) {
@@ -385,6 +400,34 @@ export async function forceStaffSessionLogout({
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date().toISOString();
 
+  const targetResult = input.sessionId
+    ? await supabase
+      .from("staff_sessions")
+      .select("staff_user_id,staff_member_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", input.sessionId)
+      .maybeSingle()
+    : await supabase
+      .from("staff_members")
+      .select("user_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", input.staffMemberId)
+      .maybeSingle();
+
+  if (targetResult.error) throw new AppError("Không xác thực được tài khoản của phiên cần đăng xuất.", 400);
+  const targetUserId = input.sessionId ? targetResult.data?.staff_user_id : targetResult.data?.user_id;
+  const targetStaffMemberId = input.sessionId ? targetResult.data?.staff_member_id : input.staffMemberId;
+  if (!targetUserId) throw new AppError("Không tìm thấy tài khoản của phiên cần đăng xuất.", 404);
+  if (!targetStaffMemberId) throw new AppError("Không tìm thấy hồ sơ nhân viên của phiên cần đăng xuất.", 404);
+
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId,
+    actorUserId,
+    targetUserId,
+    action: "buộc đăng xuất"
+  });
+
   let query = supabase
     .from("staff_sessions")
     .update({
@@ -412,9 +455,14 @@ export async function forceStaffSessionLogout({
     last_seen_at: string;
   }>;
 
-  if (sessions.length === 0) {
-    throw new AppError("Không tìm thấy phiên đang hoạt động để buộc đăng xuất.", 404);
-  }
+  // Supabase access tokens remain valid until expiry. Bump the staff auth
+  // epoch even when the client never registered a staff_sessions row.
+  await revokeStaffAuthSession({
+    supabase,
+    restaurantId,
+    staffMemberId: targetStaffMemberId,
+    revokedAt: now
+  });
 
   await writeStaffActivityLog({
     restaurantId,
@@ -436,7 +484,7 @@ export async function forceStaffSessionLogout({
   });
 
   await Promise.all(
-    [...new Set(sessions.map((item) => item.staff_user_id))].map((userId) =>
+    [...new Set([targetUserId, ...sessions.map((item) => item.staff_user_id)])].map((userId) =>
       supabase.from("notifications").insert({
         restaurant_id: restaurantId,
         user_id: userId,

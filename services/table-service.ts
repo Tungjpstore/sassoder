@@ -358,29 +358,14 @@ export async function createTable(
 
 export async function rotateTableQrToken(restaurantId: string, tableId: string) {
   const supabase = createAdminSupabaseClient() as any;
-  const { data: current, error: currentError } = await supabase
-    .from("tables")
-    .select("*")
-    .eq("id", tableId)
-    .eq("restaurant_id", restaurantId)
-    .maybeSingle();
-
-  throwIfSupabaseError(currentError);
-  if (!current) throw new AppError("Không tìm thấy bàn cần xoay mã QR", 404);
-
-  const { data: updated, error: updateError } = await supabase
-    .from("tables")
-    .update({
-      qr_token_version: Number(current.qr_token_version ?? 1) + 1,
-      qr_token_enforced: true,
-      qr_token_rotated_at: new Date().toISOString()
+  const { data: updated, error } = await supabase
+    .rpc("rotate_table_qr_token", {
+      p_restaurant_id: restaurantId,
+      p_table_id: tableId
     })
-    .eq("id", tableId)
-    .eq("restaurant_id", restaurantId)
-    .select()
     .single();
-
-  throwIfSupabaseError(updateError);
+  throwIfSupabaseError(error);
+  if (!updated) throw new AppError("Không tìm thấy bàn cần xoay mã QR", 404);
   return withQrToken(updated as RestaurantTable);
 }
 
@@ -449,16 +434,17 @@ export async function updateTableQrStatus(
     qrEnabled: boolean;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient() as any;
   const { data, error } = await supabase
-    .from("tables")
-    .update({ qr_enabled: input.qrEnabled })
-    .eq("id", input.tableId)
-    .eq("restaurant_id", restaurantId)
-    .select()
+    .rpc("set_table_qr_enabled", {
+      p_restaurant_id: restaurantId,
+      p_table_id: input.tableId,
+      p_qr_enabled: input.qrEnabled
+    })
     .single();
 
   throwIfSupabaseError(error);
+  if (!data) throw new AppError("Không tìm thấy bàn cần cập nhật QR", 404);
   return data as RestaurantTable;
 }
 

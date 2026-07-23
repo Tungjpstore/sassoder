@@ -32,7 +32,7 @@ function createInsertOnlySupabase(error: unknown = null) {
 test("paymentTransitionKey prefers bill scope when present", () => {
   assert.equal(
     paymentTransitionKey({ orderId: "order-1", billId: "bill-1", stage: "confirmed" }),
-    "bill:bill-1:confirmed"
+    "bill:bill-1:order:order-1:confirmed"
   );
 });
 
@@ -69,13 +69,14 @@ test("ensurePaymentLogEvent writes a scoped idempotent audit payload", async () 
   const { calls, client } = createInsertOnlySupabase();
 
   await ensurePaymentLogEvent(client, {
+    restaurantId: "restaurant-1",
     orderId: "order-1",
     billId: "bill-1",
     method: "QR",
     status: "waiting_confirm",
     amount: 120_000,
     source: "customer-checkout",
-    transitionKey: "bill:bill-1:waiting-confirm",
+    transitionKey: "bill:bill-1:order:order-1:waiting-confirm",
     rawData: {
       bankCode: "VCB",
       detectedAmount: 120_000
@@ -86,15 +87,16 @@ test("ensurePaymentLogEvent writes a scoped idempotent audit payload", async () 
     {
       table: "payment_logs",
       payload: {
+        restaurant_id: "restaurant-1",
         order_id: "order-1",
         bill_id: "bill-1",
         method: "QR",
         status: "waiting_confirm",
         amount: 120_000,
-        transition_key: "bill:bill-1:waiting-confirm",
+        transition_key: "bill:bill-1:order:order-1:waiting-confirm",
         raw_data: {
           source: "customer-checkout",
-          transitionKey: "bill:bill-1:waiting-confirm",
+          transitionKey: "bill:bill-1:order:order-1:waiting-confirm",
           bankCode: "VCB",
           detectedAmount: 120_000
         }
@@ -107,6 +109,7 @@ test("ensurePaymentLogEvent treats duplicate transition keys as already applied"
   const { calls, client } = createInsertOnlySupabase({ code: "23505", message: "duplicate key" });
 
   await ensurePaymentLogEvent(client, {
+    restaurantId: "restaurant-1",
     orderId: "order-1",
     method: "QR",
     status: "confirmed",
@@ -124,6 +127,7 @@ test("ensurePaymentLogEvent surfaces non-idempotency insert failures", async () 
   await assert.rejects(
     () =>
       ensurePaymentLogEvent(client, {
+        restaurantId: "restaurant-1",
         orderId: "order-1",
         method: "QR",
         status: "confirmed",

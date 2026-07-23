@@ -48,6 +48,16 @@ import {
 } from "@/services/inventory-service";
 import { requireOperationalAdminSession } from "./shared";
 
+const inventoryIdempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,199}$/;
+
+function inventoryIdempotencyKeyFromForm(formData: FormData) {
+  const value = formData.get("idempotencyKey");
+  if (typeof value !== "string" || !inventoryIdempotencyKeyPattern.test(value)) {
+    throw new AppError("Mã chống gửi trùng của nghiệp vụ kho không hợp lệ.", 422);
+  }
+  return value;
+}
+
 async function revalidateInventorySurfaces(restaurantId: string, options: { dashboard?: boolean } = {}) {
   invalidateInventorySnapshotCache(restaurantId);
   await invalidateDashboardWorkspaceCaches(restaurantId, ["inventory", "overview"]);
@@ -70,7 +80,7 @@ export async function createInventoryCategoryAction(formData: FormData) {
     name: formData.get("name")
   });
 
-  await createInventoryCategory(session.restaurantId, parsed);
+  await createInventoryCategory(session.restaurantId, { ...parsed, actorUserId: session.userId });
   await revalidateInventorySurfaces(session.restaurantId);
 }
 
@@ -84,7 +94,7 @@ export async function createInventorySupplierAction(formData: FormData) {
     isPreferred: formData.get("isPreferred") === "on"
   });
 
-  await createInventorySupplier(session.restaurantId, parsed);
+  await createInventorySupplier(session.restaurantId, { ...parsed, actorUserId: session.userId });
   await revalidateInventorySurfaces(session.restaurantId);
 }
 
@@ -147,6 +157,7 @@ export async function createInventoryPurchaseOrderAction(formData: FormData) {
 
 export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
   const session = await requireOperationalAdminSession("inventory_procurement");
+  const idempotencyKey = inventoryIdempotencyKeyFromForm(formData);
   const parsed = inventoryPurchaseOrderIdSchema.parse({
     purchaseOrderId: formData.get("purchaseOrderId")
   });
@@ -168,6 +179,7 @@ export async function receiveInventoryPurchaseOrderAction(formData: FormData) {
   await receiveInventoryPurchaseOrder(session.restaurantId, {
     purchaseOrderId: parsed.purchaseOrderId,
     actorUserId: session.userId,
+    idempotencyKey,
     lines
   });
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
@@ -181,6 +193,7 @@ export async function refreshInventoryAlertsAction(_formData?: FormData) {
 
 export async function applyInventoryCountAction(formData: FormData) {
   const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
+  const idempotencyKey = inventoryIdempotencyKeyFromForm(formData);
   const parsed = inventoryCountSchema.parse({
     title: formData.get("title"),
     locationId: formData.get("locationId"),
@@ -225,6 +238,7 @@ export async function applyInventoryCountAction(formData: FormData) {
     locationId: parsed.locationId || null,
     note: parsed.note || undefined,
     actorUserId: session.userId,
+    idempotencyKey,
     lines
   });
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
@@ -232,6 +246,7 @@ export async function applyInventoryCountAction(formData: FormData) {
 
 export async function createInventoryTransferAction(formData: FormData) {
   const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
+  const idempotencyKey = inventoryIdempotencyKeyFromForm(formData);
   const parsed = inventoryTransferSchema.parse({
     fromLocationId: formData.get("fromLocationId"),
     toLocationId: formData.get("toLocationId"),
@@ -278,6 +293,7 @@ export async function createInventoryTransferAction(formData: FormData) {
     toLocationId: parsed.toLocationId,
     note: parsed.note || undefined,
     actorUserId: session.userId,
+    idempotencyKey,
     lines
   });
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
@@ -285,6 +301,7 @@ export async function createInventoryTransferAction(formData: FormData) {
 
 export async function processInventoryTransferAction(formData: FormData) {
   const session = await requireOperationalAdminSession("inventory_warehouse_advanced");
+  const idempotencyKey = inventoryIdempotencyKeyFromForm(formData);
   const parsed = inventoryTransferWorkflowSchema.parse({
     transferId: formData.get("transferId"),
     action: formData.get("action"),
@@ -301,7 +318,8 @@ export async function processInventoryTransferAction(formData: FormData) {
       receivedQuantity: line.receivedQuantity,
       note: line.note || undefined
     })),
-    actorUserId: session.userId
+    actorUserId: session.userId,
+    idempotencyKey
   });
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
@@ -391,7 +409,7 @@ export async function deactivateInventoryIngredientAction(formData: FormData) {
     ingredientId: formData.get("ingredientId")
   });
 
-  await deactivateInventoryIngredient(session.restaurantId, parsed.ingredientId);
+  await deactivateInventoryIngredient(session.restaurantId, parsed.ingredientId, session.userId);
   await revalidateInventorySurfaces(session.restaurantId, { dashboard: true });
 }
 
@@ -464,7 +482,7 @@ export async function upsertInventoryRecipeLineAction(formData: FormData) {
     wastePercent: formData.get("wastePercent") || undefined
   });
 
-  await upsertInventoryRecipeLine(session.restaurantId, parsed);
+  await upsertInventoryRecipeLine(session.restaurantId, { ...parsed, actorUserId: session.userId });
   await revalidateInventorySurfaces(session.restaurantId);
 }
 
@@ -474,6 +492,6 @@ export async function deleteInventoryRecipeLineAction(formData: FormData) {
     recipeLineId: formData.get("recipeLineId")
   });
 
-  await deleteInventoryRecipeLine(session.restaurantId, parsed.recipeLineId);
+  await deleteInventoryRecipeLine(session.restaurantId, parsed.recipeLineId, session.userId);
   await revalidateInventorySurfaces(session.restaurantId);
 }

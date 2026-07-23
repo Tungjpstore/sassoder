@@ -1,5 +1,5 @@
 import type { Redis } from "ioredis";
-import { createDomainWorker, resourceId, withTenantResourceLock } from "./shared.mjs";
+import { createDomainWorker } from "./shared.mjs";
 
 export function createOrderWorkers(connection: Redis, logger: any) {
   return ["orders.processing", "orders.sla", "orders.retry"].map((queueName) =>
@@ -7,14 +7,8 @@ export function createOrderWorkers(connection: Redis, logger: any) {
       queueName,
       connection,
       logger,
-      processor: async (job) => {
-        const order = typeof job.data.order === "object" && job.data.order ? (job.data.order as Record<string, unknown>) : {};
-        return withTenantResourceLock(connection, job, "order", resourceId(job, order.id, job.data.orderId), async () => ({
-          processed: true,
-          queueName,
-          eventType: job.data.type ?? job.name,
-          tenantId: job.data.tenantId
-        }));
+      processor: async () => {
+        throw new Error(`${queueName}_adapter_not_configured`);
       }
     })
   );

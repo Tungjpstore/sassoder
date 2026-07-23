@@ -11,6 +11,12 @@ import { createAdminSupabaseClient, createScopedAdminSupabaseClient } from "@/li
 import { throwIfSupabaseError } from "@/lib/supabase/errors";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { writeOperationalEvent } from "@/services/operational-observability-service";
+import {
+  applyInventoryCountAtomic,
+  createBranchTransferAtomic,
+  processBranchTransferAtomic,
+  receivePurchaseOrderAtomic
+} from "@/services/procurement-atomic-rpc-service";
 import type { DeliveryStatus, InventoryMovementType } from "@/types/domain";
 
 type UntypedSupabase = {
@@ -675,6 +681,7 @@ export type InventorySupplierInput = {
   address?: string;
   defaultLeadDays?: number;
   isPreferred?: boolean;
+  actorUserId: string;
 };
 
 export type InventoryPurchaseOrderLineInput = {
@@ -733,6 +740,7 @@ export type InventoryCountInput = {
   locationId?: string | null;
   note?: string;
   actorUserId: string;
+  idempotencyKey: string;
   lines: InventoryCountLineInput[];
 };
 
@@ -758,6 +766,7 @@ export type InventoryTransferInput = {
   toLocationId: string;
   note?: string;
   actorUserId: string;
+  idempotencyKey: string;
   lines: InventoryTransferLineInput[];
 };
 
@@ -2055,8 +2064,8 @@ export async function getInventoryWorkspaceData(restaurantId: string) {
   return { snapshot, categories, ingredients, recipeMenuItems, intelligence, warehouse };
 }
 
-export async function createInventoryCategory(restaurantId: string, input: { name: string }) {
-  const supabase = await createServerSupabaseClient();
+export async function createInventoryCategory(restaurantId: string, input: { name: string; actorUserId: string }) {
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("ingredient_categories")
@@ -2073,7 +2082,7 @@ export async function createInventoryCategory(restaurantId: string, input: { nam
 }
 
 export async function createInventorySupplier(restaurantId: string, input: InventorySupplierInput) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("suppliers")
@@ -2128,33 +2137,31 @@ export async function createInventoryPurchaseOrder(restaurantId: string, input: 
 
 export async function receiveInventoryPurchaseOrder(
   restaurantId: string,
-  input: { purchaseOrderId: string; actorUserId: string; lines?: InventoryPurchaseOrderReceiptLineInput[] }
+  input: {
+    purchaseOrderId: string;
+    actorUserId: string;
+    idempotencyKey: string;
+    lines?: InventoryPurchaseOrderReceiptLineInput[];
+  }
 ): Promise<InventoryPurchaseOrderReceiptResult> {
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
-  const { data, error } = await db.rpc("receive_purchase_order", {
-    target_restaurant_id: restaurantId,
-    target_purchase_order_id: input.purchaseOrderId,
-    target_actor_user_id: input.actorUserId,
-    target_received_at: new Date().toISOString(),
-    target_lines: input.lines?.map((line) => ({
+  const data = await receivePurchaseOrderAtomic(db, {
+    restaurantId,
+    purchaseOrderId: input.purchaseOrderId,
+    actorUserId: input.actorUserId,
+    idempotencyKey: input.idempotencyKey,
+    receivedAt: new Date().toISOString(),
+    lines: input.lines?.map((line) => ({
       purchaseOrderLineId: line.purchaseOrderLineId,
       receivedQuantity: line.receivedQuantity,
       unitCost: line.unitCost,
       expirationDate: line.expirationDate?.trim() || undefined,
       batchCode: line.batchCode?.trim() || undefined,
       note: line.note?.trim() || undefined
-    })) ?? undefined
+    })) ?? []
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration warehouse trước khi nhận hàng PO.", 400);
-  if (error?.message?.includes("Missing unit conversion")) {
-    throw new AppError("PO co don vi mua hang chua co quy doi sang don vi ton kho.", 400);
-  }
-  if (error?.message?.includes("current status")) {
-    throw new AppError("PO nay da nhan hang hoac da bi huy.", 400);
-  }
-  throwIfSupabaseError(error);
   if (!data || typeof data !== "object") throw new AppError(inventoryMutationError, 500);
 
   const payload = data as Partial<InventoryPurchaseOrderReceiptResult>;
@@ -2173,13 +2180,14 @@ export async function applyInventoryCount(restaurantId: string, input: Inventory
 
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
-  const { data, error } = await db.rpc("apply_inventory_count", {
-    target_restaurant_id: restaurantId,
-    target_title: input.title?.trim() || "Kiem ke kho",
-    target_location_id: input.locationId || null,
-    target_note: input.note?.trim() || null,
-    target_actor_user_id: input.actorUserId,
-    target_lines: input.lines.map((line) => ({
+  const data = await applyInventoryCountAtomic(db, {
+    restaurantId,
+    title: input.title?.trim() || "Kiem ke kho",
+    locationId: input.locationId || null,
+    note: input.note?.trim() || null,
+    actorUserId: input.actorUserId,
+    idempotencyKey: input.idempotencyKey,
+    lines: input.lines.map((line) => ({
       ingredientId: line.ingredientId,
       countedQuantity: line.countedQuantity,
       locationId: line.locationId || input.locationId || undefined,
@@ -2187,11 +2195,6 @@ export async function applyInventoryCount(restaurantId: string, input: Inventory
     }))
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow kho trước khi kiểm kê.", 400);
-  if (error?.message?.includes("stock negative")) {
-    throw new AppError("Ket qua kiem ke lam ton kho am. Hay kiem tra lai so luong thuc te.", 400);
-  }
-  throwIfSupabaseError(error);
   if (!data || typeof data !== "object") throw new AppError(inventoryMutationError, 500);
 
   const payload = data as Partial<InventoryCountApplyResult>;
@@ -2211,13 +2214,14 @@ export async function createInventoryTransfer(restaurantId: string, input: Inven
 
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
-  const { data, error } = await db.rpc("create_branch_transfer", {
-    target_restaurant_id: restaurantId,
-    target_from_location_id: input.fromLocationId,
-    target_to_location_id: input.toLocationId,
-    target_note: input.note?.trim() || null,
-    target_actor_user_id: input.actorUserId,
-    target_lines: input.lines.map((line) => ({
+  const data = await createBranchTransferAtomic(db, {
+    restaurantId,
+    fromLocationId: input.fromLocationId,
+    toLocationId: input.toLocationId,
+    note: input.note?.trim() || null,
+    actorUserId: input.actorUserId,
+    idempotencyKey: input.idempotencyKey,
+    lines: input.lines.map((line) => ({
       ingredientId: line.ingredientId,
       quantity: line.quantity,
       unit: line.unit?.trim() || undefined,
@@ -2226,14 +2230,6 @@ export async function createInventoryTransfer(restaurantId: string, input: Inven
     }))
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow kho trước khi điều chuyển.", 400);
-  if (error?.message?.includes("stock negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Kho xuat khong du hang de dieu chuyen.", 400);
-  }
-  if (error?.message?.includes("Missing unit conversion")) {
-    throw new AppError("Don vi dieu chuyen chua co quy doi sang don vi ton kho.", 400);
-  }
-  throwIfSupabaseError(error);
   if (!data || typeof data !== "object") throw new AppError(inventoryMutationError, 500);
 
   const payload = data as Partial<InventoryTransferResult>;
@@ -2253,36 +2249,27 @@ export async function processInventoryTransfer(
     transferId: string;
     action: InventoryTransferWorkflowAction;
     actorUserId: string;
+    idempotencyKey: string;
     note?: string;
     lines?: InventoryTransferReceiveLineInput[];
   }
 ): Promise<InventoryTransferResult> {
   const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
-  const { data, error } = await db.rpc("process_branch_transfer", {
-    target_restaurant_id: restaurantId,
-    target_transfer_id: input.transferId,
-    target_action: input.action,
-    target_actor_user_id: input.actorUserId,
-    target_note: input.note?.trim() || null,
-    target_lines: input.lines?.map((line) => ({
+  const data = await processBranchTransferAtomic(db, {
+    restaurantId,
+    transferId: input.transferId,
+    action: input.action,
+    actorUserId: input.actorUserId,
+    idempotencyKey: input.idempotencyKey,
+    note: input.note?.trim() || null,
+    lines: input.lines?.map((line) => ({
       lineId: line.lineId,
       receivedQuantity: line.receivedQuantity,
       note: line.note?.trim() || undefined
     })) ?? null
   });
 
-  if (isMissingInventorySchemaError(error)) throw new AppError("Cần chạy migration workflow điều chuyển kho trước.", 400);
-  if (error?.message?.includes("Only approved transfers can be dispatched")) {
-    throw new AppError("Chi phieu da duyet moi duoc xuat kho.", 400);
-  }
-  if (error?.message?.includes("Only dispatched transfers can be received")) {
-    throw new AppError("Chi phieu da xuat kho moi duoc nhan hang.", 400);
-  }
-  if (error?.message?.includes("stock negative") || error?.message?.includes("batch negative") || error?.message?.includes("balance is missing")) {
-    throw new AppError("Kho xuat khong du hang de xuat dieu chuyen.", 400);
-  }
-  throwIfSupabaseError(error);
   if (!data || typeof data !== "object") throw new AppError(inventoryMutationError, 500);
 
   const payload = data as Partial<InventoryTransferResult>;
@@ -2301,7 +2288,7 @@ export async function updateInventoryAlertStatus(
   restaurantId: string,
   input: { alertId: string; status: "acknowledged" | "resolved" | "dismissed"; actorUserId: string }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const patch: Record<string, unknown> = {
     status: input.status,
@@ -2634,7 +2621,7 @@ export async function importInventoryIntakeRows(
   restaurantId: string,
   input: { rows: InventoryImportRowInput[]; actorUserId: string }
 ): Promise<InventoryImportResult> {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const result: InventoryImportResult = { inserted: 0, updated: 0, movements: 0, skipped: 0 };
 
@@ -2733,7 +2720,7 @@ export async function createInventoryIngredient(
     actorUserId: string;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("ingredients")
@@ -2784,7 +2771,7 @@ export async function updateInventoryIngredient(
     actorUserId?: string;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const currentResult = await db
     .from("ingredients")
@@ -2842,8 +2829,8 @@ export async function updateInventoryIngredient(
   return data as { id: string };
 }
 
-export async function deactivateInventoryIngredient(restaurantId: string, ingredientId: string) {
-  const supabase = await createServerSupabaseClient();
+export async function deactivateInventoryIngredient(restaurantId: string, ingredientId: string, actorUserId: string) {
+  const supabase = createInventoryMutationSupabaseClient(actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const currentResult = await db
     .from("ingredients")
@@ -2881,9 +2868,10 @@ export async function upsertInventoryRecipeLine(
     ingredientId: string;
     quantityPerItem: number;
     wastePercent?: number;
+    actorUserId: string;
   }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("menu_item_recipes")
@@ -2905,8 +2893,8 @@ export async function upsertInventoryRecipeLine(
   return data as { id: string };
 }
 
-export async function deleteInventoryRecipeLine(restaurantId: string, recipeLineId: string) {
-  const supabase = await createServerSupabaseClient();
+export async function deleteInventoryRecipeLine(restaurantId: string, recipeLineId: string, actorUserId: string) {
+  const supabase = createInventoryMutationSupabaseClient(actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("menu_item_recipes")
@@ -2921,69 +2909,17 @@ export async function deleteInventoryRecipeLine(restaurantId: string, recipeLine
   return data as { id: string };
 }
 
-async function acceptOrderWithoutInventory(
-  restaurantId: string,
-  input: InventoryAcceptOrderInput,
-  reason: "schema_missing" | "rpc_missing"
-) {
-  const supabase = createAdminSupabaseClient();
-  const nowIso = new Date().toISOString();
-
-  const { data: current, error: readError } = await supabase
-    .from("orders")
-    .select("id,status,accepted_at")
-    .eq("id", input.orderId)
-    .eq("restaurant_id", restaurantId)
-    .maybeSingle();
-  throwIfSupabaseError(readError);
-  if (!current) throw new AppError("Không tìm thấy đơn hàng", 404);
-  if (current.status !== "pending" && current.status !== "ordering") {
-    throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
-  }
-
-  const updatePayload = {
-    status: "ordering" as const,
-    updated_at: nowIso,
-    accepted_at: current.accepted_at ?? nowIso,
-    ...(input.serviceDueAt ? { service_due_at: input.serviceDueAt } : {}),
-    ...(input.deliveryStatus
-      ? {
-          delivery_status: input.deliveryStatus,
-          delivery_tracking_updated_at: nowIso
-        }
-      : {})
-  };
-
-  const { data, error } = await supabase
-    .from("orders")
-    .update(updatePayload)
-    .eq("id", input.orderId)
-    .eq("restaurant_id", restaurantId)
-    .in("status", ["pending", "ordering"])
-    .select("*")
-    .maybeSingle();
-  throwIfSupabaseError(error);
-  if (!data) throw new AppError("Trạng thái đơn đã thay đổi. Vui lòng tải lại danh sách đơn.", 409);
-
-  writeOperationalEvent({
-    area: "ops",
-    event: "order_accept_without_inventory",
-    status: "warn",
-    restaurantId,
-    metadata: { orderId: input.orderId, reason }
-  });
-
-  return data;
-}
-
 export async function acceptOrderWithInventoryDeduction(restaurantId: string, input: InventoryAcceptOrderInput) {
   const supabase = createAdminSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
   const allocationPlan = await buildOrderInventoryAllocationPlan(db, restaurantId, input.orderId);
 
-  // Quán chưa bật/migration inventory: vẫn cho nhận đơn (không trừ kho).
+  // A missing ledger is always a release/configuration error; never accept without stock accounting.
   if (!allocationPlan.schemaReady) {
-    return acceptOrderWithoutInventory(restaurantId, input, "schema_missing");
+    throw new AppError(
+      "Kho chưa sẵn sàng để xác nhận đơn an toàn. Hãy hoàn tất migration và đồng bộ ledger kho trước khi nhận đơn.",
+      503
+    );
   }
 
   const { data, error } = await db.rpc("accept_order_with_inventory_deduction", {
@@ -2996,7 +2932,10 @@ export async function acceptOrderWithInventoryDeduction(restaurantId: string, in
   });
 
   if (isMissingInventorySchemaError(error)) {
-    return acceptOrderWithoutInventory(restaurantId, input, "rpc_missing");
+    throw new AppError(
+      "Luồng trừ kho nguyên tử chưa sẵn sàng để xác nhận đơn. Hãy kiểm tra migration inventory trước khi thử lại.",
+      503
+    );
   }
   if (error?.message?.includes("partial order inventory sync")) {
     throw new AppError(

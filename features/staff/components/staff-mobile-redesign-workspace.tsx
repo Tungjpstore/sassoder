@@ -150,9 +150,15 @@ function isRoleModuleTab(tab: StaffAppTab): tab is "kitchen" | "cashier" | "serv
   return (ROLE_MODULE_IDS as string[]).includes(tab);
 }
 
-function todayInputValue() {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+function todayInputValue(nowMs: number) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(nowMs));
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
 
 function normalizeTab(value: string | null): StaffAppTab {
@@ -280,17 +286,17 @@ function initials(name: string) {
 
 function shortTime(value: string | null | undefined) {
   if (!value) return "--:--";
-  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 function formatDate(value: string | null | undefined) {
   if (!value) return "--";
-  return new Intl.DateTimeFormat("vi-VN", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "long", day: "2-digit", month: "long", year: "numeric" }).format(new Date(value));
 }
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "--";
-  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
 function staffPayslipStatusLabel(status: StaffPayslip["status"]) {
@@ -347,8 +353,7 @@ function priorityRank(priority: StaffOpsMobileWorkItem["priority"]) {
   return 2;
 }
 
-function initialRequestDraft(): RequestDraft {
-  const today = todayInputValue();
+function initialRequestDraft(today: string): RequestDraft {
   return {
     kind: "leave_request",
     reason: "",
@@ -378,16 +383,16 @@ function initialIncidentDraft(): IncidentDraft {
   };
 }
 
-function weekDays() {
-  const base = new Date();
-  const day = base.getDay();
+function weekDays(today: string) {
+  const base = new Date(`${today}T00:00:00Z`);
+  const day = base.getUTCDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
-  base.setDate(base.getDate() + mondayOffset);
+  base.setUTCDate(base.getUTCDate() + mondayOffset);
   return Array.from({ length: 7 }, (_, index) => {
     const current = new Date(base);
-    current.setDate(base.getDate() + index);
-    const iso = new Date(current.getTime() - current.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
-    return { iso, label: ["CN", "T2", "T3", "T4", "T5", "T6", "T7"][current.getDay()], day: current.getDate() };
+    current.setUTCDate(base.getUTCDate() + index);
+    const iso = current.toISOString().slice(0, 10);
+    return { iso, label: ["CN", "T2", "T3", "T4", "T5", "T6", "T7"][current.getUTCDay()], day: current.getUTCDate() };
   });
 }
 
@@ -419,6 +424,8 @@ function StatusPill({ children, tone = "neutral" }: { children: ReactNode; tone?
 }
 
 export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, restaurantName, restaurantSlug, userId, payrollSelf = null, payrollDataError = null, permissionDataError = null, effectivePermissions = [], enableHeartbeat = true }: StaffMobileRedesignWorkspaceProps) {
+  const initialNowMs = new Date(initialBundle.generatedAt).getTime();
+  const initialToday = todayInputValue(initialNowMs);
   const [bundle, setBundle] = useState(initialBundle);
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<StaffAppTab>("home");
@@ -433,10 +440,10 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const [deviceFingerprint, setDeviceFingerprint] = useState("");
   const [attendanceSessionToken, setAttendanceSessionToken] = useState("");
   const [deviceTrust, setDeviceTrust] = useState<StaffSessionHeartbeatResult["deviceTrust"] | null>(null);
-  const [nowMs, setNowMs] = useState(() => new Date(initialBundle.generatedAt).getTime());
+  const [nowMs, setNowMs] = useState(initialNowMs);
   const [processingAttendance, setProcessingAttendance] = useState(false);
   const [processingWorkItemKey, setProcessingWorkItemKey] = useState<string | null>(null);
-  const [requestDraft, setRequestDraft] = useState<RequestDraft>(initialRequestDraft);
+  const [requestDraft, setRequestDraft] = useState<RequestDraft>(() => initialRequestDraft(initialToday));
   const [profileDraft, setProfileDraft] = useState<ProfileDraft>(() => profileDraftFromStaff(initialBundle.members[0] ?? null));
   const [incidentDraft, setIncidentDraft] = useState<IncidentDraft>(initialIncidentDraft);
   const [submittingRequest, setSubmittingRequest] = useState(false);
@@ -447,7 +454,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
   const [forcedLogout, setForcedLogout] = useState(false);
 
   const staff = bundle.members[0] ?? null;
-  const today = todayInputValue();
+  const today = todayInputValue(nowMs);
   const activeAttendance = staff ? activeAttendanceForMember(bundle, staff.id) : null;
   const staleOpenAttendance = isStaleOpenAttendance(activeAttendance, nowMs);
   const latestAttendance = staff ? bundle.attendanceFeed.find((item) => item.staffMemberId === staff.id) ?? null : null;
@@ -917,7 +924,7 @@ export function StaffMobileRedesignWorkspace({ initialBundle, restaurantId, rest
               }
             />
           ) : null}
-          {resolvedTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} /> : null}
+          {resolvedTab === "schedule" ? <ScheduleTab assignments={upcomingAssignments} branchName={selectedBranchName} today={today} /> : null}
           {resolvedTab === "inbox" ? <InboxTab notifications={bundle.notifications} unreadCount={bundle.unreadNotificationCount} onMarkRead={markNotificationsRead} /> : null}
           {resolvedTab === "requests" ? <RequestsTab draft={requestDraft} onDraftChange={(patch) => setRequestDraft((current) => ({ ...current, ...patch }))} recentRequests={recentRequests} assignments={upcomingAssignments} onSubmit={submitRequest} submitting={submittingRequest} /> : null}
           {isRoleModuleTab(resolvedTab) ? (
@@ -1533,9 +1540,8 @@ function RoleModuleTab({
   );
 }
 
-function ScheduleTab({ assignments, branchName }: { assignments: StaffOpsShiftAssignment[]; branchName: string }) {
-  const days = weekDays();
-  const today = todayInputValue();
+function ScheduleTab({ assignments, branchName, today }: { assignments: StaffOpsShiftAssignment[]; branchName: string; today: string }) {
+  const days = weekDays(today);
   const activeAssignments = assignments.filter((assignment) => assignment.status !== "cancelled");
   const groupDates = Array.from(new Set(activeAssignments.map((assignment) => assignment.scheduledDate))).sort((a, b) => a.localeCompare(b));
   const groups = groupDates.map((iso) => ({

@@ -174,6 +174,18 @@ test("merchant payment confirmation closes served dine-in orders", () => {
   assert.deepEqual(transition.next, { status: "paid", paymentStatus: "paid" });
 });
 
+test("merchant payment confirmation keeps unserved dine-in orders in the kitchen queue", () => {
+  const transition = resolveMerchantPaymentConfirmationTransition({
+    status: "ordering",
+    paymentStatus: "waiting_confirm",
+    fulfillmentType: "DINE_IN",
+    billId: null
+  });
+
+  assert.equal(transition.allowed, true);
+  assert.deepEqual(transition.next, { status: "ordering", paymentStatus: "paid" });
+});
+
 test("merchant payment confirmation blocks orders that are not waiting for payment", () => {
   const transition = resolveMerchantPaymentConfirmationTransition({
     status: "pending",

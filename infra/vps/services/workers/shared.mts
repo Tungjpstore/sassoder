@@ -14,7 +14,12 @@ export type TenantJobData = {
   [key: string]: unknown;
 };
 
-export type DomainProcessor = (job: Job<TenantJobData>) => Promise<unknown>;
+export type DomainProcessorContext = {
+  /** Aborts cooperative network/IO work when the BullMQ timeout expires. */
+  signal: AbortSignal;
+};
+
+export type DomainProcessor = (job: Job<TenantJobData>, context: DomainProcessorContext) => Promise<unknown>;
 
 type WorkerInput = {
   queueName: string;
@@ -51,7 +56,12 @@ export function createDomainWorker({ queueName, connection, logger, processor, c
       const stopTimer = durationHistogram.startTimer({ queue: queueName, name: job.name });
       try {
         assertTenantJob(job);
-        return await withTimeout(processor(job), definition.timeoutMs, queueName, job.name);
+        return await withTimeout(
+          (signal) => processor(job, { signal }),
+          definition.timeoutMs,
+          queueName,
+          job.name
+        );
       } finally {
         stopTimer();
       }
@@ -128,13 +138,30 @@ export function resourceId(job: Job<TenantJobData>, ...candidates: unknown[]) {
   return String(job.id);
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, queueName: string, jobName: string) {
-  let timeout: NodeJS.Timeout;
+function withTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  queueName: string,
+  jobName: string
+) {
+  const controller = new AbortController();
+  let timeout: NodeJS.Timeout | undefined;
+  let promise: Promise<T>;
+  try {
+    promise = operation(controller.signal);
+  } catch (error) {
+    promise = Promise.reject(error);
+  }
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error(`job_timeout:${queueName}:${jobName}:${timeoutMs}`)), timeoutMs);
+    timeout = setTimeout(() => {
+      controller.abort(new Error(`job_timeout:${queueName}:${jobName}:${timeoutMs}`));
+      reject(new Error(`job_timeout:${queueName}:${jobName}:${timeoutMs}`));
+    }, timeoutMs);
   });
 
-  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeout));
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function serializeError(error: unknown) {

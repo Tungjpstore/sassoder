@@ -143,9 +143,10 @@ function messagesToBedrock(messages) {
   };
 }
 
-async function postJson(url, body, headers, timeoutMs) {
+async function postJson(url, body, headers, timeoutMs, signal) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 
   try {
     const response = await fetch(url, {
@@ -155,7 +156,7 @@ async function postJson(url, body, headers, timeoutMs) {
         ...headers
       },
       body: JSON.stringify(body),
-      signal: controller.signal
+      signal: requestSignal
     });
 
     const text = await response.text();
@@ -177,7 +178,7 @@ async function postJson(url, body, headers, timeoutMs) {
   }
 }
 
-async function chatWithOpenAiCompatible(provider, request, timeoutMs) {
+async function chatWithOpenAiCompatible(provider, request, timeoutMs, signal) {
   const isMimo = provider.kind === "mimo-openai-compatible";
   const json = await postJson(
     `${provider.baseUrl}/chat/completions`,
@@ -188,7 +189,8 @@ async function chatWithOpenAiCompatible(provider, request, timeoutMs) {
       ...(isMimo ? { max_completion_tokens: request.maxTokens ?? 1200, top_p: request.topP ?? 0.95 } : { max_tokens: request.maxTokens ?? 1200 })
     },
     isMimo ? { "api-key": provider.apiKey } : { authorization: `Bearer ${provider.apiKey}` },
-    timeoutMs
+    timeoutMs,
+    signal
   );
 
   return {
@@ -199,7 +201,7 @@ async function chatWithOpenAiCompatible(provider, request, timeoutMs) {
   };
 }
 
-async function chatWithAnthropic(provider, request, timeoutMs) {
+async function chatWithAnthropic(provider, request, timeoutMs, signal) {
   const anthropicMessages = messagesToAnthropic(request.messages);
   const json = await postJson(
     `${provider.baseUrl}/messages`,
@@ -214,7 +216,8 @@ async function chatWithAnthropic(provider, request, timeoutMs) {
       "x-api-key": provider.apiKey,
       "anthropic-version": readEnv("ANTHROPIC_VERSION", "2023-06-01")
     },
-    timeoutMs
+    timeoutMs,
+    signal
   );
 
   return {
@@ -225,7 +228,7 @@ async function chatWithAnthropic(provider, request, timeoutMs) {
   };
 }
 
-async function chatWithBedrock(provider, request, timeoutMs) {
+async function chatWithBedrock(provider, request, timeoutMs, signal) {
   const payload = messagesToBedrock(request.messages);
   const json = await postJson(
     `${provider.baseUrl}/model/${encodeURIComponent(request.model || provider.model)}/converse`,
@@ -239,7 +242,8 @@ async function chatWithBedrock(provider, request, timeoutMs) {
     {
       authorization: `Bearer ${provider.apiKey}`
     },
-    timeoutMs
+    timeoutMs,
+    signal
   );
 
   return {
@@ -250,35 +254,36 @@ async function chatWithBedrock(provider, request, timeoutMs) {
   };
 }
 
-async function chatOnce(providerName, request, timeoutMs) {
+async function chatOnce(providerName, request, timeoutMs, signal) {
   const provider = resolveProvider(providerName);
   if (!provider.apiKey || !provider.model) {
     throw new Error(`Provider ${providerName} is missing API key or model`);
   }
 
   if (provider.kind === "anthropic") {
-    return chatWithAnthropic(provider, request, timeoutMs);
+    return chatWithAnthropic(provider, request, timeoutMs, signal);
   }
 
   if (provider.kind === "bedrock-converse") {
-    return chatWithBedrock(provider, request, timeoutMs);
+    return chatWithBedrock(provider, request, timeoutMs, signal);
   }
 
-  return chatWithOpenAiCompatible(provider, request, timeoutMs);
+  return chatWithOpenAiCompatible(provider, request, timeoutMs, signal);
 }
 
-export async function chatWithFallback(request, logger) {
+export async function chatWithFallback(request, logger, options = {}) {
   const timeoutMs = Number(readEnv("AI_PROVIDER_TIMEOUT_MS", "45000"));
   const attempts = [];
 
   for (const providerName of providerOrder(request.provider)) {
     try {
-      const result = await chatOnce(providerName, request, timeoutMs);
+      const result = await chatOnce(providerName, request, timeoutMs, options.signal);
       return {
         ...result,
         attempts
       };
     } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason ?? error;
       attempts.push({
         provider: providerName,
         error: error instanceof Error ? error.message : String(error)

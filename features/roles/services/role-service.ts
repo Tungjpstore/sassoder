@@ -15,6 +15,7 @@ import {
 import type { staffRoleCloneSchema, staffRolePermissionUpdateSchema } from "@/lib/validators";
 import { getRestaurantEntitlement } from "@/services/subscription-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertCanonicalRestaurantOwner } from "@/services/staff-owner-boundary-service";
 
 type StaffRolePermissionUpdateInput = z.infer<typeof staffRolePermissionUpdateSchema>;
 type StaffRoleCloneInput = z.infer<typeof staffRoleCloneSchema>;
@@ -155,6 +156,15 @@ export async function updateStaffRolePermissions({
   const added = nextPermissions.filter((permission) => !current.has(permission));
   const removed = currentPermissions.filter((permission) => !next.has(permission));
 
+  if (role.role_scope === "ADMIN" || [...added, ...removed].some(isDangerPermission)) {
+    await assertCanonicalRestaurantOwner({
+      supabase,
+      restaurantId,
+      userId: actorUserId,
+      action: "thay đổi quyền quản trị hoặc quyền nhạy cảm"
+    });
+  }
+
   if (added.length === 0 && removed.length === 0) {
     return {
       role,
@@ -243,6 +253,14 @@ export async function cloneStaffRole({
   const supabase = createAdminSupabaseClient() as any;
   const sourceRole = await readRole(supabase, restaurantId, input.sourceRoleId);
   const sourcePermissions = await readRolePermissions(supabase, restaurantId, sourceRole);
+  if (sourceRole.role_scope === "ADMIN" || sourcePermissions.some(isDangerPermission)) {
+    await assertCanonicalRestaurantOwner({
+      supabase,
+      restaurantId,
+      userId: actorUserId,
+      action: "sao chép vai trò quản trị hoặc quyền nhạy cảm"
+    });
+  }
   const code = `custom-${roleSlug(input.name)}-${Date.now().toString(36)}`.slice(0, 40);
   const preview = `Bản sao từ ${sourceRole.name}`;
 

@@ -56,7 +56,10 @@ test("inventory entitlement fallback keeps basic on pro and premium workflows on
 });
 
 test("inventory route and actions use split server-side feature guards", () => {
-  assert.match(inventoryRouteSource, /requireDashboardAccess\("inventory_basic"\)/);
+  assert.match(
+    inventoryRouteSource,
+    /requireDashboardPermissionAccess\("inventory_basic",\s*"inventory\.view",\s*\{\s*allowAdminBypass: false\s*\}\)/
+  );
   assert.match(inventoryRouteSource, /inventoryFeatures=\{\{/);
   assert.match(inventoryWorkspaceSource, /inventoryFeatures\?: InventoryFeatureAccess/);
   assert.match(inventoryWorkspaceSource, /canUseProcurement=\{features\.procurement\}/);

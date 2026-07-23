@@ -4,6 +4,7 @@ import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { adminOrderIdSchema } from "@/lib/validators";
 import { invalidateDashboardWorkspaceCaches } from "@/lib/dashboard-workspace-cache";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 import { invalidateStaffOperationsBundleCache } from "@/lib/staff-operations-cache";
 import { auditRequestContext, writeAuditLog } from "@/services/audit-log-service";
 import { cancelOrder, getOrderLifecycleSnapshot } from "@/services/order-service";
@@ -18,6 +19,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
       permission: "orders.cancel"
     });
     const { orderId } = adminOrderIdSchema.parse(await params);
+    await assertStaffCanAccessOrder(session, orderId);
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
     const data = await cancelOrder(session.restaurantId, orderId, session.userId);
     const requestContext = auditRequestContext(request);
