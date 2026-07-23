@@ -59,11 +59,12 @@ jobs:
       REPO_URL: https://github.com/Tungjpstore/sassoder.git
       APP_ROOT: /opt/logivn
     steps:
-      - name: Skip until VPS secrets are configured
+      - name: Require VPS deployment credentials
         if: ${{ env.VPS_HOST == '' || env.VPS_SSH_KEY == '' }}
         run: |
-          echo "VPS_HOST and VPS_SSH_KEY are not configured; skipping deploy after preflight."
-          echo "Configure repository secrets VPS_HOST, VPS_SSH_KEY, and optionally VPS_USER/VPS_PORT to enable auto-deploy."
+          echo "::error::VPS_HOST and VPS_SSH_KEY are required; refusing to report an undeployed release as successful."
+          echo "Configure repository secrets VPS_HOST, VPS_SSH_KEY, and optionally VPS_USER/VPS_PORT before running this workflow."
+          exit 1
 
       - name: Normalize SSH defaults
         if: ${{ env.VPS_HOST != '' && env.VPS_SSH_KEY != '' }}

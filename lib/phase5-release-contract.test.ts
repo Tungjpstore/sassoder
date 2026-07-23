@@ -14,10 +14,17 @@ test("Vercel preflight links the explicit project before pulling environment", (
 
 test("VPS deployment uses strict restore verification before declaring post-deploy success", () => {
   const workflow = read(".github/workflows/vps-deploy.yml");
+  const credentialGuard = workflow.match(
+    /- name: Require VPS deployment credentials[\s\S]*?(?=\n\s+- name: Normalize SSH defaults)/
+  )?.[0] ?? "";
 
   assert.match(workflow, /write_env BACKUP_RESTORE_TEST_STRICT true/);
   assert.match(workflow, /backup\.sh --restore-test/);
   assert.match(workflow, /production-readiness\.sh --local-only/);
+  assert.match(credentialGuard, /if: \$\{\{ env\.VPS_HOST == '' \|\| env\.VPS_SSH_KEY == '' \}\}/);
+  assert.match(credentialGuard, /refusing to report an undeployed release as successful/);
+  assert.match(credentialGuard, /exit 1/);
+  assert.doesNotMatch(workflow, /skipping deploy after preflight/);
 });
 
 test("release blockers include the high-severity dependency gate", () => {
