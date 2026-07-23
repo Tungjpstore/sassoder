@@ -126,6 +126,13 @@ Residual release blockers:
 - The main local worktree and this isolated candidate overlap on 61 changed non-directory paths; 51 are byte-identical and 10 currently diverge. They must be reconciled by reviewed commits/merges, never by copying the candidate over the main worktree.
 - The current worktree has 193 changed/untracked paths; 178 are staged in the reviewed Phase 1-5 scope after protected/unrelated exclusions. The unrelated Morning Brief route/test pair remains unstaged with the separate task.
 
+## Production Read-Only Reconciliation
+
+- The authenticated Supabase dashboard shows 146 recorded production migration rows. After excluding 10 protected versions outside this task, 136 application migrations are recorded.
+- The candidate contains 149 application migrations. Production currently stops at `20260622083200_billing_delivery_realtime_entitlement_sync.sql`, so all 13 Phase 1-5 migrations in this candidate remain unapplied.
+- The dashboard lists 50 public tables. `restaurants` and `orders` both have RLS enabled with authenticated tenant policies; the table-list Enabled/Disabled column represents Realtime publication, not RLS state.
+- This inspection was read-only. No SQL was executed and no migration, policy, secret or project setting was changed.
+
 ## Final Verification
 
 - Focused Phase 1-5 suite from the exact staged candidate: 149 tests; 148 passed, 0 failed and 1 database rehearsal was skipped without a configured URL.
