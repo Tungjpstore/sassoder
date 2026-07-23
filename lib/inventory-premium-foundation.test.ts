@@ -201,5 +201,7 @@ test("purchase order row contract matches the database limit", () => {
 
 test("bootstrap script no longer presents stale schema.sql as inventory source of truth", () => {
   assert.doesNotMatch(packageJson, /Run supabase\/schema\.sql in the Supabase SQL editor/);
-  assert.match(packageJson, /Supabase migrations as the bootstrap source/);
+  assert.match(packageJson, /Fresh database bootstrap is blocked until the original baseline schema is preserved/);
+  assert.match(packageJson, /supabase\/schema\.sql is a legacy current-state snapshot, not that baseline/);
+  assert.match(packageJson, /supabase:schema[\s\S]*exit 1/);
 });

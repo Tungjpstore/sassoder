@@ -26,6 +26,8 @@ Database evidence:
 - PostgreSQL 17 transaction rehearsal: `phase1_rehearsal_ok`.
 - Concurrent duplicate create/checkout: `phase1_concurrency_ok`.
 - Deadlock and attach-race regression: `phase1_canonical_deadlock_ok`, `phase1_canonical_attach_race_ok`, `phase1_canonical_invariants_ok`.
+- A fresh migration-only PostgreSQL 17 rehearsal fails at the first historical migration because `public.orders` does not exist. Bootstrapping with the current `schema.sql` advances one migration and then fails because the historical chain expects `public.current_restaurant_id()`, while the current snapshot has already moved that helper into `app_private`.
+- Git history confirms the root commit `921af5e` introduced the historical migrations and a cumulative `schema.sql` together; no separate pre-April baseline exists in reachable history. The original baseline is therefore not byte-for-byte recoverable and must not be invented or applied to production without an object-level reconstruction and migration repair plan.
 
 Residual work:
 
@@ -139,7 +141,7 @@ Residual release blockers:
 ## Upgrade Sequence
 
 1. Preserve the candidate: review the 193-path status, exclude protected/unrelated files, stage the 178-path Phase 1-5 scope, then commit and push an immutable candidate SHA.
-2. Reconstruct a disposable production-like database from the complete historical migration chain; do not use `schema.sql` as the sole bootstrap. Omitting historical promotion migration `20260519101000` leaves `orders.promotion_customer_key_hash` missing and blocks the Phase 1 create RPC.
+2. Reconstruct the minimum original baseline contract (core tables, helper functions, realtime touch triggers and RLS) from the root snapshot and migration history, rehearse it on disposable PostgreSQL, and mark the baseline version applied—not executed—on existing environments only after backup and object inventory. Do not use the current `schema.sql` as that baseline. Omitting historical promotion migration `20260519101000` leaves `orders.promotion_customer_key_hash` missing and blocks the Phase 1 create RPC.
 3. Re-run Phase 1-4 SQL concurrency/RLS suites, including dine-in QR stock reservation and reservation reschedule races.
 4. Implement real durable worker adapters, method-scoped immutable backup storage and monthly full restore verification.
 5. Upgrade vulnerable dependencies with targeted versions, rebuild, and rerun the complete test/build/audit gate.
