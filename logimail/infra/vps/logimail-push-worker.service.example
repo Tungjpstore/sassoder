@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=logimail
 Group=logimail
-WorkingDirectory=/opt/logimail
+WorkingDirectory=/opt/logimail/current
 Environment=NODE_ENV=production
 Environment=HOME=/var/lib/logimail
 Environment=LOGIMAIL_PUBLIC_URL=https://mail.logivn.com

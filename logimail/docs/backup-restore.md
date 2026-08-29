@@ -83,6 +83,18 @@ export LOGIMAIL_RESTORE_PLAIN_CHECKSUM=/tmp/billionmail-YYYYMMDD-HHMMSS.tar.gz.s
 
 Không dùng restore dry-run để mount hoặc ghi đè volume thật; restore thật phải có runbook riêng, cửa sổ bảo trì và backup hiện trạng.
 
+## Gate trước khi bật nút backup trong production
+
+Route `/api/logimail/ops/backup` chỉ tạo `backup_jobs.status=requested`; nó không tự đọc volume BillionMail. Chỉ bật UI/automation như một backup thật khi toàn bộ điều kiện sau đã đạt:
+
+- Có worker/timer riêng chạy `infra/mailops-agent/backup.sh` bằng quyền đủ đọc `/opt/BillionMail`.
+- `LOGIMAIL_BACKUP_REMOTE` được bật có chủ đích; `BACKUP_R2_GATEWAY_URL`, token và `LOGIMAIL_BACKUP_ENCRYPTION_KEY` đều có trong secret store server-side.
+- Worker chuyển job `requested -> running -> completed|failed`, ghi `artifact_uri`, checksum và lỗi có thể hành động. Job nằm mãi ở `requested` phải phát cảnh báo.
+- `/var/backups/logimail` tồn tại với quyền hạn chế và retention local rõ ràng. Không dùng các tar code release trong `/opt` làm bằng chứng backup mailbox.
+- Restore dry-run đã chạy với artifact tải lại từ remote, không chỉ với sample tar local.
+
+Khi các gate chưa đủ, UI phải ghi `Backup worker chưa cấu hình` thay vì báo thành công sau khi chỉ tạo job metadata.
+
 ## Chính sách an toàn
 
 - Backup script không in secret.
@@ -92,3 +104,39 @@ Không dùng restore dry-run để mount hoặc ghi đè volume thật; restore 
 - Trước khi chạy `bm update`, tạo backup và ghi lại output `bm default` nhưng không chia sẻ password công khai.
 - Giữ prefix R2 `logimail`, không dùng prefix root `logivn` để tránh trộn retention/artifact.
 - Không lưu `LOGIMAIL_BACKUP_ENCRYPTION_KEY` trong R2 bucket hoặc trong file backup.
+
+## Timer production va retention
+
+Mau unit/timer tai `infra/vps/logimail-backup.service.example` va
+`infra/vps/logimail-backup.timer.example` chay backup hang ngay, co jitter,
+catch-up sau reboot va lock de hai lan chay khong tranh chap. Timer khong duoc
+tu dong cai dat boi repository nay.
+
+Tren VPS, sau khi da tao `/etc/logimail/backup.env` root-only va kiem tra
+remote encryption, operator co the cai dat thu cong:
+
+```bash
+sudo install -o root -g root -m 0644 infra/vps/logimail-backup.service.example /etc/systemd/system/logimail-backup.service
+sudo install -o root -g root -m 0644 infra/vps/logimail-backup.timer.example /etc/systemd/system/logimail-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now logimail-backup.timer
+sudo systemctl list-timers logimail-backup.timer
+```
+
+`/etc/logimail/backup.env` can co it nhat `LOGIMAIL_BACKUP_REMOTE=r2-gateway`,
+`BACKUP_STORAGE_ADAPTER=worker`, endpoint/token gateway va encryption key. Dat
+`LOGIMAIL_BACKUP_RETENTION_DAYS=14` (mac dinh) hoac mot so nguyen khong am.
+Sau khi artifact moi tao, da pass gzip/checksum va upload remote thanh cong,
+script chi xoa cac file `billionmail-<timestamp>` qua han trong
+`LOGIMAIL_BACKUP_DIR`; khong dong cham file khac.
+
+Kiem tra truoc va sau khi bat timer:
+
+```bash
+sudo systemctl start logimail-backup.service
+sudo journalctl -u logimail-backup.service -n 100 --no-pager
+sudo find /var/backups/logimail -maxdepth 1 -type f -name 'billionmail-*.sha256' -print
+```
+
+Rollback timer chi la `sudo systemctl disable --now logimail-backup.timer`.
+Khong xoa artifact truoc khi da xac minh backup remote va restore dry-run.

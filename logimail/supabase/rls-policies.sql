@@ -5,6 +5,10 @@ alter table logimail.profiles enable row level security;
 alter table logimail.account_requests enable row level security;
 alter table logimail.workspaces enable row level security;
 alter table logimail.workspace_members enable row level security;
+alter table logimail.workspace_invites enable row level security;
+alter table logimail.workspace_invite_operations enable row level security;
+alter table logimail.sso_handoffs enable row level security;
+alter table logimail.auth_session_activity enable row level security;
 alter table logimail.domains enable row level security;
 alter table logimail.domain_requests enable row level security;
 alter table logimail.mailboxes enable row level security;
@@ -153,6 +157,18 @@ for select using (logimail_private.is_workspace_member(workspace_id));
 
 drop policy if exists workspace_members_write_admin on logimail.workspace_members;
 
+-- Invite codes and recipient identity are only read by server-side service-role
+-- routes. Keeping this table without browser policies prevents code harvesting.
+revoke all on table logimail.workspace_invites from anon, authenticated;
+grant all on table logimail.workspace_invites to service_role;
+revoke all on table logimail.workspace_invite_operations from public, anon, authenticated;
+grant all on table logimail.workspace_invite_operations to service_role;
+
+-- SSO handoff rows contain identity and replay-protection metadata. Only
+-- service-role routes may create, consume or revoke them.
+revoke all on table logimail.sso_handoffs from public, anon, authenticated;
+grant select, insert, update, delete on table logimail.sso_handoffs to service_role;
+
 drop policy if exists domains_select_member on logimail.domains;
 create policy domains_select_member on logimail.domains
 for select using (logimail_private.is_workspace_member(workspace_id));
@@ -261,6 +277,8 @@ grant usage, select on all sequences in schema logimail to authenticated, servic
 
 revoke all on logimail.security_codes from public, anon, authenticated;
 grant select, insert, update, delete on logimail.security_codes to service_role;
+revoke all on logimail.auth_session_activity from public, anon, authenticated;
+grant select, insert, update, delete on logimail.auth_session_activity to service_role;
 revoke all on logimail.push_subscriptions from public, anon, authenticated;
 grant select, insert, update, delete on logimail.push_subscriptions to service_role;
 revoke all on logimail.mail_push_checkpoints from public, anon, authenticated;

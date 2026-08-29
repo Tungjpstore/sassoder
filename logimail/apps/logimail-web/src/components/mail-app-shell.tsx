@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bell, FileText, Inbox, PencilLine, Search, Send, ShieldAlert, Trash2, UserCircle } from 'lucide-react';
+import { Archive, Bell, FileText, Inbox, PencilLine, Search, Send, ShieldAlert, Trash2, UserCircle } from 'lucide-react';
 import { SignOutButton } from '@/components/auth-forms';
 import { LogiMailLogo } from '@/components/logimail-logo';
 
@@ -10,6 +10,7 @@ const mailNavigation = [
   { href: '/mail/inbox', label: 'Hộp thư đến', icon: Inbox },
   { href: '/mail/sent', label: 'Đã gửi', icon: Send },
   { href: '/mail/drafts', label: 'Thư nháp', icon: FileText },
+  { href: '/mail/archive', label: 'Lưu trữ', icon: Archive },
   { href: '/mail/spam', label: 'Thư rác', icon: ShieldAlert },
   { href: '/mail/trash', label: 'Thùng rác', icon: Trash2 },
 ];

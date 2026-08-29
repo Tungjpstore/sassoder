@@ -4,8 +4,6 @@ import { createLogimailServiceStore, supabaseErrorMessage } from '@/lib/logimail
 import { writeAuditLog } from '@/lib/audit-log';
 import {
   DEFAULT_SEND_RATE_LIMIT_PER_HOUR,
-  isSendRateExceeded,
-  sendRateWindowStart,
 } from '@/lib/security/abuse';
 
 // Anti_Abuse_Service (Requirement 16.3–16.4): when a mailbox exceeds the send-rate
@@ -25,26 +23,36 @@ function store() {
   return client;
 }
 
-async function countSendsInWindow(mailboxId: string): Promise<number> {
+async function reserveMailboxSendRate(mailboxId: string, threshold: number): Promise<SendRateCheck> {
   const db = store();
-  const { count, error } = await db
-    .from('email_send_logs')
-    .select('id', { count: 'exact', head: true })
-    .eq('mailbox_id', mailboxId)
-    .gte('created_at', sendRateWindowStart());
+  const { data, error } = await db.rpc('reserve_mailbox_send_rate', {
+    target_mailbox_id: mailboxId,
+    threshold,
+  });
   if (error) throw new Error(supabaseErrorMessage(error));
-  return count ?? 0;
+  const row = Array.isArray(data) ? (data[0] as { allowed?: boolean; count_in_window?: number } | undefined) : undefined;
+  if (!row) throw new Error('anti_abuse_reservation_failed');
+  return {
+    allowed: row.allowed === true,
+    count: typeof row.count_in_window === 'number' ? row.count_in_window : 0,
+    threshold,
+    paused: false,
+  };
 }
 
 async function pauseMailbox(input: { mailboxId: string; workspaceId?: string | null; count: number; actor: string; actorId?: string | null }) {
   const db = store();
 
-  // Pause sending by locking the mailbox (R16.3).
-  const { error: lockError } = await db
+  // Only the request that transitions active -> locked emits the alert/audit.
+  const { data: locked, error: lockError } = await db
     .from('mailboxes')
     .update({ status: 'locked' })
-    .eq('id', input.mailboxId);
+    .eq('id', input.mailboxId)
+    .eq('status', 'active')
+    .select('id')
+    .maybeSingle();
   if (lockError) throw new Error(supabaseErrorMessage(lockError));
+  if (!locked) return false;
 
   // Raise an anti-abuse alert (R16.3).
   await db.from('alerts').insert({
@@ -64,6 +72,7 @@ async function pauseMailbox(input: { mailboxId: string; workspaceId?: string | n
     targetId: input.mailboxId,
     metadata: { count: input.count, threshold: DEFAULT_SEND_RATE_LIMIT_PER_HOUR, endpoint: 'send' },
   });
+  return true;
 }
 
 /**
@@ -79,19 +88,24 @@ export async function enforceMailboxSendRate(input: {
   threshold?: number;
 }): Promise<SendRateCheck> {
   const threshold = input.threshold ?? DEFAULT_SEND_RATE_LIMIT_PER_HOUR;
-  const count = await countSendsInWindow(input.mailboxId);
-
-  if (isSendRateExceeded(count, threshold)) {
-    await pauseMailbox({ mailboxId: input.mailboxId, workspaceId: input.workspaceId, count, actor: input.actor, actorId: input.actorId });
-    return { allowed: false, count, threshold, paused: true };
+  const reservation = await reserveMailboxSendRate(input.mailboxId, threshold);
+  if (!reservation.allowed) {
+    const paused = await pauseMailbox({
+      mailboxId: input.mailboxId,
+      workspaceId: input.workspaceId,
+      count: reservation.count,
+      actor: input.actor,
+      actorId: input.actorId,
+    });
+    return { ...reservation, paused };
   }
-
-  return { allowed: true, count, threshold, paused: false };
+  return reservation;
 }
 
 export function antiAbuseError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? 'anti_abuse_error');
   if (message === 'anti_abuse_not_configured') return { status: 503, text: 'Thiếu service role cho anti-abuse.' };
+  if (message === 'anti_abuse_reservation_failed') return { status: 503, text: 'Không thể xác nhận giới hạn gửi thư.' };
   return { status: 502, text: message };
 }
 

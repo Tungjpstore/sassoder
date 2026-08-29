@@ -62,7 +62,10 @@ export function ProfileSettingsForm({
       {error ? <p className="form-alert danger">{error}</p> : null}
       <div className="profile-preview-row">
         <div className="profile-avatar-preview">
-          {avatar ? <img src={avatar} alt="Avatar" /> : <span>{(name || email || 'L').slice(0, 1).toUpperCase()}</span>}
+          {avatar ? (
+            // eslint-disable-next-line @next/next/no-img-element -- User-provided hosts cannot be safely allowlisted for image optimization.
+            <img src={avatar} alt="Avatar" />
+          ) : <span>{(name || email || 'L').slice(0, 1).toUpperCase()}</span>}
         </div>
         <div>
           <strong>{name || email}</strong>

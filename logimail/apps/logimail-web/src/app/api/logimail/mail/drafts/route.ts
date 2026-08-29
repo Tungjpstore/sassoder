@@ -63,6 +63,8 @@ export async function POST(request: Request) {
         .update(payload)
         .eq('id', draftId)
         .eq('user_id', auth.user.id)
+        .eq('mailbox_id', mailbox.id)
+        .eq('status', 'draft')
         .select('id,workspace_id,mailbox_id,user_id,to_email,cc,bcc,subject,body_preview,body_sha256,attachment_count,in_reply_to,references_header,status,updated_at,created_at')
         .maybeSingle()
       : serviceStore

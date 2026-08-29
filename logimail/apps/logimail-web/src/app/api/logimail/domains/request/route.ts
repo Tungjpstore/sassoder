@@ -2,6 +2,7 @@ import { jsonError, jsonOk, requireAuth } from '@/lib/api-boundary';
 import { writeAuditLog } from '@/lib/audit-log';
 import {
   buildSafeDnsPlan,
+  createLogimailServiceStore,
   createLogimailStore,
   normalizeDomain,
   normalizeUuid,
@@ -9,6 +10,7 @@ import {
   stringField,
   supabaseErrorMessage,
 } from '@/lib/logimail-store';
+import { createDomainOwnershipChallenge } from '@/lib/domain-ownership';
 import { notifyPlatformLogimailApprovalRequested } from '@/lib/platform-events';
 
 function dnsPlanForRequest(domain: string, mailHostname: string) {
@@ -31,8 +33,23 @@ export async function POST(request: Request) {
     const mailHostname = normalizeDomain(requestedMailHostname ?? process.env.LOGIMAIL_MAIL_HOSTNAME ?? `mail.${domain}`);
     const cloudflareZoneId = stringField(body, 'cloudflareZoneId', { max: 80 });
     const purpose = stringField(body, 'purpose', { max: 1000 });
-    const { plannedRecords, riskFlags } = dnsPlanForRequest(domain, mailHostname);
+    const { plannedRecords, riskFlags: planRiskFlags } = dnsPlanForRequest(domain, mailHostname);
+    const ownership = createDomainOwnershipChallenge(domain);
+    const riskFlags = [...planRiskFlags, 'ownership_unverified'];
     const store = createLogimailStore(auth.token);
+
+    const serviceStore = createLogimailServiceStore();
+    if (serviceStore) {
+      const [domainConflict, requestConflict] = await Promise.all([
+        serviceStore.from('domains').select('id').eq('domain', domain).neq('status', 'disabled').limit(1).maybeSingle(),
+        serviceStore.from('domain_requests').select('id,requested_by').eq('domain', domain).eq('status', 'pending').limit(1).maybeSingle(),
+      ]);
+      if (domainConflict.error || requestConflict.error) {
+        return jsonError('supabase_error', supabaseErrorMessage(domainConflict.error ?? requestConflict.error), 502);
+      }
+      if (domainConflict.data) return jsonError('domain_unavailable', 'Domain này đã được kết nối với LogiMail.', 409);
+      if (requestConflict.data) return jsonError('pending_request_exists', 'Domain này đã có yêu cầu đang chờ xác minh hoặc phê duyệt.', 409);
+    }
 
     const { data, error } = await store
       .from('domain_requests')
@@ -43,10 +60,13 @@ export async function POST(request: Request) {
         mail_hostname: mailHostname,
         cloudflare_zone_id: cloudflareZoneId,
         purpose,
-        dns_plan: { plannedRecords },
+        dns_plan: [ownership, ...plannedRecords],
         risk_flags: riskFlags,
         status: 'pending',
-        metadata: { source: 'logimail-web-api' },
+        metadata: {
+          source: 'logimail-web-api',
+          ownership: { challenge: ownership, status: 'pending', verifiedAt: null },
+        },
       })
       .select('id,workspace_id,requested_by,domain,mail_hostname,cloudflare_zone_id,purpose,status,risk_flags,created_at,updated_at')
       .single();
@@ -82,7 +102,13 @@ export async function POST(request: Request) {
       console.error('[logimail-domain-request] platform notification failed', error);
     });
 
-    return jsonOk({ domainRequest: data, plannedRecords, status: 'pending_admin_approval' }, { status: 202 });
+    return jsonOk({
+      domainRequest: data,
+      ownershipRecord: { name: ownership.name, type: ownership.type, content: ownership.content },
+      plannedRecords,
+      status: 'pending_domain_verification',
+      nextAction: `Publish ownershipRecord, then POST /api/logimail/domains/request/${data.id}/ownership`,
+    }, { status: 202 });
   } catch (error) {
     return jsonError('invalid_request', error instanceof Error ? error.message : 'Payload không hợp lệ.', 400);
   }

@@ -10,9 +10,26 @@ export function startsWithPath(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
+export function hostnameFromAuthority(value: string | null | undefined) {
+  const authority = value?.split(',')[0]?.trim();
+  if (!authority) return '';
+  try {
+    const parsed = new URL(`http://${authority}`);
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return '';
+    return parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 export function hostnameFromHeaders(headersList: Headers, fallback = '') {
-  const host = headersList.get('x-forwarded-host') ?? headersList.get('host') ?? fallback;
-  return host.split(',')[0]?.trim().replace(/^\[/, '').replace(/\]$/, '').split(':')[0]?.toLowerCase() ?? '';
+  const host = headersList.get('host');
+  if (host !== null) return hostnameFromAuthority(host);
+
+  const forwardedHost = headersList.get('x-forwarded-host');
+  if (forwardedHost !== null) return hostnameFromAuthority(forwardedHost);
+
+  return hostnameFromAuthority(fallback);
 }
 
 export function isLocalHost(hostname: string) {

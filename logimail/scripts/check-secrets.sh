@@ -46,24 +46,26 @@ is_scannable_file() {
 }
 
 failed=0
+scan_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/logimail-secret-scan.XXXXXX")"
+trap 'rm -rf "${scan_tmp_dir}"' EXIT
 for pattern in "${patterns[@]}"; do
-  : >/tmp/logimail-secret-scan.txt
+  scan_result="${scan_tmp_dir}/matches.txt"
+  : >"${scan_result}"
   while IFS= read -r -d '' file; do
     is_scannable_file "${file}" || continue
     grep -IqE "${pattern}" "${file}" || continue
     file="./${file#./}"
     if ! is_allowed_match "${pattern}" "${file}"; then
-      printf '%s\n' "${file}" >>/tmp/logimail-secret-scan.txt
+      printf '%s\n' "${file}" >>"${scan_result}"
     fi
   done < <(scan_files)
 
-  if [ -s /tmp/logimail-secret-scan.txt ]; then
+  if [ -s "${scan_result}" ]; then
     echo "Potential secret/default found for pattern: ${pattern}"
     echo "Matched files only; values are intentionally not printed."
-    cat /tmp/logimail-secret-scan.txt
+    cat "${scan_result}"
     failed=1
   fi
 done
 
-rm -f /tmp/logimail-secret-scan.txt
 exit "${failed}"

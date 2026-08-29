@@ -36,7 +36,18 @@ export async function GET(request: Request) {
   }
 
   const mailbox = mailboxes.find((item) => item.id === session.mailboxId && item.emailAddress === session.email) ?? null;
-  return jsonOk({ unlocked: Boolean(mailbox), session: mailbox ? publicMailSession(session) : null, mailbox, mailboxes });
+  const current = mailbox && mailSessionBelongsTo(session, {
+    userId: auth.user.id,
+    mailboxId: mailbox.id,
+    sessionVersion: mailbox.sessionVersion,
+    email: mailbox.emailAddress,
+  });
+  return jsonOk({
+    unlocked: Boolean(current),
+    session: current ? publicMailSession(session) : null,
+    mailbox: current ? mailbox : null,
+    mailboxes,
+  });
 }
 
 export async function POST(request: Request) {
@@ -56,7 +67,7 @@ export async function POST(request: Request) {
     await verifyMailCredentials(email, password, mailbox);
     await saveMailboxCredentials({ mailboxId: mailbox.id, email, password });
 
-    const session = createMailSession({ userId: auth.user.id, mailboxId: mailbox.id, email, password });
+    const session = createMailSession({ userId: auth.user.id, mailboxId: mailbox.id, sessionVersion: mailbox.sessionVersion, email, password });
     const response = jsonOk({ unlocked: true, session: publicMailSession(session), mailbox });
     response.cookies.set(MAIL_SESSION_COOKIE, encryptMailSession(session), mailSessionCookieOptions(session.expiresAt));
     return response;
@@ -65,10 +76,11 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
-  const auth = await requireAuth(request, 'write');
-  if (!auth.ok) return auth.response;
+export async function DELETE() {
+  // Cookie deletion is deliberately idempotent and unauthenticated: an expired
+  // Supabase token must never strand encrypted mailbox credentials in-browser.
   const response = jsonOk({ unlocked: false });
   response.cookies.set(MAIL_SESSION_COOKIE, '', emptyMailSessionCookieOptions());
+  response.headers.set('cache-control', 'no-store');
   return response;
 }

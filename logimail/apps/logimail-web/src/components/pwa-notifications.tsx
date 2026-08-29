@@ -297,8 +297,10 @@ export function PwaNotificationSettings() {
 
   useEffect(() => {
     if (!support.supported) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- Permission and localStorage are external browser state read after mount. */
     setPermission(Notification.permission);
     setEnabledState(isEnabled());
+    /* eslint-enable react-hooks/set-state-in-effect */
     let cancelled = false;
     void (async () => {
       const [config, registration] = await Promise.all([

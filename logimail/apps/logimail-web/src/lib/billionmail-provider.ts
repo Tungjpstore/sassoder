@@ -66,6 +66,25 @@ async function parseResponse(response: Response) {
   return body;
 }
 
+function providerTimeoutMs() {
+  const configured = Number(process.env.LOGIMAIL_BILLIONMAIL_TIMEOUT_MS ?? 15000);
+  if (!Number.isFinite(configured)) return 15000;
+  return Math.min(60000, Math.max(1000, Math.round(configured)));
+}
+
+async function fetchProvider(input: string | URL, init: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), providerTimeoutMs());
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('billionmail_provider_error:timeout');
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function billionMailFetch(path: string, init: RequestInit) {
   const config = assertBillionMailDirectProviderConfigured();
   const headers = new Headers(init.headers);
@@ -73,7 +92,7 @@ async function billionMailFetch(path: string, init: RequestInit) {
   headers.set('authorization', `Bearer ${config.apiToken}`);
   if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
 
-  const response = await fetch(endpoint(path), { ...init, headers, cache: 'no-store' });
+  const response = await fetchProvider(endpoint(path), { ...init, headers, cache: 'no-store' });
   return parseResponse(response);
 }
 
@@ -137,7 +156,7 @@ async function bridgeFetch(action: 'create' | 'update' | 'delete', payload: unkn
   const config = assertBillionMailProviderConfigured();
   if (!config.bridgeBaseUrl || !config.bridgeToken) throw new Error('missing_billionmail_config:BILLIONMAIL_BRIDGE_BASE_URL,BILLIONMAIL_BRIDGE_TOKEN');
 
-  const response = await fetch(billionMailBridgeMailboxEndpoint(config.bridgeBaseUrl), {
+  const response = await fetchProvider(billionMailBridgeMailboxEndpoint(config.bridgeBaseUrl), {
     method: 'POST',
     headers: {
       accept: 'application/json',

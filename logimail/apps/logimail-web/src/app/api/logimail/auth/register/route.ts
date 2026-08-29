@@ -6,9 +6,8 @@ import {
   deleteBillionMailMailbox,
   isBillionMailMailboxExistsError,
   publicBillionMailError,
-  updateBillionMailMailboxPassword,
 } from '@/lib/billionmail-provider';
-import { saveMailboxCredentials } from '@/lib/mail-credentials';
+import { mailCredentialReadiness, saveMailboxCredentials } from '@/lib/mail-credentials';
 import {
   createLogimailServiceStore,
   normalizeMailboxLocalPart,
@@ -16,8 +15,9 @@ import {
   stringField,
   supabaseErrorMessage,
 } from '@/lib/logimail-store';
+import { trustedClientIp } from '@/lib/client-ip';
 import { getRegistrationDomainRecord } from '@/lib/registration-domains';
-import { consumeSecurityCode, publicSecurityCodeError, validateSecurityCode } from '@/lib/security-codes';
+import { consumeSecurityCode, publicSecurityCodeError } from '@/lib/security-codes';
 
 const RESERVED_LOCAL_PARTS = new Set([
   'abuse',
@@ -43,8 +43,7 @@ const RATE_LIMIT_MAX = 5;
 const DEFAULT_QUOTA_MB = 1024;
 
 function clientKey(request: Request) {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded || request.headers.get('x-real-ip') || 'unknown';
+  return trustedClientIp(request.headers);
 }
 
 function checkRateLimit(request: Request) {
@@ -118,9 +117,9 @@ export async function POST(request: Request) {
   if (!serviceStore) return jsonError('not_configured', 'Chưa cấu hình Supabase service role cho đăng ký LogiMail.', 503);
 
   let providerMailboxCreated = false;
-  let providerProvisioningMode: 'created' | 'adopted' | null = null;
   let createdUserId: string | null = null;
   let createdMailboxId: string | null = null;
+  let consumedCodeId: string | null = null;
   let email = '';
 
   try {
@@ -142,12 +141,17 @@ export async function POST(request: Request) {
     email = `${localPart}@${domain.domain}`;
 
     assertBillionMailProviderConfigured();
+    if (!mailCredentialReadiness().ready) throw new Error('missing_mailbox_credential_key');
 
     const available = await ensureAddressAvailable(serviceStore, email);
     if (!available) return jsonError('address_unavailable', 'Địa chỉ email này đã tồn tại hoặc đang chờ xử lý.', 409);
 
-    const validatedCode = await validateSecurityCode({ code: securityCode, domain: domain.domain, purpose: 'account_signup' });
-    if (!validatedCode.ok) return jsonError('invalid_security_code', codeFailureMessage(validatedCode.reason), 409);
+    // Claim the one-time code before any provider or Auth side effect. This
+    // closes the concurrent-registration window; a failed provisioning attempt
+    // consumes the code and requires a fresh code from the operator.
+    const consumedCode = await consumeSecurityCode({ code: securityCode, domain: domain.domain, email, purpose: 'account_signup' });
+    if (!consumedCode.ok) return jsonError('invalid_security_code', codeFailureMessage(consumedCode.reason), 409);
+    consumedCodeId = consumedCode.row.id;
 
     const { data: userData, error: createUserError } = await serviceStore.auth.admin.createUser({
       email,
@@ -181,11 +185,9 @@ export async function POST(request: Request) {
     try {
       await createBillionMailMailbox(providerMailboxInput);
       providerMailboxCreated = true;
-      providerProvisioningMode = 'created';
     } catch (providerError) {
-      if (!isBillionMailMailboxExistsError(providerError)) throw providerError;
-      await updateBillionMailMailboxPassword(providerMailboxInput);
-      providerProvisioningMode = 'adopted';
+      if (isBillionMailMailboxExistsError(providerError)) throw new Error('address_already_registered');
+      throw providerError;
     }
 
     const { error: profileError } = await serviceStore.from('profiles').insert({
@@ -224,10 +226,8 @@ export async function POST(request: Request) {
       .upsert({ mailbox_id: createdMailboxId, user_id: createdUserId, permission: 'admin' }, { onConflict: 'mailbox_id,user_id' })
       .then((result) => { if (result.error) throw new Error(supabaseErrorMessage(result.error)); });
 
-    await saveMailboxCredentials({ mailboxId: createdMailboxId, email, password });
-
-    const consumedCode = await consumeSecurityCode({ code: securityCode, domain: domain.domain, email, userId: createdUserId, purpose: 'account_signup' });
-    if (!consumedCode.ok) throw new Error(`security_code_${consumedCode.reason}`);
+    const credentialResult = await saveMailboxCredentials({ mailboxId: createdMailboxId, email, password });
+    if (!credentialResult.stored) throw new Error('mailbox_credential_persistence_failed');
 
     await writeAuditLog({
       workspaceId: domain.workspace_id,
@@ -239,26 +239,52 @@ export async function POST(request: Request) {
         email,
         localPart,
         domain: domain.domain,
-        securityCodeId: consumedCode.row.id,
+        securityCodeId: consumedCodeId,
         provider: 'billionmail',
-        providerProvisioningMode: providerProvisioningMode ?? 'created',
       },
     });
 
     return jsonOk({ email, status: 'active', mailboxId: createdMailboxId, workspaceId: domain.workspace_id }, { status: 201 });
   } catch (error) {
+    let rollbackComplete = true;
+
     if (createdMailboxId) {
-      try {
-        await serviceStore.from('mailboxes').delete().eq('id', createdMailboxId);
-      } catch {
-        // Best-effort rollback; the original provisioning error is returned below.
+      const { error: mailboxRollbackError } = await serviceStore.from('mailboxes').delete().eq('id', createdMailboxId);
+      if (mailboxRollbackError) {
+        rollbackComplete = false;
+        console.error('[logimail-register] mailbox rollback failed', {
+          mailboxId: createdMailboxId,
+          message: supabaseErrorMessage(mailboxRollbackError),
+        });
       }
     }
+
     if (createdUserId) {
-      await serviceStore.auth.admin.deleteUser(createdUserId).catch(() => undefined);
+      const { error: userRollbackError } = await serviceStore.auth.admin.deleteUser(createdUserId);
+      if (userRollbackError) {
+        rollbackComplete = false;
+        console.error('[logimail-register] auth user rollback failed', {
+          userId: createdUserId,
+          message: supabaseErrorMessage(userRollbackError),
+        });
+      }
     }
+
     if (providerMailboxCreated && email) {
-      await deleteBillionMailMailbox(email).catch(() => undefined);
+      await deleteBillionMailMailbox(email).catch((providerRollbackError) => {
+        rollbackComplete = false;
+        console.error('[logimail-register] provider rollback failed', {
+          email,
+          message: providerRollbackError instanceof Error ? providerRollbackError.message : 'unknown_error',
+        });
+      });
+    }
+
+    if (!rollbackComplete) {
+      console.error('[logimail-register] registration failed closed with consumed code', {
+        email,
+        securityCodeId: consumedCodeId,
+      });
     }
     return jsonError('invalid_request', publicErrorMessage(error), 400);
   }

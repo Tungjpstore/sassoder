@@ -1,5 +1,6 @@
-# Nginx template cho luong LogiMail mot subdomain.
-# Host public: https://mail.logivn.com
+# Nginx template cho luong LogiMail hai host.
+# Host public: https://mail.logivn.com (mailbox) va https://domain.logivn.com
+# (Control Center, xem nginx-domain-logivn.conf.example).
 # Luu y: SMTP/SMTPS/submission/IMAP/IMAPS khong di qua Nginx.
 # Neu BillionMail dang bind 80/443 truc tiep, hay doi web UI cua BillionMail sang
 # loopback/high port truoc khi enable file nay, de tranh tranh chap cong.
@@ -53,9 +54,16 @@ server {
   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
   proxy_set_header Host $host;
+  # Next.js may synthesize X-Forwarded-Host from the upstream address when the
+  # proxy omits it. Pin the public host so same-origin SSO checks see mail.logivn.com.
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header X-Forwarded-Port 443;
   proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  # Do not trust an inbound X-Forwarded-For value from the public client.
+  proxy_set_header X-Forwarded-For $remote_addr;
   proxy_set_header X-Forwarded-Proto https;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $logimail_connection_upgrade;
   proxy_http_version 1.1;
 
   # Supabase/Next auth flows can return several Set-Cookie headers. Mobile
@@ -69,14 +77,10 @@ server {
   # Authenticated product API routes live in the Next.js app so they can share
   # the Supabase/RLS boundary with the PWA.
   location = /api/logimail/health {
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $logimail_connection_upgrade;
     proxy_pass http://logimail_api;
   }
 
   location /api/logimail/ {
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $logimail_connection_upgrade;
     proxy_pass http://logimail_web;
   }
 
@@ -116,7 +120,7 @@ server {
   }
 
   location = / {
-    return 302 /dashboard;
+    return 302 /mail/inbox;
   }
 
   location / {

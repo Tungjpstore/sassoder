@@ -1,7 +1,7 @@
-import { InviteAcceptView } from '@/components/logimail-pages';
+import { InviteExperience } from '@/components/auth-experience';
 
 export const dynamic = 'force-dynamic';
 
 export default function InvitePage() {
-  return <InviteAcceptView />;
+  return <InviteExperience />;
 }

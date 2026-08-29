@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { VerifiedLogimailUser } from '@/lib/api-boundary';
 import { createLogimailServiceStore, normalizeEmail, supabaseErrorMessage } from '@/lib/logimail-store';
+import { resolveMailboxPermission } from '@/lib/mail-permission';
 
 export type AuthorizedMailbox = {
   id: string;
@@ -13,6 +14,7 @@ export type AuthorizedMailbox = {
   status: string;
   provider: string;
   providerMailboxId: string | null;
+  sessionVersion: number;
   permission: 'read' | 'send' | 'admin';
   domain: string | null;
   mailHostname: string | null;
@@ -30,6 +32,7 @@ type MailboxRow = {
   status: string;
   provider: string;
   provider_mailbox_id: string | null;
+  session_version: number;
 };
 
 type PermissionRow = {
@@ -64,6 +67,10 @@ export function canSendFromMailbox(mailbox: AuthorizedMailbox) {
   return mailbox.permission === 'send' || mailbox.permission === 'admin';
 }
 
+export function canModifyMailbox(mailbox: AuthorizedMailbox) {
+  return mailbox.permission === 'send' || mailbox.permission === 'admin';
+}
+
 export async function getAuthorizedMailboxes(user: VerifiedLogimailUser) {
   const store = serviceStore();
   const email = user.email ? normalizeEmail(user.email) : null;
@@ -93,7 +100,7 @@ export async function getAuthorizedMailboxes(user: VerifiedLogimailUser) {
     mailboxResults.push(
       store
         .from('mailboxes')
-        .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id')
+        .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id,session_version')
         .in('id', mailboxIds)
         .eq('status', 'active'),
     );
@@ -102,7 +109,7 @@ export async function getAuthorizedMailboxes(user: VerifiedLogimailUser) {
     mailboxResults.push(
       store
         .from('mailboxes')
-        .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id')
+        .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id,session_version')
         .eq('email_address', email)
         .eq('status', 'active'),
     );
@@ -144,7 +151,13 @@ export async function getAuthorizedMailboxes(user: VerifiedLogimailUser) {
         status: mailbox.status,
         provider: mailbox.provider,
         providerMailboxId: mailbox.provider_mailbox_id,
-        permission: permissions.get(mailbox.id) ?? 'read',
+        sessionVersion: mailbox.session_version,
+        permission: resolveMailboxPermission({
+          mailboxEmail: mailbox.email_address,
+          userEmail: email,
+          permission: permissions.get(mailbox.id),
+          fallback: 'read',
+        }),
         domain: domain?.domain ?? null,
         mailHostname: domain?.mail_hostname ?? null,
         profileFullName: typeof profile.full_name === 'string' ? profile.full_name : null,

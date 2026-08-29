@@ -51,12 +51,13 @@ export function ButtonLink({
   tone?: 'primary' | 'secondary' | 'ghost' | 'warning' | 'danger';
   icon?: LucideIcon;
 }>) {
-  return (
-    <Link className={`button-link ${tone}`} href={href}>
-      {Icon ? <Icon size={16} aria-hidden="true" /> : null}
-      <span>{children}</span>
-    </Link>
-  );
+  const content = <>{Icon ? <Icon size={16} aria-hidden="true" /> : null}<span>{children}</span></>;
+  // Mailbox paths cross from the control host to mail.logivn.com. A native
+  // navigation lets middleware perform the signed SSO handoff without a
+  // client-side RSC prefetch that cannot follow the host redirect.
+  return href.startsWith('/mail/')
+    ? <a className={`button-link ${tone}`} href={href}>{content}</a>
+    : <Link className={`button-link ${tone}`} href={href}>{content}</Link>;
 }
 
 export function ButtonLike({

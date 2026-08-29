@@ -23,10 +23,23 @@ create table if not exists logimail.profiles (
   full_name text,
   avatar_url text,
   role text not null default 'member' check (role in ('owner', 'admin', 'member', 'viewer')),
+  platform_role text not null default 'none' check (platform_role in ('none', 'platform_admin', 'platform_owner')),
   account_status text not null default 'pending' check (account_status in ('pending', 'approved', 'rejected', 'suspended')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists logimail.auth_session_activity (
+  session_id uuid primary key references auth.sessions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  first_seen_at timestamptz not null default now(),
+  last_active_at timestamptz not null default now()
+);
+
+alter table logimail.auth_session_activity enable row level security;
+
+revoke all on logimail.auth_session_activity from public, anon, authenticated;
+grant select, insert, update, delete on logimail.auth_session_activity to service_role;
 
 create table if not exists logimail.account_requests (
   id uuid primary key default gen_random_uuid(),
@@ -119,8 +132,106 @@ create table if not exists logimail.mailboxes (
   encrypted_imap_password text,
   encrypted_smtp_username text,
   encrypted_smtp_password text,
+  credential_key_version integer,
+  session_version integer not null default 1 check (session_version > 0),
+  send_rate_window_started_at timestamptz,
+  send_rate_window_count integer not null default 0 check (send_rate_window_count >= 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists logimail.workspace_invites (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references logimail.workspaces(id) on delete cascade,
+  target_email text not null check (target_email = lower(target_email)),
+  role text not null default 'member' check (role in ('admin', 'member', 'viewer')),
+  mailbox_id uuid not null references logimail.mailboxes(id) on delete restrict,
+  mailbox_permission text not null default 'admin' check (mailbox_permission in ('read', 'send', 'admin')),
+  token_hash text not null unique,
+  token_hint text not null default '',
+  status text not null default 'active' check (status in ('active', 'processing', 'accepted', 'revoked', 'expired')),
+  expires_at timestamptz not null,
+  invited_by uuid not null references auth.users(id) on delete restrict,
+  accepted_by uuid references auth.users(id) on delete set null,
+  accepted_at timestamptz,
+  processing_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint workspace_invites_acceptance_check check (
+    (status = 'accepted' and accepted_by is not null and accepted_at is not null)
+    or status <> 'accepted'
+  )
+);
+
+create table if not exists logimail.workspace_invite_operations (
+  attempt_id uuid primary key default gen_random_uuid(),
+  invite_id uuid not null references logimail.workspace_invites(id) on delete cascade,
+  workspace_id uuid not null references logimail.workspaces(id) on delete cascade,
+  mailbox_id uuid not null references logimail.mailboxes(id) on delete restrict,
+  target_email text not null check (target_email = lower(target_email)),
+  status text not null default 'processing' check (status in ('processing', 'completed', 'aborted', 'manual_review')),
+  stage text not null default 'claimed' check (stage in ('claimed', 'recovery_claimed', 'provider_started', 'provider_applied', 'auth_started', 'auth_applied', 'commit_started', 'recovery_required', 'completed', 'aborted', 'manual_review')),
+  lease_token uuid,
+  lease_version integer not null default 1 check (lease_version > 0),
+  lease_expires_at timestamptz,
+  existing_user_id uuid references auth.users(id) on delete set null,
+  user_id uuid references auth.users(id) on delete set null,
+  created_auth_user boolean not null default false,
+  previous_password_ciphertext text,
+  last_error text,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  completed_at timestamptz,
+  aborted_at timestamptz
+);
+
+create table if not exists logimail.dns_provision_previews (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references logimail.workspaces(id) on delete cascade,
+  domain_id uuid not null references logimail.domains(id) on delete cascade,
+  actor_id uuid not null references auth.users(id) on delete cascade,
+  digest text not null check (digest ~ '^[0-9a-f]{64}$'),
+  confirmation_text text not null check (char_length(confirmation_text) between 10 and 160),
+  status text not null default 'issued' check (status in ('issued', 'applying', 'consumed', 'superseded', 'expired')),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint dns_provision_previews_consumed_check check (
+    (status = 'consumed' and consumed_at is not null)
+    or (status <> 'consumed' and consumed_at is null)
+  )
+);
+
+alter table logimail.dns_provision_previews enable row level security;
+revoke all on table logimail.dns_provision_previews from public, anon, authenticated;
+grant all on table logimail.dns_provision_previews to service_role;
+
+create unique index if not exists workspace_invite_operations_live_uidx
+  on logimail.workspace_invite_operations (invite_id)
+  where status in ('processing', 'completed', 'manual_review');
+create index if not exists workspace_invite_operations_lease_idx
+  on logimail.workspace_invite_operations (status, lease_expires_at)
+  where status = 'processing';
+
+create table if not exists logimail.sso_handoffs (
+  id uuid primary key,
+  nonce_hash text not null unique check (nonce_hash ~ '^[0-9a-f]{64}$'),
+  state_hash text not null unique check (state_hash ~ '^[0-9a-f]{64}$'),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  source_host text not null check (source_host = lower(source_host) and source_host !~ '[/:]'),
+  target_host text not null check (target_host = lower(target_host) and target_host !~ '[/:]'),
+  target_path text not null check (target_path like '/%' and target_path not like '//%'),
+  code_challenge text not null check (code_challenge ~ '^[A-Za-z0-9_-]{43}$'),
+  status text not null default 'active' check (status in ('active', 'consumed', 'revoked', 'expired')),
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint sso_handoffs_consumed_check check (
+    (status = 'consumed' and consumed_at is not null)
+    or (status <> 'consumed' and consumed_at is null)
+  )
 );
 
 create table if not exists logimail.mailbox_requests (
@@ -386,6 +497,7 @@ create table if not exists logimail.security_codes (
   code_hash text not null unique,
   code_ciphertext text,
   code_hint text not null default '',
+  target_email text check (target_email is null or target_email = lower(target_email)),
   status text not null default 'active' check (status in ('active', 'used', 'expired', 'revoked')),
   max_uses integer not null default 1 check (max_uses = 1),
   used_count integer not null default 0 check (used_count >= 0 and used_count <= max_uses),
@@ -399,7 +511,17 @@ create table if not exists logimail.security_codes (
   replaced_by uuid references logimail.security_codes(id) on delete set null,
   metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint security_codes_reset_target_required_check check (
+    purpose <> 'password_reset'
+    or status <> 'active'
+    or (
+      domain is not null
+      and target_email is not null
+      and split_part(target_email, '@', 1) <> ''
+      and split_part(target_email, '@', 2) = domain
+    )
+  )
 );
 
 create or replace function logimail_private.bootstrap_workspace_owner_membership()
@@ -421,12 +543,264 @@ begin
 end;
 $$;
 
+create or replace function logimail.bump_mailbox_session_version(target_mailbox_id uuid)
+returns integer
+language sql
+security definer
+set search_path = pg_catalog, logimail
+as $$
+  update logimail.mailboxes
+     set session_version = session_version + 1,
+         updated_at = now()
+   where id = target_mailbox_id
+  returning session_version;
+$$;
+
+revoke all on function logimail.bump_mailbox_session_version(uuid) from public, anon, authenticated;
+grant execute on function logimail.bump_mailbox_session_version(uuid) to service_role;
+
+create or replace function logimail.consume_sso_handoff(
+  target_handoff_id uuid,
+  target_nonce_hash text,
+  target_state_hash text,
+  expected_target_host text,
+  expected_code_challenge text
+)
+returns table (user_id uuid, source_host text, target_host text, target_path text)
+language sql
+security definer
+set search_path = pg_catalog, logimail
+as $$
+  update logimail.sso_handoffs as handoff
+     set status = 'consumed', consumed_at = now()
+   where handoff.id = target_handoff_id
+     and handoff.nonce_hash = target_nonce_hash
+     and handoff.state_hash = target_state_hash
+     and handoff.target_host = expected_target_host
+     and handoff.code_challenge = expected_code_challenge
+     and handoff.status = 'active'
+     and handoff.expires_at > now()
+  returning handoff.user_id, handoff.source_host, handoff.target_host, handoff.target_path;
+$$;
+
+revoke all on function logimail.consume_sso_handoff(uuid, text, text, text, text) from public, anon, authenticated;
+grant execute on function logimail.consume_sso_handoff(uuid, text, text, text, text) to service_role;
+
+create or replace function logimail.revoke_sso_handoffs(target_user_id uuid)
+returns bigint
+language plpgsql
+security definer
+set search_path = pg_catalog, logimail
+as $$
+declare
+  affected bigint;
+begin
+  update logimail.sso_handoffs set status = 'revoked'
+   where user_id = target_user_id and status = 'active';
+  get diagnostics affected = row_count;
+  return affected;
+end;
+$$;
+
+revoke all on function logimail.revoke_sso_handoffs(uuid) from public, anon, authenticated;
+grant execute on function logimail.revoke_sso_handoffs(uuid) to service_role;
+
+create or replace function logimail.revoke_user_sessions(target_user_id uuid, actor_user_id uuid)
+returns table (auth_sessions_revoked bigint, mailbox_sessions_revoked bigint)
+language plpgsql
+security definer
+set search_path = pg_catalog, auth, logimail
+as $$
+declare
+  auth_count bigint := 0;
+  mailbox_count bigint := 0;
+begin
+  if target_user_id is null or actor_user_id is null
+     or not exists (select 1 from auth.users where id = target_user_id)
+     or not exists (select 1 from auth.users where id = actor_user_id) then
+    raise exception 'target_user_not_found' using errcode = 'P0002';
+  end if;
+
+  delete from auth.sessions where user_id = target_user_id;
+  get diagnostics auth_count = row_count;
+
+  update logimail.mailboxes as m
+     set session_version = m.session_version + 1,
+         updated_at = now()
+   where exists (
+           select 1 from logimail.mailbox_permissions as mp
+            where mp.mailbox_id = m.id and mp.user_id = target_user_id
+         )
+      or exists (
+           select 1 from auth.users as u
+            where u.id = target_user_id and lower(u.email) = m.email_address
+         );
+  get diagnostics mailbox_count = row_count;
+
+  insert into logimail.audit_logs (actor_id, action, target_type, target_id, metadata)
+  values (
+    actor_user_id,
+    'logimail.session_revoked',
+    'user',
+    target_user_id::text,
+    jsonb_build_object('authSessionsRevoked', auth_count, 'mailboxSessionsRevoked', mailbox_count, 'source', 'service_role_rpc')
+  );
+
+  return query select auth_count, mailbox_count;
+end;
+$$;
+
+revoke all on function logimail.revoke_user_sessions(uuid, uuid) from public, anon, authenticated;
+grant execute on function logimail.revoke_user_sessions(uuid, uuid) to service_role;
+
+create or replace function logimail.touch_auth_session_activity(target_session_id uuid, target_user_id uuid)
+returns table (allowed boolean, status text, last_active_at timestamptz)
+language plpgsql
+security definer
+set search_path = pg_catalog, auth, logimail
+as $$
+declare
+  session_user_id uuid;
+  previous_last_active_at timestamptz;
+begin
+  if target_session_id is null or target_user_id is null then
+    return query select false, 'revoked'::text, null::timestamptz;
+    return;
+  end if;
+
+  select sessions.user_id
+    into session_user_id
+    from auth.sessions as sessions
+   where sessions.id = target_session_id
+   for update;
+
+  if not found or session_user_id is distinct from target_user_id then
+    return query select false, 'revoked'::text, null::timestamptz;
+    return;
+  end if;
+
+  insert into logimail.auth_session_activity (session_id, user_id)
+  values (target_session_id, target_user_id)
+  on conflict (session_id) do nothing;
+
+  select activity.last_active_at
+    into previous_last_active_at
+    from logimail.auth_session_activity as activity
+   where activity.session_id = target_session_id;
+
+  if previous_last_active_at < now() - interval '8 hours' then
+    delete from auth.sessions
+     where id = target_session_id
+       and user_id = target_user_id;
+    return query select false, 'idle_expired'::text, null::timestamptz;
+    return;
+  end if;
+
+  update logimail.auth_session_activity as activity
+     set last_active_at = now()
+   where activity.session_id = target_session_id
+  returning activity.last_active_at into previous_last_active_at;
+
+  return query select true, 'active'::text, previous_last_active_at;
+end;
+$$;
+
+revoke all on function logimail.touch_auth_session_activity(uuid, uuid) from public, anon, authenticated;
+grant execute on function logimail.touch_auth_session_activity(uuid, uuid) to service_role;
+
+create or replace function logimail.reserve_domain_send_quota(target_domain_id uuid)
+returns table (allowed boolean, used integer, daily_limit integer)
+language plpgsql
+security definer
+set search_path = pg_catalog, logimail
+as $$
+declare
+  quota_row logimail.domain_quotas%rowtype;
+begin
+  update logimail.domain_quotas
+     set used_today = case when usage_date < current_date then 1 else used_today + 1 end,
+         usage_date = current_date,
+         updated_at = now()
+   where domain_id = target_domain_id
+     and (case when usage_date < current_date then 0 else used_today end) < daily_send_limit
+  returning * into quota_row;
+  if found then
+    return query select true, quota_row.used_today, quota_row.daily_send_limit;
+    return;
+  end if;
+  select * into quota_row from logimail.domain_quotas where domain_id = target_domain_id;
+  if found then
+    return query select false,
+      case when quota_row.usage_date < current_date then 0 else quota_row.used_today end,
+      quota_row.daily_send_limit;
+  else
+    return query select false, 0, 0;
+  end if;
+end;
+$$;
+
+create or replace function logimail.reserve_mailbox_send_rate(target_mailbox_id uuid, threshold integer)
+returns table (allowed boolean, count_in_window integer)
+language plpgsql
+security definer
+set search_path = pg_catalog, logimail
+as $$
+declare
+  mailbox_row logimail.mailboxes%rowtype;
+begin
+  if threshold < 1 then
+    raise exception 'threshold must be positive';
+  end if;
+  update logimail.mailboxes
+     set send_rate_window_started_at = case
+           when send_rate_window_started_at is null or send_rate_window_started_at <= now() - interval '1 hour' then now()
+           else send_rate_window_started_at
+         end,
+         send_rate_window_count = case
+           when send_rate_window_started_at is null or send_rate_window_started_at <= now() - interval '1 hour' then 1
+           else send_rate_window_count + 1
+         end,
+         updated_at = now()
+   where id = target_mailbox_id
+     and status = 'active'
+     and (
+       send_rate_window_started_at is null
+       or send_rate_window_started_at <= now() - interval '1 hour'
+       or send_rate_window_count < threshold
+     )
+  returning * into mailbox_row;
+  if found then
+    return query select true, mailbox_row.send_rate_window_count;
+    return;
+  end if;
+  select * into mailbox_row from logimail.mailboxes where id = target_mailbox_id;
+  if found then
+    return query select false, mailbox_row.send_rate_window_count;
+  else
+    return query select false, 0;
+  end if;
+end;
+$$;
+
+revoke all on function logimail.reserve_domain_send_quota(uuid) from public, anon, authenticated;
+revoke all on function logimail.reserve_mailbox_send_rate(uuid, integer) from public, anon, authenticated;
+grant execute on function logimail.reserve_domain_send_quota(uuid) to service_role;
+grant execute on function logimail.reserve_mailbox_send_rate(uuid, integer) to service_role;
+
 create index if not exists profiles_email_idx on logimail.profiles (lower(email));
 create index if not exists profiles_account_status_idx on logimail.profiles (account_status);
 create index if not exists account_requests_user_created_idx on logimail.account_requests (user_id, created_at desc);
 create unique index if not exists account_requests_pending_user_uidx on logimail.account_requests (user_id) where status = 'pending';
 create index if not exists workspaces_owner_id_idx on logimail.workspaces (owner_id);
 create index if not exists workspace_members_user_id_idx on logimail.workspace_members (user_id);
+create unique index if not exists workspace_invites_one_active_target_uidx on logimail.workspace_invites (workspace_id, target_email) where status in ('active', 'processing');
+create index if not exists workspace_invites_claim_idx on logimail.workspace_invites (token_hash, status, expires_at);
+create index if not exists sso_handoffs_active_expiry_idx on logimail.sso_handoffs (status, expires_at);
+create index if not exists sso_handoffs_user_status_idx on logimail.sso_handoffs (user_id, status, expires_at desc);
+create index if not exists workspace_invites_workspace_status_idx on logimail.workspace_invites (workspace_id, status, created_at desc);
+create index if not exists dns_provision_previews_actor_domain_idx on logimail.dns_provision_previews (actor_id, domain_id, created_at desc);
+create unique index if not exists dns_provision_previews_one_issued_domain_uidx on logimail.dns_provision_previews (domain_id) where status in ('issued', 'applying');
+create index if not exists dns_provision_previews_expiry_idx on logimail.dns_provision_previews (status, expires_at);
 create index if not exists domains_workspace_id_idx on logimail.domains (workspace_id);
 create index if not exists domains_registration_lookup_idx on logimail.domains (workspace_id, approval_status, registration_enabled, status);
 create index if not exists domain_requests_workspace_created_idx on logimail.domain_requests (workspace_id, created_at desc);
@@ -474,6 +848,16 @@ for each row execute function logimail_private.set_updated_at();
 drop trigger if exists set_workspaces_updated_at on logimail.workspaces;
 create trigger set_workspaces_updated_at
 before update on logimail.workspaces
+for each row execute function logimail_private.set_updated_at();
+
+drop trigger if exists set_workspace_invites_updated_at on logimail.workspace_invites;
+create trigger set_workspace_invites_updated_at
+before update on logimail.workspace_invites
+for each row execute function logimail_private.set_updated_at();
+
+drop trigger if exists set_workspace_invite_operations_updated_at on logimail.workspace_invite_operations;
+create trigger set_workspace_invite_operations_updated_at
+before update on logimail.workspace_invite_operations
 for each row execute function logimail_private.set_updated_at();
 
 drop trigger if exists bootstrap_workspace_owner_membership on logimail.workspaces;

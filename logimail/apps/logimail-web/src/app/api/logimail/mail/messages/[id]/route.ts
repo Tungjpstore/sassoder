@@ -1,4 +1,5 @@
 import { jsonError, jsonOk } from '@/lib/api-boundary';
+import { canModifyMailbox } from '@/lib/mail-access';
 import { requireMailSession } from '@/lib/mail-api';
 import { getMailMessage, parseMessageRouteId } from '@/lib/mail-client';
 
@@ -13,7 +14,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!parsed) return jsonError('invalid_message_id', 'Mã email không hợp lệ.', 400);
 
   try {
-    const message = await getMailMessage(sessionContext.session, sessionContext.mailbox, parsed.folder, parsed.uid);
+    const message = await getMailMessage(sessionContext.session, sessionContext.mailbox, parsed.folder, parsed.uid, { markRead: canModifyMailbox(sessionContext.mailbox) });
     if (!message) return jsonError('message_not_found', 'Không tìm thấy email trong thư mục này.', 404);
     return jsonOk({ mailbox: sessionContext.mailbox, message });
   } catch {

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { resolve4, resolveMx, resolveTxt, reverse } from 'node:dns/promises';
+import { resolveMx, resolveTxt, reverse } from 'node:dns/promises';
 import {
   buildSafeDnsPlan,
   createLogimailServiceStore,
@@ -232,7 +232,7 @@ async function approveAccount(requestId: string, actor: string) {
   const now = new Date().toISOString();
 
   const profileResult = await db.from('profiles').upsert(
-    { id: request.user_id as string, email, full_name: (request.full_name as string) || email, role: 'owner', account_status: 'approved', updated_at: now },
+    { id: request.user_id as string, email, full_name: (request.full_name as string) || email, role: 'member', account_status: 'approved', updated_at: now },
     { onConflict: 'id' },
   );
   if (profileResult.error) throw new Error(supabaseErrorMessage(profileResult.error));
@@ -261,6 +261,10 @@ async function approveAccount(requestId: string, actor: string) {
 async function approveDomain(requestId: string, actor: string) {
   const db = store();
   const request = await getPendingRequest('domain', requestId);
+  const ownership = asRecord(asRecord(request.metadata).ownership);
+  if (ownership.status !== 'verified' || typeof ownership.verifiedAt !== 'string') {
+    throw new Error('domain_ownership_unverified');
+  }
   const now = new Date().toISOString();
 
   const domainResult = await db
@@ -281,6 +285,14 @@ async function approveDomain(requestId: string, actor: string) {
     .single();
   if (domainResult.error) throw new Error(supabaseErrorMessage(domainResult.error));
   const domain = domainResult.data as { id: string };
+
+  // A newly activated domain must be bounded before it can provision mailboxes.
+  // The database migration also backfills existing active domains.
+  const quotaResult = await db.from('domain_quotas').upsert(
+    { domain_id: domain.id, workspace_id: request.workspace_id as string },
+    { onConflict: 'domain_id', ignoreDuplicates: true },
+  );
+  if (quotaResult.error) throw new Error(supabaseErrorMessage(quotaResult.error));
 
   const finalize = await db
     .from('domain_requests')
@@ -683,6 +695,7 @@ export function adminServiceError(error: unknown) {
   if (message === 'admin_service_not_configured') return { status: 503, text: 'Thiếu service role cho bảng điều khiển admin.' };
   if (message === 'request_not_pending') return { status: 409, text: 'Yêu cầu không còn ở trạng thái chờ duyệt.' };
   if (message === 'domain_not_found') return { status: 404, text: 'Không tìm thấy domain.' };
+  if (message === 'domain_ownership_unverified') return { status: 409, text: 'Domain chưa xác minh ownership TXT nên chưa thể phê duyệt.' };
   if (message === 'domain_not_active') return { status: 409, text: 'Domain của mailbox chưa được duyệt hoặc không còn active.' };
   if (message === 'no_workspace') return { status: 409, text: 'Chưa có workspace active để gắn domain.' };
   return { status: 502, text: message };

@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=logimail
 Group=logimail
-WorkingDirectory=/opt/logimail
+WorkingDirectory=/opt/logimail/current
 Environment=NODE_ENV=production
 Environment=PORT=8787
 Environment=HOSTNAME=127.0.0.1

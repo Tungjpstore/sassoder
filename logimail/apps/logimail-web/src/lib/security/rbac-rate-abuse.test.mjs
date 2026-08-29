@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-const { authorizeRole, isStateChangingAction, ADMIN_ROLES, ALL_ROLES } = await import('./rbac.ts');
+const { authorizeRole, isPlatformRole, isStateChangingAction, ADMIN_ROLES, ALL_ROLES } = await import('./rbac.ts');
 const { evaluateFixedWindow, RATE_LIMIT_PRESETS } = await import('./rate-window.ts');
 const { isSendRateExceeded, DEFAULT_SEND_RATE_LIMIT_PER_HOUR, sendRateWindowStart, SEND_RATE_WINDOW_MS } =
   await import('./abuse.ts');
@@ -33,6 +33,13 @@ test('admin-console actions require owner/admin (R15.4)', () => {
     assert.equal(result.ok, false, `${role} should be denied`);
     assert.equal(result.reason, 'role_not_allowed');
   }
+});
+
+test('workspace roles never imply platform administration', () => {
+  for (const role of ALL_ROLES) assert.equal(isPlatformRole(role), false, `${role} must stay workspace-scoped`);
+  assert.equal(isPlatformRole('platform_admin'), true);
+  assert.equal(isPlatformRole('platform_owner'), true);
+  assert.equal(isPlatformRole('none'), false);
 });
 
 test('full role x action matrix is internally consistent', () => {

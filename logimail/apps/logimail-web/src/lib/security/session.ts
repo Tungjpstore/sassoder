@@ -2,8 +2,8 @@ import 'server-only';
 
 import { createClient } from '@supabase/supabase-js';
 
-import { writeAuditLog } from '@/lib/audit-log';
 import { jsonError } from '@/lib/api-boundary';
+import { createLogimailServiceStore, supabaseErrorMessage } from '@/lib/logimail-store';
 import {
   isSessionIdleExpired,
   readAalClaim,
@@ -23,15 +23,26 @@ function adminAuthClient() {
 
 /** Whether MFA is enabled (a verified factor exists) for a user. */
 export async function isMfaEnabled(userId: string): Promise<boolean> {
+  return (await readMfaState(userId)).enabled;
+}
+
+async function readMfaState(userId: string): Promise<{ enabled: boolean; available: boolean }> {
   try {
     const admin = adminAuthClient();
     const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
-    if (error) return false;
+    if (error) return { enabled: false, available: false };
     const factors = (data?.factors ?? []) as Array<{ status?: string }>;
-    return factors.some((factor) => factor.status === 'verified');
+    return { enabled: factors.some((factor) => factor.status === 'verified'), available: true };
   } catch {
-    return false;
+    return { enabled: false, available: false };
   }
+}
+
+type ConsoleMfaMode = 'off' | 'enrolled' | 'required';
+
+function consoleMfaMode(): ConsoleMfaMode {
+  const configured = (process.env.LOGIMAIL_ADMIN_MFA_MODE ?? 'enrolled').trim().toLowerCase();
+  return configured === 'off' || configured === 'required' ? configured : 'enrolled';
 }
 
 /**
@@ -39,9 +50,14 @@ export async function isMfaEnabled(userId: string): Promise<boolean> {
  * guard result requiring a second factor when the session is not aal2.
  */
 export async function enforceConsoleMfa(input: { userId: string; token: string }): Promise<{ ok: true } | { ok: false; response: Response }> {
-  const mfaEnabled = await isMfaEnabled(input.userId);
+  const mode = consoleMfaMode();
+  if (mode === 'off') return { ok: true };
+  const mfaState = await readMfaState(input.userId);
+  if (!mfaState.available) {
+    return { ok: false, response: jsonError('mfa_unavailable', 'Không thể kiểm tra trạng thái MFA. Vui lòng thử lại sau.', 503) };
+  }
   const aal = readAalClaim(input.token);
-  if (requiresSecondFactor({ mfaEnabled, aal })) {
+  if ((mode === 'required' && aal !== 'aal2') || (mode === 'enrolled' && requiresSecondFactor({ mfaEnabled: mfaState.enabled, aal }))) {
     return { ok: false, response: jsonError('mfa_required', 'Cần xác thực yếu tố thứ hai (MFA) trước khi thao tác console.', 401) };
   }
   return { ok: true };
@@ -55,21 +71,22 @@ export function enforceIdleTimeout(lastActiveAt: number, now: number = Date.now(
   return { ok: true };
 }
 
-/** Revoke a user's session globally so subsequent requests are rejected (R17.4). */
-export async function revokeUserSessions(input: { userId: string; token: string; actor: string; actorId?: string | null }): Promise<{ revoked: boolean }> {
-  const admin = adminAuthClient();
-  // Global sign-out invalidates the user's refresh tokens for the given JWT.
-  const { error } = await admin.auth.admin.signOut(input.token, 'global');
-  if (error) throw new Error(error.message ?? 'revoke_failed');
+/** Revoke a target user's auth sessions and mailbox cookies server-side. */
+export async function revokeUserSessions(input: { userId: string; actorId: string }): Promise<{ revoked: boolean; authSessionsRevoked: number; mailboxSessionsRevoked: number }> {
+  const db = createLogimailServiceStore();
+  if (!db) throw new Error('session_manager_not_configured');
+  const { data, error } = await db.rpc('revoke_user_sessions', { target_user_id: input.userId, actor_user_id: input.actorId });
+  if (error) throw new Error(supabaseErrorMessage(error));
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('revoke_failed');
+  const authSessionsRevoked = Number(row.auth_sessions_revoked ?? 0);
+  const mailboxSessionsRevoked = Number(row.mailbox_sessions_revoked ?? 0);
 
-  await writeAuditLog({
-    actorId: input.actorId ?? input.actor,
-    action: 'logimail.session_revoked',
-    targetType: 'user',
-    targetId: input.userId,
-    metadata: {},
-  });
-  return { revoked: true };
+  return {
+    revoked: true,
+    authSessionsRevoked,
+    mailboxSessionsRevoked,
+  };
 }
 
 export { SESSION_IDLE_TIMEOUT_MS };
@@ -77,5 +94,6 @@ export { SESSION_IDLE_TIMEOUT_MS };
 export function sessionManagerError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? 'session_manager_error');
   if (message === 'session_manager_not_configured') return { status: 503, text: 'Thiếu service role cho session manager.' };
+  if (message.includes('target_user_not_found')) return { status: 404, text: 'Không tìm thấy tài khoản cần thu hồi phiên.' };
   return { status: 502, text: message };
 }

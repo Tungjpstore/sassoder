@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient, type User } from '@supabase/supabase-js';
 
+import { enforceVerifiedSessionActivity } from '@/lib/security/session-activity';
+
 export type LogimailAction = 'read' | 'write' | 'dangerous';
 
 export type VerifiedLogimailUser = {
@@ -88,6 +90,17 @@ export async function requireAuth(request: Request, action: LogimailAction = 're
   const { data, error } = await getSupabaseAuthClient().auth.getUser(token);
   if (error || !data.user) {
     return { ok: false as const, response: jsonError('unauthorized', 'Supabase JWT không hợp lệ hoặc đã hết hạn.', 401) };
+  }
+
+  const activity = await enforceVerifiedSessionActivity({ userId: data.user.id, token });
+  if (activity.status === 'idle_expired') {
+    return { ok: false as const, response: jsonError('session_expired', 'Phiên đã hết hạn do không hoạt động. Vui lòng đăng nhập lại.', 401) };
+  }
+  if (activity.status === 'revoked' || activity.status === 'invalid_session') {
+    return { ok: false as const, response: jsonError('unauthorized', 'Phiên đăng nhập không còn hợp lệ.', 401) };
+  }
+  if (activity.status === 'unavailable') {
+    return { ok: false as const, response: jsonError('session_activity_unavailable', 'Không thể kiểm tra chính sách phiên. Vui lòng thử lại sau.', 503) };
   }
 
   return { ok: true as const, token, user: normalizeUser(data.user), action };

@@ -1,0 +1,23 @@
+# BillionMail persists Postfix and Dovecot logs below /opt/BillionMail/logs on
+# the host. Start disabled and turn on one jail at a time after
+# `fail2ban-regex`, `fail2ban-client -d`, and a controlled auth-failure test.
+
+[postfix]
+enabled = false
+filter = postfix[mode=auth]
+logpath = /opt/BillionMail/logs/postfix/mail.log
+backend = auto
+maxretry = 5
+findtime = 10m
+bantime = 1h
+action = logimail-docker-user[name=postfix, protocol=tcp, port="25,465,587"]
+
+[dovecot]
+enabled = false
+filter = dovecot
+logpath = /opt/BillionMail/logs/dovecot/mail.log
+backend = auto
+maxretry = 5
+findtime = 10m
+bantime = 1h
+action = logimail-docker-user[name=dovecot, protocol=tcp, port="110,143,993,995"]

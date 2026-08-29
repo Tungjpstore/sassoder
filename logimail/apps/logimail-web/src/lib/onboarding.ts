@@ -4,6 +4,7 @@ import { resolveTxt, resolveMx, resolve4 } from 'node:dns/promises';
 
 import { buildSafeDnsPlan, createLogimailServiceStore, normalizeDomain, supabaseErrorMessage } from '@/lib/logimail-store';
 import { writeAuditLog } from '@/lib/audit-log';
+import { createDomainOwnershipChallenge, type DomainOwnershipChallenge } from '@/lib/domain-ownership';
 
 // Domain_Onboarding_Wizard (Requirement 19): guide domain entry -> Cloudflare zone
 // -> DNS plan generation -> verification, persisting state on `domain_requests`.
@@ -20,15 +21,32 @@ function vpsIp(): string {
   return process.env.LOGIMAIL_VPS_IP?.trim() || '';
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 /** Step 1 — domain entry: create a pending domain request (R19.1). */
 export async function startOnboarding(input: { workspaceId: string; requestedBy: string; domain: string; mailHostname?: string; actor: string; actorId?: string | null }): Promise<{ requestId: string }> {
   const db = store();
   const domain = normalizeDomain(input.domain);
   const mailHostname = input.mailHostname ? normalizeDomain(input.mailHostname) : `mail.${domain}`;
+  const ownership = createDomainOwnershipChallenge(domain);
 
   const { data, error } = await db
     .from('domain_requests')
-    .insert({ workspace_id: input.workspaceId, requested_by: input.requestedBy, domain, mail_hostname: mailHostname, status: 'pending', dns_plan: [], metadata: { onboarding: { step: 'domain_entry' } } })
+    .insert({
+      workspace_id: input.workspaceId,
+      requested_by: input.requestedBy,
+      domain,
+      mail_hostname: mailHostname,
+      status: 'pending',
+      dns_plan: [ownership],
+      risk_flags: ['ownership_unverified'],
+      metadata: {
+        ownership: { challenge: ownership, status: 'pending', verifiedAt: null },
+        onboarding: { step: 'domain_entry' },
+      },
+    })
     .select('id')
     .maybeSingle();
   if (error) throw new Error(supabaseErrorMessage(error));
@@ -41,9 +59,12 @@ export async function startOnboarding(input: { workspaceId: string; requestedBy:
 /** Step 2 — store the selected Cloudflare zone (R19.2). */
 export async function selectCloudflareZone(input: { requestId: string; cloudflareZoneId: string; actor: string; actorId?: string | null }): Promise<void> {
   const db = store();
+  const { data: current, error: readError } = await db.from('domain_requests').select('id,metadata').eq('id', input.requestId).maybeSingle();
+  if (readError) throw new Error(supabaseErrorMessage(readError));
+  if (!current) throw new Error('request_not_found');
   const { data, error } = await db
     .from('domain_requests')
-    .update({ cloudflare_zone_id: input.cloudflareZoneId, metadata: { onboarding: { step: 'zone_selected' } } })
+    .update({ cloudflare_zone_id: input.cloudflareZoneId, metadata: { ...asRecord(current.metadata), onboarding: { step: 'zone_selected' } } })
     .eq('id', input.requestId)
     .select('id')
     .maybeSingle();
@@ -55,16 +76,22 @@ export async function selectCloudflareZone(input: { requestId: string; cloudflar
 /** Step 3 — generate + persist the DNS plan (R19.3). */
 export async function generateOnboardingDnsPlan(input: { requestId: string; actor: string; actorId?: string | null }): Promise<{ plan: PlannedRecord[] }> {
   const db = store();
-  const { data: request, error } = await db.from('domain_requests').select('id,domain,mail_hostname').eq('id', input.requestId).maybeSingle();
+  const { data: request, error } = await db.from('domain_requests').select('id,domain,mail_hostname,metadata').eq('id', input.requestId).maybeSingle();
   if (error) throw new Error(supabaseErrorMessage(error));
   if (!request) throw new Error('request_not_found');
 
-  const row = request as { domain: string; mail_hostname: string };
-  const plan = buildSafeDnsPlan(row.domain, vpsIp() || '<vps_ip>', row.mail_hostname) as unknown as PlannedRecord[];
+  const row = request as { domain: string; mail_hostname: string; metadata: unknown };
+  const metadata = asRecord(row.metadata);
+  const ownership = asRecord(metadata.ownership);
+  const challenge = ownership.challenge as DomainOwnershipChallenge | undefined;
+  if (!challenge) throw new Error('ownership_challenge_missing');
+  const sendingIp = vpsIp();
+  if (!sendingIp) throw new Error('missing_vps_ip');
+  const plan = [challenge, ...buildSafeDnsPlan(row.domain, sendingIp, row.mail_hostname)] as PlannedRecord[];
 
   const { error: updateError } = await db
     .from('domain_requests')
-    .update({ dns_plan: plan, metadata: { onboarding: { step: 'dns_plan' } } })
+    .update({ dns_plan: plan, metadata: { ...metadata, onboarding: { step: 'dns_plan' } } })
     .eq('id', input.requestId);
   if (updateError) throw new Error(supabaseErrorMessage(updateError));
 
@@ -104,6 +131,10 @@ export async function verifyOnboarding(input: { requestId: string; actor: string
   const row = request as { domain: string; dns_plan: unknown; metadata: Record<string, unknown> | null };
   const plan = (Array.isArray(row.dns_plan) ? row.dns_plan : []) as PlannedRecord[];
   if (plan.length === 0) throw new Error('dns_plan_missing');
+  const hasMx = plan.some((record) => record.type === 'MX' && record.name === row.domain);
+  const hasSpf = plan.some((record) => record.type === 'TXT' && record.name === row.domain && record.content.toLowerCase().startsWith('v=spf1'));
+  const hasDmarc = plan.some((record) => record.type === 'TXT' && record.name === `_dmarc.${row.domain}` && record.content.toLowerCase().startsWith('v=dmarc1'));
+  if (!hasMx || !hasSpf || !hasDmarc) throw new Error('dns_plan_incomplete');
 
   const unverified: PlannedRecord[] = [];
   for (const record of plan) {
@@ -112,9 +143,21 @@ export async function verifyOnboarding(input: { requestId: string; actor: string
   }
 
   const eligible = unverified.length === 0;
+  const metadata = asRecord(row.metadata);
+  const ownership = asRecord(metadata.ownership);
+  const challenge = ownership.challenge as DomainOwnershipChallenge | undefined;
+  const ownershipVerified = Boolean(challenge && !unverified.some((record) => record.name === challenge.name && record.content === challenge.content));
+  const riskFlags = ownershipVerified ? [] : ['ownership_unverified'];
   await db
     .from('domain_requests')
-    .update({ metadata: { ...(row.metadata ?? {}), onboarding: { step: eligible ? 'eligible' : 'verify_failed', eligible, unverified } } })
+    .update({
+      risk_flags: riskFlags,
+      metadata: {
+        ...metadata,
+        ownership: { ...ownership, status: ownershipVerified ? 'verified' : 'pending', verifiedAt: ownershipVerified ? new Date().toISOString() : null },
+        onboarding: { step: eligible ? 'eligible' : 'verify_failed', eligible, unverified },
+      },
+    })
     .eq('id', input.requestId); // status stays 'pending' until approval (R19.4)
 
   await writeAuditLog({ actorId: input.actorId ?? input.actor, action: 'logimail.onboarding_verified', targetType: 'domain_request', targetId: input.requestId, metadata: { eligible, unverifiedCount: unverified.length } });
@@ -126,6 +169,9 @@ export function onboardingError(error: unknown) {
   if (message === 'onboarding_not_configured') return { status: 503, text: 'Thiếu service role cho onboarding.' };
   if (message === 'request_not_found') return { status: 404, text: 'Không tìm thấy yêu cầu domain.' };
   if (message === 'dns_plan_missing') return { status: 409, text: 'Chưa tạo DNS plan cho domain này.' };
+  if (message === 'dns_plan_incomplete') return { status: 409, text: 'DNS plan chưa đủ MX, SPF và DMARC để xác minh.' };
+  if (message === 'ownership_challenge_missing') return { status: 409, text: 'Yêu cầu domain chưa có ownership challenge.' };
+  if (message === 'missing_vps_ip') return { status: 503, text: 'Thiếu LOGIMAIL_VPS_IP để tạo DNS plan.' };
   if (message === 'invalid_domain') return { status: 400, text: 'Domain không hợp lệ.' };
   return { status: 502, text: message };
 }

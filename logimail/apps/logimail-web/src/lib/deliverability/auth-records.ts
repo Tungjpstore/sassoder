@@ -7,6 +7,7 @@ import { writeAuditLog } from '@/lib/audit-log';
 import { computeDeliverabilityScore, type DnsState } from '@/lib/deliverability/score';
 import { getDkimTxtRecord } from '@/lib/deliverability/dkim';
 import { resolvePtrStatus } from '@/lib/deliverability/ptr';
+import { inspectDkimPublicKey } from '@/lib/ops/dns-policy';
 
 // Auth_Record_Service (Requirement 2): build expected SPF/DKIM/DMARC/BIMI/
 // MTA-STS/TLS-RPT records and validate them against public DNS, writing one
@@ -24,6 +25,7 @@ export type AuthCheckResult = {
   ptr: DnsState;
   bimi: DnsState;
   mtaSts: DnsState;
+  tlsRpt: DnsState;
   notes: string[];
 };
 
@@ -63,9 +65,9 @@ export async function buildExpectedRecords(domainId: string): Promise<ExpectedRe
   const records: ExpectedRecord[] = [
     { kind: 'spf', name: domain.domain, type: 'TXT', content: `v=spf1 mx ip4:${ip || '<sending_ip>'} -all` },
     { kind: 'mx', name: domain.domain, type: 'MX', content: host },
-    { kind: 'dmarc', name: `_dmarc.${domain.domain}`, type: 'TXT', content: `v=DMARC1; p=none; rua=mailto:postmaster@${domain.domain}` },
+    { kind: 'dmarc', name: `_dmarc.${domain.domain}`, type: 'TXT', content: `v=DMARC1; p=none; rua=mailto:postmaster@${domain.domain}; fo=1` },
     { kind: 'bimi', name: `default._bimi.${domain.domain}`, type: 'TXT', content: 'v=BIMI1; l=; a=' },
-    { kind: 'mta-sts', name: `_mta-sts.${domain.domain}`, type: 'TXT', content: 'v=STSv1; id=logimail' },
+    { kind: 'mta-sts', name: `_mta-sts.${domain.domain}`, type: 'TXT', content: 'v=STSv1; id=logimail-v1' },
     { kind: 'tls-rpt', name: `_smtp._tls.${domain.domain}`, type: 'TXT', content: `v=TLSRPTv1; rua=mailto:postmaster@${domain.domain}` },
   ];
 
@@ -89,6 +91,46 @@ function evaluateSpf(records: string[]): { state: DnsState; note?: string } {
   const value = spf[0].toLowerCase();
   if (value.includes('-all') || value.includes('~all')) return { state: 'pass' };
   return { state: 'warning', note: 'SPF thiếu cơ chế kết thúc -all/~all.' };
+}
+
+function tagValue(content: string, tag: string) {
+  const prefix = `${tag.toLowerCase()}=`;
+  return content
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.toLowerCase().startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim() ?? null;
+}
+
+async function evaluateMtaSts(domain: string, records: string[]): Promise<{ state: DnsState; note?: string }> {
+  const sts = records.filter((value) => value.toLowerCase().startsWith('v=stsv1'));
+  if (sts.length === 0) return { state: 'unknown', note: 'Chưa publish TXT _mta-sts.' };
+  if (sts.length > 1) return { state: 'fail', note: 'Có nhiều TXT _mta-sts; chỉ được phép một record.' };
+  if (!tagValue(sts[0], 'id')) return { state: 'warning', note: 'TXT MTA-STS thiếu policy id.' };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(`https://mta-sts.${domain}/.well-known/mta-sts.txt`, {
+      signal: controller.signal,
+      headers: { Accept: 'text/plain' },
+      cache: 'no-store',
+    });
+    if (!response.ok) return { state: 'warning', note: `MTA-STS policy endpoint trả HTTP ${response.status}.` };
+    const policy = (await response.text()).replace(/\r/g, '');
+    const lines = policy.split('\n').map((line) => line.trim()).filter(Boolean);
+    const hasVersion = lines.some((line) => line.toLowerCase() === 'version: stsv1');
+    const hasMode = lines.some((line) => /^mode:\s*(testing|enforce|none)$/i.test(line));
+    const hasMx = lines.some((line) => /^mx:\s*\S+/i.test(line));
+    const hasMaxAge = lines.some((line) => /^max_age:\s*\d+$/i.test(line));
+    if (hasVersion && hasMode && hasMx && hasMaxAge) return { state: 'pass' };
+    return { state: 'warning', note: 'MTA-STS policy file thiếu version, mode, mx hoặc max_age hợp lệ.' };
+  } catch {
+    return { state: 'warning', note: 'Không tải được MTA-STS policy qua HTTPS.' };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function checkAuthRecords(input: { domainId: string; actor: string; actorId?: string | null }): Promise<AuthCheckResult> {
@@ -127,25 +169,57 @@ export async function checkAuthRecords(input: { domainId: string; actor: string;
     notes.push('DKIM: chưa có selector active.');
   } else {
     const dkimRecords = await txtRecords(expectedDkim.name);
-    if (dkimRecords.some((value) => value.toLowerCase().includes('p='))) dkim = 'pass';
-    else {
+    const expectedKey = tagValue(expectedDkim.content, 'p')?.replace(/\s+/g, '') ?? '';
+    const matching = dkimRecords.find((value) => tagValue(value, 'p')?.replace(/\s+/g, '') === expectedKey);
+    if (!matching) {
       dkim = 'fail';
-      notes.push('DKIM: chưa publish bản ghi TXT cho selector active.');
+      notes.push('DKIM: public key đã publish không khớp selector active.');
+    } else {
+      const inspection = inspectDkimPublicKey(expectedKey);
+      if (!inspection.valid) {
+        dkim = 'fail';
+        notes.push('DKIM: public key không hợp lệ.');
+      } else if ((inspection.bits ?? 0) < 2048) {
+        dkim = 'fail';
+        notes.push(`DKIM: RSA key ${inspection.bits ?? 'không rõ'} bit, yêu cầu tối thiểu 2048 bit.`);
+      } else {
+        dkim = 'pass';
+      }
     }
   }
 
   // DMARC
   const dmarcRecords = await txtRecords(`_dmarc.${domain.domain}`);
-  const dmarc: DnsState = dmarcRecords.some((value) => value.toLowerCase().startsWith('v=dmarc1')) ? 'pass' : 'fail';
-  if (dmarc === 'fail') notes.push('DMARC: không tìm thấy bản ghi _dmarc.');
+  const dmarcMatches = dmarcRecords.filter((value) => value.toLowerCase().startsWith('v=dmarc1'));
+  let dmarc: DnsState = 'fail';
+  if (dmarcMatches.length === 1 && ['none', 'quarantine', 'reject'].includes(tagValue(dmarcMatches[0], 'p')?.toLowerCase() ?? '')) {
+    dmarc = tagValue(dmarcMatches[0], 'rua') ? 'pass' : 'warning';
+    if (dmarc === 'warning') notes.push('DMARC: thiếu địa chỉ aggregate report rua.');
+  } else if (dmarcMatches.length > 1) {
+    notes.push('DMARC: phát hiện nhiều record, chỉ được phép một.');
+  } else {
+    notes.push('DMARC: không tìm thấy record hợp lệ với policy p=.');
+  }
 
   // BIMI — absence is `unknown`, not `fail` (R2.4)
   const bimiRecords = await txtRecords(`default._bimi.${domain.domain}`);
   const bimi: DnsState = bimiRecords.some((value) => value.toLowerCase().startsWith('v=bimi1')) ? 'pass' : 'unknown';
 
-  // MTA-STS — absence is `unknown`
+  // MTA-STS requires both the DNS signal and a valid HTTPS policy file.
   const mtaRecords = await txtRecords(`_mta-sts.${domain.domain}`);
-  const mtaSts: DnsState = mtaRecords.some((value) => value.toLowerCase().startsWith('v=stsv1')) ? 'pass' : 'unknown';
+  const mtaEvaluation = await evaluateMtaSts(domain.domain, mtaRecords);
+  const mtaSts = mtaEvaluation.state;
+  if (mtaEvaluation.note) notes.push(`MTA-STS: ${mtaEvaluation.note}`);
+
+  const tlsRptRecords = (await txtRecords(`_smtp._tls.${domain.domain}`)).filter((value) => value.toLowerCase().startsWith('v=tlsrptv1'));
+  let tlsRpt: DnsState = 'unknown';
+  if (tlsRptRecords.length > 1) {
+    tlsRpt = 'fail';
+    notes.push('TLS-RPT: phát hiện nhiều record, chỉ được phép một.');
+  } else if (tlsRptRecords.length === 1) {
+    tlsRpt = tagValue(tlsRptRecords[0], 'rua') ? 'pass' : 'warning';
+    if (tlsRpt === 'warning') notes.push('TLS-RPT: thiếu địa chỉ nhận báo cáo rua.');
+  }
 
   // PTR (R3, also cached here per R2.6)
   const ptrResult = await resolvePtrStatus(domain.sending_ip, domain.mail_hostname);
@@ -200,10 +274,10 @@ export async function checkAuthRecords(input: { domainId: string; actor: string;
     action: 'logimail.auth_records_checked',
     targetType: 'domain',
     targetId: input.domainId,
-    metadata: { score, spf: spf.state, dkim, dmarc, mx, ptr: ptrResult.state, bimi, mtaSts },
+    metadata: { score, spf: spf.state, dkim, dmarc, mx, ptr: ptrResult.state, bimi, mtaSts, tlsRpt },
   });
 
-  return { domainId: input.domainId, score, mx, spf: spf.state, dkim, dmarc, ptr: ptrResult.state, bimi, mtaSts, notes };
+  return { domainId: input.domainId, score, mx, spf: spf.state, dkim, dmarc, ptr: ptrResult.state, bimi, mtaSts, tlsRpt, notes };
 }
 
 export function authRecordsError(error: unknown) {

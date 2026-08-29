@@ -32,6 +32,29 @@ type SendResult = {
   };
 };
 
+type MailListResult = {
+  messages: Array<{ id: string; subject: string; uid: number; folder: string }>;
+  total: number;
+  hasMore: boolean;
+};
+
+type MailDetailResult = {
+  message: {
+    id: string;
+    subject: string;
+    bodyText: string;
+    messageId: string | null;
+  };
+};
+
+type BillionMailJson = {
+  ok?: boolean;
+  success?: boolean;
+  msg?: string;
+  message?: string;
+  error?: { message?: string };
+};
+
 type SecurityCodeRow = {
   id: string;
   domain: string | null;
@@ -46,13 +69,36 @@ const baseUrl = (process.env.LOGIMAIL_E2E_BASE_URL || 'https://mail.logivn.com')
 const domain = process.env.LOGIMAIL_E2E_DOMAIN || 'logivn.com';
 const localPart = process.env.LOGIMAIL_E2E_LOCAL_PART || `codexe2e${Date.now().toString(36)}${randomBytes(2).toString('hex')}`;
 const email = `${localPart}@${domain}`;
-const password = `Codex${randomBytes(8).toString('base64url')}9a`;
+const password = process.env.LOGIMAIL_E2E_PASSWORD || `Codex${randomBytes(8).toString('base64url')}9a`;
 const adoptExistingProviderMailbox = process.env.LOGIMAIL_E2E_ADOPT_PROVIDER_MAILBOX === '1';
-const sendTo = process.env.LOGIMAIL_E2E_SEND_TO || '';
+const retainTestAccount = process.env.LOGIMAIL_E2E_RETAIN === '1';
+const sendTo = process.env.LOGIMAIL_E2E_SEND_TO || email;
+const testMarker = `LOGIMAIL-E2E-${Date.now().toString(36)}-${randomBytes(2).toString('hex')}`;
+let testUserId: string | null = null;
+
+function providerConfig() {
+  return {
+    baseUrl: process.env.BILLIONMAIL_BASE_URL?.trim() ?? '',
+    directToken: process.env.BILLIONMAIL_API_TOKEN?.trim() || process.env.BILLIONMAIL_API_KEY?.trim() || '',
+    bridgeBaseUrl: process.env.BILLIONMAIL_BRIDGE_BASE_URL?.trim() || process.env.LOGIMAIL_BILLIONMAIL_BRIDGE_BASE_URL?.trim() || '',
+    bridgeToken: process.env.BILLIONMAIL_BRIDGE_TOKEN?.trim() || process.env.LOGIMAIL_BILLIONMAIL_BRIDGE_TOKEN?.trim() || '',
+  };
+}
 
 function assertEnv() {
   const missing = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'LOGIMAIL_SECURITY_CODE_SECRET'].filter((key) => !process.env[key]);
   if (missing.length > 0) throw new Error(`Missing env: ${missing.join(', ')}`);
+  if (sendTo.toLowerCase() !== email.toLowerCase()) {
+    throw new Error('LOGIMAIL_E2E_SEND_TO must match the generated test mailbox because the receive assertion reads that inbox.');
+  }
+
+  const provider = providerConfig();
+  const providerReady = Boolean(
+    (provider.baseUrl && provider.directToken) || (provider.bridgeBaseUrl && provider.bridgeToken),
+  );
+  if ((adoptExistingProviderMailbox || !retainTestAccount) && !providerReady) {
+    throw new Error('Missing BillionMail direct or bridge credentials required for verified E2E cleanup.');
+  }
 }
 
 function supabase() {
@@ -117,7 +163,8 @@ async function runMaintenance() {
 }
 
 async function activeSignupCode() {
-  await runMaintenance();
+  if (process.env.LOGIMAIL_E2E_SECURITY_CODE) return process.env.LOGIMAIL_E2E_SECURITY_CODE;
+  if (process.env.LOGIMAIL_CRON_KEY) await runMaintenance();
   const store = supabase();
   const { data, error } = await store
     .from('security_codes')
@@ -140,7 +187,6 @@ async function registerAccount(securityCode: string) {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-forwarded-for': `203.0.113.${10 + Math.floor(Math.random() * 80)}`,
     },
     body: JSON.stringify({ localPart, domain, securityCode, password, confirmPassword: password }),
   });
@@ -152,7 +198,6 @@ async function loginAccount() {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-forwarded-for': `203.0.113.${100 + Math.floor(Math.random() * 80)}`,
     },
     body: JSON.stringify({ email, password }),
   });
@@ -167,7 +212,6 @@ async function openMailSession(accessToken: string) {
       headers: {
         authorization: `Bearer ${accessToken}`,
         'content-type': 'application/json',
-        'x-forwarded-for': `203.0.113.${180 + attempt}`,
       },
       body: JSON.stringify({ email, password }),
     });
@@ -183,7 +227,6 @@ async function openMailSession(accessToken: string) {
 }
 
 async function sendTestMail(accessToken: string, sessionCookie: string) {
-  if (!sendTo) return null;
   if (!sessionCookie) throw new Error('Missing mail session cookie for send test.');
   const response = await fetch(`${baseUrl}/api/logimail/mail/send`, {
     method: 'POST',
@@ -191,21 +234,68 @@ async function sendTestMail(accessToken: string, sessionCookie: string) {
       authorization: `Bearer ${accessToken}`,
       cookie: sessionCookie,
       'content-type': 'application/json',
-      'x-forwarded-for': `203.0.113.${220 + Math.floor(Math.random() * 20)}`,
     },
     body: JSON.stringify({
       to: sendTo,
-      subject: `LogiMail E2E ${new Date().toISOString()}`,
-      text: `LogiMail production E2E send test from ${email}. This temporary mailbox will be cleaned up automatically.`,
+      subject: testMarker,
+      text: `LogiMail production E2E receive test from ${email}. Marker: ${testMarker}`,
     }),
   });
-  return readJson<SendResult>(response);
+  return { data: await readJson<SendResult>(response), subject: testMarker };
+}
+
+async function receiveTestMail(accessToken: string, sessionCookie: string, marker: string) {
+  if (!sessionCookie) throw new Error('Missing mail session cookie for receive test.');
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 10; attempt += 1) {
+    const listResponse = await fetch(
+      `${baseUrl}/api/logimail/mail/messages?folder=inbox&q=${encodeURIComponent(marker)}&limit=50&page=0`,
+      { headers: { authorization: `Bearer ${accessToken}`, cookie: sessionCookie } },
+    );
+    try {
+      const list = await readJson<MailListResult>(listResponse);
+      const match = list.messages.find((message) => message.subject === marker);
+      if (match) {
+        const detailResponse = await fetch(`${baseUrl}/api/logimail/mail/messages/${encodeURIComponent(match.id)}`, {
+          headers: { authorization: `Bearer ${accessToken}`, cookie: sessionCookie },
+        });
+        const detail = await readJson<MailDetailResult>(detailResponse);
+        if (detail.message.subject !== marker || !detail.message.bodyText.includes(marker)) {
+          throw new Error('Received message content did not match marker.');
+        }
+        return { list, detail };
+      }
+      lastError = new Error(`Marker not found yet (attempt ${attempt}).`);
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+  }
+  throw lastError instanceof Error ? lastError : new Error('Receive test timed out.');
 }
 
 function providerEndpoint(path: string) {
-  const base = process.env.BILLIONMAIL_BASE_URL || '';
+  const base = providerConfig().baseUrl;
   const prefix = (process.env.BILLIONMAIL_API_PREFIX || '/api').replace(/^\/+|\/+$/g, '');
   return new URL(`${prefix ? `/${prefix}` : ''}/${path.replace(/^\/+/, '')}`, base).toString();
+}
+
+async function assertProviderResponse(response: Response, action: string, allowMissingMailbox = false) {
+  const text = await response.text();
+  let body: BillionMailJson | null = null;
+  if (text) {
+    try {
+      body = JSON.parse(text) as BillionMailJson;
+    } catch {
+      body = { success: response.ok, msg: text.slice(0, 500) };
+    }
+  }
+
+  if (response.ok && body?.success !== false && body?.ok !== false) return;
+  const message = body?.msg || body?.message || body?.error?.message || `HTTP ${response.status}`;
+  const missingMailbox = /mailbox[\s\S]*(?:not found|does not exist)|(?:not found|does not exist)[\s\S]*mailbox|邮箱[\s\S]*不存在/i.test(message);
+  if (allowMissingMailbox && missingMailbox) return;
+  throw new Error(`Provider ${action} failed: ${message}`);
 }
 
 function quotaBytes(quotaMb = 1024) {
@@ -213,11 +303,11 @@ function quotaBytes(quotaMb = 1024) {
 }
 
 async function createProviderMailbox() {
-  const directToken = process.env.BILLIONMAIL_API_TOKEN || '';
-  if (process.env.BILLIONMAIL_BASE_URL && directToken) {
+  const provider = providerConfig();
+  if (provider.baseUrl && provider.directToken) {
     const response = await fetch(providerEndpoint('/mailbox/create'), {
       method: 'POST',
-      headers: { accept: 'application/json', authorization: `Bearer ${directToken}`, 'content-type': 'application/json' },
+      headers: { accept: 'application/json', authorization: `Bearer ${provider.directToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         domain,
         local_part: localPart,
@@ -229,22 +319,20 @@ async function createProviderMailbox() {
         quota_active: 1,
       }),
     });
-    if (!response.ok) throw new Error(`Provider seed create failed: HTTP ${response.status}`);
+    await assertProviderResponse(response, 'seed create');
     return;
   }
 
-  const bridgeBase = process.env.BILLIONMAIL_BRIDGE_BASE_URL || '';
-  const bridgeToken = process.env.BILLIONMAIL_BRIDGE_TOKEN || '';
-  if (bridgeBase && bridgeToken) {
-    const response = await fetch(new URL('mailbox', `${bridgeBase.replace(/\/$/, '')}/`).toString(), {
+  if (provider.bridgeBaseUrl && provider.bridgeToken) {
+    const response = await fetch(new URL('mailbox', `${provider.bridgeBaseUrl.replace(/\/$/, '')}/`).toString(), {
       method: 'POST',
-      headers: { accept: 'application/json', authorization: `Bearer ${bridgeToken}`, 'content-type': 'application/json' },
+      headers: { accept: 'application/json', authorization: `Bearer ${provider.bridgeToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         action: 'create',
         payload: { email, localPart, domain, password, displayName: localPart, quotaMb: 1024 },
       }),
     });
-    if (!response.ok) throw new Error(`Provider bridge seed create failed: HTTP ${response.status}`);
+    await assertProviderResponse(response, 'bridge seed create');
     return;
   }
 
@@ -252,25 +340,28 @@ async function createProviderMailbox() {
 }
 
 async function deleteProviderMailbox() {
-  const directToken = process.env.BILLIONMAIL_API_TOKEN || '';
-  if (process.env.BILLIONMAIL_BASE_URL && directToken) {
-    await fetch(providerEndpoint('/mailbox/delete'), {
+  const provider = providerConfig();
+  if (provider.baseUrl && provider.directToken) {
+    const response = await fetch(providerEndpoint('/mailbox/delete'), {
       method: 'POST',
-      headers: { accept: 'application/json', authorization: `Bearer ${directToken}`, 'content-type': 'application/json' },
+      headers: { accept: 'application/json', authorization: `Bearer ${provider.directToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ emails: [email] }),
-    }).catch(() => undefined);
+    });
+    await assertProviderResponse(response, 'cleanup delete', true);
     return;
   }
 
-  const bridgeBase = process.env.BILLIONMAIL_BRIDGE_BASE_URL || '';
-  const bridgeToken = process.env.BILLIONMAIL_BRIDGE_TOKEN || '';
-  if (bridgeBase && bridgeToken) {
-    await fetch(new URL('mailbox', `${bridgeBase.replace(/\/$/, '')}/`).toString(), {
+  if (provider.bridgeBaseUrl && provider.bridgeToken) {
+    const response = await fetch(new URL('mailbox', `${provider.bridgeBaseUrl.replace(/\/$/, '')}/`).toString(), {
       method: 'POST',
-      headers: { accept: 'application/json', authorization: `Bearer ${bridgeToken}`, 'content-type': 'application/json' },
+      headers: { accept: 'application/json', authorization: `Bearer ${provider.bridgeToken}`, 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'delete', payload: { email } }),
-    }).catch(() => undefined);
+    });
+    await assertProviderResponse(response, 'bridge cleanup delete', true);
+    return;
   }
+
+  throw new Error('Missing BillionMail provider config for cleanup.');
 }
 
 async function cleanup() {
@@ -286,10 +377,14 @@ async function cleanup() {
 
   const { data: profile, error: profileError } = await store.from('profiles').select('id,email').eq('email', email).maybeSingle();
   if (profileError) throw new Error(supabaseErrorMessage(profileError));
+  const authUserId = profile?.id ?? testUserId;
+  if (authUserId) {
+    const authResult = await store.auth.admin.deleteUser(authUserId);
+    if (authResult.error) throw new Error(supabaseErrorMessage(authResult.error));
+  }
   if (profile?.id) {
     const profileResult = await store.from('profiles').delete().eq('id', profile.id);
     if (profileResult.error) throw new Error(supabaseErrorMessage(profileResult.error));
-    await store.auth.admin.deleteUser(profile.id).catch(() => undefined);
   }
 
   await deleteProviderMailbox();
@@ -297,13 +392,17 @@ async function cleanup() {
 
 async function assertCleanup() {
   const store = supabase();
-  const [mailbox, profile] = await Promise.all([
+  const [mailbox, profile, authUser] = await Promise.all([
     store.from('mailboxes').select('id').eq('email_address', email),
     store.from('profiles').select('id').eq('email', email),
+    testUserId ? store.auth.admin.getUserById(testUserId) : Promise.resolve(null),
   ]);
   if (mailbox.error) throw new Error(supabaseErrorMessage(mailbox.error));
   if (profile.error) throw new Error(supabaseErrorMessage(profile.error));
-  if ((mailbox.data ?? []).length > 0 || (profile.data ?? []).length > 0) throw new Error('Cleanup verification failed.');
+  if (authUser?.error && !/not found/i.test(authUser.error.message)) throw new Error(supabaseErrorMessage(authUser.error));
+  if ((mailbox.data ?? []).length > 0 || (profile.data ?? []).length > 0 || authUser?.data.user) {
+    throw new Error('Cleanup verification failed.');
+  }
 }
 
 async function main() {
@@ -323,6 +422,9 @@ async function main() {
 
     const login = await loginAccount();
     if (login.email !== email || !login.accessToken) throw new Error('Login response missing access token.');
+    const tokenPayload = JSON.parse(Buffer.from(login.accessToken.split('.')[1] || '', 'base64url').toString('utf8')) as { sub?: string };
+    testUserId = tokenPayload.sub ?? null;
+    if (!testUserId) throw new Error('Login token is missing the user subject.');
     console.log('LOGIN_OK');
 
     const mailSession = await openMailSession(login.accessToken);
@@ -330,15 +432,21 @@ async function main() {
     console.log('MAIL_SESSION_OK');
 
     const sendResult = await sendTestMail(login.accessToken, mailSession.cookie);
-    if (sendResult) {
-      if (!sendResult.sent || !sendResult.result?.accepted?.includes(sendTo)) throw new Error('Send test was not accepted by SMTP.');
-      console.log(`SEND_OK ${sendTo}`);
-    }
+    if (!sendResult.data.sent || !sendResult.data.result?.accepted?.includes(sendTo)) throw new Error('Send test was not accepted by SMTP.');
+    console.log(`SEND_OK ${sendTo}`);
+
+    const received = await receiveTestMail(login.accessToken, mailSession.cookie, sendResult.subject);
+    if (!received.detail.message.messageId) throw new Error('Received message is missing Message-ID.');
+    console.log(`RECEIVE_OK ${received.detail.message.id}`);
   } finally {
-    await cleanup();
-    await runMaintenance();
-    await assertCleanup();
-    console.log('CLEANUP_OK');
+    if (retainTestAccount) {
+      console.log(`ACCOUNT_RETAINED ${email}`);
+    } else {
+      await cleanup();
+      if (process.env.LOGIMAIL_CRON_KEY) await runMaintenance();
+      await assertCleanup();
+      console.log('CLEANUP_OK');
+    }
   }
 }
 

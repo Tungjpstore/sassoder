@@ -132,10 +132,21 @@ export function supabaseErrorMessage(error: { message?: string; code?: string } 
 }
 
 export function buildSafeDnsPlan(domain: string, vpsIp: string, mailHostname: string) {
-  return [
-    { type: 'A', name: mailHostname, content: vpsIp, proxied: false },
+  const normalizedDomain = domain.toLowerCase().replace(/\.$/, '');
+  const normalizedMailHostname = mailHostname.toLowerCase().replace(/\.$/, '');
+  const records: Array<{ type: string; name: string; content: string; priority?: number; proxied?: boolean }> = [];
+
+  // A shared mail host such as mail.logivn.com is managed in its own zone. Do
+  // not attempt to create that A record inside each customer domain's zone.
+  if (normalizedMailHostname === normalizedDomain || normalizedMailHostname.endsWith(`.${normalizedDomain}`)) {
+    records.push({ type: 'A', name: normalizedMailHostname, content: vpsIp, proxied: false });
+  }
+  records.push(
     { type: 'MX', name: domain, content: mailHostname, priority: 10 },
     { type: 'TXT', name: domain, content: `v=spf1 mx ip4:${vpsIp} -all` },
-    { type: 'TXT', name: `_dmarc.${domain}`, content: `v=DMARC1; p=none; rua=mailto:postmaster@${domain}` },
-  ] as const;
+    { type: 'TXT', name: `_dmarc.${domain}`, content: `v=DMARC1; p=none; rua=mailto:postmaster@${domain}; fo=1` },
+    { type: 'TXT', name: `_mta-sts.${domain}`, content: 'v=STSv1; id=logimail-v1' },
+    { type: 'TXT', name: `_smtp._tls.${domain}`, content: `v=TLSRPTv1; rua=mailto:postmaster@${domain}` },
+  );
+  return records;
 }

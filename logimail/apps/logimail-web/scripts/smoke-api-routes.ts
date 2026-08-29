@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { GET as healthGet } from '../src/app/api/logimail/health/route';
 import { requireAuth } from '../src/lib/api-boundary';
 import { billionMailBridgeMailboxEndpoint } from '../src/lib/billionmail-config';
+import { trustedClientIp } from '../src/lib/client-ip';
 import { decryptMailboxCredential, encryptMailboxCredential, mailCredentialReadiness } from '../src/lib/mail-credentials';
 import {
   buildSafeDnsPlan,
@@ -57,6 +58,16 @@ async function withEnv<T>(values: Record<string, string | undefined>, run: () =>
   }
 }
 
+async function withFetch<T>(fetchImpl: typeof fetch, run: () => Promise<T> | T) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = previous;
+  }
+}
+
 function routeSource(pathFromWebRoot: string) {
   return readFileSync(fileURLToPath(new URL(`../${pathFromWebRoot}`, import.meta.url)), 'utf8');
 }
@@ -78,31 +89,37 @@ test('health route reports missing server config without failing', async () => {
     {
       NEXT_PUBLIC_SUPABASE_URL: undefined,
       NEXT_PUBLIC_SUPABASE_ANON_KEY: undefined,
+      SUPABASE_SERVICE_ROLE_KEY: undefined,
       SUPABASE_SECRET_KEY: undefined,
       SUPABASE_DEFAULT_KEY: undefined,
       BILLIONMAIL_BASE_URL: undefined,
       BILLIONMAIL_API_TOKEN: undefined,
       BILLIONMAIL_BRIDGE_BASE_URL: undefined,
       BILLIONMAIL_BRIDGE_TOKEN: undefined,
+      CLOUDFLARE_API_TOKEN: undefined,
       CLOUDFLARE_ZONE_ID: undefined,
+      LOGIMAIL_HEALTH_DETAIL_KEY: undefined,
     },
     async () => {
-      const result = await responseJson(healthGet());
+      const result = await responseJson(await healthGet(new Request('https://mail.logivn.com/api/logimail/health')));
       assert.equal(result.status, 200);
       assert.equal(result.body.ok, true);
       assert.equal(result.body.data.status, 'not_configured');
-      assert.deepEqual(result.body.data.missing, [
-        'NEXT_PUBLIC_SUPABASE_URL',
-        'NEXT_PUBLIC_SUPABASE_ANON_KEY',
-        'CLOUDFLARE_ZONE_ID',
-        'SUPABASE_SECRET_KEY',
-        'BILLIONMAIL_BASE_URL',
-        'BILLIONMAIL_API_TOKEN',
-        'BILLIONMAIL_BRIDGE_BASE_URL',
-        'BILLIONMAIL_BRIDGE_TOKEN',
-      ]);
-      assert.deepEqual(result.body.data.billionmail, { ready: false, mode: 'not_configured' });
+      assert.equal(result.body.data.service, 'logimail-web-api');
+      assert.equal('missing' in result.body.data, false);
+      assert.equal('checks' in result.body.data, false);
     },
+  );
+});
+
+test('trusted client IP ignores spoofed X-Forwarded-For prefixes', () => {
+  assert.equal(
+    trustedClientIp(new Headers({ 'x-real-ip': '198.51.100.8', 'x-forwarded-for': '203.0.113.7, 198.51.100.9' })),
+    '198.51.100.8',
+  );
+  assert.equal(
+    trustedClientIp(new Headers({ 'x-forwarded-for': '203.0.113.7, 198.51.100.9' })),
+    '198.51.100.9',
   );
 });
 
@@ -111,18 +128,23 @@ test('health route reports ready when required server config is present', async 
     {
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
-      SUPABASE_SECRET_KEY: 'sb_secret_example',
+      SUPABASE_SERVICE_ROLE_KEY: 'sb_service_role_example',
       BILLIONMAIL_BASE_URL: 'http://127.0.0.1:8081',
       BILLIONMAIL_API_TOKEN: 'provider-token',
+      CLOUDFLARE_API_TOKEN: 'cf-token',
       CLOUDFLARE_ZONE_ID: 'zone-example',
+      LOGIMAIL_HEALTH_DETAIL_KEY: undefined,
     },
-    async () => {
-      const result = await responseJson(healthGet());
-      assert.equal(result.status, 200);
-      assert.equal(result.body.data.status, 'ready');
-      assert.deepEqual(result.body.data.missing, []);
-      assert.deepEqual(result.body.data.billionmail, { ready: true, mode: 'direct' });
-    },
+    () => withFetch(
+      async () => new Response('{}', { status: 200 }),
+      async () => {
+        const result = await responseJson(await healthGet(new Request('https://mail.logivn.com/api/logimail/health')));
+        assert.equal(result.status, 200);
+        assert.equal(result.body.data.status, 'ready');
+        assert.equal('missing' in result.body.data, false);
+        assert.equal('checks' in result.body.data, false);
+      },
+    ),
   );
 });
 
@@ -131,20 +153,57 @@ test('health route accepts BillionMail bridge mode for Vercel console deployment
     {
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
-      SUPABASE_SECRET_KEY: 'sb_secret_example',
+      SUPABASE_SERVICE_ROLE_KEY: 'sb_service_role_example',
       BILLIONMAIL_BASE_URL: undefined,
       BILLIONMAIL_API_TOKEN: undefined,
       BILLIONMAIL_BRIDGE_BASE_URL: 'https://mail.logivn.com/api/logimail/provider-bridge',
       BILLIONMAIL_BRIDGE_TOKEN: 'bridge-token',
+      CLOUDFLARE_API_TOKEN: 'cf-token',
       CLOUDFLARE_ZONE_ID: 'zone-example',
+      LOGIMAIL_HEALTH_DETAIL_KEY: 'health-detail-test-key',
     },
-    async () => {
-      const result = await responseJson(healthGet());
-      assert.equal(result.status, 200);
-      assert.equal(result.body.data.status, 'ready');
-      assert.deepEqual(result.body.data.missing, []);
-      assert.deepEqual(result.body.data.billionmail, { ready: true, mode: 'bridge' });
+    () => withFetch(
+      async () => new Response('{}', { status: 200 }),
+      async () => {
+        const result = await responseJson(await healthGet(new Request('https://mail.logivn.com/api/logimail/health', {
+          headers: { 'x-logimail-health-key': 'health-detail-test-key' },
+        })));
+        assert.equal(result.status, 200);
+        assert.equal(result.body.data.status, 'ready');
+        assert.deepEqual(result.body.data.missing, []);
+        assert.deepEqual(result.body.data.billionmail, { ready: true, mode: 'bridge' });
+      },
+    ),
+  );
+});
+
+test('health route reports degraded when a configured dependency times out', async () => {
+  await withEnv(
+    {
+      NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'anon-example',
+      SUPABASE_SERVICE_ROLE_KEY: 'sb_service_role_example',
+      BILLIONMAIL_BASE_URL: 'http://127.0.0.1:8081',
+      BILLIONMAIL_API_TOKEN: 'provider-token',
+      CLOUDFLARE_API_TOKEN: 'cf-token',
+      CLOUDFLARE_ZONE_ID: 'zone-example',
+      LOGIMAIL_HEALTH_TIMEOUT_MS: '100',
+      LOGIMAIL_HEALTH_DETAIL_KEY: 'health-detail-test-key',
     },
+    () => withFetch(
+      (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('timed out', 'AbortError')), { once: true });
+      }),
+      async () => {
+        const result = await responseJson(await healthGet(new Request('https://mail.logivn.com/api/logimail/health', {
+          headers: { 'x-logimail-health-key': 'health-detail-test-key' },
+        })));
+        assert.equal(result.body.data.status, 'degraded');
+        assert.equal(result.body.data.checks.supabase.reason, 'timeout');
+        assert.equal(result.body.data.checks.billionmail.reason, 'timeout');
+        assert.equal(result.body.data.checks.cloudflare.reason, 'timeout');
+      },
+    ),
   );
 });
 
@@ -157,6 +216,14 @@ test('BillionMail bridge mailbox endpoint preserves nested base path', () => {
     billionMailBridgeMailboxEndpoint('https://mail.logivn.com/api/logimail/provider-bridge/'),
     'https://mail.logivn.com/api/logimail/provider-bridge/mailbox',
   );
+});
+
+test('MTA-STS policy artifact stays in non-enforcing rollout mode', () => {
+  const policy = routeSource('public/.well-known/mta-sts.txt');
+  assert.match(policy, /^version: STSv1$/m);
+  assert.match(policy, /^mode: testing$/m);
+  assert.match(policy, /^mx: mail\.logivn\.com$/m);
+  assert.match(policy, /^max_age: 86400$/m);
 });
 
 test('auth boundary rejects requests without bearer token', async () => {
@@ -210,7 +277,7 @@ test('DNS plan keeps mail host DNS-only and leaves DMARC in observation mode', (
   assert.deepEqual(plan[0], { type: 'A', name: 'mail.logivn.com', content: '103.199.19.144', proxied: false });
   assert.deepEqual(plan[1], { type: 'MX', name: 'logivn.com', content: 'mail.logivn.com', priority: 10 });
   assert.equal(plan[2].content, 'v=spf1 mx ip4:103.199.19.144 -all');
-  assert.equal(plan[3].content, 'v=DMARC1; p=none; rua=mailto:postmaster@logivn.com');
+  assert.equal(plan[3].content, 'v=DMARC1; p=none; rua=mailto:postmaster@logivn.com; fo=1');
 });
 
 test('mailbox credential encryption is gated by server-side key', async () => {
@@ -323,34 +390,36 @@ test('public registration route uses one-time security codes and provisions real
   const domainRoute = routeSource('src/app/api/logimail/auth/domains/route.ts');
   const domainRegistry = routeSource('src/lib/registration-domains.ts');
   const billionmailProvider = routeSource('src/lib/billionmail-provider.ts');
+  const rateLimit = routeSource('src/lib/rate-limit.ts');
 
-  assert.match(registerPage, /AuthRegisterView/);
-  assert.match(publicRegisterPage, /AuthRegisterView/);
+  assert.match(registerPage, /RegisterExperience/);
+  assert.match(publicRegisterPage, /RegisterExperience/);
   assert.doesNotMatch(publicRegisterPage, /redirect\(['"]\/auth\/invite['"]\)/);
-  assert.match(authForms, /email-domain-suffix/);
+  assert.match(authForms, /styles\.domainSuffix/);
   assert.match(authForms, /securityCode/);
   assert.match(authForms, /one-time-code/);
   assert.match(authForms, /\/api\/logimail\/auth\/register/);
   assert.match(authForms, /\/api\/logimail\/auth\/reset-password/);
   assert.match(authForms, /href="\/auth\/register"/);
-  assert.doesNotMatch(authForms, /signInWithOAuth/);
+  assert.match(authForms, /logimailGoogleLogin/);
   assert.doesNotMatch(authForms, /auth\.signUp/);
   assert.doesNotMatch(authForms, /api\/logimail\/account\/request/);
   assert.match(registerRoute, /createLogimailServiceStore/);
-  assert.match(registerRoute, /validateSecurityCode/);
+  assert.match(registerRoute, /trustedClientIp\(request\.headers\)/);
+  assert.match(rateLimit, /trustedClientIp\(request\.headers\)/);
+  assert.doesNotMatch(rateLimit, /split\(','\)\[0\]/);
   assert.match(registerRoute, /consumeSecurityCode/);
   assert.match(registerRoute, /createBillionMailMailbox/);
-  assert.match(registerRoute, /updateBillionMailMailboxPassword/);
-  assert.match(registerRoute, /isBillionMailMailboxExistsError/);
   assert.match(registerRoute, /auth\.admin\.createUser/);
   assert.match(registerRoute, /saveMailboxCredentials/);
-  assert.match(registerRoute, /providerProvisioningMode/);
-  assertSourceOrder(registerRoute, 'const validatedCode = await validateSecurityCode', 'await createBillionMailMailbox', 'Registration must validate the code before provisioning a provider mailbox');
+  assert.match(registerRoute, /mailCredentialReadiness/);
+  assert.match(registerRoute, /if \(!credentialResult\.stored\)/);
+  assertSourceOrder(registerRoute, 'const consumedCode = await consumeSecurityCode', 'await createBillionMailMailbox', 'Registration must claim the code before provisioning a provider mailbox');
   assertSourceOrder(registerRoute, 'await serviceStore.auth.admin.createUser', 'await createBillionMailMailbox(providerMailboxInput)', 'Registration must create the Supabase auth user before mutating an existing provider mailbox');
-  assertSourceOrder(registerRoute, 'await createBillionMailMailbox(providerMailboxInput)', 'await updateBillionMailMailboxPassword(providerMailboxInput)', 'Registration must only adopt an existing provider mailbox after create reports an existing mailbox');
-  assertSourceOrder(registerRoute, 'await saveMailboxCredentials', 'const consumedCode = await consumeSecurityCode', 'Registration must consume the one-time code only after credentials are saved');
-  assert.match(registerRoute, /if \(!isBillionMailMailboxExistsError\(providerError\)\) throw providerError/);
+  assert.match(registerRoute, /consumedCodeId/);
   assert.match(registerRoute, /if \(providerMailboxCreated && email\)/);
+  assert.doesNotMatch(registerRoute, /updateBillionMailMailboxPassword/);
+  assert.doesNotMatch(registerRoute, /providerProvisioningMode/);
   assert.match(registerRoute, /email_confirm:\s*true/);
   assert.match(registerRoute, /account\.email_registration_create/);
   assert.doesNotMatch(registerRoute, /account\.email_registration_request_create/);
@@ -360,13 +429,12 @@ test('public registration route uses one-time security codes and provisions real
   assert.doesNotMatch(registerRoute, /\n\s*'support',/);
   assert.match(registerRoute, /\n\s*'postmaster',/);
   assert.doesNotMatch(registerRoute, /requireAuth\(/);
-  assert.match(resetRoute, /validateSecurityCode/);
   assert.match(resetRoute, /consumeSecurityCode/);
   assert.match(resetRoute, /updateBillionMailMailboxPassword/);
   assert.match(resetRoute, /auth\.admin\.updateUserById/);
   assert.match(resetRoute, /saveMailboxCredentials/);
-  assertSourceOrder(resetRoute, 'const validatedCode = await validateSecurityCode', 'await updateBillionMailMailboxPassword', 'Password reset must validate the code before updating provider password');
-  assertSourceOrder(resetRoute, 'await saveMailboxCredentials', 'const consumedCode = await consumeSecurityCode', 'Password reset must consume the one-time code only after credentials are saved');
+  assertSourceOrder(resetRoute, 'const consumedCode = await consumeSecurityCode', 'await updateBillionMailMailboxPassword', 'Password reset must claim the target-bound code before updating provider password');
+  assert.match(resetRoute, /serviceStore\.rpc\('revoke_user_sessions'/);
   assert.match(resetRoute, /account\.password_reset_with_security_code/);
   assert.match(domainRoute, /getRegistrationDomains/);
   assert.match(domainRegistry, /registration_enabled/);
@@ -404,9 +472,11 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   const mailAccess = routeSource('src/lib/mail-access.ts');
   const profileForm = routeSource('src/components/profile-settings-form.tsx');
   const authForms = routeSource('src/components/auth-forms.tsx');
+  const ssoClient = routeSource('src/lib/sso-client.ts');
   const controlLogin = routeSource('src/components/control/control-login-form.tsx');
   const authLoginClient = routeSource('src/lib/auth-login-client.ts');
   const authLoginRoute = routeSource('src/app/api/logimail/auth/login/route.ts');
+  const e2eProduction = routeSource('scripts/e2e-production-registration.ts');
   const meRoute = routeSource('src/app/api/logimail/me/route.ts');
   const sessionRoute = routeSource('src/app/api/logimail/mail/session/route.ts');
   const sendRoute = routeSource('src/app/api/logimail/mail/send/route.ts');
@@ -448,23 +518,27 @@ test('native mail client keeps RoundCube out of primary inbox and compose flow',
   assert.match(middleware, /domain\.logivn\.com/);
   assert.match(middleware, /DOMAIN_CONTROL_PREFIXES/);
   assert.match(middleware, /MAILBOX_PREFIXES/);
-  assert.doesNotMatch(middleware, /createServerClient/);
-  assert.doesNotMatch(middleware, /auth\.getUser/);
+  assert.match(middleware, /runtime = 'nodejs'/);
+  assert.match(middleware, /createServerClient/);
+  assert.match(middleware, /auth\.getClaims\(\)/);
   assert.match(authLoginClient, /\/api\/logimail\/auth\/login/);
   assert.match(authLoginClient, /auth-login-cooldown/);
   assert.match(authLoginClient, /credentials:\s*'same-origin'/);
+  assert.match(authLoginClient, /(?:auth|sessionAuth)\.setSession\(\{/);
+  assert.match(authLoginClient, /refreshToken/);
+  assert.match(authLoginRoute, /refreshToken:\s*data\.session\.refresh_token/);
   assert.doesNotMatch(authForms, /\.auth\.signInWithPassword/);
   assert.doesNotMatch(controlLogin, /\.auth\.signInWithPassword/);
   assert.match(authForms, /\/api\/logimail\/mail\/session/);
-  assert.match(authForms, /credentials:\s*'same-origin'/);
+  assert.match(ssoClient, /credentials:\s*'same-origin'/);
   assert.doesNotMatch(authForms, /catch\(\(\) => undefined\)/);
-  assert.match(authLoginRoute, /SUPABASE_SECRET_KEY/);
-  assert.match(authLoginRoute, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(authLoginRoute, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
   assert.match(authLoginRoute, /not_configured/);
   assert.match(authLoginRoute, /sb-forwarded-for/);
   assert.match(authLoginRoute, /signInWithPassword/);
   assert.match(authLoginRoute, /enforceRateLimit/);
+  assert.doesNotMatch(authLoginRoute, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(e2eProduction, /x-forwarded-for/);
   assert.doesNotMatch(pages, /admin\.logivn\.com/);
   assert.match(serviceWorker, /logimail-shell-v6/);
   assert.doesNotMatch(serviceWorker, /\n\s*'\/mail\/inbox',/);
@@ -554,6 +628,8 @@ test('nginx routes health to the ops API and product API routes to Next.js', () 
     nginx,
     /location \/api\/logimail\/ \{[\s\S]*?proxy_pass http:\/\/logimail_web;[\s\S]*?\}/,
   );
+  assert.match(nginx, /proxy_set_header X-Forwarded-For \$remote_addr;/);
+  assert.doesNotMatch(nginx, /proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;/);
 });
 
 test('approval schema keeps provisioning writes behind service/admin flow', () => {
@@ -565,6 +641,9 @@ test('approval schema keeps provisioning writes behind service/admin flow', () =
   assert.match(schema, /create table if not exists logimail\.domain_requests/);
   assert.match(schema, /create table if not exists logimail\.mailbox_requests/);
   assert.match(schema, /create table if not exists logimail\.security_codes/);
+  assert.match(schema, /target_email text/);
+  assert.match(schema, /platform_role text/);
+  assert.match(schema, /session_version integer/);
   assert.match(schema, /create table if not exists logimail\.push_subscriptions/);
   assert.match(schema, /create table if not exists logimail\.mail_push_checkpoints/);
   assert.match(schema, /max_uses integer not null default 1 check \(max_uses = 1\)/);

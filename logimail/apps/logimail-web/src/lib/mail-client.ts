@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { ImapFlow, type FetchMessageObject, type ListResponse, type MessageAddressObject } from 'imapflow';
+import { ImapFlow, type FetchMessageObject, type ListResponse, type MessageAddressObject, type SearchObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
 import type Mail from 'nodemailer/lib/mailer';
@@ -57,6 +57,8 @@ export type SendMailInput = {
   attachments?: SendMailAttachment[];
 };
 
+export type QuotaCommitResult = { status: 'reserved' };
+
 const MAX_ATTACHMENT_COUNT = 10;
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_NAME = 180;
@@ -102,7 +104,7 @@ function smtpConfig(mailbox?: AuthorizedMailbox | null) {
 
 function createImapClient(session: Pick<MailSession, 'email' | 'password'>, mailbox?: AuthorizedMailbox | null) {
   const config = imapConfig(mailbox);
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: config.host,
     port: config.port,
     secure: config.secure,
@@ -115,6 +117,13 @@ function createImapClient(session: Pick<MailSession, 'email' | 'password'>, mail
     socketTimeout: 45000,
     maxLiteralSize: 12 * 1024 * 1024,
   });
+  // ImapFlow emits idle socket failures asynchronously; always consume the
+  // event so an expired pooled connection cannot become an uncaught exception.
+  client.on('error', () => {
+    discardPooledClient(client);
+    closeQuietly(client);
+  });
+  return client;
 }
 
 async function withImap<T>(session: Pick<MailSession, 'email' | 'password'>, mailbox: AuthorizedMailbox | null, action: (client: ImapFlow) => Promise<T>) {
@@ -162,6 +171,14 @@ function closeQuietly(client: ImapFlow) {
     client.close();
   } catch {
     // ignore
+  }
+}
+
+function discardPooledClient(client: ImapFlow) {
+  for (const [key, list] of imapPool) {
+    const remaining = list.filter((pooled) => pooled.client !== client);
+    if (remaining.length > 0) imapPool.set(key, remaining);
+    else imapPool.delete(key);
   }
 }
 
@@ -243,29 +260,90 @@ function parsedAddressText(value: unknown): string {
   return '';
 }
 
+function isSelectableFolder(folder: ListResponse) {
+  const flags = Array.from(folder.flags ?? []).map((flag) => flag.toLowerCase());
+  return !flags.includes('\\noselect') && !flags.includes('\\nonexistent');
+}
+
+function folderPathMatchesName(folder: ListResponse, name: string) {
+  const path = folder.path.toLowerCase();
+  const target = name.toLowerCase();
+  const nestedSuffix = folder.delimiter ? `${folder.delimiter}${target}` : null;
+  return folder.name.toLowerCase() === target || path === target || Boolean(nestedSuffix && path.endsWith(nestedSuffix));
+}
+
 function folderKeyFromList(folder: ListResponse): MailFolderKey | null {
+  if (!isSelectableFolder(folder)) return null;
   const special = folder.specialUse?.toLowerCase();
   if (special === '\\inbox') return 'inbox';
   if (special === '\\sent') return 'sent';
   if (special === '\\drafts') return 'drafts';
   if (special === '\\junk') return 'spam';
   if (special === '\\trash') return 'trash';
-  if (special === '\\archive' || special === '\\all') return 'archive';
+  // IMAP \\All is an aggregate view (often read-only), not an archive target.
+  // Archive must resolve to a dedicated folder so move semantics stay safe.
+  if (special === '\\archive') return 'archive';
 
-  const path = folder.path.toLowerCase();
-  if (path === 'inbox') return 'inbox';
+  if (folderPathMatchesName(folder, 'INBOX')) return 'inbox';
   for (const [key, names] of Object.entries(FOLDER_FALLBACKS) as Array<[MailFolderKey, string[]]>) {
-    if (names.some((name) => name.toLowerCase() === path)) return key;
+    if (names.some((name) => folderPathMatchesName(folder, name))) return key;
   }
   return null;
 }
 
-function folderPathFor(key: MailFolderKey, folders: ListResponse[]) {
+function existingFolderPathFor(key: MailFolderKey, folders: ListResponse[]) {
   const bySpecial = folders.find((folder) => folderKeyFromList(folder) === key);
   if (bySpecial) return bySpecial.path;
   const fallback = FOLDER_FALLBACKS[key];
-  const byName = folders.find((folder) => fallback.some((name) => name.toLowerCase() === folder.path.toLowerCase()));
-  return byName?.path ?? fallback[0];
+  const byName = folders.find((folder) => {
+    if (isSelectableFolder(folder)) return fallback.some((name) => folderPathMatchesName(folder, name));
+    return false;
+  });
+  return byName?.path ?? null;
+}
+
+function folderPathFor(key: MailFolderKey, folders: ListResponse[]) {
+  return existingFolderPathFor(key, folders) ?? FOLDER_FALLBACKS[key][0];
+}
+
+/** Create Archive only when an archive action needs a real move target. */
+async function ensureArchiveFolderPath(client: ImapFlow, folders: ListResponse[]) {
+  const existing = existingFolderPathFor('archive', folders);
+  if (existing) return existing;
+
+  const requestedPath = FOLDER_FALLBACKS.archive[0];
+  try {
+    await client.mailboxCreate(requestedPath);
+    const refreshed = await client.list();
+    const createdEntry = existingFolderPathFor('archive', refreshed);
+    if (createdEntry) return createdEntry;
+    throw new Error('archive_not_selectable');
+  } catch (error) {
+    // Another request may have created Archive between LIST and CREATE.
+    const refreshed = await client.list();
+    const createdByPeer = existingFolderPathFor('archive', refreshed);
+    if (createdByPeer) return createdByPeer;
+    throw error;
+  }
+}
+
+async function moveMessagesSafely(client: ImapFlow, uids: number[], destination: string) {
+  if (client.capabilities.has('MOVE')) {
+    const moved = await client.messageMove(uids, destination, { uid: true });
+    if (!moved) throw new Error('imap_move_failed');
+    return;
+  }
+
+  // ImapFlow's MOVE fallback deletes the source even when COPY returns false.
+  // Reimplement the fallback so a failed copy can never remove the source.
+  if (!client.capabilities.has('UIDPLUS')) throw new Error('imap_move_unsupported');
+  const copied = await client.messageCopy(uids, destination, { uid: true });
+  if (!copied) throw new Error('imap_copy_failed');
+  const deleted = await client.messageDelete(uids, { uid: true });
+  if (!deleted) {
+    await client.messageFlagsRemove(uids, ['\\Deleted'], { uid: true }).catch(() => undefined);
+    throw new Error('imap_move_cleanup_failed');
+  }
 }
 
 function encodeMessageId(folder: MailFolderKey, uid: number) {
@@ -373,7 +451,7 @@ function validateAttachments(input: SendMailAttachment[] | undefined) {
   });
 }
 
-function validateSendInput(input: SendMailInput) {
+export function validateSendInput(input: SendMailInput) {
   const to = splitRecipients(input.to);
   const cc = splitRecipients(input.cc);
   const bcc = splitRecipients(input.bcc);
@@ -443,10 +521,13 @@ export async function listMailFolders(session: Pick<MailSession, 'email' | 'pass
   });
 }
 
-export type ListMailOptions = { limit?: number; page?: number; query?: string };
+export type MailListFilter = 'all' | 'unread' | 'starred';
+
+export type ListMailOptions = { limit?: number; page?: number; query?: string; filter?: MailListFilter; afterUid?: number };
 
 export type ListMailResult = {
   folderPath: string;
+  uidValidity: string | null;
   messages: MailMessageSummary[];
   total: number;
   page: number;
@@ -454,9 +535,14 @@ export type ListMailResult = {
   hasMore: boolean;
 };
 
-function searchCriteria(query: string) {
+function searchCriteria(query: string, filter: MailListFilter): SearchObject {
+  const criteria: SearchObject = {};
+  if (filter === 'unread') criteria.seen = false;
+  if (filter === 'starred') criteria.flagged = true;
   const q = query.trim().slice(0, 120);
-  return { or: [{ subject: q }, { from: q }, { to: q }] };
+  if (q) criteria.or = [{ subject: q }, { from: q }, { to: q }];
+  if (!q && filter === 'all') criteria.all = true;
+  return criteria;
 }
 
 export async function listMailMessages(
@@ -469,22 +555,43 @@ export async function listMailMessages(
   const pageSize = Math.min(100, Math.max(1, opts.limit ?? limit));
   const page = Math.max(0, Math.floor(opts.page ?? 0));
   const query = opts.query?.trim() ?? '';
+  const filter = opts.filter ?? 'all';
 
   return withImap(session, mailbox, async (client) => {
     const folders = await client.list();
-    const folderPath = folderPathFor(folder, folders);
-    const mailboxInfo = await client.mailboxOpen(folderPath, { readOnly: true });
+    const folderPath = existingFolderPathFor(folder, folders);
+    // Archive is optional on IMAP providers. Treat a missing dedicated folder
+    // as an empty view instead of opening a path that does not exist.
+    if (!folderPath && folder === 'archive') {
+      return {
+        folderPath: FOLDER_FALLBACKS.archive[0],
+        uidValidity: null,
+        messages: [],
+        total: 0,
+        page,
+        pageSize,
+        hasMore: false,
+      };
+    }
+    const targetPath = folderPath ?? folderPathFor(folder, folders);
+    const mailboxInfo = await client.mailboxOpen(targetPath, { readOnly: true });
     const exists = typeof mailboxInfo.exists === 'number' ? mailboxInfo.exists : 0;
 
-    const empty: ListMailResult = { folderPath, messages: [], total: 0, page, pageSize, hasMore: false };
+    const uidValidity = typeof mailboxInfo.uidValidity === 'bigint' ? mailboxInfo.uidValidity.toString() : null;
+    const empty: ListMailResult = { folderPath: targetPath, uidValidity, messages: [], total: 0, page, pageSize, hasMore: false };
     if (exists === 0) return empty;
 
     let targetUids: number[];
     let total: number;
 
-    if (query) {
+    if (typeof opts.afterUid === 'number' && Number.isSafeInteger(opts.afterUid) && opts.afterUid >= 0) {
+      const matched = (await client.search({ uid: `${opts.afterUid + 1}:*` }, { uid: true })) || [];
+      const sorted = matched.filter((uid) => uid > opts.afterUid!).sort((left, right) => left - right);
+      total = sorted.length;
+      targetUids = sorted.slice(0, pageSize);
+    } else if (query || filter !== 'all') {
       // Server-side IMAP SEARCH across subject/from/to, newest first, paginated.
-      const matched = (await client.search(searchCriteria(query), { uid: true })) || [];
+      const matched = (await client.search(searchCriteria(query, filter), { uid: true })) || [];
       total = matched.length;
       if (total === 0) return empty;
       const sorted = [...matched].sort((left, right) => right - left);
@@ -501,7 +608,7 @@ export async function listMailMessages(
         messages.push(messageSummary(folder, message));
       }
       messages.sort((left, right) => right.uid - left.uid);
-      return { folderPath, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
+      return { folderPath: targetPath, uidValidity, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
     }
 
     if (targetUids.length === 0) return { ...empty, total };
@@ -510,11 +617,20 @@ export async function listMailMessages(
       messages.push(messageSummary(folder, message));
     }
     messages.sort((left, right) => right.uid - left.uid);
-    return { folderPath, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
+    return { folderPath: targetPath, uidValidity, messages, total, page, pageSize, hasMore: (page + 1) * pageSize < total };
   });
 }
 
-export type MailActionKind = 'read' | 'unread' | 'flag' | 'unflag' | 'trash' | 'archive' | 'spam';
+export type MailActionKind =
+  | 'read'
+  | 'unread'
+  | 'flag'
+  | 'unflag'
+  | 'trash'
+  | 'archive'
+  | 'spam'
+  | 'restore'
+  | 'delete_permanently';
 
 export async function applyMailAction(
   session: Pick<MailSession, 'email' | 'password'>,
@@ -529,31 +645,44 @@ export async function applyMailAction(
     const folderPath = folderPathFor(folder, folders);
     await client.mailboxOpen(folderPath, { readOnly: false });
 
-    if (action === 'read') await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
-    else if (action === 'unread') await client.messageFlagsRemove(uids, ['\\Seen'], { uid: true });
-    else if (action === 'flag') await client.messageFlagsAdd(uids, ['\\Flagged'], { uid: true });
-    else if (action === 'unflag') await client.messageFlagsRemove(uids, ['\\Flagged'], { uid: true });
-    else {
+    if (action === 'read') {
+      if (!(await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true }))) throw new Error('imap_flag_failed');
+    } else if (action === 'unread') {
+      if (!(await client.messageFlagsRemove(uids, ['\\Seen'], { uid: true }))) throw new Error('imap_flag_failed');
+    } else if (action === 'flag') {
+      if (!(await client.messageFlagsAdd(uids, ['\\Flagged'], { uid: true }))) throw new Error('imap_flag_failed');
+    } else if (action === 'unflag') {
+      if (!(await client.messageFlagsRemove(uids, ['\\Flagged'], { uid: true }))) throw new Error('imap_flag_failed');
+    }
+    else if (action === 'restore') {
+      if (!['trash', 'spam', 'archive'].includes(folder)) throw new Error('invalid_restore_source');
+      await moveMessagesSafely(client, uids, folderPathFor('inbox', folders));
+    } else if (action === 'delete_permanently') {
+      if (folder !== 'trash') throw new Error('invalid_permanent_delete_source');
+      // Without UIDPLUS, IMAP EXPUNGE removes every message marked Deleted in
+      // the mailbox, including messages deleted by another session.
+      if (!client.capabilities.has('UIDPLUS')) throw new Error('imap_permanent_delete_unsupported');
+      const deleted = await client.messageDelete(uids, { uid: true });
+      if (!deleted) throw new Error('imap_permanent_delete_failed');
+    } else {
       const targetKey: MailFolderKey = action === 'trash' ? 'trash' : action === 'archive' ? 'archive' : 'spam';
-      if (folder === targetKey) {
-        if (action === 'trash') await client.messageDelete(uids, { uid: true });
-      } else {
-        const targetPath = folderPathFor(targetKey, folders);
-        await client.messageMove(uids, targetPath, { uid: true });
-      }
+      if (folder === targetKey) throw new Error('invalid_move_target');
+      const targetPath = action === 'archive' ? await ensureArchiveFolderPath(client, folders) : folderPathFor(targetKey, folders);
+      await moveMessagesSafely(client, uids, targetPath);
     }
     return { affected: uids.length };
   });
 }
 
-export async function getMailMessage(session: MailSession, mailbox: AuthorizedMailbox, folder: MailFolderKey, uid: number) {
+export async function getMailMessage(session: MailSession, mailbox: AuthorizedMailbox, folder: MailFolderKey, uid: number, options: { markRead?: boolean } = {}) {
+  const markRead = options.markRead ?? true;
   return withImap(session, mailbox, async (client) => {
     const folders = await client.list();
     const folderPath = folderPathFor(folder, folders);
-    await client.mailboxOpen(folderPath, { readOnly: false });
+    await client.mailboxOpen(folderPath, { readOnly: !markRead });
     const message = await client.fetchOne(String(uid), { uid: true, envelope: true, flags: true, internalDate: true, size: true, source: { maxLength: 8 * 1024 * 1024 } }, { uid: true });
     if (!message) return null;
-    await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }).catch(() => undefined);
+    if (markRead) await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true }).catch(() => undefined);
     const parsed = message.source ? await simpleParser(message.source) : null;
     return {
       ...messageSummary(folder, message),
@@ -598,15 +727,14 @@ export async function getMailAttachment(
 
 export async function sendMailThroughMailbox(session: MailSession, mailbox: AuthorizedMailbox, input: SendMailInput) {
   const sanitized = validateSendInput(input);
-  const [{ commitDomainQuotaUsage, enforceSendingQuota }, { findSuppressedRecipients }] = await Promise.all([
+  const [{ enforceSendingQuota }, { findSuppressedRecipients }] = await Promise.all([
     import('@/lib/deliverability/quota'),
     import('@/lib/deliverability/bounce'),
   ]);
 
-  // Per-Sending_Domain quota enforcement (R4.3, R18.3, R20.2). Domains without a
-  // configured quota row are allowed. Usage is committed after a successful send.
+  // Reserve a bounded Sending_Domain quota before SMTP accepts the message.
   const quota = await enforceSendingQuota(session.email);
-  if (!quota.allowed) throw new Error('quota_exceeded');
+  if (!quota.allowed) throw new Error(quota.reason ?? 'quota_exceeded');
 
   // Block sends to suppressed recipients (R5.4).
   if (quota.workspaceId) {
@@ -652,25 +780,31 @@ export async function sendMailThroughMailbox(session: MailSession, mailbox: Auth
   };
   const smtpTransport = nodemailer.createTransport(smtpOptions);
 
-  const sent = await smtpTransport.sendMail({ envelope: compiled.envelope, raw });
-  smtpTransport.close();
+  let sent: SMTPTransport.SentMessageInfo;
+  try {
+    sent = await smtpTransport.sendMail({ envelope: compiled.envelope, raw });
+  } finally {
+    smtpTransport.close();
+  }
 
+  let sentCopyStatus: 'saved' | 'failed' = 'saved';
   await withImap(session, mailbox, async (client) => {
     const folders = await client.list();
     const sentPath = folderPathFor('sent', folders);
-    await client.append(sentPath, raw, ['\\Seen'], new Date()).catch(() => undefined);
-  }).catch(() => undefined);
-
-  // Count the successful send against the Sending_Domain's daily quota (R18.3).
-  if (quota.domainId) await commitDomainQuotaUsage(quota.domainId).catch(() => undefined);
+    await client.append(sentPath, raw, ['\\Seen'], new Date());
+  }).catch(() => {
+    sentCopyStatus = 'failed';
+  });
 
   return {
     messageId: sent.messageId || compiled.messageId,
     accepted: sent.accepted.map(String),
     rejected: sent.rejected.map(String),
     response: sent.response,
+    sentCopy: { status: sentCopyStatus },
     subject: sanitized.subject,
     recipientCount: sanitized.to.length + sanitized.cc.length + sanitized.bcc.length,
     attachmentCount: sanitized.attachments.length,
+    quotaCommit: { status: 'reserved' } satisfies QuotaCommitResult,
   };
 }

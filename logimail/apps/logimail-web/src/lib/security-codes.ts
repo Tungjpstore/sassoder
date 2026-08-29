@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { createLogimailServiceStore, normalizeDomain, normalizeEmail, supabaseErrorMessage } from '@/lib/logimail-store';
 
 export type SecurityCodePurpose = 'account_access' | 'account_signup' | 'password_reset';
@@ -12,6 +12,7 @@ type SecurityCodeRow = {
   code_hash: string;
   code_ciphertext: string | null;
   code_hint: string;
+  target_email: string | null;
   status: 'active' | 'used' | 'expired' | 'revoked';
   max_uses: number;
   used_count: number;
@@ -32,6 +33,7 @@ type RegistrationDomainRow = {
 
 type CreateSecurityCodeInput = {
   domain?: string | null;
+  targetEmail?: string | null;
   purpose?: SecurityCodePurpose;
   createdBy?: string;
   ttlHours?: number;
@@ -49,6 +51,7 @@ type ConsumeSecurityCodeInput = {
 type ValidateSecurityCodeInput = {
   code: string;
   domain: string;
+  email: string;
   purpose: Exclude<SecurityCodePurpose, 'account_access'>;
 };
 
@@ -98,19 +101,6 @@ function encryptCode(code: string) {
   return [iv, tag, encrypted].map((part) => part.toString('base64url')).join('.');
 }
 
-function decryptCode(value: string | null) {
-  if (!value) return null;
-  try {
-    const [ivText, tagText, encryptedText] = value.split('.');
-    if (!ivText || !tagText || !encryptedText) return null;
-    const decipher = createDecipheriv('aes-256-gcm', encryptionKey(), Buffer.from(ivText, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tagText, 'base64url'));
-    return Buffer.concat([decipher.update(Buffer.from(encryptedText, 'base64url')), decipher.final()]).toString('utf8');
-  } catch {
-    return null;
-  }
-}
-
 function codeHint(code: string) {
   return normalizeSecurityCode(code).slice(-4);
 }
@@ -133,20 +123,37 @@ function matchesDomain(rowDomain: string | null, requestedDomain: string) {
   return !rowDomain || rowDomain === requestedDomain;
 }
 
+function matchesTargetEmail(row: SecurityCodeRow, requestedEmail: string) {
+  if (row.purpose !== 'password_reset') return true;
+  return Boolean(row.target_email && row.target_email === requestedEmail);
+}
+
 export function publicSecurityCodeError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? 'invalid_security_code');
   if (message === 'invalid_security_code') return 'Mã bảo mật không hợp lệ.';
   if (message === 'missing_security_code_secret') return 'Chưa cấu hình khóa bảo mật cho mã đăng ký.';
   if (message === 'security_codes_not_configured') return 'Chưa cấu hình service role cho mã bảo mật LogiMail.';
+  if (message === 'invalid_security_code_target') return 'Mã reset phải gắn với một địa chỉ email hợp lệ trong domain.';
   return message;
 }
 
 export async function createSecurityCode(input: CreateSecurityCodeInput = {}) {
   const domain = input.domain ? normalizeDomain(input.domain) : null;
   const purpose = input.purpose ?? 'account_signup';
+  const targetEmail = input.targetEmail ? normalizeEmail(input.targetEmail) : null;
+  if (purpose === 'password_reset') {
+    if (!domain || !targetEmail || targetEmail.split('@')[1] !== domain) throw new Error('invalid_security_code_target');
+  } else if (targetEmail) {
+    throw new Error('invalid_security_code_target');
+  }
   const expiresAt = new Date(Date.now() + ttlHours(input.ttlHours) * 60 * 60 * 1000).toISOString();
 
-  await revokeActiveSiblingSecurityCodes({ domain, purpose, actor: input.createdBy ?? 'logimail-system' });
+  await revokeActiveSiblingSecurityCodes({
+    domain,
+    targetEmail,
+    purpose,
+    actor: input.createdBy ?? 'logimail-system',
+  });
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = generateRawCode();
@@ -156,6 +163,7 @@ export async function createSecurityCode(input: CreateSecurityCodeInput = {}) {
       code_hash: securityCodeHash(code),
       code_ciphertext: encryptCode(code),
       code_hint: codeHint(code),
+      target_email: targetEmail,
       status: 'active',
       max_uses: 1,
       used_count: 0,
@@ -172,7 +180,12 @@ export async function createSecurityCode(input: CreateSecurityCodeInput = {}) {
   throw new Error('security_code_generation_failed');
 }
 
-async function revokeActiveSiblingSecurityCodes(input: { domain: string | null; purpose: SecurityCodePurpose; actor: string }) {
+async function revokeActiveSiblingSecurityCodes(input: {
+  domain: string | null;
+  targetEmail: string | null;
+  purpose: SecurityCodePurpose;
+  actor: string;
+}) {
   const query = store()
     .from('security_codes')
     .update({
@@ -183,7 +196,11 @@ async function revokeActiveSiblingSecurityCodes(input: { domain: string | null; 
     })
     .eq('status', 'active')
     .eq('purpose', input.purpose);
-  const { error } = input.domain ? await query.eq('domain', input.domain) : await query.is('domain', null);
+  const domainScopedQuery = input.domain ? query.eq('domain', input.domain) : query.is('domain', null);
+  const targetScopedQuery = input.purpose === 'password_reset'
+    ? domainScopedQuery.eq('target_email', input.targetEmail)
+    : domainScopedQuery.is('target_email', null);
+  const { error } = await targetScopedQuery;
   if (error) throw new Error(supabaseErrorMessage(error));
 }
 
@@ -211,6 +228,8 @@ async function markExpired(row: SecurityCodeRow, actor: string) {
     .maybeSingle();
   if (error) throw new Error(supabaseErrorMessage(error));
   if (!data) return null;
+  if (row.purpose !== 'account_signup') return null;
+
   const replacement = await createSecurityCode({
     domain: row.domain,
     purpose: row.purpose,
@@ -236,7 +255,7 @@ export async function consumeSecurityCode(input: ConsumeSecurityCodeInput) {
   if (!rowData) return { ok: false as const, reason: 'invalid' as const };
 
   const row = rowData as SecurityCodeRow;
-  if (!matchesPurpose(row.purpose, input.purpose) || !matchesDomain(row.domain, domain)) {
+  if (!matchesPurpose(row.purpose, input.purpose) || !matchesDomain(row.domain, domain) || !matchesTargetEmail(row, email)) {
     return { ok: false as const, reason: 'invalid' as const };
   }
 
@@ -267,19 +286,22 @@ export async function consumeSecurityCode(input: ConsumeSecurityCodeInput) {
   if (consumeError) throw new Error(supabaseErrorMessage(consumeError));
   if (!consumedData) return { ok: false as const, reason: 'used' as const };
 
-  const replacement = await createSecurityCode({
-    domain: row.domain,
-    purpose: row.purpose,
-    createdBy: 'logimail-auto-rotate',
-    metadata: { replacedFrom: row.id, replacementReason: 'consumed' },
-  });
-  await store().from('security_codes').update({ replaced_by: replacement.row.id }).eq('id', row.id);
+  const replacement = row.purpose === 'account_signup'
+    ? await createSecurityCode({
+      domain: row.domain,
+      purpose: row.purpose,
+      createdBy: 'logimail-auto-rotate',
+      metadata: { replacedFrom: row.id, replacementReason: 'consumed' },
+    })
+    : null;
+  if (replacement) await store().from('security_codes').update({ replaced_by: replacement.row.id }).eq('id', row.id);
 
   return { ok: true as const, row: consumedData as SecurityCodeRow, replacement };
 }
 
 export async function validateSecurityCode(input: ValidateSecurityCodeInput) {
   const domain = normalizeDomain(input.domain);
+  const email = normalizeEmail(input.email);
   const codeHash = securityCodeHash(input.code);
 
   const { data: rowData, error: lookupError } = await store()
@@ -291,7 +313,7 @@ export async function validateSecurityCode(input: ValidateSecurityCodeInput) {
   if (!rowData) return { ok: false as const, reason: 'invalid' as const };
 
   const row = rowData as SecurityCodeRow;
-  if (!matchesPurpose(row.purpose, input.purpose) || !matchesDomain(row.domain, domain)) {
+  if (!matchesPurpose(row.purpose, input.purpose) || !matchesDomain(row.domain, domain) || !matchesTargetEmail(row, email)) {
     return { ok: false as const, reason: 'invalid' as const };
   }
 
@@ -403,16 +425,12 @@ function retentionHoursValue(value?: number) {
   return Math.min(720, Math.max(0, Math.round(Number(explicit))));
 }
 
-export function displayCodeFromRow(row: Pick<SecurityCodeRow, 'code_ciphertext' | 'code_hint'>) {
-  return decryptCode(row.code_ciphertext) ?? (row.code_hint ? `••••-${row.code_hint}` : null);
-}
-
 export type SecurityCodeView = {
   id: string;
   domain: string | null;
   purpose: SecurityCodePurpose;
-  code: string | null;
   codeHint: string;
+  targetEmail: string | null;
   status: SecurityCodeRow['status'];
   usedCount: number;
   maxUses: number;
@@ -433,8 +451,8 @@ export async function listActiveSecurityCodes(limit = 50): Promise<SecurityCodeV
     id: row.id,
     domain: row.domain,
     purpose: row.purpose,
-    code: displayCodeFromRow(row),
     codeHint: row.code_hint,
+    targetEmail: row.target_email,
     status: row.status,
     usedCount: row.used_count,
     maxUses: row.max_uses,
@@ -466,6 +484,7 @@ export async function rotateSecurityCode(input: { codeId: string; actor: string 
   }
   const replacement = await createSecurityCode({
     domain: current.domain,
+    targetEmail: current.target_email,
     purpose: current.purpose,
     createdBy: input.actor,
     metadata: { replacedFrom: current.id, replacementReason: 'manual_rotate' },

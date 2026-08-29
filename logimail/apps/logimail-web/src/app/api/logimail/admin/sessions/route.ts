@@ -1,9 +1,8 @@
 import { jsonError, jsonOk } from '@/lib/api-boundary';
-import { actorLabel, requireAdmin } from '@/lib/admin-access';
+import { requireAdmin } from '@/lib/admin-access';
 import { normalizeUuid, readJsonObject, stringField } from '@/lib/logimail-store';
 import { isMfaEnabled, revokeUserSessions, sessionManagerError, SESSION_IDLE_TIMEOUT_MS } from '@/lib/security/session';
 import { readAalClaim } from '@/lib/security/session-policy';
-import { writeAuditLog } from '@/lib/audit-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,9 +28,7 @@ export async function DELETE(request: Request) {
   try {
     const body = await readJsonObject(request);
     const userId = normalizeUuid(stringField(body, 'userId', { required: true }) ?? '', 'userId');
-    const token = stringField(body, 'token', { required: true, max: 8192 }) ?? '';
-    const result = await revokeUserSessions({ userId, token, actor: actorLabel(admin.user), actorId: admin.user.id });
-    await writeAuditLog({ actorId: admin.user.id, action: 'logimail.session_revoke_requested', targetType: 'user', targetId: userId });
+    const result = await revokeUserSessions({ userId, actorId: admin.user.id });
     return jsonOk({ result });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('invalid_')) return jsonError('invalid_input', 'Dữ liệu không hợp lệ.', 400);

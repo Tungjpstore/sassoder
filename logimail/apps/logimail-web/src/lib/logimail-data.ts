@@ -3,6 +3,8 @@ import 'server-only';
 import type { User } from '@supabase/supabase-js';
 import { buildSafeDnsPlan } from '@/lib/logimail-store';
 import type { ShellStatusItem, StatusTone } from '@/lib/logimail-types';
+import { resolveMailboxPermission } from '@/lib/mail-permission';
+import { enforceVerifiedSessionActivity } from '@/lib/security/session-activity';
 import { createLogimailServerClient } from '@/lib/supabase-server';
 
 export type AuthStatus = 'not_configured' | 'unauthenticated' | 'unregistered' | 'pending' | 'approved' | 'rejected' | 'suspended';
@@ -13,6 +15,7 @@ export type ProfileRow = {
   full_name: string | null;
   avatar_url: string | null;
   role: string;
+  platform_role: string;
   account_status: string;
   created_at: string;
   updated_at: string;
@@ -393,11 +396,28 @@ export async function getLogimailOperationalData(): Promise<LogimailOperationalD
   const user = userResult.data.user;
   if (userResult.error || !user) return emptyData('unauthenticated');
 
+  const claimsResult = await supabase.auth.getClaims();
+  if (claimsResult.error) {
+    return emptyData('not_configured', user, null, ['session_activity_unavailable']);
+  }
+  if (!claimsResult.data) return emptyData('unauthenticated');
+
+  const activity = await enforceVerifiedSessionActivity({
+    userId: user.id,
+    sessionId: claimsResult.data.claims.session_id,
+  });
+  if (activity.status === 'idle_expired' || activity.status === 'revoked' || activity.status === 'invalid_session') {
+    return emptyData('unauthenticated');
+  }
+  if (activity.status === 'unavailable') {
+    return emptyData('not_configured', user, null, ['session_activity_unavailable']);
+  }
+
   const errors: string[] = [];
   const [profileResult, accountRequestsResult, workspacesResult] = await Promise.all([
     supabase
       .from('profiles')
-      .select('id,email,full_name,avatar_url,role,account_status,created_at,updated_at')
+      .select('id,email,full_name,avatar_url,role,platform_role,account_status,created_at,updated_at')
       .eq('id', user.id)
       .maybeSingle() as unknown as Promise<QueryResult<ProfileRow>>,
     supabase
@@ -561,7 +581,13 @@ export function findMailbox(data: LogimailOperationalData, id: string) {
 export function permissionForMailbox(data: LogimailOperationalData, mailboxId: string) {
   const currentUserId = data.auth.user?.id;
   const permission = data.mailboxPermissions.find((item) => item.mailbox_id === mailboxId && item.user_id === currentUserId);
-  return permission?.permission ?? 'member';
+  const mailbox = data.mailboxes.find((item) => item.id === mailboxId);
+  return resolveMailboxPermission({
+    mailboxEmail: mailbox?.email_address ?? '',
+    userEmail: data.auth.userEmail,
+    permission: permission?.permission,
+    fallback: 'member',
+  });
 }
 
 export function aliasesForMailbox(data: LogimailOperationalData, mailboxId: string) {

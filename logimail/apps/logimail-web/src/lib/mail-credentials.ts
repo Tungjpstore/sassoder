@@ -30,27 +30,42 @@ export {
 // Persistence
 // ---------------------------------------------------------------------------
 
-export async function saveMailboxCredentials(input: { mailboxId: string; email: string; password: string }) {
+export function prepareMailboxCredentials(input: { email: string; password: string }) {
   const readiness = mailCredentialReadiness();
-  if (!readiness.ready) return { stored: false as const, reason: 'missing_credential_encryption_key' };
-
-  const store = createLogimailServiceStore();
-  if (!store) return { stored: false as const, reason: 'missing_service_store' };
+  if (!readiness.ready) return { prepared: false as const, reason: 'missing_credential_encryption_key' };
 
   const version = activeCredentialKeyVersion();
   const encryptedUsername = encryptMailboxCredential(input.email.toLowerCase(), version);
   const encryptedPassword = encryptMailboxCredential(input.password, version);
-  const { error } = await store
+  return {
+    prepared: true as const,
+    credentialKeyVersion: version,
+    encryptedUsername,
+    encryptedPassword,
+  };
+}
+
+export async function saveMailboxCredentials(input: { mailboxId: string; email: string; password: string }) {
+  const prepared = prepareMailboxCredentials(input);
+  if (!prepared.prepared) return { stored: false as const, reason: prepared.reason };
+
+  const store = createLogimailServiceStore();
+  if (!store) return { stored: false as const, reason: 'missing_service_store' };
+
+  const { data, error } = await store
     .from('mailboxes')
     .update({
-      encrypted_imap_username: encryptedUsername,
-      encrypted_imap_password: encryptedPassword,
-      encrypted_smtp_username: encryptedUsername,
-      encrypted_smtp_password: encryptedPassword,
-      credential_key_version: version,
+      encrypted_imap_username: prepared.encryptedUsername,
+      encrypted_imap_password: prepared.encryptedPassword,
+      encrypted_smtp_username: prepared.encryptedUsername,
+      encrypted_smtp_password: prepared.encryptedPassword,
+      credential_key_version: prepared.credentialKeyVersion,
     })
-    .eq('id', input.mailboxId);
+    .eq('id', input.mailboxId)
+    .select('id')
+    .maybeSingle();
 
   if (error) throw new Error(supabaseErrorMessage(error));
+  if (!data) return { stored: false as const, reason: 'mailbox_not_found' };
   return { stored: true as const };
 }

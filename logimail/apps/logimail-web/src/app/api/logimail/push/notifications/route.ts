@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const payload = cleanNotificationPayload(body);
     const result = await sendPushToMailbox({ userId: context.auth.user.id, mailboxId: context.mailbox.id, payload });
     return jsonOk(result);
-  } catch (error) {
+  } catch {
     return jsonError('web_push_failed', 'Không gửi được thông báo mail mới.', 502);
   }
 }

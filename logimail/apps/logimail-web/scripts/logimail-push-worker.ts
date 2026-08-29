@@ -19,6 +19,17 @@ type PushTargetRow = {
   user_id: string;
 };
 
+type PermissionRow = {
+  mailbox_id: string;
+  user_id: string;
+};
+
+type ProfileRow = {
+  id: string;
+  email: string | null;
+  account_status: string;
+};
+
 type MailboxRow = {
   id: string;
   workspace_id: string;
@@ -29,6 +40,7 @@ type MailboxRow = {
   status: string;
   provider: string;
   provider_mailbox_id: string | null;
+  session_version: number;
   encrypted_imap_username: string | null;
   encrypted_imap_password: string | null;
 };
@@ -44,6 +56,7 @@ type CheckpointRow = {
   workspace_id: string;
   last_seen_uid: number;
   last_notified_uid: number;
+  metadata: Record<string, unknown> | null;
 };
 
 type Stats = {
@@ -100,6 +113,7 @@ function mailboxFromRow(row: MailboxRow, domain: DomainRow | undefined): Authori
     status: row.status,
     provider: row.provider,
     providerMailboxId: row.provider_mailbox_id,
+    sessionVersion: row.session_version,
     permission: 'admin',
     domain: domain?.domain ?? null,
     mailHostname: domain?.mail_hostname ?? null,
@@ -206,14 +220,11 @@ async function runOnce(options: WorkerOptions): Promise<Stats> {
     .range(0, 4999);
   if (subscriptionError) throw new Error(supabaseErrorMessage(subscriptionError));
 
-  const targets = groupPushTargets((subscriptionRows ?? []) as PushTargetRow[]);
-  stats.subscriptions = (subscriptionRows ?? []).length;
-  if (targets.size === 0) return stats;
-
-  const targetMailboxIds = Array.from(targets.keys());
+  const subscriptionTargets = (subscriptionRows ?? []) as PushTargetRow[];
+  const targetMailboxIds = Array.from(new Set(subscriptionTargets.map((row) => row.mailbox_id)));
   const { data: mailboxRows, error: mailboxError } = await store
     .from('mailboxes')
-    .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id,encrypted_imap_username,encrypted_imap_password')
+    .select('id,workspace_id,domain_id,email_address,display_name,quota_mb,status,provider,provider_mailbox_id,session_version,encrypted_imap_username,encrypted_imap_password')
     .in('id', targetMailboxIds)
     .eq('status', 'active');
   if (mailboxError) throw new Error(supabaseErrorMessage(mailboxError));
@@ -222,12 +233,36 @@ async function runOnce(options: WorkerOptions): Promise<Stats> {
   stats.mailboxes = mailboxes.length;
   if (mailboxes.length === 0) return stats;
 
+  const activeMailboxIds = mailboxes.map((mailbox) => mailbox.id);
+  const candidateUserIds = Array.from(new Set(subscriptionTargets.filter((row) => activeMailboxIds.includes(row.mailbox_id)).map((row) => row.user_id)));
+  const [permissionResult, profileResult] = await Promise.all([
+    store.from('mailbox_permissions').select('mailbox_id,user_id').in('mailbox_id', activeMailboxIds).in('user_id', candidateUserIds),
+    store.from('profiles').select('id,email,account_status').in('id', candidateUserIds),
+  ]);
+  if (permissionResult.error) throw new Error(supabaseErrorMessage(permissionResult.error));
+  if (profileResult.error) throw new Error(supabaseErrorMessage(profileResult.error));
+
+  const explicitPermissionKeys = new Set(((permissionResult.data ?? []) as PermissionRow[]).map((row) => `${row.mailbox_id}:${row.user_id}`));
+  const profiles = new Map(((profileResult.data ?? []) as ProfileRow[]).map((row) => [row.id, row]));
+  const mailboxById = new Map(mailboxes.map((mailbox) => [mailbox.id, mailbox]));
+  const authorizedTargets = subscriptionTargets.filter((row) => {
+    const mailbox = mailboxById.get(row.mailbox_id);
+    if (!mailbox) return false;
+    if (explicitPermissionKeys.has(`${row.mailbox_id}:${row.user_id}`)) return true;
+    const profile = profiles.get(row.user_id);
+    return profile?.account_status === 'approved' && profile.email?.trim().toLowerCase() === mailbox.email_address.toLowerCase();
+  });
+  stats.subscriptions = authorizedTargets.length;
+  stats.skipped += subscriptionTargets.length - authorizedTargets.length;
+  const targets = groupPushTargets(authorizedTargets);
+  if (targets.size === 0) return stats;
+
   const domainIds = Array.from(new Set(mailboxes.map((mailbox) => mailbox.domain_id)));
   const { data: domainRows, error: domainError } = await store.from('domains').select('id,domain,mail_hostname').in('id', domainIds);
   if (domainError) throw new Error(supabaseErrorMessage(domainError));
   const domains = new Map(((domainRows ?? []) as DomainRow[]).map((domain) => [domain.id, domain]));
 
-  const { data: checkpointRows, error: checkpointError } = await store.from('mail_push_checkpoints').select('mailbox_id,workspace_id,last_seen_uid,last_notified_uid').in('mailbox_id', mailboxes.map((mailbox) => mailbox.id));
+  const { data: checkpointRows, error: checkpointError } = await store.from('mail_push_checkpoints').select('mailbox_id,workspace_id,last_seen_uid,last_notified_uid,metadata').in('mailbox_id', mailboxes.map((mailbox) => mailbox.id));
   if (checkpointError) throw new Error(supabaseErrorMessage(checkpointError));
   const checkpoints = new Map(((checkpointRows ?? []) as CheckpointRow[]).map((checkpoint) => [checkpoint.mailbox_id, checkpoint]));
 
@@ -243,17 +278,26 @@ async function runOnce(options: WorkerOptions): Promise<Stats> {
       }
 
       const mailboxContext = mailboxFromRow(mailbox, domains.get(mailbox.domain_id));
-      const { messages } = await listMailMessages({ email: username, password }, mailboxContext, 'inbox', MESSAGE_FETCH_LIMIT);
+      const checkpointUidValidity = typeof checkpoint?.metadata?.uidValidity === 'string' ? checkpoint.metadata.uidValidity : null;
+      const initialPoll = !checkpoint || checkpoint.last_seen_uid === 0 || !checkpointUidValidity;
+      const { messages, uidValidity } = await listMailMessages(
+        { email: username, password },
+        mailboxContext,
+        'inbox',
+        MESSAGE_FETCH_LIMIT,
+        initialPoll || checkpointUidValidity === null ? {} : { afterUid: checkpoint.last_seen_uid },
+      );
       stats.checked += 1;
+      const uidChanged = Boolean(checkpointUidValidity && uidValidity && checkpointUidValidity !== uidValidity);
       const latestUid = messages.reduce((max, message) => Math.max(max, message.uid), checkpoint?.last_seen_uid ?? 0);
 
-      if (!checkpoint || checkpoint.last_seen_uid === 0) {
+      if (initialPoll || uidChanged) {
         stats.baseline += 1;
         await upsertCheckpoint({
           mailbox,
           lastSeenUid: latestUid,
           lastNotifiedUid: checkpoint?.last_notified_uid ?? 0,
-          metadata: { mode: 'baseline', messageCount: messages.length, latestUid },
+          metadata: { mode: 'baseline', messageCount: messages.length, latestUid, uidValidity },
           success: true,
           dryRun: options.dryRun,
         });
@@ -263,11 +307,13 @@ async function runOnce(options: WorkerOptions): Promise<Stats> {
       const newMessages = messages
         .filter((message) => message.uid > checkpoint.last_seen_uid)
         .sort((left, right) => left.uid - right.uid)
-        .slice(-MAX_NOTIFICATIONS_PER_MAILBOX);
+        .slice(0, MAX_NOTIFICATIONS_PER_MAILBOX);
       stats.newMessages += newMessages.length;
 
       let lastNotifiedUid = checkpoint.last_notified_uid;
+      let lastSeenUid = checkpoint.last_seen_uid;
       for (const message of newMessages) {
+        lastSeenUid = Math.max(lastSeenUid, message.uid);
         lastNotifiedUid = Math.max(lastNotifiedUid, message.uid);
         if (options.dryRun) continue;
         const userIds = Array.from(targets.get(mailbox.id) ?? []);
@@ -281,9 +327,9 @@ async function runOnce(options: WorkerOptions): Promise<Stats> {
 
       await upsertCheckpoint({
         mailbox,
-        lastSeenUid: latestUid,
+        lastSeenUid,
         lastNotifiedUid,
-        metadata: { mode: 'poll', messageCount: messages.length, newMessages: newMessages.length, latestUid },
+        metadata: { mode: 'poll', messageCount: messages.length, newMessages: newMessages.length, latestUid, uidValidity, pending: Math.max(0, messages.length - newMessages.length) },
         success: true,
         dryRun: options.dryRun,
       });

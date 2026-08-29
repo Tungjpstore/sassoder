@@ -14,7 +14,7 @@ export async function requireMailSession(request: Request, action: 'read' | 'wri
   }
 
   const mailbox = await resolveAuthorizedMailbox(auth.user, session.mailboxId);
-  if (!mailbox || !mailSessionBelongsTo(session, { userId: auth.user.id, mailboxId: mailbox.id, email: mailbox.emailAddress })) {
+  if (!mailbox || !mailSessionBelongsTo(session, { userId: auth.user.id, mailboxId: mailbox.id, sessionVersion: mailbox.sessionVersion, email: mailbox.emailAddress })) {
     return { ok: false as const, response: jsonError('mailbox_forbidden', 'Bạn không có quyền truy cập mailbox này.', 403) };
   }
 

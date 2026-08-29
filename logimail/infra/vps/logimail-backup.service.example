@@ -1,0 +1,20 @@
+[Unit]
+Description=LogiMail encrypted BillionMail backup
+Wants=network-online.target
+After=network-online.target docker.service
+ConditionPathExists=/etc/logimail/backup.env
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/logimail/backup.env
+ExecStart=/opt/logimail/current/infra/vps/backup-billionmail.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=-/var/backups/logimail /opt/logimail-backups/billionmail
+
+# The script takes an exclusive flock; a late timer invocation exits safely.

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the LogiMail BillionMail backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=logimail-backup.service
+
+[Install]
+WantedBy=timers.target

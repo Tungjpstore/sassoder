@@ -66,7 +66,7 @@ export async function DELETE(request: Request) {
       metadata: {},
     });
     return jsonOk({ subscribed: false });
-  } catch (error) {
+  } catch {
     return jsonError('push_unsubscribe_failed', 'Không tắt được thiết bị nhận thông báo.', 400);
   }
 }

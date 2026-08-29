@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createServerClient } from '@supabase/ssr';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { jsonError, jsonOk } from '@/lib/api-boundary';
 import { normalizeAuthError } from '@/lib/auth-errors';
+import { trustedClientIp } from '@/lib/client-ip';
 import { normalizeDomain, normalizeEmail, normalizeMailboxLocalPart, readJsonObject, stringField } from '@/lib/logimail-store';
-import { enforceRateLimit } from '@/lib/rate-limit';
+import { enforceIdentityRateLimit, enforceRateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,24 +19,10 @@ type CookieToSet = {
 const AUTH_LOGIN_WINDOW_MS = 60_000;
 const AUTH_LOGIN_IP_LIMIT = 10;
 const AUTH_LOGIN_EMAIL_LIMIT = 5;
+const AUTH_COOKIE_PARENT_DOMAIN = 'logivn.com';
 
 function hashForLog(value: string) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
-}
-
-function firstClientIp(request: Request) {
-  const forwarded = request.headers.get('x-forwarded-for') ?? '';
-  return forwarded.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown';
-}
-
-function serverSupabaseAuthKey() {
-  return (
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_DEFAULT_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    ''
-  );
 }
 
 function readNumberProperty(error: unknown, key: string) {
@@ -68,20 +55,57 @@ function emailFromBody(body: Record<string, unknown>) {
   return normalizeEmail(`${localPart}@${domain}`);
 }
 
-function applyCookies(response: NextResponse, cookiesToSet: CookieToSet[]) {
+function serializeCookie(cookie: CookieToSet) {
+  const scratchResponse = new NextResponse(null);
+  scratchResponse.cookies.set(cookie.name, cookie.value, cookie.options);
+  return scratchResponse.headers.get('set-cookie');
+}
+
+function applyCookies(response: NextResponse, cookiesToSet: CookieToSet[], legacyCookieNames: string[] = []) {
+  response.headers.delete('set-cookie');
+  for (const name of legacyCookieNames) {
+    response.headers.append(
+      'set-cookie',
+      `${name}=; Path=/; Max-Age=0; Domain=${AUTH_COOKIE_PARENT_DOMAIN}; Secure; SameSite=Lax`,
+    );
+  }
   for (const cookie of cookiesToSet) {
-    response.cookies.set(cookie.name, cookie.value, cookie.options);
+    const serialized = serializeCookie(cookie);
+    if (serialized) response.headers.append('set-cookie', serialized);
   }
   response.headers.set('cache-control', 'no-store');
   return response;
 }
 
-export async function POST(request: Request) {
+function legacyAuthCookieNames(request: NextRequest, supabaseUrl: string): string[] {
+  let baseName = '';
+  try {
+    const projectRef = new URL(supabaseUrl).hostname.split('.')[0] ?? '';
+    if (projectRef) baseName = `sb-${projectRef}-auth-token`;
+  } catch {
+    return [];
+  }
+  if (!baseName) return [];
+
+  const names = new Set<string>([baseName]);
+  for (const cookie of request.cookies.getAll()) {
+    const suffix = cookie.name.slice(baseName.length + 1);
+    if (cookie.name === baseName || (cookie.name.startsWith(`${baseName}.`) && /^\d+$/.test(suffix))) {
+      names.add(cookie.name);
+    }
+  }
+
+  return [...names];
+}
+
+export async function POST(request: NextRequest) {
   const ipLimited = enforceRateLimit(request, 'auth-login-ip', AUTH_LOGIN_IP_LIMIT, AUTH_LOGIN_WINDOW_MS);
   if (ipLimited) return ipLimited;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-  const key = serverSupabaseAuthKey();
+  // User sign-in uses the public anon/publishable key. Privileged keys remain
+  // reserved for admin-only server operations.
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
   if (!url || !key) {
     return jsonError(
       'not_configured',
@@ -92,8 +116,10 @@ export async function POST(request: Request) {
 
   let email = '';
   let emailHash = 'unknown';
-  const ipHash = hashForLog(firstClientIp(request));
+  const ip = trustedClientIp(request.headers);
+  const ipHash = hashForLog(ip);
   const cookiesToSet: CookieToSet[] = [];
+  const legacyCookieNames = legacyAuthCookieNames(request, url);
 
   try {
     const body = await readJsonObject(request);
@@ -101,19 +127,19 @@ export async function POST(request: Request) {
     emailHash = hashForLog(email);
     const password = stringField(body, 'password', { required: true, max: 256 }) ?? '';
 
-    const emailLimited = enforceRateLimit(request, `auth-login-email:${emailHash}`, AUTH_LOGIN_EMAIL_LIMIT, AUTH_LOGIN_WINDOW_MS);
+    const emailLimited = enforceIdentityRateLimit('auth-login-email', emailHash, AUTH_LOGIN_EMAIL_LIMIT, AUTH_LOGIN_WINDOW_MS);
     if (emailLimited) return emailLimited;
 
     const supabase = createServerClient(url, key, {
       db: { schema: 'logimail' },
       global: {
         headers: {
-          'sb-forwarded-for': firstClientIp(request),
+          'sb-forwarded-for': ip,
         },
       },
       cookies: {
         getAll() {
-          return [];
+          return request.cookies.getAll();
         },
         setAll(nextCookies) {
           cookiesToSet.push(...nextCookies);
@@ -123,10 +149,14 @@ export async function POST(request: Request) {
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    if (!data.session?.access_token) throw new Error('missing_auth_session');
+    if (!data.session?.access_token || !data.session.refresh_token) throw new Error('missing_auth_session');
 
     console.info('[logimail-auth-login] success', { emailHash, ipHash });
-    return applyCookies(jsonOk({ email: data.user?.email ?? email, accessToken: data.session.access_token }), cookiesToSet);
+    return applyCookies(jsonOk({
+      email: data.user?.email ?? email,
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+    }), cookiesToSet, legacyCookieNames);
   } catch (error) {
     const authError = normalizeAuthError(error, 'Không đăng nhập được.');
     const status = statusForAuthError(error, authError.retryAfterSeconds);
@@ -138,6 +168,6 @@ export async function POST(request: Request) {
       status,
       code: readStringProperty(error, 'code') ?? 'unknown',
     });
-    return applyCookies(response, cookiesToSet);
+    return applyCookies(response, cookiesToSet, legacyCookieNames);
   }
 }

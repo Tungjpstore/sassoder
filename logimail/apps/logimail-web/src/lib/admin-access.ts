@@ -3,16 +3,18 @@ import 'server-only';
 import { jsonError, requireAuth, type LogimailAction, type VerifiedLogimailUser } from '@/lib/api-boundary';
 import { createLogimailServiceStore, supabaseErrorMessage } from '@/lib/logimail-store';
 import {
-  ADMIN_ROLES as ADMIN_ROLE_LIST,
   ALL_ROLES,
   authorizeRole,
   isLogimailRole,
+  isPlatformRole,
   type LogimailRole,
+  type PlatformRole,
 } from '@/lib/security/rbac';
+import { enforceConsoleMfa } from '@/lib/security/session';
 
 export type { LogimailRole } from '@/lib/security/rbac';
 
-export type AdminRole = 'admin' | 'owner';
+export type AdminRole = PlatformRole;
 
 export type VerifiedAdminUser = VerifiedLogimailUser & {
   adminRole: AdminRole;
@@ -24,12 +26,18 @@ export type VerifiedRoleUser = VerifiedLogimailUser & {
   fullName: string | null;
 };
 
-const ADMIN_ROLES = new Set<AdminRole>(['admin', 'owner']);
+function configuredPlatformAdmins() {
+  return new Set(
+    (process.env.LOGIMAIL_PLATFORM_ADMIN_EMAILS ?? '')
+      .split(',')
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
 
 /**
- * Resolve whether the authenticated user holds an approved admin/owner profile
- * inside the LogiMail schema. Authority lives entirely in `logimail.profiles.role`
- * so the control panel at domain.logivn.com is independent from admin.logivn.com.
+ * Resolve whether the authenticated user holds an explicit platform role.
+ * Workspace ownership never grants access to the global control plane.
  */
 export async function resolveAdminProfile(user: VerifiedLogimailUser) {
   const store = createLogimailServiceStore();
@@ -37,23 +45,25 @@ export async function resolveAdminProfile(user: VerifiedLogimailUser) {
 
   const { data, error } = await store
     .from('profiles')
-    .select('id,email,full_name,role,account_status')
+    .select('id,email,full_name,platform_role,account_status')
     .eq('id', user.id)
     .maybeSingle();
   if (error) throw new Error(supabaseErrorMessage(error));
   if (!data) return { ok: false as const, reason: 'forbidden' as const };
 
-  const profile = data as { role?: string; account_status?: string; full_name?: string | null };
+  const profile = data as { platform_role?: string; account_status?: string; full_name?: string | null };
   if (profile.account_status !== 'approved') return { ok: false as const, reason: 'forbidden' as const };
-  if (!profile.role || !ADMIN_ROLES.has(profile.role as AdminRole)) {
+  const allowlisted = Boolean(user.email && configuredPlatformAdmins().has(user.email.toLowerCase()));
+  if (!isPlatformRole(profile.platform_role) && !allowlisted) {
     return { ok: false as const, reason: 'forbidden' as const };
   }
+  const adminRole: AdminRole = isPlatformRole(profile.platform_role) ? profile.platform_role : 'platform_admin';
 
   return {
     ok: true as const,
     user: {
       ...user,
-      adminRole: profile.role as AdminRole,
+      adminRole,
       fullName: typeof profile.full_name === 'string' ? profile.full_name : null,
     } satisfies VerifiedAdminUser,
   };
@@ -85,6 +95,13 @@ export async function requireAdmin(request: Request, action: LogimailAction = 'r
     return { ok: false as const, response: jsonError('forbidden', 'Chỉ admin/owner LogiMail mới truy cập được bảng điều khiển này.', 403) };
   }
 
+  // Rollout-safe MFA: only state-changing console actions are gated, and the
+  // default `enrolled` mode affects users who already have a verified factor.
+  if (action !== 'read') {
+    const mfa = await enforceConsoleMfa({ userId: auth.user.id, token: auth.token });
+    if (!mfa.ok) return mfa;
+  }
+
   return { ok: true as const, token: auth.token, user: resolved.user, action };
 }
 
@@ -94,7 +111,8 @@ export function actorLabel(user: VerifiedAdminUser | VerifiedRoleUser) {
 
 /**
  * Resolve the approved LogiMail role (owner/admin/member/viewer) for any user.
- * Authority lives in `logimail.profiles.role`; unapproved accounts are forbidden.
+ * This legacy profile role is not a platform-admin signal. Workspace-sensitive
+ * operations must resolve the role from workspace_members for the target object.
  */
 export async function resolveRoleProfile(user: VerifiedLogimailUser) {
   const store = createLogimailServiceStore();
@@ -169,5 +187,5 @@ export async function requireRole(
 
 /** Convenience guard: admin-console functions require owner/admin (R15.4). */
 export function requireAdminRole(request: Request, action: LogimailAction = 'read') {
-  return requireRole(request, { allow: ADMIN_ROLE_LIST, action });
+  return requireAdmin(request, action);
 }

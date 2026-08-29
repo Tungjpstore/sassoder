@@ -2,7 +2,6 @@ import type { CSSProperties } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import {
-  Bot,
   DatabaseBackup,
   Download,
   FileText,
@@ -22,13 +21,15 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { AuthLoginForm, AuthRegisterForm, ForgotPasswordForm, InviteAcceptForm, SignOutButton } from '@/components/auth-forms';
-import { ConfirmDangerModal } from '@/components/confirm-danger-modal';
+import { AccountDeleteForm } from '@/components/account-delete-form';
+import { MailboxAdminActions, SecurityAdminActions } from '@/components/admin-action-controls';
+import { LogiMailLogo } from '@/components/logimail-logo';
 import { AppShell } from '@/components/logimail-shell';
 import { MailAppShell } from '@/components/mail-app-shell';
 import { MailComposeClient, MailInboxClient, MailMessageClient } from '@/components/mail-native-client';
 import { ProfileSettingsForm } from '@/components/profile-settings-form';
 import { PwaNotificationSettings } from '@/components/pwa-notifications';
-import { AliasRequestForm, BackupRequestButton, DeliverabilityCheckButton, DomainRequestForm, MailboxRequestForm, MailLabelForm, MailRuleForm } from '@/components/request-forms';
+import { AliasRequestForm, BackupRequestButton, DeliverabilityCheckButton, DomainRequestForm, MailboxRequestForm, MailLabelForm, MailRuleForm, TeamInviteForm } from '@/components/request-forms';
 import {
   ActionCard,
   ActivityTimeline,
@@ -62,7 +63,6 @@ import {
   bounceSummary,
   dateTime,
   deliverabilityScore,
-  domainScore,
   draftsForMailbox,
   dmarcReportsForDomain,
   expectedDnsRecords,
@@ -75,7 +75,6 @@ import {
   permissionForMailbox,
   rulesForMailbox,
   shortDate,
-  slugFromDomain,
   statusLabel,
   statusTone,
   tasksForMailbox,
@@ -86,6 +85,7 @@ import {
 import type { StatusTone } from '@/lib/logimail-types';
 import type { MailFolderKey, MailUiMailbox } from '@/lib/mail-ui-types';
 import { getRegistrationDomains } from '@/lib/registration-domains';
+import { isPlatformRole } from '@/lib/security/rbac';
 
 function shellProps(data: LogimailOperationalData) {
   return {
@@ -169,8 +169,12 @@ function mailboxView(data: LogimailOperationalData, mailbox: MailboxRow) {
 }
 
 function mailUiMailboxes(data: LogimailOperationalData): MailUiMailbox[] {
+  const currentUserEmail = data.auth.userEmail?.trim().toLowerCase() ?? '';
   return data.mailboxes
     .filter((mailbox) => mailbox.status === 'active')
+    // Workspace membership does not grant mailbox access; keep only explicit grants
+    // (or the user's own mailbox, which the API also authorizes).
+    .filter((mailbox) => permissionForMailbox(data, mailbox.id) !== 'member' || mailbox.email_address.toLowerCase() === currentUserEmail)
     .map((mailbox) => ({
       id: mailbox.id,
       emailAddress: mailbox.email_address,
@@ -365,7 +369,7 @@ export async function MailboxesView() {
                 <MailboxUsageBar key="usage" quotaMb={mailbox.quota_mb} />,
                 <StatusBadge key="status" tone={statusTone(mailbox.status)}>{statusLabel(mailbox.status)}</StatusBadge>,
                 dateTime(mailbox.updated_at),
-                <span className="row-actions" key="actions"><Link href="/mail/inbox">Mở hộp thư</Link><Link href={`/mailboxes/${mailbox.id}`}>Chi tiết</Link></span>,
+                <span className="row-actions" key="actions"><a href="/mail/inbox">Mở hộp thư</a><Link href={`/mailboxes/${mailbox.id}`}>Chi tiết</Link></span>,
               ];
             })}
           />
@@ -445,13 +449,11 @@ export async function MailboxDetailView({ id }: Readonly<{ id: string }>) {
         <Panel title="Draft metadata"><DataTable columns={['Cập nhật', 'Người nhận', 'Tiêu đề', 'Preview', 'File']} rows={drafts.map((draft) => [dateTime(draft.updated_at), draft.to_email ?? '-', draft.subject ?? '-', draft.body_preview ?? '-', String(draft.attachment_count)])} /></Panel>
         <Panel title="Team tasks"><DataTable columns={['Tạo lúc', 'Subject', 'Khách', 'Ưu tiên', 'Trạng thái']} rows={tasks.map((task) => [dateTime(task.created_at), task.subject ?? '-', task.customer_email ?? '-', task.priority, <StatusBadge key="status" tone={statusTone(task.status)}>{statusLabel(task.status)}</StatusBadge>])} /></Panel>
       </section>
-      <Panel title="Danger zone" description="Hành động nhạy cảm cần backend riêng và xác nhận rủi ro.">
-        <div className="danger-zone-actions">
-          <ConfirmDangerModal triggerLabel="Reset mật khẩu" title="Reset mailbox password?" confirmText="CONFIRM" actionLabel="Đã hiểu"><p>Mật khẩu mới phải được sinh server-side và hiển thị một lần.</p></ConfirmDangerModal>
-          <ConfirmDangerModal triggerLabel="Tạm khóa" title="Lock mailbox?" confirmText="LOCK MAILBOX" actionLabel="Đã hiểu"><p>{mailbox.email_address} sẽ cần route backend có audit trước khi khóa thật.</p></ConfirmDangerModal>
-          <ConfirmDangerModal triggerLabel="Xóa mailbox" title="Delete mailbox?" confirmText="DELETE MAILBOX" actionLabel="Đã hiểu"><p>Cần backup và xác nhận admin trước khi xóa mailbox thật.</p></ConfirmDangerModal>
-        </div>
-      </Panel>
+      {isPlatformRole(data.auth.profile?.platform_role) ? (
+        <Panel title="Danger zone" description="Khóa/mở khóa gọi API quản trị thật. Reset và xóa vẫn bị vô hiệu hóa tới khi có workflow server-side an toàn.">
+          <MailboxAdminActions mailboxId={mailbox.id} email={mailbox.email_address} status={mailbox.status} />
+        </Panel>
+      ) : null}
     </AppShell>
   );
 }
@@ -670,7 +672,7 @@ export async function BackupsView() {
       <section className="dashboard-grid compact"><Panel title="Backup source"><CopyableRecordRow label="Schema" value="logimail" /><CopyableRecordRow label="Workspace" value={data.activeWorkspace?.id ?? 'N/A'} /><CopyableRecordRow label="Target" value={process.env.BACKUP_STORAGE_ADAPTER ?? 'not_configured'} /></Panel><Panel title="Runbook"><p className="muted-copy">Dùng `logimail/infra/mailops-agent/backup.sh` hoặc systemd job trên VPS sau khi xác nhận env.</p></Panel></section>
       <Panel title="Backup jobs"><DataTable columns={['Created', 'Scope', 'Status', 'Started', 'Completed', 'Artifact', 'Error']} rows={data.backupJobs.map((job) => [dateTime(job.created_at), job.scope, <StatusBadge key="status" tone={statusTone(job.status)}>{statusLabel(job.status)}</StatusBadge>, dateTime(job.started_at), dateTime(job.completed_at), job.artifact_uri ?? '-', job.error_message ?? '-'])} /></Panel>
       <SafetyNotice>Restore thật cần xác nhận thủ công trên VPS. Không chạy restore production từ browser.</SafetyNotice>
-      <div className="card-actions"><ConfirmDangerModal triggerLabel="Run backup now" title="Run backup now?" confirmText="RUN BACKUP" actionLabel="Đã hiểu"><ul><li>BillionMail config</li><li>Mailbox data</li><li>PostgreSQL metadata</li><li>DNS export</li></ul></ConfirmDangerModal><ButtonLike icon={Play}>Restore dry-run</ButtonLike><ButtonLike icon={Download}>Download report</ButtonLike></div>
+      <div className="card-actions"><ButtonLike icon={Play} disabled>Restore dry-run chưa có API</ButtonLike><ButtonLike icon={Download} disabled>Download report chưa kết nối</ButtonLike></div>
     </AppShell>
   );
 }
@@ -683,7 +685,7 @@ export async function AgentControlView() {
       <PageHeader eyebrow="Agent Control" title="AI MailOps Agent" description="Chỉ hiển thị policy vận hành; action thật cần audit và quyền riêng." />
       <section className="dashboard-grid compact"><Panel title="Agent status"><SecurityChecklist items={[{ label: 'Policy mode', status: 'confirm-first', tone: 'warning' }, { label: 'Workspace', status: data.activeWorkspace?.slug ?? 'N/A', tone: 'info' }, { label: 'Pending approvals', status: String(pendingTotal(data)), tone: pendingTotal(data) ? 'warning' : 'success' }]} /></Panel><Panel title="Last audit"><p>{data.auditLogs[0]?.action ?? 'Chưa có audit log.'}</p><ButtonLink href="/ops/logs">View policy logs</ButtonLink></Panel></section>
       <Panel title="Policy"><div className="three-policy"><AgentPolicyCard title="Allowed" items={['Read metadata', 'Generate report', 'Create approval request']} tone="success" /><AgentPolicyCard title="Requires confirmation" items={['DNS mutation', 'Mailbox lock/reset', 'Backup/restore']} tone="warning" /><AgentPolicyCard title="Denied" items={['Expose secret', 'Delete DNS zone', 'Bypass admin approval']} tone="danger" /></div></Panel>
-      <div className="card-actions"><ButtonLike icon={FileText}>Run daily report</ButtonLike><ButtonLink href="/ops/logs">View policy</ButtonLink><ConfirmDangerModal triggerLabel="Disable agent" title="Disable MailOps agent?" confirmText="DISABLE AGENT" actionLabel="Đã hiểu"><p>Tắt agent thật phải chạy server-side trên VPS hoặc queue worker.</p></ConfirmDangerModal></div>
+      <div className="card-actions"><ButtonLike icon={FileText} disabled>Daily report chưa kết nối</ButtonLike><ButtonLink href="/ops/logs">View policy</ButtonLink><ButtonLike tone="danger" disabled>Tắt agent chưa có API</ButtonLike></div>
     </AppShell>
   );
 }
@@ -715,10 +717,15 @@ export async function TeamView() {
 export async function InviteMemberView() {
   const { data, gate } = await loadApprovedData();
   if (gate) return gate;
+  const activeMailboxes = data.mailboxes
+    .filter((mailbox) => mailbox.workspace_id === data.activeWorkspace?.id && mailbox.status === 'active')
+    .map((mailbox) => ({ id: mailbox.id, emailAddress: mailbox.email_address }));
   return (
     <AppShell {...shellProps(data)}>
-      <PageHeader eyebrow="Team" title="Invite member" description="Invite thật cần backend route riêng để tạo user/invite token." />
-      <Panel title="Invite form"><form className="stack-form"><FormField label="Email"><input type="email" /></FormField><FormField label="Role"><select defaultValue="member"><option>owner</option><option>admin</option><option>member</option><option>viewer</option></select></FormField><FormField label="Mailbox access"><select>{data.mailboxes.map((mailbox) => <option key={mailbox.id}>{mailbox.email_address}</option>)}</select></FormField><ButtonLike type="submit" tone="primary" icon={UserPlus}>Send invite</ButtonLike></form></Panel>
+      <PageHeader eyebrow="Team" title="Mời thành viên" description="Lời mời tạo mã một lần, gắn với mailbox danh tính và không tự gửi email." />
+      <Panel title="Lời mời bảo mật">
+        {data.activeWorkspace ? <TeamInviteForm workspaceId={data.activeWorkspace.id} mailboxes={activeMailboxes} /> : <SafetyNotice>Chưa có workspace hoạt động để tạo lời mời.</SafetyNotice>}
+      </Panel>
     </AppShell>
   );
 }
@@ -755,11 +762,17 @@ function SettingsForm({ title, fields, data }: Readonly<{ title: string; fields:
 export async function SecuritySettingsView() {
   const { data, gate } = await loadApprovedData();
   if (gate) return gate;
+  const platformAdmin = isPlatformRole(data.auth.profile?.platform_role);
   return (
     <AppShell {...shellProps(data)}>
       <PageHeader eyebrow="Settings" title="Security" description="Trạng thái auth/RLS và session hiện tại." />
       <section className="dashboard-grid compact"><Panel title="Security checklist"><SecurityChecklist items={[{ label: 'Supabase user', status: data.auth.user?.id ? 'Verified' : 'Missing', tone: data.auth.user?.id ? 'success' : 'danger' }, { label: 'LogiMail profile', status: statusLabel(data.auth.profile?.account_status), tone: statusTone(data.auth.profile?.account_status) }, { label: 'Workspace member', status: data.activeWorkspace ? 'Yes' : 'No', tone: data.activeWorkspace ? 'success' : 'warning' }, { label: 'RLS errors', status: String(data.errors.length), tone: data.errors.length ? 'warning' : 'success' }]} /></Panel><Panel title="Current session"><DataTable columns={['Field', 'Value']} rows={[['Email', data.auth.userEmail ?? '-'], ['User ID', data.auth.user?.id ?? '-'], ['Workspace', data.activeWorkspace?.name ?? '-']]} /></Panel></section>
-      <Panel title="Danger zone"><div className="danger-zone-actions"><ConfirmDangerModal triggerLabel="Rotate secrets" title="Rotate API secrets?" confirmText="ROTATE SECRETS" actionLabel="Đã hiểu"><p>Secret rotation thật phải chạy server-side và không in giá trị ra UI.</p></ConfirmDangerModal><ConfirmDangerModal triggerLabel="Revoke sessions" title="Revoke active sessions?" confirmText="REVOKE" actionLabel="Đã hiểu"><p>User sẽ cần đăng nhập lại sau khi Auth session bị revoke.</p></ConfirmDangerModal></div></Panel>
+      <Panel title="Danger zone" description="Các tác vụ bên dưới gọi API server-side có audit và kiểm tra MFA.">
+        {platformAdmin && data.auth.user ? <SecurityAdminActions userId={data.auth.user.id} /> : <SafetyNotice>Chỉ platform admin mới được xoay khóa credential hoặc thu hồi phiên.</SafetyNotice>}
+      </Panel>
+      <Panel title="Xóa tài khoản" description="Xóa tài khoản là thao tác không thể hoàn tác. LogiMail yêu cầu xác thực lại và MFA (nếu tài khoản đã bật) trước khi chạy.">
+        <AccountDeleteForm />
+      </Panel>
     </AppShell>
   );
 }
@@ -785,23 +798,58 @@ export async function NotificationsView() {
 export async function OnboardingView() {
   const { data, gate } = await loadApprovedData();
   if (gate) return gate;
+  const firstDomain = data.domains[0];
+  const dnsReady = firstDomain
+    ? [firstDomain.mx_status, firstDomain.spf_status, firstDomain.dkim_status, firstDomain.dmarc_status, firstDomain.ptr_status].every((status) => status === 'pass')
+    : false;
   const steps = [
-    { title: 'Workspace', description: data.activeWorkspace?.name ?? 'Chưa có workspace', status: data.activeWorkspace ? 'Hoàn tất' : 'Thiếu', tone: data.activeWorkspace ? 'success' : 'warning' as StatusTone },
-    { title: 'Domain', description: `${data.domains.length} domain`, status: data.domains.length ? 'Có dữ liệu' : 'Thiếu', tone: data.domains.length ? 'success' : 'warning' as StatusTone },
-    { title: 'Mailbox', description: `${data.mailboxes.length} mailbox`, status: data.mailboxes.length ? 'Có dữ liệu' : 'Thiếu', tone: data.mailboxes.length ? 'success' : 'warning' as StatusTone },
-    { title: 'Audit', description: `${data.auditLogs.length} audit logs`, status: data.auditLogs.length ? 'Có dữ liệu' : 'Chờ phát sinh', tone: data.auditLogs.length ? 'success' : 'info' as StatusTone },
+    { title: 'Workspace', description: data.activeWorkspace?.name ?? 'Chưa có workspace', status: data.activeWorkspace ? 'Hoàn tất' : 'Thiếu', tone: data.activeWorkspace ? 'success' : 'warning' as StatusTone, href: '/dashboard', action: 'Mở dashboard' },
+    { title: 'Domain', description: firstDomain ? `${data.domains.length} domain đã kết nối` : 'Thêm domain gửi và nhận mail', status: firstDomain ? 'Có dữ liệu' : 'Cần thiết lập', tone: firstDomain ? 'success' : 'warning' as StatusTone, href: firstDomain ? '/domains' : '/domains/new', action: firstDomain ? 'Quản lý domain' : 'Thêm domain' },
+    { title: 'DNS', description: firstDomain ? `Xác thực MX, SPF, DKIM và DMARC cho ${firstDomain.domain}` : 'Cần domain trước khi cấu hình DNS', status: dnsReady ? 'Sẵn sàng' : 'Cần kiểm tra', tone: dnsReady ? 'success' : 'warning' as StatusTone, href: firstDomain ? `/domains/${firstDomain.id}/dns` : '/domains/new', action: firstDomain ? 'Cấu hình DNS' : 'Thêm domain trước' },
+    { title: 'Mailbox', description: data.mailboxes.length ? `${data.mailboxes.length} mailbox đã cấp` : 'Tạo mailbox đầu tiên trên domain đã duyệt', status: data.mailboxes.length ? 'Sẵn sàng' : 'Cần thiết lập', tone: data.mailboxes.length ? 'success' : 'warning' as StatusTone, href: data.mailboxes.length ? '/mail/inbox' : '/mailboxes/new', action: data.mailboxes.length ? 'Mở hộp thư' : 'Tạo mailbox' },
   ];
-  return <AppShell {...shellProps(data)}><PageHeader eyebrow="Onboarding" title="Thiết lập LogiMail" description="Stepper dựng từ trạng thái thật của workspace hiện tại." /><section className="onboarding-steps">{steps.map((step, index) => <article className={`onboarding-step ${step.tone}`} key={step.title}><span>{index + 1}</span><div><h2>{step.title}</h2><p>{step.description}</p></div><StatusBadge tone={step.tone}>{step.status}</StatusBadge></article>)}</section></AppShell>;
+  return <AppShell {...shellProps(data)}><PageHeader eyebrow="Onboarding" title="Thiết lập LogiMail" description="Mỗi bước phản ánh dữ liệu thật và dẫn thẳng tới màn hình cần thao tác." /><section className="onboarding-steps">{steps.map((step, index) => <article className={`onboarding-step ${step.tone}`} key={step.title}><span>{index + 1}</span><div><h2>{step.title}</h2><p>{step.description}</p></div><div className="card-actions"><StatusBadge tone={step.tone}>{step.status}</StatusBadge><ButtonLink href={step.href} tone="secondary">{step.action}</ButtonLink></div></article>)}</section></AppShell>;
 }
 
 export async function AuthLoginView() {
   const domains = await getRegistrationDomains();
 
   return (
-    <main className="auth-shell">
+    <main className="auth-shell split">
+      <section className="auth-brand-panel" aria-label="LogiMail Internal MailOps Platform">
+        <div className="auth-brand-top">
+          <LogiMailLogo subtitle="Internal MailOps Platform" />
+          <div className="auth-brand-copy">
+            <h1>Email nội bộ,<br />vận hành như hạ tầng.</h1>
+            <p>Truy cập hộp thư được gán và các tác vụ MailOps đúng theo quyền đã phê duyệt.</p>
+          </div>
+        </div>
+        <div className="auth-assurance-list">
+          <article>
+            <span className="auth-assurance-icon"><MailCheck size={17} aria-hidden="true" /></span>
+            <div><strong>Enterprise deliverability</strong><p>Quản trị luồng gửi, xác thực domain và uy tín inbox trong một không gian.</p></div>
+          </article>
+          <article>
+            <span className="auth-assurance-icon"><ShieldCheck size={17} aria-hidden="true" /></span>
+            <div><strong>Zero-trust access</strong><p>Mỗi phiên mail gắn với mailbox, workspace và quyền truy cập đã duyệt.</p></div>
+          </article>
+        </div>
+        <div className="auth-platform-status" aria-label="Năng lực nền tảng">
+          <span><i className="online" /> IMAP / SMTP</span>
+          <span><i className="protected" /> Supabase RLS</span>
+          <span><i className="ready" /> Audit ready</span>
+        </div>
+      </section>
       <section className="auth-panel">
-        <h2>Đăng nhập LogiMail</h2>
+        <div className="auth-panel-heading">
+          <span className="auth-secure-mark"><ShieldCheck size={18} aria-hidden="true" /></span>
+          <div>
+            <h2>Chào mừng trở lại</h2>
+            <p>Đăng nhập bằng email LogiMail đã được cấp.</p>
+          </div>
+        </div>
         <AuthLoginForm domains={domains} />
+        <p className="auth-support-copy">Cần quyền truy cập? Liên hệ quản trị viên LogiVN.</p>
       </section>
     </main>
   );

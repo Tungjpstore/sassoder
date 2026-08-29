@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "push-worker": "tsx scripts/logimail-push-worker.ts",
     "push-worker:once": "tsx scripts/logimail-push-worker.ts --once"
@@ -17,11 +17,11 @@
     "@types/mailparser": "^3.4.6",
     "@types/nodemailer": "^8.0.1",
     "@types/web-push": "^3.6.4",
-    "imapflow": "^1.4.0",
+    "imapflow": "^1.4.8",
     "lucide-react": "latest",
-    "mailparser": "^3.9.9",
-    "next": "^16.3.0-canary.46",
-    "nodemailer": "^8.0.11",
+    "mailparser": "^3.9.14",
+    "next": "16.3.0-canary.93",
+    "nodemailer": "^9.0.3",
     "postcss": "^8.5.10",
     "react": "latest",
     "react-dom": "latest",
@@ -32,6 +32,8 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.0-canary.93",
     "tsx": "^4.22.4",
     "typescript": "latest"
   }

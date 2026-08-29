@@ -1,0 +1,9 @@
+
+Oops! Something went wrong! :(
+
+ESLint: 9.39.4
+
+No files matching the pattern "components/landing-v3" were found.
+Please check for typing mistakes in the pattern.
+
+EXIT:2

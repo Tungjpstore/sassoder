@@ -1,0 +1,382 @@
+.shell {
+  --auth-ink: #17201d;
+  --auth-brand: #064e3b;
+  --auth-brand-deep: #022c22;
+  --auth-accent: #f59e0b;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(22rem, 0.88fr) minmax(30rem, 1.12fr);
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(6, 78, 59, 0.035) 1px, transparent 1px),
+    linear-gradient(rgba(6, 78, 59, 0.035) 1px, transparent 1px),
+    var(--color-bg);
+  background-size: 32px 32px;
+  color: var(--auth-ink);
+}
+
+.brand {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: clamp(2.5rem, 7vh, 5.5rem);
+  overflow: hidden;
+  padding: clamp(2rem, 4.5vw, 4.5rem);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    linear-gradient(160deg, var(--auth-brand) 0%, var(--auth-brand-deep) 100%);
+  color: #ffffff;
+}
+
+.brand::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.32;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.09) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
+
+.brand > * {
+  position: relative;
+  z-index: 1;
+}
+
+.logo :global(.logimail-logo-wordmark span:first-child) {
+  color: #ffffff;
+}
+
+.logo :global(.logimail-logo-wordmark span:last-child) {
+  color: #fbbf24;
+}
+
+.logo :global(.logimail-logo-subtitle) {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.logo :global(.logimail-logo-mark) {
+  --color-bg: #f5f4f8;
+}
+
+.brandCopy {
+  align-self: center;
+  max-width: 36rem;
+  animation: brand-enter 420ms ease-out both;
+}
+
+.eyebrow,
+.panelEyebrow {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.eyebrow {
+  color: #fbbf24;
+}
+
+.brandCopy h1 {
+  max-width: 12ch;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 3.25rem;
+  font-weight: 820;
+  line-height: 1.02;
+  letter-spacing: 0;
+}
+
+.brandCopy > p:last-child {
+  max-width: 34rem;
+  margin: 1.25rem 0 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+.assuranceList {
+  align-self: end;
+  display: grid;
+  gap: 0.75rem;
+  max-width: 36rem;
+  animation: brand-enter 480ms 80ms ease-out both;
+}
+
+.assuranceItem {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.25rem 0 0.25rem 0.875rem;
+}
+
+.assuranceIcon {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #a7f3d0;
+}
+
+.assuranceItem strong,
+.assuranceItem span {
+  display: block;
+}
+
+.assuranceItem strong {
+  font-size: 0.8125rem;
+}
+
+.assuranceItem span {
+  margin-top: 0.2rem;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.platformStatus {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.13);
+  padding-top: 1rem;
+  color: rgba(255, 255, 255, 0.62);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.platformStatus span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.platformStatus i {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #6ee7b7;
+  box-shadow: 0 0 0 3px rgba(110, 231, 183, 0.12);
+}
+
+.platformStatus span:nth-child(2) i {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.12);
+}
+
+.platformStatus span:nth-child(3) i {
+  background: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.12);
+}
+
+.formSide {
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  padding: clamp(1.5rem, 5vw, 4.5rem);
+}
+
+.surface {
+  width: min(100%, 31rem);
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 70px rgba(23, 32, 29, 0.12);
+  padding: clamp(1.4rem, 4vw, 2.4rem);
+  animation: surface-enter 360ms 60ms ease-out both;
+}
+
+.surfaceWide {
+  width: min(100%, 40rem);
+}
+
+.panelHeader {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr);
+  gap: 0.875rem;
+  align-items: start;
+  margin-bottom: 1.5rem;
+}
+
+.panelIcon {
+  width: 2.75rem;
+  height: 2.75rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.panelEyebrow {
+  color: var(--color-primary);
+}
+
+.panelHeader h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.panelHeader p:last-child {
+  margin: 0.4rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.panelFooter {
+  margin: 1.25rem 0 0;
+  border-top: 1px solid var(--color-border);
+  padding-top: 1rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.unavailable {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  border: 1px solid rgba(60, 110, 143, 0.22);
+  border-radius: 8px;
+  background: var(--color-info-soft);
+  color: var(--color-info);
+  padding: 0.875rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.unavailable p {
+  margin: 0;
+}
+
+.loading {
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+  min-height: 11rem;
+  align-content: center;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  font-weight: 750;
+  text-align: center;
+}
+
+.loading svg {
+  color: var(--color-primary);
+  animation: loading-spin 850ms linear infinite;
+}
+
+@keyframes brand-enter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes surface-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 980px) {
+  .shell {
+    grid-template-columns: minmax(18rem, 0.72fr) minmax(28rem, 1.28fr);
+  }
+
+  .brandCopy h1 {
+    font-size: 2.6rem;
+  }
+
+  .assuranceItem span {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    min-height: 100svh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    overflow: auto;
+  }
+
+  .brand {
+    min-height: 12rem;
+    grid-template-rows: auto 1fr;
+    gap: 1.5rem;
+    padding: 1.25rem;
+  }
+
+  .brandCopy {
+    align-self: end;
+  }
+
+  .brandCopy h1 {
+    max-width: 16ch;
+    font-size: 2rem;
+  }
+
+  .brandCopy > p:last-child,
+  .assuranceList,
+  .platformStatus {
+    display: none;
+  }
+
+  .formSide {
+    place-items: start center;
+    padding: 1rem;
+  }
+
+  .surface,
+  .surfaceWide {
+    width: min(100%, 34rem);
+    padding: 1.25rem;
+  }
+}
+
+@media (max-width: 440px) {
+  .brand {
+    min-height: 10.5rem;
+  }
+
+  .brandCopy h1 {
+    font-size: 1.65rem;
+  }
+
+  .panelHeader {
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .panelIcon {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .panelHeader h2 {
+    font-size: 1.3rem;
+  }
+}

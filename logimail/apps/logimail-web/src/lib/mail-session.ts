@@ -5,13 +5,14 @@ import { cookies } from 'next/headers';
 
 export const MAIL_SESSION_COOKIE = 'logimail_mail_session';
 
-const MAIL_SESSION_VERSION = 1;
+const MAIL_SESSION_VERSION = 2;
 const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000;
 
 export type MailSession = {
   v: typeof MAIL_SESSION_VERSION;
   userId: string;
   mailboxId: string;
+  sessionVersion: number;
   email: string;
   password: string;
   issuedAt: number;
@@ -42,19 +43,21 @@ function isMailSession(value: unknown): value is MailSession {
   return payload.v === MAIL_SESSION_VERSION &&
     typeof payload.userId === 'string' &&
     typeof payload.mailboxId === 'string' &&
+    typeof payload.sessionVersion === 'number' &&
     typeof payload.email === 'string' &&
     typeof payload.password === 'string' &&
     typeof payload.issuedAt === 'number' &&
     typeof payload.expiresAt === 'number';
 }
 
-export function createMailSession(input: { userId: string; mailboxId: string; email: string; password: string; ttlMs?: number }): MailSession {
+export function createMailSession(input: { userId: string; mailboxId: string; sessionVersion: number; email: string; password: string; ttlMs?: number }): MailSession {
   const now = Date.now();
   const ttlMs = Math.min(24 * 60 * 60 * 1000, Math.max(15 * 60 * 1000, input.ttlMs ?? DEFAULT_TTL_MS));
   return {
     v: MAIL_SESSION_VERSION,
     userId: input.userId,
     mailboxId: input.mailboxId,
+    sessionVersion: input.sessionVersion,
     email: input.email.toLowerCase(),
     password: input.password,
     issuedAt: now,
@@ -119,9 +122,10 @@ export function emptyMailSessionCookieOptions() {
   };
 }
 
-export function mailSessionBelongsTo(session: MailSession, input: { userId: string; mailboxId?: string; email?: string }) {
+export function mailSessionBelongsTo(session: MailSession, input: { userId: string; mailboxId?: string; sessionVersion?: number; email?: string }) {
   if (!safeEqualText(session.userId, input.userId)) return false;
   if (input.mailboxId && !safeEqualText(session.mailboxId, input.mailboxId)) return false;
+  if (input.sessionVersion !== undefined && session.sessionVersion !== input.sessionVersion) return false;
   if (input.email && !safeEqualText(session.email, input.email.toLowerCase())) return false;
   return true;
 }

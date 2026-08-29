@@ -15,10 +15,11 @@ import {
 // Alerting_Service + SLA_Tracker (Requirement 11): raise bounce-rate and
 // SLA-breach alerts, and record request resolution time.
 
-const REQUEST_TABLES: Record<RequestType, string> = {
-  account: 'account_requests',
-  domain: 'domain_requests',
-  mailbox: 'mailbox_requests',
+const REQUEST_SOURCES: Record<RequestType, { table: string; select: string }> = {
+  // Account requests are platform-scoped and do not have workspace_id.
+  account: { table: 'account_requests', select: 'id,created_at' },
+  domain: { table: 'domain_requests', select: 'id,workspace_id,created_at' },
+  mailbox: { table: 'mailbox_requests', select: 'id,workspace_id,created_at' },
 };
 
 function store() {
@@ -27,7 +28,13 @@ function store() {
   return client;
 }
 
-async function raiseAlert(input: { workspaceId?: string | null; kind: 'bounce_rate' | 'sla_breach'; severity: 'info' | 'warning' | 'critical'; message: string; metadata?: Record<string, unknown> }) {
+export async function raiseOperationalAlert(input: {
+  workspaceId?: string | null;
+  kind: 'bounce_rate' | 'sla_breach' | 'anti_abuse' | 'dns' | 'deliverability';
+  severity: 'info' | 'warning' | 'critical';
+  message: string;
+  metadata?: Record<string, unknown>;
+}) {
   const db = store();
   const { error } = await db.from('alerts').insert({
     workspace_id: input.workspaceId ?? null,
@@ -57,7 +64,7 @@ export async function scanBounceRate(): Promise<{ rate: number; breached: boolea
   const breached = isBounceRateBreached(hardBounces, sent);
 
   if (breached) {
-    await raiseAlert({
+    await raiseOperationalAlert({
       kind: 'bounce_rate',
       severity: 'critical',
       message: `Tỉ lệ hard-bounce 24h là ${(rate * 100).toFixed(1)}% (> ${(BOUNCE_RATE_THRESHOLD * 100).toFixed(0)}%).`,
@@ -74,18 +81,19 @@ export async function scanPendingSla(): Promise<{ breaches: Array<{ type: Reques
   const now = Date.now();
   const breaches: Array<{ type: RequestType; id: string }> = [];
 
-  for (const type of Object.keys(REQUEST_TABLES) as RequestType[]) {
+  for (const type of Object.keys(REQUEST_SOURCES) as RequestType[]) {
+    const source = REQUEST_SOURCES[type];
     const { data, error } = await db
-      .from(REQUEST_TABLES[type])
-      .select('id,workspace_id,created_at')
+      .from(source.table)
+      .select(source.select)
       .eq('status', 'pending')
       .limit(500);
     if (error) throw new Error(supabaseErrorMessage(error));
 
-    for (const row of (data ?? []) as Array<{ id: string; workspace_id?: string | null; created_at: string }>) {
+    for (const row of (data ?? []) as unknown as Array<{ id: string; workspace_id?: string | null; created_at: string }>) {
       if (isPendingOverdue(row.created_at, type, now)) {
         breaches.push({ type, id: row.id });
-        await raiseAlert({
+        await raiseOperationalAlert({
           workspaceId: row.workspace_id ?? null,
           kind: 'sla_breach',
           severity: 'warning',

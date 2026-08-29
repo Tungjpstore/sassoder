@@ -3,7 +3,6 @@ import {
   Bot,
   DatabaseBackup,
   Globe2,
-  Inbox,
   LockKeyhole,
   Mail,
   MailCheck,

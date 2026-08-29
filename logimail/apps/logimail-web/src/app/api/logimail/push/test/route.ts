@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     });
 
     return jsonOk(result);
-  } catch (error) {
+  } catch {
     return jsonError('web_push_failed', 'Không gửi được Web Push thử.', 502);
   }
 }

@@ -1,11 +1,12 @@
 import { jsonError, jsonOk } from '@/lib/api-boundary';
 import { requireMailSession } from '@/lib/mail-api';
-import { listMailMessages, type MailFolderKey } from '@/lib/mail-client';
+import { listMailMessages, type MailFolderKey, type MailListFilter } from '@/lib/mail-client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const allowedFolders = new Set(['inbox', 'sent', 'drafts', 'spam', 'trash', 'archive']);
+const allowedFilters = new Set<MailListFilter>(['all', 'unread', 'starred']);
 
 function folderFromUrl(request: Request): MailFolderKey {
   const folder = new URL(request.url).searchParams.get('folder') ?? 'inbox';
@@ -22,9 +23,12 @@ export async function GET(request: Request) {
     const limitRaw = Number(url.searchParams.get('limit') ?? 40);
     const pageRaw = Number(url.searchParams.get('page') ?? 0);
     const query = url.searchParams.get('q')?.trim() || undefined;
+    const filterRaw = url.searchParams.get('filter') ?? 'all';
+    if (!allowedFilters.has(filterRaw as MailListFilter)) return jsonError('invalid_filter', 'Bộ lọc email không hợp lệ.', 400);
     const result = await listMailMessages(context.session, context.mailbox, folder, Number.isFinite(limitRaw) ? limitRaw : 40, {
       page: Number.isFinite(pageRaw) ? pageRaw : 0,
       query,
+      filter: filterRaw as MailListFilter,
     });
     return jsonOk({ mailbox: context.mailbox, ...result });
   } catch (error) {

@@ -18,7 +18,29 @@ if [ -z "${LOGIMAIL_CRON_KEY:-}" ]; then
   exit 2
 fi
 
-curl -fsS --retry 2 --retry-delay 5 --max-time 120 \
+response_file="$(mktemp)"
+trap 'rm -f "${response_file}"' EXIT
+
+set +e
+http_status=$(curl -sS --retry 2 --retry-delay 5 --max-time 120 \
+  -o "${response_file}" \
+  -w '%{http_code}' \
   -H "x-logimail-cron-key: ${LOGIMAIL_CRON_KEY}" \
-  "${BASE_URL%/}${PATHNAME}"
-printf '\n[%s] OK %s\n' "$LABEL" "$(date -Is)"
+  "${BASE_URL%/}${PATHNAME}")
+curl_status=$?
+set -e
+
+if [ "${curl_status}" -ne 0 ]; then
+  printf '[%s] FAILED curl=%s HTTP=%s %s\n' "$LABEL" "${curl_status}" "${http_status:-unknown}" "$(date -Is)" >&2
+  sed -n '1,40p' "${response_file}" >&2
+  exit 1
+fi
+
+if [ "${http_status}" -lt 200 ] || [ "${http_status}" -ge 300 ]; then
+  printf '[%s] FAILED HTTP %s %s\n' "$LABEL" "${http_status}" "$(date -Is)" >&2
+  sed -n '1,40p' "${response_file}" >&2
+  exit 1
+fi
+
+cat "${response_file}"
+printf '\n[%s] OK HTTP %s %s\n' "$LABEL" "${http_status}" "$(date -Is)"

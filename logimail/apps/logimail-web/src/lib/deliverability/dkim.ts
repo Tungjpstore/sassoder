@@ -16,6 +16,7 @@ import {
   dkimTxtContent,
   dkimTxtName,
 } from '@/lib/deliverability/dkim-format';
+import { inspectDkimPublicKey } from '@/lib/ops/dns-policy';
 
 // DKIM_Manager (Requirement 1, 14): CRUD selectors, obtain/generate key pairs,
 // rotate while keeping the retired selector resolvable for 7 days. Private keys
@@ -146,6 +147,9 @@ export async function createDkimSelector(input: CreateSelectorInput): Promise<{ 
   if (keySource === 'billionmail') {
     if (!input.billionmailPublicKey) throw new Error('missing_billionmail_public_key');
     publicKeyBase64 = input.billionmailPublicKey.replace(/\s+/g, '');
+    const inspection = inspectDkimPublicKey(publicKeyBase64);
+    if (!inspection.valid) throw new Error('invalid_dkim_public_key');
+    if ((inspection.bits ?? 0) < 2048) throw new Error('weak_dkim_public_key');
   } else {
     const pair = generateRsaKeyPair();
     publicKeyBase64 = pair.publicKeyBase64;
@@ -273,5 +277,7 @@ export function dkimError(error: unknown) {
   if (message === 'dkim_selector_conflict') return { status: 409, text: 'Selector đã tồn tại cho domain này.' };
   if (message === 'invalid_selector') return { status: 400, text: 'Selector không hợp lệ (1–63 ký tự, a-z0-9-).' };
   if (message === 'missing_billionmail_public_key') return { status: 400, text: 'Thiếu public key do BillionMail quản lý.' };
+  if (message === 'invalid_dkim_public_key') return { status: 400, text: 'DKIM public key không hợp lệ hoặc không phải RSA.' };
+  if (message === 'weak_dkim_public_key') return { status: 400, text: 'DKIM RSA key phải có tối thiểu 2048 bit.' };
   return { status: 502, text: message };
 }
