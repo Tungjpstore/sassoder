@@ -49,14 +49,14 @@ Last updated: 2026-07-22
 ## Current Snapshot
 
 - Local SQL migration files: 141
-- Tracked migration files: 138
-- Git-untracked migration files: 3 (`20260722090000_staff_avatar_rls_private_helper_repair.sql`, `20260722100000_staff_owner_boundary_hardening.sql`, `20260722103000_financial_dml_hardening.sql`; no commit requested)
+- Tracked migration files: 141
+- Git-untracked migration files: 0 (all three Phase 0 hardening migrations are committed as of 2026-08-29)
 - Latest local migration: `20260722103000_financial_dml_hardening.sql`
 - Current integration branch: `ui-ux-rebuild/phase-0-tokens`
-- Current local commit: `aa58f93`
+- Current local commit: `46e6afa`
 - Current upstream commit: `aa58f93`
-- Branch relationship: local is ahead of upstream by 0 commits, behind by 0
-- Working tree status during snapshot: active Phase 0 remediation changes present
+- Branch relationship: local is ahead of upstream by 3 commits, behind by 0 (push pending)
+- Working tree status during snapshot: clean
 
 ## Current Reconciliation Status (2026-07-22)
 
