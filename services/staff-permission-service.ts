@@ -14,6 +14,7 @@ import {
   type StaffPermissionProfile
 } from "@/lib/staff-permissions";
 import type { SessionProfile } from "@/types/domain";
+import { assertCanonicalRestaurantOwner } from "@/services/staff-owner-boundary-service";
 
 type PermissionMode = "all" | "any";
 
@@ -46,6 +47,10 @@ type StaffRolePermissionRow = {
 
 type PermissionRow = {
   permission_key: StaffPermissionKey;
+};
+
+type RestaurantOwnerRow = {
+  owner_user_id: string | null;
 };
 
 function isMissingPermissionSchema(error: { code?: string; message?: string } | null | undefined) {
@@ -142,7 +147,7 @@ async function readPermissionsForRole({
 
 export async function getStaffEffectivePermissions(session: SessionProfile) {
   const supabase = createAdminSupabaseClient() as any;
-  const [userResult, memberResult] = await Promise.all([
+  const [userResult, memberResult, restaurantResult] = await Promise.all([
     supabase
       .from("users")
       .select("id,role,permission_profile,permissions,account_status")
@@ -154,11 +159,17 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
       .select("id,role_id,role_code,employment_status,archived_at")
       .eq("restaurant_id", session.restaurantId)
       .eq("user_id", session.userId)
+      .maybeSingle(),
+    supabase
+      .from("restaurants")
+      .select("owner_user_id")
+      .eq("id", session.restaurantId)
       .maybeSingle()
   ]);
 
   if (userResult.error) throw userResult.error;
   if (memberResult.error && !isMissingPermissionSchema(memberResult.error)) throw memberResult.error;
+  if (restaurantResult.error) throw restaurantResult.error;
 
   const user = userResult.data as StaffUserPermissionRow | null;
   if (!user || user.account_status === "blocked") {
@@ -171,7 +182,9 @@ export async function getStaffEffectivePermissions(session: SessionProfile) {
   }
 
   const fallbackRoleCode = user.role === "ADMIN" ? mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "manager") : mapPermissionProfileToRoleTemplateCode(user.permission_profile ?? "service");
-  const roleCode = member?.role_code ?? fallbackRoleCode;
+  const canonicalOwner = (restaurantResult.data as RestaurantOwnerRow | null)?.owner_user_id === session.userId;
+  const storedRoleCode = member?.role_code ?? fallbackRoleCode;
+  const roleCode = canonicalOwner ? "owner" : storedRoleCode === "owner" ? "manager" : storedRoleCode;
   const accountFallback = member ? null : fallbackRoleCode;
   const accountPermissions = mergeEffectivePermissions(normalizeStaffPermissions(user.permissions, accountFallback));
   const rolePermissions = member
@@ -218,8 +231,14 @@ export async function assertCanAssignStaffRole(
 ) {
   const template = STAFF_ROLE_TEMPLATES.find((role) => role.code === roleCode);
   if (template?.role === "ADMIN") {
-    await assertStaffActionPermission(session, "staff.roles");
-    return;
+    const supabase = createAdminSupabaseClient() as any;
+    await assertCanonicalRestaurantOwner({
+      supabase,
+      restaurantId: session.restaurantId,
+      userId: session.userId,
+      action: "tạo hoặc gán vai trò quản trị"
+    });
+    return assertStaffActionPermission(session, "staff.roles");
   }
 
   const supabase = createAdminSupabaseClient() as any;
@@ -236,7 +255,12 @@ export async function assertCanAssignStaffRole(
   }
 
   if (roleResult.data?.role_scope === "ADMIN") {
-    await assertStaffActionPermission(session, "staff.roles");
+    await assertCanonicalRestaurantOwner({
+      supabase,
+      restaurantId: session.restaurantId,
+      userId: session.userId,
+      action: "tạo hoặc gán vai trò quản trị tùy chỉnh"
+    });
+    return assertStaffActionPermission(session, "staff.roles");
   }
 }
-

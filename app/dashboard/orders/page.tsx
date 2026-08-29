@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { RealOrdersWorkspaceV2 } from "@/components/dashboard-v2/real/orders-workspace-v2";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { captureServerTimeMs } from "@/lib/server-time";
 import { listOrdersForRestaurant } from "@/services/order-service";
 import { listOpenServiceRequests } from "@/services/service-request-service";
 
@@ -40,6 +41,7 @@ async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { resta
       initialRequests={initialRequests}
       restaurantId={restaurantId}
       canManageTestOrders={canManageTestOrders}
+      initialNowMs={captureServerTimeMs()}
     />
   );
 }

@@ -14,7 +14,7 @@ import { Badge, EmptyState } from "../primitives";
 import { FilterTabs, Toolbar } from "../workspace-ui";
 import { Button } from "../button";
 import { RealtimeStatusBadge } from "../realtime";
-import { fetchKitchenOrders, readCachedKitchenOrders, useToast, writeCachedKitchenOrders } from "@/components/dashboard-v2/adapters/dashboard-shared";
+import { fetchKitchenOrders, useToast, writeCachedKitchenOrders } from "@/components/dashboard-v2/adapters/dashboard-shared";
 import { getDashboardActionErrorToast, resolveDashboardActionToast } from "@/lib/dashboard/order-actions";
 import { readDashboardApiResponse } from "@/lib/dashboard/api-response";
 import { formatVnd } from "@/lib/money";
@@ -104,19 +104,20 @@ function actionMinutes(body?: unknown) {
 export function RealKitchenWorkspaceV2({
   initialOrders,
   restaurantId,
+  initialNowMs,
   deferInitialLoad = false
 }: {
   initialOrders: OrderDto[];
   restaurantId: string;
+  initialNowMs: number;
   deferInitialLoad?: boolean;
 }) {
   const toast = useToast();
-  const cachedInitial = readCachedKitchenOrders();
-  const [orders, setOrders] = useState<OrderDto[]>(cachedInitial ?? initialOrders);
-  const [loading, setLoading] = useState(deferInitialLoad && !cachedInitial);
+  const [orders, setOrders] = useState<OrderDto[]>(initialOrders);
+  const [loading, setLoading] = useState(deferInitialLoad);
   const [mutatingOrderId, setMutatingOrderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
   const [rtState, setRtState] = useState<RealtimeState>("connecting");
   const [tab, setTab] = useState<StationFilter>("all");
   const refreshTimerRef = useRef<number | null>(null);
@@ -157,10 +158,10 @@ export function RealKitchenWorkspaceV2({
   }, []);
 
   useEffect(() => {
-    if (!deferInitialLoad || cachedInitial) return;
+    if (!deferInitialLoad) return;
     const timer = window.setTimeout(() => void loadOrders({ force: true }), 0);
     return () => window.clearTimeout(timer);
-  }, [cachedInitial, deferInitialLoad, loadOrders]);
+  }, [deferInitialLoad, loadOrders]);
 
   function scheduleRefresh(delay = 300) {
     if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);

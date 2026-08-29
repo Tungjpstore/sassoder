@@ -7,6 +7,7 @@ import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { loginWithPassword } from "@/services/auth-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertStaffOwnerMutationAllowed } from "@/services/staff-owner-boundary-service";
 import type { SessionProfile } from "@/types/domain";
 
 type StaffAppMemberRow = {
@@ -356,6 +357,13 @@ export async function resetStaffAppPassword({
   reason?: string | null;
 }) {
   const supabase = createAdminSupabaseClient() as any;
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId,
+    actorUserId,
+    targetUserId: userId,
+    action: "đặt lại mật khẩu"
+  });
   const [userResult, memberResult] = await Promise.all([
     supabase
       .from("users")
@@ -365,7 +373,7 @@ export async function resetStaffAppPassword({
       .maybeSingle(),
     supabase
       .from("staff_members")
-      .select("id,employee_code,full_name,archived_at")
+      .select("id,employee_code,full_name,archived_at,role_code")
       .eq("restaurant_id", restaurantId)
       .eq("user_id", userId)
       .maybeSingle()

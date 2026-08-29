@@ -80,6 +80,7 @@ type Props = {
   paymentWaiting: number;
   openOrderCount: number;
   kitchenLoad: number;
+  initialNowMs: number;
 };
 
 type StatusFilter = "all" | "pending" | "ordering" | "completed" | "waiting_payment" | "waiting_confirm";
@@ -124,13 +125,14 @@ export function RealOverviewWorkspaceV2({
   overdueTables,
   paymentWaiting,
   openOrderCount,
-  kitchenLoad
+  kitchenLoad,
+  initialNowMs
 }: Props) {
   const router = useRouter();
   const toast = useToast();
   const [tab, setTab] = useState<StatusFilter>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
   const [rtState, setRtState] = useState<RealtimeState>("connecting");
   const [refreshing, setRefreshing] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);

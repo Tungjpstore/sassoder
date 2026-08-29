@@ -28,34 +28,71 @@ Production migration apply requires reconciliation after the 2026-06-01 tenant/R
 - Added local migration `20260617134652_staff_attendance_source_proof_hardening.sql` to require QR/WiFi attendance logs to carry source-specific audit proof before payroll review.
 - Production apply still requires Supabase dry-run, staging rehearsal, backup/PITR proof, and post-apply QR attendance smoke checks.
 
-Last updated: 2026-06-17
+## 2026-07-22 Staff Avatar RLS Repair Addendum
+
+- Before this repair, the branch contained 138 local SQL migration files; the latest was `20260622083200_billing_delivery_realtime_entitlement_sync.sql`.
+- Added forward-only migration `20260722090000_staff_avatar_rls_private_helper_repair.sql` so databases that already applied the original avatar migration recreate the insert, update and delete policies with `app_private.current_restaurant_id()`.
+- Corrected the original `20260602143000_staff_avatar_and_open_attendance_recovery.sql` source for fresh bootstrap without restoring the revoked public helper.
+- This addendum is migration history evidence only. The repair is not production-approved until remote history reconciliation, staging rehearsal, backup/PITR proof and post-apply staff avatar authorization checks are complete.
+
+## 2026-07-22 Owner And Financial DML Hardening Addendum
+
+- Added `20260722100000_staff_owner_boundary_hardening.sql` with a canonical `restaurants.owner_user_id`, legacy ADMIN backfill, owner-role repair, and service-role-only guarded staff profile/account RPC wrappers.
+- Added `20260722103000_financial_dml_hardening.sql` to revoke direct authenticated mutations on orders, bills, payment logs and reservations, enforce same-tenant order-to-bill references, and lock/validate bill recalculation.
+- Release review tightened the owner migration with a composite tenant FK, deterministic active-ADMIN owner checks, all eight system roles and permissions, manager billing cleanup, active-tenant unresolved-owner failure, canonical-owner-only role assignment, a direct Data API owner-column guard and PostgREST schema reload. Financial preflight now reports orphan as well as cross-tenant bill links before DDL, and the bill-sync trigger is recreated explicitly.
+- An isolated local Supabase/PostgreSQL 17 start was attempted on alternate ports. Docker initialization failed with `No space left on device`; no existing Supabase project, container or volume was stopped or pruned. This attempt is not migration execution evidence.
+- A read-only GreenCloud control-panel check found VPS `logivn-prod-vps-01` running normally, but its Backups page reported `No backups found` despite a four-week retention setting. No backup/restart/deploy/configuration action was performed because the VPS hosts concurrent workloads. Production promotion remains blocked until a recoverable VPS backup is created and restored successfully to an isolated target.
+- These migrations are local forward-only artifacts and have not been approved for production. Apply them first to an isolated PostgreSQL rehearsal database, verify existing data/backfill ambiguity, grants, composite FK behavior and rollback/fix-forward notes, then reconcile remote migration history.
+
+Last updated: 2026-07-22
 
 ## Current Snapshot
 
-- Local SQL migration files: 127
-- Tracked migration files: 127
-- Untracked migration files: 0
-- Current integration branch: `codex/p0-production-clean`
-- Current local commit: `879cfbf`
-- Current upstream commit: `57d9784`
-- Branch relationship: local is ahead of upstream by 2 commits, behind by 0
-- Working tree status during snapshot: clean
+- Local SQL migration files: 141
+- Tracked migration files: 138
+- Git-untracked migration files: 3 (`20260722090000_staff_avatar_rls_private_helper_repair.sql`, `20260722100000_staff_owner_boundary_hardening.sql`, `20260722103000_financial_dml_hardening.sql`; no commit requested)
+- Latest local migration: `20260722103000_financial_dml_hardening.sql`
+- Current integration branch: `ui-ux-rebuild/phase-0-tokens`
+- Current local commit: `aa58f93`
+- Current upstream commit: `aa58f93`
+- Branch relationship: local is ahead of upstream by 0 commits, behind by 0
+- Working tree status during snapshot: active Phase 0 remediation changes present
+
+## Current Reconciliation Status (2026-07-22)
+
+- Current remote migration reconciliation is incomplete: linked project access returned HTTP 403, and direct database verification is blocked because `SUPABASE_DB_PASSWORD` is not available in the current environment.
+- Local repair `20260722090000_staff_avatar_rls_private_helper_repair.sql` has not been applied to the remote database.
+- No current pending-migration count or dry-run apply list is asserted. The 16-migration batch and dry-run output retained below are historical 2026-05-29 evidence only.
+
+## Release Verification (2026-07-22)
+
+- Release decision: **NO-GO**.
+- `npm test`: 753 discovered, 752 passed, 0 failed, 1 skipped; the skipped case is the PostgreSQL reservation rehearsal without a usable database URL.
+- TypeScript, targeted ESLint and the Next.js 16.2.6 production build pass; the build generated 160 static pages.
+- `npm run infra:check` reports zero direct LogiVN app service-role violations. It still fails for four environment keys used only in the excluded `logimail/` area; LogiMail was not modified for this audit.
+- `npm audit --audit-level=high` remains red with 33 vulnerabilities: 6 low, 22 moderate and 5 high.
+- `npm run release:blockers:report` returns NO-GO with six automated blockers: Supabase branches, dry-run, backup/PITR, authenticated QA, monitoring/alerting and Staff HR production secrets. PostgreSQL rehearsal failure and missing GreenCloud backup/restore proof are additional blockers outside that count.
 
 ## Release Commander Status
 
-This migration log is not a production apply approval. It records the current release-risk picture and the clean local artifact state.
+This migration log is not a production apply approval. It records the current release-risk picture and the local artifact state for this remediation.
 
 Production migration remains blocked until:
 
 - remote and local migration history are reconciled,
 - the pending batch is rehearsed on staging using `MIGRATION_RELEASE_REHEARSAL.md`,
 - backup/PITR proof is captured,
+- GreenCloud VPS backup and isolated restore proof are captured without interrupting concurrent workloads,
 - rollback/fix-forward notes are signed off by the DB rollback commander.
 
 ## Latest Migration Files
 
 | Migration | Area | Risk |
 | --- | --- | --- |
+| `20260722103000_financial_dml_hardening.sql` | Financial DML and tenant FK hardening | P0: revokes direct financial writes and adds same-tenant bill references; requires data preflight and PostgreSQL rehearsal. |
+| `20260722100000_staff_owner_boundary_hardening.sql` | Canonical owner and staff account boundary | P0: repairs legacy ADMIN ownership and wraps privileged staff mutations; requires owner backfill ambiguity and role/session rehearsal. |
+| `20260722090000_staff_avatar_rls_private_helper_repair.sql` | Staff avatar storage RLS | High: forward-repairs tenant and staff ownership checks to use the private tenant helper. |
+| `20260622083200_billing_delivery_realtime_entitlement_sync.sql` | Billing entitlements | High: latest pre-repair migration on this branch; production state is not asserted here. |
 | `20260617134652_staff_attendance_source_proof_hardening.sql` | Staff HR attendance security | P0: DB guardrails require QR token and WiFi network proof on source-specific attendance logs. |
 | `20260617085431_staff_hr_security_hardening_private_qr_rpc.sql` | Staff HR attendance security | P0: moves QR consume mutation into private schema while preserving tenant RLS helper grants. |
 | `20260614090000_logimail_deliverability_backfill.sql` | Logimail deliverability | High: deliverability data backfill must be rehearsed before production apply. |
@@ -80,9 +117,9 @@ Production migration remains blocked until:
 | `20260519100000_inventory_order_atomicity.sql` | Inventory order atomicity | High: stock movement transaction safety. |
 | `20260519092131_restrict_public_store_branch_reads.sql` | Branch RLS isolation | P0: removes anon-wide active branch reads from Data API surface. |
 
-## Pending Remote Batch
+## Historical Pending Remote Batch (2026-05-29)
 
-Current release review treats these as pending remote migrations until proven otherwise:
+The following table is retained as the pending batch recorded on 2026-05-29. It is not the current remote migration delta and must not be used for release approval.
 
 | Migration | Required Staging Proof |
 | --- | --- |
@@ -103,9 +140,9 @@ Current release review treats these as pending remote migrations until proven ot
 | `20260519201000_dashboard_operations_realtime_publication.sql` | Dashboard realtime tables are published intentionally and UI degrades if realtime is unavailable. |
 | `20260519201100_users_lower_email_lookup_idx.sql` | Email lookup index exists and helper performance does not regress. |
 
-## Dry-Run Evidence
+## Historical Dry-Run Evidence (2026-05-29)
 
-`supabase db push --dry-run --linked --yes` exits 0 and would apply these 16 migrations without changing the database:
+On 2026-05-29, `supabase db push --dry-run --linked --yes` exited 0 and reported that it would apply these 16 migrations without changing the database. This output is historical and does not represent the current branch or remote state:
 
 ```text
 20260519090000_reservation_realtime_publication.sql

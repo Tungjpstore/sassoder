@@ -71,7 +71,7 @@ function openInvoicePrint(input: {
   bankCode?: string | null;
 }) {
   const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(n) + "₫";
-  const fmtDt = (v: string | null | undefined) => (v && !Number.isNaN(new Date(v).getTime()) ? new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(v)) : "—");
+  const fmtDt = (v: string | null | undefined) => (v && !Number.isNaN(new Date(v).getTime()) ? new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(v)) : "—");
   const win = window.open("", "_blank", "width=720,height=900");
   if (!win) return;
   win.document.write(`<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Hoá đơn ${input.transferContent}</title>
@@ -113,14 +113,14 @@ function fmtDate(value: string | null | undefined) {
   if (!value) return "Chưa có";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "Chưa có";
-  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(d);
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric" }).format(d);
 }
 
 function fmtDateTime(value: string | null | undefined) {
   if (!value) return "Chưa có";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "Chưa có";
-  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
 function planShortName(plan: Pick<BillingPlanView, "name" | "code">) {
@@ -146,9 +146,10 @@ function usagePercent(used: number, limit: number | null | undefined) {
 function periodProgress(start: string | null | undefined, end: string | null | undefined, daysLeft: number) {
   const sT = start ? new Date(start).getTime() : Number.NaN;
   const eT = end ? new Date(end).getTime() : Number.NaN;
-  const now = Date.now();
   if (!Number.isNaN(sT) && !Number.isNaN(eT) && eT > sT) {
-    return Math.max(4, Math.min(100, Math.round(((now - sT) / (eT - sT)) * 100)));
+    const totalMs = eT - sT;
+    const remainingMs = Math.max(0, Math.min(totalMs, daysLeft * 86_400_000));
+    return Math.max(4, Math.min(100, Math.round(((totalMs - remainingMs) / totalMs) * 100)));
   }
   if (daysLeft <= 0) return 100;
   return Math.max(8, Math.min(100, 100 - Math.round((daysLeft / 30) * 100)));

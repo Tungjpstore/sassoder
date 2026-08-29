@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { clockInAttendance, clockOutAttendance, isStaffOperationsNetworkError } from "@/features/staff/api/client";
 
 type OfflineAttendanceAction = "clock_in" | "clock_out";
@@ -105,40 +105,61 @@ export function useOfflineAttendanceQueue({
   onSynced?: () => Promise<void> | void;
 }) {
   const key = useMemo(() => storageKey(restaurantId, userId), [restaurantId, userId]);
-  const [queue, setQueue] = useState<OfflineAttendanceQueueItem[]>(() => (typeof window === "undefined" ? [] : readQueue(key)));
+  // Keep the first render deterministic; browser storage is loaded after hydration.
+  const [queueState, setQueueState] = useState<{ key: string; items: OfflineAttendanceQueueItem[] }>({ key: "", items: [] });
   const [syncing, setSyncing] = useState(false);
-  const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [onlineState, setOnlineState] = useState<{ key: string; value: boolean }>({ key: "", value: true });
+  const activeKeyRef = useRef(key);
+  const syncingRef = useRef(false);
+  const queue = useMemo(() => (queueState.key === key ? queueState.items : []), [key, queueState]);
+  const isOnline = onlineState.key === key ? onlineState.value : false;
+  const ready = queueState.key === key && onlineState.key === key;
 
-  const replaceQueue = useCallback(
-    (nextQueue: OfflineAttendanceQueueItem[]) => {
-      writeQueue(key, nextQueue);
-      setQueue(nextQueue);
-    },
-    [key]
-  );
+  useLayoutEffect(() => {
+    activeKeyRef.current = key;
+  }, [key]);
 
   const updateQueue = useCallback(
     (updater: (currentQueue: OfflineAttendanceQueueItem[]) => OfflineAttendanceQueueItem[]) => {
-      setQueue((currentQueue) => {
+      setQueueState((currentState) => {
+        const currentQueue = readQueue(key);
         const nextQueue = updater(currentQueue).slice(0, maxOfflineQueueItems);
         writeQueue(key, nextQueue);
-        return nextQueue;
+        return activeKeyRef.current === key ? { key, items: nextQueue } : currentState;
       });
     },
     [key]
   );
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const loadTimer = window.setTimeout(() => {
+      if (activeKeyRef.current !== key) return;
+      setQueueState({ key, items: readQueue(key) });
+      setOnlineState({ key, value: navigator.onLine });
+    }, 0);
+
+    const handleOnline = () => {
+      if (activeKeyRef.current === key) setOnlineState({ key, value: true });
+    };
+    const handleOffline = () => {
+      if (activeKeyRef.current === key) setOnlineState({ key, value: false });
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea === window.localStorage && event.key === key && activeKeyRef.current === key) {
+        setQueueState({ key, items: readQueue(key) });
+      }
+    };
 
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    window.addEventListener("storage", handleStorage);
     return () => {
+      window.clearTimeout(loadTimer);
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("storage", handleStorage);
     };
-  }, []);
+  }, [key]);
 
   const enqueue = useCallback(
     (input: EnqueueOfflineAttendanceInput): EnqueueOfflineAttendanceResult => {
@@ -169,7 +190,7 @@ export function useOfflineAttendanceQueue({
       if (!writeQueue(key, nextQueue)) {
         return { item: null, error: "Không thể lưu chấm công offline trên thiết bị này." };
       }
-      setQueue(nextQueue);
+      if (activeKeyRef.current === key) setQueueState({ key, items: nextQueue });
       return { item };
     },
     [key]
@@ -184,7 +205,7 @@ export function useOfflineAttendanceQueue({
 
   const syncQueue = useCallback(
     async (options?: { force?: boolean }) => {
-      if (syncing || queue.length === 0 || (!isOnline && !options?.force)) return { synced: 0, failed: 0 };
+      if (!ready || syncingRef.current || queue.length === 0 || (!isOnline && !options?.force)) return { synced: 0, failed: 0 };
 
       const now = Date.now();
       const readyItems = options?.force
@@ -192,13 +213,14 @@ export function useOfflineAttendanceQueue({
         : queue.filter((item) => !item.nextRetryAt || new Date(item.nextRetryAt).getTime() <= now);
       if (readyItems.length === 0) return { synced: 0, failed: 0 };
 
+      syncingRef.current = true;
       setSyncing(true);
-      let workingQueue = queue;
       let synced = 0;
       let failed = 0;
 
       try {
         for (const item of readyItems.slice().reverse()) {
+          if (activeKeyRef.current !== key) return { synced, failed };
           try {
             const deviceInfo = {
               ...(item.deviceInfo ?? {}),
@@ -231,20 +253,18 @@ export function useOfflineAttendanceQueue({
             }
 
             synced += 1;
-            workingQueue = workingQueue.filter((queuedItem) => queuedItem.id !== item.id);
-            replaceQueue(workingQueue);
+            updateQueue((currentQueue) => currentQueue.filter((queuedItem) => queuedItem.id !== item.id));
           } catch (error) {
             if (item.action === "clock_out" && duplicateClockOutSynced(error)) {
               synced += 1;
-              workingQueue = workingQueue.filter((queuedItem) => queuedItem.id !== item.id);
-              replaceQueue(workingQueue);
+              updateQueue((currentQueue) => currentQueue.filter((queuedItem) => queuedItem.id !== item.id));
               continue;
             }
 
             failed += 1;
             const attempts = item.attempts + 1;
             const nextRetryAt = new Date(Date.now() + retryDelayMs(attempts)).toISOString();
-            workingQueue = workingQueue.map((queuedItem) =>
+            updateQueue((currentQueue) => currentQueue.map((queuedItem) =>
               queuedItem.id === item.id
                 ? {
                     ...queuedItem,
@@ -253,8 +273,7 @@ export function useOfflineAttendanceQueue({
                     nextRetryAt
                   }
                 : queuedItem
-            );
-            replaceQueue(workingQueue);
+            ));
             break;
           }
         }
@@ -262,18 +281,20 @@ export function useOfflineAttendanceQueue({
         if (synced > 0) await onSynced?.();
         return { synced, failed };
       } finally {
+        syncingRef.current = false;
         setSyncing(false);
       }
     },
-    [isOnline, onSynced, queue, replaceQueue, syncing]
+    [isOnline, key, onSynced, queue, ready, updateQueue]
   );
 
   useEffect(() => {
+    if (!ready) return undefined;
     const hasReadyItem = queue.some((item) => !item.nextRetryAt || new Date(item.nextRetryAt).getTime() <= Date.now());
     if (!isOnline || !hasReadyItem) return undefined;
     const timer = window.setTimeout(() => void syncQueue(), 0);
     return () => window.clearTimeout(timer);
-  }, [isOnline, queue, syncQueue]);
+  }, [isOnline, queue, ready, syncQueue]);
 
   return {
     queue,

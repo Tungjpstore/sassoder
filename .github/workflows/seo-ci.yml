@@ -43,6 +43,24 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Release blockers
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          MONITORING_WATCH_OWNER: ${{ vars.MONITORING_WATCH_OWNER }}
+          MONITORING_ALERT_EMAIL: ${{ vars.MONITORING_ALERT_EMAIL }}
+          MONITORING_LOG_DRAIN_DESTINATION: ${{ vars.MONITORING_LOG_DRAIN_DESTINATION }}
+          MONITORING_5XX_THRESHOLD: ${{ vars.MONITORING_5XX_THRESHOLD }}
+          MONITORING_FIRST_HOUR_WATCH_START: ${{ vars.MONITORING_FIRST_HOUR_WATCH_START }}
+          MONITORING_FIRST_HOUR_WATCH_OWNER: ${{ vars.MONITORING_FIRST_HOUR_WATCH_OWNER }}
+          STAFF_ATTENDANCE_QR_SECRET: ${{ secrets.STAFF_ATTENDANCE_QR_SECRET }}
+          STAFF_ATTENDANCE_SESSION_SECRET: ${{ secrets.STAFF_ATTENDANCE_SESSION_SECRET }}
+          STAFF_PIN_PEPPER: ${{ secrets.STAFF_PIN_PEPPER }}
+        run: npm run release:blockers:strict
+
       - name: Security audit threshold
         run: npm audit --audit-level=high
 

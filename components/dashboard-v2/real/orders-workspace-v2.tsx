@@ -57,6 +57,7 @@ type Props = {
   initialRequests: Parameters<typeof AdminLiveActionCenter>[0]["initialRequests"];
   restaurantId: string;
   canManageTestOrders: boolean;
+  initialNowMs: number;
 };
 
 function statusToTab(order: OrderDto): Tab {
@@ -204,7 +205,7 @@ function hasDeliveryMap(order: OrderDto) {
   );
 }
 
-export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaurantId, canManageTestOrders }: Props) {
+export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaurantId, canManageTestOrders, initialNowMs }: Props) {
   const toast = useToast();
   const [orders, setOrders] = useState<OrderDto[]>(initialOrders);
   const [activeLane, setActiveLane] = useState<FulfillmentLane>("DINE_IN");
@@ -218,7 +219,7 @@ export function RealOrdersWorkspaceV2({ initialOrders, initialRequests, restaura
   const [liveOpen, setLiveOpen] = useState(false);
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState<"all" | "DINE_IN" | "PICKUP" | "DELIVERY">("all");
   const [paymentFilter, setPaymentFilter] = useState<"all" | "unpaid" | "waiting_confirm" | "paid">("all");

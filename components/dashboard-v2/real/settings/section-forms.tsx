@@ -399,7 +399,7 @@ export function PermissionsSection() {
 
 function formatDateTime(value: string | null) {
   if (!value) return "Chưa lên lịch";
-  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
 }
 
 export function NotificationsSection({
@@ -644,7 +644,7 @@ export function BranchesSection({ branches }: { branches: Awaited<ReturnType<typ
                     <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--d-r-md)] bg-[var(--d-surface-2)] text-[var(--d-primary)]"><Store size={17} /></span>
                     <div className="min-w-0">
                       <p className="truncate text-[length:var(--d-fs-sm)] font-bold text-[var(--d-text)]">{branch.name}</p>
-                      <p className="mt-0.5 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{branch.is_primary ? "Chi nhánh chính" : `Tạo ${new Date(branch.created_at).toLocaleDateString("vi-VN")}`}</p>
+                      <p className="mt-0.5 text-[length:var(--d-fs-xs)] text-[var(--d-text-muted)]">{branch.is_primary ? "Chi nhánh chính" : `Tạo ${new Date(branch.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`}</p>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">

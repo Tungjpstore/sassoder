@@ -106,8 +106,8 @@ const APPROVAL_TYPE_LABEL: Record<string, string> = {
   device_restriction: "Giới hạn thiết bị"
 };
 
-function isOnlineMember(m: StaffOpsMember) {
-  return isStaffRecentlyActive(m.lastSeenAt);
+function isOnlineMember(m: StaffOpsMember, now = Date.now()) {
+  return isStaffRecentlyActive(m.lastSeenAt, now);
 }
 
 function isOwnerMember(member: StaffOpsMember) {
@@ -134,6 +134,16 @@ export function RealStaffWorkspaceV2(props: Props) {
   const [view, setView] = useState<View>("team");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const initialNowMs = useMemo(() => {
+    const parsed = new Date(bundle.generatedAt).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, [bundle.generatedAt]);
+  const [nowMs, setNowMs] = useState(initialNowMs);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const rtState = useStaffMobileRealtime({ restaurantId, onRefresh: () => router.refresh() });
 
@@ -141,7 +151,7 @@ export function RealStaffWorkspaceV2(props: Props) {
   const accountCount = bundle.members.length;
   const ownerCount = useMemo(() => bundle.members.filter(isOwnerMember).length, [bundle.members]);
   const totalMembers = operationalMembers.length;
-  const onlineCount = useMemo(() => operationalMembers.filter(isOnlineMember).length, [operationalMembers]);
+  const onlineCount = useMemo(() => operationalMembers.filter((member) => isOnlineMember(member, nowMs)).length, [nowMs, operationalMembers]);
   const managerCount = useMemo(
     () => operationalMembers.filter((m) => m.roleCode === "manager").length,
     [operationalMembers]
@@ -162,12 +172,12 @@ export function RealStaffWorkspaceV2(props: Props) {
 
   const visible = useMemo(() => {
     if (tab === "all") return bundle.members;
-    if (tab === "online") return operationalMembers.filter(isOnlineMember);
+    if (tab === "online") return operationalMembers.filter((member) => isOnlineMember(member, nowMs));
     if (tab === "owner") return bundle.members.filter(isOwnerMember);
     if (tab === "manager") return operationalMembers.filter((m) => m.roleCode === "manager");
     if (tab === "blocked") return bundle.members.filter((m) => m.accountStatus === "blocked");
     return operationalMembers.filter((m) => m.roleCode !== "manager");
-  }, [bundle.members, operationalMembers, tab]);
+  }, [bundle.members, nowMs, operationalMembers, tab]);
 
   const selected = bundle.members.find((m) => m.id === selectedId) ?? null;
 
@@ -209,7 +219,7 @@ export function RealStaffWorkspaceV2(props: Props) {
       header: "Trạng thái",
       align: "right",
       render: (m) => {
-        const online = isOnlineMember(m);
+        const online = isOnlineMember(m, nowMs);
         const blocked = m.accountStatus === "blocked";
         if (blocked) return <Badge tone="danger">Đã khoá</Badge>;
         return (
@@ -335,6 +345,7 @@ export function RealStaffWorkspaceV2(props: Props) {
           member={selected}
           bundle={bundle}
           restaurantStaffCode={restaurantStaffCode}
+          initialNowMs={nowMs}
           onClose={() => setSelectedId(null)}
           onChanged={() => router.refresh()}
         />
@@ -436,12 +447,14 @@ function StaffMemberDrawer({
   member,
   bundle,
   restaurantStaffCode,
+  initialNowMs,
   onClose,
   onChanged
 }: {
   member: StaffOpsMember;
   bundle: StaffOperationsBundle;
   restaurantStaffCode: string | null;
+  initialNowMs: number;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -451,7 +464,7 @@ function StaffMemberDrawer({
   const [pending, startTransition] = useTransition();
   const [resetState, resetAction, resetPending] = useActionState(resetStaffAppPasswordAction, undefined);
   const [stateActionState, stateActionFn, statePending] = useActionState(setStaffAccountStateAction, undefined);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
   const isOwnerProfile = member.roleCode === "owner";
 
   useEffect(() => {
@@ -463,7 +476,7 @@ function StaffMemberDrawer({
     return () => window.clearInterval(timer);
   }, []);
 
-  const online = isOnlineMember(member);
+  const online = isOnlineMember(member, nowMs);
   const blocked = member.accountStatus === "blocked";
   const lockExpiry = member.appPasswordLockedUntil ? new Date(member.appPasswordLockedUntil) : null;
   const isAppLocked = Boolean(lockExpiry && lockExpiry.getTime() > nowMs);

@@ -32,3 +32,6 @@ codex/
 .vscode/
 .codex-artifacts/
 logimail/supabase/.temp/
+
+# Throwaway lint runner artifacts.
+reports/lint*

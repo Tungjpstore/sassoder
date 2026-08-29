@@ -9,6 +9,7 @@ import { assessAttendanceDeviceTrust } from "@/features/staff/services/staff-dev
 import type { staffSessionForceLogoutSchema, staffSessionHeartbeatSchema } from "@/lib/validators";
 import { ensureDefaultStoreBranch } from "@/services/branch-service";
 import { writeStaffActivityLog } from "@/services/staff-activity-log-service";
+import { assertStaffOwnerMutationAllowed } from "@/services/staff-owner-boundary-service";
 import type { SessionProfile } from "@/types/domain";
 
 type StaffSessionHeartbeatInput = z.infer<typeof staffSessionHeartbeatSchema>;
@@ -384,6 +385,32 @@ export async function forceStaffSessionLogout({
 }) {
   const supabase = createAdminSupabaseClient() as any;
   const now = new Date().toISOString();
+
+  const targetResult = input.sessionId
+    ? await supabase
+      .from("staff_sessions")
+      .select("staff_user_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", input.sessionId)
+      .maybeSingle()
+    : await supabase
+      .from("staff_members")
+      .select("user_id")
+      .eq("restaurant_id", restaurantId)
+      .eq("id", input.staffMemberId)
+      .maybeSingle();
+
+  if (targetResult.error) throw new AppError("Không xác thực được tài khoản của phiên cần đăng xuất.", 400);
+  const targetUserId = input.sessionId ? targetResult.data?.staff_user_id : targetResult.data?.user_id;
+  if (!targetUserId) throw new AppError("Không tìm thấy tài khoản của phiên cần đăng xuất.", 404);
+
+  await assertStaffOwnerMutationAllowed({
+    supabase,
+    restaurantId,
+    actorUserId,
+    targetUserId,
+    action: "buộc đăng xuất"
+  });
 
   let query = supabase
     .from("staff_sessions")

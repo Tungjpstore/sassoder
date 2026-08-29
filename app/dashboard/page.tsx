@@ -7,6 +7,7 @@ import { AppError } from "@/lib/response";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
 import { formatVnd } from "@/lib/money";
+import { captureServerTimeMs } from "@/lib/server-time";
 import { buildOperationInsights } from "@/lib/ai/operation-insights";
 import { buildAiRecommendationDeck } from "@/lib/ai/recommendation-engine";
 import { buildAiSalesForecast } from "@/lib/ai/sales-forecast";
@@ -343,6 +344,7 @@ async function AdminDashboardContent({ restaurantId, showOnboardedWelcome }: { r
       paymentWaiting={paymentWaiting}
       openOrderCount={openOrderCount}
       kitchenLoad={kitchenLoad}
+      initialNowMs={captureServerTimeMs()}
     />
   );
 }

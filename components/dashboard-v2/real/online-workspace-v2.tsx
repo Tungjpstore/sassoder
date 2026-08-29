@@ -80,6 +80,7 @@ type OnlineWorkspaceProps = {
   menuItems: number;
   categories: number;
   mapboxReady: boolean;
+  initialNowMs: number;
 };
 
 type DrawerMode = "closed" | "qr" | "orders";
@@ -108,7 +109,8 @@ export function RealOnlineWorkspaceV2({
   qrSrc,
   menuItems,
   categories,
-  mapboxReady
+  mapboxReady,
+  initialNowMs
 }: OnlineWorkspaceProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -119,7 +121,7 @@ export function RealOnlineWorkspaceV2({
   const [pending, startTransition] = useTransition();
   const [mutatingId, setMutatingId] = useState<string | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(initialNowMs);
 
   function actOnOrder(orderId: string, action: "accept" | "complete" | "cancel" | "confirm-payment") {
     if (mutatingId) return;

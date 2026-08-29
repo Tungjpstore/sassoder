@@ -45,6 +45,23 @@ test("staff invite schema accepts add-staff form payload without optional pin fi
   assert.equal(parsed.phone, "0912 345 678");
 });
 
+test("staff invite schema normalizes a blank optional birth date before database writes", () => {
+  const parsed = staffInviteSchema.parse({
+    email: "",
+    password: "",
+    pin: "",
+    fullName: "Nhân viên QA",
+    dateOfBirth: "",
+    hometown: "",
+    phone: "",
+    roleCode: "waiter",
+    branchId: "",
+    notes: ""
+  });
+
+  assert.equal(parsed.dateOfBirth, undefined);
+});
+
 test("staff request schema accepts payroll-ready leave requests", () => {
   const parsed = staffOperationalRequestSchema.parse({
     requestType: "leave_request",
@@ -653,6 +670,10 @@ test("staff mobile clock-out uses the open attendance branch instead of a stale 
 test("offline attendance queue never converts QR or WiFi scans into offline sync", async () => {
   const source = await import("node:fs").then((fs) => fs.readFileSync("features/attendance/hooks/use-offline-attendance-queue.ts", "utf8"));
 
+  assert.match(source, /queueState\.key === key \? queueState\.items : \[\]/);
+  assert.match(source, /activeKeyRef\.current !== key/);
+  assert.match(source, /setQueueState\(\{ key, items: readQueue\(key\) \}\)/);
+  assert.match(source, /setOnlineState\(\{ key, value: navigator\.onLine \}\)/);
   assert.match(source, /type OfflineAttendanceSource = "gps"/);
   assert.match(source, /source === "gps" && isPremium/);
   assert.match(source, /item\.source === "gps"/);

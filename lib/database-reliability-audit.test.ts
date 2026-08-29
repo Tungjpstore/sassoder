@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -12,6 +13,29 @@ const anonExposureBoundary = "20260519092131_restrict_public_store_branch_reads.
 
 function migrationSql(fileName: string) {
   return readFileSync(`${migrationsDir}/${fileName}`, "utf8");
+}
+
+function markdownSection(markdown: string, heading: string) {
+  const start = markdown.indexOf(heading);
+  assert.notEqual(start, -1, `Missing markdown section: ${heading}`);
+  const end = markdown.indexOf("\n## ", start + heading.length);
+  return markdown.slice(start, end === -1 ? markdown.length : end);
+}
+
+function snapshotCount(snapshot: string, label: string) {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = snapshot.match(new RegExp(`^- ${escapedLabel}: (\\d+)`, "m"));
+  assert.ok(match, `Missing migration snapshot count: ${label}`);
+  return Number(match[1]);
+}
+
+function gitOutput(args: string[]) {
+  try {
+    return execFileSync("git", args, { encoding: "utf8" });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert.fail(`Git migration contract command failed: git ${args.join(" ")} (${message})`);
+  }
 }
 
 function lineNumber(sql: string, index: number) {
@@ -28,8 +52,22 @@ test("migration files have monotonic unique timestamps", () => {
 });
 
 test("migration log count and latest migration stay aligned", () => {
-  assert.match(migrationLog, new RegExp(`Tracked migration files: ${migrationFiles.length}`));
-  assert.match(migrationLog, new RegExp(migrationFiles.at(-1) ?? "NO_MIGRATIONS"));
+  const snapshot = markdownSection(migrationLog, "## Current Snapshot");
+  const localCount = snapshotCount(snapshot, "Local SQL migration files");
+  const trackedCount = snapshotCount(snapshot, "Tracked migration files");
+  const untrackedCount = snapshotCount(snapshot, "Git-untracked migration files");
+  const gitTrackedCount = gitOutput(["ls-files", "--", "supabase/migrations/*.sql"])
+    .split("\n")
+    .filter(Boolean).length;
+  const gitUntrackedCount = gitOutput(["status", "--short", "--untracked-files=all", "--", "supabase/migrations"])
+    .split("\n")
+    .filter((line) => /^\?\?\s+.+\.sql$/.test(line.trim())).length;
+
+  assert.equal(localCount, migrationFiles.length);
+  assert.equal(trackedCount, gitTrackedCount);
+  assert.equal(untrackedCount, gitUntrackedCount);
+  assert.equal(localCount, trackedCount + untrackedCount);
+  assert.match(snapshot, new RegExp(migrationFiles.at(-1) ?? "NO_MIGRATIONS"));
 });
 
 test("schema snapshot has no public tenant helper calls", () => {
@@ -115,7 +153,8 @@ test("destructive data operations are explicitly allowlisted", () => {
       /20260510210000_order_lifecycle_hardening\.sql:\d+:\s*delete from public\.orders/i.test(line) ||
       /20260516165316_inventory_po_receiving_v2\.sql:\d+:\s*drop table if exists pg_temp\.po_receipt_requests/i.test(line) ||
       /20260519190000_platform_admin_governance_hardening\.sql:\d+:\s*delete from public\.platform_admin_role_permissions/i.test(line) ||
-      /20260605093000_telegram_single_tenant_connection_lock\.sql:\d+:\s*delete from public\.telegram_sessions ts/i.test(line)
+      /20260605093000_telegram_single_tenant_connection_lock\.sql:\d+:\s*delete from public\.telegram_sessions ts/i.test(line) ||
+      /20260722100000_staff_owner_boundary_hardening\.sql:\d+:\s*delete from public\.staff_role_permissions permissions/i.test(line)
   );
 
   assert.deepEqual(destructiveDataLines, allowed);

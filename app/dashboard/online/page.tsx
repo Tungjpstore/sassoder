@@ -3,6 +3,7 @@ import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v
 import { RealOnlineWorkspaceV2 } from "@/components/dashboard-v2/real/online-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
 import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { captureServerTimeMs } from "@/lib/server-time";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { isMapboxDeliveryProviderReady } from "@/services/delivery-service";
 import { getOnlineOrderingDashboard } from "@/services/online-ordering-service";
@@ -46,6 +47,7 @@ async function OnlineWorkspaceContent({ restaurantId }: { restaurantId: string }
       menuItems={data.menuItems}
       categories={data.categories}
       mapboxReady={isMapboxDeliveryProviderReady()}
+      initialNowMs={captureServerTimeMs()}
     />
   );
 }
