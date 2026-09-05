@@ -161,6 +161,14 @@ export async function updateRestaurantSettingsAction(
     return { error: parsed.error.issues[0]?.message ?? "Vui lòng kiểm tra lại thông tin cài đặt quán." };
   }
 
+  if (parsed.data.allowLegacyQr !== current.allow_legacy_qr) {
+    await assertCanonicalRestaurantOwnerForTenant({
+      restaurantId: session.restaurantId,
+      userId: session.userId,
+      action: "thay đổi chế độ QR legacy"
+    });
+  }
+
   try {
     await updateRestaurantSettings(session.restaurantId, {
       ...parsed.data,

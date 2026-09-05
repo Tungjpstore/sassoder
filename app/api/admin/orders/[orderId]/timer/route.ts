@@ -5,6 +5,7 @@ import { adminOrderIdSchema, serviceTimerSchema } from "@/lib/validators";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { getOrderLifecycleSnapshot, updateOrderServiceTimer } from "@/services/order-service";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const preferredRegion = "sin1";
 
@@ -13,6 +14,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ord
     assertSameOriginRequest(request, { requireOrigin: true });
     const session = await requireOperationalDashboardApiSession({ feature: "order_realtime" });
     const { orderId } = adminOrderIdSchema.parse(await params);
+    await assertStaffCanAccessOrder(session, orderId);
     const body = serviceTimerSchema.parse(await request.json());
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
     const data = await updateOrderServiceTimer(session.restaurantId, orderId, body.minutes);

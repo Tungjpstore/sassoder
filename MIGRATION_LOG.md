@@ -44,19 +44,63 @@ Production migration apply requires reconciliation after the 2026-06-01 tenant/R
 - A read-only GreenCloud control-panel check found VPS `logivn-prod-vps-01` running normally, but its Backups page reported `No backups found` despite a four-week retention setting. No backup/restart/deploy/configuration action was performed because the VPS hosts concurrent workloads. Production promotion remains blocked until a recoverable VPS backup is created and restored successfully to an isolated target.
 - These migrations are local forward-only artifacts and have not been approved for production. Apply them first to an isolated PostgreSQL rehearsal database, verify existing data/backfill ambiguity, grants, composite FK behavior and rollback/fix-forward notes, then reconcile remote migration history.
 
-Last updated: 2026-07-22
+Last updated: 2026-09-03
+
+## 2026-09-03 Phase 1 Production Apply
+
+- Target: Supabase project `qr-restaurant-saas`, ref `tfhqatvevbrbzaaqjhfa`, database `main / Production`.
+- Preflight: `cross_tenant_tables=0`, `cross_tenant_orders=0`; inventory contained 32 `inventory_locations` rows and no rows in the remaining inventory ledger tables.
+- Apply: `20260903090000_phase1_security_transaction_hardening.sql` executed successfully in one explicit transaction through the authenticated Supabase SQL Editor session; migration history row inserted with version `20260903090000`.
+- Post-apply: `assert_staff_actor_session`, `create_reservation_with_lock`, `create_order_with_items_atomic`, and all three guarded staff wrappers exist as `SECURITY DEFINER`; `tables_restaurant_branch_id_fkey` and `orders_restaurant_branch_id_fkey` are validated; `store_branches_restaurant_id_id_key` exists.
+- Privilege post-apply: authenticated inventory write grants returned `0`; anonymous/authenticated execution of atomic order/reservation RPCs is `false`; service-role execution is `true`.
+- Operational limitation: the project remains on the Free plan with no configured backup/PITR evidence and no staging branch. Phase 1 SQL is applied, but broader release readiness is still **NO-GO** until recoverable backup/restore and authenticated smoke evidence are captured.
 
 ## Current Snapshot
 
-- Local SQL migration files: 141
+- Local SQL migration files: 145
 - Tracked migration files: 141
-- Git-untracked migration files: 0 (all three Phase 0 hardening migrations are committed as of 2026-08-29)
-- Latest local migration: `20260722103000_financial_dml_hardening.sql`
+- Git-untracked migration files: 4 (Phase 1 and Phase 2 hardening migrations pending review)
+- Latest local migration: `20260903110000_phase2_prepaid_consistency_fix.sql`
 - Current integration branch: `ui-ux-rebuild/phase-0-tokens`
-- Current local commit: `46e6afa`
-- Current upstream commit: `aa58f93`
-- Branch relationship: local is ahead of upstream by 3 commits, behind by 0 (push pending)
-- Working tree status during snapshot: clean
+- Current local commit: `45fce9999b5815bb0d83f195ef4a5056c9a5f73d`
+- Current upstream commit: `45fce9999b5815bb0d83f195ef4a5056c9a5f73d`
+- Branch relationship: local and upstream are aligned (0 ahead, 0 behind)
+- Working tree status: 22 expected changed/untracked files remain in the current implementation candidate; review and commit them before release.
+
+## 2026-09-03 Phase 2 Production Apply
+
+- Target: Supabase project `qr-restaurant-saas`, ref `tfhqatvevbrbzaaqjhfa`, database `main / Production`.
+- Preflight: `inventory_locations` and `stock_balances` schemas present; `orders.branch_id` present; `inventory_reservations` absent before apply; cross-tenant inventory location/balance checks returned `0`.
+- Apply: `20260903100000_phase2_inventory_reservation_ledger.sql` executed successfully in one explicit transaction through the authenticated Supabase SQL Editor session.
+- Post-apply: `inventory_reservations=1`, reservation/consume/release RPCs and `cancel_order_with_inventory_reservation_rollback` exist; `reserved_balance_violations=0`.
+- Migration history: inserted version `20260903100000` with name `phase2_inventory_reservation_ledger` and `created_by=codex_sql_editor`.
+- Rollback posture: fix-forward only; disable prepaid reservation wiring per tenant if needed, and do not delete reservation or movement history.
+- Operational limitation: production still has no configured backup/PITR evidence or staging branch. Phase 2 is applied, but broader release readiness remains **NO-GO** until recoverable backup/restore, concurrency rehearsal and authenticated smoke evidence are captured.
+
+## 2026-09-03 Phase 2 Scope Fix And Rehearsal
+
+- Added and applied fix-forward migration `20260903103000_phase2_inventory_reservation_scope_fix.sql`.
+- Post-apply checks: scope trigger `1`, history row `1`, service-role direct write grants `0`, reservation scope violations `0`.
+- Production transactional rehearsal passed and rolled back completely: reservation retry idempotency, competing reservation rejection, consume-once, release-once, branch mismatch rejection and `reserved_quantity` invariant.
+- The rehearsal used temporary rows inside one transaction and ended with `ROLLBACK`; no test order, ingredient, stock or reservation remains.
+- `npm run smoke:production` passed all 16 public/auth-guarded production checks, including Supabase health, customer ordering/reservation pages and OAuth safety contracts.
+- `npm audit fix` applied non-breaking lockfile updates and Next.js was upgraded from `16.2.6` to `16.3.4`; current full audit reports 20 findings (5 low, 7 moderate, 8 high) and the production-only audit reports 13 findings (2 high). Remaining findings require planned upstream upgrades; no `--force` was used.
+- Remaining release blockers are infrastructure/operations only: no recoverable backup/PITR evidence, no staging branch, and authenticated UI smoke still needs a real operator flow.
+
+## 2026-09-03 Phase 2 Local Candidate
+
+- Added `20260903100000_phase2_inventory_reservation_ledger.sql` with service-role-only `reserve_order_inventory`, `consume_order_inventory`, `release_order_inventory`, and reserved-acceptance RPCs.
+- Prepaid remote orders now reserve only the resolved order branch (or null/global stock), consume the reservation once on acceptance, and release it before cancellation.
+- Allocation plans are canonically sorted to reduce multi-line advisory-lock deadlocks and retries remain idempotent by order/allocation key.
+- Local validation: TypeScript, targeted ESLint, production build, and `npm test` pass (`758 passed`, `0 failed`, `1 skipped`). PostgreSQL concurrency rehearsal remains pending because no rehearsal database URL is configured.
+- Production apply: completed on 2026-09-03 after explicit transaction and post-apply checks; staging/concurrency rehearsal remains pending.
+
+## 2026-09-03 Phase 2 Prepaid Consistency Fix
+
+- Added `20260903110000_phase2_prepaid_consistency_fix.sql` as a fix-forward migration.
+- Reservation retries now replay the existing allocation set instead of selecting a second FEFO batch.
+- Consuming a prepaid reservation now decrements both `stock_balances` and the legacy `ingredients.on_hand_quantity` aggregate in one transaction.
+- The SQL Editor apply is still being reconciled; production history must show `20260903110000` before this migration is considered applied.
 
 ## Current Reconciliation Status (2026-07-22)
 
@@ -86,6 +130,12 @@ Production migration remains blocked until:
 - rollback/fix-forward notes are signed off by the DB rollback commander.
 
 ## Latest Migration Files
+
+| Migration | Area | Risk |
+| --- | --- | --- |
+| `20260903103000_phase2_inventory_reservation_scope_fix.sql` | Reservation order/tenant/branch trigger guard and direct-write revocation | High: fix-forward integrity guard; requires PostgreSQL rehearsal evidence. |
+| `20260903100000_phase2_inventory_reservation_ledger.sql` | Prepaid inventory reservation, consume/release ledger and branch-aware stock isolation | P0: requires PostgreSQL concurrency rehearsal and production preflight before apply. |
+| `20260903090000_phase1_security_transaction_hardening.sql` | Phase 1 RBAC, inventory DML, tenant-branch FKs and reservation transaction RPC | P0: requires PostgreSQL rehearsal, data preflight and authenticated actor verification before production apply. |
 
 | Migration | Area | Risk |
 | --- | --- | --- |

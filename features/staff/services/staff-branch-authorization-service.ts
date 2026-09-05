@@ -126,6 +126,75 @@ export async function assertStaffCanAccessOrder(session: SessionProfile, orderId
   await assertStaffCanAccessBranch(session, result.data.branch_id as string | null);
 }
 
+export async function assertStaffCanAccessReservation(session: SessionProfile, reservationId: string) {
+  const supabase = createAdminSupabaseClient() as any;
+  const result = await supabase
+    .from("reservations")
+    .select("id,locks:reservation_table_locks(status,table:tables(branch_id))")
+    .eq("restaurant_id", session.restaurantId)
+    .eq("id", reservationId)
+    .maybeSingle();
+
+  if (result.error) {
+    if (isMissingStaffBranchSchema(result.error)) {
+      throw new AppError("Đặt bàn chưa có dữ liệu chi nhánh để kiểm tra quyền nhân viên.", 503);
+    }
+    throw result.error;
+  }
+  if (!result.data?.id) throw new AppError("Không tìm thấy đặt bàn.", 404);
+
+  const branchIds = await getStaffAuthorizedBranchIds(session);
+  if (branchIds === null) return;
+
+  const reservationBranchIds = new Set<string>();
+  for (const lock of (result.data.locks ?? []) as Array<{
+    status?: string | null;
+    table?: { branch_id?: string | null } | Array<{ branch_id?: string | null }> | null;
+  }>) {
+    if (lock.status !== "active") continue;
+    const table = firstOrNull(lock.table);
+    if (table?.branch_id) reservationBranchIds.add(table.branch_id);
+  }
+
+  if (reservationBranchIds.size === 0) {
+    if (branchIds.size !== 1) {
+      throw new AppError("Dữ liệu đặt bàn chưa có chi nhánh nên nhân viên không thể thao tác an toàn.", 403);
+    }
+    return;
+  }
+
+  for (const branchId of reservationBranchIds) {
+    if (!branchIds.has(branchId)) {
+      throw new AppError("Bạn không có quyền thao tác dữ liệu ngoài chi nhánh được gán.", 403);
+    }
+  }
+}
+
+export async function assertStaffCanAccessTables(session: SessionProfile, tableIds: string[]) {
+  const normalizedTableIds = [...new Set(tableIds.filter(Boolean))];
+  if (normalizedTableIds.length === 0) return;
+  const supabase = createAdminSupabaseClient() as any;
+  const result = await supabase
+    .from("tables")
+    .select("id,branch_id")
+    .eq("restaurant_id", session.restaurantId)
+    .in("id", normalizedTableIds);
+
+  if (result.error) {
+    if (isMissingStaffBranchSchema(result.error)) {
+      throw new AppError("Bàn chưa có dữ liệu chi nhánh để kiểm tra quyền nhân viên.", 503);
+    }
+    throw result.error;
+  }
+  if ((result.data ?? []).length !== normalizedTableIds.length) {
+    throw new AppError("Không tìm thấy bàn trong nhà hàng này.", 404);
+  }
+
+  for (const table of result.data as Array<{ id: string; branch_id?: string | null }>) {
+    await assertStaffCanAccessBranch(session, table.branch_id ?? null);
+  }
+}
+
 export async function assertStaffCanAccessServiceRequest(session: SessionProfile, requestId: string) {
   const supabase = createAdminSupabaseClient() as any;
   const result = await supabase

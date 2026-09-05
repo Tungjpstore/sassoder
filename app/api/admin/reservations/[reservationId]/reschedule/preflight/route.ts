@@ -3,14 +3,16 @@ import { fail, ok } from "@/lib/response";
 import { assertSameOriginRequest } from "@/lib/security/request-origin";
 import { reservationIdSchema, reservationRescheduleSchema } from "@/lib/validators";
 import { preflightReservationReschedule } from "@/services/reservation-service";
+import { assertStaffCanAccessReservation } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const preferredRegion = "sin1";
 
 export async function POST(request: Request, { params }: { params: Promise<{ reservationId: string }> }) {
   try {
     assertSameOriginRequest(request);
-    const session = await requireOperationalDashboardApiSession({ feature: "reservations" });
+    const session = await requireOperationalDashboardApiSession({ feature: "reservations", permission: "reservations.manage" });
     const { reservationId } = reservationIdSchema.parse(await params);
+    await assertStaffCanAccessReservation(session, reservationId);
     const body = reservationRescheduleSchema.parse(await request.json().catch(() => ({})));
     return ok(await preflightReservationReschedule(session.restaurantId, reservationId, body));
   } catch (error) {

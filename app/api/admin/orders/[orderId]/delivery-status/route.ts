@@ -5,14 +5,16 @@ import { adminOrderIdSchema, deliveryStatusSchema } from "@/lib/validators";
 import { broadcastVpsRealtime } from "@/lib/vps/realtime";
 import { writeAuditLog } from "@/services/audit-log-service";
 import { getOrderLifecycleSnapshot, updateOrderDeliveryStatus } from "@/services/order-service";
+import { assertStaffCanAccessOrder } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const preferredRegion = "sin1";
 
 export async function POST(request: Request, { params }: { params: Promise<{ orderId: string }> }) {
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
-    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking" });
+    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking", permission: "orders.update" });
     const { orderId } = adminOrderIdSchema.parse(await params);
+    await assertStaffCanAccessOrder(session, orderId);
     const body = deliveryStatusSchema.parse(await request.json());
     const before = await getOrderLifecycleSnapshot(session.restaurantId, orderId);
     const data = await updateOrderDeliveryStatus(session.restaurantId, orderId, body.status, session.userId);

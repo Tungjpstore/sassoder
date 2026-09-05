@@ -675,6 +675,7 @@ export type InventorySupplierInput = {
   address?: string;
   defaultLeadDays?: number;
   isPreferred?: boolean;
+  actorUserId: string;
 };
 
 export type InventoryPurchaseOrderLineInput = {
@@ -1104,8 +1105,12 @@ async function buildOrderInventoryAllocationPlan(
   restaurantId: string,
   orderId: string
 ): Promise<InventoryOrderAllocationPlanResult> {
-  const itemsResult = await db.from("order_items").select("menu_item_id,quantity").eq("order_id", orderId);
+  const [itemsResult, orderResult] = await Promise.all([
+    db.from("order_items").select("menu_item_id,quantity").eq("order_id", orderId),
+    db.from("orders").select("branch_id").eq("id", orderId).eq("restaurant_id", restaurantId).maybeSingle()
+  ]);
   throwIfSupabaseError(itemsResult.error);
+  throwIfSupabaseError(orderResult.error);
   const items = (itemsResult.data ?? []) as OrderItemInventoryRow[];
   if (items.length === 0) {
     return { schemaReady: true, allocations: [], allocatedQuantity: 0, skippedReason: "no_items" };
@@ -1129,14 +1134,17 @@ async function buildOrderInventoryAllocationPlan(
   }
 
   const ingredientIds = [...demandByIngredient.keys()];
-  const stockResult = await db
+  let stockQuery = db
     .from("stock_balances")
     .select(
       "ingredient_id,branch_id,location_id,batch_id,on_hand_quantity,reserved_quantity,batch:inventory_batches(status,expiration_date,unit_cost,received_at,created_at)"
     )
     .eq("restaurant_id", restaurantId)
-    .in("ingredient_id", ingredientIds)
-    .gt("on_hand_quantity", 0);
+    .in("ingredient_id", ingredientIds);
+  stockQuery = orderResult.data?.branch_id
+    ? stockQuery.eq("branch_id", orderResult.data.branch_id)
+    : stockQuery.is("branch_id", null);
+  const stockResult = await stockQuery.gt("on_hand_quantity", 0);
 
   if (isMissingInventorySchemaError(stockResult.error)) {
     return { schemaReady: false, allocations: [], allocatedQuantity: 0, skippedReason: "schema_missing" };
@@ -1166,7 +1174,10 @@ async function buildOrderInventoryAllocationPlan(
       locationId: allocation.locationId,
       batchId: allocation.batchId,
       allocationIndex: allocation.allocationIndex
-    }))
+    })).sort((left, right) =>
+      `${left.ingredientId}:${left.branchId ?? "global"}:${left.locationId ?? "global"}:${left.batchId ?? "no-batch"}`
+        .localeCompare(`${right.ingredientId}:${right.branchId ?? "global"}:${right.locationId ?? "global"}:${right.batchId ?? "no-batch"}`)
+    )
   };
 }
 
@@ -2073,7 +2084,7 @@ export async function createInventoryCategory(restaurantId: string, input: { nam
 }
 
 export async function createInventorySupplier(restaurantId: string, input: InventorySupplierInput) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const { data, error } = await db
     .from("suppliers")
@@ -2301,7 +2312,7 @@ export async function updateInventoryAlertStatus(
   restaurantId: string,
   input: { alertId: string; status: "acknowledged" | "resolved" | "dismissed"; actorUserId: string }
 ) {
-  const supabase = await createServerSupabaseClient();
+  const supabase = createInventoryMutationSupabaseClient(input.actorUserId);
   const db = supabase as unknown as UntypedSupabase;
   const patch: Record<string, unknown> = {
     status: input.status,
@@ -2976,9 +2987,99 @@ async function acceptOrderWithoutInventory(
   return data;
 }
 
+export async function reserveInventoryForPrepaidOrder(restaurantId: string, orderId: string, actorUserId?: string | null) {
+  const db = createAdminSupabaseClient() as unknown as UntypedSupabase;
+  const existingResult = await db
+    .from("inventory_reservations")
+    .select("quantity,status")
+    .eq("restaurant_id", restaurantId)
+    .eq("order_id", orderId)
+    .in("status", ["reserved", "consumed"]);
+  if (!isMissingInventorySchemaError(existingResult.error)) {
+    throwIfSupabaseError(existingResult.error);
+    const existingReservations = (existingResult.data ?? []) as Array<{ quantity?: number | string | null; status?: string | null }>;
+    if (existingReservations.length > 0) {
+      return {
+        schemaReady: true,
+        status: "reserved",
+        reservationCount: existingReservations.length,
+        quantity: existingReservations.reduce((sum, row) => sum + Number(row.quantity ?? 0), 0),
+        replayed: true
+      };
+    }
+  }
+
+  const allocationPlan = await buildOrderInventoryAllocationPlan(db, restaurantId, orderId);
+  if (!allocationPlan.schemaReady) {
+    throw new AppError("Chưa thể giữ tồn kho prepaid vì schema inventory chưa sẵn sàng.", 503);
+  }
+  if (allocationPlan.allocations.length === 0) {
+    return { schemaReady: true, reservationCount: 0, skippedReason: allocationPlan.skippedReason ?? "no_recipes" };
+  }
+  const { data, error } = await db.rpc("reserve_order_inventory", {
+    target_restaurant_id: restaurantId,
+    target_order_id: orderId,
+    target_actor_user_id: actorUserId ?? null,
+    target_allocations: allocationPlan.allocations
+  });
+  if (error?.message?.includes("insufficient") || error?.message?.includes("reservation")) {
+    throw new AppError("Món prepaid vừa hết tồn kho. Vui lòng chọn món khác hoặc thử lại.", 409);
+  }
+  throwIfSupabaseError(error);
+  return { schemaReady: true, ...(data as Record<string, unknown>) };
+}
+
+export async function consumeReservedInventory(restaurantId: string, orderId: string, actorUserId?: string | null) {
+  const db = createAdminSupabaseClient() as unknown as UntypedSupabase;
+  const { data, error } = await db.rpc("consume_order_inventory", {
+    target_restaurant_id: restaurantId,
+    target_order_id: orderId,
+    target_actor_user_id: actorUserId ?? null
+  });
+  if (isMissingInventorySchemaError(error)) return { status: "no_reservation" };
+  throwIfSupabaseError(error);
+  return data as Record<string, unknown>;
+}
+
+export async function releaseReservedInventory(restaurantId: string, orderId: string, actorUserId?: string | null) {
+  const db = createAdminSupabaseClient() as unknown as UntypedSupabase;
+  const { data, error } = await db.rpc("release_order_inventory", {
+    target_restaurant_id: restaurantId,
+    target_order_id: orderId,
+    target_actor_user_id: actorUserId ?? null
+  });
+  if (isMissingInventorySchemaError(error)) return { status: "no_reservation" };
+  throwIfSupabaseError(error);
+  return data as Record<string, unknown>;
+}
+
 export async function acceptOrderWithInventoryDeduction(restaurantId: string, input: InventoryAcceptOrderInput) {
   const supabase = createAdminSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
+
+  const reservedResult = await db
+    .from("inventory_reservations")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", restaurantId)
+    .eq("order_id", input.orderId)
+    .eq("status", "reserved");
+  if (isMissingInventorySchemaError(reservedResult.error)) {
+    return acceptOrderWithoutInventory(restaurantId, input, "rpc_missing");
+  }
+  throwIfSupabaseError(reservedResult.error);
+  const hasReservedInventory = (reservedResult.count ?? 0) > 0;
+  if (hasReservedInventory) {
+    const { data: reservedOrder, error: reservedOrderError } = await db.rpc("accept_order_with_reserved_inventory", {
+      target_restaurant_id: restaurantId,
+      target_order_id: input.orderId,
+      target_actor_user_id: input.actorUserId ?? null,
+      target_service_due_at: input.serviceDueAt ?? null,
+      target_delivery_status: input.deliveryStatus ?? null
+    });
+    throwIfSupabaseError(reservedOrderError);
+    return reservedOrder;
+  }
+
   const allocationPlan = await buildOrderInventoryAllocationPlan(db, restaurantId, input.orderId);
 
   // Quán chưa bật/migration inventory: vẫn cho nhận đơn (không trừ kho).
@@ -2992,7 +3093,7 @@ export async function acceptOrderWithInventoryDeduction(restaurantId: string, in
     target_actor_user_id: input.actorUserId ?? null,
     target_service_due_at: input.serviceDueAt ?? null,
     target_delivery_status: input.deliveryStatus ?? null,
-    target_allocations: allocationPlan.allocations
+    target_allocations: hasReservedInventory ? [] : allocationPlan.allocations
   });
 
   if (isMissingInventorySchemaError(error)) {
@@ -3017,6 +3118,25 @@ export async function acceptOrderWithInventoryDeduction(restaurantId: string, in
 export async function cancelOrderWithInventoryRollback(restaurantId: string, input: InventoryCancelOrderInput) {
   const supabase = createAdminSupabaseClient();
   const db = supabase as unknown as UntypedSupabase;
+  const atomicReservationRollback = await db.rpc("cancel_order_with_inventory_reservation_rollback", {
+    target_restaurant_id: restaurantId,
+    target_order_id: input.orderId,
+    target_actor_user_id: input.actorUserId ?? null
+  });
+
+  if (!isMissingInventorySchemaError(atomicReservationRollback.error)) {
+    if (atomicReservationRollback.error?.message?.includes("stock negative") || atomicReservationRollback.error?.message?.includes("batch negative") || atomicReservationRollback.error?.message?.includes("balance is missing")) {
+      throw new AppError("Không thể hoàn kho an toàn cho đơn này. Vui lòng kiểm tra ledger kho trước khi hủy.", 409);
+    }
+    if (atomicReservationRollback.error?.message?.includes("changed before inventory cancellation")) {
+      throw new AppError("Trạng thái đơn đã thay đổi. Không thể huỷ an toàn, vui lòng tải lại.", 409);
+    }
+    throwIfSupabaseError(atomicReservationRollback.error);
+    return atomicReservationRollback.data;
+  }
+
+  // Older deployments do not have the Phase 2 wrapper; preserve the Phase 1 path.
+  await releaseReservedInventory(restaurantId, input.orderId, input.actorUserId);
   const { data, error } = await db.rpc("cancel_order_with_inventory_rollback", {
     target_restaurant_id: restaurantId,
     target_order_id: input.orderId,

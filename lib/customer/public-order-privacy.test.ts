@@ -37,3 +37,14 @@ test("sanitizeSharedTableHistoryOrder redacts private fields for other diners", 
   assert.equal(result.customerNote, null);
   assert.equal(result.total, 10000);
 });
+
+test("sanitizeSharedTableHistoryOrder redacts private fields for QR-only viewers", () => {
+  const result = sanitizeSharedTableHistoryOrder(order({ fulfillmentType: "DELIVERY" }), "sess-a", undefined);
+  assert.equal(result.customerName, null);
+  assert.equal(result.customerPhone, null);
+  assert.equal(result.customerNote, null);
+  assert.equal(result.deliveryAddress, null);
+  assert.equal(result.deliveryLat, null);
+  assert.equal(result.deliveryCourier, null);
+  assert.equal(result.deliveryTrackingSnapshot, null);
+});

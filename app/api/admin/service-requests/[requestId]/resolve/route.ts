@@ -10,7 +10,7 @@ export const preferredRegion = "sin1";
 export async function POST(request: Request, { params }: { params: Promise<{ requestId: string }> }) {
   try {
     assertSameOriginRequest(request, { requireOrigin: true });
-    const session = await requireOperationalDashboardApiSession({ feature: "staff_call" });
+    const session = await requireOperationalDashboardApiSession({ feature: "staff_call", permission: "orders.update" });
     const { requestId } = await params;
     await assertStaffCanAccessServiceRequest(session, requestId);
     const data = await resolveServiceRequest(session.restaurantId, requestId);

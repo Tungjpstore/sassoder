@@ -10,7 +10,7 @@ function safeSize(value: string | null) {
 }
 
 export async function GET(request: Request) {
-  const session = await requireOperationalDashboardApiSession({ feature: "reservations" });
+  const session = await requireOperationalDashboardApiSession({ feature: "reservations", permission: "reservations.manage" });
   const url = new URL(request.url);
   const size = safeSize(url.searchParams.get("size"));
   const reserveUrl = buildTenantUrl(session.restaurant.slug, "/reserve");

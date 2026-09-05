@@ -202,7 +202,7 @@ const reservationPreflightTableSelect =
   "id,name,area,capacity,table_area_id,floor_label,seating_zone,table_kind,reservation_priority,is_bookable,is_hidden,is_under_maintenance,qr_enabled";
 
 const reservationAnalyticsSelect =
-  "id,status,party_size,starts_at,created_at,deposit_required_amount,deposit_paid_amount,deposit_status,locks:reservation_table_locks(table:tables(name,area,capacity,floor_label))";
+  "id,status,party_size,starts_at,created_at,deposit_required_amount,deposit_paid_amount,deposit_status,locks:reservation_table_locks(table:tables(name,area,capacity,floor_label,branch_id))";
 
 const reservationSettingsSelect =
   "id,name,slug,platform_status,deleted_at,bank_code,bank_account,bank_account_name,logo_url,address,store_lat,store_lng,hotline,contact_email,opening_time,closing_time,reservations_enabled,reservation_deposit_enabled,reservation_deposit_type,reservation_deposit_value,reservation_hold_minutes,reservation_duration_minutes,reservation_buffer_minutes,reservation_min_notice_minutes,reservation_max_days_ahead,reservation_arrival_grace_minutes";
@@ -2026,13 +2026,52 @@ export async function createReservation(input: {
     confirmed_at: needsDeposit ? null : now.toISOString()
   };
 
-  let { data: reservation, error: reservationError } = await supabase
-    .from("reservations")
-    .insert(reservationInsert)
-    .select(reservationSelect)
-    .single();
+  let reservation: any = null;
+  let reservationError: any = null;
+  let usedAtomicReservationRpc = false;
 
-  if (isMissingReservationPreferenceColumns(reservationError)) {
+  const atomicResult = await (supabase as any).rpc("create_reservation_with_lock", {
+    p_reservation: reservationInsert,
+    p_table_id: table.id,
+    p_lock_ends_at: lockEnd.toISOString(),
+    p_deposit_log: needsDeposit
+      ? {
+          method: "QR",
+          status: "pending",
+          amount: depositAmount,
+          transition_key: reservationDepositTransitionKey("pending", "deposit-required"),
+          raw_data: {
+            source: "reservation_deposit_required",
+            transitionKey: reservationDepositTransitionKey("pending", "deposit-required")
+          }
+        }
+      : null
+  });
+  const atomicErrorCode = String(atomicResult.error?.code ?? "");
+  const atomicErrorMessage = String(atomicResult.error?.message ?? "");
+  const atomicRpcMissing = atomicErrorCode === "PGRST202" || atomicErrorCode === "42883" || /create_reservation_with_lock/i.test(atomicErrorMessage);
+  if (!atomicResult.error) {
+    reservation = Array.isArray(atomicResult.data) ? atomicResult.data[0] : atomicResult.data;
+    usedAtomicReservationRpc = Boolean(reservation?.id);
+  } else if (atomicErrorCode === "23505" && input.idempotencyKey) {
+    const existingResult = await getIdempotentReservationResult(supabase, settings, input.idempotencyKey);
+    if (existingResult) return existingResult;
+    throw new AppError("Yêu cầu đặt bàn đã tồn tại nhưng chưa thể đọc lại kết quả.", 409);
+  } else if (atomicErrorCode === "23P01") {
+    throw new AppError("Bàn vừa được khách khác giữ. Vui lòng chọn khung giờ khác.", 409);
+  } else if (!atomicRpcMissing) {
+    throw new AppError(atomicErrorMessage || "Không tạo được đặt bàn", 400);
+  }
+
+  if (!usedAtomicReservationRpc) {
+    ({ data: reservation, error: reservationError } = await supabase
+      .from("reservations")
+      .insert(reservationInsert)
+      .select(reservationSelect)
+      .single());
+  }
+
+  if (!usedAtomicReservationRpc && isMissingReservationPreferenceColumns(reservationError)) {
     const {
       preferred_table_area_id: _preferredTableAreaId,
       preferred_seating_zone: _preferredSeatingZone,
@@ -2049,32 +2088,34 @@ export async function createReservation(input: {
     reservationError = legacyResult.error;
   }
 
-  if ((reservationError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
+  if (!usedAtomicReservationRpc && (reservationError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
     const existingResult = await getIdempotentReservationResult(supabase, settings, input.idempotencyKey);
     if (existingResult) return existingResult;
   }
 
-  if (reservationError || !reservation) {
+  if (!usedAtomicReservationRpc && (reservationError || !reservation)) {
     throw new AppError(reservationError?.message ?? "Không tạo được đặt bàn", 400);
   }
 
-  const { error: lockError } = await supabase.from("reservation_table_locks").insert({
-    reservation_id: reservation.id,
-    restaurant_id: settings.id,
-    table_id: table.id,
-    starts_at: startsAt.toISOString(),
-    ends_at: lockEnd.toISOString()
-  });
+  if (!usedAtomicReservationRpc) {
+    const { error: lockError } = await supabase.from("reservation_table_locks").insert({
+      reservation_id: reservation.id,
+      restaurant_id: settings.id,
+      table_id: table.id,
+      starts_at: startsAt.toISOString(),
+      ends_at: lockEnd.toISOString()
+    });
 
-  if (lockError) {
-    await supabase.from("reservations").delete().eq("id", reservation.id);
-    if ((lockError as { code?: string }).code === "23P01") {
-      throw new AppError("Bàn vừa được khách khác giữ. Vui lòng chọn khung giờ khác.", 409);
+    if (lockError) {
+      await supabase.from("reservations").delete().eq("id", reservation.id);
+      if ((lockError as { code?: string }).code === "23P01") {
+        throw new AppError("Bàn vừa được khách khác giữ. Vui lòng chọn khung giờ khác.", 409);
+      }
+      throw new AppError(lockError.message ?? "Không giữ được bàn", 400);
     }
-    throw new AppError(lockError.message ?? "Không giữ được bàn", 400);
   }
 
-  if (needsDeposit) {
+  if (needsDeposit && !usedAtomicReservationRpc) {
     await ensureReservationDepositLogEvent(supabase, {
       reservationId: reservation.id,
       restaurantId: settings.id,
@@ -2448,7 +2489,12 @@ export async function cancelPublicReservation(reservationId: string, token: stri
   return getPublicReservation(reservationId, token);
 }
 
-export async function listReservationsForRestaurant(restaurantId: string, date?: string) {
+export async function listReservationsForRestaurant(
+  restaurantId: string,
+  date?: string,
+  options: { authorizedBranchIds?: ReadonlySet<string> | null } = {}
+) {
+  if (options.authorizedBranchIds && options.authorizedBranchIds.size === 0) return [];
   await expireReservationHolds(restaurantId);
   const supabase = await createServerSupabaseClient();
   const settings = date ? await getReservationSettings(restaurantId) : null;
@@ -2485,7 +2531,15 @@ export async function listReservationsForRestaurant(restaurantId: string, date?:
   }
 
   throwIfSupabaseError(error);
-  return ((data ?? []) as unknown as Array<ReservationRow & { locks?: ReservationLockRow[] }>).map(mapReservation);
+  const reservations = ((data ?? []) as unknown as Array<ReservationRow & { locks?: ReservationLockRow[] }>).map(mapReservation);
+  if (!options.authorizedBranchIds) return reservations;
+
+  return reservations.filter((reservation) => {
+    if (reservation.branchId) return options.authorizedBranchIds?.has(reservation.branchId) ?? false;
+    // Legacy/unassigned reservations are safe only when the staff member has
+    // exactly one active branch, matching assertStaffCanAccessBranch semantics.
+    return options.authorizedBranchIds?.size === 1;
+  });
 }
 
 export async function getReservationAnalytics(
@@ -2493,6 +2547,7 @@ export async function getReservationAnalytics(
   options: {
     windowDays?: number;
     now?: Date;
+    authorizedBranchIds?: ReadonlySet<string> | null;
   } = {}
 ) {
   const windowDays = options.windowDays ?? DEFAULT_RESERVATION_ANALYTICS_WINDOW_DAYS;
@@ -2509,7 +2564,20 @@ export async function getReservationAnalytics(
     .limit(1000);
 
   throwIfSupabaseError(error);
-  return buildReservationAnalytics((data ?? []) as ReservationAnalyticsRow[], {
+  const rows = (data ?? []) as ReservationAnalyticsRow[];
+  const scopedRows = !options.authorizedBranchIds
+    ? rows
+    : rows.filter((row) => {
+        if (options.authorizedBranchIds?.size === 0) return false;
+        const branchIds = new Set(
+          (row.locks ?? [])
+            .map((lock) => firstOrNull(lock.table)?.branch_id ?? null)
+            .filter((branchId): branchId is string => Boolean(branchId))
+        );
+        if (branchIds.size === 0) return options.authorizedBranchIds?.size === 1;
+        return [...branchIds].every((branchId) => options.authorizedBranchIds?.has(branchId));
+      });
+  return buildReservationAnalytics(scopedRows, {
     windowDays,
     windowStart,
     windowEnd

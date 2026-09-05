@@ -8,7 +8,7 @@ export const preferredRegion = "sin1";
 
 export async function GET() {
   try {
-    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking" });
+    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking", permission: "orders.update" });
     return ok(await listDeliveryCouriers(session.restaurantId));
   } catch (error) {
     return fail(error);
@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     assertSameOriginRequest(request);
-    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking" });
+    const session = await requireOperationalDashboardApiSession({ feature: "delivery_realtime_tracking", permission: "orders.update" });
     const body = deliveryCourierSchema.parse(await request.json());
     return ok(await createDeliveryCourier(session.restaurantId, body), { status: 201 });
   } catch (error) {

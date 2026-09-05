@@ -21,7 +21,11 @@ import {
 } from "@/lib/customer/modifier-pricing";
 import { recordDeliveryStatusTrackingEvent } from "@/services/delivery-tracking-service";
 import { ensurePaymentLogEvent, paymentTransitionKey } from "@/services/payment-log-service";
-import { acceptOrderWithInventoryDeduction, cancelOrderWithInventoryRollback } from "@/services/inventory-service";
+import {
+  acceptOrderWithInventoryDeduction,
+  cancelOrderWithInventoryRollback,
+  reserveInventoryForPrepaidOrder
+} from "@/services/inventory-service";
 import { getPaymentInstructions } from "@/services/payment-service";
 import { assertPromotionUsageAfterInsert, resolvePromotionForOrder, withPromotionUsageLock } from "@/services/promotion-service";
 import { buildPromotionCustomerKeyHash } from "@/lib/promotion-identity";
@@ -105,6 +109,52 @@ type OrderInsertRow = Database["public"]["Tables"]["orders"]["Insert"] & {
 };
 type OrderItemInsertRow = Database["public"]["Tables"]["order_items"]["Insert"];
 type RemoteDeliveryQuote = Awaited<ReturnType<typeof quoteDeliveryForRestaurant>> | null;
+
+function isMissingOrderAggregateRpc(error: { code?: string; message?: string } | null | undefined) {
+  return error?.code === "PGRST202" || error?.code === "42883" || /create_order_with_items_atomic/i.test(error?.message ?? "");
+}
+
+async function insertOrderAggregate(
+  supabase: OrderSupabaseClient,
+  orderPayload: OrderInsertRow,
+  itemRows: OrderItemInsertRow[],
+  paymentLog?: Record<string, unknown> | null
+) {
+  const atomicResult = await (supabase as any).rpc("create_order_with_items_atomic", {
+    p_order: orderPayload,
+    p_items: itemRows,
+    p_payment_log: paymentLog ?? null
+  });
+  if (!atomicResult.error) {
+    const row = Array.isArray(atomicResult.data) ? atomicResult.data[0] : atomicResult.data;
+    if (row) return { data: row, error: null, atomic: true };
+  } else if (!isMissingOrderAggregateRpc(atomicResult.error)) {
+    return { data: null, error: atomicResult.error, atomic: true };
+  }
+
+  const { data, error } = await insertOrderWithBranchFallback(supabase, orderPayload);
+  if (error || !data) return { data, error, atomic: false };
+  const itemResult = await insertOrderItemsWithModifierFallback(
+    supabase,
+    itemRows.map((row) => ({ ...row, order_id: data.id }))
+  );
+  if (itemResult.error) {
+    await supabase.from("orders").delete().eq("id", data.id);
+    return { data: null, error: itemResult.error, atomic: false };
+  }
+  if (paymentLog) {
+    const paymentResult = await supabase.from("payment_logs").insert({
+      ...paymentLog,
+      transition_key: String(paymentLog.transition_key ?? "").replace("order:pending:", `order:${data.id}:`),
+      order_id: data.id
+    } as any);
+    if (paymentResult.error) {
+      await supabase.from("orders").delete().eq("id", data.id);
+      return { data: null, error: paymentResult.error, atomic: false };
+    }
+  }
+  return { data, error: null, atomic: false };
+}
 
 type RawOrder = {
   id: string;
@@ -1111,6 +1161,11 @@ async function assertCustomerOrderAccess(
     });
     throw new AppError("Phiên gọi món không khớp với đơn hàng này", 403);
   }
+
+  return {
+    orderCustomerSessionId: accessOrder.customer_session_id,
+    billCustomerSessionId: bill?.customer_session_id ?? null
+  };
 }
 
 async function getMutableOrder(supabase: OrderSupabaseClient, restaurantId: string, orderId: string) {
@@ -1283,7 +1338,17 @@ export async function createOrder(input: CreateOrderInput) {
       requestedBranchId: table.branch_id ?? null
     });
 
-    const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+    const orderItems = pricedItems.map((item): OrderItemInsertRow => ({
+      order_id: "pending",
+      menu_item_id: item.menuItemId,
+      quantity: item.quantity,
+      price: item.unitPrice,
+      base_price: item.basePrice,
+      modifier_total: item.modifierTotal,
+      modifier_snapshot: item.modifierSnapshot as Json,
+      note: mergeOrderItemNote(item.note, item.modifierNote)
+    }));
+    const { data: insertedOrder, error: orderError, atomic: usedAtomicOrderRpc } = await insertOrderAggregate(supabase, {
       restaurant_id: restaurant.id,
       table_id: table.id,
       bill_id: bill.id,
@@ -1299,7 +1364,7 @@ export async function createOrder(input: CreateOrderInput) {
       customer_session_id: input.customerSessionId || null,
       customer_note: input.customerNote || null,
       idempotency_key: input.idempotencyKey || null
-    });
+    }, orderItems);
 
     if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
       const { data: existing, error: existingError } = await supabase
@@ -1349,26 +1414,6 @@ export async function createOrder(input: CreateOrderInput) {
         await supabase.from("orders").delete().eq("id", insertedOrder.id);
         throw error;
       }
-    }
-
-    const orderItems = pricedItems.map((item): OrderItemInsertRow => {
-      return {
-        order_id: insertedOrder.id,
-        menu_item_id: item.menuItemId,
-        quantity: item.quantity,
-        price: item.unitPrice,
-        base_price: item.basePrice,
-        modifier_total: item.modifierTotal,
-        modifier_snapshot: item.modifierSnapshot as Json,
-        note: mergeOrderItemNote(item.note, item.modifierNote)
-      };
-    });
-
-    const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
-
-    if (orderItemError) {
-      await supabase.from("orders").delete().eq("id", insertedOrder.id);
-      throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn", 400);
     }
 
     const order = await getOrderDto(insertedOrder.id, supabase);
@@ -1536,7 +1581,29 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
       requestedBranchId: input.fulfillmentType === "PICKUP" ? input.branchId ?? null : null,
       requireRequestedBranch: input.fulfillmentType === "PICKUP" && Boolean(input.branchId?.trim())
     });
-    const { data: insertedOrder, error: orderError } = await insertOrderWithBranchFallback(supabase, {
+    const orderItems = pricedItems.map((item): OrderItemInsertRow => ({
+      order_id: "pending",
+      menu_item_id: item.menuItemId,
+      quantity: item.quantity,
+      price: item.unitPrice,
+      base_price: item.basePrice,
+      modifier_total: item.modifierTotal,
+      modifier_snapshot: item.modifierSnapshot as Json,
+      note: mergeOrderItemNote(item.note, item.modifierNote)
+    }));
+    const paymentLog = requiresPrepaidQr
+      ? {
+          method: "QR",
+          status: "pending",
+          amount: total,
+          transition_key: paymentTransitionKey({ orderId: "pending", stage: "start-qr-prepaid" }),
+          raw_data: {
+            source: "remote_order_prepaid_required",
+            transitionKey: paymentTransitionKey({ orderId: "pending", stage: "start-qr-prepaid" })
+          }
+        }
+      : null;
+    const { data: insertedOrder, error: orderError, atomic: usedAtomicOrderRpc } = await insertOrderAggregate(supabase, {
       restaurant_id: settings.id,
       table_id: null,
       bill_id: null,
@@ -1570,7 +1637,7 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
       delivery_quote_snapshot: deliveryQuote ? buildDeliveryQuoteSnapshot(settings, deliveryQuote) : null,
       delivery_tracking_updated_at: shouldStoreRoute ? new Date().toISOString() : null,
       idempotency_key: input.idempotencyKey || null
-    });
+    }, orderItems, paymentLog);
 
     if ((orderError as { code?: string } | null)?.code === "23505" && input.idempotencyKey) {
       const { data: existing, error: existingError } = await supabase
@@ -1617,35 +1684,26 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
       }
     }
 
-    const orderItems = pricedItems.map((item): OrderItemInsertRow => {
-      return {
-        order_id: insertedOrder.id,
-        menu_item_id: item.menuItemId,
-        quantity: item.quantity,
-        price: item.unitPrice,
-        base_price: item.basePrice,
-        modifier_total: item.modifierTotal,
-        modifier_snapshot: item.modifierSnapshot as Json,
-        note: mergeOrderItemNote(item.note, item.modifierNote)
-      };
-    });
-
-    const { error: orderItemError } = await insertOrderItemsWithModifierFallback(supabase, orderItems);
-
-    if (orderItemError) {
-      await supabase.from("orders").delete().eq("id", insertedOrder.id);
-      throw new AppError(orderItemError.message ?? "Không tạo được món trong đơn online", 400);
+    if (requiresPrepaidQr) {
+      try {
+        await reserveInventoryForPrepaidOrder(settings.id, insertedOrder.id);
+      } catch (error) {
+        await supabase.from("orders").delete().eq("id", insertedOrder.id).eq("restaurant_id", settings.id);
+        throw error;
+      }
     }
 
-    if (requiresPrepaidQr) {
-      await ensurePaymentLogEvent(supabase, {
-        orderId: insertedOrder.id,
-        method: "QR",
-        status: "pending",
-        amount: total,
-        source: "remote_order_prepaid_required",
-        transitionKey: paymentTransitionKey({ orderId: insertedOrder.id, stage: "start-qr-prepaid" })
-      });
+    if (requiresPrepaidQr && !usedAtomicOrderRpc) {
+      if (paymentLog) {
+        await ensurePaymentLogEvent(supabase, {
+          orderId: insertedOrder.id,
+          method: "QR",
+          status: "pending",
+          amount: total,
+          source: "remote_order_prepaid_required",
+          transitionKey: paymentTransitionKey({ orderId: insertedOrder.id, stage: "start-qr-prepaid" })
+        });
+      }
     }
 
     const order = await getOrderDto(insertedOrder.id, supabase);
@@ -1683,14 +1741,27 @@ export async function createRemoteOrder(input: CreateRemoteOrderInput) {
 
 export async function getPublicOrder(orderId: string, access?: CustomerOrderAccessInput) {
   const supabase = createPublicTenantAdminClient("customer_order_read");
+  let accessIdentity: {
+    orderCustomerSessionId: string | null;
+    billCustomerSessionId: string | null;
+  } | null = null;
   if (access) {
-    await assertCustomerOrderAccess(orderId, access, supabase);
+    accessIdentity = await assertCustomerOrderAccess(orderId, access, supabase);
   }
 
   const order = await getOrderDto(orderId, supabase);
+  const viewerOwnsOrder = Boolean(
+    access &&
+      access.customerSessionId &&
+      (accessIdentity?.orderCustomerSessionId === access.customerSessionId ||
+        accessIdentity?.billCustomerSessionId === access.customerSessionId)
+  );
+  const publicOrder = access
+    ? sanitizeSharedTableHistoryOrder(order, viewerOwnsOrder ? access.customerSessionId : null, access.customerSessionId)
+    : order;
   return {
-    order,
-    payment: getPaymentInstructions(order)
+    order: publicOrder,
+    payment: getPaymentInstructions(publicOrder)
   };
 }
 
@@ -1853,8 +1924,17 @@ export async function listOrdersForRestaurant(
     activeLimit?: number;
     includeHistory?: boolean;
     limit?: number;
+    authorizedBranchIds?: ReadonlySet<string> | null;
   } = {}
 ) {
+  if (options.authorizedBranchIds && options.authorizedBranchIds.size === 0) return [];
+  const filterAuthorizedOrders = (orders: OrderDto[]) => {
+    if (!options.authorizedBranchIds) return orders;
+    return orders.filter((order) => {
+      if (order.branchId) return options.authorizedBranchIds?.has(order.branchId) ?? false;
+      return options.authorizedBranchIds?.size === 1;
+    });
+  };
   const supabase = createAdminSupabaseClient();
 
   if (options.includeHistory) {
@@ -1888,12 +1968,13 @@ export async function listOrdersForRestaurant(
       rowsById.set(order.id, order);
     }
 
-    return attachLatestDeliveryLocations(
+    const orders = await attachLatestDeliveryLocations(
       restaurantId,
       [...rowsById.values()]
         .map((order) => mapOrder(order))
         .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
     );
+    return filterAuthorizedOrders(orders);
   }
 
   const { data, error } = await runOrderSelectWithBranchFallback((select) => {
@@ -1907,14 +1988,19 @@ export async function listOrdersForRestaurant(
   });
 
   throwIfSupabaseError(error);
-  return attachLatestDeliveryLocations(
+  const orders = await attachLatestDeliveryLocations(
     restaurantId,
     (data ?? []).map((order) => mapOrder(order as unknown as RawOrder))
   );
+  return filterAuthorizedOrders(orders);
 }
 
-export async function listKitchenOrdersForRestaurant(restaurantId: string) {
-  const cached = readKitchenOrdersCache(restaurantId);
+export async function listKitchenOrdersForRestaurant(
+  restaurantId: string,
+  options: { authorizedBranchIds?: ReadonlySet<string> | null } = {}
+) {
+  if (options.authorizedBranchIds && options.authorizedBranchIds.size === 0) return [];
+  const cached = options.authorizedBranchIds ? null : readKitchenOrdersCache(restaurantId);
   if (cached) return cached;
 
   const supabase = createAdminSupabaseClient();
@@ -1930,8 +2016,14 @@ export async function listKitchenOrdersForRestaurant(restaurantId: string) {
 
   throwIfSupabaseError(error);
   const orders = (data ?? []).map((order) => mapKitchenOrder(order as unknown as Omit<RawOrder, "restaurant" | "bill">));
-  writeKitchenOrdersCache(restaurantId, orders);
-  return orders;
+  const scopedOrders = options.authorizedBranchIds
+    ? orders.filter((order) => {
+        if (order.branchId) return options.authorizedBranchIds?.has(order.branchId) ?? false;
+        return options.authorizedBranchIds?.size === 1;
+      })
+    : orders;
+  if (!options.authorizedBranchIds) writeKitchenOrdersCache(restaurantId, orders);
+  return scopedOrders;
 }
 
 export async function acceptOrder(restaurantId: string, orderId: string, minutes = 15, actorUserId?: string | null) {

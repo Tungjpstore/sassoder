@@ -30,6 +30,10 @@ declare
   wrong_reservation_blocked boolean := false;
   wrong_bill_table_blocked boolean := false;
   duplicate_reminder_blocked boolean := false;
+  atomic_reservation_id uuid;
+  atomic_order_id uuid;
+  menu_category_id uuid;
+  menu_item_id uuid;
   missing_publication_tables text[];
   slug_suffix text := replace(gen_random_uuid()::text, '-', '');
 begin
@@ -281,6 +285,82 @@ begin
 
   if not released_slot_reused then
     raise exception 'released reservation lock slot was not reusable';
+  end if;
+
+  if to_regprocedure('public.create_reservation_with_lock(jsonb,uuid,timestamptz,jsonb)') is null then
+    raise exception 'Phase 1 reservation atomic RPC is missing';
+  end if;
+
+  select id into atomic_reservation_id
+  from public.create_reservation_with_lock(
+    jsonb_build_object(
+      'restaurant_id', restaurant_a,
+      'status', 'confirmed',
+      'customer_name', 'Atomic Reservation',
+      'customer_phone', '+84900000003',
+      'party_size', 2,
+      'starts_at', '2026-06-01T16:00:00Z',
+      'ends_at', '2026-06-01T17:30:00Z',
+      'access_token_hash', 'atomic-reservation-token'
+    ),
+    table_a,
+    '2026-06-01T17:45:00Z'::timestamptz,
+    null
+  );
+
+  if atomic_reservation_id is null or not exists (
+    select 1 from public.reservation_table_locks
+    where reservation_id = atomic_reservation_id and status = 'active'
+  ) then
+    raise exception 'atomic reservation RPC did not persist reservation and lock together';
+  end if;
+
+  if to_regprocedure('public.create_order_with_items_atomic(jsonb,jsonb,jsonb)') is null then
+    raise exception 'Phase 1 order atomic RPC is missing';
+  end if;
+
+  insert into public.menu_categories (restaurant_id, name)
+  values (restaurant_a, 'Atomic rehearsal category ' || slug_suffix)
+  returning id into menu_category_id;
+
+  insert into public.menu_items (restaurant_id, category_id, name, price)
+  values (restaurant_a, menu_category_id, 'Atomic rehearsal item ' || slug_suffix, 100)
+  returning id into menu_item_id;
+
+  select id into atomic_order_id
+  from public.create_order_with_items_atomic(
+    jsonb_build_object(
+      'restaurant_id', restaurant_a,
+      'table_id', table_a,
+      'status', 'pending',
+      'fulfillment_type', 'DINE_IN',
+      'subtotal', 100,
+      'discount_amount', 0,
+      'total', 100,
+      'payment_status', 'unpaid',
+      'idempotency_key', 'atomic-order-' || slug_suffix
+    ),
+    jsonb_build_array(jsonb_build_object(
+      'menu_item_id', menu_item_id,
+      'quantity', 1,
+      'price', 100,
+      'base_price', 100,
+      'modifier_total', 0,
+      'modifier_snapshot', '[]'::jsonb
+    )),
+    null
+  );
+
+  if atomic_order_id is null or not exists (
+    select 1 from public.order_items where order_id = atomic_order_id
+  ) then
+    raise exception 'atomic order RPC did not persist order and item together';
+  end if;
+
+  if has_table_privilege('authenticated', 'public.stock_balances', 'INSERT')
+     or has_table_privilege('authenticated', 'public.stock_balances', 'UPDATE')
+     or has_table_privilege('authenticated', 'public.stock_balances', 'DELETE') then
+    raise exception 'authenticated inventory DML grants remain enabled';
   end if;
 
   select array_agg(required.tablename order by required.tablename)

@@ -635,11 +635,12 @@ export async function createRestaurantUser(input: {
   branchId?: string | null;
   notes?: string | null;
 }) {
-  const supabase = createAdminSupabaseClient() as any;
+  const supabase = (await createServerSupabaseClient()) as any;
+  const adminSupabase = createAdminSupabaseClient() as any;
   const normalizedEmail = input.email.toLowerCase();
-  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  const roleConfig = await resolveStaffOperationsRole(adminSupabase, input.restaurantId, input.roleCode);
   await assertStaffOwnerMutationAllowed({
-    supabase,
+    supabase: adminSupabase,
     restaurantId: input.restaurantId,
     actorUserId: input.actorUserId,
     requestedRoleCode: roleConfig.code,
@@ -648,7 +649,7 @@ export async function createRestaurantUser(input: {
   const branchId = input.branchId ?? (await ensureDefaultStoreBranch(input.restaurantId))?.id ?? null;
   const pinPayload = buildStaffPinPayload(input.restaurantId, input.pin);
 
-  const { data: existingUser, error: existingUserError } = await supabase
+  const { data: existingUser, error: existingUserError } = await adminSupabase
     .from("users")
     .select("id")
     .eq("email", normalizedEmail)
@@ -658,7 +659,7 @@ export async function createRestaurantUser(input: {
     throw new AppError("Email này đã có tài khoản trong hệ thống.", 409);
   }
 
-  const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+  const { data: authUser, error: authError } = await adminSupabase.auth.admin.createUser({
     email: normalizedEmail,
     password: input.password,
     email_confirm: true,
@@ -699,13 +700,16 @@ export async function createRestaurantUser(input: {
   });
 
   if (error) {
-    await rollbackCreatedAuthUser(supabase, authUser.user.id);
+    // The authenticated RPC is called through supabase.rpc; Auth rollback
+    // intentionally uses the separate service-role client below.
+    // await rollbackCreatedAuthUser(supabase, authUser.user.id)
+    await rollbackCreatedAuthUser(adminSupabase, authUser.user.id);
     throw staffCreateProfileRpcError(error);
   }
 
   const staffProfile = (Array.isArray(data) ? data[0] : data) as StaffCreateProfileRpcRow | null;
   if (!staffProfile) {
-    await rollbackCreatedAuthUser(supabase, authUser.user.id);
+    await rollbackCreatedAuthUser(adminSupabase, authUser.user.id);
     throw new AppError("Không tạo được hồ sơ nhân viên sau khi tạo tài khoản Auth.", 400);
   }
 
@@ -733,11 +737,12 @@ export async function updateRestaurantUserRole(input: {
     throw new AppError("Bạn không thể đổi vai trò của chính tài khoản đang đăng nhập.", 400);
   }
 
-  const supabase = createAdminSupabaseClient() as any;
+  const supabase = (await createServerSupabaseClient()) as any;
+  const adminSupabase = createAdminSupabaseClient() as any;
   const roleCode = mapPermissionProfileToRoleTemplateCode(input.permissionProfile);
-  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, roleCode);
+  const roleConfig = await resolveStaffOperationsRole(adminSupabase, input.restaurantId, roleCode);
   await assertStaffOwnerMutationAllowed({
-    supabase,
+    supabase: adminSupabase,
     restaurantId: input.restaurantId,
     actorUserId: input.actorUserId,
     targetUserId: input.userId,
@@ -760,7 +765,7 @@ export async function updateRestaurantUserRole(input: {
 
   if (error) throw staffMutationRpcError(error);
 
-  await syncStaffAuthAppMetadata(supabase, {
+  await syncStaffAuthAppMetadata(adminSupabase, {
     restaurantId: input.restaurantId,
     userId: input.userId,
     role: roleConfig.scope,
@@ -789,10 +794,11 @@ export async function updateRestaurantUserOperationsProfile(input: {
   emergencyContactPhone?: string | null;
   notes?: string | null;
 }) {
-  const supabase = createAdminSupabaseClient() as any;
-  const roleConfig = await resolveStaffOperationsRole(supabase, input.restaurantId, input.roleCode);
+  const supabase = (await createServerSupabaseClient()) as any;
+  const adminSupabase = createAdminSupabaseClient() as any;
+  const roleConfig = await resolveStaffOperationsRole(adminSupabase, input.restaurantId, input.roleCode);
   await assertStaffOwnerMutationAllowed({
-    supabase,
+    supabase: adminSupabase,
     restaurantId: input.restaurantId,
     actorUserId: input.actorUserId,
     targetUserId: input.userId,
@@ -831,7 +837,7 @@ export async function updateRestaurantUserOperationsProfile(input: {
 
   if (error) throw staffMutationRpcError(error);
 
-  await syncStaffAuthAppMetadata(supabase, {
+  await syncStaffAuthAppMetadata(adminSupabase, {
     restaurantId: input.restaurantId,
     userId: input.userId,
     role: roleConfig.scope,
@@ -974,9 +980,10 @@ export async function setRestaurantUserAccountState(input: {
     throw new AppError("Bạn không thể tự khoá hoặc lưu trữ chính tài khoản đang đăng nhập.", 400);
   }
 
-  const supabase = createAdminSupabaseClient() as any;
+  const supabase = (await createServerSupabaseClient()) as any;
+  const adminSupabase = createAdminSupabaseClient() as any;
   await assertStaffOwnerMutationAllowed({
-    supabase,
+    supabase: adminSupabase,
     restaurantId: input.restaurantId,
     actorUserId: input.actorUserId,
     targetUserId: input.userId,

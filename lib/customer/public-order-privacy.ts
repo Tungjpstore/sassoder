@@ -8,7 +8,9 @@ export function sanitizeSharedTableHistoryOrder(
   ownerSessionId: string | null | undefined,
   viewerSessionId: string | null | undefined
 ): OrderDto {
-  if (!viewerSessionId || !ownerSessionId || ownerSessionId === viewerSessionId) {
+  // A QR-only viewer has no durable identity proof, so treat missing session
+  // context as untrusted unless it matches the order owner explicitly.
+  if (viewerSessionId && ownerSessionId && ownerSessionId === viewerSessionId) {
     return order;
   }
 
@@ -16,6 +18,17 @@ export function sanitizeSharedTableHistoryOrder(
     ...order,
     customerName: null,
     customerPhone: null,
-    customerNote: null
+    customerNote: null,
+    deliveryAddress: null,
+    deliveryLat: null,
+    deliveryLng: null,
+    deliveryCourierId: null,
+    deliveryAssignedAt: null,
+    deliveryCourier: null,
+    deliveryCourierLocation: null,
+    deliveryRouteGeometry: null,
+    deliveryQuoteSnapshot: null,
+    deliveryTrackingUpdatedAt: null,
+    deliveryTrackingSnapshot: null
   };
 }

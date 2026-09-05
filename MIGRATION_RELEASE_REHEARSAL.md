@@ -1,5 +1,85 @@
 # Migration Release Rehearsal - LogiVN
 
+## Phase 2 Addendum - Inventory Reservation Ledger
+
+Target migration: `20260903100000_phase2_inventory_reservation_ledger.sql`
+
+Required fix-forward migration: `20260903103000_phase2_inventory_reservation_scope_fix.sql`
+
+Run against an isolated PostgreSQL/Supabase database after Phase 1:
+
+```bash
+RESERVATION_DB_REHEARSAL_REQUIRED=true RESERVATION_DB_URL="$STAGING_DATABASE_URL" npm test
+```
+
+Required database scenarios:
+
+- Two prepaid orders competing for the final batch: one reservation succeeds and the other fails without negative stock.
+- Retrying the same order returns the existing reservation without increasing `reserved_quantity`.
+- Acceptance consumes the reservation exactly once; cancellation releases it exactly once.
+- A branch-A order cannot reserve or consume branch-B stock; a null-branch order only uses null-branch stock.
+- Direct reservation rows with a restaurant or branch that differs from the order are rejected by `inventory_reservations_scope_guard`.
+- `reserved_quantity` never exceeds `on_hand_quantity` and all reserve/release/consume movements retain the order source ID.
+
+Read-only checks:
+
+```sql
+select routine_name, security_type
+from information_schema.routines
+where specific_schema = 'public'
+  and routine_name in ('reserve_order_inventory', 'consume_order_inventory', 'release_order_inventory', 'accept_order_with_reserved_inventory');
+
+select status, count(*)
+from public.inventory_reservations
+group by status
+order by status;
+
+select routine_name, security_type
+from information_schema.routines
+where specific_schema = 'public'
+  and routine_name = 'cancel_order_with_inventory_reservation_rollback';
+```
+
+Rollback is fix-forward: keep the additive RPCs and disable prepaid reservation wiring per tenant until concurrency evidence is complete. Do not drop ledger rows or rewrite existing movement history.
+
+## Phase 1 Addendum - 2026-09-03
+
+Target migration: `20260903090000_phase1_security_transaction_hardening.sql`
+
+Run the rehearsal against an isolated PostgreSQL/Supabase staging database after the complete ordered migration set has been applied:
+
+```bash
+RESERVATION_DB_REHEARSAL_REQUIRED=true RESERVATION_DB_URL="$STAGING_DATABASE_URL" npm test
+```
+
+The rehearsal now verifies:
+
+- reservation + table lock persistence through `create_reservation_with_lock`;
+- order + item persistence through `create_order_with_items_atomic`;
+- authenticated inventory `INSERT/UPDATE/DELETE` grants are revoked;
+- existing cross-tenant reservation and branch guards remain active.
+
+Additional read-only checks:
+
+```sql
+select routine_name, security_type
+from information_schema.routines
+where specific_schema = 'public'
+  and routine_name in ('create_reservation_with_lock', 'create_order_with_items_atomic');
+
+select grantee, table_name, privilege_type
+from information_schema.role_table_grants
+where grantee = 'authenticated'
+  and table_name in ('stock_balances', 'inventory_batches', 'purchase_orders')
+order by table_name, privilege_type;
+
+select conname, convalidated
+from pg_constraint
+where conname in ('tables_restaurant_branch_id_fkey', 'orders_restaurant_branch_id_fkey');
+```
+
+Expected result: both RPCs exist as `SECURITY DEFINER`, no authenticated inventory write grants are returned, and both composite foreign keys are validated. Do not apply this migration to production until these checks and backup/restore evidence are recorded in `MIGRATION_LOG.md`.
+
 ## 2026-05-29 Refresh
 
 Status: no current pending migration apply according to Supabase dry-run.

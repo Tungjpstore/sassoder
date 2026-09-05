@@ -2,16 +2,18 @@ import { Suspense } from "react";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { RealReservationsWorkspaceV2 } from "@/components/dashboard-v2/real/reservations-workspace-v2";
 import { readThroughDashboardWorkspaceCache } from "@/lib/dashboard-workspace-cache";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { requireDashboardPermissionAccess } from "@/lib/dashboard-access";
 import { captureServerTimeMs, vietnamDateInputValue } from "@/lib/server-time";
 import { buildTenantUrl } from "@/lib/tenant-domain";
 import { getReservationAnalytics, getReservationSettings, listReservationsForRestaurant } from "@/services/reservation-service";
 import { listTablesWithStatus } from "@/services/table-service";
+import { getStaffAuthorizedBranchIds } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function ReservationsPage() {
-  const { session, entitlement } = await requireDashboardAccess("reservations");
+  const { session, entitlement } = await requireDashboardPermissionAccess("reservations", "reservations.manage");
+  const authorizedBranchIds = await getStaffAuthorizedBranchIds(session);
   return (
     <AdminShell
       title="Đặt bàn trước"
@@ -21,26 +23,33 @@ export default async function ReservationsPage() {
       subtitle="Nhận lịch giữ bàn, cọc VietQR, chống trùng giờ và đưa khách vào bàn đang phục vụ."
     >
       <Suspense fallback={<ReservationsWorkspaceSkeleton />}>
-        <ReservationsWorkspaceContent restaurantId={session.restaurantId} />
+        <ReservationsWorkspaceContent restaurantId={session.restaurantId} authorizedBranchIds={authorizedBranchIds} />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function ReservationsWorkspaceContent({ restaurantId }: { restaurantId: string }) {
+async function ReservationsWorkspaceContent({
+  restaurantId,
+  authorizedBranchIds
+}: {
+  restaurantId: string;
+  authorizedBranchIds: ReadonlySet<string> | null;
+}) {
   const initialNowMs = captureServerTimeMs();
   const today = vietnamDateInputValue(initialNowMs);
+  const branchScopeKey = authorizedBranchIds ? [...authorizedBranchIds].sort().join(",") || "none" : "all";
   const { settings, reservations, tables, analytics } = await readThroughDashboardWorkspaceCache({
     restaurantId,
     workspace: "reservations",
-    identifier: `today:${today}`,
+    identifier: `today:${today}:branches:${branchScopeKey}`,
     ttlSeconds: 5,
     load: async () => {
       const [settings, reservations, tables, analytics] = await Promise.all([
         getReservationSettings(restaurantId),
-        listReservationsForRestaurant(restaurantId, today),
-        listTablesWithStatus(restaurantId),
-        getReservationAnalytics(restaurantId)
+        listReservationsForRestaurant(restaurantId, today, { authorizedBranchIds }),
+        listTablesWithStatus(restaurantId, { authorizedBranchIds }),
+        getReservationAnalytics(restaurantId, { authorizedBranchIds })
       ]);
 
       return { settings, reservations, tables, analytics };

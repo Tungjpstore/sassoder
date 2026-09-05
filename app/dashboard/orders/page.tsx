@@ -1,15 +1,17 @@
 import { Suspense } from "react";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
 import { RealOrdersWorkspaceV2 } from "@/components/dashboard-v2/real/orders-workspace-v2";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { requireDashboardPermissionAccess } from "@/lib/dashboard-access";
 import { captureServerTimeMs } from "@/lib/server-time";
 import { listOrdersForRestaurant } from "@/services/order-service";
 import { listOpenServiceRequests } from "@/services/service-request-service";
+import { getStaffAuthorizedBranchIds } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOrdersPage() {
-  const { session, entitlement } = await requireDashboardAccess("order_realtime");
+  const { session, entitlement } = await requireDashboardPermissionAccess("order_realtime", "orders.view");
+  const authorizedBranchIds = await getStaffAuthorizedBranchIds(session);
 
   return (
     <AdminShell
@@ -21,16 +23,28 @@ export default async function AdminOrdersPage() {
       showLiveActionCenter={false}
     >
       <Suspense fallback={<OrdersBoardSkeleton />}>
-        <OrdersBoardContent restaurantId={session.restaurantId} canManageTestOrders={session.role === "ADMIN"} />
+        <OrdersBoardContent
+          restaurantId={session.restaurantId}
+          canManageTestOrders={session.role === "ADMIN"}
+          authorizedBranchIds={authorizedBranchIds}
+        />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function OrdersBoardContent({ restaurantId, canManageTestOrders }: { restaurantId: string; canManageTestOrders: boolean }) {
+async function OrdersBoardContent({
+  restaurantId,
+  canManageTestOrders,
+  authorizedBranchIds
+}: {
+  restaurantId: string;
+  canManageTestOrders: boolean;
+  authorizedBranchIds: ReadonlySet<string> | null;
+}) {
   const [orders, serviceRequests] = await Promise.all([
-    listOrdersForRestaurant(restaurantId),
-    listOpenServiceRequests(restaurantId)
+    listOrdersForRestaurant(restaurantId, { authorizedBranchIds }),
+    listOpenServiceRequests(restaurantId, { authorizedBranchIds })
   ]);
   const initialOrders = JSON.parse(JSON.stringify(orders));
   const initialRequests = JSON.parse(JSON.stringify(serviceRequests));

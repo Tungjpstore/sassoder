@@ -117,7 +117,11 @@ export async function createCustomerServiceRequest(input: {
   return request;
 }
 
-export async function listOpenServiceRequests(restaurantId: string) {
+export async function listOpenServiceRequests(
+  restaurantId: string,
+  options: { authorizedBranchIds?: ReadonlySet<string> | null } = {}
+) {
+  if (options.authorizedBranchIds && options.authorizedBranchIds.size === 0) return [];
   const supabase = createAdminSupabaseClient();
   const { data, error } = await supabase
     .from("service_requests")
@@ -128,7 +132,12 @@ export async function listOpenServiceRequests(restaurantId: string) {
     .limit(50);
 
   throwIfSupabaseError(error);
-  return (data ?? []).map((row) => mapServiceRequest(row as unknown as RawServiceRequest));
+  const requests = (data ?? []).map((row) => mapServiceRequest(row as unknown as RawServiceRequest));
+  if (!options.authorizedBranchIds) return requests;
+  return requests.filter((request) => {
+    if (request.branchId) return options.authorizedBranchIds?.has(request.branchId) ?? false;
+    return options.authorizedBranchIds?.size === 1;
+  });
 }
 
 export async function resolveServiceRequest(restaurantId: string, requestId: string) {

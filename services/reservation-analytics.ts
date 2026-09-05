@@ -8,6 +8,7 @@ export type ReservationAnalyticsTableRow = {
   area: string;
   capacity: number;
   floor_label?: string | null;
+  branch_id?: string | null;
 };
 
 export type ReservationAnalyticsLockRow = {

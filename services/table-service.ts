@@ -182,7 +182,11 @@ function firstReservationLockReservation(lock: ReservationLockOccupancyRow) {
   return Array.isArray(lock.reservation) ? lock.reservation[0] ?? null : lock.reservation ?? null;
 }
 
-export async function listTablesWithStatus(restaurantId: string): Promise<RestaurantTableWithStatus[]> {
+export async function listTablesWithStatus(
+  restaurantId: string,
+  options: { authorizedBranchIds?: ReadonlySet<string> | null } = {}
+): Promise<RestaurantTableWithStatus[]> {
+  if (options.authorizedBranchIds && options.authorizedBranchIds.size === 0) return [];
   const supabase = (await createServerSupabaseClient()) as any;
   const [tablesResult, ordersResult, billsResult, reservationLocksResult] = await Promise.all([
     supabase.from("tables").select("*").eq("restaurant_id", restaurantId).order("name", { ascending: true }),
@@ -237,7 +241,13 @@ export async function listTablesWithStatus(restaurantId: string): Promise<Restau
   }
 
   const now = Date.now();
-  return ((tablesResult.data ?? []) as RestaurantTable[]).map((table) => {
+  return ((tablesResult.data ?? []) as RestaurantTable[])
+    .filter((table) => {
+      if (!options.authorizedBranchIds) return true;
+      if (table.branch_id) return options.authorizedBranchIds.has(table.branch_id);
+      return options.authorizedBranchIds.size === 1;
+    })
+    .map((table) => {
     const tableOrders = ordersByTable.get(table.id) ?? [];
     const tableBills = billsByTable.get(table.id) ?? [];
     const tableReservationLocks = seatedReservationsByTable.get(table.id) ?? [];
@@ -261,7 +271,7 @@ export async function listTablesWithStatus(restaurantId: string): Promise<Restau
       oldestOrderAt: tableOrders[0]?.created_at ?? tableBills[0]?.created_at ?? null,
       nextServiceDueAt: dueDates[0] ?? null
     };
-  });
+    });
 }
 
 export async function getPublicTable(

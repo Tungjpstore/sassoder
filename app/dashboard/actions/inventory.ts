@@ -84,7 +84,7 @@ export async function createInventorySupplierAction(formData: FormData) {
     isPreferred: formData.get("isPreferred") === "on"
   });
 
-  await createInventorySupplier(session.restaurantId, parsed);
+  await createInventorySupplier(session.restaurantId, { ...parsed, actorUserId: session.userId });
   await revalidateInventorySurfaces(session.restaurantId);
 }
 

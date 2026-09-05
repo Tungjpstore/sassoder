@@ -1,14 +1,16 @@
 import { Suspense } from "react";
 import { RealKitchenWorkspaceV2 } from "@/components/dashboard-v2/real/kitchen-workspace-v2";
 import { ProductionDashboardShell as AdminShell } from "@/components/dashboard-v2/production-shell";
-import { requireDashboardAccess } from "@/lib/dashboard-access";
+import { requireDashboardPermissionAccess } from "@/lib/dashboard-access";
 import { captureServerTimeMs } from "@/lib/server-time";
 import { listKitchenOrdersForRestaurant } from "@/services/order-service";
+import { getStaffAuthorizedBranchIds } from "@/features/staff/services/staff-branch-authorization-service";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminKitchenPage() {
-  const { session, entitlement } = await requireDashboardAccess("kitchen_screen");
+  const { session, entitlement } = await requireDashboardPermissionAccess("kitchen_screen", "orders.view");
+  const authorizedBranchIds = await getStaffAuthorizedBranchIds(session);
 
   return (
     <AdminShell
@@ -19,14 +21,14 @@ export default async function AdminKitchenPage() {
       subtitle="Tập trung vào lượt gọi món cần xử lý, hẹn giờ ra món và cảnh báo quá giờ."
     >
       <Suspense fallback={<KitchenBoardSkeleton />}>
-        <KitchenBoardContent restaurantId={session.restaurantId} />
+        <KitchenBoardContent restaurantId={session.restaurantId} authorizedBranchIds={authorizedBranchIds} />
       </Suspense>
     </AdminShell>
   );
 }
 
-async function KitchenBoardContent({ restaurantId }: { restaurantId: string }) {
-  const initialOrders = await listKitchenOrdersForRestaurant(restaurantId);
+async function KitchenBoardContent({ restaurantId, authorizedBranchIds }: { restaurantId: string; authorizedBranchIds: ReadonlySet<string> | null }) {
+  const initialOrders = await listKitchenOrdersForRestaurant(restaurantId, { authorizedBranchIds });
   return <RealKitchenWorkspaceV2 initialOrders={initialOrders} restaurantId={restaurantId} initialNowMs={captureServerTimeMs()} />;
 }
 
