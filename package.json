@@ -27,6 +27,7 @@
     "open-design:doctor": "node scripts/dev/open-design.mjs doctor",
     "open-design:mcp-smoke": "node scripts/dev/open-design.mjs mcp-smoke",
     "open-design:config": "node scripts/dev/open-design.mjs config",
+    "dev:customer-links": "tsx scripts/print-customer-test-links.ts",
     "infra:check": "node scripts/infra/check.mjs",
     "release:blockers": "node scripts/infra/release-external-blockers.mjs --write",
     "release:blockers:report": "node scripts/infra/release-external-blockers.mjs --write --report-only",
@@ -115,6 +116,9 @@
     },
     "@lhci/cli": {
       "uuid": "11.1.1"
+    },
+    "@ai-sdk/provider-utils": {
+      "undici": "6.28.1"
     }
   }
 }

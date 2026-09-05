@@ -1649,6 +1649,10 @@ export async function updateRestaurantSettings(
   const supabase = await createServerSupabaseClient();
   const logoUrl = input.removeLogo ? null : await uploadMenuImageFile({ restaurantId, file: input.logoFile ?? null, label: "Logo quán" });
   const logoUpdate = logoUrl !== undefined || input.removeLogo ? { logo_url: logoUrl } : {};
+  // Never write a fallback for legacy QR: omitting it must preserve the tenant's
+  // stored value, because defaulting to true would silently re-open unsigned
+  // table QR links and defaulting to false would break already printed codes.
+  const legacyQrUpdate = input.allowLegacyQr === undefined ? {} : { allow_legacy_qr: input.allowLegacyQr };
   const { data, error } = await supabase
     .from("restaurants")
     .update({
@@ -1662,12 +1666,12 @@ export async function updateRestaurantSettings(
       closing_time: input.closingTime || null,
       brand_primary: input.brandPrimary || null,
       brand_accent: input.brandAccent || null,
-      allow_legacy_qr: input.allowLegacyQr ?? true,
       notify_new_order: input.notifyNewOrder ?? true,
       notify_payment_waiting: input.notifyPaymentWaiting ?? true,
       show_promotions_on_menu: input.showPromotionsOnMenu ?? true,
       receipt_footer: input.receiptFooter || null,
       receipt_show_qr: input.receiptShowQr ?? true,
+      ...legacyQrUpdate,
       ...logoUpdate
     })
     .eq("id", restaurantId)

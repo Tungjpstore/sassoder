@@ -78,7 +78,7 @@ npm run lint
 npx tsc --noEmit --pretty false --incremental false
 npm test
 NEXT_PRIVATE_BUILD_WORKER=0 npm run build
-npm audit --audit-level=high
+npm audit --omit=dev --audit-level=high
 npm run billing:verify
 npm run seo:week5
 npm run seo:agentic
@@ -89,6 +89,8 @@ Required result:
 - all commands pass,
 - `npm run billing:verify` has no subscription/payment warning unless a release commander waiver is documented,
 - no generated reports or artifacts are unintentionally included.
+
+The audit gate is scoped with `--omit=dev` to match `.github/workflows/seo-ci.yml`. Development-only Lighthouse CI dependencies (`@lhci/cli` -> `lighthouse` -> `puppeteer-core` -> `extract-zip`) still report high advisories and have no non-breaking upstream fix; they never ship to users. Run the unscoped `npm audit --audit-level=high` when reviewing that dev-tooling debt.
 
 ## Phase 2 - Supabase Migration Reconciliation
 

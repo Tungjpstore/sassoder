@@ -142,7 +142,7 @@ MAPBOX_ACCESS_TOKEN=<Mapbox access token>
 Để SaaS subdomain hoạt động, cần gắn wildcard domain `*.logivn.com` vào project Vercel và trỏ DNS/nameserver theo cấu hình Vercel. Khi đó mỗi quán dùng URL dạng:
 
 ```txt
-https://ten-quan.logivn.com/table/{tableId}
+https://ten-quan.logivn.com/table/{tableId}?t={qrToken}
 ```
 
 ## Chạy Local
@@ -159,9 +159,11 @@ Các đường dẫn chính:
 - Đăng ký tài khoản: `/dashboard/register`
 - Onboarding tạo quán: `/dashboard/onboarding`
 - Cài đặt VietQR: `/dashboard/settings`
-- Khách gọi món qua subdomain: `https://[slug].logivn.com/table/[tableId]`
-- Fallback kỹ thuật: `/r/[slug]/table/[tableId]`
+- Khách gọi món qua subdomain: `https://[slug].logivn.com/table/[tableId]?t=[qrToken]`
+- Fallback kỹ thuật: `/r/[slug]/table/[tableId]?t=[qrToken]`
 - Health check production: `/api/health`
+
+Tham số `t` là QR token đã ký. Quán tạo từ 2026-09-05 trở đi mặc định `allow_legacy_qr=false` nên link không có token sẽ bị từ chối; lấy link đúng ở `/dashboard/tables` (nút QR/in poster) thay vì tự ghép URL. Quán cũ giữ giá trị `allow_legacy_qr` hiện tại cho tới khi chủ quán xoay QR.
 
 ## Onboarding
 

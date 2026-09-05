@@ -66,6 +66,7 @@ const bookingSteps: Array<{ id: BookingStep; label: string }> = [
   { id: "contact", label: "Thông tin" },
   { id: "review", label: "Xác nhận" }
 ];
+const partySizeChoices = [2, 4, 6, 8];
 
 function tableSummary(reservation: ReservationDto) {
   const names = reservation.tables.map((t) => t.name).filter(Boolean);
@@ -192,6 +193,7 @@ function BookingScreen(props: ReserveViewProps) {
 
   const stepIndex = bookingSteps.findIndex((s) => s.id === step);
   const deposit = depositAmount(restaurant, partySize);
+  const isPresetPartySize = partySizeChoices.includes(partySize);
   const groupedSlots = React.useMemo(
     () =>
       [
@@ -283,13 +285,18 @@ function BookingScreen(props: ReserveViewProps) {
 
               <SectionLabel className="mt-4 block">Số khách</SectionLabel>
               <div className="mt-2 flex items-center gap-2">
-                {[2, 4, 6, 8].map((v) => (
+                {partySizeChoices.map((v) => (
                   <button key={v} type="button" onClick={() => setPartySize(v)} className={cn("h-11 flex-1 rounded-[var(--r-md)] border text-[length:var(--fs-sm)] font-bold transition", partySize === v ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
                     {v}
                   </button>
                 ))}
-                <input type="number" min={1} max={100} value={partySize} onChange={(e) => setPartySize(Math.max(1, Math.min(100, Number(e.target.value) || 1)))} aria-label="Số khách khác" className="h-11 w-16 rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-2 text-center text-[length:var(--fs-sm)] font-bold outline-none focus:border-[var(--jade)]" />
+                <button type="button" onClick={() => setPartySize(isPresetPartySize ? 5 : partySize)} aria-pressed={!isPresetPartySize} className={cn("h-11 flex-1 rounded-[var(--r-md)] border text-[length:var(--fs-sm)] font-bold transition", !isPresetPartySize ? "border-[var(--jade)] bg-[var(--jade)] text-[var(--on-jade)]" : "border-[var(--line)] bg-[var(--surface)] text-[var(--text)]")}>
+                  Khác
+                </button>
               </div>
+              {!isPresetPartySize ? (
+                <input type="number" min={1} max={100} value={partySize} onChange={(e) => setPartySize(Math.max(1, Math.min(100, Number(e.target.value) || 1)))} aria-label="Số khách khác" className="mt-2 h-11 w-full rounded-[var(--r-md)] border border-[var(--line)] bg-[var(--surface)] px-3 text-center text-[length:var(--fs-sm)] font-bold outline-none focus:border-[var(--jade)]" />
+              ) : null}
             </Card>
 
             {restaurant.preferenceOptions.tableAreas.length > 0 || visibleZones.length > 1 || visibleKinds.length > 1 ? (

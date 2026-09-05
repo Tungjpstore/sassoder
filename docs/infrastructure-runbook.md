@@ -101,7 +101,8 @@
   - `npm run lint`
   - `npx tsc --noEmit`
   - `npm test`
-  - `npm audit --audit-level=high`
+  - `npm run release:blockers:report` trên `pull_request`/`push`, `npm run release:blockers:strict` trên `workflow_dispatch`
+  - `npm audit --omit=dev --audit-level=high`
   - `npm run billing:verify` khi GitHub secrets có đủ Supabase env
   - `npm run seo:week5`
   - `npm run seo:agentic`
@@ -179,7 +180,7 @@ Chỉ nên chạy manual trên production khi chấp nhận side effect thật n
 ## Quy trình deploy an toàn
 
 1. Chạy local gate:
-   `npm run infra:check && npm run lint && npx tsc --noEmit --pretty false --incremental false && npm test && npm audit --audit-level=high && npm run billing:verify && NEXT_PRIVATE_BUILD_WORKER=0 npm run build`
+   `npm run infra:check && npm run lint && npx tsc --noEmit --pretty false --incremental false && npm test && npm audit --omit=dev --audit-level=high && npm run billing:verify && NEXT_PRIVATE_BUILD_WORKER=0 npm run build`
 2. Merge sau khi GitHub Actions xanh.
 3. Nếu deploy gồm HR/staff operations, rà thêm `docs/staff-operations-release-checklist.md` trước khi mở traffic.
 4. Chạy `Vercel Preflight` nếu thay đổi đụng env, cron, build config hoặc route handlers quan trọng.

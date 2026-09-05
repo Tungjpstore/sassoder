@@ -1,5 +1,5 @@
 // Dev helper: in ra link test luồng khách hàng (slug + bàn + token).
-// Chạy: node scripts/print-customer-test-links.mjs
+// Chạy: npm run dev:customer-links
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 
@@ -9,9 +9,16 @@ const env = Object.fromEntries(
     .filter((line) => line.includes("=") && !line.trimStart().startsWith("#"))
     .map((line) => {
       const i = line.indexOf("=");
-      return [line.slice(0, i).trim(), line.slice(i + 1).trim()];
+      return [line.slice(0, i).trim(), line.slice(i + 1).trim().replace(/^['"]|['"]$/g, "")];
     })
 );
+
+for (const [key, value] of Object.entries(env)) {
+  if (process.env[key] === undefined) process.env[key] = value as string;
+}
+
+// Imported after .env.local is applied because the helper resolves its secret at call time.
+const { buildTableQrAccessToken } = await import("../lib/customer/table-qr-access");
 
 const url = env.NEXT_PUBLIC_SUPABASE_URL;
 const key = env.SUPABASE_SERVICE_ROLE_KEY;
@@ -43,11 +50,16 @@ for (const r of restaurants) {
     allow_legacy_qr: r.allow_legacy_qr
   });
 
-  const { data: tables } = await supabase
+  const { data: tables, error: tablesError } = await supabase
     .from("tables")
-    .select("id, name, qr_token")
+    .select("id, name, restaurant_id, qr_token_version, qr_token_enforced")
     .eq("restaurant_id", r.id)
     .limit(3);
+
+  if (tablesError) {
+    console.error("tables error:", tablesError.message);
+    continue;
+  }
 
   if (r.online_ordering_enabled && (r.pickup_enabled || r.delivery_enabled)) {
     console.log("Đặt món online:", base + "/r/" + r.slug);
@@ -56,7 +68,9 @@ for (const r of restaurants) {
     console.log("Đặt bàn:       ", base + "/r/" + r.slug + "/reserve");
   }
   for (const t of tables ?? []) {
-    const token = t.qr_token ? "?t=" + t.qr_token : "";
+    // qr_token is derived, not stored: always append it so links work for tenants
+    // that require signed QR access (the default since 2026-09-05).
+    const token = "?t=" + buildTableQrAccessToken(t);
     console.log("Bàn " + (t.name ?? t.id) + ": " + base + "/r/" + r.slug + "/table/" + t.id + token);
   }
 }
