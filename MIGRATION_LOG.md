@@ -57,15 +57,15 @@ Last updated: 2026-09-03
 
 ## Current Snapshot
 
-- Local SQL migration files: 145
-- Tracked migration files: 145
+- Local SQL migration files: 146
+- Tracked migration files: 146
 - Git-untracked migration files: 0
-- Latest local migration: `20260903110000_phase2_prepaid_consistency_fix.sql`
-- Current integration branch: `main`
-- Current local commit: `4d5a3932df09e3db5de6e766d88aa0562dbbf5e1`
-- Current upstream commit: `4d5a3932df09e3db5de6e766d88aa0562dbbf5e1`
+- Latest local migration: `20260905090000_phase_a_legacy_qr_default_off.sql`
+- Current integration branch: `hoplite/koroneia-ffa429c4`
+- Current local commit: `d4a97ccedef9d8fe2895e486eccca6589fe585c6`
+- Current upstream commit: `d4a97ccedef9d8fe2895e486eccca6589fe585c6`
 - Branch relationship: local and upstream are aligned (0 ahead, 0 behind)
-- Working tree status: Phase 1 and Phase 2 hardening migrations are committed on `main` (commit `4d5a393`); no migration files remain untracked.
+- Working tree status: Phase A adds one forward-only migration that changes the `restaurants.allow_legacy_qr` default for new tenants; no migration files remain untracked.
 
 ## 2026-09-03 Phase 2 Production Apply
 

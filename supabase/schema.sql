@@ -43,7 +43,7 @@ create table public.restaurants (
   closing_time time,
   brand_primary text,
   brand_accent text,
-  allow_legacy_qr boolean not null default true,
+  allow_legacy_qr boolean not null default false,
   online_ordering_enabled boolean not null default false,
   pickup_enabled boolean not null default true,
   delivery_enabled boolean not null default false,
