@@ -115,6 +115,9 @@
     },
     "@lhci/cli": {
       "uuid": "11.1.1"
+    },
+    "@ai-sdk/provider-utils": {
+      "undici": "6.28.1"
     }
   }
 }
