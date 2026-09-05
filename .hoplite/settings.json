@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "ports": {"preview": 3000, "additional": {}},
+  "scripts": {
+    "setup": {"enabled": true, "command": "npm ci --no-audit --no-fund"},
+    "run": {"enabled": true, "command": "NEXT_DEV_ALLOWED_ORIGINS='*.preview.usehoplite.com,*.w.modal.host' npm run dev -- --hostname 0.0.0.0 --port 3000"},
+    "archive": {"enabled": true, "command": null},
+    "check": {"enabled": true, "command": "npm run lint && npx tsc --noEmit --pretty false --incremental false && npm test"}
+  },
+  "mcpServers": []
+}

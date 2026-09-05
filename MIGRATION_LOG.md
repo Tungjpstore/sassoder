@@ -58,14 +58,14 @@ Last updated: 2026-09-03
 ## Current Snapshot
 
 - Local SQL migration files: 145
-- Tracked migration files: 141
-- Git-untracked migration files: 4 (Phase 1 and Phase 2 hardening migrations pending review)
+- Tracked migration files: 145
+- Git-untracked migration files: 0
 - Latest local migration: `20260903110000_phase2_prepaid_consistency_fix.sql`
-- Current integration branch: `ui-ux-rebuild/phase-0-tokens`
-- Current local commit: `45fce9999b5815bb0d83f195ef4a5056c9a5f73d`
-- Current upstream commit: `45fce9999b5815bb0d83f195ef4a5056c9a5f73d`
+- Current integration branch: `main`
+- Current local commit: `4d5a3932df09e3db5de6e766d88aa0562dbbf5e1`
+- Current upstream commit: `4d5a3932df09e3db5de6e766d88aa0562dbbf5e1`
 - Branch relationship: local and upstream are aligned (0 ahead, 0 behind)
-- Working tree status: 22 expected changed/untracked files remain in the current implementation candidate; review and commit them before release.
+- Working tree status: Phase 1 and Phase 2 hardening migrations are committed on `main` (commit `4d5a393`); no migration files remain untracked.
 
 ## 2026-09-03 Phase 2 Production Apply
 

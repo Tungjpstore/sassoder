@@ -21,8 +21,19 @@ const contentSecurityPolicy = [
   ...(isVercelProduction ? ["upgrade-insecure-requests"] : [])
 ].join("; ");
 
+// Dev-only: Next 16 blocks HMR/RSC requests from any origin other than localhost,
+// which leaves the page un-hydrated behind loopback IPs or tunneled preview hosts.
+const allowedDevOrigins = [
+  "127.0.0.1",
+  ...(process.env.NEXT_DEV_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+];
+
 const nextConfig: NextConfig = {
   typedRoutes: false,
+  allowedDevOrigins,
   turbopack: {
     root: process.cwd()
   },
